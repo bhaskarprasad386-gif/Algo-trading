@@ -4,7 +4,7 @@ from app.core.logger import app_logger
 
 
 router = APIRouter(
-    prefix="/api/v1/market-data",
+    prefix="/market-data",
     tags=["Market Data"],
 )
 
