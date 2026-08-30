@@ -22,13 +22,16 @@ class MarketDataWebSocket:
         correlation_id: str = "market-data",
         on_data: Optional[Callable] = None,
     ):
-        """Connect to Angel One WebSocket V2 and subscribe to tokens."""
+        """Connect to Angel One WebSocket V2 using the existing auth session."""
 
         try:
-            login_data = self.auth.login()
+            if not self.auth.smart_api or not self.auth.session_data:
+                self.auth.login()
 
-            auth_token = login_data.get("jwt_token")
-            feed_token = login_data.get("feed_token")
+            session_data = self.auth.session_data or {}
+
+            auth_token = session_data.get("jwtToken")
+            feed_token = session_data.get("feedToken")
 
             if not auth_token or not feed_token:
                 raise TradingAppException(
@@ -53,6 +56,7 @@ class MarketDataWebSocket:
 
             def handle_open(wsapp):
                 app_logger.info("Angel One WebSocket connected")
+
                 self.websocket.subscribe(
                     correlation_id,
                     mode,
@@ -97,7 +101,11 @@ class MarketDataWebSocket:
 
     def close(self):
         """Close the active WebSocket connection."""
+
         if self.websocket:
             self.websocket.close_connection()
             self.websocket = None
-            app_logger.info("Angel One WebSocket closed")
+
+            app_logger.info(
+                "Angel One WebSocket closed"
+            )
