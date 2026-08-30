@@ -4,3 +4,4 @@ pydantic-settings
 python-dotenv
 pyotp
 smartapi-python
+requests
