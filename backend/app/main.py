@@ -34,8 +34,8 @@ app.add_exception_handler(
 )
 
 
-# यहाँ prefix="/api/v1" जोड़ दिया गया है ताकि सही पाथ (/api/v1/market-data/ltp) बन जाए
-app.include_router(market_data_router, prefix="/api/v1")
+# चूँकि routes.py में prefix पहले से '/api/v1/market-data' है, इसलिए यहाँ अतिरिक्त prefix नहीं देना है
+app.include_router(market_data_router)
 
 
 @app.on_event("startup")
