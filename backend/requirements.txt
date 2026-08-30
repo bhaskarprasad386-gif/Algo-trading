@@ -2,3 +2,5 @@ fastapi
 uvicorn[standard]
 pydantic-settings
 python-dotenv
+pyotp
+smartapi-python
