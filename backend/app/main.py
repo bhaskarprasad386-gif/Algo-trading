@@ -13,7 +13,6 @@ from app.algo.auth import AngelOneAuth
 from app.market_data.routes import router as market_data_router
 
 
-# Database tables
 Base.metadata.create_all(bind=engine)
 
 
@@ -24,7 +23,6 @@ app = FastAPI(
 )
 
 
-# Exception handlers
 app.add_exception_handler(
     TradingAppException,
     trading_exception_handler,
@@ -36,8 +34,10 @@ app.add_exception_handler(
 )
 
 
-# Market Data API routes
-app.include_router(market_data_router)
+app.include_router(
+    market_data_router,
+    prefix="/api/v1/market-data",
+)
 
 
 @app.on_event("startup")
@@ -77,6 +77,4 @@ def login_angel_one():
 
     auth = AngelOneAuth()
 
-    result = auth.login()
-
-    return result
+    return auth.login()
