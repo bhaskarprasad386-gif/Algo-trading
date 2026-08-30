@@ -19,3 +19,13 @@ class AngelOneAuth:
                     400
                 )
             # Rest of login...
+            pass
+            
+        except TradingAppException:
+            raise
+        except Exception as e:
+            raise TradingAppException(
+                "LoginError",
+                f"Angel One login failed: {str(e)}",
+                500
+            )
