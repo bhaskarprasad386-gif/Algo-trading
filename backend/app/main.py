@@ -1,13 +1,8 @@
 from fastapi import FastAPI
 from app.core.config import settings
-import logging
-
-# Basic logging setup
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+from app.core.logger import app_logger
+from app.core.exceptions import TradingAppException, trading_exception_handler, global_exception_handler
+from app.algo.auth import AngelOneAuth
 
 app = FastAPI(
     title=settings.app_name,
@@ -15,10 +10,13 @@ app = FastAPI(
     debug=settings.debug
 )
 
+# Register Custom & Global Exception Handlers
+app.add_exception_handler(TradingAppException, trading_exception_handler)
+app.add_exception_handler(Exception, global_exception_handler)
+
 @app.on_event("startup")
 async def startup_event():
-    logger.info(f"{settings.app_name} started")
-    logger.info(f"Environment: {settings.environment}")
+    app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
 
 @app.get("/")
 def root():
@@ -35,3 +33,11 @@ def health_check():
         "app": settings.app_name,
         "version": "0.1.0"
     }
+
+@app.post("/api/v1/login")
+def login_angel_one():
+    """Endpoint to log in to Angel One using config credentials and generate session tokens"""
+    app_logger.info("Initiating Angel One login process via API")
+    auth = AngelOneAuth()
+    result = auth.login()
+    return result
