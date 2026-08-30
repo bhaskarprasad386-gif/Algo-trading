@@ -8,3 +8,4 @@ requests
 loguru
 sqlalchemy
 logzero
+websocket-client
