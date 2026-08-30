@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query, HTTPException
+
 from app.core.logger import app_logger
 
 
@@ -31,7 +32,10 @@ def get_ltp(
         )
 
     except Exception as e:
-        app_logger.error(f"LTP error: {str(e)}")
+        app_logger.error(
+            f"LTP error: {str(e)}"
+        )
+
         raise HTTPException(
             status_code=500,
             detail=str(e),
@@ -57,7 +61,10 @@ def get_historical(
 
     try:
         market_client = MarketDataClient()
-        historical_client = HistoricalDataClient(market_client)
+
+        historical_client = HistoricalDataClient(
+            market_client
+        )
 
         return historical_client.get_candles(
             exchange=exchange,
