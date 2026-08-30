@@ -1,24 +1,25 @@
 from fastapi import FastAPI
+from app.core.config import settings
 
 app = FastAPI(
-    title="Algo Trading Platform",
+    title=settings.app_name,
     version="0.1.0",
+    debug=settings.debug
 )
 
 
-@app.get("/health")
-def health():
+@app.get("/")
+def root():
     return {
-        "status": "ok",
-        "service": "algo-trading-backend",
-        "version": "0.1.0",
+        "message": "Algo Trading Platform is running",
+        "environment": settings.environment
     }
 
 
-@app.get("/api/v1/status")
-def api_status():
+@app.get("/health")
+def health_check():
     return {
-        "status": "connected",
-        "service": "algo-trading-backend",
-        "api": "v1",
+        "status": "ok",
+        "app": settings.app_name,
+        "version": "0.1.0"
     }
