@@ -48,4 +48,4 @@ jobs:
           ANGEL_PASSWORD: ""
           ANGEL_TOTP_SECRET: ""
         run: |
-          python -c "from app.main import app; routes = [r.path for r in app.routes]; print('Routes:', routes); assert '/health' in routes; assert '/api/v1/login' in routes; assert '/api/v1/market-data/ltp' in routes; assert '/api/v1/market-data/historical' in routes; print('Route verification: OK')"
+          python -c "from app.main import app; routes = [getattr(r, 'path', None) for r in app.routes]; print('Routes:', routes); assert '/health' in routes; assert '/api/v1/login' in routes; assert '/api/v1/market-data/ltp' in routes; assert '/api/v1/market-data/historical' in routes; print('Route verification: OK')"
