@@ -1,12 +1,12 @@
 from pydantic_settings import BaseSettings
 
-
 class Settings(BaseSettings):
     app_name: str = "Algo Trading Platform"
     environment: str = "development"
     debug: bool = True
+    SECRET_KEY: str = "your_super_secret_key_here"
+    DATABASE_URL: str = "sqlite:///./algo_trading.db"
 
-    # Angel One credentials (environment variables se aayenge)
     angel_api_key: str = ""
     angel_client_id: str = ""
     angel_password: str = ""
@@ -15,6 +15,6 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
-
+        extra = "ignore"
 
 settings = Settings()
