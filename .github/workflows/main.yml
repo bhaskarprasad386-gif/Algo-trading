@@ -48,4 +48,32 @@ jobs:
           ANGEL_PASSWORD: ""
           ANGEL_TOTP_SECRET: ""
         run: |
-          python -c "from app.main import app; routes = [getattr(r, 'path', None) for r in app.routes]; print('Routes:', routes); assert '/health' in routes; assert '/api/v1/login' in routes; assert '/api/v1/market-data/ltp' in routes; assert '/api/v1/market-data/historical' in routes; print('Route verification: OK')"
+          python - <<'PY'
+          from app.main import app
+
+          routes = []
+
+          for route in app.routes:
+              path = getattr(route, "path", None)
+              if path:
+                  routes.append(path)
+
+          print("Registered routes:")
+          for path in routes:
+              print(path)
+
+          required = [
+              "/health",
+              "/api/v1/login",
+              "/api/v1/market-data/ltp",
+              "/api/v1/market-data/historical",
+          ]
+
+          missing = [path for path in required if path not in routes]
+
+          if missing:
+              print("MISSING ROUTES:", missing)
+              raise SystemExit(1)
+
+          print("Route verification: OK")
+          PY
