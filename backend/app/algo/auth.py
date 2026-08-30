@@ -6,10 +6,10 @@ from app.core.exceptions import TradingAppException
 
 class AngelOneAuth:
     def __init__(self):
-        self.api_key = settings.ANGEL_ONE_API_KEY
-        self.client_id = settings.ANGEL_ONE_CLIENT_ID
-        self.pin = settings.ANGEL_ONE_PIN
-        self.totp_secret = settings.ANGEL_ONE_TOTP_SECRET
+        self.api_key = settings.angel_api_key
+        self.client_id = settings.angel_client_id
+        self.pin = settings.angel_password
+        self.totp_secret = settings.angel_totp_secret
         self.smart_api = None
         self.session_data = None
 
@@ -30,13 +30,8 @@ class AngelOneAuth:
             if not self.api_key or not self.client_id or not self.pin:
                 raise TradingAppException("ConfigError", "Angel One credentials are not fully set in environment variables.", 400)
 
-            # Initialize SmartConnect
             self.smart_api = SmartConnect(api_key=self.api_key)
-            
-            # Generate current TOTP
             totp_code = self.generate_totp()
-
-            # Perform login
             data = self.smart_api.generateSession(self.client_id, self.pin, totp_code)
 
             if data and data.get('status'):
