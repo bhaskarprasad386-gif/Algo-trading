@@ -1,0 +1,51 @@
+name: Backend Verification
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  verify-backend:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify Python files
+        run: |
+          python -m compileall app
+
+      - name: Verify FastAPI import
+        env:
+          ANGEL_API_KEY: ""
+          ANGEL_CLIENT_ID: ""
+          ANGEL_PASSWORD: ""
+          ANGEL_TOTP_SECRET: ""
+        run: |
+          python -c "from app.main import app; print('FastAPI import: OK')"
+
+      - name: Verify routes
+        env:
+          ANGEL_API_KEY: ""
+          ANGEL_CLIENT_ID: ""
+          ANGEL_PASSWORD: ""
+          ANGEL_TOTP_SECRET: ""
+        run: |
+          python -c "from app.main import app; routes = [r.path for r in app.routes]; print('Routes:', routes); assert '/health' in routes; assert '/api/v1/login' in routes; assert '/api/v1/market-data/ltp' in routes; assert '/api/v1/market-data/historical' in routes; print('Route verification: OK')"
