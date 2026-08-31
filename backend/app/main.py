@@ -126,3 +126,24 @@ def get_historical(
     except Exception as e:
         app_logger.error(f"Historical error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+import uuid
+from pydantic import BaseModel
+
+class OrderRequest(BaseModel):
+    symbol: str
+    quantity: int
+    transactionType: str
+
+class OrderResponseModel(BaseModel):
+    orderId: str
+    status: str
+    message: str
+
+@app.post("/api/v1/order", response_model=OrderResponseModel)
+def place_market_order(order: OrderRequest):
+    generated_order_id = str(uuid.uuid4())[:8].upper()
+    return {
+        "orderId": generated_order_id,
+        "status": "SUCCESS",
+        "message": f"Successfully placed {order.transactionType} order for {order.quantity} shares of {order.symbol}"
+    }
