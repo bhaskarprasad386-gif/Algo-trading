@@ -24,7 +24,6 @@ class MainActivity : AppCompatActivity() {
     private val orderHistoryList = mutableListOf<String>()
     private var webSocket: WebSocket? = null
     
-    // Optimized OkHttpClient for stable streaming
     private val client = OkHttpClient.Builder()
         .pingInterval(10, TimeUnit.SECONDS)
         .build()
@@ -44,6 +43,7 @@ class MainActivity : AppCompatActivity() {
 
         checkServerStatus()
 
+        // When user clicks 'Fetch Quote', it now starts the Live WebSocket Stream!
         btnFetchQuote.setOnClickListener {
             val symbol = etSymbol.text.toString().trim().uppercase()
             if (symbol.isNotEmpty()) {
@@ -72,15 +72,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startLiveWebSocket(symbol: symbolModelToStringSafe(symbol)) {
-        webSocket?.close(1000, "Switching")
+    private fun startLiveWebSocket(symbol: String) {
+        // Close any existing active connection first
+        webSocket?.close(1000, "Switching symbol")
 
-        // Use 10.0.2.2 for Emulator, or your live server IP for real device
+        // WebSocket URL (10.0.2.2 is used for Android Emulator to connect to local PC)
         val request = Request.Builder().url("ws://10.0.2.2:8000/ws/market-data/$symbol").build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {
-                runOnUiThread { tvQuoteDetails.text = "Connected to $symbol Live Stream" }
+                runOnUiThread { 
+                    tvQuoteDetails.text = "Connected to Live Stream for $symbol..." 
+                }
             }
 
             override fun onMessage(ws: WebSocket, text: String) {
@@ -92,7 +95,7 @@ class MainActivity : AppCompatActivity() {
                     val ltp = json.getDouble("ltp")
                     val spread = json.getDouble("spread")
 
-                    // Safely update UI without lagging the main thread
+                    // Update UI smoothly on the main thread
                     runOnUiThread {
                         tvQuoteDetails.text = """
                             🟢 LIVE MARKET ($sSymbol)
@@ -104,24 +107,30 @@ class MainActivity : AppCompatActivity() {
                         """.trimIndent()
                     }
                 } catch (e: Exception) {
-                    // Skip malformed packets smoothly
+                    // Ignore parse glitches safely
                 }
             }
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                runOnUiThread { tvQuoteDetails.text = "Stream Connection Lost" }
+                runOnUiThread { 
+                    tvQuoteDetails.text = "Live Stream Connection Lost" 
+                }
             }
         })
     }
-
-    private fun symbolModelToStringSafe(s: String): String = s
 
     private fun placeOrder(transactionType: String) {
         val symbol = etSymbol.text.toString().trim().uppercase()
         val qtyStr = etQuantity.text.toString().trim()
 
-        if (symbol.isEmpty()) { etSymbol.error = "Enter symbol"; return }
-        if (qtyStr.isEmpty()) { etQuantity.error = "Enter quantity"; return }
+        if (symbol.isEmpty()) { 
+            etSymbol.error = "Enter symbol"
+            return 
+        }
+        if (qtyStr.isEmpty()) { 
+            etQuantity.error = "Enter quantity"
+            return 
+        }
 
         val quantity = qtyStr.toIntOrNull() ?: 1
         val request = OrderRequest(symbol = symbol, quantity = quantity, transactionType = transactionType)
@@ -145,6 +154,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        webSocket?.close(1000, "Closed")
+        // Safely close WebSocket when app is closed
+        webSocket?.close(1000, "App closed")
     }
 }
