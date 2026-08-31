@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Algo Trading & Arbitrage Terminal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-[#0b0f19] text-gray-100 font-sans antialiased">
+    <div class="flex h-screen overflow-hidden">
+        
+        <!-- Sidebar -->
+        <aside class="w-64 bg-[#111827] border-r border-gray-800 flex flex-col">
+            <div class="p-5 border-b border-gray-800 flex items-center space-x-3">
+                <i class="fa-solid fa-chart-candlestick text-emerald-500 text-2xl"></i>
+                <span class="text-lg font-bold tracking-wider text-white">ALGO<span class="text-emerald-500">TERMINAL</span></span>
+            </div>
+            <nav class="flex-1 p-4 space-y-2">
+                <a href="index.html" class="flex items-center space-x-3 px-4 py-2.5 rounded-lg bg-emerald-600 text-white font-medium shadow-lg shadow-emerald-900/30">
+                    <i class="fa-solid fa-house"></i><span>Dashboard</span>
+                </a>
+            </nav>
+            <div class="p-4 border-t border-gray-800 text-xs text-gray-500 text-center">
+                Web Dashboard v1.0
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <div class="flex-1 flex flex-col overflow-y-auto">
+            <header class="h-16 bg-[#111827] border-b border-gray-800 flex items-center justify-between px-6">
+                <div class="flex items-center space-x-4">
+                    <h1 class="text-lg font-semibold text-gray-200">Live Control Center</h1>
+                    <button onclick="checkSystemHealth()" class="text-xs bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded border border-gray-700 text-gray-300 transition">Check Health</button>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <span id="sys-status" class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-emerald-950 text-emerald-400 border border-emerald-800">
+                        <span class="w-2 h-2 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span> Online
+                    </span>
+                </div>
+            </header>
+
+            <main class="p-6 space-y-6">
+                <div id="alert-banner" class="hidden p-4 rounded-xl border text-sm font-medium"></div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <!-- Market Data / LTP Section -->
+                    <div class="bg-[#111827] border border-gray-800 p-6 rounded-xl shadow-xl">
+                        <h2 class="text-base font-semibold mb-4 text-emerald-400 flex items-center space-x-2">
+                            <i class="fa-solid fa-bolt"></i><span>Live LTP Inspector</span>
+                        </h2>
+                        <div class="space-y-4">
+                            <div class="grid grid-cols-3 gap-3">
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">Exchange</label>
+                                    <input type="text" id="exchange" value="NSE" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">Symbol Token</label>
+                                    <input type="text" id="symboltoken" value="3045" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">Trading Symbol</label>
+                                    <input type="text" id="tradingsymbol" value="SBIN-EQ" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+                                </div>
+                            </div>
+                            <button onclick="fetchLTP()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2 rounded-lg text-sm transition">Fetch LTP Data</button>
+                            <pre id="ltp-result" class="bg-gray-950 p-3 rounded-lg text-xs font-mono text-emerald-400 border border-gray-800 overflow-x-auto h-32 flex items-center justify-center text-gray-500">Awaiting request...</pre>
+                        </div>
+                    </div>
+
+                    <!-- Arbitrage Evaluator Widget -->
+                    <div class="bg-[#111827] border border-gray-800 p-6 rounded-xl shadow-xl">
+                        <h2 class="text-base font-semibold mb-4 text-purple-400 flex items-center space-x-2">
+                            <i class="fa-solid fa-scale-balanced"></i><span>Quick Arbitrage Check</span>
+                        </h2>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">Symbol</label>
+                                <input type="text" id="dash-sym" value="RELIANCE" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500">
+                            </div>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">Exchange A Price</label>
+                                    <input type="number" step="0.05" id="dash-pa" value="2500.00" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">Exchange B Price</label>
+                                    <input type="number" step="0.05" id="dash-pb" value="2518.50" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500">
+                                </div>
+                            </div>
+                            <button onclick="quickArbitrage()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-medium py-2 rounded-lg text-sm transition">Evaluate Spread</button>
+                            <pre id="dash-arb-result" class="bg-gray-950 p-3 rounded-lg text-xs font-mono text-purple-300 border border-gray-800 overflow-x-auto h-32 flex items-center justify-center text-gray-500">Awaiting evaluation...</pre>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = "http://127.0.0.1:8000";
+
+        function showAlert(message, type = "success") {
+            const banner = document.getElementById('alert-banner');
+            banner.className = `p-4 rounded-xl border text-sm font-medium ${type === 'success' ? 'bg-emerald-950/50 border-emerald-800 text-emerald-300' : 'bg-red-950/50 border-red-800 text-red-300'}`;
+            banner.innerText = message;
+            banner.classList.remove('hidden');
+            setTimeout(() => banner.classList.add('hidden'), 5000);
+        }
+
+        async function checkSystemHealth() {
+            try {
+                const res = await fetch(`${API_BASE}/health`);
+                const data = await res.json();
+                showAlert(`System Healthy: ${data.database}`, "success");
+            } catch (err) {
+                showAlert("Backend connection failed! Ensure FastAPI is running.", "error");
+            }
+        }
+
+        async function fetchLTP() {
+            const ex = document.getElementById('exchange').value;
+            const token = document.getElementById('symboltoken').value;
+            const ts = document.getElementById('tradingsymbol').value;
+            const box = document.getElementById('ltp-result');
+            box.style.justifyContent = "flex-start";
+            box.innerText = "Fetching market price...";
+            try {
+                const res = await fetch(`${API_BASE}/api/v1/market-data/ltp?exchange=${ex}&tradingsymbol=${ts}&symboltoken=${token}`);
+                const data = await res.json();
+                box.innerText = JSON.stringify(data, null, 2);
+            } catch (err) {
+                box.innerText = "Error fetching LTP: " + err;
+            }
+        }
+
+        async function quickArbitrage() {
+            const sym = document.getElementById('dash-sym').value;
+            const pa = document.getElementById('dash-pa').value;
+            const pb = document.getElementById('dash-pb').value;
+            const box = document.getElementById('dash-arb-result');
+            box.style.justifyContent = "flex-start";
+            box.innerText = "Evaluating spread...";
+            try {
+                const res = await fetch(`${API_BASE}/api/v1/strategy/arbitrage/evaluate?symbol=${sym}&price_a=${pa}&price_b=${pb}&threshold=0.5`);
+                const data = await res.json();
+                box.innerText = JSON.stringify(data, null, 2);
+            } catch (err) {
+                box.innerText = "Error evaluating spread: " + err;
+            }
+        }
+    </script>
+</body>
+</html>
