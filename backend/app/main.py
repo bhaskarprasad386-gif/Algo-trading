@@ -147,3 +147,30 @@ def place_market_order(order: OrderRequest):
         "status": "SUCCESS",
         "message": f"Successfully placed {order.transactionType} order for {order.quantity} shares of {order.symbol}"
     }
+    from fastapi import WebSocket, WebSocketDisconnect
+import asyncio
+import random
+
+@app.websocket("/ws/market-data/{symbol}")
+async def websocket_market_data(websocket: WebSocket, symbol: str):
+    await websocket.accept()
+    try:
+        while True:
+            base_price = 1500.00
+            fluctuation = random.uniform(-5.0, 5.0)
+            ltp = round(base_price + fluctuation, 2)
+            
+            data = {
+                "symbol": symbol.upper(),
+                "bidPrice": round(ltp - 0.5, 2),
+                "askPrice": round(ltp + 0.5, 2),
+                "ltp": ltp,
+                "spread": 1.00
+            }
+            
+            await websocket.send_json(data)
+            await asyncio.sleep(2)
+            
+    except WebSocketDisconnect:
+        print(f"Client disconnected for symbol: {symbol}")
+
