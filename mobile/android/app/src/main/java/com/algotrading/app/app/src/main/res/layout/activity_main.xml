@@ -13,8 +13,18 @@
         android:text="Checking Server Status..."
         android:textSize="16sp"
         android:textStyle="bold"
-        android:paddingBottom="20dp"
+        android:paddingBottom="16dp"
         android:gravity="center" />
+
+    <EditText
+        android:id="@+id/etSymbol"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Enter Symbol (e.g. RELIANCE)"
+        android:text="RELIANCE"
+        android:textSize="16sp"
+        android:padding="12dp"
+        android:layout_marginBottom="16dp" />
 
     <Button
         android:id="@+id/btnFetchQuote"
@@ -30,9 +40,11 @@
         android:id="@+id/tvQuoteDetails"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Click the button above to view Bid, Ask, LTP, and Spread."
+        android:text="Enter a symbol above and click the button to view quotes."
         android:textSize="16sp"
+        android:lineSpacingExtra="8dp"
         android:padding="16dp"
         android:background="#F5F5F5"
         android:textColor="#333333" />
+
 </LinearLayout>
