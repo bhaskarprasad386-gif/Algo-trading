@@ -21,6 +21,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnSell: Button
     private lateinit var tvOrderResult: TextView
 
+    // Order History list to keep track of multiple orders
+    private val orderHistoryList = mutableListOf<String>()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -34,10 +37,8 @@ class MainActivity : AppCompatActivity() {
         btnSell = findViewById(R.id.btnSell)
         tvOrderResult = findViewById(R.id.tvOrderResult)
 
-        // Check Backend Connection on Startup
         checkServerStatus()
 
-        // Fetch Quote on Button Click
         btnFetchQuote.setOnClickListener {
             val symbol = etSymbol.text.toString().trim().uppercase()
             if (symbol.isNotEmpty()) {
@@ -47,12 +48,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Place Buy Order
         btnBuy.setOnClickListener {
             placeOrder("BUY")
         }
 
-        // Place Sell Order
         btnSell.setOnClickListener {
             placeOrder("SELL")
         }
@@ -115,14 +114,19 @@ class MainActivity : AppCompatActivity() {
             try {
                 val response = ApiService.retrofitService.placeOrder(request)
                 withContext(Dispatchers.Main) {
-                    tvOrderResult.text = """
-                        Order Success! ID: ${response.orderId}
-                        Status: ${response.status} - ${response.message}
-                    """.trimIndent()
+                    val orderDetail = "[$transactionType] $quantity x $symbol | ID: ${response.orderId} (${response.status})"
+                    
+                    // Add new order to the top of the history list
+                    orderHistoryList.add(0, orderDetail)
+                    
+                    // Display all past orders
+                    tvOrderResult.text = "--- Order History ---\n\n" + orderHistoryList.joinToString("\n\n")
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    tvOrderResult.text = "Order Failed: ${e.localizedMessage}"
+                    val errorDetail = "[FAILED] $transactionType $symbol: ${e.localizedMessage}"
+                    orderHistoryList.add(0, errorDetail)
+                    tvOrderResult.text = "--- Order History ---\n\n" + orderHistoryList.joinToString("\n\n")
                 }
             }
         }
