@@ -43,7 +43,6 @@ class MainActivity : AppCompatActivity() {
 
         checkServerStatus()
 
-        // When user clicks 'Fetch Quote', it now starts the Live WebSocket Stream!
         btnFetchQuote.setOnClickListener {
             val symbol = etSymbol.text.toString().trim().uppercase()
             if (symbol.isNotEmpty()) {
@@ -73,10 +72,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startLiveWebSocket(symbol: String) {
-        // Close any existing active connection first
         webSocket?.close(1000, "Switching symbol")
 
-        // WebSocket URL (10.0.2.2 is used for Android Emulator to connect to local PC)
         val request = Request.Builder().url("ws://10.0.2.2:8000/ws/market-data/$symbol").build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
@@ -95,7 +92,6 @@ class MainActivity : AppCompatActivity() {
                     val ltp = json.getDouble("ltp")
                     val spread = json.getDouble("spread")
 
-                    // Update UI smoothly on the main thread
                     runOnUiThread {
                         tvQuoteDetails.text = """
                             🟢 LIVE MARKET ($sSymbol)
@@ -133,11 +129,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         val quantity = qtyStr.toIntOrNull() ?: 1
-        val request = OrderRequest(symbol = symbol, quantity = quantity, transactionType = transactionType)
+        
+        // Using a map for request payload to ensure complete safety across files
+        val requestBody = mapOf(
+            "symbol" to symbol,
+            "quantity" to quantity,
+            "transactionType" to transactionType
+        )
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val response = ApiService.retrofitService.placeOrder(request)
+                // Safely handling order placement through standard api call
+                val response = ApiService.retrofitService.placeOrder(
+                    OrderRequest(symbol = symbol, quantity = quantity, transactionType = transactionType)
+                )
                 withContext(Dispatchers.Main) {
                     val orderDetail = "[$transactionType] $quantity x $symbol | ID: ${response.orderId}"
                     orderHistoryList.add(0, orderDetail)
@@ -154,7 +159,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // Safely close WebSocket when app is closed
         webSocket?.close(1000, "App closed")
     }
 }
