@@ -169,7 +169,7 @@ async def websocket_market_data(websocket: WebSocket, symbol: str):
             }
             
             await websocket.send_json(data)
-            await asyncio.sleep(2)
+            await asyncio.sleep(0.2)
             
     except WebSocketDisconnect:
         print(f"Client disconnected for symbol: {symbol}")
