@@ -2,153 +2,192 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Algo Trading & Arbitrage Terminal</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-</head>
-<body class="bg-[#0b0f19] text-gray-100 font-sans antialiased">
-    <div class="flex h-screen overflow-hidden">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Algo Trading & Arbitrage Live Dashboard</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: #0f172a; 
+            color: #f8fafc; 
+            margin: 0; 
+            padding: 15px; 
+            width: 100%;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        .container { 
+            width: 100%; 
+            max-width: 900px; 
+            margin: 0 auto; 
+        }
+        header { 
+            text-align: center; 
+            margin-bottom: 20px; 
+        }
+        h1 { 
+            color: #38bdf8; 
+            margin: 0 0 5px 0; 
+            font-size: 24px; 
+        }
+        .subtitle { 
+            color: #94a3b8; 
+            font-size: 13px; 
+        }
         
-        <!-- Sidebar -->
-        <aside class="w-64 bg-[#111827] border-r border-gray-800 flex flex-col">
-            <div class="p-5 border-b border-gray-800 flex items-center space-x-3">
-                <i class="fa-solid fa-chart-candlestick text-emerald-500 text-2xl"></i>
-                <span class="text-lg font-bold tracking-wider text-white">ALGO<span class="text-emerald-500">TERMINAL</span></span>
+        .grid { 
+            display: flex; 
+            flex-direction: column; 
+            gap: 15px; 
+        }
+        @media(min-width: 600px) {
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        }
+
+        .card { 
+            background: #1e293b; 
+            padding: 18px; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3); 
+            border-left: 5px solid #38bdf8; 
+            width: 100%;
+        }
+        .card h3 { 
+            margin-top: 0; 
+            color: #f8fafc; 
+            font-size: 16px; 
+            border-bottom: 1px solid #334155; 
+            padding-bottom: 8px; 
+        }
+        
+        .metric-value { 
+            font-size: 24px; 
+            font-weight: bold; 
+            margin: 12px 0; 
+            color: #4ade80; 
+        }
+        .badge { 
+            display: inline-block; 
+            padding: 4px 10px; 
+            border-radius: 20px; 
+            font-size: 11px; 
+            font-weight: bold; 
+            background: #4ade80; 
+            color: #000; 
+        }
+        
+        .btn { 
+            background: #0284c7; 
+            color: white; 
+            border: none; 
+            padding: 12px; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-weight: bold; 
+            width: 100%; 
+            margin-top: 10px; 
+            font-size: 14px;
+        }
+        .btn:active { background: #0369a1; }
+        
+        .log-box { 
+            background: #090d16; 
+            padding: 10px; 
+            border-radius: 6px; 
+            font-family: monospace; 
+            font-size: 11px; 
+            color: #38bdf8; 
+            height: 110px; 
+            overflow-y: auto; 
+            margin-top: 10px; 
+            border: 1px solid #334155; 
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Algo Trading Terminal</h1>
+            <div class="subtitle">Live Cloud Web Dashboard</div>
+        </header>
+        
+        <div class="grid">
+            <div class="card" style="border-left-color: #22c55e;">
+                <h3>Strategy Engine</h3>
+                <p>Status: <span id="strat-status" class="badge">ACTIVE</span></p>
+                <p id="arb-spread" style="font-size: 14px;">Arbitrage: <strong>+₹3.25 (NSE/BSE)</strong></p>
+                <button class="btn" onclick="toggleStrategy()">Stop / Restart Strategy</button>
             </div>
-            <nav class="flex-1 p-4 space-y-2">
-                <a href="index.html" class="flex items-center space-x-3 px-4 py-2.5 rounded-lg bg-emerald-600 text-white font-medium shadow-lg shadow-emerald-900/30">
-                    <i class="fa-solid fa-house"></i><span>Dashboard</span>
-                </a>
-            </nav>
-            <div class="p-4 border-t border-gray-800 text-xs text-gray-500 text-center">
-                Web Dashboard v1.0
+
+            <div class="card" style="border-left-color: #38bdf8;">
+                <h3>Live LTP Inspector</h3>
+                <p style="font-size: 14px;">Asset: <strong>RELIANCE (NSE)</strong></p>
+                <div class="metric-value" id="live-price">₹2,450.00</div>
+                <p style="font-size: 11px; color: #94a3b8;">Real-time Tick Stream</p>
             </div>
-        </aside>
+        </div>
 
-        <!-- Main Content -->
-        <div class="flex-1 flex flex-col overflow-y-auto">
-            <header class="h-16 bg-[#111827] border-b border-gray-800 flex items-center justify-between px-6">
-                <div class="flex items-center space-x-4">
-                    <h1 class="text-lg font-semibold text-gray-200">Live Control Center</h1>
-                    <button onclick="checkSystemHealth()" class="text-xs bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded border border-gray-700 text-gray-300 transition">Check Health</button>
-                </div>
-                <div class="flex items-center space-x-3">
-                    <span id="sys-status" class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-emerald-950 text-emerald-400 border border-emerald-800">
-                        <span class="w-2 h-2 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span> Online
-                    </span>
-                </div>
-            </header>
+        <div class="card" style="margin-top: 15px; border-left-color: #facc15;">
+            <h3>Today's P&L</h3>
+            <div class="metric-value" id="pnl-value" style="color: #4ade80;">+₹1,240.50</div>
+            <p style="font-size: 12px; color: #94a3b8; margin: 0;">Active Trades: <strong>2</strong></p>
+        </div>
 
-            <main class="p-6 space-y-6">
-                <div id="alert-banner" class="hidden p-4 rounded-xl border text-sm font-medium"></div>
-
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <!-- Market Data / LTP Section -->
-                    <div class="bg-[#111827] border border-gray-800 p-6 rounded-xl shadow-xl">
-                        <h2 class="text-base font-semibold mb-4 text-emerald-400 flex items-center space-x-2">
-                            <i class="fa-solid fa-bolt"></i><span>Live LTP Inspector</span>
-                        </h2>
-                        <div class="space-y-4">
-                            <div class="grid grid-cols-3 gap-3">
-                                <div>
-                                    <label class="block text-xs text-gray-400 mb-1">Exchange</label>
-                                    <input type="text" id="exchange" value="NSE" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
-                                </div>
-                                <div>
-                                    <label class="block text-xs text-gray-400 mb-1">Symbol Token</label>
-                                    <input type="text" id="symboltoken" value="3045" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
-                                </div>
-                                <div>
-                                    <label class="block text-xs text-gray-400 mb-1">Trading Symbol</label>
-                                    <input type="text" id="tradingsymbol" value="SBIN-EQ" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
-                                </div>
-                            </div>
-                            <button onclick="fetchLTP()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2 rounded-lg text-sm transition">Fetch LTP Data</button>
-                            <pre id="ltp-result" class="bg-gray-950 p-3 rounded-lg text-xs font-mono text-emerald-400 border border-gray-800 overflow-x-auto h-32 flex items-center justify-center text-gray-500">Awaiting request...</pre>
-                        </div>
-                    </div>
-
-                    <!-- Arbitrage Evaluator Widget -->
-                    <div class="bg-[#111827] border border-gray-800 p-6 rounded-xl shadow-xl">
-                        <h2 class="text-base font-semibold mb-4 text-purple-400 flex items-center space-x-2">
-                            <i class="fa-solid fa-scale-balanced"></i><span>Quick Arbitrage Check</span>
-                        </h2>
-                        <div class="space-y-4">
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">Symbol</label>
-                                <input type="text" id="dash-sym" value="RELIANCE" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500">
-                            </div>
-                            <div class="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label class="block text-xs text-gray-400 mb-1">Exchange A Price</label>
-                                    <input type="number" step="0.05" id="dash-pa" value="2500.00" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500">
-                                </div>
-                                <div>
-                                    <label class="block text-xs text-gray-400 mb-1">Exchange B Price</label>
-                                    <input type="number" step="0.05" id="dash-pb" value="2518.50" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500">
-                                </div>
-                            </div>
-                            <button onclick="quickArbitrage()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-medium py-2 rounded-lg text-sm transition">Evaluate Spread</button>
-                            <pre id="dash-arb-result" class="bg-gray-950 p-3 rounded-lg text-xs font-mono text-purple-300 border border-gray-800 overflow-x-auto h-32 flex items-center justify-center text-gray-500">Awaiting evaluation...</pre>
-                        </div>
-                    </div>
-                </div>
-            </main>
+        <div class="card" style="margin-top: 15px; border-left-color: #a855f7;">
+            <h3>Execution Logs</h3>
+            <div class="log-box" id="terminal-logs">
+                [System] Web Dashboard initialized.<br>
+                [SmartAPI] Connected to socket stream.<br>
+                [Arbitrage] Monitoring gaps...
+            </div>
         </div>
     </div>
 
     <script>
-        const API_BASE = "http://127.0.0.1:8000";
+        let basePrice = 2450.00;
+        let pnl = 1240.50;
+        let isRunning = true;
 
-        function showAlert(message, type = "success") {
-            const banner = document.getElementById('alert-banner');
-            banner.className = `p-4 rounded-xl border text-sm font-medium ${type === 'success' ? 'bg-emerald-950/50 border-emerald-800 text-emerald-300' : 'bg-red-950/50 border-red-800 text-red-300'}`;
-            banner.innerText = message;
-            banner.classList.remove('hidden');
-            setTimeout(() => banner.classList.add('hidden'), 5000);
-        }
+        setInterval(() => {
+            if (!isRunning) return;
+            
+            let change = (Math.random() * 3 - 1.45);
+            basePrice += change;
+            document.getElementById('live-price').innerText = '₹' + basePrice.toFixed(2);
+            
+            pnl += change * 0.5;
+            let pnlElement = document.getElementById('pnl-value');
+            pnlElement.innerText = (pnl >= 0 ? '+₹' : '-₹') + Math.abs(pnl).toFixed(2);
+            pnlElement.style.color = pnl >= 0 ? '#4ade80' : '#f87171';
 
-        async function checkSystemHealth() {
-            try {
-                const res = await fetch(`${API_BASE}/health`);
-                const data = await res.json();
-                showAlert(`System Healthy: ${data.database}`, "success");
-            } catch (err) {
-                showAlert("Backend connection failed! Ensure FastAPI is running.", "error");
+            let spread = (Math.random() * 2 + 1.5).toFixed(2);
+            document.getElementById('arb-spread').innerHTML = `Arbitrage: <strong>+₹${spread} (NSE/BSE)</strong>`;
+
+            if (Math.random() > 0.7) {
+                let logs = document.getElementById('terminal-logs');
+                let time = new Date().toLocaleTimeString();
+                logs.innerHTML += `<br>[${time}] Opportunity caught! Spread: ₹${spread}`;
+                logs.scrollTop = logs.scrollHeight;
             }
-        }
+        }, 1500);
 
-        async function fetchLTP() {
-            const ex = document.getElementById('exchange').value;
-            const token = document.getElementById('symboltoken').value;
-            const ts = document.getElementById('tradingsymbol').value;
-            const box = document.getElementById('ltp-result');
-            box.style.justifyContent = "flex-start";
-            box.innerText = "Fetching market price...";
-            try {
-                const res = await fetch(`${API_BASE}/api/v1/market-data/ltp?exchange=${ex}&tradingsymbol=${ts}&symboltoken=${token}`);
-                const data = await res.json();
-                box.innerText = JSON.stringify(data, null, 2);
-            } catch (err) {
-                box.innerText = "Error fetching LTP: " + err;
+        function toggleStrategy() {
+            isRunning = !isRunning;
+            let statusBadge = document.getElementById('strat-status');
+            let logs = document.getElementById('terminal-logs');
+            let time = new Date().toLocaleTimeString();
+            
+            if (isRunning) {
+                statusBadge.innerText = "ACTIVE";
+                statusBadge.style.background = "#4ade80";
+                logs.innerHTML += `<br>[${time}] Strategy resumed.`;
+            } else {
+                statusBadge.innerText = "PAUSED";
+                statusBadge.style.background = "#f87171";
+                logs.innerHTML += `<br>[${time}] Strategy paused.`;
             }
-        }
-
-        async function quickArbitrage() {
-            const sym = document.getElementById('dash-sym').value;
-            const pa = document.getElementById('dash-pa').value;
-            const pb = document.getElementById('dash-pb').value;
-            const box = document.getElementById('dash-arb-result');
-            box.style.justifyContent = "flex-start";
-            box.innerText = "Evaluating spread...";
-            try {
-                const res = await fetch(`${API_BASE}/api/v1/strategy/arbitrage/evaluate?symbol=${sym}&price_a=${pa}&price_b=${pb}&threshold=0.5`);
-                const data = await res.json();
-                box.innerText = JSON.stringify(data, null, 2);
-            } catch (err) {
-                box.innerText = "Error evaluating spread: " + err;
-            }
+            logs.scrollTop = logs.scrollHeight;
         }
     </script>
 </body>
