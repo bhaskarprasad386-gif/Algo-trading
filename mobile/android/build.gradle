@@ -1,18 +1,28 @@
-buildscript {
-    repositories {
-        google()
-        mavenCentral()
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.example.app'
+    compileSdk 33
+
+    defaultConfig {
+        applicationId "com.example.app"
+        minSdk 21
+        targetSdk 33
+        versionCode 1
+        versionName "1.0"
     }
-    dependencies {
-        classpath "com.android.tools.build:gradle:8.1.0"
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
     }
 }
 
-
-    buildscript {
-    dependencies {
-        classpath "com.android.tools.build:gradle:8.1.0"
-    }
+dependencies {
+    implementation 'androidx.core:core-ktx:1.9.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.8.0'
 }
-
-        
