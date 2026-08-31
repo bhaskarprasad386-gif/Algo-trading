@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Query, HTTPException
-from fastapi import FastAPI
 from app.core.logger import app_logger
 
 router = APIRouter(
