@@ -33,7 +33,6 @@ app.add_exception_handler(
     global_exception_handler,
 )
 
-# यह लाइन सुनिश्चित करती है कि राउट्स ऐप में रजिस्टर हो जाएं
 app.include_router(market_data_router)
 
 
