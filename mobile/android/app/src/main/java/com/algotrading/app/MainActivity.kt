@@ -2,6 +2,7 @@ package com.algotrading.app
 
 import android.os.Bundle
 import android.widget.Button
+import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import kotlinx.coroutines.CoroutineScope
@@ -10,7 +11,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
+
     private lateinit var tvStatus: TextView
+    private lateinit var etSymbol: EditText
     private lateinit var tvQuoteDetails: TextView
     private lateinit var btnFetchQuote: Button
 
@@ -19,13 +22,21 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         tvStatus = findViewById(R.id.tvStatus)
+        etSymbol = findViewById(R.id.etSymbol)
         tvQuoteDetails = findViewById(R.id.tvQuoteDetails)
         btnFetchQuote = findViewById(R.id.btnFetchQuote)
 
+        // Check Backend Connection on Startup
         checkServerStatus()
 
+        // Fetch Bid, Ask and Spread based on user input
         btnFetchQuote.setOnClickListener {
-            fetchMarketQuote("RELIANCE")
+            val symbol = etSymbol.text.toString().trim().uppercase()
+            if (symbol.isNotEmpty()) {
+                fetchMarketQuote(symbol)
+            } else {
+                etSymbol.error = "Please enter a valid symbol"
+            }
         }
     }
 
@@ -60,7 +71,7 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    tvQuoteDetails.text = "Failed: ${e.localizedMessage}"
+                    tvQuoteDetails.text = "Failed to fetch quote for $symbol: ${e.localizedMessage}"
                 }
             }
         }
