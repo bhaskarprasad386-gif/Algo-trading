@@ -10,7 +10,10 @@ from app.core.exceptions import (
 from app.core.database import engine, Base
 from app.models import user, instrument, order
 from app.algo.auth import AngelOneAuth
+
 from app.market_data.routes import router as market_data_router
+
+app.include_router(market_data_router, prefix="/api/v1")
 
 
 Base.metadata.create_all(bind=engine)
