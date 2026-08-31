@@ -10,7 +10,6 @@ from app.core.exceptions import (
 from app.core.database import engine, Base
 from app.models import user, instrument, order
 from app.algo.auth import AngelOneAuth
-# ध्यान रखें: यहाँ market_data_router वाला इम्पोर्ट और include_router हटा दिया गया है
 from app.market_data.routes import router as market_data_router
 
 
@@ -34,7 +33,7 @@ app.add_exception_handler(
     global_exception_handler,
 )
 
-# सीधा यही इम्पोर्ट किया हुआ राउटर जोड़ दें
+# यह लाइन सुनिश्चित करती है कि राउट्स ऐप में रजिस्टर हो जाएं
 app.include_router(market_data_router)
 
 
