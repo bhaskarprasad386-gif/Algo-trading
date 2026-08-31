@@ -16,6 +16,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etSymbol: EditText
     private lateinit var tvQuoteDetails: TextView
     private lateinit var btnFetchQuote: Button
+    private lateinit var etQuantity: EditText
+    private lateinit var btnBuy: Button
+    private lateinit var btnSell: Button
+    private lateinit var tvOrderResult: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -25,18 +29,32 @@ class MainActivity : AppCompatActivity() {
         etSymbol = findViewById(R.id.etSymbol)
         tvQuoteDetails = findViewById(R.id.tvQuoteDetails)
         btnFetchQuote = findViewById(R.id.btnFetchQuote)
+        etQuantity = findViewById(R.id.etQuantity)
+        btnBuy = findViewById(R.id.btnBuy)
+        btnSell = findViewById(R.id.btnSell)
+        tvOrderResult = findViewById(R.id.tvOrderResult)
 
         // Check Backend Connection on Startup
         checkServerStatus()
 
-        // Fetch Bid, Ask and Spread based on user input
+        // Fetch Quote on Button Click
         btnFetchQuote.setOnClickListener {
             val symbol = etSymbol.text.toString().trim().uppercase()
             if (symbol.isNotEmpty()) {
                 fetchMarketQuote(symbol)
             } else {
-                etSymbol.error = "Please enter a valid symbol"
+                etSymbol.error = "Please enter a symbol"
             }
+        }
+
+        // Place Buy Order
+        btnBuy.setOnClickListener {
+            placeOrder("BUY")
+        }
+
+        // Place Sell Order
+        btnSell.setOnClickListener {
+            placeOrder("SELL")
         }
     }
 
@@ -72,6 +90,39 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     tvQuoteDetails.text = "Failed to fetch quote for $symbol: ${e.localizedMessage}"
+                }
+            }
+        }
+    }
+
+    private fun placeOrder(transactionType: String) {
+        val symbol = etSymbol.text.toString().trim().uppercase()
+        val qtyStr = etQuantity.text.toString().trim()
+
+        if (symbol.isEmpty()) {
+            etSymbol.error = "Enter symbol first"
+            return
+        }
+        if (qtyStr.isEmpty()) {
+            etQuantity.error = "Enter quantity"
+            return
+        }
+
+        val quantity = qtyStr.toIntOrNull() ?: 1
+        val request = OrderRequest(symbol = symbol, quantity = quantity, transactionType = transactionType)
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val response = ApiService.retrofitService.placeOrder(request)
+                withContext(Dispatchers.Main) {
+                    tvOrderResult.text = """
+                        Order Success! ID: ${response.orderId}
+                        Status: ${response.status} - ${response.message}
+                    """.trimIndent()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    tvOrderResult.text = "Order Failed: ${e.localizedMessage}"
                 }
             }
         }
