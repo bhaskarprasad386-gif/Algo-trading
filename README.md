@@ -1,27 +1,13 @@
-# Algo Trading Platform
+# Mobile-First Algorithmic Trading & Arbitrage Platform
 
-Mobile-first algorithmic trading platform using Angel One SmartAPI.
+A modular, mobile-first algorithmic trading and cross-exchange arbitrage system integrated with Angel One SmartAPI and powered by a FastAPI backend.
 
-## Current Status
+## Architecture & Directory Structure
+* `backend/`: Core FastAPI server, order execution, market data fetching, and strategy engines.
+* `web/dashboard/`: Responsive Tailwind CSS web terminal for real-time monitoring and LTP checking.
+* `mobile/android/`: Android native client application (Kotlin) for on-the-go tracking and alerts.
 
-- **Phase**: Foundation
-- **Backend**: FastAPI structure ready
-- **Android**: Not started
-- **Website**: Not started
-- **Scanners**: Not started
-- **Live Orders**: Disabled
-
-## Project Structure
-
-```text
-algo-trading/
-├── backend/          # FastAPI backend
-│   ├── app/
-│   │   ├── core/
-│   │   │   └── config.py
-│   │   └── main.py
-│   ├── requirements.txt
-│   └── .env.example
-├── mobile/android/   # Android app (future)
-├── web/dashboard/    # Website (future)
-└── MASTER_SPEC.md    # Full project specification
+## Key Features
+* **Live LTP Inspector**: Real-time market data monitoring across exchanges.
+* **Arbitrage Evaluator**: Instant calculation of price spreads and cross-exchange opportunities.
+* **FastAPI Backend**: High-performance asynchronous routes for automated execution.
