@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Query, HTTPException
 from app.instruments.routes import router as instruments_router
+from app.strategy_engine.routes import router as arbitrage_router
 
 from app.core.config import settings
 from app.core.logger import app_logger
@@ -21,6 +22,8 @@ app = FastAPI(
     version="0.1.0",
     debug=settings.debug,
 )
+app.include_router(arbitrage_router)
+
 app.include_router(instruments_router)
 
 
