@@ -1,22 +1,4 @@
 plugins {
-    id 'com.android.application'
-}
-
-android {
-    namespace 'com.example.app'
-    compileSdk 33
-
-    defaultConfig {
-        applicationId "com.example.app"
-        minSdk 21
-        targetSdk 33
-        versionCode 1
-        versionName "1.0"
-    }
-
-    buildTypes {
-        release {
-            minifyEnabled false
-        }
-    }
+    id 'com.android.application' apply false
+    id 'org.jetbrains.kotlin.android' apply false
 }
