@@ -1,7 +1,8 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 import asyncio
-import random
+import queue
+import threading
 import uuid
 
 from app.core.config import settings
@@ -14,6 +15,8 @@ from app.core.exceptions import (
 from app.core.database import engine, Base
 from app.models import User, Instrument, Order, Session, Position, SystemLog
 from app.algo.auth import AngelOneAuth
+from app.market_data.websocket import MarketDataWebSocket
+from app.market_data.instruments import InstrumentMaster
 
 # Routers
 from app.instruments.routes import router as instruments_router
@@ -127,26 +130,62 @@ def place_market_order(order: OrderRequest):
 
 @app.websocket("/ws/market-data/{symbol}")
 async def websocket_market_data(websocket: WebSocket, symbol: str):
-    """Temporary mock WebSocket retained until the public streaming adapter is wired."""
+    """Stream real Angel One market ticks for an NSE equity symbol."""
     await websocket.accept()
-    app_logger.info(f"WebSocket connected for symbol: {symbol}")
+
+    symbol = symbol.strip().upper()
+    if not symbol:
+        await websocket.close(code=1008, reason="symbol is required")
+        return
+
+    master = InstrumentMaster()
+    token = master.get_token(symbol, "NSE")
+    if not token:
+        await websocket.close(code=1008, reason=f"NSE symbol not found: {symbol}")
+        return
+
+    tick_queue: queue.Queue = queue.Queue(maxsize=100)
+    client = MarketDataWebSocket()
+
+    def on_data(message):
+        try:
+            if tick_queue.full():
+                try:
+                    tick_queue.get_nowait()
+                except queue.Empty:
+                    pass
+            tick_queue.put_nowait(message)
+        except Exception as exc:
+            app_logger.error(f"Failed to queue market tick: {exc}")
+
+    def run_client():
+        try:
+            client.connect(
+                exchange_type=1,
+                tokens=[token],
+                mode=1,
+                correlation_id=f"market-{symbol}-{uuid.uuid4().hex[:8]}",
+                on_data=on_data,
+            )
+        except Exception as exc:
+            app_logger.error(f"Market WebSocket client stopped: {exc}")
+
+    worker = threading.Thread(
+        target=run_client,
+        name=f"angel-ws-{symbol}",
+        daemon=True,
+    )
+    worker.start()
+    app_logger.info(f"Public market WebSocket connected for {symbol}")
 
     try:
         while True:
-            base_price = 1500.00
-            fluctuation = random.uniform(-5.0, 5.0)
-            ltp = round(base_price + fluctuation, 2)
-
-            data = {
-                "symbol": symbol.upper(),
-                "bidPrice": round(ltp - 0.5, 2),
-                "askPrice": round(ltp + 0.5, 2),
-                "ltp": ltp,
-                "spread": 1.00,
-            }
-
-            await websocket.send_json(data)
-            await asyncio.sleep(0.5)
-
+            try:
+                tick = await asyncio.to_thread(tick_queue.get, True, 30)
+                await websocket.send_json(tick)
+            except queue.Empty:
+                await websocket.send_json({"status": "connected", "symbol": symbol})
     except WebSocketDisconnect:
-        app_logger.info(f"WebSocket disconnected for symbol: {symbol}")
+        app_logger.info(f"Public market WebSocket disconnected for {symbol}")
+    finally:
+        client.close()
