@@ -64,13 +64,34 @@ def health_check():
         "database": "Connected",
     }
 
-
-@app.post("/api/v1/login")
+@app.post("/api/v1/auth/login")
 def login_angel_one():
-    """Login to Angel One using configured credentials."""
-    app_logger.info("Initiating Angel One login")
+    """Login to Angel One."""
+    app_logger.info("Angel One login requested")
     auth = AngelOneAuth()
     return auth.login()
+
+
+@app.get("/api/v1/auth/status")
+def auth_status():
+    """Check Angel One session status."""
+    auth = AngelOneAuth()
+    return auth.status()
+
+
+@app.post("/api/v1/auth/refresh")
+def auth_refresh():
+    """Refresh Angel One session."""
+    auth = AngelOneAuth()
+    return auth.refresh_session()
+
+
+@app.post("/api/v1/auth/logout")
+def auth_logout():
+    """Clear Angel One session."""
+    auth = AngelOneAuth()
+    return auth.logout()
+
 
 
 @app.get("/api/v1/market-data/ltp")
