@@ -8,6 +8,24 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import Base
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    username: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(256))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class Session(Base):
+    __tablename__ = "sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    token_hash: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class Instrument(Base):
     __tablename__ = "instruments"
 
@@ -43,6 +61,27 @@ class Candle(Base):
     low: Mapped[float] = mapped_column(Float)
     close: Mapped[float] = mapped_column(Float)
     volume: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class Order(Base):
+    __tablename__ = "orders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    order_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(128), index=True)
+    quantity: Mapped[int] = mapped_column(Integer)
+    transaction_type: Mapped[str] = mapped_column(String(8))
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class Position(Base):
+    __tablename__ = "positions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(128), index=True)
+    quantity: Mapped[int] = mapped_column(Integer, default=0)
+    average_price: Mapped[float] = mapped_column(Float, default=0.0)
 
 
 class SystemLog(Base):
