@@ -1,8 +1,8 @@
-from fastapi import FastAPI, Query, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-import uuid
 import asyncio
 import random
+import uuid
 
 from app.core.config import settings
 from app.core.logger import app_logger
@@ -19,6 +19,7 @@ from app.algo.auth import AngelOneAuth
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
 from app.order_engine.routes import router as orders_router
+from app.market_data.routes import router as market_data_router
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -37,6 +38,7 @@ app.add_exception_handler(Exception, global_exception_handler)
 app.include_router(orders_router)
 app.include_router(arbitrage_router)
 app.include_router(instruments_router)
+app.include_router(market_data_router)
 
 
 @app.on_event("startup")
@@ -64,85 +66,30 @@ def health_check():
         "database": "Connected",
     }
 
+
 @app.post("/api/v1/auth/login")
 def login_angel_one():
     """Login to Angel One."""
     app_logger.info("Angel One login requested")
-    auth = AngelOneAuth()
-    return auth.login()
+    return AngelOneAuth().login()
 
 
 @app.get("/api/v1/auth/status")
 def auth_status():
     """Check Angel One session status."""
-    auth = AngelOneAuth()
-    return auth.status()
+    return AngelOneAuth().status()
 
 
 @app.post("/api/v1/auth/refresh")
 def auth_refresh():
     """Refresh Angel One session."""
-    auth = AngelOneAuth()
-    return auth.refresh_session()
+    return AngelOneAuth().refresh_session()
 
 
 @app.post("/api/v1/auth/logout")
 def auth_logout():
     """Clear Angel One session."""
-    auth = AngelOneAuth()
-    return auth.logout()
-
-
-
-@app.get("/api/v1/market-data/ltp")
-def get_ltp(
-    exchange: str = Query(...),
-    tradingsymbol: str = Query(...),
-    symboltoken: str = Query(...),
-):
-    """Get latest traded price for an instrument."""
-    from app.market_data.client import MarketDataClient
-
-    try:
-        app_logger.info(f"LTP request: {exchange} {tradingsymbol} {symboltoken}")
-        return MarketDataClient().ltp(
-            exchange=exchange,
-            tradingsymbol=tradingsymbol,
-            symboltoken=symboltoken,
-        )
-    except TradingAppException:
-        raise
-    except Exception as e:
-        app_logger.error(f"LTP error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/v1/market-data/historical")
-def get_historical(
-    exchange: str = Query(...),
-    symboltoken: str = Query(...),
-    interval: str = Query(...),
-    from_date: str = Query(...),
-    to_date: str = Query(...),
-):
-    """Get historical candle data."""
-    from app.market_data.client import MarketDataClient
-    from app.market_data.historical import HistoricalDataClient
-
-    try:
-        app_logger.info(f"Historical request: {exchange} {symboltoken} {interval}")
-        market_client = MarketDataClient()
-        historical_client = HistoricalDataClient(market_client)
-        return historical_client.get_candles(
-            exchange=exchange,
-            symboltoken=symboltoken,
-            interval=interval,
-            from_date=from_date,
-            to_date=to_date,
-        )
-    except Exception as e:
-        app_logger.error(f"Historical error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return AngelOneAuth().logout()
 
 
 class OrderRequest(BaseModel):
@@ -159,21 +106,28 @@ class OrderResponseModel(BaseModel):
 
 @app.post("/api/v1/order", response_model=OrderResponseModel)
 def place_market_order(order: OrderRequest):
-    """Dummy paper order endpoint (for testing)."""
+    """Legacy paper-order endpoint retained for compatibility."""
+    if not order.symbol.strip():
+        raise ValueError("symbol is required")
+    if order.quantity <= 0:
+        raise ValueError("quantity must be greater than zero")
+    if order.transactionType.upper() not in {"BUY", "SELL"}:
+        raise ValueError("transactionType must be BUY or SELL")
+
     generated_order_id = str(uuid.uuid4())[:8].upper()
     return {
         "orderId": generated_order_id,
         "status": "SUCCESS",
-        "message": f"Successfully placed {order.transactionType} order for {order.quantity} shares of {order.symbol}",
+        "message": (
+            f"Successfully simulated {order.transactionType.upper()} order "
+            f"for {order.quantity} shares of {order.symbol.upper()}"
+        ),
     }
 
 
 @app.websocket("/ws/market-data/{symbol}")
 async def websocket_market_data(websocket: WebSocket, symbol: str):
-    """
-    Temporary Mock WebSocket.
-    Later isko real Angel One WebSocket se replace karenge.
-    """
+    """Temporary mock WebSocket retained until the public streaming adapter is wired."""
     await websocket.accept()
     app_logger.info(f"WebSocket connected for symbol: {symbol}")
 
