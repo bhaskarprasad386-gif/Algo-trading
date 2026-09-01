@@ -20,13 +20,12 @@ jobs:
 
       - name: Generate Gradle Wrapper and Build
         run: |
-          cd mobile/android
-          gradle wrapper
+          gradle wrapper --gradle-version 8.0
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew :app:assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: 'mobile/android/app/build/outputs/apk/debug/app-debug.apk'
+          path: 'app/build/outputs/apk/debug/app-debug.apk'
