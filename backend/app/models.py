@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Integer, String, Text
+from sqlalchemy import DateTime, Float, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -50,6 +50,9 @@ class Tick(Base):
 
 class Candle(Base):
     __tablename__ = "candles"
+    __table_args__ = (
+        UniqueConstraint("token", "timeframe", "timestamp", name="uq_candle_identity"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     token: Mapped[str] = mapped_column(String(64), index=True)
