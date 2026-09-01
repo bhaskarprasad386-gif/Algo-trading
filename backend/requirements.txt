@@ -11,3 +11,4 @@ logzero
 websocket-client
 python-jose[cryptography]
 passlib[bcrypt]
+httpx2
