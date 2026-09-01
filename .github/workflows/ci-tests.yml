@@ -32,3 +32,5 @@ jobs:
 
       - name: Run tests
         run: python -m pytest -q
+
+# CI verification trigger after candle identity fix
