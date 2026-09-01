@@ -27,7 +27,7 @@ Fast, modular, mobile-first advanced F&O algo-trading platform. GitHub is the so
 - Historical provider aligned with existing client contract.
 - Historical → live startup gate: live blocked until historical sync is complete.
 - Stable candle normalization layer.
-- Candle storage idempotency/update path implemented; fresh CI verification is the next checkpoint for the latest storage change.
+- **Candle storage identity checkpoint VERIFIED:** canonical `app.models.candle.Candle` now enforces a unique `(token, timeframe, timestamp)` database index; existing `CandleStorage.save()` performs timestamp-keyed update/upsert semantics; fresh Backend Tests CI run #82 passed all 62 tests.
 - CI workflow supports push/pull_request/manual verification.
 
 ## Core Trading Engines
