@@ -139,7 +139,7 @@ async def websocket_market_data(websocket: WebSocket, symbol: str):
         return
 
     master = InstrumentMaster()
-    token = master.get_token(symbol, "NSE")
+    token = await asyncio.to_thread(master.get_token, symbol, "NSE")
     if not token:
         await websocket.close(code=1008, reason=f"NSE symbol not found: {symbol}")
         return
