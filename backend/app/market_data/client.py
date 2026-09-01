@@ -6,49 +6,19 @@ from app.core.logger import app_logger
 
 
 class MarketDataClient:
-    """Wrapper around the authenticated Angel One SmartAPI client."""
+    """Uses shared AngelOneAuth session for market data."""
 
     def __init__(self, auth: Optional[AngelOneAuth] = None):
         self.auth = auth or AngelOneAuth()
-        self.smart_api = None
-
-    def connect(self):
-        """Get or create an authenticated SmartAPI client."""
-        try:
-            self.smart_api = self.auth.get_client()
-            app_logger.info("Angel One market data client connected successfully")
-            return self.smart_api
-
-        except TradingAppException:
-            raise
-
-        except Exception as e:
-            app_logger.error(
-                f"Failed to connect market data client: {str(e)}"
-            )
-            raise TradingAppException(
-                "MarketDataConnectionError",
-                f"Could not connect to Angel One market data client: {str(e)}",
-                500,
-            )
 
     def get_client(self):
-        """Return the authenticated SmartAPI client."""
-        if self.smart_api is None:
-            return self.connect()
-
-        return self.smart_api
+        return self.auth.get_client()
 
     def ltp(self, exchange: str, tradingsymbol: str, symboltoken: str) -> Dict[str, Any]:
-        """Fetch the latest traded price for an instrument."""
+        """Fetch latest traded price."""
         try:
             client = self.get_client()
-
-            response = client.ltpData(
-                exchange,
-                tradingsymbol,
-                symboltoken,
-            )
+            response = client.ltpData(exchange, tradingsymbol, symboltoken)
 
             if response and response.get("status"):
                 return response
@@ -58,22 +28,32 @@ class MarketDataClient:
                 if response
                 else "Empty response from Angel One"
             )
-
-            raise TradingAppException(
-                "LTPRequestFailed",
-                message,
-                502,
-            )
+            raise TradingAppException("LTPRequestFailed", message, 502)
 
         except TradingAppException:
             raise
-
         except Exception as e:
-            app_logger.error(
-                f"LTP request failed for {tradingsymbol}: {str(e)}"
+            app_logger.error(f"LTP request failed for {tradingsymbol}: {str(e)}")
+            raise TradingAppException("LTPRequestError", str(e), 502)
+
+    def profile(self) -> Dict[str, Any]:
+        """Fetch user profile (auth test)."""
+        try:
+            client = self.get_client()
+            response = client.getProfile(self.auth.get_jwt_token())
+
+            if response and response.get("status"):
+                return response
+
+            message = (
+                response.get("message", "Profile fetch failed")
+                if response
+                else "Empty response"
             )
-            raise TradingAppException(
-                "LTPRequestError",
-                str(e),
-                502,
-            )
+            raise TradingAppException("ProfileError", message, 502)
+
+        except TradingAppException:
+            raise
+        except Exception as e:
+            app_logger.error(f"Profile request failed: {str(e)}")
+            raise TradingAppException("ProfileError", str(e), 502)
