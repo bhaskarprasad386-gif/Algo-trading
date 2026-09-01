@@ -236,11 +236,29 @@ The system must support:
 * Duplicate protection
 * Error recovery
 
+### Historical-to-Live Startup Rule
+
+When the application/server starts:
+
+1. Check the exchange market calendar.
+2. Synchronize missing historical market data first.
+3. Validate and merge historical data without duplicates.
+4. Start the live WebSocket only when the market is open.
+5. Feed live ticks into the same processing/storage pipeline used by historical data.
+
+On weekends, exchange holidays, or outside market hours, live WebSocket/live-stream processing must remain OFF. The implementation must use an exchange trading calendar rather than relying only on Saturday/Sunday rules.
+
+Historical and live data must support seamless merging and recovery after downtime.
+
 ---
 
 ## 10. Performance
 
 The system should minimize unnecessary latency.
+
+### Latency Target
+
+Target **10–15 ms for the application's own system-side processing path** where technically practical. This is a target, not a guarantee of end-to-end broker/network latency.
 
 Architecture:
 
@@ -248,19 +266,36 @@ WebSocket Tick
 |
 Tick Receiver
 |
-Memory Processing
+In-Memory Processing
 |
-High-Speed Core
+Rust High-Speed Core
 |
 Backend WebSocket
 |
 Android / Website
 
-Heavy processing must not run on the Android UI thread.
+Performance rules:
 
-Actual broker/network latency cannot be guaranteed to be 1 millisecond.
+* Rust for latency-sensitive/hot-path calculations
+* Async I/O
+* In-memory state and caching where appropriate
+* Batch processing where it reduces overhead
+* Avoid unnecessary database writes on every tick
+* Background workers for heavy/non-latency-critical work
+* Heavy processing must not run on the Android UI thread
+* Measure actual latency at each pipeline stage instead of assuming it
 
-The goal is minimum practical system-side latency.
+The system should expose measurable timestamps/metrics for tick receipt, processing completion, and client delivery so bottlenecks can be identified.
+
+Actual broker, Internet, server, and device latency cannot be guaranteed to remain within 10–15 ms.
+
+### Server Portability
+
+The application must be deployable on a free/low-cost server initially and movable to a paid VPS/cloud/high-performance server later without redesigning the application architecture.
+
+Use portable deployment/configuration (for example, containerized services where appropriate), environment-based secrets, and infrastructure-independent application modules.
+
+Moving to a paid server should primarily require infrastructure/configuration changes rather than rewriting the core application.
 
 ---
 
@@ -362,6 +397,14 @@ Backtesting must support:
 * Drawdown
 * Trade list
 * Equity curve
+* Spread time-series chart
+* Spread maximum/minimum and timestamps
+* Spread opportunity duration
+* Entry/exit markers
+* Bid/ask and liquidity validation
+* Complete raw trade-by-trade data
+
+Backtesting must use the same strategy/calculation logic as live and paper-trading paths wherever practical, so behavior does not diverge between modes.
 
 Backtesting must not place real orders.
 
