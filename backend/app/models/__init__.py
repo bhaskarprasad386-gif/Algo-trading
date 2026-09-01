@@ -8,12 +8,5 @@ from app.models.tick import Tick
 from app.models.user import User
 
 __all__ = [
-    "User",
-    "Session",
-    "Instrument",
-    "Tick",
-    "Candle",
-    "Order",
-    "Position",
-    "SystemLog",
+    "User", "Session", "Instrument", "Tick", "Candle", "Order", "Position", "SystemLog",
 ]
