@@ -1,0 +1,1 @@
+Full pytest CI verification checkpoint.
