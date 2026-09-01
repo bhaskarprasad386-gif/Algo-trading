@@ -11,3 +11,6 @@ A modular, mobile-first algorithmic trading and cross-exchange arbitrage system 
 * **Live LTP Inspector**: Real-time market data monitoring across exchanges.
 * **Arbitrage Evaluator**: Instant calculation of price spreads and cross-exchange opportunities.
 * **FastAPI Backend**: High-performance asynchronous routes for automated execution.
+
+## Verification
+Backend CI runs dependency installation, Python compilation, and the pytest suite on pushes to `main` and pull requests. Manual workflow dispatch is also enabled.
