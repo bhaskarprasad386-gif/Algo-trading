@@ -8,10 +8,7 @@ from app.core.logger import app_logger
 
 
 class AngelOneAuth:
-    """
-    Angel One SmartAPI authentication + session manager.
-    Singleton style: ek hi session poori app use karegi.
-    """
+    """Angel One SmartAPI authentication and session manager."""
 
     _instance = None
 
@@ -33,7 +30,6 @@ class AngelOneAuth:
         self.smart_api: Optional[SmartConnect] = None
         self.session_data: Optional[Dict[str, Any]] = None
         self.is_logged_in: bool = False
-
         self._initialized = True
 
     def _validate_credentials(self) -> None:
@@ -45,25 +41,15 @@ class AngelOneAuth:
             )
 
     def login(self) -> Dict[str, Any]:
-        """Login to Angel One and store session tokens."""
+        """Login to Angel One and store session tokens server-side."""
         try:
             self._validate_credentials()
-
             self.smart_api = SmartConnect(api_key=self.api_key)
             totp = pyotp.TOTP(self.totp_secret).now()
-
-            data = self.smart_api.generateSession(
-                self.client_id,
-                self.password,
-                totp,
-            )
+            data = self.smart_api.generateSession(self.client_id, self.password, totp)
 
             if not data or not data.get("status"):
-                message = (
-                    data.get("message", "Login failed")
-                    if data
-                    else "Empty response from Angel One"
-                )
+                message = data.get("message", "Login failed") if data else "Empty response from Angel One"
                 self.is_logged_in = False
                 raise TradingAppException("LoginError", message, 401)
 
@@ -75,9 +61,6 @@ class AngelOneAuth:
                 "status": "success",
                 "message": "Login successful",
                 "client_code": self.session_data.get("clientcode"),
-                "jwt_token": self.session_data.get("jwtToken"),
-                "feed_token": self.session_data.get("feedToken"),
-                "refresh_token": self.session_data.get("refreshToken"),
             }
 
         except TradingAppException:
@@ -85,14 +68,10 @@ class AngelOneAuth:
         except Exception as e:
             self.is_logged_in = False
             app_logger.error(f"Angel One login failed: {str(e)}")
-            raise TradingAppException(
-                "LoginError",
-                f"Angel One login failed: {str(e)}",
-                500,
-            )
+            raise TradingAppException("LoginError", f"Angel One login failed: {str(e)}", 500)
 
     def refresh_session(self) -> Dict[str, Any]:
-        """Refresh session using refresh token."""
+        """Refresh session using the server-side refresh token."""
         try:
             if not self.smart_api or not self.session_data:
                 return self.login()
@@ -102,23 +81,14 @@ class AngelOneAuth:
                 return self.login()
 
             data = self.smart_api.generateToken(refresh_token)
-
             if not data or not data.get("status"):
                 app_logger.warning("Refresh failed, doing full login again")
                 return self.login()
 
-            new_data = data.get("data", {})
-            self.session_data.update(new_data)
+            self.session_data.update(data.get("data", {}))
             self.is_logged_in = True
             app_logger.info("Angel One session refreshed")
-
-            return {
-                "status": "success",
-                "message": "Session refreshed",
-                "jwt_token": self.session_data.get("jwtToken"),
-                "feed_token": self.session_data.get("feedToken"),
-                "refresh_token": self.session_data.get("refreshToken"),
-            }
+            return {"status": "success", "message": "Session refreshed"}
 
         except Exception as e:
             app_logger.error(f"Session refresh failed: {str(e)}")
@@ -131,23 +101,19 @@ class AngelOneAuth:
         return self.smart_api
 
     def get_session_data(self) -> Dict[str, Any]:
-        """Return current session data."""
+        """Return current server-side session data."""
         if not self.session_data:
             self.login()
         return self.session_data or {}
 
     def get_feed_token(self) -> Optional[str]:
-        """Feed token for WebSocket."""
-        data = self.get_session_data()
-        return data.get("feedToken")
+        return self.get_session_data().get("feedToken")
 
     def get_jwt_token(self) -> Optional[str]:
-        """JWT token for REST APIs."""
-        data = self.get_session_data()
-        return data.get("jwtToken")
+        return self.get_session_data().get("jwtToken")
 
     def status(self) -> Dict[str, Any]:
-        """Current auth status (safe, no secrets exposed fully)."""
+        """Return safe authentication status without exposing tokens."""
         return {
             "is_logged_in": self.is_logged_in,
             "client_code": (self.session_data or {}).get("clientcode"),
@@ -157,7 +123,7 @@ class AngelOneAuth:
         }
 
     def logout(self) -> Dict[str, Any]:
-        """Clear local session."""
+        """Clear the local server-side session."""
         self.smart_api = None
         self.session_data = None
         self.is_logged_in = False
