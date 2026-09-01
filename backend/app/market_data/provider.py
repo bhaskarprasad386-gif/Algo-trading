@@ -1,33 +1,34 @@
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
 class HistoricalRequest:
-    symbol: str
+    exchange: str
+    symboltoken: str
     interval: str
     from_date: str
     to_date: str
 
 
 class MarketDataProvider(Protocol):
-    def historical(self, request: HistoricalRequest) -> list[dict]: ...
+    def historical(self, request: HistoricalRequest) -> list[Any]: ...
 
 
 class AngelOneHistoricalProvider:
-    """Adapter boundary for Angel One historical API; credentials stay outside code."""
+    """Adapter over the existing MarketDataClient historical API."""
 
-    def __init__(self, client) -> None:
-        self.client = client
+    def __init__(self, market_client) -> None:
+        self.market_client = market_client
 
-    def historical(self, request: HistoricalRequest) -> list[dict]:
-        response = self.client.historicalData(
+    def historical(self, request: HistoricalRequest) -> list[Any]:
+        response = self.market_client.get_client().getCandleData(
             {
-                "exchange": "NSE",
-                "symboltoken": request.symbol,
+                "exchange": request.exchange,
+                "symboltoken": request.symboltoken,
                 "interval": request.interval,
                 "fromdate": request.from_date,
                 "todate": request.to_date,
             }
         )
-        return response.get("data") or []
+        return (response or {}).get("data") or []
