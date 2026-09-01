@@ -13,15 +13,25 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0"
-
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
+        debug {
+            buildConfigField 'String', 'BACKEND_BASE_URL', '"http://10.0.2.2:8000/"'
+            buildConfigField 'String', 'BACKEND_WS_URL', '"ws://10.0.2.2:8000"'
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // Set these values from a release-specific build configuration before deployment.
+            buildConfigField 'String', 'BACKEND_BASE_URL', '"https://YOUR_BACKEND_HOST/"'
+            buildConfigField 'String', 'BACKEND_WS_URL', '"wss://YOUR_BACKEND_HOST"'
         }
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     compileOptions {
@@ -29,9 +39,7 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = '17'
-    }
+    kotlinOptions { jvmTarget = '17' }
 }
 
 dependencies {
