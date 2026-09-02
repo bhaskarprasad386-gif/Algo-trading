@@ -150,20 +150,22 @@ class CashFutureHistoryCollector:
                 net_profit=quote.net_profit, roi_pct=quote.roi_pct, expiry_date=expiry_date,
             )
             row = save_history_point(db, point, expiry_date=expiry_date)
-            spread_pct = None
-            if market_quote["bid"] and market_quote["ask"] and future_ltp > 0:
-                spread_pct = (market_quote["ask"] - market_quote["bid"]) / future_ltp * 100.0
             results.append({
                 "id": row.id, "symbol": symbol, "contract_month": label, "future_symbol": future_symbol,
                 "expiry_date": expiry_date.isoformat() if expiry_date else None,
                 "cash_price": cash_ltp, "future_price": future_ltp, "gap": quote.gap, "gap_pct": quote.gap_pct,
+                "executable_gap": quote.executable_gap, "executable_gap_pct": quote.executable_gap_pct,
+                "cash_execution_price": quote.cash_execution_price, "future_execution_price": quote.future_execution_price,
+                "cash_bid_ask_spread_pct": quote.cash_bid_ask_spread_pct,
+                "future_bid_ask_spread_pct": quote.future_bid_ask_spread_pct,
                 "gross_spread_profit": quote.gross_spread_profit, "net_profit": quote.net_profit,
+                "charges": quote.charges, "funding_cost": quote.funding_cost,
                 "margin_required": margin_required, "deployed_capital": quote.deployed_capital,
                 "roi_pct": quote.roi_pct, "executable": quote.executable,
                 "rejection_reasons": list(quote.rejection_reasons), "volume": market_quote["volume"],
                 "oi": market_quote["oi"], "cash_bid": cash_quote["bid"], "cash_ask": cash_quote["ask"],
                 "future_bid": market_quote["bid"], "future_ask": market_quote["ask"],
-                "future_bid_ask_spread_pct": spread_pct, "timestamp": observation_time.isoformat(),
+                "timestamp": observation_time.isoformat(),
             })
         return results
 
