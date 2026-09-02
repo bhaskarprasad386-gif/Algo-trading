@@ -1,9 +1,4 @@
-"""Automatic Cash-Future observation collector.
-
-The collector is deliberately separated from scanner calculation logic. It discovers
-NSE cash plus the nearest two NFO stock-future expiries and persists one observation
-for CURRENT and one for NEAR on each cycle.
-"""
+"""Automatic Cash-Future observation collector."""
 
 from __future__ import annotations
 
@@ -33,16 +28,6 @@ def _expiry(value: Any) -> date | None:
     return None
 
 
-def _ltp(response: dict) -> float:
-    data = response.get("data") if isinstance(response, dict) else None
-    if not isinstance(data, dict):
-        raise ValueError("Angel One LTP response has no data object")
-    value = data.get("ltp")
-    if value is None:
-        raise ValueError("Angel One LTP response has no ltp")
-    return float(value)
-
-
 def _number(value: Any, default: float | int = 0):
     try:
         return float(value) if value is not None else default
@@ -51,7 +36,6 @@ def _number(value: Any, default: float | int = 0):
 
 
 def _full_quote(response: dict) -> dict[str, Any]:
-    """Normalize Angel One FULL quote payload to the fields the scanner needs."""
     data = response.get("data") if isinstance(response, dict) else None
     if not isinstance(data, dict):
         raise ValueError("Angel One FULL quote response has no data object")
@@ -79,19 +63,19 @@ class CashFutureHistoryCollector:
     """Collect and persist CURRENT/NEAR Cash-Future observations."""
 
     def __init__(self, symbols: Iterable[str], market_client: MarketDataClient | None = None,
-                 instrument_master: InstrumentMaster | None = None):
+                 instrument_master: InstrumentMaster | None = None,
+                 config: CashFutureConfig | None = None):
         self.symbols = [s.strip().upper() for s in symbols if s.strip()]
         self.market_client = market_client or MarketDataClient()
         self.instrument_master = instrument_master or InstrumentMaster()
+        self.config = config or CashFutureConfig()
 
     def _future_instruments(self, symbol: str) -> list[dict]:
         master = self.instrument_master
         master.search(exchange="NFO")
-        rows = [
-            item for item in master.instruments
-            if str(item.get("exch_seg", "")).upper() == "NFO"
-            and str(item.get("instrumenttype", "")).upper() in {"FUTSTK", "FUTIDX"}
-        ]
+        rows = [item for item in master.instruments
+                if str(item.get("exch_seg", "")).upper() == "NFO"
+                and str(item.get("instrumenttype", "")).upper() == "FUTSTK"]
         candidates: list[tuple[date, dict]] = []
         for item in rows:
             name = str(item.get("name", "")).upper()
@@ -109,56 +93,49 @@ class CashFutureHistoryCollector:
         cash = self.instrument_master.get_instrument(cash_symbol, "NSE")
         if not cash:
             raise ValueError(f"NSE cash instrument not found: {cash_symbol}")
-        cash_quote = _full_quote(
-            self.market_client.quote("NSE", cash_symbol, str(cash["token"]))
-        )
+        cash_quote = _full_quote(self.market_client.quote("NSE", cash_symbol, str(cash["token"])))
         cash_ltp = cash_quote["ltp"]
         if cash_ltp <= 0:
             raise ValueError(f"invalid cash LTP for {cash_symbol}")
-
         observation_time = datetime.now(IST).replace(microsecond=0)
         results: list[dict] = []
         for label, future in zip(("CURRENT", "NEAR"), self._future_instruments(symbol)):
             future_symbol = str(future.get("symbol"))
-            market_quote = _full_quote(
-                self.market_client.quote("NFO", future_symbol, str(future["token"]))
-            )
+            market_quote = _full_quote(self.market_client.quote("NFO", future_symbol, str(future["token"])))
             future_ltp = market_quote["ltp"]
             expiry_date = _expiry(future.get("expiry"))
             lot_size = int(float(future.get("lotsize") or future.get("lotSize") or 0))
             if lot_size <= 0:
                 raise ValueError(f"invalid lot size for {future_symbol}")
-
             quote = calculate_cash_future(
                 CashQuote(symbol=symbol, ltp=cash_ltp, bid=cash_quote["bid"], ask=cash_quote["ask"]),
-                FutureQuote(
-                    symbol=symbol, contract_month=label, ltp=future_ltp, lot_size=lot_size,
-                    margin_required=0.0, volume=market_quote["volume"], oi=market_quote["oi"],
-                    bid=market_quote["bid"], ask=market_quote["ask"], expiry=expiry_date,
-                ),
-                CashFutureConfig(),
+                FutureQuote(symbol=symbol, contract_month=label, ltp=future_ltp, lot_size=lot_size,
+                            margin_required=0.0, volume=market_quote["volume"], oi=market_quote["oi"],
+                            bid=market_quote["bid"], ask=market_quote["ask"], expiry=expiry_date),
+                self.config,
             )
             point = CashFutureHistoryPoint(
                 timestamp=observation_time, symbol=symbol, contract_month=label,
-                cash_price=cash_ltp, future_price=future_ltp, gap=quote.gap,
-                gap_pct=quote.gap_pct, lot_size=lot_size, margin_required=0.0,
-                volume=market_quote["volume"], oi=market_quote["oi"],
-                cash_bid=cash_quote["bid"], cash_ask=cash_quote["ask"],
-                future_bid=market_quote["bid"], future_ask=market_quote["ask"],
-                charges=quote.charges, funding_cost=quote.funding_cost,
-                net_profit=quote.net_profit, roi_pct=quote.roi_pct,
-                expiry_date=expiry_date,
+                cash_price=cash_ltp, future_price=future_ltp, gap=quote.gap, gap_pct=quote.gap_pct,
+                lot_size=lot_size, margin_required=0.0, volume=market_quote["volume"], oi=market_quote["oi"],
+                cash_bid=cash_quote["bid"], cash_ask=cash_quote["ask"], future_bid=market_quote["bid"],
+                future_ask=market_quote["ask"], charges=quote.charges, funding_cost=quote.funding_cost,
+                net_profit=quote.net_profit, roi_pct=quote.roi_pct, expiry_date=expiry_date,
             )
             row = save_history_point(db, point, expiry_date=expiry_date)
+            spread_pct = None
+            if market_quote["bid"] and market_quote["ask"] and future_ltp > 0:
+                spread_pct = (market_quote["ask"] - market_quote["bid"]) / future_ltp * 100.0
             results.append({
-                "id": row.id, "symbol": symbol, "contract_month": label,
-                "future_symbol": future_symbol,
+                "id": row.id, "symbol": symbol, "contract_month": label, "future_symbol": future_symbol,
                 "expiry_date": expiry_date.isoformat() if expiry_date else None,
-                "cash_price": cash_ltp, "future_price": future_ltp, "gap": quote.gap,
-                "volume": market_quote["volume"], "oi": market_quote["oi"],
-                "cash_bid": cash_quote["bid"], "cash_ask": cash_quote["ask"],
+                "cash_price": cash_ltp, "future_price": future_ltp, "gap": quote.gap, "gap_pct": quote.gap_pct,
+                "gross_spread_profit": quote.gross_spread_profit, "net_profit": quote.net_profit,
+                "roi_pct": quote.roi_pct, "executable": quote.executable,
+                "rejection_reasons": list(quote.rejection_reasons), "volume": market_quote["volume"],
+                "oi": market_quote["oi"], "cash_bid": cash_quote["bid"], "cash_ask": cash_quote["ask"],
                 "future_bid": market_quote["bid"], "future_ask": market_quote["ask"],
-                "timestamp": observation_time.isoformat(),
+                "future_bid_ask_spread_pct": spread_pct, "timestamp": observation_time.isoformat(),
             })
         return results
 
