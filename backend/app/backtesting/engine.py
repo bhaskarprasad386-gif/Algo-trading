@@ -1,9 +1,4 @@
-"""Small deterministic backtesting engine foundation.
-
-The engine is deliberately broker-independent. It consumes ordered candle-like
-records and separate entry/exit strategies, applies configurable slippage and
-transaction cost rates, and returns immutable trade/result records.
-"""
+"""Small deterministic backtesting engine foundation."""
 
 from dataclasses import dataclass
 from math import sqrt
@@ -50,6 +45,7 @@ class BacktestResult:
     win_rate: float
     expectancy: float
     sharpe_ratio: float
+    sortino_ratio: float
     max_drawdown: float
 
 
@@ -59,12 +55,7 @@ class BacktestEngine:
     def __init__(self, config: BacktestConfig | None = None) -> None:
         self.config = config or BacktestConfig()
 
-    def run(
-        self,
-        candles: Iterable[Mapping[str, object]],
-        entry_strategy: Strategy,
-        exit_strategy: Strategy,
-    ) -> BacktestResult:
+    def run(self, candles: Iterable[Mapping[str, object]], entry_strategy: Strategy, exit_strategy: Strategy) -> BacktestResult:
         capital = self.config.initial_capital
         peak_capital = capital
         max_drawdown = 0.0
@@ -76,7 +67,6 @@ class BacktestEngine:
             close = float(candle["close"])
             if close <= 0:
                 raise ValueError("candle close must be positive")
-
             context = {key: float(value) for key, value in candle.items() if _is_number(value)}
 
             if open_trade is None and entry_strategy.evaluate(context):
@@ -93,18 +83,7 @@ class BacktestEngine:
                 peak_capital = max(peak_capital, capital)
                 drawdown = (peak_capital - capital) / peak_capital
                 max_drawdown = max(max_drawdown, drawdown)
-                trades.append(
-                    BacktestTrade(
-                        entry_timestamp=entry_timestamp,
-                        exit_timestamp=timestamp,
-                        entry_price=entry_price,
-                        exit_price=exit_price,
-                        quantity=self.config.quantity,
-                        gross_pnl=gross_pnl,
-                        costs=costs,
-                        net_pnl=net_pnl,
-                    )
-                )
+                trades.append(BacktestTrade(timestamp if False else entry_timestamp, timestamp, entry_price, exit_price, self.config.quantity, gross_pnl, costs, net_pnl))
                 open_trade = None
 
         net_pnl = capital - self.config.initial_capital
@@ -112,36 +91,32 @@ class BacktestEngine:
         win_rate = wins / len(trades) if trades else 0.0
         expectancy = net_pnl / len(trades) if trades else 0.0
         sharpe_ratio = _trade_sharpe_ratio(trades, self.config.initial_capital)
+        sortino_ratio = _trade_sortino_ratio(trades, self.config.initial_capital)
         total_return = net_pnl / self.config.initial_capital
-        return BacktestResult(
-            initial_capital=self.config.initial_capital,
-            final_capital=capital,
-            net_pnl=net_pnl,
-            total_return=total_return,
-            trades=tuple(trades),
-            win_rate=win_rate,
-            expectancy=expectancy,
-            sharpe_ratio=sharpe_ratio,
-            max_drawdown=max_drawdown,
-        )
+        return BacktestResult(self.config.initial_capital, capital, net_pnl, total_return, tuple(trades), win_rate, expectancy, sharpe_ratio, sortino_ratio, max_drawdown)
 
 
 def _trade_sharpe_ratio(trades: list[BacktestTrade], initial_capital: float) -> float:
-    """Return trade-level Sharpe ratio with zero risk-free rate.
-
-    Returns are each completed trade's net P&L divided by initial capital.
-    No annualization is applied because the engine currently has no fixed
-    portfolio-return sampling frequency.
-    """
     if len(trades) < 2:
         return 0.0
-
     returns = [trade.net_pnl / initial_capital for trade in trades]
     mean_return = sum(returns) / len(returns)
     variance = sum((value - mean_return) ** 2 for value in returns) / len(returns)
     if variance == 0.0:
         return 0.0
     return mean_return / sqrt(variance)
+
+
+def _trade_sortino_ratio(trades: list[BacktestTrade], initial_capital: float) -> float:
+    """Return trade-level Sortino ratio using zero minimum acceptable return."""
+    if len(trades) < 2:
+        return 0.0
+    returns = [trade.net_pnl / initial_capital for trade in trades]
+    mean_return = sum(returns) / len(returns)
+    downside_deviation = sqrt(sum(min(value, 0.0) ** 2 for value in returns) / len(returns))
+    if downside_deviation == 0.0:
+        return 0.0
+    return mean_return / downside_deviation
 
 
 def _is_number(value: object) -> bool:
