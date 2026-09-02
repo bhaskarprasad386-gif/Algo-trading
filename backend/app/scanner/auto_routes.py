@@ -43,6 +43,7 @@ def discover_cash_future_symbols(limit: int = 50) -> list[str]:
 
 
 def _filtered(data: list[dict]) -> list[dict]:
+    # The mobile/web clients receive only genuinely executable opportunities.
     return [item for item in data if item.get("executable") is True]
 
 
@@ -56,19 +57,31 @@ def cash_future_live_auto_scanner(
     min_volume: int = Query(0, ge=0),
     min_oi: int = Query(0, ge=0),
     max_bid_ask_spread_pct: float | None = Query(None, ge=0),
+    max_cash_bid_ask_spread_pct: float | None = Query(None, ge=0),
+    charges: float = Query(0.0, ge=0),
+    funding_cost: float = Query(0.0, ge=0),
     db: Session = Depends(get_db),
 ):
-    """Discover active stock futures and return only pairs passing requested filters."""
+    """Discover active stock futures and return only pairs passing execution checks."""
     symbols = discover_cash_future_symbols(limit)
     if not symbols:
         raise HTTPException(status_code=404, detail="no active cash-future symbols found")
     config = CashFutureConfig(
-        min_gap=min_gap, min_gap_pct=min_gap_pct, min_net_profit=min_net_profit,
-        min_roi_pct=min_roi_pct, min_volume=min_volume, min_oi=min_oi,
+        min_gap=min_gap,
+        min_gap_pct=min_gap_pct,
+        min_net_profit=min_net_profit,
+        min_roi_pct=min_roi_pct,
+        min_volume=min_volume,
+        min_oi=min_oi,
         max_bid_ask_spread_pct=max_bid_ask_spread_pct,
+        max_cash_bid_ask_spread_pct=max_cash_bid_ask_spread_pct,
+        charges=charges,
+        funding_cost=funding_cost,
+        require_two_sided_quotes=True,
     )
     result = CashFutureHistoryCollector(symbols, config=config).collect(db)
     opportunities = _filtered(result["collected"])
+    opportunities.sort(key=lambda item: (item.get("net_profit", 0), item.get("roi_pct", 0)), reverse=True)
     return {
         "status": "success",
         "scanner": "cash-future",
@@ -79,9 +92,16 @@ def cash_future_live_auto_scanner(
         "data": opportunities,
         "errors": result["errors"],
         "filters": {
-            "min_gap": min_gap, "min_gap_pct": min_gap_pct,
-            "min_net_profit": min_net_profit, "min_roi_pct": min_roi_pct,
-            "min_volume": min_volume, "min_oi": min_oi,
+            "min_gap": min_gap,
+            "min_gap_pct": min_gap_pct,
+            "min_net_profit": min_net_profit,
+            "min_roi_pct": min_roi_pct,
+            "min_volume": min_volume,
+            "min_oi": min_oi,
             "max_bid_ask_spread_pct": max_bid_ask_spread_pct,
+            "max_cash_bid_ask_spread_pct": max_cash_bid_ask_spread_pct,
+            "charges": charges,
+            "funding_cost": funding_cost,
+            "require_two_sided_quotes": True,
         },
     }
