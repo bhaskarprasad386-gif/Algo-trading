@@ -16,3 +16,4 @@ Fresh CAGR verification after restoring backtesting coverage.
 Fresh backtest robustness summary Backend Tests verification.
 Fresh backtest robustness pytest verification.
 Fresh robustness median-return verification.
+Fresh robustness return-dispersion verification.
