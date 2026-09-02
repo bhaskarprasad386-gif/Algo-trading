@@ -6,7 +6,9 @@ MAIN_ACTIVITY = ANDROID_ROOT / "app" / "src" / "main" / "java" / "com" / "algotr
 
 def test_android_paper_position_summary_contains_core_fields():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
-    assert '"PAPER POSITION ACTIVE\\nChecked: $completedAt' in ui
+    assert 'tvPaperResult.text = if (position == null)' in ui
+    assert '"POSITION CHECK SUCCESS\\n\\nPAPER POSITION: FLAT' in ui
+    assert '"POSITION CHECK SUCCESS\\n\\nPAPER POSITION ACTIVE\\nChecked: $completedAt' in ui
     assert 'Entry: ₹${position.entry_price}' in ui
     assert 'Stop Loss: ₹${position.stop_loss}' in ui
     assert 'Target: ₹${position.target}' in ui
@@ -15,6 +17,7 @@ def test_android_paper_position_summary_contains_core_fields():
 
 def test_android_paper_entry_summary_contains_core_fields():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
+    assert 'tvPaperResult.text = "ENTRY SUCCESS' in ui
     assert '"PAPER POSITION ACTIVE\\nCompleted: $completedAt' in ui
     assert 'Entry: ₹${response.entry_price}' in ui
     assert 'Stop Loss: ₹${response.stop_loss}' in ui
