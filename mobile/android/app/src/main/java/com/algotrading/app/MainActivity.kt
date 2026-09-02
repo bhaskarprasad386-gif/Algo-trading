@@ -49,13 +49,14 @@ class MainActivity : AppCompatActivity() {
         withContext(Dispatchers.Main) {
             btnRunScanner.isEnabled = false
             btnRunScanner.text = "SCANNING..."
-            tvScannerResult.text = "Running Cash–Future scanner..."
+            tvScannerResult.text = "SCAN IN PROGRESS\n\nRunning Cash–Future scanner..."
         }
         try {
             val response = ApiService.retrofitService.cashFutureScan()
             withContext(Dispatchers.Main) {
                 tvScannerResult.text = if (response.data.isEmpty()) {
                     buildString {
+                        append("SCAN COMPLETE — NO OPPORTUNITIES\n\n")
                         append("No executable Cash–Future opportunities found.\n")
                         append("Symbols scanned: ${response.symbols_requested.size}\n")
                         append("Observations: ${response.scanned_observations}")
@@ -68,6 +69,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 } else {
                     buildString {
+                        append("SCAN COMPLETE — SUCCESS\n\n")
                         append("CASH–FUTURE OPPORTUNITIES (${response.opportunity_count})\n")
                         append("Mode: ${response.mode}\n\n")
                         response.data.forEach { item ->
@@ -90,7 +92,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         } catch (error: Exception) {
-            withContext(Dispatchers.Main) { tvScannerResult.text = "Scanner Failed: ${error.message ?: "API error"}" }
+            withContext(Dispatchers.Main) { tvScannerResult.text = "SCAN ERROR\n\nScanner Failed: ${error.message ?: "API error"}" }
         } finally {
             withContext(Dispatchers.Main) {
                 btnRunScanner.isEnabled = true
