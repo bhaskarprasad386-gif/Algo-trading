@@ -5,3 +5,4 @@ Realized max drawdown metric verification.
 Correct realized max drawdown expectation verification.
 Expectancy metric verification.
 Sharpe ratio metric verification.
+Fresh Sharpe ratio Backend Tests verification.
