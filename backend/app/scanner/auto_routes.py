@@ -30,7 +30,9 @@ def discover_cash_future_symbols(limit: int = 50) -> list[str]:
     for item in master.instruments:
         if str(item.get("exch_seg", "")).upper() != "NFO":
             continue
-        if str(item.get("instrumenttype", "")).upper() not in {"FUTSTK", "FUTIDX"}:
+        # This scanner is for stock cash-vs-futures pairs. Index futures
+        # (FUTIDX) have no matching NSE cash equity symbol such as NIFTY-EQ.
+        if str(item.get("instrumenttype", "")).upper() != "FUTSTK":
             continue
         expiry = _expiry(item.get("expiry"))
         if not expiry or expiry < today:
@@ -46,7 +48,7 @@ def cash_future_live_auto_scanner(
     limit: int = Query(50, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
-    """Automatically discover active NFO futures and scan their NSE cash pairs."""
+    """Automatically discover active NFO stock futures and scan their NSE cash pairs."""
     symbols = discover_cash_future_symbols(limit)
     if not symbols:
         raise HTTPException(status_code=404, detail="no active cash-future symbols found")
