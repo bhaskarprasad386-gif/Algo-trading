@@ -9,7 +9,7 @@ def test_android_paper_result_status_messages_are_clear():
     for marker in (
         'tvPaperResult.text = "ENTRY SUCCESS',
         'tvPaperResult.text = "ENTRY FAILED',
-        'tvPaperResult.text = "POSITION CHECK SUCCESS',
+        'tvPaperResult.text = if (position == null) "POSITION CHECK SUCCESS',
         'tvPaperResult.text = "POSITION CHECK FAILED',
         'tvPaperResult.text = if (response.status == "closed") "EXIT SUCCESS',
         'tvPaperResult.text = "EXIT FAILED',
