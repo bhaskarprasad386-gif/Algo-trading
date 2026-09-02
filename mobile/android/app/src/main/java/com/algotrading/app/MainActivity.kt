@@ -74,8 +74,10 @@ class MainActivity : AppCompatActivity() {
                             append("${item.symbol}\n")
                             append("Cash: ₹${item.cash_price} | Future: ₹${item.future_price}\n")
                             append("Gap: ₹${item.gap} (${item.gap_pct}%)\n")
-                            append("Margin: ₹${item.margin_required} | Net: ₹${item.net_profit}\n")
-                            append("ROI: ${item.roi_pct}%\n\n")
+                            append("Gross Spread: ₹${item.gross_spread_profit}\n")
+                            append("Margin: ₹${item.margin_required}\n")
+                            append("Deployed Capital: ₹${item.deployed_capital}\n")
+                            append("Net: ₹${item.net_profit} | ROI: ${item.roi_pct}%\n\n")
                         }
                         if (response.errors.isNotEmpty()) {
                             append("ERRORS (${response.errors.size})\n")
