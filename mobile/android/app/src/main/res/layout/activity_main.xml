@@ -1,87 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:padding="20dp">
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical">
-
-        <TextView
-            android:id="@+id/tvStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Checking Server Status..."
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:gravity="center"
-            android:paddingBottom="16dp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Paper Trading"
-            android:textSize="20sp"
-            android:textStyle="bold"
-            android:paddingBottom="12dp" />
-
-        <EditText
-            android:id="@+id/etEntryPrice"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Entry Price"
-            android:inputType="numberDecimal"
-            android:text="100"
-            android:layout_marginBottom="10dp" />
-
-        <EditText
-            android:id="@+id/etQuantity"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Quantity"
-            android:inputType="numberDecimal"
-            android:text="1"
-            android:layout_marginBottom="10dp" />
-
-        <Button
-            android:id="@+id/btnPaperEntry"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="PAPER ENTRY"
-            android:layout_marginBottom="10dp" />
-
-        <Button
-            android:id="@+id/btnPaperPosition"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="CHECK POSITION"
-            android:layout_marginBottom="16dp" />
-
-        <EditText
-            android:id="@+id/etExitPrice"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Exit Price"
-            android:inputType="numberDecimal"
-            android:text="103.5"
-            android:layout_marginBottom="10dp" />
-
-        <Button
-            android:id="@+id/btnPaperExit"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="PAPER EXIT"
-            android:layout_marginBottom="16dp" />
-
-        <TextView
-            android:id="@+id/tvPaperResult"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Paper trading status will appear here."
-            android:textSize="15sp"
-            android:padding="12dp" />
-
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:padding="20dp">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+        <TextView android:id="@+id/tvStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Checking Server Status..." android:textSize="16sp" android:textStyle="bold" android:gravity="center" android:paddingBottom="16dp" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Cash–Future Scanner" android:textSize="20sp" android:textStyle="bold" android:paddingBottom="10dp" />
+        <Button android:id="@+id/btnRunScanner" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="RUN CASH–FUTURE SCAN" android:layout_marginBottom="10dp" />
+        <TextView android:id="@+id/tvScannerResult" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Scanner results will appear here." android:textSize="14sp" android:padding="12dp" android:layout_marginBottom="18dp" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Paper Trading" android:textSize="20sp" android:textStyle="bold" android:paddingBottom="12dp" />
+        <EditText android:id="@+id/etEntryPrice" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Entry Price" android:inputType="numberDecimal" android:text="100" android:layout_marginBottom="10dp" />
+        <EditText android:id="@+id/etQuantity" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Quantity" android:inputType="numberDecimal" android:text="1" android:layout_marginBottom="10dp" />
+        <Button android:id="@+id/btnPaperEntry" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="PAPER ENTRY" android:layout_marginBottom="10dp" />
+        <Button android:id="@+id/btnPaperPosition" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="CHECK POSITION" android:layout_marginBottom="16dp" />
+        <EditText android:id="@+id/etExitPrice" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Exit Price" android:inputType="numberDecimal" android:text="103.5" android:layout_marginBottom="10dp" />
+        <Button android:id="@+id/btnPaperExit" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="PAPER EXIT" android:layout_marginBottom="16dp" />
+        <TextView android:id="@+id/tvPaperResult" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Paper trading status will appear here." android:textSize="15sp" android:padding="12dp" />
     </LinearLayout>
 </ScrollView>
