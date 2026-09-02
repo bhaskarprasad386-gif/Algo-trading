@@ -18,6 +18,7 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
+    // Android scanner auto-refresh compile verification checkpoint.
     private lateinit var tvStatus: TextView
     private lateinit var etEntryPrice: EditText
     private lateinit var etQuantity: EditText
