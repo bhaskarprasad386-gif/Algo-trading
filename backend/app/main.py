@@ -47,7 +47,7 @@ DASHBOARD_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "in
 
 @app.get("/dashboard", include_in_schema=False)
 def dashboard():
-    return FileResponse(DASHBOARD_FILE, media_type="text/html")
+    return FileResponse(str(DASHBOARD_FILE), media_type="text/html")
 
 
 @app.websocket("/ws/market-data/{symbol}")
