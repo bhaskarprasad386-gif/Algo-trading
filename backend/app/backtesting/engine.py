@@ -47,6 +47,7 @@ class BacktestResult:
     total_return: float
     trades: tuple[BacktestTrade, ...]
     win_rate: float
+    max_drawdown: float
 
 
 class BacktestEngine:
@@ -62,6 +63,8 @@ class BacktestEngine:
         exit_strategy: Strategy,
     ) -> BacktestResult:
         capital = self.config.initial_capital
+        peak_capital = capital
+        max_drawdown = 0.0
         open_trade: tuple[object, float] | None = None
         trades: list[BacktestTrade] = []
 
@@ -84,6 +87,9 @@ class BacktestEngine:
                 costs = traded_value * self.config.transaction_cost_rate
                 net_pnl = gross_pnl - costs
                 capital += net_pnl
+                peak_capital = max(peak_capital, capital)
+                drawdown = (peak_capital - capital) / peak_capital
+                max_drawdown = max(max_drawdown, drawdown)
                 trades.append(
                     BacktestTrade(
                         entry_timestamp=entry_timestamp,
@@ -109,6 +115,7 @@ class BacktestEngine:
             total_return=total_return,
             trades=tuple(trades),
             win_rate=win_rate,
+            max_drawdown=max_drawdown,
         )
 
 
