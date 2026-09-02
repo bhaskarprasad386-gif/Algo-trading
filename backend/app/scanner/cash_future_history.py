@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Iterable
 
 
@@ -22,6 +22,7 @@ class CashFutureHistoryPoint:
     funding_cost: float = 0.0
     net_profit: float = 0.0
     roi_pct: float = 0.0
+    expiry_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -36,18 +37,7 @@ class HistoricalGapMatch:
     difference_from_target: float
 
 
-def find_historical_gap_matches(
-    points: Iterable[CashFutureHistoryPoint],
-    target_gap: float,
-    tolerance: float = 0.0,
-    contract_month: str | None = None,
-) -> list[HistoricalGapMatch]:
-    """Find historical observations whose gap is equal to or above target.
-
-    If tolerance is positive, observations down to target_gap - tolerance are
-    also accepted. Contract month is always filtered when supplied, preventing
-    current- and near-month histories from being mixed.
-    """
+def find_historical_gap_matches(points: Iterable[CashFutureHistoryPoint], target_gap: float, tolerance: float = 0.0, contract_month: str | None = None) -> list[HistoricalGapMatch]:
     lower_bound = target_gap - max(tolerance, 0.0)
     matches = []
     for point in points:
@@ -55,26 +45,11 @@ def find_historical_gap_matches(
             continue
         if point.gap < lower_bound:
             continue
-        matches.append(
-            HistoricalGapMatch(
-                timestamp=point.timestamp,
-                symbol=point.symbol,
-                contract_month=point.contract_month,
-                gap=point.gap,
-                gap_pct=point.gap_pct,
-                net_profit=point.net_profit,
-                roi_pct=point.roi_pct,
-                difference_from_target=point.gap - target_gap,
-            )
-        )
+        matches.append(HistoricalGapMatch(point.timestamp, point.symbol, point.contract_month, point.gap, point.gap_pct, point.net_profit, point.roi_pct, point.gap - target_gap))
     return sorted(matches, key=lambda item: item.timestamp, reverse=True)
 
 
-def build_graph_series(
-    points: Iterable[CashFutureHistoryPoint],
-    contract_month: str | None = None,
-) -> dict[str, list]:
-    """Build frontend-ready cash/future/gap time series."""
+def build_graph_series(points: Iterable[CashFutureHistoryPoint], contract_month: str | None = None) -> dict[str, list]:
     selected = [p for p in points if contract_month is None or p.contract_month == contract_month]
     selected.sort(key=lambda p: p.timestamp)
     return {
