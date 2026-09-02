@@ -38,18 +38,22 @@ def protected_limit_price(
         else reference_price * (1.0 - active.max_slippage_pct)
     )
 
-    # Stay strictly inside a non-tick-aligned slippage boundary. If the raw
-    # boundary is exactly on a tick, keep that tick; otherwise move one tick
-    # inward so the protected price cannot sit on the permissive edge.
+    # Keep the price strictly inside the calculated boundary when that
+    # boundary already lands on a tick. This avoids spending the entire
+    # slippage budget because of a tick-boundary/floating-point edge case.
     ticks = raw_limit / active.tick_size
+    nearest_tick = round(ticks)
     epsilon = 1e-12
-    nearest = round(ticks)
-    if math.isclose(ticks, nearest, rel_tol=0.0, abs_tol=epsilon):
-        aligned_ticks = nearest
-    elif side is OrderSide.BUY:
-        aligned_ticks = math.floor(ticks) - 1
+    on_tick = math.isclose(ticks, nearest_tick, rel_tol=0.0, abs_tol=epsilon)
+
+    if side is OrderSide.BUY:
+        aligned_ticks = math.floor(ticks + epsilon)
+        if on_tick:
+            aligned_ticks -= 1
     else:
-        aligned_ticks = math.ceil(ticks) + 1
+        aligned_ticks = math.ceil(ticks - epsilon)
+        if on_tick:
+            aligned_ticks += 1
 
     return aligned_ticks * active.tick_size
 
