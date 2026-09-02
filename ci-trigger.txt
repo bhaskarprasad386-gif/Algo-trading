@@ -1,3 +1,4 @@
 Fresh CI verification trigger marker.
 Backtesting engine foundation verification.
 Float-safe backtesting test fix verification.
+Realized max drawdown metric verification.
