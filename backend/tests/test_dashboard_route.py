@@ -31,7 +31,7 @@ def test_dashboard_contains_paper_position_check_ui():
     body = response.body.decode("utf-8")
     assert 'onclick="paperPosition()"' in body
     assert "Check Position" in body
-    assert "Checking paper position…" in body
+    assert "CHECKING PAPER POSITION…" in body
     assert "PAPER POSITION ACTIVE" in body
     assert "No active paper position." in body
 
