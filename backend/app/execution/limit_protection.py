@@ -27,7 +27,7 @@ def protected_limit_price(
     side: OrderSide,
     config: SlippageConfig | None = None,
 ) -> float:
-    """Return a tick-aligned limit that never exceeds the slippage budget."""
+    """Return a conservative tick-aligned limit inside the slippage budget."""
     if reference_price <= 0:
         raise ValueError("reference_price must be positive")
 
@@ -38,12 +38,18 @@ def protected_limit_price(
         else reference_price * (1.0 - active.max_slippage_pct)
     )
 
-    # BUY rounds down so the cap is not exceeded; SELL rounds up so the floor
-    # is not breached. A broker-specific tick/price-band rule can be layered later.
+    # Round inward toward the reference price. For a SELL, move to the next
+    # higher tick when the raw floor lands exactly on a tick so the protection
+    # remains conservative against floating-point boundary effects.
     ticks = raw_limit / active.tick_size
+    epsilon = 1e-12
     if side is OrderSide.BUY:
-        return math.floor(ticks + 1e-12) * active.tick_size
-    return math.ceil(ticks - 1e-12) * active.tick_size
+        aligned_ticks = math.floor(ticks + epsilon)
+    else:
+        aligned_ticks = math.ceil(ticks - epsilon)
+        if math.isclose(ticks, aligned_ticks, rel_tol=0.0, abs_tol=epsilon):
+            aligned_ticks += 1
+    return aligned_ticks * active.tick_size
 
 
 def within_slippage(
@@ -58,6 +64,7 @@ def within_slippage(
     if max_slippage_pct < 0:
         raise ValueError("max_slippage_pct cannot be negative")
 
+    tolerance = max(abs(reference_price) * 1e-12, 1e-12)
     if side is OrderSide.BUY:
-        return proposed_price <= reference_price * (1.0 + max_slippage_pct)
-    return proposed_price >= reference_price * (1.0 - max_slippage_pct)
+        return proposed_price <= reference_price * (1.0 + max_slippage_pct) + tolerance
+    return proposed_price >= reference_price * (1.0 - max_slippage_pct) - tolerance
