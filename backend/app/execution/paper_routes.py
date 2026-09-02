@@ -32,6 +32,16 @@ def _paper_fill(mode: ExecutionMode, price: float, quantity: float) -> Fill:
     return Fill(price=price, quantity=quantity)
 
 
+def _position_from_state(state) -> dict:
+    return {
+        "mode": state.mode.value,
+        "quantity": state.quantity,
+        "entry_price": state.entry_price,
+        "stop_loss": state.stop_loss,
+        "target": state.target,
+    }
+
+
 @router.post("/paper/entry")
 def paper_entry(request: PaperEntryRequest):
     """Simulate one paper entry and store the active paper position."""
@@ -45,14 +55,19 @@ def paper_entry(request: PaperEntryRequest):
     )
     fill = engine.enter(request.price, request.quantity)
     state = engine.paper
-    _paper_position = {
+    _paper_position = _position_from_state(state)
+
+    # Keep the original flat response fields for API compatibility while also
+    # exposing the canonical position object used by the dashboard.
+    return {
+        "status": "success",
         "mode": state.mode.value,
-        "quantity": state.quantity,
+        "fill": {"price": fill.price, "quantity": fill.quantity},
         "entry_price": state.entry_price,
         "stop_loss": state.stop_loss,
         "target": state.target,
+        "position": _paper_position,
     }
-    return {"status": "success", "position": _paper_position}
 
 
 @router.get("/paper/position")
