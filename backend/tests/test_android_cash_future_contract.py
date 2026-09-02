@@ -20,8 +20,12 @@ def test_android_cash_future_api_contract_matches_backend():
 
 def test_android_cash_future_screen_is_wired_to_scanner():
     body = MAIN_ACTIVITY.read_text(encoding="utf-8")
-    assert 'findViewById<Button>(R.id.btnRunScanner).setOnClickListener' in body
+    assert 'btnRunScanner = findViewById(R.id.btnRunScanner)' in body
+    assert 'btnRunScanner.setOnClickListener { runCashFutureScanner() }' in body
     assert 'cashFutureScan()' in body
+    assert 'btnRunScanner.isEnabled = false' in body
+    assert 'btnRunScanner.text = "SCANNING..."' in body
+    assert 'btnRunScanner.isEnabled = true' in body
     assert 'response.symbols_requested.size' in body
     assert 'response.scanned_observations' in body
     assert 'response.opportunity_count' in body
