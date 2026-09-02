@@ -1,7 +1,26 @@
+from dataclasses import replace
 from datetime import datetime
 
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.core.database import Base
+from app.models.cash_future_history import CashFutureHistory
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 from app.scanner.cash_future_history_store import read_history, save_history_point
+
+
+@pytest.fixture
+def db_session():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    try:
+        yield session
+    finally:
+        session.close()
+        engine.dispose()
 
 
 def test_history_persists_and_reads_quote_liquidity_fields(db_session):
@@ -60,9 +79,10 @@ def test_history_upsert_keeps_one_row_for_same_identity(db_session):
         future_ask=108.1,
     )
     save_history_point(db_session, point)
-    save_history_point(db_session, point.__class__(**{**point.__dict__, "future_price": 109.0, "gap": 9.0}))
+    save_history_point(db_session, replace(point, future_price=109.0, gap=9.0))
 
     rows = read_history(db_session, "ABC", "CURRENT")
     assert len(rows) == 1
     assert rows[0].future_price == 109.0
     assert rows[0].gap == 9.0
+    assert db_session.query(CashFutureHistory).count() == 1
