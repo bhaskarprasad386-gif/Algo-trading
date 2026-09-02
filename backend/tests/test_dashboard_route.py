@@ -58,3 +58,12 @@ def test_dashboard_scanner_has_busy_state_protection():
     assert "button.disabled=false" in body
     assert "button.textContent='RUN SCAN'" in body
     assert "finally{button.disabled=false;button.textContent='RUN SCAN'}" in body
+
+
+def test_dashboard_scanner_shows_last_scan_time():
+    response = dashboard()
+    body = response.body.decode("utf-8")
+    assert 'id="lastScan"' in body
+    assert "Last Scan:" in body
+    assert 'document.getElementById(\'lastScan\').textContent=stamp()' in body
+    assert 'function stamp(){return new Date().toLocaleString()}' in body
