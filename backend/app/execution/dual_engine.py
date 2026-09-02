@@ -49,7 +49,7 @@ class ExecutionState:
         self.target = fill.price * (1.0 + config.target_pct)
 
 
-FillExecutor = Callable[[ExecutionMode, float], Fill]
+FillExecutor = Callable[[ExecutionMode, float, float], Fill]
 
 
 class DualExecutionEngine:
@@ -75,7 +75,7 @@ class DualExecutionEngine:
 
     def enter(self, price: float, quantity: float) -> Fill:
         """Execute a paper-only entry; live execution must use enter_live()."""
-        paper_fill = self._fill_executor(ExecutionMode.PAPER, price)
+        paper_fill = self._fill_executor(ExecutionMode.PAPER, price, quantity)
         self.paper.apply_fill(paper_fill, self.config)
         return paper_fill
 
@@ -92,6 +92,6 @@ class DualExecutionEngine:
         if not self.idempotency.accept(ExecutionRequest(request_id)):
             raise RuntimeError("duplicate live execution request")
 
-        live_fill = self._fill_executor(ExecutionMode.LIVE, price)
+        live_fill = self._fill_executor(ExecutionMode.LIVE, price, quantity)
         self.live.apply_fill(live_fill, self.config)
         return live_fill
