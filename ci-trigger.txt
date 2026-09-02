@@ -18,3 +18,4 @@ Fresh backtest robustness pytest verification.
 Fresh robustness median-return verification.
 Fresh robustness return-dispersion verification.
 Fresh robustness stddev expectation fix verification.
+Fresh dual execution engine verification.
