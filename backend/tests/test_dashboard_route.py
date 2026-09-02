@@ -67,3 +67,15 @@ def test_dashboard_scanner_shows_last_scan_time():
     assert "Last Scan:" in body
     assert 'document.getElementById(\'lastScan\').textContent=stamp()' in body
     assert 'function stamp(){return new Date().toLocaleString()}' in body
+
+
+def test_dashboard_scanner_shows_summary_metrics():
+    response = dashboard()
+    body = response.body.decode("utf-8")
+    assert 'id="scanSummary"' in body
+    assert 'id="summarySymbols"' in body
+    assert 'id="summaryObservations"' in body
+    assert 'id="summaryOpportunities"' in body
+    assert 'id="summaryErrors"' in body
+    assert 'function setScanSummary(p)' in body
+    assert 'setScanSummary(p)' in body
