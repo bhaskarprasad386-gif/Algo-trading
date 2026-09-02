@@ -1,4 +1,5 @@
 from app.models.candle import Candle
+from app.models.cash_future_history import CashFutureHistory
 from app.models.instrument import Instrument
 from app.models.order import Order
 from app.models.position import Position
@@ -8,5 +9,6 @@ from app.models.tick import Tick
 from app.models.user import User
 
 __all__ = [
-    "User", "Session", "Instrument", "Tick", "Candle", "Order", "Position", "SystemLog",
+    "User", "Session", "Instrument", "Tick", "Candle", "CashFutureHistory",
+    "Order", "Position", "SystemLog",
 ]
