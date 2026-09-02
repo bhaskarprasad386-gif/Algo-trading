@@ -52,6 +52,29 @@ def cash_future_scanner(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.get("/cash-future/live")
+def cash_future_live_scanner(
+    symbols: str = Query(..., description="Comma-separated NSE cash symbols, e.g. RELIANCE,SBIN"),
+    db: Session = Depends(get_db),
+):
+    """Fetch live NSE cash + nearest two NFO futures and return scanner observations."""
+    requested = [item.strip().upper() for item in symbols.split(",") if item.strip()]
+    if not requested:
+        raise HTTPException(status_code=400, detail="at least one symbol is required")
+    if len(requested) > 50:
+        raise HTTPException(status_code=400, detail="maximum 50 symbols per live scan")
+
+    result = CashFutureHistoryCollector(requested).collect(db)
+    return {
+        "status": "success",
+        "scanner": "cash-future",
+        "mode": "live",
+        "count": len(result["collected"]),
+        "data": result["collected"],
+        "errors": result["errors"],
+    }
+
+
 @router.post("/cash-future/history")
 def save_cash_future_history(
     symbol: str,
