@@ -145,3 +145,44 @@ def test_cash_future_live_auto_api_sorts_executable_rows_by_net_profit(monkeypat
 
     assert [item["symbol"] for item in response["data"]] == ["INFY", "TCS", "SBIN"]
     assert response["opportunity_count"] == 3
+
+
+def test_cash_future_live_auto_api_forwards_execution_filters(monkeypatch):
+    class FakeCollector:
+        def __init__(self, symbols, config):
+            assert symbols == ["SBIN"]
+            assert config.min_gap == 1.25
+            assert config.min_gap_pct == 0.75
+            assert config.min_net_profit == 15.0
+            assert config.min_roi_pct == 0.6
+            assert config.min_volume == 2000
+            assert config.min_oi == 30000
+            assert config.max_bid_ask_spread_pct == 1.5
+            assert config.max_cash_bid_ask_spread_pct == 1.0
+            assert config.charges == 12.0
+            assert config.funding_cost == 4.0
+            assert config.require_two_sided_quotes is True
+
+        def collect(self, db):
+            return {"collected": [], "errors": []}
+
+    monkeypatch.setattr(auto_routes, "discover_cash_future_symbols", lambda limit: ["SBIN"])
+    monkeypatch.setattr(auto_routes, "CashFutureHistoryCollector", FakeCollector)
+
+    response = auto_routes.cash_future_live_auto_scanner(
+        limit=1,
+        min_gap=1.25,
+        min_gap_pct=0.75,
+        min_net_profit=15.0,
+        min_roi_pct=0.6,
+        min_volume=2000,
+        min_oi=30000,
+        max_bid_ask_spread_pct=1.5,
+        max_cash_bid_ask_spread_pct=1.0,
+        charges=12.0,
+        funding_cost=4.0,
+        db=object(),
+    )
+
+    assert response["status"] == "success"
+    assert response["opportunity_count"] == 0
