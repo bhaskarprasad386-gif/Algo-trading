@@ -1,0 +1,63 @@
+"""Deterministic smart-limit and slippage protection primitives."""
+
+from dataclasses import dataclass
+from enum import Enum
+import math
+
+
+class OrderSide(str, Enum):
+    BUY = "buy"
+    SELL = "sell"
+
+
+@dataclass(frozen=True)
+class SlippageConfig:
+    max_slippage_pct: float = 0.005
+    tick_size: float = 0.05
+
+    def __post_init__(self) -> None:
+        if self.max_slippage_pct < 0:
+            raise ValueError("max_slippage_pct cannot be negative")
+        if self.tick_size <= 0:
+            raise ValueError("tick_size must be positive")
+
+
+def protected_limit_price(
+    reference_price: float,
+    side: OrderSide,
+    config: SlippageConfig | None = None,
+) -> float:
+    """Return a tick-aligned limit that never exceeds the slippage budget."""
+    if reference_price <= 0:
+        raise ValueError("reference_price must be positive")
+
+    active = config or SlippageConfig()
+    raw_limit = (
+        reference_price * (1.0 + active.max_slippage_pct)
+        if side is OrderSide.BUY
+        else reference_price * (1.0 - active.max_slippage_pct)
+    )
+
+    # BUY rounds down so the cap is not exceeded; SELL rounds up so the floor
+    # is not breached. A broker-specific tick/price-band rule can be layered later.
+    ticks = raw_limit / active.tick_size
+    if side is OrderSide.BUY:
+        return math.floor(ticks + 1e-12) * active.tick_size
+    return math.ceil(ticks - 1e-12) * active.tick_size
+
+
+def within_slippage(
+    reference_price: float,
+    proposed_price: float,
+    side: OrderSide,
+    max_slippage_pct: float,
+) -> bool:
+    """Check whether a proposed price stays inside the side-specific slippage cap."""
+    if reference_price <= 0 or proposed_price <= 0:
+        raise ValueError("prices must be positive")
+    if max_slippage_pct < 0:
+        raise ValueError("max_slippage_pct cannot be negative")
+
+    if side is OrderSide.BUY:
+        return proposed_price <= reference_price * (1.0 + max_slippage_pct)
+    return proposed_price >= reference_price * (1.0 - max_slippage_pct)
