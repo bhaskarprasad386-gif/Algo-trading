@@ -94,3 +94,30 @@ def test_cash_future_rejects_low_broker_margin_roi():
     )
     assert result.executable is False
     assert "roi_below_minimum" in result.rejection_reasons
+
+
+def test_cash_future_live_auto_api_returns_only_executable_rows(monkeypatch):
+    class FakeCollector:
+        def __init__(self, symbols, config):
+            assert symbols == ["SBIN"]
+            assert config.require_two_sided_quotes is True
+
+        def collect(self, db):
+            return {
+                "collected": [
+                    {"symbol": "SBIN", "net_profit": 25.0, "roi_pct": 1.2, "executable": True},
+                    {"symbol": "SBIN", "net_profit": 100.0, "roi_pct": 5.0, "executable": False},
+                ],
+                "errors": [],
+            }
+
+    monkeypatch.setattr(auto_routes, "discover_cash_future_symbols", lambda limit: ["SBIN"])
+    monkeypatch.setattr(auto_routes, "CashFutureHistoryCollector", FakeCollector)
+
+    response = auto_routes.cash_future_live_auto_scanner(db=object())
+
+    assert response["status"] == "success"
+    assert response["opportunity_count"] == 1
+    assert len(response["data"]) == 1
+    assert response["data"][0]["executable"] is True
+    assert response["data"][0]["net_profit"] == 25.0
