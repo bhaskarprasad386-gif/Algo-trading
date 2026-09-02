@@ -1,6 +1,6 @@
 """Paper-execution API boundary.
 
-This route intentionally exposes paper entry only. Live broker execution stays
+This route intentionally exposes paper execution only. Live broker execution stays
 behind the existing confirmation, idempotency, and safety gates.
 """
 
@@ -19,6 +19,13 @@ class PaperEntryRequest(BaseModel):
     target_pct: float = Field(0.04, ge=0)
 
 
+class PaperExitRequest(BaseModel):
+    price: float = Field(..., gt=0)
+
+
+_paper_position: dict | None = None
+
+
 def _paper_fill(mode: ExecutionMode, price: float, quantity: float) -> Fill:
     if mode is not ExecutionMode.PAPER:
         raise RuntimeError("paper endpoint cannot execute live orders")
@@ -27,7 +34,8 @@ def _paper_fill(mode: ExecutionMode, price: float, quantity: float) -> Fill:
 
 @router.post("/paper/entry")
 def paper_entry(request: PaperEntryRequest):
-    """Simulate one paper entry and calculate SL/target from the fill price."""
+    """Simulate one paper entry and store the active paper position."""
+    global _paper_position
     engine = DualExecutionEngine(
         _paper_fill,
         config=ExecutionConfig(
@@ -37,11 +45,40 @@ def paper_entry(request: PaperEntryRequest):
     )
     fill = engine.enter(request.price, request.quantity)
     state = engine.paper
-    return {
-        "status": "success",
+    _paper_position = {
         "mode": state.mode.value,
-        "fill": {"price": fill.price, "quantity": fill.quantity},
+        "quantity": state.quantity,
         "entry_price": state.entry_price,
         "stop_loss": state.stop_loss,
         "target": state.target,
     }
+    return {"status": "success", "position": _paper_position}
+
+
+@router.get("/paper/position")
+def paper_position():
+    """Return the current in-memory paper position, if any."""
+    if _paper_position is None:
+        return {"status": "flat", "position": None}
+    return {"status": "active", "position": _paper_position}
+
+
+@router.post("/paper/exit")
+def paper_exit(request: PaperExitRequest):
+    """Close the active paper position and return realized P&L."""
+    global _paper_position
+    if _paper_position is None:
+        return {"status": "flat", "position": None, "pnl": 0.0}
+
+    entry_price = float(_paper_position["entry_price"])
+    quantity = float(_paper_position["quantity"])
+    pnl = round((request.price - entry_price) * quantity, 8)
+    result = {
+        "status": "closed",
+        "entry_price": entry_price,
+        "exit_price": request.price,
+        "quantity": quantity,
+        "pnl": pnl,
+    }
+    _paper_position = None
+    return result
