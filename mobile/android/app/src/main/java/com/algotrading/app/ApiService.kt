@@ -5,7 +5,6 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
-import retrofit2.http.Query
 
 data class MarketStatus(val status: String, val message: String)
 
@@ -23,19 +22,28 @@ data class CashFutureOpportunity(
     val future_price: Double = 0.0,
     val gap: Double = 0.0,
     val gap_pct: Double = 0.0,
+    val gross_spread_profit: Double = 0.0,
     val margin_required: Double = 0.0,
+    val deployed_capital: Double = 0.0,
     val net_profit: Double = 0.0,
     val roi_pct: Double = 0.0,
     val executable: Boolean = false,
 )
+
+data class CashFutureScanError(
+    val symbol: String = "",
+    val error: String = "",
+)
+
 data class CashFutureScanResponse(
     val status: String,
     val scanner: String,
     val mode: String,
-    val symbol_count: Int = 0,
+    val symbols_requested: List<String> = emptyList(),
+    val scanned_observations: Int = 0,
     val opportunity_count: Int = 0,
     val data: List<CashFutureOpportunity> = emptyList(),
-    val errors: List<String> = emptyList(),
+    val errors: List<CashFutureScanError> = emptyList(),
 )
 
 interface ApiInterface {
