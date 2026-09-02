@@ -30,3 +30,10 @@ def test_android_cash_future_screen_is_wired_to_scanner():
     assert 'response.scanned_observations' in body
     assert 'response.opportunity_count' in body
     assert 'response.errors.size' in body
+
+
+def test_android_cash_future_screen_shows_error_reasons():
+    body = MAIN_ACTIVITY.read_text(encoding="utf-8")
+    assert 'response.errors.forEach' in body
+    assert 'error.symbol' in body
+    assert 'error.error' in body
