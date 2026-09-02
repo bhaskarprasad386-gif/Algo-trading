@@ -37,6 +37,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var scannerRefreshRunnable: Runnable
     private lateinit var scannerCountdownRunnable: Runnable
     private var scannerCountdownSeconds = 0L
+    private var lastScannerResult: String? = null
 
     private fun currentTimestamp(): String = SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(Date())
 
@@ -125,60 +126,64 @@ class MainActivity : AppCompatActivity() {
             tvScannerNextRefresh.text = "Next Refresh: SCAN IN PROGRESS"
             btnRunScanner.isEnabled = false
             btnRunScanner.text = "SCANNING..."
-            tvScannerResult.text = "SCAN IN PROGRESS\n\nRunning Cash–Future scanner..."
+            tvScannerResult.text = lastScannerResult?.let { "$it\n\nREFRESHING SCANNER..." } ?: "SCAN IN PROGRESS\n\nRunning Cash–Future scanner..."
         }
         try {
             val response = ApiService.retrofitService.cashFutureScan()
             val completedAt = currentTimestamp()
-            withContext(Dispatchers.Main) {
-                tvScannerResult.text = if (response.data.isEmpty()) {
-                    buildString {
-                        append("SCAN COMPLETE — NO OPPORTUNITIES\n")
-                        append("Last Scan: $completedAt\n\n")
-                        append("Symbols requested: ${response.symbols_requested.size}\n")
-                        append("Observations: ${response.scanned_observations}\n")
-                        append("Executable opportunities: 0\n")
-                        append("Errors: ${response.errors.size}\n\n")
-                        append("No executable Cash–Future opportunities found.")
-                        if (response.errors.isNotEmpty()) {
-                            append("\n\nERRORS (${response.errors.size})\n")
-                            response.errors.forEach { error -> append("${error.symbol}: ${error.error}\n") }
-                        }
+            val result = if (response.data.isEmpty()) {
+                buildString {
+                    append("SCAN COMPLETE — NO OPPORTUNITIES\n")
+                    append("Last Scan: $completedAt\n\n")
+                    append("Symbols requested: ${response.symbols_requested.size}\n")
+                    append("Observations: ${response.scanned_observations}\n")
+                    append("Executable opportunities: 0\n")
+                    append("Errors: ${response.errors.size}\n\n")
+                    append("No executable Cash–Future opportunities found.")
+                    if (response.errors.isNotEmpty()) {
+                        append("\n\nERRORS (${response.errors.size})\n")
+                        response.errors.forEach { error -> append("${error.symbol}: ${error.error}\n") }
                     }
-                } else {
-                    buildString {
-                        append("SCAN COMPLETE — SUCCESS\n")
-                        append("Last Scan: $completedAt\n\n")
-                        append("Symbols requested: ${response.symbols_requested.size}\n")
-                        append("Observations: ${response.scanned_observations}\n")
-                        append("Executable opportunities: ${response.opportunity_count}\n")
-                        append("Errors: ${response.errors.size}\n\n")
-                        append("CASH–FUTURE OPPORTUNITIES (${response.opportunity_count})\n")
-                        append("Priority: EXECUTABLE FIRST\n")
-                        append("Mode: ${response.mode}\n\n")
-                        response.data.sortedWith(compareByDescending<CashFutureOpportunity> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit }).forEach { item ->
-                            append("────────────────────\n")
-                            append("${item.symbol}\n")
-                            append("Cash: ₹${item.cash_price}\n")
-                            append("Future: ₹${item.future_price}\n")
-                            append("Gap: ₹${item.gap} (${item.gap_pct}%)\n")
-                            append("Gross Spread: ₹${item.gross_spread_profit}\n")
-                            append("Margin: ₹${item.margin_required}\n")
-                            append("Deployed Capital: ₹${item.deployed_capital}\n")
-                            append("Net Profit: ₹${item.net_profit}\n")
-                            append("ROI: ${item.roi_pct}%\n")
-                            append("Executable: ${if (item.executable) "YES" else "NO"}\n\n")
-                        }
-                        if (response.errors.isNotEmpty()) {
-                            append("ERRORS (${response.errors.size})\n")
-                            response.errors.forEach { error -> append("${error.symbol}: ${error.error}\n") }
-                        }
+                }
+            } else {
+                buildString {
+                    append("SCAN COMPLETE — SUCCESS\n")
+                    append("Last Scan: $completedAt\n\n")
+                    append("Symbols requested: ${response.symbols_requested.size}\n")
+                    append("Observations: ${response.scanned_observations}\n")
+                    append("Executable opportunities: ${response.opportunity_count}\n")
+                    append("Errors: ${response.errors.size}\n\n")
+                    append("CASH–FUTURE OPPORTUNITIES (${response.opportunity_count})\n")
+                    append("Priority: EXECUTABLE FIRST\n")
+                    append("Mode: ${response.mode}\n\n")
+                    response.data.sortedWith(compareByDescending<CashFutureOpportunity> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit }).forEach { item ->
+                        append("────────────────────\n")
+                        append("${item.symbol}\n")
+                        append("Cash: ₹${item.cash_price}\n")
+                        append("Future: ₹${item.future_price}\n")
+                        append("Gap: ₹${item.gap} (${item.gap_pct}%)\n")
+                        append("Gross Spread: ₹${item.gross_spread_profit}\n")
+                        append("Margin: ₹${item.margin_required}\n")
+                        append("Deployed Capital: ₹${item.deployed_capital}\n")
+                        append("Net Profit: ₹${item.net_profit}\n")
+                        append("ROI: ${item.roi_pct}%\n")
+                        append("Executable: ${if (item.executable) "YES" else "NO"}\n\n")
+                    }
+                    if (response.errors.isNotEmpty()) {
+                        append("ERRORS (${response.errors.size})\n")
+                        response.errors.forEach { error -> append("${error.symbol}: ${error.error}\n") }
                     }
                 }
             }
+            withContext(Dispatchers.Main) {
+                lastScannerResult = result
+                tvScannerResult.text = result
+            }
         } catch (error: Exception) {
             val failedAt = currentTimestamp()
-            withContext(Dispatchers.Main) { tvScannerResult.text = "SCAN ERROR\n\nLast Scan: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}" }
+            withContext(Dispatchers.Main) {
+                tvScannerResult.text = lastScannerResult?.let { "$it\n\nREFRESH FAILED\nLast Attempt: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}" } ?: "SCAN ERROR\n\nLast Scan: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}"
+            }
         } finally {
             withContext(Dispatchers.Main) {
                 btnRunScanner.isEnabled = true
