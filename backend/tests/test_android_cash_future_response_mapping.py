@@ -37,7 +37,7 @@ def test_android_cash_future_scanner_states_are_clear():
     assert 'tvScannerResult.text = "SCAN IN PROGRESS\\n\\nRunning Cash–Future scanner..."' in ui
     assert 'append("SCAN COMPLETE — SUCCESS\\n")' in ui
     assert 'append("SCAN COMPLETE — NO OPPORTUNITIES\\n")' in ui
-    assert 'tvScannerResult.text = "SCAN ERROR\\n\\nLast Scan:' in ui
+    assert '"SCAN ERROR\\n\\nLast Scan: $failedAt\\n\\nScanner Failed:' in ui
 
 
 def test_android_cash_future_scanner_summary_counts_are_clear():
@@ -76,7 +76,8 @@ def test_android_cash_future_last_scan_time_is_completion_time():
 def test_android_cash_future_error_timestamp_is_recorded_on_failure():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
     assert 'val failedAt = currentTimestamp()' in ui
-    assert 'tvScannerResult.text = "SCAN ERROR\\n\\nLast Scan: $failedAt\\n\\nScanner Failed:' in ui
+    assert 'Last Scan: $failedAt' in ui
+    assert 'Scanner Failed: ${error.message ?: "API error"}' in ui
 
 
 def test_android_paper_requests_have_busy_state_protection():
