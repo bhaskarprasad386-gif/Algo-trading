@@ -77,20 +77,23 @@ class MainActivity : AppCompatActivity() {
                         append("Executable opportunities: ${response.opportunity_count}\n")
                         append("Errors: ${response.errors.size}\n\n")
                         append("CASH–FUTURE OPPORTUNITIES (${response.opportunity_count})\n")
+                        append("Priority: EXECUTABLE FIRST\n")
                         append("Mode: ${response.mode}\n\n")
-                        response.data.forEach { item ->
-                            append("────────────────────\n")
-                            append("${item.symbol}\n")
-                            append("Cash: ₹${item.cash_price}\n")
-                            append("Future: ₹${item.future_price}\n")
-                            append("Gap: ₹${item.gap} (${item.gap_pct}%)\n")
-                            append("Gross Spread: ₹${item.gross_spread_profit}\n")
-                            append("Margin: ₹${item.margin_required}\n")
-                            append("Deployed Capital: ₹${item.deployed_capital}\n")
-                            append("Net Profit: ₹${item.net_profit}\n")
-                            append("ROI: ${item.roi_pct}%\n")
-                            append("Executable: ${if (item.executable) "YES" else "NO"}\n\n")
-                        }
+                        response.data
+                            .sortedWith(compareByDescending<CashFutureOpportunity> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit })
+                            .forEach { item ->
+                                append("────────────────────\n")
+                                append("${item.symbol}\n")
+                                append("Cash: ₹${item.cash_price}\n")
+                                append("Future: ₹${item.future_price}\n")
+                                append("Gap: ₹${item.gap} (${item.gap_pct}%)\n")
+                                append("Gross Spread: ₹${item.gross_spread_profit}\n")
+                                append("Margin: ₹${item.margin_required}\n")
+                                append("Deployed Capital: ₹${item.deployed_capital}\n")
+                                append("Net Profit: ₹${item.net_profit}\n")
+                                append("ROI: ${item.roi_pct}%\n")
+                                append("Executable: ${if (item.executable) "YES" else "NO"}\n\n")
+                            }
                         if (response.errors.isNotEmpty()) {
                             append("ERRORS (${response.errors.size})\n")
                             response.errors.forEach { error ->
