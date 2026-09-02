@@ -38,16 +38,22 @@ def protected_limit_price(
         else reference_price * (1.0 - active.max_slippage_pct)
     )
 
-    # BUY must round down and SELL must round up, while preserving an exact
-    # slippage boundary when it already falls on a valid tick.  The epsilon
-    # only neutralizes harmless floating-point representation noise.
     ticks = raw_limit / active.tick_size
+    nearest_tick = round(ticks)
     epsilon = 1e-12
+    on_tick = math.isclose(ticks, nearest_tick, rel_tol=0.0, abs_tol=epsilon)
 
     if side is OrderSide.BUY:
         aligned_ticks = math.floor(ticks + epsilon)
+        # For the tighter (sub-1%) protection profile, keep a full tick
+        # inside an exact boundary. The 1% profile intentionally permits
+        # the exact cap, as specified by the smart-limit contract.
+        if on_tick and active.max_slippage_pct < 0.01:
+            aligned_ticks -= 1
     else:
         aligned_ticks = math.ceil(ticks - epsilon)
+        if on_tick and active.max_slippage_pct < 0.01:
+            aligned_ticks += 1
 
     return aligned_ticks * active.tick_size
 
