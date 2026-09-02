@@ -3,3 +3,4 @@ Backtesting engine foundation verification.
 Float-safe backtesting test fix verification.
 Realized max drawdown metric verification.
 Correct realized max drawdown expectation verification.
+Expectancy metric verification.
