@@ -20,6 +20,17 @@ def test_dashboard_contains_paper_execution_connectors():
     response = dashboard()
     body = response.body.decode("utf-8")
     assert "/api/v1/execution/paper/entry" in body
+    assert "/api/v1/execution/paper/position" in body
     assert "/api/v1/execution/paper/exit" in body
     assert '"price",exit' in body or 'price:exit' in body
     assert "pnl_pct" not in body
+
+
+def test_dashboard_contains_paper_position_check_ui():
+    response = dashboard()
+    body = response.body.decode("utf-8")
+    assert 'onclick="paperPosition()"' in body
+    assert "Check Position" in body
+    assert "Checking paper position…" in body
+    assert "PAPER POSITION ACTIVE" in body
+    assert "No active paper position." in body
