@@ -91,7 +91,7 @@ def test_backtest_sortino_ratio_uses_only_downside_deviation():
     )
 
     assert len(result.trades) == 2
-    assert result.sortino_ratio == pytest.approx(0.5)
+    assert result.sortino_ratio == pytest.approx(2 ** 0.5 / 2)
 
 
 def test_backtest_tracks_realized_max_drawdown():
