@@ -5,6 +5,8 @@ import os
 import queue
 import threading
 import uuid
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.core.logger import app_logger
@@ -37,6 +39,9 @@ app.include_router(market_data_router)
 app.include_router(scanner_router)
 
 _history_collector_task: asyncio.Task | None = None
+IST = ZoneInfo("Asia/Kolkata")
+MARKET_OPEN = time(9, 15)
+MARKET_CLOSE = time(15, 30)
 
 
 def _collector_enabled() -> bool:
@@ -54,6 +59,10 @@ def _collector_interval() -> int:
         return 60
 
 
+def _market_is_open(now: datetime) -> bool:
+    return now.weekday() < 5 and MARKET_OPEN <= now.time() <= MARKET_CLOSE
+
+
 async def _cash_future_history_loop() -> None:
     symbols = _collector_symbols()
     if not symbols:
@@ -63,19 +72,24 @@ async def _cash_future_history_loop() -> None:
     collector = CashFutureHistoryCollector(symbols)
     app_logger.info(f"Cash-Future history collector started: {len(symbols)} symbols, {interval}s interval")
     while True:
-        db = SessionLocal()
         try:
-            result = await asyncio.to_thread(collector.collect, db)
-            app_logger.info(
-                f"Cash-Future history cycle complete: {len(result['collected'])} observations, "
-                f"{len(result['errors'])} errors"
-            )
+            now_ist = datetime.now(IST)
+            if _market_is_open(now_ist):
+                db = SessionLocal()
+                try:
+                    result = await asyncio.to_thread(collector.collect, db)
+                    app_logger.info(
+                        f"Cash-Future history cycle complete: {len(result['collected'])} observations, "
+                        f"{len(result['errors'])} errors"
+                    )
+                finally:
+                    db.close()
+            else:
+                app_logger.debug("Cash-Future history collector sleeping outside NSE market hours")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             app_logger.error(f"Cash-Future history cycle failed: {exc}")
-        finally:
-            db.close()
         await asyncio.sleep(interval)
 
 
@@ -83,7 +97,7 @@ async def _cash_future_history_loop() -> None:
 async def startup_event():
     global _history_collector_task
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
-    if _collector_enabled():
+    if _collector_enabled() and _history_collector_task is None:
         _history_collector_task = asyncio.create_task(_cash_future_history_loop())
 
 
