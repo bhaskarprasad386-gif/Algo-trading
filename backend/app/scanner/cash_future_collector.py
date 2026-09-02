@@ -59,6 +59,16 @@ def _full_quote(response: dict) -> dict[str, Any]:
     }
 
 
+def _margin_required(response: dict) -> float:
+    data = response.get("data") if isinstance(response, dict) else None
+    if not isinstance(data, dict):
+        raise ValueError("Angel One margin response has no data object")
+    value = _number(data.get("totalMarginRequired"), -1)
+    if value < 0:
+        raise ValueError("Angel One margin response has no valid totalMarginRequired")
+    return value
+
+
 class CashFutureHistoryCollector:
     """Collect and persist CURRENT/NEAR Cash-Future observations."""
 
@@ -87,6 +97,20 @@ class CashFutureHistoryCollector:
         candidates.sort(key=lambda x: x[0])
         return [item for _, item in candidates[:2]]
 
+    def _future_margin(self, future: dict, future_ltp: float, lot_size: int) -> float:
+        token = str(future.get("token") or "").strip()
+        if not token:
+            raise ValueError("future token is required for broker margin calculation")
+        response = self.market_client.margin([{
+            "exchange": "NFO",
+            "qty": lot_size,
+            "price": future_ltp,
+            "productType": "CARRYFORWARD",
+            "token": token,
+            "tradeType": "SELL",
+        }])
+        return _margin_required(response)
+
     def collect_symbol(self, symbol: str, db) -> list[dict]:
         symbol = symbol.strip().upper()
         cash_symbol = f"{symbol}-EQ"
@@ -103,21 +127,24 @@ class CashFutureHistoryCollector:
             future_symbol = str(future.get("symbol"))
             market_quote = _full_quote(self.market_client.quote("NFO", future_symbol, str(future["token"])))
             future_ltp = market_quote["ltp"]
+            if future_ltp <= 0:
+                raise ValueError(f"invalid future LTP for {future_symbol}")
             expiry_date = _expiry(future.get("expiry"))
             lot_size = int(float(future.get("lotsize") or future.get("lotSize") or 0))
             if lot_size <= 0:
                 raise ValueError(f"invalid lot size for {future_symbol}")
+            margin_required = self._future_margin(future, future_ltp, lot_size)
             quote = calculate_cash_future(
                 CashQuote(symbol=symbol, ltp=cash_ltp, bid=cash_quote["bid"], ask=cash_quote["ask"]),
                 FutureQuote(symbol=symbol, contract_month=label, ltp=future_ltp, lot_size=lot_size,
-                            margin_required=0.0, volume=market_quote["volume"], oi=market_quote["oi"],
+                            margin_required=margin_required, volume=market_quote["volume"], oi=market_quote["oi"],
                             bid=market_quote["bid"], ask=market_quote["ask"], expiry=expiry_date),
                 self.config,
             )
             point = CashFutureHistoryPoint(
                 timestamp=observation_time, symbol=symbol, contract_month=label,
                 cash_price=cash_ltp, future_price=future_ltp, gap=quote.gap, gap_pct=quote.gap_pct,
-                lot_size=lot_size, margin_required=0.0, volume=market_quote["volume"], oi=market_quote["oi"],
+                lot_size=lot_size, margin_required=margin_required, volume=market_quote["volume"], oi=market_quote["oi"],
                 cash_bid=cash_quote["bid"], cash_ask=cash_quote["ask"], future_bid=market_quote["bid"],
                 future_ask=market_quote["ask"], charges=quote.charges, funding_cost=quote.funding_cost,
                 net_profit=quote.net_profit, roi_pct=quote.roi_pct, expiry_date=expiry_date,
@@ -131,6 +158,7 @@ class CashFutureHistoryCollector:
                 "expiry_date": expiry_date.isoformat() if expiry_date else None,
                 "cash_price": cash_ltp, "future_price": future_ltp, "gap": quote.gap, "gap_pct": quote.gap_pct,
                 "gross_spread_profit": quote.gross_spread_profit, "net_profit": quote.net_profit,
+                "margin_required": margin_required, "deployed_capital": quote.deployed_capital,
                 "roi_pct": quote.roi_pct, "executable": quote.executable,
                 "rejection_reasons": list(quote.rejection_reasons), "volume": market_quote["volume"],
                 "oi": market_quote["oi"], "cash_bid": cash_quote["bid"], "cash_ask": cash_quote["ask"],
