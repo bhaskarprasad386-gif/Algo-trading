@@ -55,7 +55,17 @@ class MainActivity : AppCompatActivity() {
             val response = ApiService.retrofitService.cashFutureScan()
             withContext(Dispatchers.Main) {
                 tvScannerResult.text = if (response.data.isEmpty()) {
-                    "No executable Cash–Future opportunities found.\nSymbols scanned: ${response.symbols_requested.size}\nObservations: ${response.scanned_observations}"
+                    buildString {
+                        append("No executable Cash–Future opportunities found.\n")
+                        append("Symbols scanned: ${response.symbols_requested.size}\n")
+                        append("Observations: ${response.scanned_observations}\n")
+                        if (response.errors.isNotEmpty()) {
+                            append("\nScanner errors (${response.errors.size}):\n")
+                            response.errors.forEach { error ->
+                                append("${error.symbol}: ${error.error}\n")
+                            }
+                        }
+                    }
                 } else {
                     buildString {
                         append("CASH–FUTURE OPPORTUNITIES (${response.opportunity_count})\n")
@@ -67,7 +77,12 @@ class MainActivity : AppCompatActivity() {
                             append("Margin: ₹${item.margin_required} | Net: ₹${item.net_profit}\n")
                             append("ROI: ${item.roi_pct}%\n\n")
                         }
-                        if (response.errors.isNotEmpty()) append("Errors: ${response.errors.size}\n")
+                        if (response.errors.isNotEmpty()) {
+                            append("Scanner errors (${response.errors.size}):\n")
+                            response.errors.forEach { error ->
+                                append("${error.symbol}: ${error.error}\n")
+                            }
+                        }
                     }
                 }
             }
