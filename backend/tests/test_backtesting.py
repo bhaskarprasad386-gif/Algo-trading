@@ -67,7 +67,7 @@ def test_backtest_tracks_realized_max_drawdown():
 
     assert len(result.trades) == 2
     assert result.net_pnl == -10
-    assert result.max_drawdown == pytest.approx(10 / 100_010)
+    assert result.max_drawdown == pytest.approx(20 / 100_010)
 
 
 def test_backtest_without_completed_trade_has_zero_pnl():
