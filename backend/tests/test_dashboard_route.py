@@ -87,5 +87,5 @@ def test_dashboard_scanner_prioritizes_executable_opportunities():
     assert ".sort((a,b)=>Number(b.executable)-Number(a.executable)" in body
     assert "Number(b.roi_pct||0)-Number(a.roi_pct||0)" in body
     assert "Number(b.net_profit||0)-Number(a.net_profit||0)" in body
-    assert "<td>"+'+(i+1)+'"</td>" in body
+    assert "tr.innerHTML='<td>'+(i+1)+'" in body
     assert "<th>Priority</th>" in body
