@@ -5,7 +5,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import kotlinx.coroutines.CoroutineScope
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -34,7 +34,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnPaperPosition).setOnClickListener { paperPosition() }
     }
 
-    private fun checkServerStatus() = CoroutineScope(Dispatchers.IO).launch {
+    private fun checkServerStatus() = lifecycleScope.launch(Dispatchers.IO) {
         try {
             val response = ApiService.retrofitService.getRootStatus()
             withContext(Dispatchers.Main) { tvStatus.text = "Server Status: ${response.status}" }
@@ -43,7 +43,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun runCashFutureScanner() = CoroutineScope(Dispatchers.IO).launch {
+    private fun runCashFutureScanner() = lifecycleScope.launch(Dispatchers.IO) {
         try {
             val response = ApiService.retrofitService.cashFutureScan()
             withContext(Dispatchers.Main) {
@@ -60,16 +60,12 @@ class MainActivity : AppCompatActivity() {
                             append("Margin: ₹${item.margin_required} | Net: ₹${item.net_profit}\n")
                             append("ROI: ${item.roi_pct}%\n\n")
                         }
-                        if (response.errors.isNotEmpty()) {
-                            append("Errors: ${response.errors.size}\n")
-                        }
+                        if (response.errors.isNotEmpty()) append("Errors: ${response.errors.size}\n")
                     }
                 }
             }
         } catch (error: Exception) {
-            withContext(Dispatchers.Main) {
-                tvScannerResult.text = "Scanner Failed: ${error.message ?: "API error"}"
-            }
+            withContext(Dispatchers.Main) { tvScannerResult.text = "Scanner Failed: ${error.message ?: "API error"}" }
         }
     }
 
@@ -78,7 +74,7 @@ class MainActivity : AppCompatActivity() {
         val quantity = etQuantity.text.toString().toDoubleOrNull()
         if (price == null || price <= 0) { etEntryPrice.error = "Enter a positive entry price"; return }
         if (quantity == null || quantity <= 0) { etQuantity.error = "Enter a positive quantity"; return }
-        CoroutineScope(Dispatchers.IO).launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val response = ApiService.retrofitService.paperEntry(PaperEntryRequest(price, quantity))
                 withContext(Dispatchers.Main) { tvPaperResult.text = "PAPER POSITION ACTIVE\n\nEntry: ₹${response.entry_price}\nStop Loss: ₹${response.stop_loss}\nTarget: ₹${response.target}\nQuantity: ${response.position.quantity}" }
@@ -86,7 +82,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun paperPosition() = CoroutineScope(Dispatchers.IO).launch {
+    private fun paperPosition() = lifecycleScope.launch(Dispatchers.IO) {
         try {
             val response = ApiService.retrofitService.paperPosition()
             withContext(Dispatchers.Main) {
@@ -99,7 +95,7 @@ class MainActivity : AppCompatActivity() {
     private fun paperExit() {
         val price = etExitPrice.text.toString().toDoubleOrNull()
         if (price == null || price <= 0) { etExitPrice.error = "Enter a positive exit price"; return }
-        CoroutineScope(Dispatchers.IO).launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val response = ApiService.retrofitService.paperExit(PaperExitRequest(price))
                 withContext(Dispatchers.Main) { tvPaperResult.text = if (response.status == "closed") "PAPER POSITION CLOSED\n\nEntry: ₹${response.entry_price}\nExit: ₹${response.exit_price}\nQuantity: ${response.quantity}\nP&L: ₹${response.pnl}" else "PAPER POSITION: FLAT" }
