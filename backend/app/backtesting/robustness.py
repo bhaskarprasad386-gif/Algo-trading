@@ -1,7 +1,7 @@
 """Deterministic robustness summary for completed backtest variants."""
 
 from dataclasses import dataclass
-from statistics import median
+from statistics import median, pstdev
 from typing import Iterable
 
 from app.backtesting.engine import BacktestResult
@@ -18,6 +18,7 @@ class RobustnessResult:
     median_return: float
     max_return: float
     return_range: float
+    return_stddev: float
     worst_max_drawdown: float
 
 
@@ -25,7 +26,7 @@ def summarize_robustness(results: Iterable[BacktestResult]) -> RobustnessResult:
     """Return deterministic cross-variant robustness statistics."""
     items = tuple(results)
     if not items:
-        return RobustnessResult(0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        return RobustnessResult(0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
     returns = tuple(result.total_return for result in items)
     profitable = sum(1 for value in returns if value > 0.0)
@@ -40,5 +41,6 @@ def summarize_robustness(results: Iterable[BacktestResult]) -> RobustnessResult:
         median_return=median(returns),
         max_return=max_return,
         return_range=max_return - min_return,
+        return_stddev=pstdev(returns),
         worst_max_drawdown=max(result.max_drawdown for result in items),
     )
