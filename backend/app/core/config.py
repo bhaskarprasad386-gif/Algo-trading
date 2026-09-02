@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     angel_password: str = ""
     angel_totp_secret: str = ""
 
+    # Cash-Future history collector
+    CASH_FUTURE_HISTORY_ENABLED: bool = False
+    CASH_FUTURE_HISTORY_SYMBOLS: str = ""
+    CASH_FUTURE_HISTORY_INTERVAL_SECONDS: int = 60
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
