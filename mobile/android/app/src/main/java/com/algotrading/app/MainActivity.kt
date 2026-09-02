@@ -24,6 +24,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etExitPrice: EditText
     private lateinit var tvPaperResult: TextView
     private lateinit var tvScannerResult: TextView
+    private lateinit var tvScannerAutoRefreshStatus: TextView
+    private lateinit var tvScannerNextRefresh: TextView
     private lateinit var btnRunScanner: Button
     private lateinit var cbScannerAutoRefresh: CheckBox
     private lateinit var etScannerRefreshSeconds: EditText
@@ -33,6 +35,8 @@ class MainActivity : AppCompatActivity() {
 
     private val scannerRefreshHandler = Handler(Looper.getMainLooper())
     private lateinit var scannerRefreshRunnable: Runnable
+    private lateinit var scannerCountdownRunnable: Runnable
+    private var scannerCountdownSeconds = 0L
 
     private fun currentTimestamp(): String = SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(Date())
 
@@ -45,6 +49,8 @@ class MainActivity : AppCompatActivity() {
         etExitPrice = findViewById(R.id.etExitPrice)
         tvPaperResult = findViewById(R.id.tvPaperResult)
         tvScannerResult = findViewById(R.id.tvScannerResult)
+        tvScannerAutoRefreshStatus = findViewById(R.id.tvScannerAutoRefreshStatus)
+        tvScannerNextRefresh = findViewById(R.id.tvScannerNextRefresh)
         btnRunScanner = findViewById(R.id.btnRunScanner)
         cbScannerAutoRefresh = findViewById(R.id.cbScannerAutoRefresh)
         etScannerRefreshSeconds = findViewById(R.id.etScannerRefreshSeconds)
@@ -52,6 +58,22 @@ class MainActivity : AppCompatActivity() {
         btnPaperPosition = findViewById(R.id.btnPaperPosition)
         btnPaperExit = findViewById(R.id.btnPaperExit)
         scannerRefreshRunnable = Runnable { runCashFutureScanner() }
+        scannerCountdownRunnable = object : Runnable {
+            override fun run() {
+                if (!cbScannerAutoRefresh.isChecked || btnRunScanner.isEnabled.not()) {
+                    tvScannerNextRefresh.text = if (btnRunScanner.isEnabled) "Next Refresh: —" else "Next Refresh: SCAN IN PROGRESS"
+                    return
+                }
+                scannerCountdownSeconds -= 1L
+                if (scannerCountdownSeconds <= 0L) {
+                    tvScannerNextRefresh.text = "Next Refresh: NOW"
+                    return
+                }
+                tvScannerNextRefresh.text = "Next Refresh: ${scannerCountdownSeconds}s"
+                scannerRefreshHandler.postDelayed(this, 1000L)
+            }
+        }
+        updateScannerAutoRefreshStatus()
         checkServerStatus()
         btnRunScanner.setOnClickListener { runCashFutureScanner() }
         cbScannerAutoRefresh.setOnCheckedChangeListener { _, _ -> scheduleScannerRefresh() }
@@ -63,15 +85,28 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable)
+        scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable)
         super.onDestroy()
+    }
+
+    private fun updateScannerAutoRefreshStatus() {
+        tvScannerAutoRefreshStatus.text = if (cbScannerAutoRefresh.isChecked) "Auto Refresh: ON" else "Auto Refresh: OFF"
     }
 
     private fun scheduleScannerRefresh() {
         scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable)
-        if (!cbScannerAutoRefresh.isChecked || btnRunScanner.isEnabled.not()) return
+        scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable)
+        updateScannerAutoRefreshStatus()
+        if (!cbScannerAutoRefresh.isChecked || btnRunScanner.isEnabled.not()) {
+            tvScannerNextRefresh.text = if (btnRunScanner.isEnabled) "Next Refresh: —" else "Next Refresh: SCAN IN PROGRESS"
+            return
+        }
         val seconds = etScannerRefreshSeconds.text.toString().toLongOrNull()?.coerceIn(10L, 300L) ?: 30L
         etScannerRefreshSeconds.setText(seconds.toString())
+        scannerCountdownSeconds = seconds
+        tvScannerNextRefresh.text = "Next Refresh: ${scannerCountdownSeconds}s"
         scannerRefreshHandler.postDelayed(scannerRefreshRunnable, seconds * 1000L)
+        scannerRefreshHandler.postDelayed(scannerCountdownRunnable, 1000L)
     }
 
     private fun checkServerStatus() = lifecycleScope.launch(Dispatchers.IO) {
@@ -86,6 +121,8 @@ class MainActivity : AppCompatActivity() {
     private fun runCashFutureScanner(): Job = lifecycleScope.launch(Dispatchers.IO) {
         withContext(Dispatchers.Main) {
             scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable)
+            scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable)
+            tvScannerNextRefresh.text = "Next Refresh: SCAN IN PROGRESS"
             btnRunScanner.isEnabled = false
             btnRunScanner.text = "SCANNING..."
             tvScannerResult.text = "SCAN IN PROGRESS\n\nRunning Cash–Future scanner..."
@@ -146,6 +183,12 @@ class MainActivity : AppCompatActivity() {
             withContext(Dispatchers.Main) {
                 btnRunScanner.isEnabled = true
                 btnRunScanner.text = "RUN CASH–FUTURE SCAN"
+                if (cbScannerAutoRefresh.isChecked) {
+                    tvScannerAutoRefreshStatus.text = "Auto Refresh: ON • READY"
+                } else {
+                    tvScannerAutoRefreshStatus.text = "Auto Refresh: OFF"
+                    tvScannerNextRefresh.text = "Next Refresh: —"
+                }
                 scheduleScannerRefresh()
             }
         }
