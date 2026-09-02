@@ -138,8 +138,12 @@ class MainActivity : AppCompatActivity() {
             withContext(Dispatchers.Main) { setPaperBusy(true, "PAPER ENTRY IN PROGRESS...") }
             try {
                 val response = ApiService.retrofitService.paperEntry(PaperEntryRequest(price, quantity))
-                withContext(Dispatchers.Main) { tvPaperResult.text = "PAPER POSITION ACTIVE\n\nEntry: ₹${response.entry_price}\nStop Loss: ₹${response.stop_loss}\nTarget: ₹${response.target}\nQuantity: ${response.position.quantity}" }
-            } catch (error: Exception) { withContext(Dispatchers.Main) { tvPaperResult.text = "Paper Entry Failed: ${error.message ?: "API error"}" } }
+                val completedAt = currentTimestamp()
+                withContext(Dispatchers.Main) { tvPaperResult.text = "PAPER POSITION ACTIVE\n\nCompleted: $completedAt\n\nEntry: ₹${response.entry_price}\nStop Loss: ₹${response.stop_loss}\nTarget: ₹${response.target}\nQuantity: ${response.position.quantity}" }
+            } catch (error: Exception) {
+                val failedAt = currentTimestamp()
+                withContext(Dispatchers.Main) { tvPaperResult.text = "Paper Entry Failed\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
+            }
             finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
         }
     }
@@ -148,11 +152,15 @@ class MainActivity : AppCompatActivity() {
         withContext(Dispatchers.Main) { setPaperBusy(true, "CHECKING PAPER POSITION...") }
         try {
             val response = ApiService.retrofitService.paperPosition()
+            val completedAt = currentTimestamp()
             withContext(Dispatchers.Main) {
                 val position = response.position
-                tvPaperResult.text = if (position == null) "PAPER POSITION: FLAT" else "PAPER POSITION ACTIVE\n\nEntry: ₹${position.entry_price}\nStop Loss: ₹${position.stop_loss}\nTarget: ₹${position.target}\nQuantity: ${position.quantity}"
+                tvPaperResult.text = if (position == null) "PAPER POSITION: FLAT\n\nChecked: $completedAt" else "PAPER POSITION ACTIVE\n\nChecked: $completedAt\n\nEntry: ₹${position.entry_price}\nStop Loss: ₹${position.stop_loss}\nTarget: ₹${position.target}\nQuantity: ${position.quantity}"
             }
-        } catch (error: Exception) { withContext(Dispatchers.Main) { tvPaperResult.text = "Position Check Failed: ${error.message ?: "API error"}" } }
+        } catch (error: Exception) {
+            val failedAt = currentTimestamp()
+            withContext(Dispatchers.Main) { tvPaperResult.text = "Position Check Failed\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
+        }
         finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
     }
 
@@ -163,8 +171,12 @@ class MainActivity : AppCompatActivity() {
             withContext(Dispatchers.Main) { setPaperBusy(true, "PAPER EXIT IN PROGRESS...") }
             try {
                 val response = ApiService.retrofitService.paperExit(PaperExitRequest(price))
-                withContext(Dispatchers.Main) { tvPaperResult.text = if (response.status == "closed") "PAPER POSITION CLOSED\n\nEntry: ₹${response.entry_price}\nExit: ₹${response.exit_price}\nQuantity: ${response.quantity}\nP&L: ₹${response.pnl}" else "PAPER POSITION: FLAT" }
-            } catch (error: Exception) { withContext(Dispatchers.Main) { tvPaperResult.text = "Paper Exit Failed: ${error.message ?: "API error"}" } }
+                val completedAt = currentTimestamp()
+                withContext(Dispatchers.Main) { tvPaperResult.text = if (response.status == "closed") "PAPER POSITION CLOSED\n\nCompleted: $completedAt\n\nEntry: ₹${response.entry_price}\nExit: ₹${response.exit_price}\nQuantity: ${response.quantity}\nP&L: ₹${response.pnl}" else "PAPER POSITION: FLAT\n\nCompleted: $completedAt" }
+            } catch (error: Exception) {
+                val failedAt = currentTimestamp()
+                withContext(Dispatchers.Main) { tvPaperResult.text = "Paper Exit Failed\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
+            }
             finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
         }
     }
