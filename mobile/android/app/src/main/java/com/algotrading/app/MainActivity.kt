@@ -22,7 +22,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvScannerResult: TextView
     private lateinit var btnRunScanner: Button
 
-    private fun lastScanTime(): String = SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(Date())
+    private fun currentTimestamp(): String = SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(Date())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,12 +58,12 @@ class MainActivity : AppCompatActivity() {
         }
         try {
             val response = ApiService.retrofitService.cashFutureScan()
-            val scannedAt = lastScanTime()
+            val completedAt = currentTimestamp()
             withContext(Dispatchers.Main) {
                 tvScannerResult.text = if (response.data.isEmpty()) {
                     buildString {
                         append("SCAN COMPLETE — NO OPPORTUNITIES\n")
-                        append("Last Scan: $scannedAt\n\n")
+                        append("Last Scan: $completedAt\n\n")
                         append("Symbols requested: ${response.symbols_requested.size}\n")
                         append("Observations: ${response.scanned_observations}\n")
                         append("Executable opportunities: 0\n")
@@ -77,7 +77,7 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     buildString {
                         append("SCAN COMPLETE — SUCCESS\n")
-                        append("Last Scan: $scannedAt\n\n")
+                        append("Last Scan: $completedAt\n\n")
                         append("Symbols requested: ${response.symbols_requested.size}\n")
                         append("Observations: ${response.scanned_observations}\n")
                         append("Executable opportunities: ${response.opportunity_count}\n")
@@ -106,7 +106,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         } catch (error: Exception) {
-            withContext(Dispatchers.Main) { tvScannerResult.text = "SCAN ERROR\n\nLast Scan: ${lastScanTime()}\n\nScanner Failed: ${error.message ?: "API error"}" }
+            val failedAt = currentTimestamp()
+            withContext(Dispatchers.Main) { tvScannerResult.text = "SCAN ERROR\n\nLast Scan: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}" }
         } finally {
             withContext(Dispatchers.Main) {
                 btnRunScanner.isEnabled = true
