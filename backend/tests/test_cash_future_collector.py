@@ -40,6 +40,14 @@ class FakeMarketClient:
             },
         }
 
+    def margin(self, positions):
+        assert len(positions) == 1
+        position = positions[0]
+        assert position["exchange"] == "NFO"
+        assert position["productType"] == "CARRYFORWARD"
+        assert position["tradeType"] == "SELL"
+        return {"status": True, "data": {"totalMarginRequired": 50000.0}}
+
 
 def test_collector_keeps_current_and_near_separate(monkeypatch):
     saved = []
@@ -55,9 +63,11 @@ def test_collector_keeps_current_and_near_separate(monkeypatch):
     assert [item["contract_month"] for item in result] == ["CURRENT", "NEAR"]
     assert [point.contract_month for point in saved] == ["CURRENT", "NEAR"]
     assert [point.gap for point in saved] == [8.0, 11.0]
+    assert [point.margin_required for point in saved] == [50000.0, 50000.0]
     assert saved[0].expiry_date == date(2026, 9, 30)
     assert saved[1].expiry_date == date(2026, 10, 29)
     assert result[0]["volume"] == 5000
     assert result[0]["oi"] == 20000
     assert result[0]["future_bid"] == 107.9
     assert result[0]["future_ask"] == 108.1
+    assert result[0]["margin_required"] == 50000.0
