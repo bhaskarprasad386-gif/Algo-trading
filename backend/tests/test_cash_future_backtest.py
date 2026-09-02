@@ -60,8 +60,13 @@ def test_backtest_rejects_mixed_contract_input():
 def test_backtest_can_filter_an_explicit_contract():
     now = datetime(2026, 9, 2, 10, 0)
     result = run_backtest(
-        [point(now, 8.0, month="CURRENT"), point(now + timedelta(hours=1), 2.0, month="NEAR")],
+        [
+            point(now, 8.0, month="CURRENT"),
+            point(now, 9.0, month="NEAR"),
+            point(now + timedelta(hours=1), 2.0, month="NEAR"),
+        ],
         BacktestConfig(min_entry_gap=5.0, exit_gap=3.0, contract_month="NEAR"),
     )
     assert result["trade_count"] == 1
-    assert result["trades"][0]["entry_gap"] == 2.0 or result["trade_count"] == 1
+    assert result["trades"][0]["entry_gap"] == 9.0
+    assert result["trades"][0]["exit_gap"] == 2.0
