@@ -48,3 +48,5 @@
 - Fresh Backend Tests CI **#106** completed successfully: **69 tests passed**, 0 failed.
 - **Backtesting Sortino ratio metric VERIFIED.** `BacktestResult.sortino_ratio` uses trade-level returns relative to initial capital, zero minimum acceptable return and downside deviation without annualization.
 - Fresh Backend Tests CI **#114** completed successfully: **70 tests passed**, 0 failed.
+- **Backtesting CAGR metric VERIFIED.** `BacktestResult.cagr` annualizes compounded growth using completed-trade datetime/date duration when valid timestamps are available.
+- Fresh Backend Tests CI **#125** completed successfully: **71 tests passed**, 0 failed.
