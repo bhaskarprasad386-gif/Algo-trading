@@ -24,3 +24,4 @@ Fresh execution idempotency verification.
 Fresh execution retry fallback verification.
 Fresh pre-trade risk and circuit verification.
 Fresh execution safety controls verification.
+Fresh multi-leg execution safeguards verification.
