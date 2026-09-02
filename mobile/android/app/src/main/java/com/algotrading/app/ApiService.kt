@@ -1,10 +1,12 @@
 package com.algotrading.app
 
+import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
+import java.util.concurrent.TimeUnit
 
 data class MarketStatus(val status: String, val message: String)
 
@@ -55,8 +57,17 @@ interface ApiInterface {
 }
 
 object ApiService {
+    private val httpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
+
     val retrofitService: ApiInterface by lazy {
         Retrofit.Builder()
+            .client(httpClient)
             .addConverterFactory(GsonConverterFactory.create())
             .baseUrl(BuildConfig.BACKEND_BASE_URL)
             .build()
