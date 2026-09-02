@@ -116,7 +116,6 @@ class CashFutureHistoryCollector:
         if cash_ltp <= 0:
             raise ValueError(f"invalid cash LTP for {cash_symbol}")
 
-        # One timestamp per collection cycle keeps CURRENT and NEAR observations comparable.
         observation_time = datetime.now(IST).replace(microsecond=0)
         results: list[dict] = []
         for label, future in zip(("CURRENT", "NEAR"), self._future_instruments(symbol)):
@@ -133,16 +132,9 @@ class CashFutureHistoryCollector:
             quote = calculate_cash_future(
                 CashQuote(symbol=symbol, ltp=cash_ltp, bid=cash_quote["bid"], ask=cash_quote["ask"]),
                 FutureQuote(
-                    symbol=symbol,
-                    contract_month=label,
-                    ltp=future_ltp,
-                    lot_size=lot_size,
-                    margin_required=0.0,
-                    volume=market_quote["volume"],
-                    oi=market_quote["oi"],
-                    bid=market_quote["bid"],
-                    ask=market_quote["ask"],
-                    expiry=expiry_date,
+                    symbol=symbol, contract_month=label, ltp=future_ltp, lot_size=lot_size,
+                    margin_required=0.0, volume=market_quote["volume"], oi=market_quote["oi"],
+                    bid=market_quote["bid"], ask=market_quote["ask"], expiry=expiry_date,
                 ),
                 CashFutureConfig(),
             )
@@ -150,6 +142,9 @@ class CashFutureHistoryCollector:
                 timestamp=observation_time, symbol=symbol, contract_month=label,
                 cash_price=cash_ltp, future_price=future_ltp, gap=quote.gap,
                 gap_pct=quote.gap_pct, lot_size=lot_size, margin_required=0.0,
+                volume=market_quote["volume"], oi=market_quote["oi"],
+                cash_bid=cash_quote["bid"], cash_ask=cash_quote["ask"],
+                future_bid=market_quote["bid"], future_ask=market_quote["ask"],
                 charges=quote.charges, funding_cost=quote.funding_cost,
                 net_profit=quote.net_profit, roi_pct=quote.roi_pct,
                 expiry_date=expiry_date,
