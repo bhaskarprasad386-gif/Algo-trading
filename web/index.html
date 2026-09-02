@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Algo Trading Dashboard</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#f5f7fb;color:#172033}header{background:#111827;color:white;padding:18px 20px}main{max-width:1200px;margin:auto;padding:20px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.muted{color:#64748b}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}.card{background:white;border:1px solid #e5e7eb;border-radius:12px;padding:16px}.value{font-size:24px;font-weight:700;margin-top:5px}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}button{border:0;border-radius:9px;padding:10px 15px;cursor:pointer;font-weight:600}#scan{background:#111827;color:#fff}table{width:100%;border-collapse:collapse;background:white;border-radius:12px;overflow:hidden}th,td{text-align:left;padding:12px;border-bottom:1px solid #e5e7eb;font-size:14px}th{background:#f8fafc}.pill{padding:4px 8px;border-radius:999px;font-size:12px;font-weight:700}.ok{background:#dcfce7;color:#166534}.no{background:#fee2e2;color:#991b1b}.table-wrap{overflow:auto;border-radius:12px}.status{margin:10px 0}.empty{text-align:center;padding:30px;color:#64748b}@media(max-width:800px){.cards{grid-template-columns:repeat(2,1fr)}th,td{white-space:nowrap}}@media(max-width:480px){main{padding:12px}.cards{grid-template-columns:1fr 1fr}.card{padding:12px}.value{font-size:20px}}
+  </style>
+</head>
+<body>
+<header><div class="top"><div><strong>Algo Trading</strong><div class="muted" style="color:#cbd5e1">Cash–Future Scanner Dashboard</div></div><span id="api">API: not checked</span></div></header>
+<main>
+  <div class="cards">
+    <div class="card"><div class="muted">Opportunities</div><div class="value" id="count">0</div></div>
+    <div class="card"><div class="muted">Executable</div><div class="value" id="exec">0</div></div>
+    <div class="card"><div class="muted">Best Net Profit</div><div class="value" id="profit">₹0</div></div>
+    <div class="card"><div class="muted">Best ROI</div><div class="value" id="roi">0%</div></div>
+  </div>
+  <div class="actions"><button id="scan">Run Cash–Future Scan</button></div>
+  <div class="status muted" id="status">Dashboard ready. Live broker connection is intentionally not used yet.</div>
+  <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Cash</th><th>Future</th><th>Gap</th><th>Margin</th><th>Net Profit</th><th>ROI</th><th>Status</th></tr></thead><tbody id="rows"><tr><td colspan="8" class="empty">Run a scan to load opportunities.</td></tr></tbody></table></div>
+</main>
+<script>
+const API_BASE='';
+const money=n=>`₹${Number(n||0).toFixed(2)}`;
+function render(data){const rows=document.getElementById('rows');document.getElementById('count').textContent=data.length;const executable=data.filter(x=>x.executable).length;document.getElementById('exec').textContent=executable;const bestProfit=Math.max(0,...data.map(x=>Number(x.net_profit||0)));const bestRoi=Math.max(0,...data.map(x=>Number(x.roi_pct||0)));document.getElementById('profit').textContent=money(bestProfit);document.getElementById('roi').textContent=`${bestRoi.toFixed(2)}%`;if(!data.length){rows.innerHTML='<tr><td colspan="8" class="empty">No opportunities returned.</td></tr>';return}rows.innerHTML=data.map(x=>`<tr><td>${x.symbol||'-'}</td><td>${money(x.cash_ltp)}</td><td>${money(x.future_ltp)}</td><td>${money(x.gap)} (${Number(x.gap_pct||0).toFixed(2)}%)</td><td>${money(x.margin_required)}</td><td>${money(x.net_profit)}</td><td>${Number(x.roi_pct||0).toFixed(2)}%</td><td><span class="pill ${x.executable?'ok':'no'}">${x.executable?'EXECUTABLE':'REJECTED'}</span></td></tr>`).join('')}
+async function scan(){const status=document.getElementById('status');status.textContent='Scanning...';try{const r=await fetch(`${API_BASE}/api/v1/scanner/cash-future/live/auto`);if(!r.ok)throw new Error(`HTTP ${r.status}`);const j=await r.json();document.getElementById('api').textContent='API: connected';render(j.data||[]);status.textContent=`Scan complete — ${j.opportunity_count??(j.data||[]).length} executable opportunities.`}catch(e){document.getElementById('api').textContent='API: unavailable';status.textContent=`Backend not reachable: ${e.message}`}}
+document.getElementById('scan').addEventListener('click',scan);
+</script>
+</body>
+</html>
