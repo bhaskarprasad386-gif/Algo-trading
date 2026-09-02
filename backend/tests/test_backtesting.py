@@ -19,6 +19,7 @@ def test_backtest_enters_and_exits_on_strategy_rules():
     assert result.trades[0].exit_price == 110
     assert result.net_pnl == 10
     assert result.win_rate == 1.0
+    assert result.max_drawdown == 0.0
 
 
 def test_backtest_applies_slippage_and_transaction_costs():
@@ -46,6 +47,27 @@ def test_backtest_applies_slippage_and_transaction_costs():
     assert trade.gross_pnl == pytest.approx(15.8)
     assert trade.costs == pytest.approx(0.4198)
     assert trade.net_pnl == pytest.approx(15.3802)
+    assert result.max_drawdown == 0.0
+
+
+def test_backtest_tracks_realized_max_drawdown():
+    entry = Strategy("entry", (StrategyRule("go", threshold_rule("signal", minimum=1)),))
+    exit_ = Strategy("exit", (StrategyRule("stop", threshold_rule("signal", maximum=0)),))
+
+    result = BacktestEngine().run(
+        [
+            {"timestamp": 1, "close": 100, "signal": 1},
+            {"timestamp": 2, "close": 110, "signal": 0},
+            {"timestamp": 3, "close": 110, "signal": 1},
+            {"timestamp": 4, "close": 90, "signal": 0},
+        ],
+        entry,
+        exit_,
+    )
+
+    assert len(result.trades) == 2
+    assert result.net_pnl == -10
+    assert result.max_drawdown == pytest.approx(10 / 100_010)
 
 
 def test_backtest_without_completed_trade_has_zero_pnl():
@@ -59,3 +81,4 @@ def test_backtest_without_completed_trade_has_zero_pnl():
     assert result.trades == ()
     assert result.net_pnl == 0
     assert result.win_rate == 0
+    assert result.max_drawdown == 0
