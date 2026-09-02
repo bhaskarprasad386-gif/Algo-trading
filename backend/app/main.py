@@ -39,6 +39,39 @@ app.include_router(market_data_router)
 app.include_router(scanner_router)
 app.include_router(auto_scanner_router)
 
+
+@app.websocket("/ws/market-data/{symbol}")
+async def market_data_websocket(websocket: WebSocket, symbol: str):
+    await websocket.accept()
+    client = MarketDataWebSocket()
+    try:
+        instrument = InstrumentMaster().get_instrument(symbol.strip().upper(), "NSE")
+        if not instrument:
+            await websocket.send_json({"status": "error", "detail": f"Instrument not found: NSE {symbol.strip().upper()}"})
+            return
+        messages = asyncio.Queue()
+
+        def on_data(message):
+            try:
+                asyncio.get_running_loop().call_soon_threadsafe(messages.put_nowait, message)
+            except RuntimeError:
+                pass
+
+        client.connect(exchange_type=1, tokens=[str(instrument["token"])], on_data=on_data)
+        while True:
+            message = await messages.get()
+            await websocket.send_json(message if isinstance(message, dict) else {"data": message})
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        app_logger.error(f"Market-data WebSocket error for {symbol}: {exc}")
+        try:
+            await websocket.send_json({"status": "error", "detail": str(exc)})
+        except Exception:
+            pass
+    finally:
+        client.close()
+
 _history_collector_task: asyncio.Task | None = None
 IST = ZoneInfo("Asia/Kolkata")
 MARKET_OPEN = time(9, 15)
