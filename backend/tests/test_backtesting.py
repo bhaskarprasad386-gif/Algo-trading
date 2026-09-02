@@ -103,8 +103,9 @@ def test_backtest_cagr_uses_completed_trade_duration():
     exit_ = Strategy("exit", (StrategyRule("stop", threshold_rule("signal", maximum=0)),))
     start = datetime(2024, 1, 1, tzinfo=timezone.utc)
     end = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    config = BacktestConfig(initial_capital=1_000, quantity=10)
 
-    result = BacktestEngine().run(
+    result = BacktestEngine(config).run(
         [
             {"timestamp": start, "close": 100, "signal": 1},
             {"timestamp": end, "close": 110, "signal": 0},
