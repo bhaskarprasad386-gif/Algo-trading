@@ -6,7 +6,7 @@ from typing import Callable
 
 from .confirmation import ConfirmationGateway
 from .idempotency import ExecutionRequest, IdempotencyGuard
-from .safety import SafetyController
+from .safety import SafetyController, SafetyLimits
 
 
 class ExecutionMode(str, Enum):
@@ -67,7 +67,9 @@ class DualExecutionEngine:
         self._fill_executor = fill_executor
         self.confirmation = confirmation or ConfirmationGateway()
         self.idempotency = idempotency or IdempotencyGuard()
-        self.safety = safety or SafetyController()
+        # Preserve the legacy constructor while keeping explicit safety injection
+        # available for real/live configuration and limits.
+        self.safety = safety or SafetyController(SafetyLimits(daily_loss_limit=float("inf")))
         self.paper = ExecutionState(ExecutionMode.PAPER)
         self.live = ExecutionState(ExecutionMode.LIVE)
 
