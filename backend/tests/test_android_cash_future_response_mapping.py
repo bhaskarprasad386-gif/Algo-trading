@@ -7,14 +7,7 @@ MAIN_ACTIVITY = ANDROID_ROOT / "app" / "src" / "main" / "java" / "com" / "algotr
 
 
 def test_android_cash_future_response_fixture_matches_displayed_fields():
-    fixture = {
-        "status": "ok", "scanner": "cash-future", "mode": "automatic",
-        "symbols_requested": ["ABC"], "scanned_observations": 1, "opportunity_count": 1,
-        "data": [{"symbol": "ABC", "cash_price": 100.0, "future_price": 105.0, "gap": 5.0,
-                  "gap_pct": 5.0, "gross_spread_profit": 500.0, "margin_required": 1000.0,
-                  "deployed_capital": 1500.0, "net_profit": 450.0, "roi_pct": 30.0, "executable": True}],
-        "errors": [],
-    }
+    fixture = {"status": "ok", "scanner": "cash-future", "mode": "automatic", "symbols_requested": ["ABC"], "scanned_observations": 1, "opportunity_count": 1, "data": [{"symbol": "ABC", "cash_price": 100.0, "future_price": 105.0, "gap": 5.0, "gap_pct": 5.0, "gross_spread_profit": 500.0, "margin_required": 1000.0, "deployed_capital": 1500.0, "net_profit": 450.0, "roi_pct": 30.0, "executable": True}], "errors": []}
     parsed = json.loads(json.dumps(fixture))
     opportunity = parsed["data"][0]
     api = API_SERVICE.read_text(encoding="utf-8")
@@ -42,8 +35,8 @@ def test_android_cash_future_scanner_states_are_clear():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
     assert 'btnRunScanner.text = "SCANNING..."' in ui
     assert 'tvScannerResult.text = "SCAN IN PROGRESS\\n\\nRunning Cash–Future scanner..."' in ui
-    assert 'append("SCAN COMPLETE — SUCCESS\\n\\n")' in ui
-    assert 'append("SCAN COMPLETE — NO OPPORTUNITIES\\n\\n")' in ui
+    assert 'append("SCAN COMPLETE — SUCCESS\\n")' in ui
+    assert 'append("SCAN COMPLETE — NO OPPORTUNITIES\\n")' in ui
     assert 'tvScannerResult.text = "SCAN ERROR\\n\\nScanner Failed:' in ui
 
 
@@ -58,13 +51,7 @@ def test_android_cash_future_scanner_summary_counts_are_clear():
 
 def test_android_cash_future_per_stock_summary_is_clear():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
-    for label in (
-        'append("────────────────────\\n")', 'append("Cash: ₹${item.cash_price}\\n")',
-        'append("Future: ₹${item.future_price}\\n")', 'append("Gap: ₹${item.gap} (${item.gap_pct}%)\\n")',
-        'append("Gross Spread: ₹${item.gross_spread_profit}\\n")', 'append("Margin: ₹${item.margin_required}\\n")',
-        'append("Deployed Capital: ₹${item.deployed_capital}\\n")', 'append("Net Profit: ₹${item.net_profit}\\n")',
-        'append("ROI: ${item.roi_pct}%\\n")', 'append("Executable: ${if (item.executable) "YES" else "NO"}\\n\\n")',
-    ):
+    for label in ('append("────────────────────\\n")', 'append("Cash: ₹${item.cash_price}\\n")', 'append("Future: ₹${item.future_price}\\n")', 'append("Gap: ₹${item.gap} (${item.gap_pct}%)\\n")', 'append("Gross Spread: ₹${item.gross_spread_profit}\\n")', 'append("Margin: ₹${item.margin_required}\\n")', 'append("Deployed Capital: ₹${item.deployed_capital}\\n")', 'append("Net Profit: ₹${item.net_profit}\\n")', 'append("ROI: ${item.roi_pct}%\\n")', 'append("Executable: ${if (item.executable) "YES" else "NO"}\\n\\n")'):
         assert label in ui
 
 
