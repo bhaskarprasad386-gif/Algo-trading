@@ -48,6 +48,8 @@ def test_cash_future_passes_requested_executable_filters():
     assert result.executable is True
     assert result.rejection_reasons == ()
     assert result.net_profit == 10.0
+    assert result.deployed_capital == 2000.0
+    assert result.roi_pct == 0.5
 
 
 def test_cash_future_rejects_gap_profit_volume_and_oi_filters():
@@ -72,3 +74,23 @@ def test_cash_future_rejects_wide_future_bid_ask_spread():
     )
     assert result.executable is False
     assert "bid_ask_spread_above_maximum" in result.rejection_reasons
+
+
+def test_cash_future_rejects_insufficient_broker_margin():
+    result = calculate_cash_future(
+        CashQuote(symbol="SBIN", ltp=100.0),
+        _quote(margin_required=900.0),
+        CashFutureConfig(min_margin=1000.0),
+    )
+    assert result.executable is False
+    assert "margin_below_minimum" in result.rejection_reasons
+
+
+def test_cash_future_rejects_low_broker_margin_roi():
+    result = calculate_cash_future(
+        CashQuote(symbol="SBIN", ltp=100.0),
+        _quote(margin_required=10000.0),
+        CashFutureConfig(min_roi_pct=0.2),
+    )
+    assert result.executable is False
+    assert "roi_below_minimum" in result.rejection_reasons
