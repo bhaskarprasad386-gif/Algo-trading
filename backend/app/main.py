@@ -1,4 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
+from pathlib import Path
 from pydantic import BaseModel
 import asyncio
 import queue
@@ -25,7 +27,6 @@ from app.scanner.auto_routes import router as auto_scanner_router
 from app.execution.paper_routes import router as paper_execution_router
 from app.scanner.cash_future_collector import CashFutureHistoryCollector
 
-# Import models before creating tables so SQLAlchemy registers all model metadata.
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug)
@@ -40,6 +41,13 @@ app.include_router(market_data_router)
 app.include_router(scanner_router)
 app.include_router(auto_scanner_router)
 app.include_router(paper_execution_router)
+
+DASHBOARD_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "index.html"
+
+
+@app.get("/dashboard", include_in_schema=False)
+def dashboard():
+    return FileResponse(DASHBOARD_FILE, media_type="text/html")
 
 
 @app.websocket("/ws/market-data/{symbol}")
