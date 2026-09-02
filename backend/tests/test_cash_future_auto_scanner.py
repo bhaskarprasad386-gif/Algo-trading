@@ -121,3 +121,27 @@ def test_cash_future_live_auto_api_returns_only_executable_rows(monkeypatch):
     assert len(response["data"]) == 1
     assert response["data"][0]["executable"] is True
     assert response["data"][0]["net_profit"] == 25.0
+
+
+def test_cash_future_live_auto_api_sorts_executable_rows_by_net_profit(monkeypatch):
+    class FakeCollector:
+        def __init__(self, symbols, config):
+            assert config.require_two_sided_quotes is True
+
+        def collect(self, db):
+            return {
+                "collected": [
+                    {"symbol": "SBIN", "net_profit": 20.0, "roi_pct": 3.0, "executable": True},
+                    {"symbol": "TCS", "net_profit": 50.0, "roi_pct": 1.0, "executable": True},
+                    {"symbol": "INFY", "net_profit": 50.0, "roi_pct": 2.0, "executable": True},
+                ],
+                "errors": [],
+            }
+
+    monkeypatch.setattr(auto_routes, "discover_cash_future_symbols", lambda limit: ["SBIN", "TCS", "INFY"])
+    monkeypatch.setattr(auto_routes, "CashFutureHistoryCollector", FakeCollector)
+
+    response = auto_routes.cash_future_live_auto_scanner(db=object())
+
+    assert [item["symbol"] for item in response["data"]] == ["INFY", "TCS", "SBIN"]
+    assert response["opportunity_count"] == 3
