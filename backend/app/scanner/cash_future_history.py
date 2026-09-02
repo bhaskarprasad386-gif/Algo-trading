@@ -18,6 +18,12 @@ class CashFutureHistoryPoint:
     gap_pct: float
     lot_size: int
     margin_required: float
+    volume: float | None = None
+    oi: float | None = None
+    cash_bid: float | None = None
+    cash_ask: float | None = None
+    future_bid: float | None = None
+    future_ask: float | None = None
     charges: float = 0.0
     funding_cost: float = 0.0
     net_profit: float = 0.0
