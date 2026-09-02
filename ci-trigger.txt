@@ -14,3 +14,4 @@ Fresh CAGR verification after test fix.
 Fresh CAGR verification after tolerance fix.
 Fresh CAGR verification after restoring backtesting coverage.
 Fresh backtest robustness summary Backend Tests verification.
+Fresh backtest robustness pytest verification.
