@@ -1,6 +1,7 @@
 """Small deterministic backtesting engine foundation."""
 
 from dataclasses import dataclass
+from datetime import date, datetime
 from math import sqrt
 from typing import Iterable, Mapping
 
@@ -47,6 +48,7 @@ class BacktestResult:
     sharpe_ratio: float
     sortino_ratio: float
     max_drawdown: float
+    cagr: float
 
 
 class BacktestEngine:
@@ -109,6 +111,7 @@ class BacktestEngine:
         sharpe_ratio = _trade_sharpe_ratio(trades, self.config.initial_capital)
         sortino_ratio = _trade_sortino_ratio(trades, self.config.initial_capital)
         total_return = net_pnl / self.config.initial_capital
+        cagr = _calculate_cagr(trades, self.config.initial_capital, capital)
         return BacktestResult(
             initial_capital=self.config.initial_capital,
             final_capital=capital,
@@ -120,6 +123,7 @@ class BacktestEngine:
             sharpe_ratio=sharpe_ratio,
             sortino_ratio=sortino_ratio,
             max_drawdown=max_drawdown,
+            cagr=cagr,
         )
 
 
@@ -144,6 +148,24 @@ def _trade_sortino_ratio(trades: list[BacktestTrade], initial_capital: float) ->
     if downside_deviation == 0.0:
         return 0.0
     return mean_return / downside_deviation
+
+
+def _calculate_cagr(
+    trades: list[BacktestTrade], initial_capital: float, final_capital: float
+) -> float:
+    """Calculate CAGR when completed-trade timestamps provide a real duration."""
+    if not trades or final_capital <= 0:
+        return 0.0
+    start = trades[0].entry_timestamp
+    end = trades[-1].exit_timestamp
+    if not isinstance(start, (datetime, date)) or not isinstance(end, (datetime, date)):
+        return 0.0
+    if isinstance(start, datetime) != isinstance(end, datetime):
+        return 0.0
+    years = (end - start).total_seconds() / (365.25 * 24 * 60 * 60) if isinstance(start, datetime) else (end - start).days / 365.25
+    if years <= 0:
+        return 0.0
+    return (final_capital / initial_capital) ** (1.0 / years) - 1.0
 
 
 def _is_number(value: object) -> bool:
