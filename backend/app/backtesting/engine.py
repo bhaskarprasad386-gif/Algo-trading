@@ -55,7 +55,12 @@ class BacktestEngine:
     def __init__(self, config: BacktestConfig | None = None) -> None:
         self.config = config or BacktestConfig()
 
-    def run(self, candles: Iterable[Mapping[str, object]], entry_strategy: Strategy, exit_strategy: Strategy) -> BacktestResult:
+    def run(
+        self,
+        candles: Iterable[Mapping[str, object]],
+        entry_strategy: Strategy,
+        exit_strategy: Strategy,
+    ) -> BacktestResult:
         capital = self.config.initial_capital
         peak_capital = capital
         max_drawdown = 0.0
@@ -83,7 +88,18 @@ class BacktestEngine:
                 peak_capital = max(peak_capital, capital)
                 drawdown = (peak_capital - capital) / peak_capital
                 max_drawdown = max(max_drawdown, drawdown)
-                trades.append(BacktestTrade(timestamp if False else entry_timestamp, timestamp, entry_price, exit_price, self.config.quantity, gross_pnl, costs, net_pnl))
+                trades.append(
+                    BacktestTrade(
+                        entry_timestamp=entry_timestamp,
+                        exit_timestamp=timestamp,
+                        entry_price=entry_price,
+                        exit_price=exit_price,
+                        quantity=self.config.quantity,
+                        gross_pnl=gross_pnl,
+                        costs=costs,
+                        net_pnl=net_pnl,
+                    )
+                )
                 open_trade = None
 
         net_pnl = capital - self.config.initial_capital
@@ -93,7 +109,18 @@ class BacktestEngine:
         sharpe_ratio = _trade_sharpe_ratio(trades, self.config.initial_capital)
         sortino_ratio = _trade_sortino_ratio(trades, self.config.initial_capital)
         total_return = net_pnl / self.config.initial_capital
-        return BacktestResult(self.config.initial_capital, capital, net_pnl, total_return, tuple(trades), win_rate, expectancy, sharpe_ratio, sortino_ratio, max_drawdown)
+        return BacktestResult(
+            initial_capital=self.config.initial_capital,
+            final_capital=capital,
+            net_pnl=net_pnl,
+            total_return=total_return,
+            trades=tuple(trades),
+            win_rate=win_rate,
+            expectancy=expectancy,
+            sharpe_ratio=sharpe_ratio,
+            sortino_ratio=sortino_ratio,
+            max_drawdown=max_drawdown,
+        )
 
 
 def _trade_sharpe_ratio(trades: list[BacktestTrade], initial_capital: float) -> float:
