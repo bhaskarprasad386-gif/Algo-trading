@@ -32,11 +32,7 @@ def save_history_point(db: Session, point: CashFutureHistoryPoint, expiry_date: 
         )
     )
     if existing is None:
-        existing = CashFutureHistory(
-            symbol=point.symbol.upper(),
-            contract_month=point.contract_month,
-            timestamp=timestamp,
-        )
+        existing = CashFutureHistory(symbol=point.symbol.upper(), contract_month=point.contract_month, timestamp=timestamp)
         db.add(existing)
 
     existing.cash_price = point.cash_price
@@ -45,6 +41,12 @@ def save_history_point(db: Session, point: CashFutureHistoryPoint, expiry_date: 
     existing.gap_pct = point.gap_pct
     existing.lot_size = point.lot_size
     existing.margin_required = point.margin_required
+    existing.volume = point.volume
+    existing.oi = point.oi
+    existing.cash_bid = point.cash_bid
+    existing.cash_ask = point.cash_ask
+    existing.future_bid = point.future_bid
+    existing.future_ask = point.future_ask
     existing.charges = point.charges
     existing.funding_cost = point.funding_cost
     existing.net_profit = point.net_profit
@@ -56,13 +58,7 @@ def save_history_point(db: Session, point: CashFutureHistoryPoint, expiry_date: 
     return existing
 
 
-def read_history(
-    db: Session,
-    symbol: str,
-    contract_month: str,
-    start: datetime | None = None,
-    end: datetime | None = None,
-) -> list[CashFutureHistoryPoint]:
+def read_history(db: Session, symbol: str, contract_month: str, start: datetime | None = None, end: datetime | None = None) -> list[CashFutureHistoryPoint]:
     stmt = select(CashFutureHistory).where(
         CashFutureHistory.symbol == symbol.upper(),
         CashFutureHistory.contract_month == contract_month,
@@ -74,20 +70,12 @@ def read_history(
     rows = db.scalars(stmt.order_by(CashFutureHistory.timestamp)).all()
     return [
         CashFutureHistoryPoint(
-            timestamp=r.timestamp,
-            symbol=r.symbol,
-            contract_month=r.contract_month,
-            cash_price=r.cash_price,
-            future_price=r.future_price,
-            gap=r.gap,
-            gap_pct=r.gap_pct,
-            lot_size=r.lot_size,
-            margin_required=r.margin_required,
-            charges=r.charges,
-            funding_cost=r.funding_cost,
-            net_profit=r.net_profit,
-            roi_pct=r.roi_pct,
-            expiry_date=r.expiry_date,
+            timestamp=r.timestamp, symbol=r.symbol, contract_month=r.contract_month,
+            cash_price=r.cash_price, future_price=r.future_price, gap=r.gap, gap_pct=r.gap_pct,
+            lot_size=r.lot_size, margin_required=r.margin_required, volume=r.volume, oi=r.oi,
+            cash_bid=r.cash_bid, cash_ask=r.cash_ask, future_bid=r.future_bid, future_ask=r.future_ask,
+            charges=r.charges, funding_cost=r.funding_cost, net_profit=r.net_profit,
+            roi_pct=r.roi_pct, expiry_date=r.expiry_date,
         )
         for r in rows
     ]
@@ -102,13 +90,8 @@ def find_expiry_close(db: Session, symbol: str, contract_month: str, expiry_date
         return None
     point = points[-1]
     return {
-        "expiry_date": expiry_date.isoformat(),
-        "close_time": point.timestamp.isoformat(),
-        "cash_price": point.cash_price,
-        "future_price": point.future_price,
-        "closing_gap": point.gap,
-        "closing_gap_pct": point.gap_pct,
-        "gap_closed": point.gap == 0.0,
-        "net_profit": point.net_profit,
-        "roi_pct": point.roi_pct,
+        "expiry_date": expiry_date.isoformat(), "close_time": point.timestamp.isoformat(),
+        "cash_price": point.cash_price, "future_price": point.future_price,
+        "closing_gap": point.gap, "closing_gap_pct": point.gap_pct,
+        "gap_closed": point.gap == 0.0, "net_profit": point.net_profit, "roi_pct": point.roi_pct,
     }
