@@ -32,6 +32,7 @@ def test_robustness_summarizes_cross_variant_consistency():
     assert result.median_return == pytest.approx(0.06)
     assert result.max_return == pytest.approx(0.10)
     assert result.return_range == pytest.approx(0.12)
+    assert result.return_stddev == pytest.approx(0.05163977794943222)
     assert result.worst_max_drawdown == pytest.approx(0.08)
 
 
@@ -45,4 +46,5 @@ def test_robustness_empty_input_is_zeroed():
     assert result.median_return == 0.0
     assert result.max_return == 0.0
     assert result.return_range == 0.0
+    assert result.return_stddev == 0.0
     assert result.worst_max_drawdown == 0.0
