@@ -1,5 +1,6 @@
 import pytest
 
+from app.execution.confirmation import ConfirmationGateway
 from app.execution.dual_engine import ExecutionConfig, ExecutionMode, Fill, DualExecutionEngine
 
 
@@ -12,23 +13,29 @@ def test_same_signal_keeps_paper_and_live_state_separate_and_adjusts_from_actual
     def executor(mode, requested_price):
         return fills[mode]
 
+    confirmation = ConfirmationGateway(ttl_seconds=30)
     engine = DualExecutionEngine(
         executor,
         ExecutionConfig(stop_loss_pct=0.02, target_pct=0.04),
+        confirmation=confirmation,
     )
 
-    paper_fill, live_fill = engine.enter(price=100, quantity=2)
-
+    paper_fill = engine.enter(price=100, quantity=2)
     assert paper_fill.price == 101
-    assert live_fill.price == 102
     assert engine.paper.entry_price == 101
-    assert engine.live.entry_price == 102
-    assert engine.paper.entry_price != engine.live.entry_price
     assert engine.paper.stop_loss == pytest.approx(98.98)
     assert engine.paper.target == pytest.approx(105.04)
+    assert engine.paper.quantity == 2
+
+    request_id = "dual-state-live-1"
+    engine.create_live_confirmation(request_id)
+    live_fill = engine.enter_live(price=100, quantity=2, request_id=request_id)
+
+    assert live_fill.price == 102
+    assert engine.live.entry_price == 102
+    assert engine.paper.entry_price != engine.live.entry_price
     assert engine.live.stop_loss == pytest.approx(99.96)
     assert engine.live.target == pytest.approx(106.08)
-    assert engine.paper.quantity == 2
     assert engine.live.quantity == 2
 
 
