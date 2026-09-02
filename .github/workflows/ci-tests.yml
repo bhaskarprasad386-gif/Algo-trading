@@ -33,5 +33,4 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
 
-# CI verification trigger after candle identity fix
-# fresh verification trigger
+# CI verification trigger after ltp route contract test fix
