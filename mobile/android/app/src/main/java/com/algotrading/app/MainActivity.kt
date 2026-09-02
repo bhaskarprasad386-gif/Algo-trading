@@ -139,10 +139,10 @@ class MainActivity : AppCompatActivity() {
             try {
                 val response = ApiService.retrofitService.paperEntry(PaperEntryRequest(price, quantity))
                 val completedAt = currentTimestamp()
-                withContext(Dispatchers.Main) { tvPaperResult.text = "PAPER POSITION ACTIVE\n\nCompleted: $completedAt\n\nEntry: ₹${response.entry_price}\nStop Loss: ₹${response.stop_loss}\nTarget: ₹${response.target}\nQuantity: ${response.position.quantity}" }
+                withContext(Dispatchers.Main) { tvPaperResult.text = "ENTRY SUCCESS\n\nPAPER POSITION ACTIVE\nCompleted: $completedAt\n\nEntry: ₹${response.entry_price}\nStop Loss: ₹${response.stop_loss}\nTarget: ₹${response.target}\nQuantity: ${response.position.quantity}" }
             } catch (error: Exception) {
                 val failedAt = currentTimestamp()
-                withContext(Dispatchers.Main) { tvPaperResult.text = "Paper Entry Failed\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
+                withContext(Dispatchers.Main) { tvPaperResult.text = "ENTRY FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
             }
             finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
         }
@@ -155,11 +155,11 @@ class MainActivity : AppCompatActivity() {
             val completedAt = currentTimestamp()
             withContext(Dispatchers.Main) {
                 val position = response.position
-                tvPaperResult.text = if (position == null) "PAPER POSITION: FLAT\n\nChecked: $completedAt" else "PAPER POSITION ACTIVE\n\nChecked: $completedAt\n\nEntry: ₹${position.entry_price}\nStop Loss: ₹${position.stop_loss}\nTarget: ₹${position.target}\nQuantity: ${position.quantity}"
+                tvPaperResult.text = if (position == null) "POSITION CHECK SUCCESS\n\nPAPER POSITION: FLAT\n\nChecked: $completedAt" else "POSITION CHECK SUCCESS\n\nPAPER POSITION ACTIVE\nChecked: $completedAt\n\nEntry: ₹${position.entry_price}\nStop Loss: ₹${position.stop_loss}\nTarget: ₹${position.target}\nQuantity: ${position.quantity}"
             }
         } catch (error: Exception) {
             val failedAt = currentTimestamp()
-            withContext(Dispatchers.Main) { tvPaperResult.text = "Position Check Failed\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
+            withContext(Dispatchers.Main) { tvPaperResult.text = "POSITION CHECK FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
         }
         finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
     }
@@ -172,10 +172,10 @@ class MainActivity : AppCompatActivity() {
             try {
                 val response = ApiService.retrofitService.paperExit(PaperExitRequest(price))
                 val completedAt = currentTimestamp()
-                withContext(Dispatchers.Main) { tvPaperResult.text = if (response.status == "closed") "PAPER POSITION CLOSED\n\nCompleted: $completedAt\n\nEntry: ₹${response.entry_price}\nExit: ₹${response.exit_price}\nQuantity: ${response.quantity}\nP&L: ₹${response.pnl}" else "PAPER POSITION: FLAT\n\nCompleted: $completedAt" }
+                withContext(Dispatchers.Main) { tvPaperResult.text = if (response.status == "closed") "EXIT SUCCESS\n\nPAPER POSITION CLOSED\nCompleted: $completedAt\n\nEntry: ₹${response.entry_price}\nExit: ₹${response.exit_price}\nQuantity: ${response.quantity}\nP&L: ₹${response.pnl}" else "EXIT SUCCESS\n\nPAPER POSITION: FLAT\nCompleted: $completedAt" }
             } catch (error: Exception) {
                 val failedAt = currentTimestamp()
-                withContext(Dispatchers.Main) { tvPaperResult.text = "Paper Exit Failed\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
+                withContext(Dispatchers.Main) { tvPaperResult.text = "EXIT FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
             }
             finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
         }
