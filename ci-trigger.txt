@@ -1,1 +1,2 @@
 Fresh CI verification trigger marker.
+Backtesting engine foundation verification.
