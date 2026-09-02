@@ -57,3 +57,12 @@ def test_android_cash_future_error_fixture_is_supported():
     assert "data class CashFutureScanError" in api
     assert "error.symbol" in ui
     assert "error.error" in ui
+
+
+def test_android_cash_future_scanner_states_are_clear():
+    ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
+    assert 'btnRunScanner.text = "SCANNING..."' in ui
+    assert 'tvScannerResult.text = "SCAN IN PROGRESS\\n\\nRunning Cash–Future scanner..."' in ui
+    assert 'append("SCAN COMPLETE — SUCCESS\\n\\n")' in ui
+    assert 'append("SCAN COMPLETE — NO OPPORTUNITIES\\n\\n")' in ui
+    assert 'tvScannerResult.text = "SCAN ERROR\\n\\nScanner Failed:' in ui
