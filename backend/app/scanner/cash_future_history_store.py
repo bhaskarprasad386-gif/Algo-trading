@@ -2,29 +2,40 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.cash_future_history import CashFutureHistory
-from app.scanner.cash_future_history import CashFutureHistoryPoint, HistoricalGapMatch, build_graph_series, find_historical_gap_matches
+from app.scanner.cash_future_history import CashFutureHistoryPoint, build_graph_series, find_historical_gap_matches
+
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def _naive_ist(value: datetime) -> datetime:
+    """Normalize an observation/query datetime to naive IST for DB compatibility."""
+    if value.tzinfo is not None:
+        return value.astimezone(IST).replace(tzinfo=None)
+    return value
 
 
 def save_history_point(db: Session, point: CashFutureHistoryPoint, expiry_date: date | None = None) -> CashFutureHistory:
     """Insert or update one observation by symbol/contract/timestamp."""
+    timestamp = _naive_ist(point.timestamp)
     existing = db.scalar(
         select(CashFutureHistory).where(
             CashFutureHistory.symbol == point.symbol.upper(),
             CashFutureHistory.contract_month == point.contract_month,
-            CashFutureHistory.timestamp == point.timestamp,
+            CashFutureHistory.timestamp == timestamp,
         )
     )
     if existing is None:
         existing = CashFutureHistory(
             symbol=point.symbol.upper(),
             contract_month=point.contract_month,
-            timestamp=point.timestamp,
+            timestamp=timestamp,
         )
         db.add(existing)
 
@@ -57,9 +68,9 @@ def read_history(
         CashFutureHistory.contract_month == contract_month,
     )
     if start is not None:
-        stmt = stmt.where(CashFutureHistory.timestamp >= start)
+        stmt = stmt.where(CashFutureHistory.timestamp >= _naive_ist(start))
     if end is not None:
-        stmt = stmt.where(CashFutureHistory.timestamp <= end)
+        stmt = stmt.where(CashFutureHistory.timestamp <= _naive_ist(end))
     rows = db.scalars(stmt.order_by(CashFutureHistory.timestamp)).all()
     return [
         CashFutureHistoryPoint(
@@ -76,13 +87,14 @@ def read_history(
             funding_cost=r.funding_cost,
             net_profit=r.net_profit,
             roi_pct=r.roi_pct,
+            expiry_date=r.expiry_date,
         )
         for r in rows
     ]
 
 
 def find_expiry_close(db: Session, symbol: str, contract_month: str, expiry_date: date) -> dict | None:
-    """Return the last observation at/before 15:30 on expiry day."""
+    """Return the last observation in the 15:20–15:30 IST expiry-day window."""
     start = datetime.combine(expiry_date, time(15, 20))
     end = datetime.combine(expiry_date, time(15, 30))
     points = read_history(db, symbol, contract_month, start, end)
@@ -96,6 +108,7 @@ def find_expiry_close(db: Session, symbol: str, contract_month: str, expiry_date
         "future_price": point.future_price,
         "closing_gap": point.gap,
         "closing_gap_pct": point.gap_pct,
+        "gap_closed": point.gap == 0.0,
         "net_profit": point.net_profit,
         "roi_pct": point.roi_pct,
     }
