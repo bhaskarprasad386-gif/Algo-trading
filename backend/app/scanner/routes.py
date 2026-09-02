@@ -7,6 +7,7 @@ from app.core.database import get_db
 from app.core.logger import app_logger
 from app.scanner.cash_future import CashFutureConfig, CashQuote, FutureQuote, calculate_cash_future
 from app.scanner.cash_future_backtest import BacktestConfig, run_backtest
+from app.scanner.cash_future_collector import CashFutureHistoryCollector
 from app.scanner.cash_future_history import CashFutureHistoryPoint, build_graph_series, find_historical_gap_matches
 from app.scanner.cash_future_history_store import find_expiry_close, read_history, save_history_point
 
@@ -79,6 +80,21 @@ def save_cash_future_history(
     row.oi = oi
     db.commit()
     return {"status": "success", "id": row.id, "timestamp": row.timestamp.isoformat(), "gap": row.gap, "gap_pct": row.gap_pct}
+
+
+@router.post("/cash-future/history/collect")
+def collect_cash_future_history(
+    symbols: str = Query(..., description="Comma-separated NSE cash symbols, e.g. RELIANCE,SBIN"),
+    db: Session = Depends(get_db),
+):
+    """Collect and persist one CURRENT and one NEAR observation for each symbol."""
+    requested = [item.strip().upper() for item in symbols.split(",") if item.strip()]
+    if not requested:
+        raise HTTPException(status_code=400, detail="at least one symbol is required")
+    if len(requested) > 50:
+        raise HTTPException(status_code=400, detail="maximum 50 symbols per collection cycle")
+    result = CashFutureHistoryCollector(requested).collect(db)
+    return {"status": "success", "scanner": "cash-future", **result}
 
 
 @router.get("/cash-future/history")
