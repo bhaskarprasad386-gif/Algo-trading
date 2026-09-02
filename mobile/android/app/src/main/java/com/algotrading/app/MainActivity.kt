@@ -57,9 +57,11 @@ class MainActivity : AppCompatActivity() {
                 tvScannerResult.text = if (response.data.isEmpty()) {
                     buildString {
                         append("SCAN COMPLETE — NO OPPORTUNITIES\n\n")
-                        append("No executable Cash–Future opportunities found.\n")
-                        append("Symbols scanned: ${response.symbols_requested.size}\n")
-                        append("Observations: ${response.scanned_observations}")
+                        append("Symbols requested: ${response.symbols_requested.size}\n")
+                        append("Observations: ${response.scanned_observations}\n")
+                        append("Executable opportunities: 0\n")
+                        append("Errors: ${response.errors.size}\n\n")
+                        append("No executable Cash–Future opportunities found.")
                         if (response.errors.isNotEmpty()) {
                             append("\n\nERRORS (${response.errors.size})\n")
                             response.errors.forEach { error ->
@@ -70,6 +72,10 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     buildString {
                         append("SCAN COMPLETE — SUCCESS\n\n")
+                        append("Symbols requested: ${response.symbols_requested.size}\n")
+                        append("Observations: ${response.scanned_observations}\n")
+                        append("Executable opportunities: ${response.opportunity_count}\n")
+                        append("Errors: ${response.errors.size}\n\n")
                         append("CASH–FUTURE OPPORTUNITIES (${response.opportunity_count})\n")
                         append("Mode: ${response.mode}\n\n")
                         response.data.forEach { item ->
