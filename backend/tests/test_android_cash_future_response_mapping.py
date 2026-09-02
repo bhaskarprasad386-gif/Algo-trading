@@ -92,3 +92,9 @@ def test_android_cash_future_per_stock_summary_is_clear():
         'append("Executable: ${if (item.executable) "YES" else "NO"}\\n\\n")',
     ):
         assert label in ui
+
+
+def test_android_cash_future_opportunities_are_prioritized():
+    ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
+    assert 'append("Priority: EXECUTABLE FIRST\\n")' in ui
+    assert '.sortedWith(compareByDescending<CashFutureOpportunity> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit })' in ui
