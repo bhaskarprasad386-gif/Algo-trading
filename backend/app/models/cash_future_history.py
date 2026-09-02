@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import DateTime, Float, Index, Integer, String
+from sqlalchemy import Date, DateTime, Float, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -25,6 +25,7 @@ class CashFutureHistory(Base):
     symbol: Mapped[str] = mapped_column(String(128), index=True)
     contract_month: Mapped[str] = mapped_column(String(32), index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime, index=True)
+    expiry_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     cash_price: Mapped[float] = mapped_column(Float)
     future_price: Mapped[float] = mapped_column(Float)
     gap: Mapped[float] = mapped_column(Float)
