@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 from app.core.logger import app_logger
 from app.market_data.client import MarketDataClient
@@ -16,6 +17,8 @@ from app.market_data.instruments import InstrumentMaster
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 from app.scanner.cash_future_history_store import save_history_point
 from app.scanner.cash_future import CashQuote, FutureQuote, calculate_cash_future, CashFutureConfig
+
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def _expiry(value: Any) -> date | None:
@@ -76,6 +79,8 @@ class CashFutureHistoryCollector:
             raise ValueError(f"NSE cash instrument not found: {cash_symbol}")
         cash_ltp = _ltp(self.market_client.ltp("NSE", cash_symbol, str(cash["token"])))
 
+        # One timestamp per collection cycle keeps CURRENT and NEAR observations comparable.
+        observation_time = datetime.now(IST).replace(microsecond=0)
         results: list[dict] = []
         for label, future in zip(("CURRENT", "NEAR"), self._future_instruments(symbol)):
             future_symbol = str(future.get("symbol"))
@@ -92,7 +97,7 @@ class CashFutureHistoryCollector:
                 CashFutureConfig(),
             )
             point = CashFutureHistoryPoint(
-                timestamp=datetime.utcnow(), symbol=symbol, contract_month=label,
+                timestamp=observation_time, symbol=symbol, contract_month=label,
                 cash_price=cash_ltp, future_price=future_ltp, gap=quote.gap,
                 gap_pct=quote.gap_pct, lot_size=lot_size, margin_required=0.0,
                 charges=quote.charges, funding_cost=quote.funding_cost,
@@ -102,7 +107,8 @@ class CashFutureHistoryCollector:
             row = save_history_point(db, point, expiry_date=expiry_date)
             results.append({"id": row.id, "symbol": symbol, "contract_month": label,
                             "future_symbol": future_symbol, "expiry_date": expiry_date.isoformat() if expiry_date else None,
-                            "cash_price": cash_ltp, "future_price": future_ltp, "gap": quote.gap})
+                            "cash_price": cash_ltp, "future_price": future_ltp, "gap": quote.gap,
+                            "timestamp": observation_time.isoformat()})
         return results
 
     def collect(self, db) -> dict:
