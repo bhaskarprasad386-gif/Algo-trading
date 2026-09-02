@@ -75,3 +75,20 @@ def test_android_cash_future_scanner_summary_counts_are_clear():
     assert 'append("Executable opportunities: ${response.opportunity_count}\\n")' in ui
     assert 'append("Errors: ${response.errors.size}\\n\\n")' in ui
     assert 'append("Executable opportunities: 0\\n")' in ui
+
+
+def test_android_cash_future_per_stock_summary_is_clear():
+    ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
+    for label in (
+        'append("────────────────────\\n")',
+        'append("Cash: ₹${item.cash_price}\\n")',
+        'append("Future: ₹${item.future_price}\\n")',
+        'append("Gap: ₹${item.gap} (${item.gap_pct}%)\\n")',
+        'append("Gross Spread: ₹${item.gross_spread_profit}\\n")',
+        'append("Margin: ₹${item.margin_required}\\n")',
+        'append("Deployed Capital: ₹${item.deployed_capital}\\n")',
+        'append("Net Profit: ₹${item.net_profit}\\n")',
+        'append("ROI: ${item.roi_pct}%\\n")',
+        'append("Executable: ${if (item.executable) "YES" else "NO"}\\n\\n")',
+    ):
+        assert label in ui
