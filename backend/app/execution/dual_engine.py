@@ -45,8 +45,9 @@ class ExecutionState:
     def apply_fill(self, fill: Fill, config: ExecutionConfig) -> None:
         self.quantity = fill.quantity
         self.entry_price = fill.price
-        self.stop_loss = fill.price * (1.0 - config.stop_loss_pct)
-        self.target = fill.price * (1.0 + config.target_pct)
+        # Normalize floating-point artefacts without changing trading precision.
+        self.stop_loss = round(fill.price * (1.0 - config.stop_loss_pct), 8)
+        self.target = round(fill.price * (1.0 + config.target_pct), 8)
 
 
 FillExecutor = Callable[[ExecutionMode, float, float], Fill]
@@ -67,8 +68,6 @@ class DualExecutionEngine:
         self._fill_executor = fill_executor
         self.confirmation = confirmation or ConfirmationGateway()
         self.idempotency = idempotency or IdempotencyGuard()
-        # Preserve the legacy constructor while keeping explicit safety injection
-        # available for real/live configuration and limits.
         self.safety = safety or SafetyController(SafetyLimits(daily_loss_limit=float("inf")))
         self.paper = ExecutionState(ExecutionMode.PAPER)
         self.live = ExecutionState(ExecutionMode.LIVE)
