@@ -40,3 +40,5 @@
 - Added `backend/tests/test_backtesting.py` coverage for the backtesting foundation.
 - Fixed floating-point-sensitive cost assertions with `pytest.approx()`.
 - Fresh Backend Tests CI **#90** completed successfully: **67 tests passed**, 0 failed.
+- **Backtesting max-drawdown enhancement VERIFIED.** `BacktestResult.max_drawdown` tracks realized peak-to-trough capital drawdown.
+- Fresh Backend Tests CI **#97** completed successfully: **68 tests passed**, 0 failed.
