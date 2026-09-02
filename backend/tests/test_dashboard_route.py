@@ -46,3 +46,15 @@ def test_dashboard_paper_actions_have_busy_state_protection():
     assert "setPaperBusy(true,'CHECKING PAPER POSITION…')" in body
     assert "setPaperBusy(true,'PAPER EXIT IN PROGRESS…')" in body
     assert "finally{setPaperBusy(false)}" in body
+
+
+def test_dashboard_scanner_has_busy_state_protection():
+    response = dashboard()
+    body = response.body.decode("utf-8")
+    assert 'id="scanBtn"' in body
+    assert "button.disabled=true" in body
+    assert "button.textContent='SCANNING…'" in body
+    assert "status.textContent='SCANNING BACKEND…'" in body
+    assert "button.disabled=false" in body
+    assert "button.textContent='RUN SCAN'" in body
+    assert "finally{button.disabled=false;button.textContent='RUN SCAN'}" in body
