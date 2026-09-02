@@ -1,7 +1,7 @@
 """Cash-vs-futures arbitrage calculations.
 
 Pure calculation layer: broker/API adapters and UI stay outside this module so
-scanner rules can be customized without rewriting execution/data plumbing.
+scanner rules can be customized without rewriting data/execution plumbing.
 """
 
 from __future__ import annotations
@@ -23,6 +23,8 @@ class CashFutureConfig:
     min_volume: int = 0
     min_oi: int = 0
     max_bid_ask_spread_pct: Optional[float] = None
+    max_cash_bid_ask_spread_pct: Optional[float] = None
+    require_two_sided_quotes: bool = True
     min_days_to_expiry: int = 0
     max_days_to_expiry: Optional[int] = None
     charges: float = 0.0
@@ -63,6 +65,12 @@ class CashFutureResult:
     future_ltp: float
     gap: float
     gap_pct: float
+    executable_gap: Optional[float]
+    executable_gap_pct: Optional[float]
+    cash_execution_price: Optional[float]
+    future_execution_price: Optional[float]
+    cash_bid_ask_spread_pct: Optional[float]
+    future_bid_ask_spread_pct: Optional[float]
     lot_size: int
     gross_spread_profit: float
     charges: float
@@ -83,13 +91,13 @@ def _validate_positive(name: str, value: float) -> None:
 def _bid_ask_spread_pct(bid: Optional[float], ask: Optional[float], ltp: float) -> Optional[float]:
     if bid is None or ask is None:
         return None
-    if bid <= 0 or ask <= 0 or ltp <= 0:
+    if bid <= 0 or ask <= 0 or ltp <= 0 or ask < bid:
         return None
     return (ask - bid) / ltp * 100.0
 
 
 def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutureConfig) -> CashFutureResult:
-    """Calculate executable cash-future spread after configurable costs/checks."""
+    """Calculate a cash-future opportunity using executable bid/ask prices."""
     if not config.enabled:
         raise ValueError("cash-future scanner is disabled")
     _validate_positive("cash ltp", cash.ltp)
@@ -101,15 +109,33 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
 
     gap = future.ltp - cash.ltp
     gap_pct = gap / cash.ltp * 100.0
-    gross = gap * future.lot_size
+    cash_spread_pct = _bid_ask_spread_pct(cash.bid, cash.ask, cash.ltp)
+    future_spread_pct = _bid_ask_spread_pct(future.bid, future.ask, future.ltp)
+
+    executable_gap: Optional[float] = None
+    executable_gap_pct: Optional[float] = None
+    cash_execution_price: Optional[float] = None
+    future_execution_price: Optional[float] = None
+    if cash.ask is not None and future.bid is not None and cash.ask > 0 and future.bid > 0:
+        cash_execution_price = cash.ask
+        future_execution_price = future.bid
+        executable_gap = future.bid - cash.ask
+        executable_gap_pct = executable_gap / cash.ask * 100.0
+
+    # Gross/net profit is based on prices that can actually be crossed now,
+    # never on midpoint/LTP-only spread when two-sided quotes are available.
+    profit_gap = executable_gap if executable_gap is not None else gap
+    gross = profit_gap * future.lot_size
     net = gross - config.charges - config.funding_cost
     deployed = cash.ltp * future.lot_size + future.margin_required
     roi = (net / deployed * 100.0) if deployed > 0 else 0.0
 
     reasons: list[str] = []
-    if gap < config.min_gap:
+    threshold_gap = executable_gap if executable_gap is not None else gap
+    threshold_gap_pct = executable_gap_pct if executable_gap_pct is not None else gap_pct
+    if threshold_gap < config.min_gap:
         reasons.append("gap_below_minimum")
-    if gap_pct < config.min_gap_pct:
+    if threshold_gap_pct < config.min_gap_pct:
         reasons.append("gap_pct_below_minimum")
     if net < config.min_net_profit:
         reasons.append("net_profit_below_minimum")
@@ -124,9 +150,18 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
     if future.oi < config.min_oi:
         reasons.append("oi_below_minimum")
 
-    spread_pct = _bid_ask_spread_pct(future.bid, future.ask, future.ltp)
-    if config.max_bid_ask_spread_pct is not None and spread_pct is not None and spread_pct > config.max_bid_ask_spread_pct:
-        reasons.append("bid_ask_spread_above_maximum")
+    if config.require_two_sided_quotes and (cash.ask is None or future.bid is None):
+        reasons.append("missing_executable_quotes")
+    if config.max_bid_ask_spread_pct is not None:
+        if future_spread_pct is not None and future_spread_pct > config.max_bid_ask_spread_pct:
+            reasons.append("bid_ask_spread_above_maximum")
+        elif future_spread_pct is None:
+            reasons.append("future_bid_ask_unavailable")
+    if config.max_cash_bid_ask_spread_pct is not None:
+        if cash_spread_pct is not None and cash_spread_pct > config.max_cash_bid_ask_spread_pct:
+            reasons.append("cash_bid_ask_spread_above_maximum")
+        elif cash_spread_pct is None:
+            reasons.append("cash_bid_ask_unavailable")
 
     if future.expiry is not None:
         days = (future.expiry - date.today()).days
@@ -142,6 +177,12 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
         future_ltp=future.ltp,
         gap=gap,
         gap_pct=gap_pct,
+        executable_gap=executable_gap,
+        executable_gap_pct=executable_gap_pct,
+        cash_execution_price=cash_execution_price,
+        future_execution_price=future_execution_price,
+        cash_bid_ask_spread_pct=cash_spread_pct,
+        future_bid_ask_spread_pct=future_spread_pct,
         lot_size=future.lot_size,
         gross_spread_profit=gross,
         charges=config.charges,
