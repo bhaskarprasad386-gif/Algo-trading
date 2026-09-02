@@ -76,3 +76,15 @@ def test_android_cash_future_error_timestamp_is_recorded_on_failure():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
     assert 'val failedAt = currentTimestamp()' in ui
     assert 'tvScannerResult.text = "SCAN ERROR\\n\\nLast Scan: $failedAt\\n\\nScanner Failed:' in ui
+
+
+def test_android_paper_requests_have_busy_state_protection():
+    ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
+    assert 'private fun setPaperBusy(busy: Boolean, message: String? = null)' in ui
+    assert 'btnPaperEntry.isEnabled = !busy' in ui
+    assert 'btnPaperPosition.isEnabled = !busy' in ui
+    assert 'btnPaperExit.isEnabled = !busy' in ui
+    assert 'setPaperBusy(true, "PAPER ENTRY IN PROGRESS...")' in ui
+    assert 'setPaperBusy(true, "CHECKING PAPER POSITION...")' in ui
+    assert 'setPaperBusy(true, "PAPER EXIT IN PROGRESS...")' in ui
+    assert 'finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }' in ui
