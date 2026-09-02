@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable
 
+from .confirmation import ConfirmationGateway
+from .idempotency import ExecutionRequest, IdempotencyGuard
+from .safety import SafetyController
+
 
 class ExecutionMode(str, Enum):
     PAPER = "paper"
@@ -51,9 +55,19 @@ FillExecutor = Callable[[ExecutionMode, float], Fill]
 class DualExecutionEngine:
     """Keep paper/live state separate while processing the same signal."""
 
-    def __init__(self, fill_executor: FillExecutor, config: ExecutionConfig | None = None) -> None:
+    def __init__(
+        self,
+        fill_executor: FillExecutor,
+        config: ExecutionConfig | None = None,
+        confirmation: ConfirmationGateway | None = None,
+        idempotency: IdempotencyGuard | None = None,
+        safety: SafetyController | None = None,
+    ) -> None:
         self.config = config or ExecutionConfig()
         self._fill_executor = fill_executor
+        self.confirmation = confirmation or ConfirmationGateway()
+        self.idempotency = idempotency or IdempotencyGuard()
+        self.safety = safety
         self.paper = ExecutionState(ExecutionMode.PAPER)
         self.live = ExecutionState(ExecutionMode.LIVE)
 
@@ -64,3 +78,20 @@ class DualExecutionEngine:
         self.paper.apply_fill(paper_fill, self.config)
         self.live.apply_fill(live_fill, self.config)
         return paper_fill, live_fill
+
+    def create_live_confirmation(self, request_id: str):
+        """Create the short-lived confirmation required for a live entry."""
+        return self.confirmation.create(request_id)
+
+    def enter_live(self, price: float, quantity: float, request_id: str) -> Fill:
+        """Execute one live entry only after confirmation, idempotency and safety checks."""
+        if self.safety is not None and not self.safety.allow_execution():
+            raise RuntimeError("live execution blocked by safety controller")
+        if not self.confirmation.confirm(request_id):
+            raise RuntimeError("live execution requires a valid confirmation")
+        if not self.idempotency.accept(ExecutionRequest(request_id)):
+            raise RuntimeError("duplicate live execution request")
+
+        live_fill = self._fill_executor(ExecutionMode.LIVE, price)
+        self.live.apply_fill(live_fill, self.config)
+        return live_fill
