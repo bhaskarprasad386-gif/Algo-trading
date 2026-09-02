@@ -6,7 +6,7 @@ from app.scanner.cash_future import CashFutureConfig, CashQuote, FutureQuote, ca
 
 
 def test_cash_future_calculates_gap_profit_and_roi():
-    cash = CashQuote(symbol="RELIANCE", ltp=1000.0)
+    cash = CashQuote(symbol="RELIANCE", ltp=1000.0, bid=999.0, ask=1000.0)
     future = FutureQuote(
         symbol="RELIANCE-FUT",
         contract_month="current",
@@ -15,6 +15,8 @@ def test_cash_future_calculates_gap_profit_and_roi():
         margin_required=50000.0,
         volume=10000,
         oi=20000,
+        bid=1010.0,
+        ask=1011.0,
     )
     result = calculate_cash_future(
         cash,
@@ -31,7 +33,7 @@ def test_cash_future_calculates_gap_profit_and_roi():
 
 
 def test_custom_filters_reject_weak_opportunity():
-    cash = CashQuote(symbol="ABC", ltp=100.0)
+    cash = CashQuote(symbol="ABC", ltp=100.0, bid=99.9, ask=100.0)
     future = FutureQuote(
         symbol="ABC-FUT",
         contract_month="near",
@@ -40,6 +42,8 @@ def test_custom_filters_reject_weak_opportunity():
         margin_required=10000.0,
         volume=100,
         oi=1000,
+        bid=100.1,
+        ask=100.3,
         expiry=date.today() + timedelta(days=2),
     )
     result = calculate_cash_future(
