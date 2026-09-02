@@ -88,3 +88,44 @@ def test_android_paper_requests_have_busy_state_protection():
     assert 'setPaperBusy(true, "CHECKING PAPER POSITION...")' in ui
     assert 'setPaperBusy(true, "PAPER EXIT IN PROGRESS...")' in ui
     assert 'finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }' in ui
+
+
+def test_android_paper_entry_completion_timestamp_is_after_api_call():
+    ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
+    response_marker = 'val response = ApiService.retrofitService.paperEntry(PaperEntryRequest(price, quantity))'
+    completion_marker = 'val completedAt = currentTimestamp()'
+    display_marker = 'Completed: $completedAt'
+    assert response_marker in ui
+    assert completion_marker in ui
+    assert display_marker in ui
+    assert ui.index(response_marker) < ui.index(completion_marker) < ui.index(display_marker)
+
+
+def test_android_paper_position_completion_timestamp_is_after_api_call():
+    ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
+    response_marker = 'val response = ApiService.retrofitService.paperPosition()'
+    completion_marker = 'val completedAt = currentTimestamp()'
+    display_marker = 'Checked: $completedAt'
+    assert response_marker in ui
+    assert completion_marker in ui
+    assert display_marker in ui
+    assert ui.index(response_marker) < ui.index(completion_marker) < ui.index(display_marker)
+
+
+def test_android_paper_exit_completion_timestamp_is_after_api_call():
+    ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
+    response_marker = 'val response = ApiService.retrofitService.paperExit(PaperExitRequest(price))'
+    completion_marker = 'val completedAt = currentTimestamp()'
+    display_marker = 'Completed: $completedAt'
+    assert response_marker in ui
+    assert completion_marker in ui
+    assert display_marker in ui
+    assert ui.index(response_marker) < ui.index(completion_marker) < ui.index(display_marker)
+
+
+def test_android_paper_failures_record_failure_time():
+    ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
+    assert 'val failedAt = currentTimestamp()' in ui
+    assert 'Paper Entry Failed\\n\\nTime: $failedAt' in ui
+    assert 'Position Check Failed\\n\\nTime: $failedAt' in ui
+    assert 'Paper Exit Failed\\n\\nTime: $failedAt' in ui
