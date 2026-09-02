@@ -9,3 +9,4 @@ Fresh Sharpe ratio Backend Tests verification.
 Fresh Sortino ratio Backend Tests verification.
 Fresh Sortino ratio expectation fix verification.
 Fresh Sortino ratio final verification.
+Fresh CAGR metric Backend Tests verification.
