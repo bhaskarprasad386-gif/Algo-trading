@@ -58,9 +58,9 @@ class MainActivity : AppCompatActivity() {
                     buildString {
                         append("No executable Cash–Future opportunities found.\n")
                         append("Symbols scanned: ${response.symbols_requested.size}\n")
-                        append("Observations: ${response.scanned_observations}\n")
+                        append("Observations: ${response.scanned_observations}")
                         if (response.errors.isNotEmpty()) {
-                            append("\nScanner errors (${response.errors.size}):\n")
+                            append("\n\nERRORS (${response.errors.size})\n")
                             response.errors.forEach { error ->
                                 append("${error.symbol}: ${error.error}\n")
                             }
@@ -78,7 +78,7 @@ class MainActivity : AppCompatActivity() {
                             append("ROI: ${item.roi_pct}%\n\n")
                         }
                         if (response.errors.isNotEmpty()) {
-                            append("Scanner errors (${response.errors.size}):\n")
+                            append("ERRORS (${response.errors.size})\n")
                             response.errors.forEach { error ->
                                 append("${error.symbol}: ${error.error}\n")
                             }
