@@ -34,7 +34,7 @@ class MainActivity : AppCompatActivity() {
     private val scannerRefreshHandler = Handler(Looper.getMainLooper())
     private val scannerRefreshRunnable = Runnable { runCashFutureScanner() }
 
-    private fun currentTimestamp(): String = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+    private fun currentTimestamp(): String = SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(Date())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -94,18 +94,53 @@ class MainActivity : AppCompatActivity() {
             val completedAt = currentTimestamp()
             withContext(Dispatchers.Main) {
                 tvScannerResult.text = if (response.data.isEmpty()) {
-                    "NO EXECUTABLE CASH–FUTURE OPPORTUNITIES\n\nLast Scan: $completedAt"
+                    buildString {
+                        append("SCAN COMPLETE — NO OPPORTUNITIES\n")
+                        append("Last Scan: $completedAt\n\n")
+                        append("Symbols requested: ${response.symbols_requested.size}\n")
+                        append("Observations: ${response.scanned_observations}\n")
+                        append("Executable opportunities: 0\n")
+                        append("Errors: ${response.errors.size}\n\n")
+                        append("No executable Cash–Future opportunities found.")
+                        if (response.errors.isNotEmpty()) {
+                            append("\n\nERRORS (${response.errors.size})\n")
+                            response.errors.forEach { error -> append("${error.symbol}: ${error.error}\n") }
+                        }
+                    }
                 } else {
-                    response.data.joinToString("\n\n") { item ->
-                        "${item.symbol}\nCash: ${item.cash_ltp}\nFuture: ${item.future_ltp}\nGap: ${item.gap}\nGross Spread: ${item.gross_spread}\nMargin: ${item.margin}\nDeployed Capital: ${item.deployed_capital}\nNet Profit: ${item.net_profit}\nROI: ${item.roi_pct}%\nExecutable: ${item.executable}"
-                    } + "\n\nLast Scan: $completedAt"
+                    buildString {
+                        append("SCAN COMPLETE — SUCCESS\n")
+                        append("Last Scan: $completedAt\n\n")
+                        append("Symbols requested: ${response.symbols_requested.size}\n")
+                        append("Observations: ${response.scanned_observations}\n")
+                        append("Executable opportunities: ${response.opportunity_count}\n")
+                        append("Errors: ${response.errors.size}\n\n")
+                        append("CASH–FUTURE OPPORTUNITIES (${response.opportunity_count})\n")
+                        append("Priority: EXECUTABLE FIRST\n")
+                        append("Mode: ${response.mode}\n\n")
+                        response.data.sortedWith(compareByDescending<CashFutureOpportunity> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit }).forEach { item ->
+                            append("────────────────────\n")
+                            append("${item.symbol}\n")
+                            append("Cash: ₹${item.cash_price}\n")
+                            append("Future: ₹${item.future_price}\n")
+                            append("Gap: ₹${item.gap} (${item.gap_pct}%)\n")
+                            append("Gross Spread: ₹${item.gross_spread_profit}\n")
+                            append("Margin: ₹${item.margin_required}\n")
+                            append("Deployed Capital: ₹${item.deployed_capital}\n")
+                            append("Net Profit: ₹${item.net_profit}\n")
+                            append("ROI: ${item.roi_pct}%\n")
+                            append("Executable: ${if (item.executable) "YES" else "NO"}\n\n")
+                        }
+                        if (response.errors.isNotEmpty()) {
+                            append("ERRORS (${response.errors.size})\n")
+                            response.errors.forEach { error -> append("${error.symbol}: ${error.error}\n") }
+                        }
+                    }
                 }
             }
-        } catch (e: Exception) {
+        } catch (error: Exception) {
             val failedAt = currentTimestamp()
-            withContext(Dispatchers.Main) {
-                tvScannerResult.text = "SCANNER ERROR\n${e.message ?: "Unknown error"}\n\nLast Scan: $failedAt"
-            }
+            withContext(Dispatchers.Main) { tvScannerResult.text = "SCAN ERROR\n\nLast Scan: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}" }
         } finally {
             withContext(Dispatchers.Main) {
                 btnRunScanner.isEnabled = true
@@ -115,7 +150,62 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun paperEntry() { /* existing implementation */ }
-    private fun paperPosition() { /* existing implementation */ }
-    private fun paperExit() { /* existing implementation */ }
+    private fun setPaperBusy(busy: Boolean, message: String? = null) {
+        btnPaperEntry.isEnabled = !busy
+        btnPaperPosition.isEnabled = !busy
+        btnPaperExit.isEnabled = !busy
+        if (message != null) tvPaperResult.text = message
+    }
+
+    private fun paperEntry() {
+        val price = etEntryPrice.text.toString().toDoubleOrNull()
+        val quantity = etQuantity.text.toString().toDoubleOrNull()
+        if (price == null || price <= 0) { etEntryPrice.error = "Enter a positive entry price"; return }
+        if (quantity == null || quantity <= 0) { etQuantity.error = "Enter a positive quantity"; return }
+        lifecycleScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { setPaperBusy(true, "PAPER ENTRY IN PROGRESS...") }
+            try {
+                val response = ApiService.retrofitService.paperEntry(PaperEntryRequest(price, quantity))
+                val completedAt = currentTimestamp()
+                withContext(Dispatchers.Main) { tvPaperResult.text = "ENTRY SUCCESS\n\nPAPER POSITION ACTIVE\nCompleted: $completedAt\n\nEntry: ₹${response.entry_price}\nStop Loss: ₹${response.stop_loss}\nTarget: ₹${response.target}\nQuantity: ${response.position.quantity}" }
+            } catch (error: Exception) {
+                val failedAt = currentTimestamp()
+                withContext(Dispatchers.Main) { tvPaperResult.text = "ENTRY FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
+            }
+            finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
+        }
+    }
+
+    private fun paperPosition() = lifecycleScope.launch(Dispatchers.IO) {
+        withContext(Dispatchers.Main) { setPaperBusy(true, "CHECKING PAPER POSITION...") }
+        try {
+            val response = ApiService.retrofitService.paperPosition()
+            val completedAt = currentTimestamp()
+            withContext(Dispatchers.Main) {
+                val position = response.position
+                tvPaperResult.text = if (position == null) "POSITION CHECK SUCCESS\n\nPAPER POSITION: FLAT\n\nChecked: $completedAt" else "POSITION CHECK SUCCESS\n\nPAPER POSITION ACTIVE\nChecked: $completedAt\n\nEntry: ₹${position.entry_price}\nStop Loss: ₹${position.stop_loss}\nTarget: ₹${position.target}\nQuantity: ${position.quantity}"
+            }
+        } catch (error: Exception) {
+            val failedAt = currentTimestamp()
+            withContext(Dispatchers.Main) { tvPaperResult.text = "POSITION CHECK FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
+        }
+        finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
+    }
+
+    private fun paperExit() {
+        val price = etExitPrice.text.toString().toDoubleOrNull()
+        if (price == null || price <= 0) { etExitPrice.error = "Enter a positive exit price"; return }
+        lifecycleScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { setPaperBusy(true, "PAPER EXIT IN PROGRESS...") }
+            try {
+                val response = ApiService.retrofitService.paperExit(PaperExitRequest(price))
+                val completedAt = currentTimestamp()
+                withContext(Dispatchers.Main) { tvPaperResult.text = if (response.status == "closed") "EXIT SUCCESS\n\nPAPER POSITION CLOSED\nCompleted: $completedAt\n\nEntry: ₹${response.entry_price}\nExit: ₹${response.exit_price}\nQuantity: ${response.quantity}\nP&L: ₹${response.pnl}" else "EXIT SUCCESS\n\nPAPER POSITION: FLAT\nCompleted: $completedAt" }
+            } catch (error: Exception) {
+                val failedAt = currentTimestamp()
+                withContext(Dispatchers.Main) { tvPaperResult.text = "EXIT FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
+            }
+            finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
+        }
+    }
 }
