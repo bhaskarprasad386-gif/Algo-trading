@@ -48,16 +48,20 @@ class MainActivity : AppCompatActivity() {
             val response = ApiService.retrofitService.cashFutureScan()
             withContext(Dispatchers.Main) {
                 tvScannerResult.text = if (response.data.isEmpty()) {
-                    "No executable Cash–Future opportunities found.\nSymbols scanned: ${response.symbol_count}"
+                    "No executable Cash–Future opportunities found.\nSymbols scanned: ${response.symbols_requested.size}\nObservations: ${response.scanned_observations}"
                 } else {
                     buildString {
-                        append("CASH–FUTURE OPPORTUNITIES (${response.opportunity_count})\n\n")
+                        append("CASH–FUTURE OPPORTUNITIES (${response.opportunity_count})\n")
+                        append("Mode: ${response.mode}\n\n")
                         response.data.forEach { item ->
                             append("${item.symbol}\n")
                             append("Cash: ₹${item.cash_price} | Future: ₹${item.future_price}\n")
                             append("Gap: ₹${item.gap} (${item.gap_pct}%)\n")
                             append("Margin: ₹${item.margin_required} | Net: ₹${item.net_profit}\n")
                             append("ROI: ${item.roi_pct}%\n\n")
+                        }
+                        if (response.errors.isNotEmpty()) {
+                            append("Errors: ${response.errors.size}\n")
                         }
                     }
                 }
