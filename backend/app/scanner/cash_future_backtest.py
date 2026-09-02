@@ -18,22 +18,38 @@ class BacktestConfig:
     charges_per_trade: float = 0.0
     funding_cost_per_trade: float = 0.0
     max_holding_days: int = 30
+    contract_month: str | None = None
 
 
 def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfig) -> dict:
-    """Enter at/above minimum gap and exit on convergence, expiry, or timeout."""
-    ordered = sorted(points, key=lambda p: p.timestamp)
+    """Enter at/above minimum gap and exit on convergence, expiry, or timeout.
+
+    A backtest never mixes CURRENT, NEAR, or exact contract identifiers. When
+    ``contract_month`` is supplied, only that contract is processed. When it is
+    omitted, mixed contract input is rejected rather than silently combining
+    unrelated expiry series.
+    """
+    raw_points = list(points)
+    contracts = {p.contract_month for p in raw_points}
+    if config.contract_month is not None:
+        raw_points = [p for p in raw_points if p.contract_month == config.contract_month]
+    elif len(contracts) > 1:
+        raise ValueError("backtest input contains multiple contract months; run each contract separately")
+
+    ordered = sorted(raw_points, key=lambda p: p.timestamp)
     trades = []
-    entry = None
     equity = 0.0
     peak = 0.0
     max_drawdown = 0.0
     total_capital = 0.0
+    equity_curve = []
+    entry = None
 
     for point in ordered:
         if entry is None:
             if point.gap >= config.min_entry_gap:
                 entry = point
+            equity_curve.append({"timestamp": point.timestamp.isoformat(), "equity": equity})
             continue
 
         holding_days = (point.timestamp - entry.timestamp).total_seconds() / 86400.0
@@ -41,6 +57,7 @@ def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfi
         expired = entry.expiry_date is not None and point.timestamp.date() >= entry.expiry_date
         timed_out = holding_days >= config.max_holding_days
         if not (converged or expired or timed_out):
+            equity_curve.append({"timestamp": point.timestamp.isoformat(), "equity": equity})
             continue
 
         gross = (entry.gap - point.gap) * entry.lot_size
@@ -65,6 +82,7 @@ def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfi
         total_capital += capital
         peak = max(peak, equity)
         max_drawdown = max(max_drawdown, peak - equity)
+        equity_curve.append({"timestamp": point.timestamp.isoformat(), "equity": equity})
         entry = None
 
     wins = sum(1 for t in trades if t["net_profit"] > 0)
@@ -76,5 +94,6 @@ def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfi
         "net_profit": equity,
         "roi_pct": equity / total_capital * 100.0 if total_capital else 0.0,
         "max_drawdown": max_drawdown,
+        "equity_curve": equity_curve,
         "trades": trades,
     }
