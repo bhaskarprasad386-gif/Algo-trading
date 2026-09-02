@@ -32,6 +32,7 @@ def test_executable_profit_uses_cash_ask_and_future_bid_not_ltp():
     assert result.future_execution_price == 109.0
     assert result.gross_spread_profit == 800.0
     assert result.net_profit == 650.0
+    assert result.deployed_capital == 12100.0
     assert result.executable is True
 
 
