@@ -79,3 +79,13 @@ def test_dashboard_scanner_shows_summary_metrics():
     assert 'id="summaryErrors"' in body
     assert 'function setScanSummary(p)' in body
     assert 'setScanSummary(p)' in body
+
+
+def test_dashboard_scanner_prioritizes_executable_opportunities():
+    response = dashboard()
+    body = response.body.decode("utf-8")
+    assert ".sort((a,b)=>Number(b.executable)-Number(a.executable)" in body
+    assert "Number(b.roi_pct||0)-Number(a.roi_pct||0)" in body
+    assert "Number(b.net_profit||0)-Number(a.net_profit||0)" in body
+    assert "<td>"+'+(i+1)+'"</td>" in body
+    assert "<th>Priority</th>" in body
