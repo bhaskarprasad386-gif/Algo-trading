@@ -122,12 +122,14 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
         executable_gap = future.bid - cash.ask
         executable_gap_pct = executable_gap / cash.ask * 100.0
 
-    # Gross/net profit is based on prices that can actually be crossed now,
-    # never on midpoint/LTP-only spread when two-sided quotes are available.
+    # Gross/net profit is based on prices that can actually be crossed now.
     profit_gap = executable_gap if executable_gap is not None else gap
     gross = profit_gap * future.lot_size
     net = gross - config.charges - config.funding_cost
-    deployed = cash.ltp * future.lot_size + future.margin_required
+    # Capital should reflect the cash leg's executable buy price when available,
+    # because ROI must not be overstated by using an LTP below the live ask.
+    cash_capital_price = cash_execution_price if cash_execution_price is not None else cash.ltp
+    deployed = cash_capital_price * future.lot_size + future.margin_required
     roi = (net / deployed * 100.0) if deployed > 0 else 0.0
 
     reasons: list[str] = []
