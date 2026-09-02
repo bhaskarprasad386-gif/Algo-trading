@@ -17,6 +17,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etExitPrice: EditText
     private lateinit var tvPaperResult: TextView
     private lateinit var tvScannerResult: TextView
+    private lateinit var btnRunScanner: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -27,8 +28,9 @@ class MainActivity : AppCompatActivity() {
         etExitPrice = findViewById(R.id.etExitPrice)
         tvPaperResult = findViewById(R.id.tvPaperResult)
         tvScannerResult = findViewById(R.id.tvScannerResult)
+        btnRunScanner = findViewById(R.id.btnRunScanner)
         checkServerStatus()
-        findViewById<Button>(R.id.btnRunScanner).setOnClickListener { runCashFutureScanner() }
+        btnRunScanner.setOnClickListener { runCashFutureScanner() }
         findViewById<Button>(R.id.btnPaperEntry).setOnClickListener { paperEntry() }
         findViewById<Button>(R.id.btnPaperExit).setOnClickListener { paperExit() }
         findViewById<Button>(R.id.btnPaperPosition).setOnClickListener { paperPosition() }
@@ -44,6 +46,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun runCashFutureScanner() = lifecycleScope.launch(Dispatchers.IO) {
+        withContext(Dispatchers.Main) {
+            btnRunScanner.isEnabled = false
+            btnRunScanner.text = "SCANNING..."
+            tvScannerResult.text = "Running Cash–Future scanner..."
+        }
         try {
             val response = ApiService.retrofitService.cashFutureScan()
             withContext(Dispatchers.Main) {
@@ -66,6 +73,11 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (error: Exception) {
             withContext(Dispatchers.Main) { tvScannerResult.text = "Scanner Failed: ${error.message ?: "API error"}" }
+        } finally {
+            withContext(Dispatchers.Main) {
+                btnRunScanner.isEnabled = true
+                btnRunScanner.text = "RUN CASH–FUTURE SCAN"
+            }
         }
     }
 
