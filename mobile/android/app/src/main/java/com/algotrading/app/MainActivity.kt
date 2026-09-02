@@ -18,7 +18,6 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
-    // Android scanner auto-refresh compile verification checkpoint.
     private lateinit var tvStatus: TextView
     private lateinit var etEntryPrice: EditText
     private lateinit var etQuantity: EditText
@@ -33,7 +32,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnPaperExit: Button
 
     private val scannerRefreshHandler = Handler(Looper.getMainLooper())
-    private val scannerRefreshRunnable = Runnable { triggerScannerRefresh() }
+    private lateinit var scannerRefreshRunnable: Runnable
 
     private fun currentTimestamp(): String = SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(Date())
 
@@ -52,6 +51,7 @@ class MainActivity : AppCompatActivity() {
         btnPaperEntry = findViewById(R.id.btnPaperEntry)
         btnPaperPosition = findViewById(R.id.btnPaperPosition)
         btnPaperExit = findViewById(R.id.btnPaperExit)
+        scannerRefreshRunnable = Runnable { runCashFutureScanner() }
         checkServerStatus()
         btnRunScanner.setOnClickListener { runCashFutureScanner() }
         cbScannerAutoRefresh.setOnCheckedChangeListener { _, _ -> scheduleScannerRefresh() }
@@ -72,10 +72,6 @@ class MainActivity : AppCompatActivity() {
         val seconds = etScannerRefreshSeconds.text.toString().toLongOrNull()?.coerceIn(10L, 300L) ?: 30L
         etScannerRefreshSeconds.setText(seconds.toString())
         scannerRefreshHandler.postDelayed(scannerRefreshRunnable, seconds * 1000L)
-    }
-
-    private fun triggerScannerRefresh(): Unit {
-        runCashFutureScanner()
     }
 
     private fun checkServerStatus() = lifecycleScope.launch(Dispatchers.IO) {
