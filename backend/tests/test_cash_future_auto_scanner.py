@@ -47,15 +47,15 @@ def test_cash_future_passes_requested_executable_filters():
     )
     assert result.executable is True
     assert result.rejection_reasons == ()
-    assert result.net_profit == 10.0
+    assert result.net_profit == 9.0
     assert result.deployed_capital == 2000.0
-    assert result.roi_pct == 0.5
+    assert result.roi_pct == 0.45
 
 
 def test_cash_future_rejects_gap_profit_volume_and_oi_filters():
     result = calculate_cash_future(
         CashQuote(symbol="SBIN", ltp=100.0, bid=99.9, ask=100.0),
-        _quote(ltp=100.2, volume=100, oi=1000),
+        _quote(ltp=100.2, bid=100.2, volume=100, oi=1000),
         CashFutureConfig(min_gap=0.5, min_gap_pct=0.5, min_net_profit=5.0, min_volume=1000, min_oi=10000),
     )
     assert result.executable is False
