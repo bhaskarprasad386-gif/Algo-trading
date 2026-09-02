@@ -6,7 +6,7 @@ from app.core.logger import app_logger
 
 
 class MarketDataClient:
-    """Uses shared AngelOneAuth session for market data."""
+    """Uses shared AngelOneAuth session for market data and broker calculations."""
 
     def __init__(self, auth: Optional[AngelOneAuth] = None):
         self.auth = auth or AngelOneAuth()
@@ -57,6 +57,27 @@ class MarketDataClient:
         except Exception as e:
             app_logger.error(f"Quote request failed for {tradingsymbol}: {str(e)}")
             raise TradingAppException("QuoteRequestError", str(e), 502)
+
+    def margin(self, positions: list[dict[str, Any]]) -> Dict[str, Any]:
+        """Fetch Angel One's real-time margin requirement for a position basket."""
+        if not positions:
+            raise ValueError("positions must not be empty")
+        try:
+            client = self.get_client()
+            response = client.getMarginApi({"positions": positions})
+            if response and response.get("status"):
+                return response
+            message = (
+                response.get("message", "Unknown margin calculation error")
+                if response
+                else "Empty response from Angel One"
+            )
+            raise TradingAppException("MarginRequestFailed", message, 502)
+        except TradingAppException:
+            raise
+        except Exception as e:
+            app_logger.error(f"Margin calculation failed: {str(e)}")
+            raise TradingAppException("MarginRequestError", str(e), 502)
 
     def profile(self) -> Dict[str, Any]:
         """Fetch user profile (auth test)."""
