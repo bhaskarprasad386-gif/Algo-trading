@@ -1,7 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 import asyncio
-import os
 import queue
 import threading
 import uuid
@@ -45,18 +44,15 @@ MARKET_CLOSE = time(15, 30)
 
 
 def _collector_enabled() -> bool:
-    return os.getenv("CASH_FUTURE_HISTORY_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    return settings.CASH_FUTURE_HISTORY_ENABLED
 
 
 def _collector_symbols() -> list[str]:
-    return [item.strip().upper() for item in os.getenv("CASH_FUTURE_HISTORY_SYMBOLS", "").split(",") if item.strip()]
+    return [item.strip().upper() for item in settings.CASH_FUTURE_HISTORY_SYMBOLS.split(",") if item.strip()]
 
 
 def _collector_interval() -> int:
-    try:
-        return max(15, int(os.getenv("CASH_FUTURE_HISTORY_INTERVAL_SECONDS", "60")))
-    except ValueError:
-        return 60
+    return max(15, settings.CASH_FUTURE_HISTORY_INTERVAL_SECONDS)
 
 
 def _market_is_open(now: datetime) -> bool:
