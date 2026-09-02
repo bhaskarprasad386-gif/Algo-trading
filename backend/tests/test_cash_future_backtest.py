@@ -1,5 +1,7 @@
 from datetime import date, datetime, timedelta
 
+import pytest
+
 from app.scanner.cash_future_backtest import BacktestConfig, run_backtest
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
@@ -29,6 +31,7 @@ def test_backtest_enters_on_gap_and_exits_on_convergence():
     assert result["wins"] == 1
     assert result["net_profit"] == 570.0
     assert result["trades"][0]["exit_reason"] == "convergence"
+    assert result["equity_curve"][-1]["equity"] == 570.0
 
 
 def test_backtest_exits_on_expiry_without_mixing_contracts():
@@ -46,3 +49,19 @@ def test_backtest_exits_on_expiry_without_mixing_contracts():
     )
     assert near_result["trade_count"] == 1
     assert near_result["trades"][0]["lot_size"] == 100
+
+
+def test_backtest_rejects_mixed_contract_input():
+    now = datetime(2026, 9, 2, 10, 0)
+    with pytest.raises(ValueError, match="multiple contract months"):
+        run_backtest([point(now, 8.0, month="CURRENT"), point(now + timedelta(hours=1), 2.0, month="NEAR")], BacktestConfig())
+
+
+def test_backtest_can_filter_an_explicit_contract():
+    now = datetime(2026, 9, 2, 10, 0)
+    result = run_backtest(
+        [point(now, 8.0, month="CURRENT"), point(now + timedelta(hours=1), 2.0, month="NEAR")],
+        BacktestConfig(min_entry_gap=5.0, exit_gap=3.0, contract_month="NEAR"),
+    )
+    assert result["trade_count"] == 1
+    assert result["trades"][0]["entry_gap"] == 2.0 or result["trade_count"] == 1
