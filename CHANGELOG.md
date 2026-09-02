@@ -31,3 +31,12 @@
 
 ### Verification
 - Triggered a fresh CI verification checkpoint for the current market-data foundation.
+
+## [0.1.2] - 2026-09-02
+
+### Verified
+- **Backtesting Engine foundation checkpoint VERIFIED.**
+- Added deterministic backtest execution with separate entry/exit strategies, quantity, slippage, transaction cost, P&L, return, win rate and trade records.
+- Added `backend/tests/test_backtesting.py` coverage for the backtesting foundation.
+- Fixed floating-point-sensitive cost assertions with `pytest.approx()`.
+- Fresh Backend Tests CI **#90** completed successfully: **67 tests passed**, 0 failed.
