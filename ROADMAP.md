@@ -33,7 +33,8 @@ Fast, modular, mobile-first advanced F&O algo-trading platform. GitHub is the so
 - **Backtesting max-drawdown enhancement VERIFIED:** `BacktestResult.max_drawdown` tracks realized peak-to-trough capital drawdown; fresh Backend Tests CI run #97 completed successfully with **68 tests passed, 0 failed**.
 - **Backtesting expectancy metric VERIFIED:** `BacktestResult.expectancy` reports average net P&L per completed trade; fresh Backend Tests CI run #102 completed successfully with **68 tests passed, 0 failed**.
 - **Backtesting Sharpe ratio metric VERIFIED:** `BacktestResult.sharpe_ratio` uses trade-level returns relative to initial capital, with zero risk-free rate and no annualization because the engine does not assume a fixed portfolio-return sampling frequency; fresh Backend Tests CI run #106 completed successfully with **69 tests passed, 0 failed**.
-- **Backtesting Sortino ratio metric VERIFIED:** `BacktestResult.sortino_ratio` uses trade-level returns relative to initial capital, zero minimum acceptable return and downside deviation without annualization; fresh Backend Tests CI run #114 completed successfully with **70 tests passed, 0 failed**.
+- **Backtesting Sortino ratio metric VERIFIED:** `BacktestResult.sortino_ratio` uses trade-level returns relative to initial capital, zero minimum acceptable return and downside deviation without annualization; fresh Backend Tests CI run #114 passed **70 tests, 0 failed**.
+- **Backtesting CAGR metric VERIFIED:** `BacktestResult.cagr` annualizes compounded growth using completed-trade datetime/date duration when valid timestamps are available; fresh Backend Tests CI run #125 completed successfully with **71 tests passed, 0 failed**.
 - CI workflow supports push/pull_request/manual verification.
 
 ## Core Trading Engines
