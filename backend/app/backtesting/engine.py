@@ -6,6 +6,7 @@ transaction cost rates, and returns immutable trade/result records.
 """
 
 from dataclasses import dataclass
+from math import sqrt
 from typing import Iterable, Mapping
 
 from app.algo.strategy import Strategy
@@ -48,6 +49,7 @@ class BacktestResult:
     trades: tuple[BacktestTrade, ...]
     win_rate: float
     expectancy: float
+    sharpe_ratio: float
     max_drawdown: float
 
 
@@ -109,6 +111,7 @@ class BacktestEngine:
         wins = sum(1 for trade in trades if trade.net_pnl > 0)
         win_rate = wins / len(trades) if trades else 0.0
         expectancy = net_pnl / len(trades) if trades else 0.0
+        sharpe_ratio = _trade_sharpe_ratio(trades, self.config.initial_capital)
         total_return = net_pnl / self.config.initial_capital
         return BacktestResult(
             initial_capital=self.config.initial_capital,
@@ -118,8 +121,27 @@ class BacktestEngine:
             trades=tuple(trades),
             win_rate=win_rate,
             expectancy=expectancy,
+            sharpe_ratio=sharpe_ratio,
             max_drawdown=max_drawdown,
         )
+
+
+def _trade_sharpe_ratio(trades: list[BacktestTrade], initial_capital: float) -> float:
+    """Return trade-level Sharpe ratio with zero risk-free rate.
+
+    Returns are each completed trade's net P&L divided by initial capital.
+    No annualization is applied because the engine currently has no fixed
+    portfolio-return sampling frequency.
+    """
+    if len(trades) < 2:
+        return 0.0
+
+    returns = [trade.net_pnl / initial_capital for trade in trades]
+    mean_return = sum(returns) / len(returns)
+    variance = sum((value - mean_return) ** 2 for value in returns) / len(returns)
+    if variance == 0.0:
+        return 0.0
+    return mean_return / sqrt(variance)
 
 
 def _is_number(value: object) -> bool:
