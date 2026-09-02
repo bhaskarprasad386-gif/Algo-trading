@@ -32,7 +32,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnPaperExit: Button
 
     private val scannerRefreshHandler = Handler(Looper.getMainLooper())
-    private val scannerRefreshRunnable = Runnable { runCashFutureScanner() }
+    private val scannerRefreshRunnable = Runnable { triggerScannerRefresh() }
 
     private fun currentTimestamp(): String = SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(Date())
 
@@ -71,6 +71,10 @@ class MainActivity : AppCompatActivity() {
         val seconds = etScannerRefreshSeconds.text.toString().toLongOrNull()?.coerceIn(10L, 300L) ?: 30L
         etScannerRefreshSeconds.setText(seconds.toString())
         scannerRefreshHandler.postDelayed(scannerRefreshRunnable, seconds * 1000L)
+    }
+
+    private fun triggerScannerRefresh(): Unit {
+        runCashFutureScanner()
     }
 
     private fun checkServerStatus() = lifecycleScope.launch(Dispatchers.IO) {
