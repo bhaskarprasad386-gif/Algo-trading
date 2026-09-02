@@ -77,7 +77,8 @@ class MainActivity : AppCompatActivity() {
                             append("Gross Spread: ₹${item.gross_spread_profit}\n")
                             append("Margin: ₹${item.margin_required}\n")
                             append("Deployed Capital: ₹${item.deployed_capital}\n")
-                            append("Net: ₹${item.net_profit} | ROI: ${item.roi_pct}%\n\n")
+                            append("Net: ₹${item.net_profit} | ROI: ${item.roi_pct}%\n")
+                            append("Executable: ${if (item.executable) "YES" else "NO"}\n\n")
                         }
                         if (response.errors.isNotEmpty()) {
                             append("ERRORS (${response.errors.size})\n")
