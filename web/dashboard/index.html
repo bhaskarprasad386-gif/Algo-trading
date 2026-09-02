@@ -1,79 +1,40 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Algo Trading & Arbitrage Live Dashboard</title>
-    <style>
-        * { box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:#0f172a; color:#f8fafc; margin:0; padding:15px; width:100%; min-height:100vh; overflow-x:hidden; }
-        .container { width:100%; max-width:900px; margin:0 auto; }
-        header { text-align:center; margin-bottom:20px; }
-        h1 { color:#38bdf8; margin:0 0 5px; font-size:24px; }
-        .subtitle { color:#94a3b8; font-size:13px; }
-        .grid { display:flex; flex-direction:column; gap:15px; }
-        @media(min-width:600px){ .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;} }
-        .card { background:#1e293b; padding:18px; border-radius:12px; box-shadow:0 4px 15px rgba(0,0,0,.3); border-left:5px solid #38bdf8; width:100%; }
-        .card h3 { margin-top:0; color:#f8fafc; font-size:16px; border-bottom:1px solid #334155; padding-bottom:8px; }
-        .metric-value { font-size:24px; font-weight:bold; margin:12px 0; color:#4ade80; }
-        .badge { display:inline-block; padding:4px 10px; border-radius:20px; font-size:11px; font-weight:bold; background:#4ade80; color:#000; }
-        .btn { background:#0284c7; color:white; border:none; padding:12px; border-radius:6px; cursor:pointer; font-weight:bold; width:100%; margin-top:10px; font-size:14px; }
-        .log-box { background:#090d16; padding:10px; border-radius:6px; font-family:monospace; font-size:11px; color:#38bdf8; height:110px; overflow-y:auto; margin-top:10px; border:1px solid #334155; word-break:break-all; }
-        .chart-controls { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
-        select, input { background:#0f172a; color:#f8fafc; border:1px solid #475569; border-radius:6px; padding:9px; }
-        .chart-wrap { background:#090d16; border:1px solid #334155; border-radius:8px; padding:8px; overflow:hidden; }
-        canvas { display:block; width:100%; height:260px; }
-        .legend { display:flex; gap:16px; flex-wrap:wrap; font-size:12px; margin:8px 2px 0; }
-        .legend span::before { content:''; display:inline-block; width:18px; height:3px; vertical-align:middle; margin-right:5px; }
-        .cash-legend::before { background:#38bdf8; }
-        .future-legend::before { background:#f97316; }
-        .gap-legend::before { background:#a855f7; }
-    </style>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Algo Trading & Arbitrage Live Dashboard</title>
+<style>
+*{box-sizing:border-box}body{font-family:'Segoe UI',Tahoma,Verdana,sans-serif;background:#0f172a;color:#f8fafc;margin:0;padding:15px;width:100%;min-height:100vh;overflow-x:hidden}.container{width:100%;max-width:900px;margin:0 auto}header{text-align:center;margin-bottom:20px}h1{color:#38bdf8;margin:0 0 5px;font-size:24px}.subtitle{color:#94a3b8;font-size:13px}.grid{display:flex;flex-direction:column;gap:15px}@media(min-width:600px){.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}}.card{background:#1e293b;padding:18px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,.3);border-left:5px solid #38bdf8;width:100%}.card h3{margin-top:0;color:#f8fafc;font-size:16px;border-bottom:1px solid #334155;padding-bottom:8px}.metric-value{font-size:24px;font-weight:bold;margin:12px 0;color:#4ade80}.badge{display:inline-block;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:bold;background:#4ade80;color:#000}.btn{background:#0284c7;color:white;border:none;padding:12px;border-radius:6px;cursor:pointer;font-weight:bold;width:100%;margin-top:10px;font-size:14px}.log-box{background:#090d16;padding:10px;border-radius:6px;font-family:monospace;font-size:11px;color:#38bdf8;height:110px;overflow-y:auto;margin-top:10px;border:1px solid #334155;word-break:break-all}.chart-controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}select,input{background:#0f172a;color:#f8fafc;border:1px solid #475569;border-radius:6px;padding:9px;min-width:120px}.api-row{display:flex;gap:8px;margin-bottom:10px}.api-row input{flex:1;min-width:0}.chart-wrap{background:#090d16;border:1px solid #334155;border-radius:8px;padding:8px;overflow:hidden}canvas{display:block;width:100%;height:260px}.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;margin:8px 2px 0}.legend span::before{content:'';display:inline-block;width:18px;height:3px;vertical-align:middle;margin-right:5px}.cash-legend::before{background:#38bdf8}.future-legend::before{background:#f97316}.gap-legend::before{background:#a855f7}.status-ok{color:#4ade80}.status-bad{color:#f87171}
+</style>
 </head>
 <body>
 <div class="container">
 <header><h1>Algo Trading Terminal</h1><div class="subtitle">Live Cloud Web Dashboard</div></header>
 <div class="grid">
-<div class="card" style="border-left-color:#22c55e;"><h3>Strategy Engine</h3><p>Status: <span id="strat-status" class="badge">ACTIVE</span></p><p id="arb-spread" style="font-size:14px;">Arbitrage: <strong>+₹3.25 (NSE/BSE)</strong></p><button class="btn" onclick="toggleStrategy()">Stop / Restart Strategy</button></div>
-<div class="card" style="border-left-color:#38bdf8;"><h3>Live LTP Inspector</h3><p style="font-size:14px;">Asset: <strong>RELIANCE (NSE)</strong></p><div class="metric-value" id="live-price">₹2,450.00</div><p style="font-size:11px;color:#94a3b8;">Real-time Tick Stream</p></div>
+<div class="card" style="border-left-color:#22c55e"><h3>Strategy Engine</h3><p>Status: <span id="strat-status" class="badge">ACTIVE</span></p><p id="arb-spread" style="font-size:14px">Arbitrage: <strong>Waiting for backend data</strong></p><button class="btn" onclick="toggleStrategy()">Stop / Restart Strategy</button></div>
+<div class="card" style="border-left-color:#38bdf8"><h3>Live LTP Inspector</h3><p style="font-size:14px">Asset: <strong id="asset-label">RELIANCE (NSE)</strong></p><div class="metric-value" id="live-price">—</div><p id="live-status" style="font-size:11px;color:#94a3b8">Backend LTP integration pending</p></div>
 </div>
-<div class="card" style="margin-top:15px;border-left-color:#0ea5e9;">
+<div class="card" style="margin-top:15px;border-left-color:#0ea5e9">
 <h3>Cash–Future Price & Gap</h3>
-<div class="chart-controls"><select id="contract"><option value="CURRENT">CURRENT Future</option><option value="NEAR">NEAR Future</option></select><select id="range"><option value="30">30 Days</option><option value="90">90 Days</option><option value="180">180 Days</option><option value="365">1 Year</option></select><button class="btn" style="width:auto;margin:0;padding:9px 14px;" onclick="loadCashFutureChart()">Refresh</button></div>
+<div class="api-row"><input id="apiBase" placeholder="Backend API URL (e.g. http://192.168.1.10:8000)"><button class="btn" style="width:auto;margin:0;padding:9px 14px" onclick="saveApiBase()">Save API</button></div>
+<div class="chart-controls"><input id="symbol" value="RELIANCE" maxlength="30" placeholder="Symbol"><select id="contract"><option value="CURRENT">CURRENT Future</option><option value="NEAR">NEAR Future</option></select><select id="range"><option value="30">30 Days</option><option value="90">90 Days</option><option value="180">180 Days</option><option value="365">1 Year</option></select><button class="btn" style="width:auto;margin:0;padding:9px 14px" onclick="loadCashFutureChart()">Refresh</button></div>
+<p style="font-size:11px;color:#94a3b8;margin:0 0 10px">API: <span id="api-status">not checked</span> • Symbol: <strong id="selected-symbol">RELIANCE</strong> • Contract: <strong id="selected-contract">CURRENT</strong></p>
 <div class="chart-wrap"><canvas id="priceChart" width="820" height="260"></canvas><div class="legend"><span class="cash-legend">Cash</span><span class="future-legend">Future</span></div></div>
-<div class="chart-wrap" style="margin-top:12px;"><canvas id="gapChart" width="820" height="220"></canvas><div class="legend"><span class="gap-legend">Gap (Future − Cash)</span></div></div>
-<p id="chart-status" style="font-size:11px;color:#94a3b8;margin-bottom:0;">Waiting for historical data…</p>
+<div class="chart-wrap" style="margin-top:12px"><canvas id="gapChart" width="820" height="220"></canvas><div class="legend"><span class="gap-legend">Gap (Future − Cash)</span></div></div>
+<p id="chart-status" style="font-size:11px;color:#94a3b8;margin-bottom:0">Waiting for historical data…</p>
 </div>
-<div class="card" style="margin-top:15px;border-left-color:#facc15;"><h3>Today's P&amp;L</h3><div class="metric-value" id="pnl-value" style="color:#4ade80;">+₹1,240.50</div><p style="font-size:12px;color:#94a3b8;margin:0;">Active Trades: <strong>2</strong></p></div>
-<div class="card" style="margin-top:15px;border-left-color:#a855f7;"><h3>Execution Logs</h3><div class="log-box" id="terminal-logs">[System] Web Dashboard initialized.<br>[SmartAPI] Connected to socket stream.<br>[Arbitrage] Monitoring gaps...</div></div>
+<div class="card" style="margin-top:15px;border-left-color:#facc15"><h3>Today's P&amp;L</h3><div class="metric-value" id="pnl-value" style="color:#94a3b8">—</div><p style="font-size:12px;color:#94a3b8;margin:0">Live P&amp;L integration pending</p></div>
+<div class="card" style="margin-top:15px;border-left-color:#a855f7"><h3>Execution Logs</h3><div class="log-box" id="terminal-logs">[System] Web Dashboard initialized.<br>[Backend] Waiting for API connection…</div></div>
 </div>
 <script>
-let basePrice=2450.00,pnl=1240.50,isRunning=true;
-function drawLineChart(canvasId, labels, datasets, title){
- const c=document.getElementById(canvasId),ctx=c.getContext('2d'),w=c.clientWidth||820,h=c.height,dpr=window.devicePixelRatio||1;
- c.width=w*dpr; c.height=h*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,w,h);
- const pad={l:48,r:12,t:24,b:28},pw=w-pad.l-pad.r,ph=h-pad.t-pad.b;
- const values=datasets.flatMap(d=>d.values); if(!values.length){ctx.fillStyle='#94a3b8';ctx.fillText('No historical data',pad.l,pad.t+20);return;}
- let min=Math.min(...values),max=Math.max(...values); if(min===max){min-=1;max+=1;} const x=i=>pad.l+(labels.length<=1?0:(i/(labels.length-1))*pw),y=v=>pad.t+(max-v)/(max-min)*ph;
- ctx.strokeStyle='#334155';ctx.lineWidth=1;for(let i=0;i<5;i++){let yy=pad.t+i*ph/4;ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(w-pad.r,yy);ctx.stroke();}
- ctx.fillStyle='#64748b';ctx.font='10px Segoe UI';ctx.fillText(max.toFixed(2),4,pad.t+4);ctx.fillText(min.toFixed(2),4,h-pad.b);
- datasets.forEach(d=>{ctx.strokeStyle=d.color;ctx.lineWidth=2;ctx.beginPath();d.values.forEach((v,i)=>{const xx=x(i),yy=y(v);i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy);});ctx.stroke();});
- if(labels.length){ctx.fillStyle='#64748b';ctx.fillText(new Date(labels[0]).toLocaleDateString(),pad.l,h-8);ctx.fillText(new Date(labels[labels.length-1]).toLocaleDateString(),Math.max(pad.l,pw-30),h-8);}
- ctx.fillStyle='#cbd5e1';ctx.font='12px Segoe UI';ctx.fillText(title,pad.l,14);
-}
-function sampleData(days){const labels=[],cash=[],future=[],gap=[];let c=2450;for(let i=days-1;i>=0;i--){let d=new Date(Date.now()-i*86400000);c+=Math.sin(i/7)*2+(Math.random()-.5)*5;let g=4+Math.sin(i/9)*1.5+(Math.random()-.5)*1;labels.push(d.toISOString());cash.push(c);future.push(c+g);gap.push(g);}return{labels,cash,future,gap};}
-async function loadCashFutureChart(){
- const contract=document.getElementById('contract').value,days=Number(document.getElementById('range').value),status=document.getElementById('chart-status');
- try{
-  const r=await fetch(`/api/v1/scanner/cash-future/graph?symbol=RELIANCE&contract_month=${encodeURIComponent(contract)}&days=${days}`);
-  if(!r.ok) throw new Error('API unavailable'); const payload=await r.json(); const s=payload.graph||payload.series||payload;
-  if(!s.timestamps||!s.timestamps.length) throw new Error('No history');
-  drawLineChart('priceChart',s.timestamps,[{values:s.cash,color:'#38bdf8'},{values:s.future,color:'#f97316'}],'Cash vs Future');
-  drawLineChart('gapChart',s.timestamps,[{values:s.gap,color:'#a855f7'}],'Future − Cash Gap'); status.textContent=`${contract} • ${s.timestamps.length} historical observations`;
- }catch(e){const d=sampleData(Math.min(days,60));drawLineChart('priceChart',d.labels,[{values:d.cash,color:'#38bdf8'},{values:d.future,color:'#f97316'}],'Cash vs Future (demo)');drawLineChart('gapChart',d.labels,[{values:d.gap,color:'#a855f7'}],'Future − Cash Gap (demo)');status.textContent='Historical API data unavailable; showing demo chart only.';}
-}
-window.addEventListener('resize',()=>loadCashFutureChart());loadCashFutureChart();
-setInterval(()=>{if(!isRunning)return;let change=Math.random()*3-1.45;basePrice+=change;document.getElementById('live-price').innerText='₹'+basePrice.toFixed(2);pnl+=change*.5;let pe=document.getElementById('pnl-value');pe.innerText=(pnl>=0?'+₹':'-₹')+Math.abs(pnl).toFixed(2);pe.style.color=pnl>=0?'#4ade80':'#f87171';let spread=(Math.random()*2+1.5).toFixed(2);document.getElementById('arb-spread').innerHTML=`Arbitrage: <strong>+₹${spread} (NSE/BSE)</strong>`;if(Math.random()>.7){let logs=document.getElementById('terminal-logs');logs.innerHTML+=`<br>[${new Date().toLocaleTimeString()}] Opportunity caught! Spread: ₹${spread}`;logs.scrollTop=logs.scrollHeight;}},1500);
-function toggleStrategy(){isRunning=!isRunning;let b=document.getElementById('strat-status'),logs=document.getElementById('terminal-logs'),t=new Date().toLocaleTimeString();if(isRunning){b.innerText='ACTIVE';b.style.background='#4ade80';logs.innerHTML+=`<br>[${t}] Strategy resumed.`;}else{b.innerText='PAUSED';b.style.background='#f87171';logs.innerHTML+=`<br>[${t}] Strategy paused.`;}logs.scrollTop=logs.scrollHeight;}
+let isRunning=true;
+const savedApiBase=localStorage.getItem('algoApiBase')||'';
+document.getElementById('apiBase').value=savedApiBase;
+function apiBase(){return document.getElementById('apiBase').value.trim().replace(/\/$/,'')||window.location.origin;}
+function saveApiBase(){const value=document.getElementById('apiBase').value.trim().replace(/\/$/,'');if(value)localStorage.setItem('algoApiBase',value);else localStorage.removeItem('algoApiBase');document.getElementById('api-status').textContent=value||'same origin';loadCashFutureChart();}
+function drawLineChart(canvasId,labels,datasets,title){const c=document.getElementById(canvasId),ctx=c.getContext('2d'),w=c.clientWidth||820,h=canvasId==='gapChart'?220:c.height,dpr=window.devicePixelRatio||1;c.width=w*dpr;c.height=h*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);const pad={l:48,r:12,t:24,b:28},pw=w-pad.l-pad.r,ph=h-pad.t-pad.b,values=datasets.flatMap(d=>d.values);if(!values.length){ctx.fillStyle='#94a3b8';ctx.fillText('No historical data',pad.l,pad.t+20);return}let min=Math.min(...values),max=Math.max(...values);if(min===max){min-=1;max+=1}const x=i=>pad.l+(labels.length<=1?0:i/(labels.length-1)*pw),y=v=>pad.t+(max-v)/(max-min)*ph;ctx.strokeStyle='#334155';ctx.lineWidth=1;for(let i=0;i<5;i++){let yy=pad.t+i*ph/4;ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(w-pad.r,yy);ctx.stroke()}ctx.fillStyle='#64748b';ctx.font='10px Segoe UI';ctx.fillText(max.toFixed(2),4,pad.t+4);ctx.fillText(min.toFixed(2),4,h-pad.b);datasets.forEach(d=>{ctx.strokeStyle=d.color;ctx.lineWidth=2;ctx.beginPath();d.values.forEach((v,i)=>{const xx=x(i),yy=y(v);i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)});ctx.stroke()});if(labels.length){ctx.fillStyle='#64748b';ctx.fillText(new Date(labels[0]).toLocaleDateString(),pad.l,h-8);ctx.fillText(new Date(labels[labels.length-1]).toLocaleDateString(),Math.max(pad.l,pw-30),h-8)}ctx.fillStyle='#cbd5e1';ctx.font='12px Segoe UI';ctx.fillText(title,pad.l,14)}
+async function loadCashFutureChart(){const symbol=document.getElementById('symbol').value.trim().toUpperCase();const contract=document.getElementById('contract').value;const days=Number(document.getElementById('range').value);const status=document.getElementById('chart-status');if(!symbol){status.textContent='Enter a symbol.';return}document.getElementById('selected-symbol').textContent=symbol;document.getElementById('selected-contract').textContent=contract;document.getElementById('asset-label').textContent=`${symbol} (NSE)`;document.getElementById('api-status').textContent='checking…';try{const base=apiBase();const health=await fetch(`${base}/health`,{cache:'no-store'});if(!health.ok)throw new Error('Health check failed');document.getElementById('api-status').textContent='connected';document.getElementById('api-status').className='status-ok';const r=await fetch(`${base}/api/v1/scanner/cash-future/graph?symbol=${encodeURIComponent(symbol)}&contract_month=${encodeURIComponent(contract)}&days=${days}`,{cache:'no-store'});if(!r.ok)throw new Error(`Graph API ${r.status}`);const payload=await r.json(),s=payload.graph||payload.series||payload;if(!s.timestamps||!s.timestamps.length)throw new Error('No historical data');if(!s.cash||!s.future||!s.gap)throw new Error('Incomplete graph data');drawLineChart('priceChart',s.timestamps,[{values:s.cash,color:'#38bdf8'},{values:s.future,color:'#f97316'}],'Cash vs Future');drawLineChart('gapChart',s.timestamps,[{values:s.gap,color:'#a855f7'}],'Future − Cash Gap');status.textContent=`LIVE BACKEND DATA • ${symbol} • ${contract} • ${s.timestamps.length} observations`;}catch(e){document.getElementById('api-status').textContent='unavailable';document.getElementById('api-status').className='status-bad';status.textContent=`No backend history for ${symbol}/${contract}: ${e.message}`;const c=document.getElementById('priceChart'),g=document.getElementById('gapChart');c.getContext('2d').clearRect(0,0,c.width,c.height);g.getContext('2d').clearRect(0,0,g.width,g.height);const ctx=c.getContext('2d');ctx.fillStyle='#f87171';ctx.font='12px Segoe UI';ctx.fillText('Backend data unavailable — no demo/fake market chart shown.',20,40);const gctx=g.getContext('2d');gctx.fillStyle='#f87171';gctx.font='12px Segoe UI';gctx.fillText('No historical gap data available.',20,40);}}
+document.getElementById('contract').addEventListener('change',loadCashFutureChart);document.getElementById('range').addEventListener('change',loadCashFutureChart);document.getElementById('symbol').addEventListener('change',loadCashFutureChart);window.addEventListener('resize',()=>loadCashFutureChart());loadCashFutureChart();
+function toggleStrategy(){isRunning=!isRunning;const b=document.getElementById('strat-status'),logs=document.getElementById('terminal-logs'),t=new Date().toLocaleTimeString();b.innerText=isRunning?'ACTIVE':'PAUSED';b.style.background=isRunning?'#4ade80':'#f87171';logs.innerHTML+=`<br>[${t}] Strategy ${isRunning?'resumed':'paused'}.`;logs.scrollTop=logs.scrollHeight;}
 </script>
 </body></html>
