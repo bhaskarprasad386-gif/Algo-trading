@@ -20,9 +20,18 @@ class FakeMaster:
 
 
 class FakeMarketClient:
-    def ltp(self, exchange, tradingsymbol, symboltoken):
+    def quote(self, exchange, tradingsymbol, symboltoken):
         prices = {"ABC-EQ": 100.0, "ABC30SEP2026FUT": 108.0, "ABC29OCT2026FUT": 111.0}
-        return {"status": True, "data": {"ltp": prices[tradingsymbol]}}
+        return {
+            "status": True,
+            "data": {
+                "ltp": prices[tradingsymbol],
+                "bid": 99.9 if tradingsymbol == "ABC-EQ" else prices[tradingsymbol] - 0.1,
+                "ask": 100.1 if tradingsymbol == "ABC-EQ" else prices[tradingsymbol] + 0.1,
+                "tradeVolume": 5000,
+                "opnInterest": 20000,
+            },
+        }
 
 
 def test_collector_keeps_current_and_near_separate(monkeypatch):
@@ -41,3 +50,7 @@ def test_collector_keeps_current_and_near_separate(monkeypatch):
     assert [point.gap for point in saved] == [8.0, 11.0]
     assert saved[0].expiry_date == date(2026, 9, 30)
     assert saved[1].expiry_date == date(2026, 10, 29)
+    assert saved[0].volume == 5000
+    assert saved[0].oi == 20000
+    assert saved[0].future_bid == 107.9
+    assert saved[0].future_ask == 108.1
