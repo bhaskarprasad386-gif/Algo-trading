@@ -46,3 +46,5 @@
 - Fresh Backend Tests CI **#102** completed successfully: **68 tests passed**, 0 failed.
 - **Backtesting Sharpe ratio metric VERIFIED.** `BacktestResult.sharpe_ratio` uses trade-level returns relative to initial capital, with zero risk-free rate and no annualization because the engine does not assume a fixed portfolio-return sampling frequency.
 - Fresh Backend Tests CI **#106** completed successfully: **69 tests passed**, 0 failed.
+- **Backtesting Sortino ratio metric VERIFIED.** `BacktestResult.sortino_ratio` uses trade-level returns relative to initial capital, zero minimum acceptable return and downside deviation without annualization.
+- Fresh Backend Tests CI **#114** completed successfully: **70 tests passed**, 0 failed.
