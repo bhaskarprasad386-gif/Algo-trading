@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from app.algo.strategy import Strategy, StrategyRule, threshold_rule
@@ -23,6 +25,7 @@ def test_backtest_enters_and_exits_on_strategy_rules():
     assert result.sharpe_ratio == 0.0
     assert result.sortino_ratio == 0.0
     assert result.max_drawdown == 0.0
+    assert result.cagr == 0.0
 
 
 def test_backtest_applies_slippage_and_transaction_costs():
@@ -54,6 +57,7 @@ def test_backtest_applies_slippage_and_transaction_costs():
     assert result.sharpe_ratio == 0.0
     assert result.sortino_ratio == 0.0
     assert result.max_drawdown == 0.0
+    assert result.cagr == 0.0
 
 
 def test_backtest_sharpe_ratio_uses_completed_trade_returns():
@@ -94,6 +98,24 @@ def test_backtest_sortino_ratio_uses_only_downside_deviation():
     assert result.sortino_ratio == pytest.approx(2 ** 0.5 / 2)
 
 
+def test_backtest_cagr_uses_completed_trade_duration():
+    entry = Strategy("entry", (StrategyRule("go", threshold_rule("signal", minimum=1)),))
+    exit_ = Strategy("exit", (StrategyRule("stop", threshold_rule("signal", maximum=0)),))
+    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+    result = BacktestEngine().run(
+        [
+            {"timestamp": start, "close": 100, "signal": 1},
+            {"timestamp": end, "close": 110, "signal": 0},
+        ],
+        entry,
+        exit_,
+    )
+
+    assert result.cagr == pytest.approx(0.1, rel=1e-3)
+
+
 def test_backtest_tracks_realized_max_drawdown():
     entry = Strategy("entry", (StrategyRule("go", threshold_rule("signal", minimum=1)),))
     exit_ = Strategy("exit", (StrategyRule("stop", threshold_rule("signal", maximum=0)),))
@@ -130,3 +152,4 @@ def test_backtest_without_completed_trade_has_zero_pnl():
     assert result.sharpe_ratio == 0
     assert result.sortino_ratio == 0
     assert result.max_drawdown == 0
+    assert result.cagr == 0
