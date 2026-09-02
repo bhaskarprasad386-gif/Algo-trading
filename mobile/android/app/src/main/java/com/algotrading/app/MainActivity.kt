@@ -21,6 +21,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvPaperResult: TextView
     private lateinit var tvScannerResult: TextView
     private lateinit var btnRunScanner: Button
+    private lateinit var btnPaperEntry: Button
+    private lateinit var btnPaperPosition: Button
+    private lateinit var btnPaperExit: Button
 
     private fun currentTimestamp(): String = SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(Date())
 
@@ -34,11 +37,14 @@ class MainActivity : AppCompatActivity() {
         tvPaperResult = findViewById(R.id.tvPaperResult)
         tvScannerResult = findViewById(R.id.tvScannerResult)
         btnRunScanner = findViewById(R.id.btnRunScanner)
+        btnPaperEntry = findViewById(R.id.btnPaperEntry)
+        btnPaperPosition = findViewById(R.id.btnPaperPosition)
+        btnPaperExit = findViewById(R.id.btnPaperExit)
         checkServerStatus()
         btnRunScanner.setOnClickListener { runCashFutureScanner() }
-        findViewById<Button>(R.id.btnPaperEntry).setOnClickListener { paperEntry() }
-        findViewById<Button>(R.id.btnPaperExit).setOnClickListener { paperExit() }
-        findViewById<Button>(R.id.btnPaperPosition).setOnClickListener { paperPosition() }
+        btnPaperEntry.setOnClickListener { paperEntry() }
+        btnPaperExit.setOnClickListener { paperExit() }
+        btnPaperPosition.setOnClickListener { paperPosition() }
     }
 
     private fun checkServerStatus() = lifecycleScope.launch(Dispatchers.IO) {
@@ -116,20 +122,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun setPaperBusy(busy: Boolean, message: String? = null) {
+        btnPaperEntry.isEnabled = !busy
+        btnPaperPosition.isEnabled = !busy
+        btnPaperExit.isEnabled = !busy
+        if (message != null) tvPaperResult.text = message
+    }
+
     private fun paperEntry() {
         val price = etEntryPrice.text.toString().toDoubleOrNull()
         val quantity = etQuantity.text.toString().toDoubleOrNull()
         if (price == null || price <= 0) { etEntryPrice.error = "Enter a positive entry price"; return }
         if (quantity == null || quantity <= 0) { etQuantity.error = "Enter a positive quantity"; return }
         lifecycleScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { setPaperBusy(true, "PAPER ENTRY IN PROGRESS...") }
             try {
                 val response = ApiService.retrofitService.paperEntry(PaperEntryRequest(price, quantity))
                 withContext(Dispatchers.Main) { tvPaperResult.text = "PAPER POSITION ACTIVE\n\nEntry: ₹${response.entry_price}\nStop Loss: ₹${response.stop_loss}\nTarget: ₹${response.target}\nQuantity: ${response.position.quantity}" }
             } catch (error: Exception) { withContext(Dispatchers.Main) { tvPaperResult.text = "Paper Entry Failed: ${error.message ?: "API error"}" } }
+            finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
         }
     }
 
     private fun paperPosition() = lifecycleScope.launch(Dispatchers.IO) {
+        withContext(Dispatchers.Main) { setPaperBusy(true, "CHECKING PAPER POSITION...") }
         try {
             val response = ApiService.retrofitService.paperPosition()
             withContext(Dispatchers.Main) {
@@ -137,16 +153,19 @@ class MainActivity : AppCompatActivity() {
                 tvPaperResult.text = if (position == null) "PAPER POSITION: FLAT" else "PAPER POSITION ACTIVE\n\nEntry: ₹${position.entry_price}\nStop Loss: ₹${position.stop_loss}\nTarget: ₹${position.target}\nQuantity: ${position.quantity}"
             }
         } catch (error: Exception) { withContext(Dispatchers.Main) { tvPaperResult.text = "Position Check Failed: ${error.message ?: "API error"}" } }
+        finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
     }
 
     private fun paperExit() {
         val price = etExitPrice.text.toString().toDoubleOrNull()
         if (price == null || price <= 0) { etExitPrice.error = "Enter a positive exit price"; return }
         lifecycleScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { setPaperBusy(true, "PAPER EXIT IN PROGRESS...") }
             try {
                 val response = ApiService.retrofitService.paperExit(PaperExitRequest(price))
                 withContext(Dispatchers.Main) { tvPaperResult.text = if (response.status == "closed") "PAPER POSITION CLOSED\n\nEntry: ₹${response.entry_price}\nExit: ₹${response.exit_price}\nQuantity: ${response.quantity}\nP&L: ₹${response.pnl}" else "PAPER POSITION: FLAT" }
             } catch (error: Exception) { withContext(Dispatchers.Main) { tvPaperResult.text = "Paper Exit Failed: ${error.message ?: "API error"}" } }
+            finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
         }
     }
 }
