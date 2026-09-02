@@ -36,6 +36,28 @@ class MarketDataClient:
             app_logger.error(f"LTP request failed for {tradingsymbol}: {str(e)}")
             raise TradingAppException("LTPRequestError", str(e), 502)
 
+    def quote(self, exchange: str, tradingsymbol: str, symboltoken: str) -> Dict[str, Any]:
+        """Fetch Angel One FULL quote including volume/OI/depth when available."""
+        try:
+            client = self.get_client()
+            response = client.getMarketData(
+                "FULL",
+                {exchange.upper(): [str(symboltoken)]},
+            )
+            if response and response.get("status"):
+                return response
+            message = (
+                response.get("message", "Unknown market-data error")
+                if response
+                else "Empty response from Angel One"
+            )
+            raise TradingAppException("QuoteRequestFailed", message, 502)
+        except TradingAppException:
+            raise
+        except Exception as e:
+            app_logger.error(f"Quote request failed for {tradingsymbol}: {str(e)}")
+            raise TradingAppException("QuoteRequestError", str(e), 502)
+
     def profile(self) -> Dict[str, Any]:
         """Fetch user profile (auth test)."""
         try:
