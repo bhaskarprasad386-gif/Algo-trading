@@ -42,3 +42,7 @@
 - Fresh Backend Tests CI **#90** completed successfully: **67 tests passed**, 0 failed.
 - **Backtesting max-drawdown enhancement VERIFIED.** `BacktestResult.max_drawdown` tracks realized peak-to-trough capital drawdown.
 - Fresh Backend Tests CI **#97** completed successfully: **68 tests passed**, 0 failed.
+- **Backtesting expectancy metric VERIFIED.** `BacktestResult.expectancy` reports average net P&L per completed trade.
+- Fresh Backend Tests CI **#102** completed successfully: **68 tests passed**, 0 failed.
+- **Backtesting Sharpe ratio metric VERIFIED.** `BacktestResult.sharpe_ratio` uses trade-level returns relative to initial capital, with zero risk-free rate and no annualization because the engine does not assume a fixed portfolio-return sampling frequency.
+- Fresh Backend Tests CI **#106** completed successfully: **69 tests passed**, 0 failed.
