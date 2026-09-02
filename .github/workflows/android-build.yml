@@ -30,3 +30,4 @@ jobs:
 
       - name: Compile Android debug build
         run: gradle assembleDebug --no-daemon
+
