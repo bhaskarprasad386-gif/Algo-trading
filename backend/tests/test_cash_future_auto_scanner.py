@@ -41,7 +41,7 @@ def _quote(**overrides):
 
 def test_cash_future_passes_requested_executable_filters():
     result = calculate_cash_future(
-        CashQuote(symbol="SBIN", ltp=100.0),
+        CashQuote(symbol="SBIN", ltp=100.0, bid=99.9, ask=100.0),
         _quote(),
         CashFutureConfig(min_gap=0.5, min_gap_pct=0.5, min_net_profit=5.0, min_volume=1000, min_oi=10000),
     )
@@ -54,7 +54,7 @@ def test_cash_future_passes_requested_executable_filters():
 
 def test_cash_future_rejects_gap_profit_volume_and_oi_filters():
     result = calculate_cash_future(
-        CashQuote(symbol="SBIN", ltp=100.0),
+        CashQuote(symbol="SBIN", ltp=100.0, bid=99.9, ask=100.0),
         _quote(ltp=100.2, volume=100, oi=1000),
         CashFutureConfig(min_gap=0.5, min_gap_pct=0.5, min_net_profit=5.0, min_volume=1000, min_oi=10000),
     )
@@ -68,7 +68,7 @@ def test_cash_future_rejects_gap_profit_volume_and_oi_filters():
 
 def test_cash_future_rejects_wide_future_bid_ask_spread():
     result = calculate_cash_future(
-        CashQuote(symbol="SBIN", ltp=100.0),
+        CashQuote(symbol="SBIN", ltp=100.0, bid=99.9, ask=100.0),
         _quote(bid=99.0, ask=103.0),
         CashFutureConfig(max_bid_ask_spread_pct=2.0),
     )
@@ -78,7 +78,7 @@ def test_cash_future_rejects_wide_future_bid_ask_spread():
 
 def test_cash_future_rejects_insufficient_broker_margin():
     result = calculate_cash_future(
-        CashQuote(symbol="SBIN", ltp=100.0),
+        CashQuote(symbol="SBIN", ltp=100.0, bid=99.9, ask=100.0),
         _quote(margin_required=900.0),
         CashFutureConfig(min_margin=1000.0),
     )
@@ -88,7 +88,7 @@ def test_cash_future_rejects_insufficient_broker_margin():
 
 def test_cash_future_rejects_low_broker_margin_roi():
     result = calculate_cash_future(
-        CashQuote(symbol="SBIN", ltp=100.0),
+        CashQuote(symbol="SBIN", ltp=100.0, bid=99.9, ask=100.0),
         _quote(margin_required=10000.0),
         CashFutureConfig(min_roi_pct=0.2),
     )
