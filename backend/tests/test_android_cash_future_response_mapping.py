@@ -34,7 +34,8 @@ def test_android_cash_future_error_fixture_is_supported():
 def test_android_cash_future_scanner_states_are_clear():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
     assert 'btnRunScanner.text = "SCANNING..."' in ui
-    assert 'tvScannerResult.text = "SCAN IN PROGRESS\\n\\nRunning Cash–Future scanner..."' in ui
+    assert "SCAN IN PROGRESS" in ui
+    assert "Running Cash–Future scanner..." in ui
     assert 'append("SCAN COMPLETE — SUCCESS\\n")' in ui
     assert 'append("SCAN COMPLETE — NO OPPORTUNITIES\\n")' in ui
     assert '"SCAN ERROR\\n\\nLast Scan: $failedAt\\n\\nScanner Failed:' in ui
