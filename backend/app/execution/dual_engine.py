@@ -53,7 +53,7 @@ FillExecutor = Callable[[ExecutionMode, float], Fill]
 
 
 class DualExecutionEngine:
-    """Keep paper/live state separate while processing the same signal."""
+    """Keep paper/live state separate and require explicit gated live entry."""
 
     def __init__(
         self,
@@ -67,25 +67,23 @@ class DualExecutionEngine:
         self._fill_executor = fill_executor
         self.confirmation = confirmation or ConfirmationGateway()
         self.idempotency = idempotency or IdempotencyGuard()
-        self.safety = safety
+        self.safety = safety or SafetyController()
         self.paper = ExecutionState(ExecutionMode.PAPER)
         self.live = ExecutionState(ExecutionMode.LIVE)
 
-    def enter(self, price: float, quantity: float) -> tuple[Fill, Fill]:
-        """Submit the synchronized entry to both modes and adjust from actual fills."""
+    def enter(self, price: float, quantity: float) -> Fill:
+        """Execute a paper-only entry; live execution must use enter_live()."""
         paper_fill = self._fill_executor(ExecutionMode.PAPER, price)
-        live_fill = self._fill_executor(ExecutionMode.LIVE, price)
         self.paper.apply_fill(paper_fill, self.config)
-        self.live.apply_fill(live_fill, self.config)
-        return paper_fill, live_fill
+        return paper_fill
 
     def create_live_confirmation(self, request_id: str):
         """Create the short-lived confirmation required for a live entry."""
         return self.confirmation.create(request_id)
 
     def enter_live(self, price: float, quantity: float, request_id: str) -> Fill:
-        """Execute one live entry only after confirmation, idempotency and safety checks."""
-        if self.safety is not None and not self.safety.allow_execution():
+        """Execute one live entry only after safety, confirmation and idempotency checks."""
+        if not self.safety.allow_execution():
             raise RuntimeError("live execution blocked by safety controller")
         if not self.confirmation.confirm(request_id):
             raise RuntimeError("live execution requires a valid confirmation")
