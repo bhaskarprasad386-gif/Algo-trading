@@ -23,3 +23,7 @@ def test_android_scanner_auto_refresh_behavior_contract():
     assert "btnRunScanner.isEnabled = true" in finally_block
     assert 'btnRunScanner.text = "RUN CASH–FUTURE SCAN"' in finally_block
     assert "scheduleScannerRefresh()" in finally_block
+
+    assert "private lateinit var scannerRefreshRunnable: Runnable" in body
+    assert "scannerRefreshRunnable = Runnable { runCashFutureScanner() }" in body
+    assert "override fun onDestroy()" in body
