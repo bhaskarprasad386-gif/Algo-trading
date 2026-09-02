@@ -47,6 +47,7 @@ class BacktestResult:
     total_return: float
     trades: tuple[BacktestTrade, ...]
     win_rate: float
+    expectancy: float
     max_drawdown: float
 
 
@@ -107,6 +108,7 @@ class BacktestEngine:
         net_pnl = capital - self.config.initial_capital
         wins = sum(1 for trade in trades if trade.net_pnl > 0)
         win_rate = wins / len(trades) if trades else 0.0
+        expectancy = net_pnl / len(trades) if trades else 0.0
         total_return = net_pnl / self.config.initial_capital
         return BacktestResult(
             initial_capital=self.config.initial_capital,
@@ -115,6 +117,7 @@ class BacktestEngine:
             total_return=total_return,
             trades=tuple(trades),
             win_rate=win_rate,
+            expectancy=expectancy,
             max_drawdown=max_drawdown,
         )
 
