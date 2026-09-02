@@ -1,7 +1,7 @@
-from backend.app.execution.confirmation import ConfirmationGateway
-from backend.app.execution.dual_engine import DualExecutionEngine, ExecutionMode, Fill
-from backend.app.execution.idempotency import IdempotencyGuard
-from backend.app.execution.safety import SafetyController, SafetyLimits
+from app.execution.confirmation import ConfirmationGateway
+from app.execution.dual_engine import DualExecutionEngine, ExecutionMode, Fill
+from app.execution.idempotency import IdempotencyGuard
+from app.execution.safety import SafetyController, SafetyLimits
 
 
 def test_live_entry_requires_confirmation_and_allows_once() -> None:
