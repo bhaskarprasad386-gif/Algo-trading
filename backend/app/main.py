@@ -18,6 +18,7 @@ from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
 from app.order_engine.routes import router as orders_router
 from app.market_data.routes import router as market_data_router
+from app.scanner.routes import router as scanner_router
 
 # Import models before creating tables so SQLAlchemy registers all model metadata.
 Base.metadata.create_all(bind=engine)
@@ -31,6 +32,7 @@ app.include_router(orders_router)
 app.include_router(arbitrage_router)
 app.include_router(instruments_router)
 app.include_router(market_data_router)
+app.include_router(scanner_router)
 
 
 @app.on_event("startup")
