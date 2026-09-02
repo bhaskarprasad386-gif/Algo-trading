@@ -89,3 +89,13 @@ def test_dashboard_scanner_prioritizes_executable_opportunities():
     assert "Number(b.net_profit||0)-Number(a.net_profit||0)" in body
     assert "tr.innerHTML='<td>'+(i+1)+'" in body
     assert "<th>Priority</th>" in body
+
+
+def test_dashboard_scanner_has_clear_empty_and_failure_states():
+    response = dashboard()
+    body = response.body.decode("utf-8")
+    assert "NO EXECUTABLE OPPORTUNITIES" in body
+    assert "SCAN COMPLETE • NO EXECUTABLE OPPORTUNITIES" in body
+    assert "No backend data — no demo data shown." not in body
+    assert "status.textContent='SCAN FAILED: '+e.message" in body
+    assert "log('Scan failed: '+e.message)" in body
