@@ -22,6 +22,7 @@ from app.order_engine.routes import router as orders_router
 from app.market_data.routes import router as market_data_router
 from app.scanner.routes import router as scanner_router
 from app.scanner.auto_routes import router as auto_scanner_router
+from app.execution.paper_routes import router as paper_execution_router
 from app.scanner.cash_future_collector import CashFutureHistoryCollector
 
 # Import models before creating tables so SQLAlchemy registers all model metadata.
@@ -38,6 +39,7 @@ app.include_router(instruments_router)
 app.include_router(market_data_router)
 app.include_router(scanner_router)
 app.include_router(auto_scanner_router)
+app.include_router(paper_execution_router)
 
 
 @app.websocket("/ws/market-data/{symbol}")
