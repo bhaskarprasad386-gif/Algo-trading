@@ -66,3 +66,12 @@ def test_android_cash_future_scanner_states_are_clear():
     assert 'append("SCAN COMPLETE — SUCCESS\\n\\n")' in ui
     assert 'append("SCAN COMPLETE — NO OPPORTUNITIES\\n\\n")' in ui
     assert 'tvScannerResult.text = "SCAN ERROR\\n\\nScanner Failed:' in ui
+
+
+def test_android_cash_future_scanner_summary_counts_are_clear():
+    ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
+    assert 'append("Symbols requested: ${response.symbols_requested.size}\\n")' in ui
+    assert 'append("Observations: ${response.scanned_observations}\\n")' in ui
+    assert 'append("Executable opportunities: ${response.opportunity_count}\\n")' in ui
+    assert 'append("Errors: ${response.errors.size}\\n\\n")' in ui
+    assert 'append("Executable opportunities: 0\\n")' in ui
