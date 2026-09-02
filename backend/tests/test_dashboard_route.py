@@ -34,3 +34,15 @@ def test_dashboard_contains_paper_position_check_ui():
     assert "Checking paper position…" in body
     assert "PAPER POSITION ACTIVE" in body
     assert "No active paper position." in body
+
+
+def test_dashboard_paper_actions_have_busy_state_protection():
+    response = dashboard()
+    body = response.body.decode("utf-8")
+    assert 'const paperButtons=[\'paperEntryBtn\',\'paperPositionBtn\',\'paperExitBtn\'];' in body
+    assert 'function setPaperBusy(busy,message)' in body
+    assert 'document.getElementById(id).disabled=busy' in body
+    assert "setPaperBusy(true,'PAPER ENTRY IN PROGRESS…')" in body
+    assert "setPaperBusy(true,'CHECKING PAPER POSITION…')" in body
+    assert "setPaperBusy(true,'PAPER EXIT IN PROGRESS…')" in body
+    assert "finally{setPaperBusy(false)}" in body
