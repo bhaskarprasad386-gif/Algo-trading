@@ -57,7 +57,7 @@ def test_dashboard_scanner_has_busy_state_protection():
     assert "status.textContent='SCANNING BACKEND…'" in body
     assert "button.disabled=false" in body
     assert "button.textContent='RUN SCAN'" in body
-    assert "finally{button.disabled=false;button.textContent='RUN SCAN'}" in body
+    assert "finally{button.disabled=false;button.textContent='RUN SCAN';scheduleScan()}" in body
 
 
 def test_dashboard_scanner_shows_last_scan_time():
