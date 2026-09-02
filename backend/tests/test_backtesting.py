@@ -1,3 +1,5 @@
+import pytest
+
 from app.algo.strategy import Strategy, StrategyRule, threshold_rule
 from app.backtesting.engine import BacktestConfig, BacktestEngine
 
@@ -39,11 +41,11 @@ def test_backtest_applies_slippage_and_transaction_costs():
     )
 
     trade = result.trades[0]
-    assert trade.entry_price == 101
-    assert trade.exit_price == 108.9
-    assert trade.gross_pnl == 15.8
-    assert trade.costs == 0.4198
-    assert round(trade.net_pnl, 4) == 15.3802
+    assert trade.entry_price == pytest.approx(101)
+    assert trade.exit_price == pytest.approx(108.9)
+    assert trade.gross_pnl == pytest.approx(15.8)
+    assert trade.costs == pytest.approx(0.4198)
+    assert trade.net_pnl == pytest.approx(15.3802)
 
 
 def test_backtest_without_completed_trade_has_zero_pnl():
