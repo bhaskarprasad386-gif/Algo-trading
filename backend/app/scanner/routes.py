@@ -8,7 +8,12 @@ from app.core.logger import app_logger
 from app.scanner.cash_future import CashFutureConfig, CashQuote, FutureQuote, calculate_cash_future
 from app.scanner.cash_future_backtest import BacktestConfig, run_backtest
 from app.scanner.cash_future_collector import CashFutureHistoryCollector
-from app.scanner.cash_future_history import CashFutureHistoryPoint, build_graph_series, find_historical_gap_matches
+from app.scanner.cash_future_history import (
+    CashFutureHistoryPoint,
+    analyze_historical_gap_outcomes,
+    build_graph_series,
+    find_historical_gap_matches,
+)
 from app.scanner.cash_future_history_store import find_expiry_close, read_history, save_history_point
 
 router = APIRouter(prefix="/api/v1/scanner", tags=["Scanner"])
@@ -116,13 +121,35 @@ def query_cash_future_gap(
     target_gap: float,
     tolerance: float = Query(0.0, ge=0),
     days: int = Query(365, ge=1, le=3650),
+    exit_gap: float = Query(0.0),
+    max_holding_days: int = Query(30, ge=1, le=3650),
+    charges_per_trade: float = Query(0.0, ge=0),
+    funding_cost_per_trade: float = Query(0.0, ge=0),
     db: Session = Depends(get_db),
 ):
+    """Find prior same/greater gaps and report subsequent convergence outcomes."""
     end = datetime.utcnow()
     points = read_history(db, symbol, contract_month, end - timedelta(days=days), end)
     matches = find_historical_gap_matches(points, target_gap, tolerance, contract_month)
-    return {"status": "success", "target_gap": target_gap, "tolerance": tolerance, "count": len(matches),
-            "matches": [m.__dict__ for m in matches]}
+    outcomes = analyze_historical_gap_outcomes(
+        points,
+        target_gap=target_gap,
+        tolerance=tolerance,
+        contract_month=contract_month,
+        exit_gap=exit_gap,
+        max_holding_days=max_holding_days,
+        charges_per_trade=charges_per_trade,
+        funding_cost_per_trade=funding_cost_per_trade,
+    )
+    return {
+        "status": "success",
+        "target_gap": target_gap,
+        "tolerance": tolerance,
+        "contract_month": contract_month,
+        "count": len(matches),
+        "matches": [m.__dict__ for m in matches],
+        "outcomes": [o.__dict__ | {"match": o.match.__dict__} for o in outcomes],
+    }
 
 
 @router.get("/cash-future/graph")
