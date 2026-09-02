@@ -29,6 +29,7 @@ Fast, modular, mobile-first advanced F&O algo-trading platform. GitHub is the so
 - Stable candle normalization layer.
 - **Candle storage identity checkpoint VERIFIED:** canonical `app.models.candle.Candle` now enforces a unique `(token, timeframe, timestamp)` database index; existing `CandleStorage.save()` performs timestamp-keyed update/upsert semantics; fresh Backend Tests CI run #82 passed all 62 tests.
 - **Strategy Builder foundation checkpoint VERIFIED:** commit `6e0107b` added deterministic strategy/rule composition primitives in `backend/app/algo/strategy.py` plus `backend/app/algo/__init__.py` and `backend/tests/test_strategy.py`; fresh Backend Tests CI run #84 passed all 64 tests.
+- **Backtesting Engine foundation checkpoint VERIFIED:** deterministic entry/exit execution with quantity, slippage, transaction cost, P&L, return, win rate and trade records is implemented in `backend/app/backtesting/engine.py` with tests in `backend/tests/test_backtesting.py`; fresh Backend Tests CI run #90 completed successfully with **67 tests passed**.
 - CI workflow supports push/pull_request/manual verification.
 
 ## Core Trading Engines
