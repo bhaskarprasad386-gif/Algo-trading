@@ -66,10 +66,11 @@ def test_android_cash_future_last_scan_time_is_completion_time():
     response_marker = 'val response = ApiService.retrofitService.cashFutureScan()'
     completion_marker = 'val completedAt = currentTimestamp()'
     success_marker = 'append("Last Scan: $completedAt\\n\\n")'
-    assert response_marker in ui
-    assert completion_marker in ui
-    assert success_marker in ui
-    assert ui.index(response_marker) < ui.index(completion_marker) < ui.index(success_marker)
+    start = ui.index(response_marker)
+    segment = ui[start:start + 1200]
+    assert completion_marker in segment
+    assert success_marker in segment
+    assert segment.index(response_marker) < segment.index(completion_marker) < segment.index(success_marker)
 
 
 def test_android_cash_future_error_timestamp_is_recorded_on_failure():
@@ -95,10 +96,11 @@ def test_android_paper_entry_completion_timestamp_is_after_api_call():
     response_marker = 'val response = ApiService.retrofitService.paperEntry(PaperEntryRequest(price, quantity))'
     completion_marker = 'val completedAt = currentTimestamp()'
     display_marker = 'Completed: $completedAt'
-    assert response_marker in ui
-    assert completion_marker in ui
-    assert display_marker in ui
-    assert ui.index(response_marker) < ui.index(completion_marker) < ui.index(display_marker)
+    start = ui.index(response_marker)
+    segment = ui[start:start + 1000]
+    assert completion_marker in segment
+    assert display_marker in segment
+    assert segment.index(response_marker) < segment.index(completion_marker) < segment.index(display_marker)
 
 
 def test_android_paper_position_completion_timestamp_is_after_api_call():
@@ -106,10 +108,11 @@ def test_android_paper_position_completion_timestamp_is_after_api_call():
     response_marker = 'val response = ApiService.retrofitService.paperPosition()'
     completion_marker = 'val completedAt = currentTimestamp()'
     display_marker = 'Checked: $completedAt'
-    assert response_marker in ui
-    assert completion_marker in ui
-    assert display_marker in ui
-    assert ui.index(response_marker) < ui.index(completion_marker) < ui.index(display_marker)
+    start = ui.index(response_marker)
+    segment = ui[start:start + 1000]
+    assert completion_marker in segment
+    assert display_marker in segment
+    assert segment.index(response_marker) < segment.index(completion_marker) < segment.index(display_marker)
 
 
 def test_android_paper_exit_completion_timestamp_is_after_api_call():
@@ -117,15 +120,16 @@ def test_android_paper_exit_completion_timestamp_is_after_api_call():
     response_marker = 'val response = ApiService.retrofitService.paperExit(PaperExitRequest(price))'
     completion_marker = 'val completedAt = currentTimestamp()'
     display_marker = 'Completed: $completedAt'
-    assert response_marker in ui
-    assert completion_marker in ui
-    assert display_marker in ui
-    assert ui.index(response_marker) < ui.index(completion_marker) < ui.index(display_marker)
+    start = ui.index(response_marker)
+    segment = ui[start:start + 1000]
+    assert completion_marker in segment
+    assert display_marker in segment
+    assert segment.index(response_marker) < segment.index(completion_marker) < segment.index(display_marker)
 
 
 def test_android_paper_failures_record_failure_time():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
-    assert 'val failedAt = currentTimestamp()' in ui
-    assert 'Paper Entry Failed\\n\\nTime: $failedAt' in ui
-    assert 'Position Check Failed\\n\\nTime: $failedAt' in ui
-    assert 'Paper Exit Failed\\n\\nTime: $failedAt' in ui
+    assert ui.count('val failedAt = currentTimestamp()') >= 4
+    assert 'ENTRY FAILED\\n\\nTime: $failedAt' in ui
+    assert 'POSITION CHECK FAILED\\n\\nTime: $failedAt' in ui
+    assert 'EXIT FAILED\\n\\nTime: $failedAt' in ui
