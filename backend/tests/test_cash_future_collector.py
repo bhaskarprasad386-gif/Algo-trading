@@ -1,6 +1,8 @@
 from datetime import date
 
-from app.scanner.cash_future_collector import CashFutureHistoryCollector
+import pytest
+
+from app.scanner.cash_future_collector import CashFutureHistoryCollector, _full_quote
 
 
 class FakeMaster:
@@ -26,17 +28,15 @@ class FakeMarketClient:
         return {
             "status": True,
             "data": {
-                "fetched": [
-                    {
-                        "ltp": price,
-                        "tradeVolume": 5000,
-                        "opnInterest": 20000,
-                        "depth": {
-                            "buy": [{"price": price - 0.1}],
-                            "sell": [{"price": price + 0.1}],
-                        },
-                    }
-                ]
+                "fetched": [{
+                    "ltp": price,
+                    "tradeVolume": 5000,
+                    "opnInterest": 20000,
+                    "depth": {
+                        "buy": [{"price": price - 0.1}],
+                        "sell": [{"price": price + 0.1}],
+                    },
+                }]
             },
         }
 
@@ -68,6 +68,32 @@ def test_collector_keeps_current_and_near_separate(monkeypatch):
     assert saved[1].expiry_date == date(2026, 10, 29)
     assert result[0]["volume"] == 5000
     assert result[0]["oi"] == 20000
+    assert result[0]["cash_bid"] == 99.9
+    assert result[0]["cash_ask"] == 100.1
     assert result[0]["future_bid"] == 107.9
     assert result[0]["future_ask"] == 108.1
+    assert result[0]["cash_execution_price"] == 100.1
+    assert result[0]["future_execution_price"] == 107.9
     assert result[0]["margin_required"] == 50000.0
+
+
+def test_full_quote_rejects_missing_fetched_data():
+    with pytest.raises(ValueError, match="has no fetched quote"):
+        _full_quote({"status": True, "data": {"fetched": []}})
+
+
+def test_full_quote_does_not_invent_bid_ask():
+    quote = _full_quote({
+        "status": True,
+        "data": {
+            "fetched": [{
+                "ltp": 100.0,
+                "tradeVolume": 10,
+                "opnInterest": 20,
+                "depth": {"buy": [], "sell": []},
+            }]
+        },
+    })
+    assert quote["ltp"] == 100.0
+    assert quote["bid"] is None
+    assert quote["ask"] is None
