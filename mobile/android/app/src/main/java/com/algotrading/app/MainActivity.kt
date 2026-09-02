@@ -5,106 +5,116 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import kotlinx.coroutines.*
-import okhttp3.*
-import org.json.JSONObject
-import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
-    private lateinit var etSymbol: EditText
-    private lateinit var tvQuoteDetails: TextView
-    private lateinit var btnFetchQuote: Button
+    private lateinit var etEntryPrice: EditText
     private lateinit var etQuantity: EditText
-    private lateinit var btnBuy: Button
-    private lateinit var btnSell: Button
-    private lateinit var tvOrderResult: TextView
-    private val orderHistoryList = mutableListOf<String>()
-    private var webSocket: WebSocket? = null
-    private val client = OkHttpClient.Builder().pingInterval(10, TimeUnit.SECONDS).build()
+    private lateinit var etExitPrice: EditText
+    private lateinit var tvPaperResult: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
         tvStatus = findViewById(R.id.tvStatus)
-        etSymbol = findViewById(R.id.etSymbol)
-        tvQuoteDetails = findViewById(R.id.tvQuoteDetails)
-        btnFetchQuote = findViewById(R.id.btnFetchQuote)
+        etEntryPrice = findViewById(R.id.etEntryPrice)
         etQuantity = findViewById(R.id.etQuantity)
-        btnBuy = findViewById(R.id.btnBuy)
-        btnSell = findViewById(R.id.btnSell)
-        tvOrderResult = findViewById(R.id.tvOrderResult)
+        etExitPrice = findViewById(R.id.etExitPrice)
+        tvPaperResult = findViewById(R.id.tvPaperResult)
+
         checkServerStatus()
-        btnFetchQuote.setOnClickListener {
-            val symbol = etSymbol.text.toString().trim().uppercase()
-            if (symbol.isNotEmpty()) startLiveWebSocket(symbol) else etSymbol.error = "Please enter a symbol"
-        }
-        btnBuy.setOnClickListener { placeOrder("BUY") }
-        btnSell.setOnClickListener { placeOrder("SELL") }
+
+        findViewById<Button>(R.id.btnPaperEntry).setOnClickListener { paperEntry() }
+        findViewById<Button>(R.id.btnPaperExit).setOnClickListener { paperExit() }
+        findViewById<Button>(R.id.btnPaperPosition).setOnClickListener { paperPosition() }
     }
 
     private fun checkServerStatus() = CoroutineScope(Dispatchers.IO).launch {
         try {
             val response = ApiService.retrofitService.getRootStatus()
-            withContext(Dispatchers.Main) { tvStatus.text = "Server Status: ${response.status}" }
+            withContext(Dispatchers.Main) {
+                tvStatus.text = "Server Status: ${response.status}"
+            }
         } catch (_: Exception) {
-            withContext(Dispatchers.Main) { tvStatus.text = "Server Error: Offline" }
+            withContext(Dispatchers.Main) {
+                tvStatus.text = "Server Error: Offline"
+            }
         }
     }
 
-    private fun startLiveWebSocket(symbol: String) {
-        webSocket?.close(1000, "Switching symbol")
-        val request = Request.Builder().url("${BuildConfig.BACKEND_WS_URL}/ws/market-data/$symbol").build()
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(ws: WebSocket, response: Response) {
-                runOnUiThread { tvQuoteDetails.text = "Connected to Live Stream for $symbol..." }
-            }
-            override fun onMessage(ws: WebSocket, text: String) {
-                try {
-                    val json = JSONObject(text)
-                    val sSymbol = json.getString("symbol")
-                    val bid = json.getDouble("bidPrice")
-                    val ask = json.getDouble("askPrice")
-                    val ltp = json.getDouble("ltp")
-                    val spread = json.getDouble("spread")
-                    runOnUiThread {
-                        tvQuoteDetails.text = "LIVE MARKET ($sSymbol)\n-------------------------\nBid Price : ₹$bid\nAsk Price : ₹$ask\nLTP       : ₹$ltp\nSpread    : ₹$spread"
-                    }
-                } catch (_: Exception) { }
-            }
-            override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                runOnUiThread { tvQuoteDetails.text = "Live Stream Connection Lost" }
-            }
-        })
-    }
-
-    private fun placeOrder(transactionType: String) {
-        val symbol = etSymbol.text.toString().trim().uppercase()
-        val qtyStr = etQuantity.text.toString().trim()
-        if (symbol.isEmpty()) { etSymbol.error = "Enter symbol"; return }
-        if (qtyStr.isEmpty()) { etQuantity.error = "Enter quantity"; return }
-        val quantity = qtyStr.toIntOrNull()
-        if (quantity == null || quantity <= 0) { etQuantity.error = "Enter a positive quantity"; return }
+    private fun paperEntry() {
+        val price = etEntryPrice.text.toString().toDoubleOrNull()
+        val quantity = etQuantity.text.toString().toDoubleOrNull()
+        if (price == null || price <= 0) {
+            etEntryPrice.error = "Enter a positive entry price"
+            return
+        }
+        if (quantity == null || quantity <= 0) {
+            etQuantity.error = "Enter a positive quantity"
+            return
+        }
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val response = ApiService.retrofitService.placeOrder(OrderRequest(symbol, quantity, transactionType))
+                val response = ApiService.retrofitService.paperEntry(
+                    PaperEntryRequest(price = price, quantity = quantity)
+                )
                 withContext(Dispatchers.Main) {
-                    orderHistoryList.add(0, "[$transactionType] $quantity x $symbol | ID: ${response.orderId}")
-                    tvOrderResult.text = "--- Paper Order History ---\n\n" + orderHistoryList.joinToString("\n\n")
+                    tvPaperResult.text = "PAPER POSITION ACTIVE\n\nEntry: ₹${response.entry_price}\nStop Loss: ₹${response.stop_loss}\nTarget: ₹${response.target}\nQuantity: ${response.position.quantity}"
                 }
-            } catch (_: Exception) {
+            } catch (error: Exception) {
                 withContext(Dispatchers.Main) {
-                    orderHistoryList.add(0, "[FAILED] $transactionType $symbol")
-                    tvOrderResult.text = "--- Paper Order History ---\n\n" + orderHistoryList.joinToString("\n\n")
+                    tvPaperResult.text = "Paper Entry Failed: ${error.message ?: "API error"}"
                 }
             }
         }
     }
 
-    override fun onDestroy() {
-        webSocket?.close(1000, "App closed")
-        client.dispatcher.executorService.shutdown()
-        super.onDestroy()
+    private fun paperPosition() = CoroutineScope(Dispatchers.IO).launch {
+        try {
+            val response = ApiService.retrofitService.paperPosition()
+            withContext(Dispatchers.Main) {
+                val position = response.position
+                tvPaperResult.text = if (position == null) {
+                    "PAPER POSITION: FLAT"
+                } else {
+                    "PAPER POSITION ACTIVE\n\nEntry: ₹${position.entry_price}\nStop Loss: ₹${position.stop_loss}\nTarget: ₹${position.target}\nQuantity: ${position.quantity}"
+                }
+            }
+        } catch (error: Exception) {
+            withContext(Dispatchers.Main) {
+                tvPaperResult.text = "Position Check Failed: ${error.message ?: "API error"}"
+            }
+        }
+    }
+
+    private fun paperExit() {
+        val price = etExitPrice.text.toString().toDoubleOrNull()
+        if (price == null || price <= 0) {
+            etExitPrice.error = "Enter a positive exit price"
+            return
+        }
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val response = ApiService.retrofitService.paperExit(PaperExitRequest(price))
+                withContext(Dispatchers.Main) {
+                    tvPaperResult.text = if (response.status == "closed") {
+                        "PAPER POSITION CLOSED\n\nEntry: ₹${response.entry_price}\nExit: ₹${response.exit_price}\nQuantity: ${response.quantity}\nP&L: ₹${response.pnl}"
+                    } else {
+                        "PAPER POSITION: FLAT"
+                    }
+                }
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main) {
+                    tvPaperResult.text = "Paper Exit Failed: ${error.message ?: "API error"}"
+                }
+            }
+        }
     }
 }
