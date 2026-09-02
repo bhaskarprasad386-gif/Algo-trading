@@ -16,6 +16,7 @@ def test_android_cash_future_executable_contract_matches_backend():
 
 def test_android_cash_future_screen_displays_executable_status():
     body = MAIN_ACTIVITY.read_text(encoding="utf-8")
-    assert "response.data.forEach" in body
+    assert "response.data" in body
+    assert '.sortedWith(compareByDescending<CashFutureOpportunity> { it.executable }' in body
     assert 'if (item.executable) "YES" else "NO"' in body
     assert 'append("Executable:' in body
