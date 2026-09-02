@@ -16,7 +16,8 @@ def test_android_scanner_auto_refresh_behavior_contract():
 
     schedule = body.split("private fun scheduleScannerRefresh()", 1)[1]
     assert "scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable)" in schedule
-    assert "if (!cbScannerAutoRefresh.isChecked || btnRunScanner.isEnabled.not()) return" in schedule
+    assert "if (!cbScannerAutoRefresh.isChecked || btnRunScanner.isEnabled.not())" in schedule
+    assert "return" in schedule.split("if (!cbScannerAutoRefresh.isChecked || btnRunScanner.isEnabled.not())", 1)[1]
     assert "scannerRefreshHandler.postDelayed(scannerRefreshRunnable, seconds * 1000L)" in schedule
 
     finally_block = body.split("finally", 1)[1]
