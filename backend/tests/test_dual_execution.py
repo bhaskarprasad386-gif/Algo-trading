@@ -10,7 +10,7 @@ def test_same_signal_keeps_paper_and_live_state_separate_and_adjusts_from_actual
         ExecutionMode.LIVE: Fill(price=102, quantity=2),
     }
 
-    def executor(mode, requested_price):
+    def executor(mode, requested_price, quantity):
         return fills[mode]
 
     confirmation = ConfirmationGateway(ttl_seconds=30)
