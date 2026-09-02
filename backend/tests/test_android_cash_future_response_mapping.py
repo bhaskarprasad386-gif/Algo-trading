@@ -37,7 +37,7 @@ def test_android_cash_future_scanner_states_are_clear():
     assert 'tvScannerResult.text = "SCAN IN PROGRESS\\n\\nRunning Cash–Future scanner..."' in ui
     assert 'append("SCAN COMPLETE — SUCCESS\\n")' in ui
     assert 'append("SCAN COMPLETE — NO OPPORTUNITIES\\n")' in ui
-    assert 'tvScannerResult.text = "SCAN ERROR\\n\\nScanner Failed:' in ui
+    assert 'tvScannerResult.text = "SCAN ERROR\\n\\nLast Scan:' in ui
 
 
 def test_android_cash_future_scanner_summary_counts_are_clear():
@@ -61,8 +61,17 @@ def test_android_cash_future_opportunities_are_prioritized():
     assert '.sortedWith(compareByDescending<CashFutureOpportunity> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit })' in ui
 
 
-def test_android_cash_future_last_scan_time_is_displayed():
+def test_android_cash_future_last_scan_time_is_completion_time():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
-    assert 'SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault())' in ui
-    assert 'append("Last Scan: $scannedAt\\n\\n")' in ui
+    response_marker = 'val response = ApiService.retrofitService.cashFutureScan()'
+    completion_marker = 'val scannedAt = lastScanTime()'
+    success_marker = 'append("Last Scan: $scannedAt\\n\\n")'
+    assert response_marker in ui
+    assert completion_marker in ui
+    assert success_marker in ui
+    assert ui.index(response_marker) < ui.index(completion_marker) < ui.index(success_marker)
+
+
+def test_android_cash_future_error_timestamp_is_recorded_on_failure():
+    ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
     assert 'tvScannerResult.text = "SCAN ERROR\\n\\nLast Scan: ${lastScanTime()}\\n\\nScanner Failed:' in ui
