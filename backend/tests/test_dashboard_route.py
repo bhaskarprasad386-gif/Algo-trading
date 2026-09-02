@@ -99,3 +99,15 @@ def test_dashboard_scanner_has_clear_empty_and_failure_states():
     assert "No backend data — no demo data shown." not in body
     assert "status.textContent='SCAN FAILED: '+e.message" in body
     assert "log('Scan failed: '+e.message)" in body
+
+
+def test_dashboard_scanner_has_auto_refresh_controls():
+    response = dashboard()
+    body = response.body.decode("utf-8")
+    assert 'id="autoRefresh"' in body
+    assert 'id="refreshSeconds"' in body
+    assert 'min="10" max="300"' in body
+    assert 'let refreshTimer=null;' in body
+    assert "function scheduleScan()" in body
+    assert "setTimeout(scan,seconds*1000)" in body
+    assert "document.getElementById('autoRefresh').addEventListener('change',scheduleScan)" in body
