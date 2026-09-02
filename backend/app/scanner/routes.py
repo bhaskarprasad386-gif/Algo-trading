@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.logger import app_logger
 from app.scanner.cash_future import CashFutureConfig, CashQuote, FutureQuote, calculate_cash_future
+from app.scanner.cash_future_backtest import BacktestConfig, run_backtest
 from app.scanner.cash_future_history import CashFutureHistoryPoint, build_graph_series, find_historical_gap_matches
 from app.scanner.cash_future_history_store import find_expiry_close, read_history, save_history_point
 
@@ -71,7 +72,8 @@ def save_cash_future_history(
     deployed = cash_price * lot_size + margin_required
     roi = net / deployed * 100.0 if deployed else 0.0
     point = CashFutureHistoryPoint(timestamp, symbol.upper(), contract_month, cash_price, future_price,
-                                   gap, gap_pct, lot_size, margin_required, charges, funding_cost, net, roi)
+                                   gap, gap_pct, lot_size, margin_required, charges, funding_cost, net, roi,
+                                   expiry_date)
     row = save_history_point(db, point, expiry_date=expiry_date)
     row.volume = volume
     row.oi = oi
@@ -117,6 +119,42 @@ def cash_future_graph(
     end = datetime.utcnow()
     points = read_history(db, symbol, contract_month, end - timedelta(days=days), end)
     return {"status": "success", "contract_month": contract_month, "series": build_graph_series(points, contract_month)}
+
+
+@router.get("/cash-future/backtest")
+def cash_future_backtest(
+    symbol: str,
+    contract_month: str = Query(..., description="Use CURRENT or NEAR (or an exact contract identifier); contracts are never mixed."),
+    days: int = Query(365, ge=1, le=3650),
+    min_entry_gap: float = Query(0.0),
+    exit_gap: float = Query(0.0),
+    charges_per_trade: float = Query(0.0, ge=0),
+    funding_cost_per_trade: float = Query(0.0, ge=0),
+    max_holding_days: int = Query(30, ge=1, le=3650),
+    db: Session = Depends(get_db),
+):
+    """Run an independent historical convergence backtest for one future contract series."""
+    end = datetime.utcnow()
+    points = read_history(db, symbol, contract_month, end - timedelta(days=days), end)
+    if not points:
+        raise HTTPException(status_code=404, detail="no historical Cash-Future observations found for this contract")
+    result = run_backtest(
+        points,
+        BacktestConfig(
+            min_entry_gap=min_entry_gap,
+            exit_gap=exit_gap,
+            charges_per_trade=charges_per_trade,
+            funding_cost_per_trade=funding_cost_per_trade,
+            max_holding_days=max_holding_days,
+        ),
+    )
+    return {
+        "status": "success",
+        "scanner": "cash-future",
+        "contract_month": contract_month,
+        "history_days": days,
+        "backtest": result,
+    }
 
 
 @router.get("/cash-future/expiry-close")
