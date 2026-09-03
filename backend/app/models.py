@@ -81,6 +81,79 @@ class Candle(Base):
     volume: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class HistoricalMarketBar(Base):
+    """Canonical persisted 1-minute historical market data for backtesting.
+
+    The identity includes the instrument/contract and minute timestamp so imports
+    can be safely repeated without creating duplicate bars. Contract metadata is
+    stored point-in-time to avoid selecting today's contract metadata for history.
+    """
+
+    __tablename__ = "historical_market_bars"
+    __table_args__ = (
+        Index(
+            "uq_historical_bar_identity",
+            "instrument_key",
+            "timestamp",
+            unique=True,
+        ),
+        Index("ix_historical_bar_symbol_timestamp", "symbol", "timestamp"),
+        Index("ix_historical_bar_contract_timestamp", "contract_month", "timestamp"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    instrument_key: Mapped[str] = mapped_column(String(192), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    segment: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    instrument_type: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    contract_month: Mapped[str | None] = mapped_column(String(16), index=True, nullable=True)
+    expiry_date: Mapped[datetime | None] = mapped_column(DateTime, index=True, nullable=True)
+    lot_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
+    open: Mapped[float] = mapped_column(Float, nullable=False)
+    high: Mapped[float] = mapped_column(Float, nullable=False)
+    low: Mapped[float] = mapped_column(Float, nullable=False)
+    close: Mapped[float] = mapped_column(Float, nullable=False)
+    volume: Mapped[float | None] = mapped_column(Float, nullable=True)
+    open_interest: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bid: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ask: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(String(128), nullable=False, default="unknown")
+    data_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    imported_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class BacktestDataCoverage(Base):
+    """Coverage catalog used to make historical downloads incremental."""
+
+    __tablename__ = "backtest_data_coverage"
+    __table_args__ = (
+        Index(
+            "uq_backtest_coverage_identity",
+            "instrument_key",
+            "timeframe",
+            "start_date",
+            "end_date",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    instrument_key: Mapped[str] = mapped_column(String(192), index=True, nullable=False)
+    symbol: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    segment: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    contract_month: Mapped[str | None] = mapped_column(String(16), index=True, nullable=True)
+    timeframe: Mapped[str] = mapped_column(String(16), default="1m", nullable=False)
+    start_date: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
+    end_date: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
+    row_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    data_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    validated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class Order(Base):
     __tablename__ = "orders"
 
