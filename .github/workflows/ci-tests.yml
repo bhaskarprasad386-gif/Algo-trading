@@ -33,4 +33,4 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
 
-# CI verification trigger for cash-future API execution-filter coverage
+# CI verification trigger for persistent paper balance and realized P&L coverage
