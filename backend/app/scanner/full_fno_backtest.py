@@ -21,13 +21,7 @@ def historical_current_near_contracts(
     contracts: Sequence[HistoricalContract],
     as_of: date,
 ) -> tuple[HistoricalContract | None, HistoricalContract | None]:
-    """Select the historical current and next-near contracts by expiry.
-
-    The current contract is the earliest contract whose expiry is on or after
-    ``as_of``. The near contract is the next expiry after the current contract.
-    Contracts that have already expired are ignored, so a date after the final
-    expiry correctly returns ``(None, None)``.
-    """
+    """Select the historical current and next-near contracts by expiry."""
     ordered = sorted(contracts, key=lambda contract: contract[1])
     active = [contract for contract in ordered if contract[1] >= as_of]
     if not active:
@@ -58,14 +52,7 @@ def run_full_fno_backtest(
     result_sink: ResultSink | None = None,
     collect_results: bool = True,
 ) -> dict:
-    """Run the persisted F&O stock universe through the synchronized paper engine.
-
-    The replay itself is streaming. For large jobs, ``collect_results=False`` and
-    ``result_sink`` make each symbol result durable immediately instead of building
-    a full-universe result list in RAM. The canonical 1-minute market data stays in
-    the persistent historical store; the worker only holds the current symbol's
-    replay state.
-    """
+    """Run the persisted F&O stock universe through the synchronized paper engine."""
     selection = future_selection.upper()
     if selection not in {"CURRENT", "NEAR", "BOTH"}:
         raise ValueError("future_selection must be CURRENT, NEAR or BOTH")
@@ -112,6 +99,22 @@ def run_full_fno_backtest(
             ),
             cancelled=cancelled,
         )
+
+        # Cancellation can happen while the current symbol is being replayed.
+        # Never persist that partially/just-completed result after cancellation.
+        if result.get("status") == "cancelled" or (cancelled is not None and cancelled()):
+            return {
+                "status": "cancelled",
+                "universe": "FULL_FNO_STOCK",
+                "future_selection": selection,
+                "symbols_total": total,
+                "symbols_processed": processed,
+                "chunks_written": chunks_written,
+                "total_net_profit": total_net_profit,
+                "max_drawdown": max_drawdown,
+                "results": results,
+            }
+
         item = {"symbol": symbol, **result}
 
         if result_sink is not None:
