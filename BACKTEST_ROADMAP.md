@@ -70,6 +70,38 @@ For a trade entered on a historical date such as 1 January:
 - Track bid/ask spread and reject opportunities that fail configured liquidity/execution checks.
 - Calculate gross spread P&L, brokerage/statutory charges, funding cost, slippage and net P&L using the historical contract lot size and actual position quantity.
 
+## Realism & Anti-False-Profit Controls
+- **Point-in-time data only:** at each historical minute, the engine may use only information that was actually available by that timestamp.
+- **No survivorship bias:** use the historically eligible F&O universe, including securities that later became inactive/delisted where historical data exists.
+- **Corporate-action correctness:** apply historical stock splits, bonuses, dividends and other relevant cash-market adjustments consistently; do not silently mix adjusted and unadjusted series.
+- **Dividend-aware basis:** record ex-date/dividend effects separately so cash–future basis is not mistaken for pure arbitrage profit.
+- **Trading-calendar correctness:** use the historical NSE trading calendar, holidays, special sessions and actual market-close times.
+- **Data-quality gates:** detect missing minutes, duplicate rows, timestamp collisions, stale quotes, impossible prices, crossed/negative spreads and contract mismatches; flag or reject affected periods rather than filling silently.
+- **Executable fill model:** model bid/ask fills, spread crossing, latency, partial fills, quantity limits, rejected orders and unavailable liquidity where the source data supports it.
+- **Conservative fill rule:** never assume the best displayed price if the order could not realistically have executed there.
+- **Slippage stress:** support normal, conservative and severe slippage assumptions and show how results change.
+- **Cost stress:** rerun with increased brokerage/fees/funding assumptions to test whether the edge survives higher costs.
+- **Margin realism:** model historical futures margin/available capital, mark-to-market cash movements and margin utilization; reject trades when capital/margin is insufficient.
+- **Capital locking:** reserve capital/margin for open positions and prevent overlapping trades from using the same funds twice.
+- **Rollover realism:** include historical rollover price difference, transaction costs and execution constraints when switching contracts.
+- **Market microstructure filters:** account for liquidity, volume, OI, spread width, circuit/price-band constraints and stale/missing quotes where applicable.
+- **Session rules:** respect pre-open/regular-market windows and do not create fills outside the strategy's configured trading session.
+- **Failure simulation:** test data outages, missing one leg, broker/order rejection, partial execution and delayed execution so the engine does not convert failures into imaginary profits.
+- **Reproducibility:** every run stores strategy version, data version/hash, parameters, cost model, slippage model, calendar version and engine version.
+
+## Robustness & Statistical Validation
+- **Walk-forward validation:** optimize only on historical training windows and evaluate on untouched forward windows.
+- **Out-of-sample testing:** keep a final unseen period that is never used for parameter selection.
+- **Parameter sensitivity:** test ranges around every configurable threshold; prefer stable performance regions rather than a single optimum.
+- **Cross-regime testing:** report performance separately for trending, volatile, low-volatility, gap-up/gap-down and stressed market periods where identifiable.
+- **Cross-sectional robustness:** show results by stock, sector, contract month and liquidity bucket so one symbol cannot hide a weak strategy.
+- **Monte Carlo trade-order test:** reshuffle trade outcomes/order and estimate drawdown and risk distributions rather than relying on one historical sequence.
+- **Bootstrap confidence ranges:** provide uncertainty bands for expectancy, win rate and P&L-related metrics where statistically appropriate.
+- **Trade-count sufficiency:** clearly warn when a result is based on too few independent opportunities to be statistically meaningful.
+- **Benchmark comparison:** compare strategy results against simple cash/future or passive reference baselines where meaningful.
+- **Backtest vs paper reconciliation:** compare identical signals, timestamps, executable assumptions and costs between historical replay and forward paper trading.
+- **Robustness score:** produce a separate score based on OOS stability, cost/slippage stress, parameter sensitivity, drawdown behavior and data coverage; never present it as a probability of future profit.
+
 ## Backtest Engine Rules
 - No look-ahead bias.
 - Signal and execution timing must be explicitly defined; do not execute using information unavailable at the signal timestamp.
@@ -97,6 +129,12 @@ For a trade entered on a historical date such as 1 January:
 - **Gap-wise and interval-wise P&L**
 - **Historical gap occurrence/search report** with exact timestamps
 - Replay/interval comparison: 1m vs 5m vs 10m vs 15m vs 30m vs 1h vs 1d
+- Data-coverage and data-quality report
+- Slippage/cost stress report
+- Walk-forward and out-of-sample report
+- Parameter-sensitivity report
+- Monte Carlo/robustness report
+- Per-stock/sector/liquidity/regime breakdown
 
 ## Validation Gates
 - [ ] Historical 1-minute data ingestion verified.
@@ -110,12 +148,21 @@ For a trade entered on a historical date such as 1 January:
 - [ ] Spot/current/near synchronized graphs verified.
 - [ ] Executable entry/exit pricing verified.
 - [ ] Charges/funding/slippage verified.
+- [ ] Data-quality and missing-minute gates verified.
+- [ ] Corporate-action/dividend handling verified.
+- [ ] Historical calendar/session handling verified.
+- [ ] Partial-fill/rejection/latency behavior verified.
 - [ ] No-look-ahead tests verified.
+- [ ] Survivorship-bias controls verified.
 - [ ] ₹20 lakh capital/margin constraints verified.
 - [ ] Expiry-day 3:30 PM handling verified.
 - [ ] Automatic expiry/settlement and final P&L verified.
+- [ ] Cost/slippage stress tests verified.
+- [ ] Walk-forward and out-of-sample validation verified.
+- [ ] Parameter-sensitivity and robustness tests verified.
+- [ ] Monte Carlo/uncertainty analysis verified.
 - [ ] Backtest report and equity curve verified.
 - [ ] Paper-trading results can be compared against the same strategy logic.
 
 ## Current Priority
-Build and verify the Cash–Future backtesting engine with the advanced replay/interval system, historical lot-size mapping, interval-wise gap/P&L ledger and historical gap-search capability first. RSI, second scanner and real-money execution remain out of scope until this backtesting + paper-trading stage is validated.
+Build and verify the Cash–Future backtesting engine with the advanced replay/interval system, historical lot-size mapping, interval-wise gap/P&L ledger and historical gap-search capability first. Then harden it with data-quality, corporate-action/dividend, execution/microstructure, margin, anti-survivorship and statistical robustness controls before trusting any headline result. RSI, second scanner and real-money execution remain out of scope until this backtesting + paper-trading stage is validated.
