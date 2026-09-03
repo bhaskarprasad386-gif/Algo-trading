@@ -41,9 +41,36 @@ data class BrokerStatusResponse(val broker: String, val connected: Boolean, val 
 data class SafetyResponse(val real_trading_enabled: Boolean = false, val kill_switch: Boolean = true, val enabled_at: String? = null, val broker_connected: Boolean = false, val live_order_routing: Boolean = false, val message: String? = null)
 data class RealTradingEnableRequest(val confirmation: String)
 
-data class FullFnoJobResponse(val id: String, val status: String, val progress_pct: Double = 0.0, val symbols_total: Int = 0, val symbols_processed: Int = 0, val result_json: String? = null)
+data class FullFnoJobRequest(
+    val days: Int = 365,
+    val min_entry_gap: Double = 0.0,
+    val exit_gap: Double = 0.0,
+    val charges_per_trade: Double = 0.0,
+    val funding_cost_per_trade: Double = 0.0,
+    val max_holding_days: Int = 30,
+    val future_selection: String = "BOTH"
+)
+data class FullFnoJobAcceptedResponse(val status: String, val universe: String, val future_selection: String, val job: String)
+data class FullFnoJobState(
+    val job_id: String,
+    val status: String,
+    val symbol: String = "",
+    val contract_month: String = "",
+    val requested_days: Int = 0,
+    val progress_pct: Double = 0.0,
+    val symbols_processed: Int = 0,
+    val symbols_total: Int = 0,
+    val result_chunks: Int = 0,
+    val message: String? = null,
+    val result: Map<String, Any?>? = null,
+    val created_at: String? = null,
+    val updated_at: String? = null
+)
+data class FullFnoJobStatusResponse(val status: String, val job: FullFnoJobState)
 data class FullFnoResultChunk(val sequence: Int, val symbol: String, val result: Map<String, Any?> = emptyMap(), val created_at: String? = null)
 data class FullFnoResultsPage(val status: String, val job_id: String, val total: Int = 0, val offset: Int = 0, val limit: Int = 0, val after_sequence: Int? = null, val next_after_sequence: Int? = null, val data: List<FullFnoResultChunk> = emptyList())
+data class FullFnoJobControlResponse(val status: String, val job_id: String, val job_status: String)
+data class FullFnoPurgeResponse(val status: String, val job_id: String, val job_status: String, val deleted_chunks: Int)
 
 interface ApiInterface {
     @GET("/") suspend fun getRootStatus(): MarketStatus
@@ -65,8 +92,19 @@ interface ApiInterface {
     @POST("/api/v1/execution/paper/exit") suspend fun paperExit(@Body request: PaperExitRequest): PaperExitResponse
     @GET("/api/v1/execution/paper/orders") suspend fun paperOrders(): PaperOrdersResponse
     @GET("/api/v1/scanner/cash-future/live/auto") suspend fun cashFutureScan(): CashFutureScanResponse
-    @GET("/api/v1/scanner/cash-future/backtest/jobs/{job_id}") suspend fun fullFnoJob(@Path("job_id") jobId: String): FullFnoJobResponse
+    @POST("/api/v1/scanner/cash-future/backtest/full/jobs") suspend fun startFullFnoJob(
+        @Query("days") days: Int = 365,
+        @Query("min_entry_gap") minEntryGap: Double = 0.0,
+        @Query("exit_gap") exitGap: Double = 0.0,
+        @Query("charges_per_trade") chargesPerTrade: Double = 0.0,
+        @Query("funding_cost_per_trade") fundingCostPerTrade: Double = 0.0,
+        @Query("max_holding_days") maxHoldingDays: Int = 30,
+        @Query("future_selection") futureSelection: String = "BOTH"
+    ): FullFnoJobAcceptedResponse
+    @GET("/api/v1/scanner/cash-future/backtest/jobs/{job_id}") suspend fun fullFnoJob(@Path("job_id") jobId: String): FullFnoJobStatusResponse
     @GET("/api/v1/scanner/cash-future/backtest/jobs/{job_id}/results") suspend fun fullFnoResults(@Path("job_id") jobId: String, @Query("limit") limit: Int = 50, @Query("after_sequence") afterSequence: Int? = null): FullFnoResultsPage
+    @DELETE("/api/v1/scanner/cash-future/backtest/jobs/{job_id}") suspend fun cancelFullFnoJob(@Path("job_id") jobId: String): FullFnoJobControlResponse
+    @DELETE("/api/v1/scanner/cash-future/backtest/jobs/{job_id}/results") suspend fun purgeFullFnoResults(@Path("job_id") jobId: String): FullFnoPurgeResponse
 }
 
 object ApiService {
