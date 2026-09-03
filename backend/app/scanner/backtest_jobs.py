@@ -10,11 +10,9 @@ from app.core.database import SessionLocal
 from app.models import BacktestJob
 from app.scanner.cash_future_backtest import BacktestConfig, run_backtest
 from app.scanner.cash_future_history_store import read_history
+from app.scanner.full_fno_backtest import run_full_fno_backtest
 
 
-# Bounded worker: large replays must not consume every available worker and
-# starve lightweight API/UI operations. The queue contract allows a later
-# process-backed executor without changing clients.
 _EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="backtest-worker")
 _LOCK = Lock()
 _FUTURES: dict[str, Future] = {}
@@ -26,7 +24,6 @@ def _utcnow() -> datetime:
 
 def _new_job_id() -> str:
     import uuid
-
     return str(uuid.uuid4())
 
 
@@ -40,32 +37,24 @@ def _update(db: Session, job_id: str, **values) -> None:
     db.commit()
 
 
-def create_job(
-    *,
-    symbol: str,
-    contract_month: str,
-    days: int,
-    min_entry_gap: float,
-    exit_gap: float,
-    charges_per_trade: float,
-    funding_cost_per_trade: float,
-    max_holding_days: int,
-) -> BacktestJob:
+def _is_cancelled(job_id: str) -> bool:
     db = SessionLocal()
     try:
-        job = BacktestJob(
-            job_id=_new_job_id(),
-            status="queued",
-            symbol=symbol.upper(),
-            contract_month=contract_month.upper(),
-            requested_days=days,
-            progress_pct=0.0,
-            symbols_processed=0,
-            symbols_total=1,
-            message="Queued",
-            created_at=_utcnow(),
-            updated_at=_utcnow(),
-        )
+        job = db.query(BacktestJob.status).filter(BacktestJob.job_id == job_id).first()
+        return job is not None and job[0] == "cancelled"
+    finally:
+        db.close()
+
+
+def create_job(*, symbol: str, contract_month: str, days: int, min_entry_gap: float,
+               exit_gap: float, charges_per_trade: float, funding_cost_per_trade: float,
+               max_holding_days: int) -> BacktestJob:
+    db = SessionLocal()
+    try:
+        job = BacktestJob(job_id=_new_job_id(), status="queued", symbol=symbol.upper(),
+                          contract_month=contract_month.upper(), requested_days=days,
+                          progress_pct=0.0, symbols_processed=0, symbols_total=1,
+                          message="Queued", created_at=_utcnow(), updated_at=_utcnow())
         db.add(job)
         db.commit()
         db.refresh(job)
@@ -73,34 +62,41 @@ def create_job(
     finally:
         db.close()
 
-    future = _EXECUTOR.submit(
-        _run_job,
-        job_id,
-        symbol.upper(),
-        contract_month.upper(),
-        days,
-        min_entry_gap,
-        exit_gap,
-        charges_per_trade,
-        funding_cost_per_trade,
-        max_holding_days,
-    )
+    future = _EXECUTOR.submit(_run_job, job_id, symbol.upper(), contract_month.upper(), days,
+                              min_entry_gap, exit_gap, charges_per_trade,
+                              funding_cost_per_trade, max_holding_days)
     with _LOCK:
         _FUTURES[job_id] = future
     return job
 
 
-def _run_job(
-    job_id: str,
-    symbol: str,
-    contract_month: str,
-    days: int,
-    min_entry_gap: float,
-    exit_gap: float,
-    charges_per_trade: float,
-    funding_cost_per_trade: float,
-    max_holding_days: int,
-) -> None:
+def create_full_fno_job(*, days: int, min_entry_gap: float, exit_gap: float,
+                        charges_per_trade: float, funding_cost_per_trade: float,
+                        max_holding_days: int) -> BacktestJob:
+    """Queue the full persisted stock-F&O universe without blocking the API/UI."""
+    db = SessionLocal()
+    try:
+        job = BacktestJob(job_id=_new_job_id(), status="queued", symbol="__FULL_FNO__",
+                          contract_month="MULTI", requested_days=days, progress_pct=0.0,
+                          symbols_processed=0, symbols_total=0,
+                          message="Queued full F&O backtest", created_at=_utcnow(), updated_at=_utcnow())
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        job_id = job.job_id
+    finally:
+        db.close()
+
+    future = _EXECUTOR.submit(_run_full_fno_job, job_id, days, min_entry_gap, exit_gap,
+                              charges_per_trade, funding_cost_per_trade, max_holding_days)
+    with _LOCK:
+        _FUTURES[job_id] = future
+    return job
+
+
+def _run_job(job_id: str, symbol: str, contract_month: str, days: int,
+             min_entry_gap: float, exit_gap: float, charges_per_trade: float,
+             funding_cost_per_trade: float, max_holding_days: int) -> None:
     db = SessionLocal()
     try:
         _update(db, job_id, status="running", progress_pct=1.0, message="Loading validated history")
@@ -111,27 +107,45 @@ def _run_job(
         if not points:
             _update(db, job_id, status="failed", progress_pct=100.0, message="No historical observations found")
             return
+        result = run_backtest(points, BacktestConfig(min_entry_gap=min_entry_gap, exit_gap=exit_gap,
+                            charges_per_trade=charges_per_trade, funding_cost_per_trade=funding_cost_per_trade,
+                            max_holding_days=max_holding_days, contract_month=contract_month))
+        _update(db, job_id, status="completed", progress_pct=100.0, symbols_processed=1,
+                message="Backtest completed", result_json=str(result))
+    except Exception as exc:
+        _update(db, job_id, status="failed", progress_pct=100.0, message=str(exc))
+    finally:
+        db.close()
+        with _LOCK:
+            _FUTURES.pop(job_id, None)
 
-        result = run_backtest(
-            points,
-            BacktestConfig(
-                min_entry_gap=min_entry_gap,
-                exit_gap=exit_gap,
-                charges_per_trade=charges_per_trade,
-                funding_cost_per_trade=funding_cost_per_trade,
-                max_holding_days=max_holding_days,
-                contract_month=contract_month,
-            ),
+
+def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: float,
+                      charges_per_trade: float, funding_cost_per_trade: float,
+                      max_holding_days: int) -> None:
+    db = SessionLocal()
+    try:
+        _update(db, job_id, status="running", progress_pct=1.0,
+                message="Discovering persisted full F&O coverage")
+
+        def progress(processed: int, total: int, message: str) -> None:
+            _update(db, job_id, progress_pct=100.0 if total == 0 else processed / total * 100.0,
+                    symbols_processed=processed, symbols_total=total, message=message)
+
+        result = run_full_fno_backtest(
+            db, days=days, min_entry_gap=min_entry_gap, exit_gap=exit_gap,
+            charges_per_trade=charges_per_trade, funding_cost_per_trade=funding_cost_per_trade,
+            max_holding_days=max_holding_days, progress=progress,
+            cancelled=lambda: _is_cancelled(job_id),
         )
-        _update(
-            db,
-            job_id,
-            status="completed",
-            progress_pct=100.0,
-            symbols_processed=1,
-            message="Backtest completed",
-            result_json=str(result),
-        )
+        status = "cancelled" if result.get("status") == "cancelled" else "completed"
+        total = max(result.get("symbols_total", 0), 1)
+        _update(db, job_id, status=status,
+                progress_pct=result.get("symbols_processed", 0) / total * 100.0,
+                symbols_processed=result.get("symbols_processed", 0),
+                symbols_total=result.get("symbols_total", 0),
+                message="Full F&O backtest completed" if status == "completed" else "Cancelled",
+                result_json=str(result))
     except Exception as exc:
         _update(db, job_id, status="failed", progress_pct=100.0, message=str(exc))
     finally:
