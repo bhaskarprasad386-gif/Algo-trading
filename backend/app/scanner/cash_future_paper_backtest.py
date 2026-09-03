@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Callable, Iterable
 
 from app.scanner.synchronized_replay import ReplayBar
 
@@ -15,6 +15,8 @@ class PaperBacktestConfig:
     exit_gap: float = 0.0
     charges_per_leg: float = 0.0
     funding_cost_per_day: float = 0.0
+    future_selection: str = "BOTH"
+    max_holding_days: int = 30
 
 
 def _short_pnl(entry: float, mark: float, lot_size: int) -> float:
@@ -24,27 +26,45 @@ def _short_pnl(entry: float, mark: float, lot_size: int) -> float:
 def run_cash_future_paper_backtest(
     bars: Iterable[ReplayBar],
     config: PaperBacktestConfig,
+    cancelled: Callable[[], bool] | None = None,
 ) -> dict:
-    """Paper trade Spot BUY + Current Future SELL + Near Future SELL.
+    """Paper backtest with selectable CURRENT, NEAR or BOTH future legs.
 
-    Bars are chronological synchronized 1-minute observations. No future bar
-    is consulted when deciding entry. Current and near legs settle using their
-    historical expiry dates. The source remains minute-level; this engine does
-    not aggregate the input.
+    The input remains canonical 1-minute synchronized data. The selected future
+    contracts are fixed at entry; a later contract must never silently replace
+    an open leg.
     """
+    selection = config.future_selection.upper()
+    if selection not in {"CURRENT", "NEAR", "BOTH"}:
+        raise ValueError("future_selection must be CURRENT, NEAR or BOTH")
+
     capital = config.starting_capital
     peak = capital
     max_drawdown = 0.0
     entry: ReplayBar | None = None
     entry_time = None
     spot_entry = current_entry = near_entry = None
-    current_closed = near_closed = False
+    current_closed = selection == "NEAR"
+    near_closed = selection == "CURRENT"
     realized = 0.0
     ledger: list[dict] = []
+    current_exit_time = near_exit_time = None
 
     for bar in bars:
+        if cancelled is not None and cancelled():
+            return {
+                "status": "cancelled",
+                "starting_capital": capital,
+                "ending_capital": capital + realized,
+                "net_profit": realized,
+                "ledger": ledger,
+            }
+
         if entry is None:
-            if bar.current_gap < config.min_entry_gap:
+            trigger_gap = bar.current_gap if selection == "CURRENT" else bar.near_gap
+            if selection == "BOTH":
+                trigger_gap = min(bar.current_gap, bar.near_gap)
+            if trigger_gap < config.min_entry_gap:
                 continue
             entry = bar
             entry_time = bar.timestamp
@@ -53,17 +73,30 @@ def run_cash_future_paper_backtest(
             near_entry = bar.near_future
             continue
 
-        assert entry_time is not None
-        assert spot_entry is not None and current_entry is not None and near_entry is not None
+        assert entry_time is not None and spot_entry is not None
+        assert current_entry is not None and near_entry is not None
 
-        if not current_closed and (bar.current_gap <= config.exit_gap or bar.timestamp.date() >= bar.current_expiry):
-            realized += _short_pnl(current_entry, bar.current_future, bar.lot_size)
-            current_closed = True
-            current_exit_time = bar.timestamp
-        if not near_closed and bar.timestamp.date() >= bar.near_expiry:
-            realized += _short_pnl(near_entry, bar.near_future, bar.lot_size)
-            near_closed = True
-            near_exit_time = bar.timestamp
+        if config.max_holding_days > 0 and (bar.timestamp - entry_time).days >= config.max_holding_days:
+            if selection in {"CURRENT", "BOTH"} and not current_closed:
+                realized += _short_pnl(current_entry, bar.current_future, bar.lot_size)
+                current_closed = True
+                current_exit_time = bar.timestamp
+            if selection in {"NEAR", "BOTH"} and not near_closed:
+                realized += _short_pnl(near_entry, bar.near_future, bar.lot_size)
+                near_closed = True
+                near_exit_time = bar.timestamp
+
+        if selection in {"CURRENT", "BOTH"} and not current_closed:
+            if bar.current_gap <= config.exit_gap or bar.timestamp.date() >= bar.current_expiry:
+                realized += _short_pnl(current_entry, bar.current_future, bar.lot_size)
+                current_closed = True
+                current_exit_time = bar.timestamp
+
+        if selection in {"NEAR", "BOTH"} and not near_closed:
+            if bar.timestamp.date() >= bar.near_expiry:
+                realized += _short_pnl(near_entry, bar.near_future, bar.lot_size)
+                near_closed = True
+                near_exit_time = bar.timestamp
 
         spot_pnl = (bar.spot - spot_entry) * bar.lot_size
         current_pnl = 0.0 if current_closed else _short_pnl(current_entry, bar.current_future, bar.lot_size)
@@ -80,6 +113,7 @@ def run_cash_future_paper_backtest(
             "near_future": bar.near_future,
             "current_gap": bar.current_gap,
             "near_gap": bar.near_gap,
+            "future_selection": selection,
             "lot_size": bar.lot_size,
             "spot_pnl": spot_pnl,
             "current_future_pnl": current_pnl,
@@ -91,10 +125,12 @@ def run_cash_future_paper_backtest(
         if current_closed and near_closed:
             days_held = max(0.0, (bar.timestamp - entry_time).total_seconds() / 86400.0)
             funding = days_held * config.funding_cost_per_day
-            charges = config.charges_per_leg * 3.0
+            future_legs = 1 if selection in {"CURRENT", "NEAR"} else 2
+            charges = config.charges_per_leg * (1 + future_legs)
             net = gross - funding - charges
             return {
                 "status": "completed",
+                "future_selection": selection,
                 "starting_capital": capital,
                 "ending_capital": capital + net,
                 "net_profit": net,
@@ -111,10 +147,12 @@ def run_cash_future_paper_backtest(
             }
 
     if entry is None:
-        return {"status": "no_entry", "starting_capital": capital, "ending_capital": capital, "net_profit": 0.0, "ledger": []}
+        return {"status": "no_entry", "future_selection": selection, "starting_capital": capital,
+                "ending_capital": capital, "net_profit": 0.0, "ledger": []}
 
     return {
         "status": "open",
+        "future_selection": selection,
         "starting_capital": capital,
         "ending_capital": capital + realized,
         "net_profit": realized,
@@ -124,5 +162,7 @@ def run_cash_future_paper_backtest(
         "entry_current_gap": entry.current_gap,
         "entry_near_gap": entry.near_gap,
         "lot_size": entry.lot_size,
+        "current_exit_time": current_exit_time.isoformat() if current_exit_time else None,
+        "near_exit_time": near_exit_time.isoformat() if near_exit_time else None,
         "ledger": ledger,
     }
