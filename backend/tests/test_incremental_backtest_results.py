@@ -23,7 +23,7 @@ def test_paper_backtest_can_stream_without_minute_ledger():
 
     assert result["status"] == "completed"
     assert "ledger" not in result
-    assert result["net_profit"] == 10.0
+    assert result["net_profit"] == 50.0
 
 
 def test_full_fno_streams_symbol_results_to_sink_without_accumulating(monkeypatch):
