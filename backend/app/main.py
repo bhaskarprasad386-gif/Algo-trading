@@ -27,6 +27,7 @@ from app.scanner.routes import router as scanner_router
 from app.scanner.auto_routes import router as auto_scanner_router
 from app.execution.paper_routes import router as paper_execution_router
 from app.scanner.cash_future_collector import CashFutureHistoryCollector
+from app.brokers.routes import router as brokers_router
 
 run_schema_migrations()
 Base.metadata.create_all(bind=engine)
@@ -36,6 +37,7 @@ app.add_exception_handler(TradingAppException, trading_exception_handler)
 app.add_exception_handler(Exception, global_exception_handler)
 
 app.include_router(auth_router)
+app.include_router(brokers_router)
 app.include_router(orders_router)
 app.include_router(arbitrage_router)
 app.include_router(instruments_router)
