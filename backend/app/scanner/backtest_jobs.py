@@ -140,12 +140,13 @@ def _run_job(job_id: str, symbol: str, contract_month: str, days: int,
 
 
 def _persist_full_fno_chunk(job_id: str, sequence: int, symbol: str, result: dict) -> None:
-    """Durably commit one validated symbol result; duplicate sequence is idempotent, including write races."""
+    """Durably commit one validated symbol result; exact duplicate replay is idempotent."""
     if not job_id or sequence < 0 or not symbol:
         raise ValueError("invalid full-F&O result chunk identity")
     if not isinstance(result, dict):
         raise TypeError("full-F&O result chunk must be a dict")
 
+    payload_json = json.dumps(result, default=str)
     db = SessionLocal()
     try:
         existing = db.query(BacktestJobResultChunk).filter(
@@ -153,12 +154,14 @@ def _persist_full_fno_chunk(job_id: str, sequence: int, symbol: str, result: dic
             BacktestJobResultChunk.sequence == sequence,
         ).first()
         if existing is not None:
+            if existing.symbol != symbol or existing.result_json != payload_json:
+                raise ValueError("conflicting full-F&O result chunk for existing sequence")
             return
         db.add(BacktestJobResultChunk(
             job_id=job_id,
             sequence=sequence,
             symbol=symbol,
-            result_json=json.dumps(result, default=str),
+            result_json=payload_json,
             created_at=_utcnow(),
         ))
         db.commit()
@@ -170,6 +173,8 @@ def _persist_full_fno_chunk(job_id: str, sequence: int, symbol: str, result: dic
         ).first()
         if raced is None:
             raise
+        if raced.symbol != symbol or raced.result_json != payload_json:
+            raise ValueError("conflicting full-F&O result chunk for existing sequence")
     except Exception:
         db.rollback()
         raise
