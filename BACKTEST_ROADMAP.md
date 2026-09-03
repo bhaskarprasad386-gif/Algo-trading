@@ -9,6 +9,22 @@
 - Spot leg: NSE cash/equity data.
 - Futures legs: current-month and near-month futures contracts, mapped by the historical replay date and actual contract expiry.
 
+## Full F&O Universe & Non-Blocking App Performance
+- Every backtest must scan the **complete historically eligible NSE F&O stock universe** for the requested period; no eligible stock may be silently omitted because the universe is large.
+- Index derivatives are not treated as Cash–Future stock trades; only securities with a corresponding cash/equity leg participate in this strategy.
+- The full-universe backtest must run as a **background/asynchronous job**, never on the Android UI/main thread and never inside a blocking request handler.
+- The app UI must remain responsive while a large backtest is running: scrolling, navigation, status polling, cancellation and other non-backtest screens must continue to work.
+- Backtest work must be processed in bounded batches/chunks with controlled memory usage rather than loading the entire F&O universe and full-year minute dataset into RAM at once.
+- Historical data must be read from the persistent validated data store in streaming/chunked form; the engine must not repeatedly fetch the same year of data into memory.
+- Results must be written incrementally to persistent job/result storage so an interrupted or restarted UI session does not lose completed work.
+- The API should return a job ID immediately for a large backtest and expose progress such as queued/running/completed/failed/cancelled, percentage, symbols processed, trades/opportunities processed and current date range.
+- Users must be able to cancel a running backtest safely; cancellation must stop future work without corrupting already validated historical data or completed result records.
+- Backtest concurrency must be bounded so multiple users/jobs cannot exhaust CPU, RAM, database connections or storage and cause the server/app to hang.
+- The engine must isolate heavy backtest computation from lightweight API/UI operations; a slow backtest must not block login, scanner, paper trading, health checks or dashboard requests.
+- If the backend is unavailable or restarted, the mobile app must show job status/recovery state instead of freezing or continuously retrying.
+- For Android/local execution, heavy processing must use background workers/services with progress reporting and resource limits; never execute the complete full-F&O yearly replay directly in the UI lifecycle.
+- Performance acceptance gate: full eligible F&O universe + 1 year of 1-minute data must complete through the job pipeline without UI freeze, ANR, request timeout caused by synchronous computation, uncontrolled memory growth or data corruption.
+
 ## Advanced Replay & Chart Interval Controls
 The backtest keeps **1-minute data as the source of truth**, but the user can control how the historical replay advances and how the chart is displayed.
 
@@ -121,6 +137,10 @@ For a trade entered on a historical date such as 1 January:
 - **Never redownload the full historical year for every backtest:** resolve requested coverage against the persisted data catalog first, then fetch only missing/repaired ranges.
 - **Persist successful downloads:** once a year/date range has passed data-quality validation, mark it complete and reuse it for future backtests.
 - **Append new dates automatically:** newly available historical/live-to-historical minutes are added incrementally while preserving existing validated data.
+- **Never run a full-universe yearly replay synchronously in the UI/API request path:** submit it as a background job with bounded workers, chunked data access and incremental result persistence.
+- **Never load the entire full-F&O yearly minute dataset into memory at once:** process by date/symbol/contract partitions with bounded memory.
+- **Never let backtest workers starve core app services:** enforce worker/resource limits and isolate heavy computation from API/UI operations.
+- **Job state is durable:** queued/running/progress/completed/failed/cancelled state and partial results survive UI navigation and are recoverable after restart where the storage backend supports it.
 
 ## Reports
 - Net P&L
@@ -145,6 +165,8 @@ For a trade entered on a historical date such as 1 January:
 - Parameter-sensitivity report
 - Monte Carlo/robustness report
 - Per-stock/sector/liquidity/regime breakdown
+- **Full-F&O universe coverage report**
+- **Backtest job progress/runtime/resource report**
 
 ## Validation Gates
 - [ ] Historical 1-minute data ingestion verified.
@@ -154,6 +176,10 @@ For a trade entered on a historical date such as 1 January:
 - [ ] New trading dates append without duplicate observations.
 - [ ] Gap-repair downloads only missing/corrupt ranges.
 - [ ] Full eligible F&O universe coverage verified.
+- [ ] Full-F&O backtest runs asynchronously/background without UI freeze or ANR.
+- [ ] Backtest computation is chunked/bounded and does not load the complete yearly dataset into RAM.
+- [ ] Backtest worker/resource concurrency limits prevent app/server starvation.
+- [ ] Backtest job progress/cancellation/recovery is verified.
 - [ ] Spot/current-month/near-month contract matching verified.
 - [ ] Historical lot size mapping verified for every contract.
 - [ ] Full minute-level trade ledger verified.
@@ -180,4 +206,4 @@ For a trade entered on a historical date such as 1 January:
 - [ ] Paper-trading results can be compared against the same strategy logic.
 
 ## Current Priority
-Build and verify the Cash–Future backtesting engine with the advanced replay/interval system, historical lot-size mapping, interval-wise gap/P&L ledger and historical gap-search capability first. The data layer must persist validated historical downloads and synchronize incrementally so subsequent backtests reuse existing data and fetch only missing/new/repaired ranges. Then harden it with data-quality, corporate-action/dividend, execution/microstructure, margin, anti-survivorship and statistical robustness controls before trusting any headline result. RSI, second scanner and real-money execution remain out of scope until this backtesting + paper-trading stage is validated.
+Build and verify the Cash–Future backtesting engine with the advanced replay/interval system, historical lot-size mapping, interval-wise gap/P&L ledger and historical gap-search capability first. The data layer must persist validated historical downloads and synchronize incrementally so subsequent backtests reuse existing data and fetch only missing/new/repaired ranges. The complete eligible F&O stock universe must be processed through a background/chunked job architecture so the Android/web UI remains responsive even for a full 1-year 1-minute replay. Then harden it with data-quality, corporate-action/dividend, execution/microstructure, margin, anti-survivorship and statistical robustness controls before trusting any headline result. RSI, second scanner and real-money execution remain out of scope until this backtesting + paper-trading stage is validated.
