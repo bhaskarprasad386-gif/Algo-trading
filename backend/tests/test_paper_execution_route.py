@@ -95,3 +95,34 @@ def test_paper_entry_rejects_non_positive_values_for_authenticated_user():
         json={"price": 0, "quantity": 1},
     )
     assert response.status_code == 422
+
+
+def test_cash_future_scanner_bridge_creates_symbol_specific_paper_position():
+    client, headers = _client_and_headers()
+    response = client.post(
+        "/api/v1/execution/paper/from-scanner",
+        headers=headers,
+        json={
+            "symbol": "RELIANCE",
+            "cash_price": 2500.0,
+            "quantity": 2,
+            "stop_loss_pct": 0.02,
+            "target_pct": 0.04,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["source"] == "cash-future-scanner"
+    assert data["scanner_entry_price"] == 2500.0
+    assert data["order"]["symbol"] == "RELIANCE"
+    assert data["position"]["symbol"] == "RELIANCE"
+    assert data["position"]["quantity"] == 2.0
+
+
+def test_cash_future_scanner_bridge_requires_authentication():
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/execution/paper/from-scanner",
+        json={"symbol": "RELIANCE", "cash_price": 2500.0, "quantity": 2},
+    )
+    assert response.status_code == 401
