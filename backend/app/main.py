@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.logger import app_logger
 from app.core.exceptions import TradingAppException, trading_exception_handler, global_exception_handler
 from app.core.database import engine, Base, SessionLocal
+from app.core.schema_migrations import run_schema_migrations
 from app.models import User, Instrument, Order, Session, Position, SystemLog
 from app.auth.routes import router as auth_router
 from app.algo.auth import AngelOneAuth
@@ -27,6 +28,7 @@ from app.scanner.auto_routes import router as auto_scanner_router
 from app.execution.paper_routes import router as paper_execution_router
 from app.scanner.cash_future_collector import CashFutureHistoryCollector
 
+run_schema_migrations()
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug)
