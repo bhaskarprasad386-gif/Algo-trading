@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from typing import Callable
+from datetime import date, datetime, timedelta
+from typing import Callable, Sequence, TypeAlias
 
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,27 @@ from app.scanner.synchronized_replay import iter_persisted_symbol_replay
 ProgressCallback = Callable[[int, int, str], None]
 CancelCallback = Callable[[], bool]
 ResultSink = Callable[[int, str, dict], None]
+HistoricalContract: TypeAlias = tuple[str, date]
+
+
+def historical_current_near_contracts(
+    contracts: Sequence[HistoricalContract],
+    as_of: date,
+) -> tuple[HistoricalContract | None, HistoricalContract | None]:
+    """Select the historical current and next-near contracts by expiry.
+
+    The current contract is the earliest contract whose expiry is on or after
+    ``as_of``. The near contract is the next expiry after the current contract.
+    Contracts that have already expired are ignored, so a date after the final
+    expiry correctly returns ``(None, None)``.
+    """
+    ordered = sorted(contracts, key=lambda contract: contract[1])
+    active = [contract for contract in ordered if contract[1] >= as_of]
+    if not active:
+        return None, None
+    current = active[0]
+    near = active[1] if len(active) > 1 else None
+    return current, near
 
 
 def persisted_stock_symbols(db: Session) -> list[str]:
