@@ -36,3 +36,4 @@ jobs:
         run: python -m pytest -q
 
 # CI verification trigger for persistent paper balance and realized P&L coverage
+# Incremental Full-F&O verification trigger: durable result sinking / bounded RAM
