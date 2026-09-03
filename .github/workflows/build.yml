@@ -9,6 +9,8 @@ jobs:
   backend:
     name: Backend tests
     runs-on: ubuntu-latest
+    env:
+      SECRET_KEY: ci-test-secret-key-not-for-production
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
