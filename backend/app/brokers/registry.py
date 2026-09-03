@@ -1,15 +1,12 @@
-"""Registry for supported broker adapters.
-
-The registry keeps broker-specific code isolated from the trading engine so
-new brokers can be added without changing scanner or execution logic.
-"""
-
+"""Registry for supported broker adapters."""
 from .base import BrokerAdapter
+from .angel_one import AngelOneAdapter
 
 
 class BrokerRegistry:
     def __init__(self) -> None:
         self._adapters: dict[str, BrokerAdapter] = {}
+        self.register(AngelOneAdapter())
 
     def register(self, adapter: BrokerAdapter) -> None:
         key = adapter.name.strip().lower()
@@ -21,10 +18,9 @@ class BrokerRegistry:
 
     def get(self, name: str) -> BrokerAdapter:
         key = name.strip().lower()
-        try:
-            return self._adapters[key]
-        except KeyError as exc:
-            raise KeyError(f"unsupported broker: {name}") from exc
+        if key not in self._adapters:
+            raise KeyError(f"unsupported broker: {name}")
+        return self._adapters[key]
 
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self._adapters))
