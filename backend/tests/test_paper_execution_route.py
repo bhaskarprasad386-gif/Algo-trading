@@ -80,7 +80,7 @@ def test_paper_entry_persists_position_and_order_and_updates_balance():
 
     flat_response = client.get("/api/v1/execution/paper/position", headers=headers)
     assert flat_response.status_code == 200
-    assert flat_response.json() == {"status": "flat", "position": None}
+    assert flat_response.json() == {"status": "flat", "position": None, "mark_to_market": None}
 
     orders_after_exit = client.get("/api/v1/execution/paper/orders", headers=headers)
     assert orders_after_exit.status_code == 200
