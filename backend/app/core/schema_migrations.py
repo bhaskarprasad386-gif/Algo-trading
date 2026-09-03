@@ -102,3 +102,8 @@ def run_schema_migrations() -> None:
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_mobile_number ON users (mobile_number)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_id ON orders (user_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_positions_user_id ON positions (user_id)"))
+
+    # Resume only jobs that have a complete persisted configuration. Older jobs are
+    # failed safely by the recovery routine instead of being replayed with guesses.
+    from app.scanner.backtest_jobs import recover_interrupted_jobs
+    recover_interrupted_jobs()
