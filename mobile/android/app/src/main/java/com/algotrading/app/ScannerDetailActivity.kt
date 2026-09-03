@@ -25,6 +25,14 @@ class ScannerDetailActivity : AppCompatActivity() {
 
         findViewById<TextView>(R.id.tvDetailTitle).text = symbol.ifBlank { "Scanner Opportunity" }
         findViewById<TextView>(R.id.tvDetailStatus).text = if (executable) "EXECUTABLE • PAPER MODE" else "OBSERVATION ONLY"
+
+        // Scanner snapshot only. Actual live LTP/P&L must come from an executed position/quote feed.
+        findViewById<TextView>(R.id.tvCurrentLtpValue).text = if (cash > 0.0) "${money(cash)}  • scanner snapshot" else "Awaiting live quote"
+        findViewById<TextView>(R.id.tvEntryValue).text = "Not executed"
+        findViewById<TextView>(R.id.tvQuantityValue).text = "0"
+        findViewById<TextView>(R.id.tvLivePnlValue).text = "₹0.00  • no active position"
+        findViewById<TextView>(R.id.tvNetPnlValue).text = "Awaiting executed position"
+
         findViewById<TextView>(R.id.tvCashValue).text = money(cash)
         findViewById<TextView>(R.id.tvFutureValue).text = money(future)
         findViewById<TextView>(R.id.tvGapValue).text = "${money(gap)}  (${pct(gapPct)}%)"
@@ -33,8 +41,16 @@ class ScannerDetailActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.tvCapitalValue).text = money(capital)
         findViewById<TextView>(R.id.tvNetValue).text = money(net)
         findViewById<TextView>(R.id.tvRoiValue).text = "${pct(roi)}%"
+
+        findViewById<TextView>(R.id.tvBreakevenValue).text = "Break-even: Awaiting executed strategy legs"
+        findViewById<TextView>(R.id.tvMaxProfitValue).text = "Max Profit (scanner estimate): ${money(net)}"
+        findViewById<TextView>(R.id.tvMaxLossValue).text = "Max Loss: Not available until strategy legs are defined"
+        findViewById<TextView>(R.id.tvRiskValue).text =
+            if (executable) "Risk: paper execution eligible; live P&L starts only after an actual position exists"
+            else "Risk: observation only; no executable position is active"
+
         findViewById<TextView>(R.id.tvAnalysisNote).text =
-            if (executable) "The scanner marked this opportunity executable. Live order routing remains disabled; use paper execution until live-trading safety and reconciliation are fully approved."
+            if (executable) "Scanner snapshot is shown separately from execution. Paper/live P&L must use actual executed quantity, average fill, current market price and applicable charges. Live order routing remains disabled."
             else "This result is for analysis only. No executable trade is suggested by the scanner."
     }
 
