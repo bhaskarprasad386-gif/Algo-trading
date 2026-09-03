@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from app.core.database import Base, SessionLocal, engine
-from app.models import BacktestJob
+from app.models import BacktestJob, BacktestJobResultChunk
 from app.scanner import backtest_jobs
 
 
@@ -80,5 +80,71 @@ def test_full_fno_job_queues_and_persists_job_state(monkeypatch):
         assert submitted["args"][0] == job.job_id
     finally:
         db.query(BacktestJob).filter(BacktestJob.job_id == job.job_id).delete()
+        db.commit()
+        db.close()
+
+
+def test_full_fno_chunk_is_durable_across_sessions_and_idempotent():
+    """A committed chunk survives a fresh DB session and duplicate delivery is ignored."""
+    Base.metadata.create_all(bind=engine)
+    job_id = "test-job-durable-chunk"
+    db = SessionLocal()
+    try:
+        db.query(BacktestJobResultChunk).filter(
+            BacktestJobResultChunk.job_id == job_id,
+        ).delete()
+        db.commit()
+
+        backtest_jobs._persist_full_fno_chunk(
+            job_id, 7, "RELIANCE", {"status": "completed", "net_profit": 123.45}
+        )
+        backtest_jobs._persist_full_fno_chunk(
+            job_id, 7, "RELIANCE", {"status": "completed", "net_profit": 999.0}
+        )
+        db.expire_all()
+
+        rows = backtest_jobs.get_result_chunks(db, job_id, after_sequence=6, limit=50)
+        assert len(rows) == 1
+        assert rows[0].sequence == 7
+        assert rows[0].symbol == "RELIANCE"
+        assert '123.45' in rows[0].result_json
+        assert '999.0' not in rows[0].result_json
+    finally:
+        db.query(BacktestJobResultChunk).filter(
+            BacktestJobResultChunk.job_id == job_id,
+        ).delete()
+        db.commit()
+        db.close()
+
+
+def test_full_fno_result_chunks_use_keyset_paging():
+    Base.metadata.create_all(bind=engine)
+    job_id = "test-job-keyset-paging"
+    db = SessionLocal()
+    try:
+        db.query(BacktestJobResultChunk).filter(
+            BacktestJobResultChunk.job_id == job_id,
+        ).delete()
+        db.commit()
+        db.add_all([
+            BacktestJobResultChunk(
+                job_id=job_id,
+                sequence=sequence,
+                symbol=f"SYM{sequence}",
+                result_json=f'{{"sequence": {sequence}}}',
+                created_at=datetime.utcnow(),
+            )
+            for sequence in range(5)
+        ])
+        db.commit()
+
+        first = backtest_jobs.get_result_chunks(db, job_id, after_sequence=None, limit=2)
+        second = backtest_jobs.get_result_chunks(db, job_id, after_sequence=first[-1].sequence, limit=2)
+        assert [row.sequence for row in first] == [0, 1]
+        assert [row.sequence for row in second] == [2, 3]
+    finally:
+        db.query(BacktestJobResultChunk).filter(
+            BacktestJobResultChunk.job_id == job_id,
+        ).delete()
         db.commit()
         db.close()
