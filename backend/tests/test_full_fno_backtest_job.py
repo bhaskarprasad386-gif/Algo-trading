@@ -79,6 +79,48 @@ def test_full_fno_result_chunks_are_durable_and_bounded():
         db.close()
 
 
+def test_full_fno_incremental_mode_sinks_each_symbol_without_result_list(monkeypatch):
+    from app.scanner import full_fno_backtest
+
+    calls = []
+
+    monkeypatch.setattr(full_fno_backtest, "persisted_stock_symbols",
+                        lambda db: ["RELIANCE", "TCS", "INFY"])
+    monkeypatch.setattr(full_fno_backtest, "iter_persisted_symbol_replay",
+                        lambda db, symbol, start, end: iter([symbol]))
+
+    def fake_engine(bars, config, cancelled=None):
+        calls.append((next(iter(bars)), config.collect_ledger, config.future_selection))
+        return {"status": "completed", "net_profit": 100.0, "max_drawdown": 0.0}
+
+    monkeypatch.setattr(full_fno_backtest, "run_cash_future_paper_backtest", fake_engine)
+
+    sink_calls = []
+    result = full_fno_backtest.run_full_fno_backtest(
+        object(),
+        days=365,
+        min_entry_gap=5.0,
+        exit_gap=1.0,
+        charges_per_trade=0.0,
+        funding_cost_per_trade=0.0,
+        max_holding_days=30,
+        future_selection="BOTH",
+        result_sink=lambda sequence, symbol, item: sink_calls.append((sequence, symbol, item)),
+        collect_results=False,
+    )
+
+    assert result["status"] == "completed"
+    assert result["results"] is None
+    assert result["symbols_total"] == 3
+    assert result["symbols_processed"] == 3
+    assert result["chunks_written"] == 3
+    assert [symbol for _, symbol, _ in sink_calls] == ["RELIANCE", "TCS", "INFY"]
+    assert [sequence for sequence, _, _ in sink_calls] == [0, 1, 2]
+    assert all(collect_ledger is False for _, collect_ledger, _ in calls)
+    assert all(selection == "BOTH" for _, _, selection in calls)
+    assert result["total_net_profit"] == 300.0
+
+
 def test_paper_engine_does_not_retain_minute_ledger_when_incremental():
     expiry = date(2026, 9, 30)
     bars = [
