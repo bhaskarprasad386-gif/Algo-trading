@@ -13,6 +13,7 @@ from app.scanner.synchronized_replay import iter_persisted_symbol_replay
 
 ProgressCallback = Callable[[int, int, str], None]
 CancelCallback = Callable[[], bool]
+ResultSink = Callable[[int, str, dict], None]
 
 
 def persisted_stock_symbols(db: Session) -> list[str]:
@@ -33,12 +34,16 @@ def run_full_fno_backtest(
     future_selection: str = "BOTH",
     progress: ProgressCallback | None = None,
     cancelled: CancelCallback | None = None,
+    result_sink: ResultSink | None = None,
+    collect_results: bool = True,
 ) -> dict:
     """Run the persisted F&O stock universe through the synchronized paper engine.
 
-    The worker processes one symbol at a time and streams synchronized historical
-    bars, so the API/UI never has to load the full universe or full-year minute
-    dataset into memory.
+    The replay itself is streaming. For large jobs, ``collect_results=False`` and
+    ``result_sink`` make each symbol result durable immediately instead of building
+    a full-universe result list in RAM. The canonical 1-minute market data stays in
+    the persistent historical store; the worker only holds the current symbol's
+    replay state.
     """
     selection = future_selection.upper()
     if selection not in {"CURRENT", "NEAR", "BOTH"}:
@@ -47,7 +52,13 @@ def run_full_fno_backtest(
     symbols = persisted_stock_symbols(db)
     total = len(symbols)
     processed = 0
-    results: list[dict] = []
+    chunks_written = 0
+    results: list[dict] = [] if collect_results else []
+    total_net_profit = 0.0
+    max_drawdown = 0.0
+    completed_symbols = 0
+    no_entry_symbols = 0
+
     end = datetime.utcnow()
     start = end - timedelta(days=days)
 
@@ -59,7 +70,10 @@ def run_full_fno_backtest(
                 "future_selection": selection,
                 "symbols_total": total,
                 "symbols_processed": processed,
-                "results": results,
+                "chunks_written": chunks_written,
+                "total_net_profit": total_net_profit,
+                "max_drawdown": max_drawdown,
+                "results": results if collect_results else None,
             }
 
         bars = iter_persisted_symbol_replay(db, symbol, start, end)
@@ -73,14 +87,27 @@ def run_full_fno_backtest(
                 funding_cost_per_day=funding_cost_per_trade,
                 future_selection=selection,
                 max_holding_days=max_holding_days,
+                collect_ledger=collect_results,
             ),
             cancelled=cancelled,
         )
-        results.append({"symbol": symbol, **result})
+        item = {"symbol": symbol, **result}
+
+        if result_sink is not None:
+            result_sink(processed, symbol, item)
+            chunks_written += 1
+        if collect_results:
+            results.append(item)
+
+        total_net_profit += float(result.get("net_profit", 0.0) or 0.0)
+        max_drawdown = max(max_drawdown, float(result.get("max_drawdown", 0.0) or 0.0))
+        if result.get("status") == "no_entry":
+            no_entry_symbols += 1
+        else:
+            completed_symbols += 1
 
         processed += 1
         if progress is not None:
-            pct = 100.0 if total == 0 else processed / total * 100.0
             progress(processed, total, f"Processed {symbol}")
 
     return {
@@ -89,6 +116,10 @@ def run_full_fno_backtest(
         "future_selection": selection,
         "symbols_total": total,
         "symbols_processed": processed,
-        "contracts_processed": sum(1 for item in results if item.get("status") != "no_entry"),
-        "results": results,
+        "chunks_written": chunks_written,
+        "contracts_processed": completed_symbols,
+        "no_entry_symbols": no_entry_symbols,
+        "total_net_profit": total_net_profit,
+        "max_drawdown": max_drawdown,
+        "results": results if collect_results else None,
     }
