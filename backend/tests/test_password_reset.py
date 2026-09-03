@@ -10,8 +10,9 @@ from app.auth.routes import (
     confirm_password_reset,
     request_password_reset,
 )
+from app.core.database import Base
 from app.core.security import get_password_hash, verify_password
-from app.models import Base, PasswordResetToken, User
+from app.models import PasswordResetToken, User
 
 
 def _db():
