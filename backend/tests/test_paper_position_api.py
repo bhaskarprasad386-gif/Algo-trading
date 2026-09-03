@@ -1,35 +1,70 @@
-from app.execution import paper_routes
+from uuid import uuid4
+
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+
+def _client_and_headers():
+    client = TestClient(app)
+    email = f"paper-position-{uuid4().hex}@example.com"
+    response = client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": "TestPass123!", "full_name": "Paper Test"},
+    )
+    assert response.status_code == 201
+    return client, {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
 def test_paper_position_lifecycle():
-    paper_routes._paper_position = None
+    client, headers = _client_and_headers()
 
-    entry = paper_routes.paper_entry(
-        paper_routes.PaperEntryRequest(price=100.0, quantity=2.0, stop_loss_pct=0.02, target_pct=0.04)
+    entry_response = client.post(
+        "/api/v1/execution/paper/entry",
+        headers=headers,
+        json={"price": 100.0, "quantity": 2.0, "stop_loss_pct": 0.02, "target_pct": 0.04},
     )
+    assert entry_response.status_code == 200
+    entry = entry_response.json()
     assert entry["status"] == "success"
     assert entry["position"]["entry_price"] == 100.0
     assert entry["position"]["stop_loss"] == 98.0
     assert entry["position"]["target"] == 104.0
 
-    active = paper_routes.paper_position()
+    active_response = client.get("/api/v1/execution/paper/position", headers=headers)
+    assert active_response.status_code == 200
+    active = active_response.json()
     assert active["status"] == "active"
     assert active["position"]["quantity"] == 2.0
 
-    exit_result = paper_routes.paper_exit(paper_routes.PaperExitRequest(price=103.5))
-    assert exit_result == {
-        "status": "closed",
-        "entry_price": 100.0,
-        "exit_price": 103.5,
-        "quantity": 2.0,
-        "pnl": 7.0,
-    }
+    exit_response = client.post(
+        "/api/v1/execution/paper/exit",
+        headers=headers,
+        json={"price": 103.5},
+    )
+    assert exit_response.status_code == 200
+    exit_result = exit_response.json()
+    assert exit_result["status"] == "closed"
+    assert exit_result["entry_price"] == 100.0
+    assert exit_result["exit_price"] == 103.5
+    assert exit_result["quantity"] == 2.0
+    assert exit_result["pnl"] == 7.0
+    assert exit_result["order"]["transaction_type"] == "SELL"
 
-    flat = paper_routes.paper_position()
-    assert flat == {"status": "flat", "position": None}
+    flat_response = client.get("/api/v1/execution/paper/position", headers=headers)
+    assert flat_response.status_code == 200
+    assert flat_response.json() == {"status": "flat", "position": None}
 
 
 def test_paper_exit_without_position_is_flat():
-    paper_routes._paper_position = None
-    result = paper_routes.paper_exit(paper_routes.PaperExitRequest(price=101.0))
-    assert result == {"status": "flat", "position": None, "pnl": 0.0}
+    client, headers = _client_and_headers()
+    response = client.post(
+        "/api/v1/execution/paper/exit",
+        headers=headers,
+        json={"price": 101.0},
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "flat"
+    assert result["position"] is None
+    assert result["pnl"] == 0.0
