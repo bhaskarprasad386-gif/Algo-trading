@@ -10,8 +10,9 @@ from app.models.user import User
 from app.models.account import TradingAccount
 from app.models.backtest_job import BacktestJob
 from app.models.backtest_job_result_chunk import BacktestJobResultChunk
+from app.models.password_reset_token import PasswordResetToken
 
 __all__ = [
     "User", "TradingAccount", "Session", "Instrument", "Tick", "Candle", "CashFutureHistory",
-    "Order", "Position", "SystemLog", "BacktestJob", "BacktestJobResultChunk",
+    "Order", "Position", "SystemLog", "BacktestJob", "BacktestJobResultChunk", "PasswordResetToken",
 ]
