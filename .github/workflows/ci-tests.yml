@@ -35,4 +35,4 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
 
-# Durable result integrity verification trigger: race-safe idempotent chunk commit
+# Durable result integrity verification trigger: conflicting duplicate sequence protection
