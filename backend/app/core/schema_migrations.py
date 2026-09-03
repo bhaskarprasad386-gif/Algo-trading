@@ -64,7 +64,6 @@ def run_schema_migrations() -> None:
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_job_id ON backtest_jobs (job_id)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_symbol ON backtest_jobs (symbol)"))
 
-        # Incremental durable result storage for large full-F&O jobs.
         if "backtest_job_result_chunks" not in account_tables:
             connection.execute(text("""
                 CREATE TABLE backtest_job_result_chunks (
@@ -78,6 +77,21 @@ def run_schema_migrations() -> None:
             """))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_backtest_job_result_chunk ON backtest_job_result_chunks (job_id, sequence)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_job_result_chunks_job ON backtest_job_result_chunks (job_id, sequence)"))
+
+        if "password_reset_tokens" not in account_tables:
+            connection.execute(text("""
+                CREATE TABLE password_reset_tokens (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    token_hash VARCHAR(64) NOT NULL UNIQUE,
+                    expires_at DATETIME NOT NULL,
+                    used_at DATETIME,
+                    created_at DATETIME NOT NULL
+                )
+            """))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_user ON password_reset_tokens (user_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_expires ON password_reset_tokens (expires_at)"))
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_password_reset_tokens_token_hash ON password_reset_tokens (token_hash)"))
 
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_mobile_number ON users (mobile_number)"))
