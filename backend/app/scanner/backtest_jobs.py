@@ -8,7 +8,7 @@ from threading import Lock
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
-from app.models import BacktestJob
+from app.models import BacktestJob, BacktestJobResultChunk
 from app.scanner.cash_future_backtest import BacktestConfig, run_backtest
 from app.scanner.cash_future_history_store import read_history
 from app.scanner.full_fno_backtest import run_full_fno_backtest
@@ -137,6 +137,27 @@ def _run_job(job_id: str, symbol: str, contract_month: str, days: int,
             _FUTURES.pop(job_id, None)
 
 
+def _persist_full_fno_chunk(job_id: str, sequence: int, symbol: str, result: dict) -> None:
+    """Commit one symbol result immediately and release its JSON from worker memory."""
+    db = SessionLocal()
+    try:
+        existing = db.query(BacktestJobResultChunk).filter(
+            BacktestJobResultChunk.job_id == job_id,
+            BacktestJobResultChunk.sequence == sequence,
+        ).first()
+        if existing is None:
+            db.add(BacktestJobResultChunk(
+                job_id=job_id,
+                sequence=sequence,
+                symbol=symbol,
+                result_json=json.dumps(result, default=str),
+                created_at=_utcnow(),
+            ))
+            db.commit()
+    finally:
+        db.close()
+
+
 def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: float,
                       charges_per_trade: float, funding_cost_per_trade: float,
                       max_holding_days: int, future_selection: str) -> None:
@@ -144,6 +165,9 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
     try:
         if _is_cancelled(job_id):
             return
+        # Remove stale chunks if a job id is ever retried/reused by an external runner.
+        db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete()
+        db.commit()
         _update(db, job_id, status="running", progress_pct=1.0,
                 message=f"Discovering persisted full F&O coverage ({future_selection})")
 
@@ -158,17 +182,22 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
             charges_per_trade=charges_per_trade, funding_cost_per_trade=funding_cost_per_trade,
             max_holding_days=max_holding_days, future_selection=future_selection,
             progress=progress, cancelled=lambda: _is_cancelled(job_id),
+            result_sink=lambda sequence, symbol, item: _persist_full_fno_chunk(job_id, sequence, symbol, item),
+            collect_results=False,
         )
         if _is_cancelled(job_id) and result.get("status") != "cancelled":
             return
         status = "cancelled" if result.get("status") == "cancelled" else "completed"
         total = max(result.get("symbols_total", 0), 1)
+        # Store only a compact summary in BacktestJob. Detailed per-symbol results
+        # live in BacktestJobResultChunk and can be fetched page-by-page.
+        summary = {key: value for key, value in result.items() if key != "results"}
         _update(db, job_id, status=status,
                 progress_pct=result.get("symbols_processed", 0) / total * 100.0,
                 symbols_processed=result.get("symbols_processed", 0),
                 symbols_total=result.get("symbols_total", 0),
                 message="Full F&O backtest completed" if status == "completed" else "Cancelled",
-                result_json=json.dumps(result, default=str))
+                result_json=json.dumps(summary, default=str))
     except Exception as exc:
         if not _is_cancelled(job_id):
             _update(db, job_id, status="failed", progress_pct=100.0, message=str(exc))
@@ -180,6 +209,19 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
 
 def get_job(db: Session, job_id: str) -> BacktestJob | None:
     return db.query(BacktestJob).filter(BacktestJob.job_id == job_id).first()
+
+
+def get_result_chunks(db: Session, job_id: str, *, offset: int = 0, limit: int = 50) -> list[BacktestJobResultChunk]:
+    """Read durable full-F&O results in bounded pages."""
+    offset = max(0, offset)
+    limit = min(max(1, limit), 200)
+    return db.query(BacktestJobResultChunk).filter(
+        BacktestJobResultChunk.job_id == job_id,
+    ).order_by(BacktestJobResultChunk.sequence).offset(offset).limit(limit).all()
+
+
+def result_chunk_count(db: Session, job_id: str) -> int:
+    return db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).count()
 
 
 def cancel_job(db: Session, job_id: str) -> bool:
