@@ -139,7 +139,12 @@ def _run_job(job_id: str, symbol: str, contract_month: str, days: int,
 
 
 def _persist_full_fno_chunk(job_id: str, sequence: int, symbol: str, result: dict) -> None:
-    """Commit one symbol result immediately and release its JSON from worker memory."""
+    """Durably commit one validated symbol result; duplicate sequence is idempotent."""
+    if not job_id or sequence < 0 or not symbol:
+        raise ValueError("invalid full-F&O result chunk identity")
+    if not isinstance(result, dict):
+        raise TypeError("full-F&O result chunk must be a dict")
+
     db = SessionLocal()
     try:
         existing = db.query(BacktestJobResultChunk).filter(
@@ -155,6 +160,9 @@ def _persist_full_fno_chunk(job_id: str, sequence: int, symbol: str, result: dic
                 created_at=_utcnow(),
             ))
             db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
@@ -166,8 +174,8 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
     try:
         if _is_cancelled(job_id):
             return
-        # A newly-created job has no chunks. Do not delete here: already committed
-        # chunks must survive a worker retry/recovery path for this same job_id.
+        # Already committed chunks are intentionally retained so a future recovery/retry
+        # path cannot erase durable progress before it has resumed from the persisted ledger.
         _update(db, job_id, status="running", progress_pct=1.0,
                 message=f"Discovering persisted full F&O coverage ({future_selection})")
 
