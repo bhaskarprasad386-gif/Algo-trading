@@ -43,10 +43,26 @@ def test_full_fno_chunk_is_durable_across_sessions_and_idempotent():
     Base.metadata.create_all(bind=engine); job_id = "test-job-durable-chunk"; db = SessionLocal()
     try:
         db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete(); db.commit()
-        backtest_jobs._persist_full_fno_chunk(job_id, 7, "RELIANCE", {"status": "completed", "net_profit": 123.45})
-        backtest_jobs._persist_full_fno_chunk(job_id, 7, "RELIANCE", {"status": "completed", "net_profit": 999.0})
+        result = {"status": "completed", "net_profit": 123.45}
+        backtest_jobs._persist_full_fno_chunk(job_id, 7, "RELIANCE", result)
+        backtest_jobs._persist_full_fno_chunk(job_id, 7, "RELIANCE", result.copy())
         db.expire_all(); rows = backtest_jobs.get_result_chunks(db, job_id, after_sequence=6, limit=50)
-        assert len(rows) == 1 and rows[0].sequence == 7 and rows[0].symbol == "RELIANCE" and '123.45' in rows[0].result_json and '999.0' not in rows[0].result_json
+        assert len(rows) == 1 and rows[0].sequence == 7 and rows[0].symbol == "RELIANCE" and '123.45' in rows[0].result_json
+    finally:
+        db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete(); db.commit(); db.close()
+
+
+def test_full_fno_chunk_rejects_conflicting_duplicate_sequence():
+    Base.metadata.create_all(bind=engine); job_id = "test-job-conflicting-chunk"; db = SessionLocal()
+    try:
+        db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete(); db.commit()
+        backtest_jobs._persist_full_fno_chunk(job_id, 8, "RELIANCE", {"net_profit": 123.45})
+        with pytest.raises(ValueError, match="conflicting full-F&O result chunk"):
+            backtest_jobs._persist_full_fno_chunk(job_id, 8, "TCS", {"net_profit": 123.45})
+        with pytest.raises(ValueError, match="conflicting full-F&O result chunk"):
+            backtest_jobs._persist_full_fno_chunk(job_id, 8, "RELIANCE", {"net_profit": 999.0})
+        rows = backtest_jobs.get_result_chunks(db, job_id, after_sequence=7, limit=50)
+        assert len(rows) == 1 and rows[0].symbol == "RELIANCE" and "123.45" in rows[0].result_json and "999.0" not in rows[0].result_json
     finally:
         db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete(); db.commit(); db.close()
 
