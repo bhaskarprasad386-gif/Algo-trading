@@ -31,22 +31,61 @@ def synchronize_minute_bars(
     current: Iterable[tuple[datetime, float, date, int]],
     near: Iterable[tuple[datetime, float, date, int]],
 ) -> Iterator[ReplayBar]:
-    """Yield only timestamps present in all three legs, in timestamp order."""
-    spots = {ts: price for ts, price in spot}
-    currents = {ts: (price, expiry, lot) for ts, price, expiry, lot in current}
-    nears = {ts: (price, expiry, lot) for ts, price, expiry, lot in near}
+    """Yield common timestamps from sorted streams without loading a year into RAM.
 
-    for timestamp in sorted(spots.keys() & currents.keys() & nears.keys()):
-        current_price, current_expiry, current_lot = currents[timestamp]
-        near_price, near_expiry, near_lot = nears[timestamp]
-        if current_lot != near_lot:
-            raise ValueError("Current and near futures lot size mismatch")
-        yield ReplayBar(
-            timestamp=timestamp,
-            spot=spots[timestamp],
-            current_future=current_price,
-            near_future=near_price,
-            current_expiry=current_expiry,
-            near_expiry=near_expiry,
-            lot_size=current_lot,
-        )
+    The persisted historical store is expected to provide each leg ordered by
+    timestamp. The merge advances only the stream(s) behind the current maximum
+    timestamp, so memory stays bounded to one row per leg.
+    """
+    spot_it = iter(spot)
+    current_it = iter(current)
+    near_it = iter(near)
+
+    try:
+        spot_row = next(spot_it)
+        current_row = next(current_it)
+        near_row = next(near_it)
+    except StopIteration:
+        return
+
+    while True:
+        spot_ts, spot_price = spot_row
+        current_ts, current_price, current_expiry, current_lot = current_row
+        near_ts, near_price, near_expiry, near_lot = near_row
+
+        if spot_ts == current_ts == near_ts:
+            if current_lot != near_lot:
+                raise ValueError("Current and near futures lot size mismatch")
+            yield ReplayBar(
+                timestamp=spot_ts,
+                spot=spot_price,
+                current_future=current_price,
+                near_future=near_price,
+                current_expiry=current_expiry,
+                near_expiry=near_expiry,
+                lot_size=current_lot,
+            )
+            try:
+                spot_row = next(spot_it)
+                current_row = next(current_it)
+                near_row = next(near_it)
+            except StopIteration:
+                return
+            continue
+
+        minimum_ts = min(spot_ts, current_ts, near_ts)
+        if spot_ts == minimum_ts:
+            try:
+                spot_row = next(spot_it)
+            except StopIteration:
+                return
+        if current_ts == minimum_ts:
+            try:
+                current_row = next(current_it)
+            except StopIteration:
+                return
+        if near_ts == minimum_ts:
+            try:
+                near_row = next(near_it)
+            except StopIteration:
+                return
