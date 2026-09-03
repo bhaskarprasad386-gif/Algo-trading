@@ -5,7 +5,7 @@ never store raw broker passwords or TOTP secrets in this layer.
 """
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
@@ -34,22 +34,27 @@ class BrokerOrderResult:
 
 
 class BrokerAdapter(Protocol):
-    """Interface every supported broker must implement."""
+    """Interface every supported broker must implement.
+
+    Authentication credentials are supplied only at call time. Concrete
+    adapters may keep an authenticated SDK client in process memory, but the
+    provider-neutral layer never persists raw credentials or TOTP secrets.
+    """
 
     name: str
 
-    def connect(self, credentials: dict[str, str]) -> BrokerSession:
-        """Authenticate with the broker and return a short-lived session."""
+    def connect(self, **credentials: Any) -> dict[str, Any]:
+        """Authenticate with the broker and return safe connection metadata."""
         ...
 
-    def place_order(self, session: BrokerSession, order: BrokerOrder) -> BrokerOrderResult:
-        """Place one real order after application-level safety gates."""
+    def place_order(self, *args: Any, **kwargs: Any) -> Any:
+        """Place a real order only after application-level safety gates."""
         ...
 
-    def cancel_order(self, session: BrokerSession, broker_order_id: str) -> BrokerOrderResult:
-        """Cancel an existing broker order."""
+    def cancel_order(self, *args: Any, **kwargs: Any) -> Any:
+        """Cancel a real broker order only after application-level safety gates."""
         ...
 
-    def disconnect(self, session: BrokerSession) -> None:
+    def disconnect(self) -> None:
         """Invalidate/close the broker session when supported."""
         ...
