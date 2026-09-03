@@ -17,6 +17,9 @@ def test_android_scanner_auto_refresh_controls():
     assert "scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable)" in body
     assert "scheduleScannerRefresh()" in body
     assert "cbScannerAutoRefresh.setOnCheckedChangeListener" in body
-    assert "if (!cbScannerAutoRefresh.isChecked || btnRunScanner.isEnabled.not())" in body
-    assert "return" in body.split("if (!cbScannerAutoRefresh.isChecked || btnRunScanner.isEnabled.not())", 1)[1]
+    condition = "if (!cbScannerAutoRefresh.isChecked || btnRunScanner.isEnabled.not())"
+    equivalent_condition = "if (!cbScannerAutoRefresh.isChecked || !btnRunScanner.isEnabled)"
+    assert condition in body or equivalent_condition in body
+    marker = condition if condition in body else equivalent_condition
+    assert "return" in body.split(marker, 1)[1]
     assert "scheduleScannerRefresh()" in body.split("finally", 1)[1]
