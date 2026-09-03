@@ -6,8 +6,10 @@ import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.Path
 import java.util.concurrent.TimeUnit
 
 data class MarketStatus(val status: String, val message: String)
@@ -30,12 +32,22 @@ data class TokenResponse(val access_token: String, val token_type: String = "bea
 data class AccountInfo(val id: Int, val mode: String, val virtual_balance: Double, val is_active: Boolean)
 data class UserInfo(val id: Int, val email: String? = null, val mobile_number: String? = null, val full_name: String? = null, val account: AccountInfo)
 
+data class BrokerConnectRequest(val broker: String = "angel_one", val display_name: String? = null, val api_key: String, val client_code: String, val password: String, val totp_secret: String)
+data class BrokerConnectionInfo(val broker: String, val connected: Boolean, val display_name: String? = null, val connected_at: String? = null)
+data class BrokerConnectionsResponse(val connections: List<BrokerConnectionInfo> = emptyList())
+data class BrokerConnectResponse(val connected: Boolean, val broker: String, val display_name: String? = null, val client_code: String? = null, val real_trading: Boolean = false)
+data class BrokerStatusResponse(val broker: String, val connected: Boolean, val display_name: String? = null, val real_trading: Boolean = false)
+
 interface ApiInterface {
     @GET("/") suspend fun getRootStatus(): MarketStatus
     @POST("/api/v1/auth/register") suspend fun register(@Body request: RegisterRequest): TokenResponse
     @POST("/api/v1/auth/login") suspend fun login(@Body request: LoginRequest): TokenResponse
     @GET("/api/v1/auth/me") suspend fun me(): UserInfo
     @POST("/api/v1/auth/logout") suspend fun logout(): Map<String, String>
+    @GET("/api/v1/brokers/connections") suspend fun brokerConnections(): BrokerConnectionsResponse
+    @POST("/api/v1/brokers/connect") suspend fun connectBroker(@Body request: BrokerConnectRequest): BrokerConnectResponse
+    @GET("/api/v1/brokers/{broker}/status") suspend fun brokerStatus(@Path("broker") broker: String): BrokerStatusResponse
+    @DELETE("/api/v1/brokers/{broker}") suspend fun disconnectBroker(@Path("broker") broker: String): BrokerStatusResponse
     @POST("/api/v1/execution/paper/entry") suspend fun paperEntry(@Body request: PaperEntryRequest): PaperEntryResponse
     @GET("/api/v1/execution/paper/position") suspend fun paperPosition(): PaperPositionResponse
     @POST("/api/v1/execution/paper/exit") suspend fun paperExit(@Body request: PaperExitRequest): PaperExitResponse
