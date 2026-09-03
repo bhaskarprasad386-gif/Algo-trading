@@ -53,7 +53,7 @@ def test_paper_position_lifecycle():
 
     flat_response = client.get("/api/v1/execution/paper/position", headers=headers)
     assert flat_response.status_code == 200
-    assert flat_response.json() == {"status": "flat", "position": None}
+    assert flat_response.json() == {"status": "flat", "position": None, "mark_to_market": None}
 
 
 def test_paper_exit_without_position_is_flat():
