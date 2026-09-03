@@ -56,6 +56,7 @@ def run_schema_migrations() -> None:
                     symbols_total INTEGER NOT NULL DEFAULT 0,
                     message TEXT,
                     result_json TEXT,
+                    config_json TEXT,
                     created_at DATETIME,
                     updated_at DATETIME
                 )
@@ -63,6 +64,10 @@ def run_schema_migrations() -> None:
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_status ON backtest_jobs (status)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_job_id ON backtest_jobs (job_id)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_symbol ON backtest_jobs (symbol)"))
+        else:
+            job_columns = {column["name"] for column in inspect(connection).get_columns("backtest_jobs")}
+            if "config_json" not in job_columns:
+                connection.execute(text("ALTER TABLE backtest_jobs ADD COLUMN config_json TEXT"))
 
         if "backtest_job_result_chunks" not in account_tables:
             connection.execute(text("""
