@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 from app.core.database import Base, SessionLocal, engine
 from app.models import BacktestJob, BacktestJobResultChunk
 from app.scanner import backtest_jobs
@@ -45,6 +47,21 @@ def test_full_fno_chunk_is_durable_across_sessions_and_idempotent():
         backtest_jobs._persist_full_fno_chunk(job_id, 7, "RELIANCE", {"status": "completed", "net_profit": 999.0})
         db.expire_all(); rows = backtest_jobs.get_result_chunks(db, job_id, after_sequence=6, limit=50)
         assert len(rows) == 1 and rows[0].sequence == 7 and rows[0].symbol == "RELIANCE" and '123.45' in rows[0].result_json and '999.0' not in rows[0].result_json
+    finally:
+        db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete(); db.commit(); db.close()
+
+
+def test_full_fno_result_chunk_rejects_invalid_payload_without_persisting():
+    Base.metadata.create_all(bind=engine); job_id = "test-job-invalid-chunk"; db = SessionLocal()
+    try:
+        db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete(); db.commit()
+        with pytest.raises(ValueError):
+            backtest_jobs._persist_full_fno_chunk(job_id, -1, "RELIANCE", {})
+        with pytest.raises(ValueError):
+            backtest_jobs._persist_full_fno_chunk("", 0, "RELIANCE", {})
+        with pytest.raises(TypeError):
+            backtest_jobs._persist_full_fno_chunk(job_id, 0, "RELIANCE", ["bad"])
+        assert backtest_jobs.result_chunk_count(db, job_id) == 0
     finally:
         db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete(); db.commit(); db.close()
 
