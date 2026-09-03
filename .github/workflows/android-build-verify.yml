@@ -36,6 +36,7 @@ jobs:
           gradle-version: '8.2'
 
       - name: Compile Android debug build
+        # Build against the live Render backend, not the emulator-only 10.0.2.2 host.
         run: gradle assembleDebug --no-daemon -PbackendBaseUrl="$BACKEND_BASE_URL" -PbackendWsUrl="$BACKEND_WS_URL"
 
       - name: Upload debug APK
