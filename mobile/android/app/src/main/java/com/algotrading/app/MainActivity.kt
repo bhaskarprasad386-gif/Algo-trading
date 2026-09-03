@@ -124,6 +124,7 @@ class MainActivity : AppCompatActivity() {
         btnEnableRealTrading.setOnClickListener { confirmEnableRealTrading() }
         btnDisableRealTrading.setOnClickListener { disableRealTrading() }
         btnKillSwitch.setOnClickListener { triggerKillSwitch() }
+        tvScannerResult.setOnClickListener { openScannerDetail(lastExecutableOpportunity) }
     }
 
     override fun onDestroy() {
@@ -268,6 +269,23 @@ class MainActivity : AppCompatActivity() {
         val opportunity = lastExecutableOpportunity
         btnScannerPaperExecute.isEnabled = opportunity != null
         btnScannerPaperExecute.text = opportunity?.let { "PAPER EXECUTE ${it.symbol} • ₹${it.cash_price}" } ?: "PAPER EXECUTE • NO EXECUTABLE OPPORTUNITY"
+    }
+
+    private fun openScannerDetail(opportunity: CashFutureOpportunity?) {
+        opportunity ?: return
+        startActivity(Intent(this, ScannerDetailActivity::class.java).apply {
+            putExtra(ScannerDetailActivity.EXTRA_SYMBOL, opportunity.symbol)
+            putExtra(ScannerDetailActivity.EXTRA_CASH_PRICE, opportunity.cash_price)
+            putExtra(ScannerDetailActivity.EXTRA_FUTURE_PRICE, opportunity.future_price)
+            putExtra(ScannerDetailActivity.EXTRA_GAP, opportunity.gap)
+            putExtra(ScannerDetailActivity.EXTRA_GAP_PCT, opportunity.gap_pct)
+            putExtra(ScannerDetailActivity.EXTRA_GROSS_SPREAD_PROFIT, opportunity.gross_spread_profit)
+            putExtra(ScannerDetailActivity.EXTRA_MARGIN_REQUIRED, opportunity.margin_required)
+            putExtra(ScannerDetailActivity.EXTRA_DEPLOYED_CAPITAL, opportunity.deployed_capital)
+            putExtra(ScannerDetailActivity.EXTRA_NET_PROFIT, opportunity.net_profit)
+            putExtra(ScannerDetailActivity.EXTRA_ROI_PCT, opportunity.roi_pct)
+            putExtra(ScannerDetailActivity.EXTRA_EXECUTABLE, opportunity.executable)
+        })
     }
 
     private fun runCashFutureScanner(): Job = lifecycleScope.launch(Dispatchers.IO) {
