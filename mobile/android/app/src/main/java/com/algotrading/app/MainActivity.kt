@@ -1,6 +1,7 @@
 package com.algotrading.app
 
 import android.app.AlertDialog
+import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -29,6 +30,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvScannerNextRefresh: TextView
     private lateinit var btnRunScanner: Button
     private lateinit var btnScannerPaperExecute: Button
+    private lateinit var btnFullFnoBacktest: Button
     private lateinit var cbScannerAutoRefresh: CheckBox
     private lateinit var etScannerRefreshSeconds: EditText
     private lateinit var btnPaperEntry: Button
@@ -69,6 +71,7 @@ class MainActivity : AppCompatActivity() {
         tvScannerNextRefresh = findViewById(R.id.tvScannerNextRefresh)
         btnRunScanner = findViewById(R.id.btnRunScanner)
         btnScannerPaperExecute = findViewById(R.id.btnScannerPaperExecute)
+        btnFullFnoBacktest = findViewById(R.id.btnFullFnoBacktest)
         cbScannerAutoRefresh = findViewById(R.id.cbScannerAutoRefresh)
         etScannerRefreshSeconds = findViewById(R.id.etScannerRefreshSeconds)
         btnPaperEntry = findViewById(R.id.btnPaperEntry)
@@ -110,6 +113,7 @@ class MainActivity : AppCompatActivity() {
         checkSafetyStatus()
         btnRunScanner.setOnClickListener { runCashFutureScanner() }
         btnScannerPaperExecute.setOnClickListener { paperExecuteScannerOpportunity() }
+        btnFullFnoBacktest.setOnClickListener { startActivity(Intent(this, FullFnoBacktestActivity::class.java)) }
         cbScannerAutoRefresh.setOnCheckedChangeListener { _, _ -> scheduleScannerRefresh() }
         etScannerRefreshSeconds.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) scheduleScannerRefresh() }
         btnPaperEntry.setOnClickListener { paperEntry() }
@@ -285,77 +289,45 @@ class MainActivity : AppCompatActivity() {
                         append("────────────────────\n"); append("${item.symbol}\n"); append("Cash: ₹${item.cash_price}\n"); append("Future: ₹${item.future_price}\n"); append("Gap: ₹${item.gap} (${item.gap_pct}%)\n"); append("Gross Spread: ₹${item.gross_spread_profit}\n"); append("Margin: ₹${item.margin_required}\n"); append("Deployed Capital: ₹${item.deployed_capital}\n"); append("Net Profit: ₹${item.net_profit}\n"); append("ROI: ${item.roi_pct}%\n"); append("Executable: ${if (item.executable) "YES" else "NO"}\n\n")
                     }
                     if (response.errors.isNotEmpty()) { append("ERRORS (${response.errors.size})\n"); response.errors.forEach { error -> append("${error.symbol}: ${error.error}\n") } }
-                    if (executable != null) { append("\nPAPER READY: ${executable.symbol} • ₹${executable.cash_price} • ROI ${executable.roi_pct}%\nPress PAPER EXECUTE to create a paper BUY.") }
                 }
             }
-            withContext(Dispatchers.Main) { lastExecutableOpportunity = executable; lastScannerResult = result; tvScannerResult.text = result; renderScannerPaperState() }
+            withContext(Dispatchers.Main) { lastScannerResult = result; lastExecutableOpportunity = executable; tvScannerResult.text = result; renderScannerPaperState() }
         } catch (error: Exception) {
-            val failedAt = currentTimestamp()
-            withContext(Dispatchers.Main) { lastExecutableOpportunity = null; renderScannerPaperState(); tvScannerResult.text = lastScannerResult?.let { "$it\n\nREFRESH FAILED\nLast Attempt: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}" } ?: "SCAN ERROR\n\nLast Scan: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}" }
+            withContext(Dispatchers.Main) { tvScannerResult.text = "SCAN FAILED\n\n${error.message ?: "API error"}"; lastExecutableOpportunity = null; renderScannerPaperState() }
         } finally {
-            withContext(Dispatchers.Main) { btnRunScanner.isEnabled = true; btnRunScanner.text = "RUN CASH–FUTURE SCAN"; if (cbScannerAutoRefresh.isChecked) tvScannerAutoRefreshStatus.text = "Auto Refresh: ON • READY" else { tvScannerAutoRefreshStatus.text = "Auto Refresh: OFF"; tvScannerNextRefresh.text = "Next Refresh: —" }; scheduleScannerRefresh() }
+            withContext(Dispatchers.Main) { btnRunScanner.isEnabled = true; btnRunScanner.text = "RUN CASH–FUTURE SCAN"; scheduleScannerRefresh() }
         }
     }
 
     private fun paperExecuteScannerOpportunity() {
-        val opportunity = lastExecutableOpportunity ?: run { renderScannerPaperState(); return }
-        val quantity = etQuantity.text.toString().toDoubleOrNull()
-        if (quantity == null || quantity <= 0) { etQuantity.error = "Enter a positive paper quantity"; return }
-        lifecycleScope.launch(Dispatchers.IO) {
-            withContext(Dispatchers.Main) { btnScannerPaperExecute.isEnabled = false; btnScannerPaperExecute.text = "PAPER EXECUTING..."; tvPaperResult.text = "CASH–FUTURE PAPER ENTRY IN PROGRESS...\n\n${opportunity.symbol}\nCash Entry: ₹${opportunity.cash_price}\nFuture: ₹${opportunity.future_price}\nQuantity: $quantity" }
-            try {
-                val request = ScannerPaperEntryRequest(
-                    symbol = opportunity.symbol,
-                    cash_price = opportunity.cash_price,
-                    quantity = quantity,
-                    future_price = opportunity.future_price,
-                    gap = opportunity.gap,
-                    net_profit = opportunity.net_profit,
-                    executable = opportunity.executable
-                )
-                val response = ApiService.retrofitService.paperEntryFromScanner(request)
-                val completedAt = currentTimestamp()
-                withContext(Dispatchers.Main) {
-                    tvPaperResult.text = "CASH–FUTURE PAPER ENTRY SUCCESS\n\nCompleted: $completedAt\nSource: ${response.source}\nSymbol: ${opportunity.symbol}\nCash Entry: ₹${response.scanner_entry_price}\nFuture: ₹${opportunity.future_price}\nGap: ₹${opportunity.gap}\nScanner Net Profit: ₹${opportunity.net_profit}\nQuantity: ${response.order.quantity}\nOrder: ${response.order.id}\nStatus: ${response.order.status}\nVirtual Balance: ₹${response.virtual_balance}\nRealized P&L: ₹${response.realized_pnl}"
-                    lastExecutableOpportunity = null
-                    renderScannerPaperState()
-                }
-                paperPosition()
-            } catch (error: Exception) {
-                val failedAt = currentTimestamp()
-                withContext(Dispatchers.Main) { tvPaperResult.text = "CASH–FUTURE PAPER ENTRY FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}"; renderScannerPaperState() }
-            }
-        }
+        val opportunity = lastExecutableOpportunity ?: return
+        etEntryPrice.setText(opportunity.cash_price.toString())
+        etQuantity.setText("1")
+        tvPaperResult.text = "Selected ${opportunity.symbol} • Paper entry price loaded"
+        paperEntry()
     }
 
-    private fun setPaperBusy(busy: Boolean, message: String? = null) { btnPaperEntry.isEnabled = !busy; btnPaperPosition.isEnabled = !busy; btnPaperExit.isEnabled = !busy; if (message != null) tvPaperResult.text = message }
-
-    private fun paperEntry() {
-        val price = etEntryPrice.text.toString().toDoubleOrNull(); val quantity = etQuantity.text.toString().toDoubleOrNull()
-        if (price == null || price <= 0) { etEntryPrice.error = "Enter a positive entry price"; return }
-        if (quantity == null || quantity <= 0) { etQuantity.error = "Enter a positive quantity"; return }
-        lifecycleScope.launch(Dispatchers.IO) {
-            withContext(Dispatchers.Main) { setPaperBusy(true, "PAPER ENTRY IN PROGRESS...") }
-            try { val response = ApiService.retrofitService.paperEntry(PaperEntryRequest(price, quantity)); val completedAt = currentTimestamp(); withContext(Dispatchers.Main) { tvPaperResult.text = "ENTRY SUCCESS\n\nPAPER POSITION ACTIVE\nCompleted: $completedAt\n\nEntry: ₹${response.entry_price}\nStop Loss: ₹${response.stop_loss}\nTarget: ₹${response.target}\nQuantity: ${response.position.quantity}" } }
-            catch (error: Exception) { val failedAt = currentTimestamp(); withContext(Dispatchers.Main) { tvPaperResult.text = "ENTRY FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}" } }
-            finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
-        }
+    private fun paperEntry() = lifecycleScope.launch(Dispatchers.IO) {
+        try {
+            val price = etEntryPrice.text.toString().toDoubleOrNull() ?: 0.0
+            val quantity = etQuantity.text.toString().toDoubleOrNull() ?: 0.0
+            val response = ApiService.retrofitService.paperEntry(PaperEntryRequest(price, quantity))
+            withContext(Dispatchers.Main) { tvPaperResult.text = "Entry: ${response.status} • ₹${response.entry_price} × ${response.quantity}"; paperPosition() }
+        } catch (error: Exception) { withContext(Dispatchers.Main) { tvPaperResult.text = "Entry failed • ${error.message ?: "API error"}" } }
     }
 
     private fun paperPosition() = lifecycleScope.launch(Dispatchers.IO) {
-        withContext(Dispatchers.Main) { setPaperBusy(true, "CHECKING PAPER POSITION...") }
-        try { val response = ApiService.retrofitService.paperPosition(); val completedAt = currentTimestamp(); withContext(Dispatchers.Main) { val position = response.position; tvPaperResult.text = if (position == null) "POSITION CHECK SUCCESS\n\nPAPER POSITION: FLAT\n\nChecked: $completedAt" else "POSITION CHECK SUCCESS\n\nPAPER POSITION ACTIVE\nChecked: $completedAt\n\nEntry: ₹${position.entry_price}\nStop Loss: ₹${position.stop_loss}\nTarget: ₹${position.target}\nQuantity: ${position.quantity}" } }
-        catch (error: Exception) { val failedAt = currentTimestamp(); withContext(Dispatchers.Main) { tvPaperResult.text = "POSITION CHECK FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}" } }
-        finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
+        try {
+            val response = ApiService.retrofitService.paperPosition()
+            withContext(Dispatchers.Main) { findViewById<TextView>(R.id.tvPaperPosition).text = if (response.active) "${response.symbol}\nEntry: ₹${response.entry_price}\nQuantity: ${response.quantity}" else "No active paper position"; findViewById<TextView>(R.id.tvPaperOrders).text = "Orders: ${response.orders.size}" }
+        } catch (error: Exception) { withContext(Dispatchers.Main) { tvPaperResult.text = "Position failed • ${error.message ?: "API error"}" } }
     }
 
-    private fun paperExit() {
-        val price = etExitPrice.text.toString().toDoubleOrNull(); if (price == null || price <= 0) { etExitPrice.error = "Enter a positive exit price"; return }
-        lifecycleScope.launch(Dispatchers.IO) {
-            withContext(Dispatchers.Main) { setPaperBusy(true, "PAPER EXIT IN PROGRESS...") }
-            try { val response = ApiService.retrofitService.paperExit(PaperExitRequest(price)); val completedAt = currentTimestamp(); withContext(Dispatchers.Main) { tvPaperResult.text = if (response.status == "closed") "EXIT SUCCESS\n\nPAPER POSITION CLOSED\nCompleted: $completedAt\n\nEntry: ₹${response.entry_price}\nExit: ₹${response.exit_price}\nQuantity: ${response.quantity}\nP&L: ₹${response.pnl}" else "EXIT SUCCESS\n\nPAPER POSITION: FLAT\nCompleted: $completedAt" } }
-            catch (error: Exception) { val failedAt = currentTimestamp(); withContext(Dispatchers.Main) { tvPaperResult.text = "EXIT FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}" } }
-            finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
-        }
+    private fun paperExit() = lifecycleScope.launch(Dispatchers.IO) {
+        try {
+            val price = etExitPrice.text.toString().toDoubleOrNull() ?: 0.0
+            val response = ApiService.retrofitService.paperExit(PaperExitRequest(price))
+            withContext(Dispatchers.Main) { tvPaperResult.text = "Exit: ${response.status} • Net P&L ₹${response.net_profit}"; paperPosition() }
+        } catch (error: Exception) { withContext(Dispatchers.Main) { tvPaperResult.text = "Exit failed • ${error.message ?: "API error"}" } }
     }
 }
