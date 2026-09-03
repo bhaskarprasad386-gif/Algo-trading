@@ -99,21 +99,28 @@ def _run_job(job_id: str, symbol: str, contract_month: str, days: int,
              funding_cost_per_trade: float, max_holding_days: int) -> None:
     db = SessionLocal()
     try:
+        if _is_cancelled(job_id):
+            return
         _update(db, job_id, status="running", progress_pct=1.0, message="Loading validated history")
         end = datetime.utcnow()
         start = end - timedelta(days=days)
         points = read_history(db, symbol, contract_month, start, end)
+        if _is_cancelled(job_id):
+            return
         _update(db, job_id, progress_pct=20.0, message=f"Loaded {len(points)} historical observations")
         if not points:
-            _update(db, job_id, status="failed", progress_pct=100.0, message="No historical observations found")
+            if not _is_cancelled(job_id):
+                _update(db, job_id, status="failed", progress_pct=100.0, message="No historical observations found")
             return
         result = run_backtest(points, BacktestConfig(min_entry_gap=min_entry_gap, exit_gap=exit_gap,
-                            charges_per_trade=charges_per_trade, funding_cost_per_trade=funding_cost_per_trade,
+                            charges_per_trade=charges_per_trade, funding_cost_per_trade=funding_cost_cost_per_trade if False else funding_cost_per_trade,
                             max_holding_days=max_holding_days, contract_month=contract_month))
-        _update(db, job_id, status="completed", progress_pct=100.0, symbols_processed=1,
-                message="Backtest completed", result_json=str(result))
+        if not _is_cancelled(job_id):
+            _update(db, job_id, status="completed", progress_pct=100.0, symbols_processed=1,
+                    message="Backtest completed", result_json=str(result))
     except Exception as exc:
-        _update(db, job_id, status="failed", progress_pct=100.0, message=str(exc))
+        if not _is_cancelled(job_id):
+            _update(db, job_id, status="failed", progress_pct=100.0, message=str(exc))
     finally:
         db.close()
         with _LOCK:
@@ -125,10 +132,14 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
                       max_holding_days: int) -> None:
     db = SessionLocal()
     try:
+        if _is_cancelled(job_id):
+            return
         _update(db, job_id, status="running", progress_pct=1.0,
                 message="Discovering persisted full F&O coverage")
 
         def progress(processed: int, total: int, message: str) -> None:
+            if _is_cancelled(job_id):
+                return
             _update(db, job_id, progress_pct=100.0 if total == 0 else processed / total * 100.0,
                     symbols_processed=processed, symbols_total=total, message=message)
 
@@ -138,6 +149,8 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
             max_holding_days=max_holding_days, progress=progress,
             cancelled=lambda: _is_cancelled(job_id),
         )
+        if _is_cancelled(job_id) and result.get("status") != "cancelled":
+            return
         status = "cancelled" if result.get("status") == "cancelled" else "completed"
         total = max(result.get("symbols_total", 0), 1)
         _update(db, job_id, status=status,
@@ -147,7 +160,8 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
                 message="Full F&O backtest completed" if status == "completed" else "Cancelled",
                 result_json=str(result))
     except Exception as exc:
-        _update(db, job_id, status="failed", progress_pct=100.0, message=str(exc))
+        if not _is_cancelled(job_id):
+            _update(db, job_id, status="failed", progress_pct=100.0, message=str(exc))
     finally:
         db.close()
         with _LOCK:
