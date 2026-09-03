@@ -127,7 +127,8 @@ def cash_future_backtest(symbol: str, contract_month: str = Query(...), days: in
     min_entry_gap: float = Query(0.0), exit_gap: float = Query(0.0), charges_per_trade: float = Query(0.0, ge=0),
     funding_cost_per_trade: float = Query(0.0, ge=0), max_holding_days: int = Query(30, ge=1, le=3650), db: Session = Depends(get_db)):
     end = datetime.utcnow()
-    points = read_history(db, symbol, contract_month, end - timedelta(days=days), end)
+    start = end - timedelta(days=days)
+    points = read_history(db, symbol, contract_month, start, end)
     if not points:
         raise HTTPException(status_code=404, detail="no historical Cash-Future observations found for this contract")
     result = run_backtest(points, BacktestConfig(min_entry_gap=min_entry_gap, exit_gap=exit_gap,
@@ -175,12 +176,15 @@ def cash_future_backtest_job_status(job_id: str, db: Session = Depends(get_db)):
 
 @router.get("/cash-future/backtest/jobs/{job_id}/results")
 def cash_future_backtest_job_results(job_id: str, offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200),
+                                     after_sequence: int | None = Query(None, ge=-1),
                                      db: Session = Depends(get_db)):
     job = get_job(db, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="backtest job not found")
-    chunks = get_result_chunks(db, job_id, offset=offset, limit=limit)
+    chunks = get_result_chunks(db, job_id, offset=offset, limit=limit, after_sequence=after_sequence)
+    next_after_sequence = chunks[-1].sequence if chunks else None
     return {"status": "success", "job_id": job_id, "offset": offset, "limit": limit,
+            "after_sequence": after_sequence, "next_after_sequence": next_after_sequence,
             "total": result_chunk_count(db, job_id),
             "data": [{"sequence": c.sequence, "symbol": c.symbol, "result": json.loads(c.result_json),
                       "created_at": c.created_at.isoformat() if c.created_at else None} for c in chunks]}
