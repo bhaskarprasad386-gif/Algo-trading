@@ -128,3 +128,31 @@ def test_full_fno_completed_job_keeps_only_compact_summary_and_reopens_chunks(mo
         db.query(BacktestJob).filter(BacktestJob.job_id == job.job_id).delete()
         db.commit()
         db.close()
+
+
+def test_full_fno_cancellation_stops_result_sinking(monkeypatch):
+    """Cancellation during a symbol replay must not sink that symbol or continue."""
+    from app.scanner import full_fno_backtest
+
+    monkeypatch.setattr(full_fno_backtest, "persisted_stock_symbols", lambda db: ["RELIANCE", "TCS", "INFY"])
+    monkeypatch.setattr(full_fno_backtest, "iter_persisted_symbol_replay", lambda db, symbol, start, end: iter([symbol]))
+
+    sink_calls = []
+    cancel_checks = {"count": 0}
+
+    def cancelled():
+        cancel_checks["count"] += 1
+        return cancel_checks["count"] >= 3
+
+    def fake_engine(bars, config, cancelled=None):
+        symbol = next(iter(bars))
+        return {"status": "cancelled", "net_profit": 0.0, "max_drawdown": 0.0, "symbol": symbol}
+
+    monkeypatch.setattr(full_fno_backtest, "run_cash_future_paper_backtest", fake_engine)
+    result = full_fno_backtest.run_full_fno_backtest(object(), days=365, min_entry_gap=5.0, exit_gap=1.0, charges_per_trade=0.0, funding_cost_per_trade=0.0, max_holding_days=30, future_selection="BOTH", cancelled=cancelled, result_sink=lambda sequence, symbol, item: sink_calls.append((sequence, symbol)), collect_results=False)
+
+    assert result["status"] == "cancelled"
+    assert result["symbols_total"] == 3
+    assert result["symbols_processed"] == 0
+    assert result["chunks_written"] == 0
+    assert sink_calls == []
