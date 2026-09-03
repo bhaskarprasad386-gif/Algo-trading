@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Algo Trading — Login</title>
+<style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#07111f;color:#eef5ff;font-family:Inter,system-ui,-apple-system,Segoe UI,Arial,sans-serif}.card{width:min(430px,calc(100% - 28px));padding:24px;background:#0d1b2e;border:1px solid #1d3552;border-radius:18px;box-shadow:0 20px 60px #0006}.brand{font-size:24px;font-weight:900}.muted{color:#8295ae;font-size:12px}.tabs{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:20px 0 14px}.tabs button,button,input{width:100%;padding:11px;border-radius:9px;border:1px solid #29435f;background:#071625;color:#fff}.tabs button{font-weight:800;cursor:pointer}.tabs .active,button.primary{background:#3b82f6;border-color:#3b82f6}.field{margin:10px 0}.field label{display:block;font-size:11px;color:#8295ae;margin-bottom:6px}.hidden{display:none}.msg{min-height:18px;margin-top:10px;font-size:12px}.success{color:#4ade80}.error{color:#f87171}.safe{margin-top:18px;padding:10px;border:1px solid #29435f;border-radius:9px;color:#8295ae;font-size:11px}
+</style>
+</head>
+<body><main class="card">
+<div class="brand">ALGO TRADING</div><div class="muted">Secure web access • Paper Trading by default</div>
+<div class="tabs"><button id="loginTab" class="active" onclick="setMode('login')">LOGIN</button><button id="signupTab" onclick="setMode('signup')">SIGN UP</button></div>
+<div id="nameField" class="field hidden"><label>FULL NAME</label><input id="fullName" autocomplete="name"></div>
+<div class="field"><label>EMAIL OR MOBILE</label><input id="identifier" autocomplete="username" placeholder="Email or +91 mobile"></div>
+<div class="field"><label>PASSWORD</label><input id="password" type="password" autocomplete="current-password" minlength="8"></div>
+<button class="primary" id="submit" onclick="submitAuth()">LOGIN</button>
+<div id="msg" class="msg"></div>
+<div class="safe">Paper Trading is the default account mode. Broker connection is separate. Real Trading remains OFF until explicitly enabled.</div>
+</main>
+<script>
+let mode='login';
+function setMode(value){mode=value;loginTab.classList.toggle('active',mode==='login');signupTab.classList.toggle('active',mode==='signup');nameField.classList.toggle('hidden',mode!=='signup');submit.textContent=mode==='login'?'LOGIN':'CREATE ACCOUNT';msg.textContent=''}
+function base(){return localStorage.getItem('algoApiBase')||window.location.origin}
+async function submitAuth(){const id=identifier.value.trim(),pw=password.value,name=fullName.value.trim();if(!id||!pw){msg.textContent='Email/mobile and password are required.';msg.className='msg error';return}if(mode==='signup'&&pw.length<8){msg.textContent='Password must be at least 8 characters.';msg.className='msg error';return}const email=id.includes('@')?id:null;const mobile=id.includes('@')?null:id;const body=mode==='login'?{identifier:id,password:pw}:{email,mobile_number:mobile,password:pw,full_name:name||null};submit.disabled=true;msg.textContent='Please wait…';msg.className='msg';try{const r=await fetch(base()+'/api/v1/auth/'+(mode==='login'?'login':'register'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const p=await r.json();if(!r.ok)throw new Error(p.detail||'Authentication failed');localStorage.setItem('authToken',p.access_token);location.href='/dashboard'}catch(e){msg.textContent=e.message;msg.className='msg error'}finally{submit.disabled=false}}
+</script></body></html>
