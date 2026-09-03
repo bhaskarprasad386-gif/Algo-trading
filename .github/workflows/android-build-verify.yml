@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+env:
+  BACKEND_BASE_URL: https://algo-trading-backend-2.onrender.com/
+  BACKEND_WS_URL: wss://algo-trading-backend-2.onrender.com
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -32,7 +36,7 @@ jobs:
           gradle-version: '8.2'
 
       - name: Compile Android debug build
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon -PbackendBaseUrl="$BACKEND_BASE_URL" -PbackendWsUrl="$BACKEND_WS_URL"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
