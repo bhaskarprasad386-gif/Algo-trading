@@ -7,6 +7,7 @@
         <EditText android:id="@+id/etAuthPassword" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Password" android:inputType="textPassword" android:layout_marginBottom="12dp" />
         <EditText android:id="@+id/etAuthName" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Full name (Sign Up only)" android:inputType="textCapWords" android:visibility="gone" android:layout_marginBottom="12dp" />
         <Button android:id="@+id/btnAuthSubmit" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="LOGIN" android:layout_marginBottom="12dp" />
+        <Button android:id="@+id/btnAuthForgot" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="FORGOT PASSWORD" android:layout_marginBottom="12dp" />
         <Button android:id="@+id/btnAuthToggle" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="CREATE ACCOUNT" />
         <TextView android:id="@+id/tvAuthResult" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="" android:textSize="14sp" android:paddingTop="16dp" android:textIsSelectable="true" />
     </LinearLayout>
