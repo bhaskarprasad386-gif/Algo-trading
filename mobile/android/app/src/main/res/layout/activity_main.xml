@@ -11,71 +11,21 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:paddingBottom="16dp">
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical">
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="ALGO TRADING"
-                    android:textColor="#FFFFFF"
-                    android:textSize="22sp"
-                    android:textStyle="bold" />
-                <TextView
-                    android:id="@+id/tvStatus"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
-                    android:text="Checking Server Status..."
-                    android:textColor="#9FB0C7"
-                    android:textSize="12sp" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:paddingBottom="16dp">
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="ALGO TRADING" android:textColor="#FFFFFF" android:textSize="22sp" android:textStyle="bold" />
+                <TextView android:id="@+id/tvStatus" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:text="Checking Server Status..." android:textColor="#9FB0C7" android:textSize="12sp" />
             </LinearLayout>
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="#163B32"
-                android:paddingLeft="12dp"
-                android:paddingTop="7dp"
-                android:paddingRight="12dp"
-                android:paddingBottom="7dp"
-                android:text="PAPER MODE"
-                android:textColor="#4ADE80"
-                android:textSize="11sp"
-                android:textStyle="bold" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="#163B32" android:paddingLeft="12dp" android:paddingTop="7dp" android:paddingRight="12dp" android:paddingBottom="7dp" android:text="PAPER MODE" android:textColor="#4ADE80" android:textSize="11sp" android:textStyle="bold" />
         </LinearLayout>
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginBottom="12dp">
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="92dp"
-                android:layout_weight="1"
-                android:layout_marginEnd="6dp"
-                android:background="#101D31"
-                android:orientation="vertical"
-                android:padding="14dp">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginBottom="12dp">
+            <LinearLayout android:layout_width="0dp" android:layout_height="92dp" android:layout_weight="1" android:layout_marginEnd="6dp" android:background="#101D31" android:orientation="vertical" android:padding="14dp">
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="PAPER BALANCE" android:textColor="#8295AE" android:textSize="10sp" android:textStyle="bold" />
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="₹10,00,000" android:textColor="#FFFFFF" android:textSize="19sp" android:textStyle="bold" />
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Virtual funds" android:textColor="#4ADE80" android:textSize="10sp" />
             </LinearLayout>
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="92dp"
-                android:layout_weight="1"
-                android:layout_marginStart="6dp"
-                android:background="#101D31"
-                android:orientation="vertical"
-                android:padding="14dp">
+            <LinearLayout android:layout_width="0dp" android:layout_height="92dp" android:layout_weight="1" android:layout_marginStart="6dp" android:background="#101D31" android:orientation="vertical" android:padding="14dp">
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="TODAY P&amp;L" android:textColor="#8295AE" android:textSize="10sp" android:textStyle="bold" />
                 <TextView android:id="@+id/tvPaperResult" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="₹0.00" android:textColor="#4ADE80" android:textSize="19sp" android:textStyle="bold" />
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Paper trading" android:textColor="#8295AE" android:textSize="10sp" />
@@ -102,6 +52,18 @@
             <TextView android:id="@+id/tvScannerNextRefresh" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Next Refresh: —" android:textColor="#8295AE" android:textSize="11sp" android:layout_marginBottom="8dp" />
             <Button android:id="@+id/btnRunScanner" android:layout_width="match_parent" android:layout_height="48dp" android:text="RUN CASH–FUTURE SCAN" android:textStyle="bold" />
             <TextView android:id="@+id/tvScannerResult" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Scanner results will appear here." android:textSize="12sp" android:textColor="#DCE6F5" android:fontFamily="monospace" android:textIsSelectable="true" android:background="#08111F" android:padding="12dp" android:layout_marginTop="10dp" />
+        </LinearLayout>
+
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:background="#171F2F" android:orientation="vertical" android:padding="16dp" android:layout_marginBottom="16dp">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="BROKER CONNECTIVITY" android:textColor="#FFFFFF" android:textSize="16sp" android:textStyle="bold" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:text="Angel One • authentication only • Real Trading remains OFF" android:textColor="#9FB0C7" android:textSize="11sp" />
+            <EditText android:id="@+id/etBrokerApiKey" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:hint="Angel One API Key" android:inputType="textPassword" android:textColor="#FFFFFF" android:textColorHint="#8295AE" />
+            <EditText android:id="@+id/etBrokerClientCode" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Client Code" android:inputType="text" android:textColor="#FFFFFF" android:textColorHint="#8295AE" />
+            <EditText android:id="@+id/etBrokerPassword" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Angel One Password" android:inputType="textPassword" android:textColor="#FFFFFF" android:textColorHint="#8295AE" />
+            <EditText android:id="@+id/etBrokerTotpSecret" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="TOTP Secret" android:inputType="textPassword" android:textColor="#FFFFFF" android:textColorHint="#8295AE" />
+            <Button android:id="@+id/btnConnectBroker" android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="6dp" android:text="CONNECT ANGEL ONE" android:textStyle="bold" />
+            <Button android:id="@+id/btnDisconnectBroker" android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="6dp" android:text="DISCONNECT ANGEL ONE" />
+            <TextView android:id="@+id/tvBrokerStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Broker Status: Not connected" android:textColor="#DCE6F5" android:textSize="12sp" />
         </LinearLayout>
 
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="PAPER TRADE" android:textColor="#FFFFFF" android:textSize="14sp" android:textStyle="bold" android:layout_marginBottom="8dp" />
