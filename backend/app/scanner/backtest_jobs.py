@@ -49,15 +49,42 @@ def _is_cancelled(job_id: str) -> bool:
         db.close()
 
 
+def _full_fno_config(*, days: int, min_entry_gap: float, exit_gap: float,
+                     charges_per_trade: float, funding_cost_per_trade: float,
+                     max_holding_days: int, future_selection: str) -> dict:
+    return {
+        "kind": "full_fno",
+        "days": days,
+        "min_entry_gap": min_entry_gap,
+        "exit_gap": exit_gap,
+        "charges_per_trade": charges_per_trade,
+        "funding_cost_per_trade": funding_cost_per_trade,
+        "max_holding_days": max_holding_days,
+        "future_selection": future_selection,
+    }
+
+
 def create_job(*, symbol: str, contract_month: str, days: int, min_entry_gap: float,
                exit_gap: float, charges_per_trade: float, funding_cost_per_trade: float,
                max_holding_days: int) -> BacktestJob:
+    config = {
+        "kind": "single",
+        "symbol": symbol.upper(),
+        "contract_month": contract_month.upper(),
+        "days": days,
+        "min_entry_gap": min_entry_gap,
+        "exit_gap": exit_gap,
+        "charges_per_trade": charges_per_trade,
+        "funding_cost_per_trade": funding_cost_per_trade,
+        "max_holding_days": max_holding_days,
+    }
     db = SessionLocal()
     try:
         job = BacktestJob(job_id=_new_job_id(), status="queued", symbol=symbol.upper(),
                           contract_month=contract_month.upper(), requested_days=days,
                           progress_pct=0.0, symbols_processed=0, symbols_total=1,
-                          message="Queued", created_at=_utcnow(), updated_at=_utcnow())
+                          message="Queued", config_json=json.dumps(config),
+                          created_at=_utcnow(), updated_at=_utcnow())
         db.add(job)
         db.commit()
         db.refresh(job)
@@ -80,13 +107,19 @@ def create_full_fno_job(*, days: int, min_entry_gap: float, exit_gap: float,
     selection = future_selection.upper()
     if selection not in {"CURRENT", "NEAR", "BOTH"}:
         raise ValueError("future_selection must be CURRENT, NEAR or BOTH")
+    config = _full_fno_config(
+        days=days, min_entry_gap=min_entry_gap, exit_gap=exit_gap,
+        charges_per_trade=charges_per_trade, funding_cost_per_trade=funding_cost_per_trade,
+        max_holding_days=max_holding_days, future_selection=selection,
+    )
 
     db = SessionLocal()
     try:
         job = BacktestJob(job_id=_new_job_id(), status="queued", symbol="__FULL_FNO__",
                           contract_month=selection, requested_days=days, progress_pct=0.0,
                           symbols_processed=0, symbols_total=0,
-                          message="Queued full F&O backtest", created_at=_utcnow(), updated_at=_utcnow())
+                          message="Queued full F&O backtest", config_json=json.dumps(config),
+                          created_at=_utcnow(), updated_at=_utcnow())
         db.add(job)
         db.commit()
         db.refresh(job)
@@ -189,8 +222,6 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
     try:
         if _is_cancelled(job_id):
             return
-        # Already committed chunks are intentionally retained so a future recovery/retry
-        # path cannot erase durable progress before it has resumed from the persisted ledger.
         _update(db, job_id, status="running", progress_pct=1.0,
                 message=f"Discovering persisted full F&O coverage ({future_selection})")
 
@@ -226,6 +257,57 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
         db.close()
         with _LOCK:
             _FUTURES.pop(job_id, None)
+
+
+def recover_interrupted_jobs() -> int:
+    """Resume durable queued/running jobs after a process restart.
+
+    Only jobs created with persisted configuration are resumable. Older jobs without
+    configuration are marked failed rather than guessed/replayed with unsafe defaults.
+    Durable result chunks are never deleted during recovery.
+    """
+    db = SessionLocal()
+    recovered = 0
+    try:
+        jobs = db.query(BacktestJob).filter(BacktestJob.status.in_(["queued", "running"])).all()
+        for job in jobs:
+            if not job.config_json:
+                job.status = "failed"
+                job.progress_pct = min(job.progress_pct, 99.0)
+                job.message = "Worker interrupted; durable chunks preserved; job configuration unavailable for safe recovery"
+                job.updated_at = _utcnow()
+                continue
+            try:
+                config = json.loads(job.config_json)
+                if config.get("kind") != "full_fno":
+                    job.status = "failed"
+                    job.progress_pct = min(job.progress_pct, 99.0)
+                    job.message = "Worker interrupted; unsupported recovery job configuration"
+                    job.updated_at = _utcnow()
+                    continue
+                selection = str(config["future_selection"]).upper()
+                if selection not in {"CURRENT", "NEAR", "BOTH"}:
+                    raise ValueError("invalid persisted future selection")
+                future = _EXECUTOR.submit(
+                    _run_full_fno_job, job.job_id, int(config["days"]),
+                    float(config["min_entry_gap"]), float(config["exit_gap"]),
+                    float(config["charges_per_trade"]), float(config["funding_cost_per_trade"]),
+                    int(config["max_holding_days"]), selection,
+                )
+                with _LOCK:
+                    _FUTURES[job.job_id] = future
+                job.message = "Recovery queued from durable configuration"
+                job.updated_at = _utcnow()
+                recovered += 1
+            except Exception as exc:
+                job.status = "failed"
+                job.progress_pct = min(job.progress_pct, 99.0)
+                job.message = f"Worker interrupted; safe recovery failed: {exc}"
+                job.updated_at = _utcnow()
+        db.commit()
+        return recovered
+    finally:
+        db.close()
 
 
 def get_job(db: Session, job_id: str) -> BacktestJob | None:
