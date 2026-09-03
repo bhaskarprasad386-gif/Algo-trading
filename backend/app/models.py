@@ -82,21 +82,9 @@ class Candle(Base):
 
 
 class HistoricalMarketBar(Base):
-    """Canonical persisted 1-minute historical market data for backtesting.
-
-    The identity includes the instrument/contract and minute timestamp so imports
-    can be safely repeated without creating duplicate bars. Contract metadata is
-    stored point-in-time to avoid selecting today's contract metadata for history.
-    """
-
     __tablename__ = "historical_market_bars"
     __table_args__ = (
-        Index(
-            "uq_historical_bar_identity",
-            "instrument_key",
-            "timestamp",
-            unique=True,
-        ),
+        Index("uq_historical_bar_identity", "instrument_key", "timestamp", unique=True),
         Index("ix_historical_bar_symbol_timestamp", "symbol", "timestamp"),
         Index("ix_historical_bar_contract_timestamp", "contract_month", "timestamp"),
     )
@@ -125,18 +113,9 @@ class HistoricalMarketBar(Base):
 
 
 class BacktestDataCoverage(Base):
-    """Coverage catalog used to make historical downloads incremental."""
-
     __tablename__ = "backtest_data_coverage"
     __table_args__ = (
-        Index(
-            "uq_backtest_coverage_identity",
-            "instrument_key",
-            "timeframe",
-            "start_date",
-            "end_date",
-            unique=True,
-        ),
+        Index("uq_backtest_coverage_identity", "instrument_key", "timeframe", "start_date", "end_date", unique=True),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -197,6 +176,27 @@ class BacktestJob(Base):
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class BacktestJobResultChunk(Base):
+    """Durable per-symbol result chunks for large background backtests.
+
+    A chunk is committed as soon as one symbol finishes, so a full-year/full-F&O
+    run never needs to retain every symbol result in one in-memory JSON object.
+    """
+
+    __tablename__ = "backtest_job_result_chunks"
+    __table_args__ = (
+        Index("uq_backtest_job_result_chunk", "job_id", "sequence", unique=True),
+        Index("ix_backtest_job_result_chunks_job", "job_id", "sequence"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    job_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    symbol: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    result_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
 class SystemLog(Base):
