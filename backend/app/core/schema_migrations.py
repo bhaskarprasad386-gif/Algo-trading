@@ -26,36 +26,22 @@ def run_schema_migrations() -> None:
 
         account_tables = set(inspect(connection).get_table_names())
         if "trading_accounts" in account_tables:
-            account_columns = {
-                column["name"] for column in inspect(connection).get_columns("trading_accounts")
-            }
+            account_columns = {column["name"] for column in inspect(connection).get_columns("trading_accounts")}
             if "realized_pnl" not in account_columns:
-                connection.execute(
-                    text("ALTER TABLE trading_accounts ADD COLUMN realized_pnl FLOAT DEFAULT 0.0")
-                )
+                connection.execute(text("ALTER TABLE trading_accounts ADD COLUMN realized_pnl FLOAT DEFAULT 0.0"))
 
-        # Paper execution persistence for existing databases.
         if "orders" in account_tables:
             order_columns = {column["name"] for column in inspect(connection).get_columns("orders")}
-            for name, definition in {
-                "user_id": "INTEGER",
-                "price": "FLOAT",
-                "pnl": "FLOAT",
-            }.items():
+            for name, definition in {"user_id": "INTEGER", "price": "FLOAT", "pnl": "FLOAT"}.items():
                 if name not in order_columns:
                     connection.execute(text(f"ALTER TABLE orders ADD COLUMN {name} {definition}"))
 
         if "positions" in account_tables:
             position_columns = {column["name"] for column in inspect(connection).get_columns("positions")}
-            for name, definition in {
-                "user_id": "INTEGER",
-                "stop_loss": "FLOAT",
-                "target": "FLOAT",
-            }.items():
+            for name, definition in {"user_id": "INTEGER", "stop_loss": "FLOAT", "target": "FLOAT"}.items():
                 if name not in position_columns:
                     connection.execute(text(f"ALTER TABLE positions ADD COLUMN {name} {definition}"))
 
-        # Durable state for non-blocking backtest jobs on existing databases.
         if "backtest_jobs" not in account_tables:
             connection.execute(text("""
                 CREATE TABLE backtest_jobs (
@@ -77,6 +63,21 @@ def run_schema_migrations() -> None:
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_status ON backtest_jobs (status)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_job_id ON backtest_jobs (job_id)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_symbol ON backtest_jobs (symbol)"))
+
+        # Incremental durable result storage for large full-F&O jobs.
+        if "backtest_job_result_chunks" not in account_tables:
+            connection.execute(text("""
+                CREATE TABLE backtest_job_result_chunks (
+                    id INTEGER PRIMARY KEY,
+                    job_id VARCHAR(64) NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    symbol VARCHAR(128) NOT NULL,
+                    result_json TEXT NOT NULL,
+                    created_at DATETIME
+                )
+            """))
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_backtest_job_result_chunk ON backtest_job_result_chunks (job_id, sequence)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_job_result_chunks_job ON backtest_job_result_chunks (job_id, sequence)"))
 
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_mobile_number ON users (mobile_number)"))
