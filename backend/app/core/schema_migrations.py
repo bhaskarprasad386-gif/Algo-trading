@@ -24,6 +24,17 @@ def run_schema_migrations() -> None:
             if name not in columns:
                 connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
 
+        # Add persistent paper P&L to existing trading accounts.
+        account_tables = set(inspector.get_table_names(connection=connection))
+        if "trading_accounts" in account_tables:
+            account_columns = {
+                column["name"] for column in inspect(connection).get_columns("trading_accounts")
+            }
+            if "realized_pnl" not in account_columns:
+                connection.execute(
+                    text("ALTER TABLE trading_accounts ADD COLUMN realized_pnl FLOAT DEFAULT 0.0")
+                )
+
         # These indexes are safe on SQLite/PostgreSQL and preserve the
         # one-account-per-email/mobile invariant for newly created users.
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
