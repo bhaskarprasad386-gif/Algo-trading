@@ -42,7 +42,7 @@ class FullFnoBacktestActivity : AppCompatActivity() {
             tvStatus.text = "Starting Full-F&O backtest…"
         }
         try {
-            val accepted = ApiService.retrofitService.startFullFnoBacktest()
+            val accepted = ApiService.retrofitService.startFullFnoJob()
             jobId = accepted.job
             pollJob(accepted.job)
         } catch (e: Exception) {
@@ -54,11 +54,11 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         while (true) {
             val job = ApiService.retrofitService.fullFnoJob(id)
             withContext(Dispatchers.Main) {
-                tvStatus.text = "Full-F&O: ${job.status.uppercase()} • ${job.symbols_processed}/${job.symbols_total} • ${job.progress_pct}%"
+                tvStatus.text = "Full-F&O: ${job.job.status.uppercase()} • ${job.job.symbols_processed}/${job.job.symbols_total} • ${job.job.progress_pct}%"
             }
-            if (job.status == "completed" || job.status == "failed" || job.status == "cancelled") {
-                withContext(Dispatchers.Main) { btnLoadMore.isEnabled = job.status != "failed" }
-                if (job.status == "completed") loadNextPageInternal(id)
+            if (job.job.status == "completed" || job.job.status == "failed" || job.job.status == "cancelled") {
+                withContext(Dispatchers.Main) { btnLoadMore.isEnabled = job.job.status != "failed" }
+                if (job.job.status == "completed") loadNextPageInternal(id)
                 return
             }
             delay(1500)
