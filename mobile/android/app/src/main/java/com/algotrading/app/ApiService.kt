@@ -36,7 +36,9 @@ data class BrokerConnectRequest(val broker: String = "angel_one", val display_na
 data class BrokerConnectionInfo(val broker: String, val connected: Boolean, val display_name: String? = null, val connected_at: String? = null)
 data class BrokerConnectionsResponse(val connections: List<BrokerConnectionInfo> = emptyList())
 data class BrokerConnectResponse(val connected: Boolean, val broker: String, val display_name: String? = null, val client_code: String? = null, val real_trading: Boolean = false)
-data class BrokerStatusResponse(val broker: String, val connected: Boolean, val display_name: String? = null, val real_trading: Boolean = false)
+data class BrokerStatusResponse(val broker: String, val connected: Boolean, val display_name: String? = null, val real_trading: Boolean = false, val kill_switch: Boolean = true)
+data class SafetyResponse(val real_trading_enabled: Boolean = false, val kill_switch: Boolean = true, val enabled_at: String? = null, val broker_connected: Boolean = false, val live_order_routing: Boolean = false, val message: String? = null)
+data class RealTradingEnableRequest(val confirmation: String)
 
 interface ApiInterface {
     @GET("/") suspend fun getRootStatus(): MarketStatus
@@ -48,6 +50,10 @@ interface ApiInterface {
     @POST("/api/v1/brokers/connect") suspend fun connectBroker(@Body request: BrokerConnectRequest): BrokerConnectResponse
     @GET("/api/v1/brokers/{broker}/status") suspend fun brokerStatus(@Path("broker") broker: String): BrokerStatusResponse
     @DELETE("/api/v1/brokers/{broker}") suspend fun disconnectBroker(@Path("broker") broker: String): BrokerStatusResponse
+    @GET("/api/v1/brokers/safety") suspend fun safetyStatus(): SafetyResponse
+    @POST("/api/v1/brokers/safety/enable") suspend fun enableRealTrading(@Body request: RealTradingEnableRequest): SafetyResponse
+    @POST("/api/v1/brokers/safety/disable") suspend fun disableRealTrading(): SafetyResponse
+    @POST("/api/v1/brokers/safety/kill-switch") suspend fun triggerKillSwitch(): SafetyResponse
     @POST("/api/v1/execution/paper/entry") suspend fun paperEntry(@Body request: PaperEntryRequest): PaperEntryResponse
     @GET("/api/v1/execution/paper/position") suspend fun paperPosition(): PaperPositionResponse
     @POST("/api/v1/execution/paper/exit") suspend fun paperExit(@Body request: PaperExitRequest): PaperExitResponse
