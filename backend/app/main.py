@@ -47,6 +47,7 @@ app.include_router(auto_scanner_router)
 app.include_router(paper_execution_router)
 
 DASHBOARD_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "index.html"
+BROKER_SETTINGS_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "broker.html"
 
 
 @app.get("/dashboard", include_in_schema=False)
@@ -82,7 +83,7 @@ def dashboard():
       summary.textContent=`Backend connected • ${p.scanned_observations??0} scanned • ${p.opportunity_count??rows.length} executable opportunities`;
       const best=rows[0];
       if(best){spread.innerHTML=`Arbitrage: <strong>${best.symbol} • Gap ₹${Number(best.gap??0).toFixed(2)} • Net ₹${Number(best.net_profit??0).toFixed(2)}</strong>`;live.textContent=Number(best.cash_ltp??0).toFixed(2);liveStatus.textContent=`Cash price from Cash-Future scanner • ${best.symbol}`;}
-      log.innerHTML+=`<br>[${new Date().toLocaleTimeString()}] Cash-Future scan: ${rows.length} executable.`; log.scrollTop=log.scrollHeight;
+      if(log){log.innerHTML+=`<br>[${new Date().toLocaleTimeString()}] Cash-Future scan: ${rows.length} executable.`; log.scrollTop=log.scrollHeight;}
     }catch(e){summary.textContent=`Scanner unavailable: ${e.message}`;}
   }
   await scan(); setInterval(scan,30000);
@@ -90,6 +91,13 @@ def dashboard():
 </script>
 '''
     return HTMLResponse(content=html.replace("</body>", connector + "</body>"), media_type="text/html")
+
+
+@app.get("/dashboard/broker", include_in_schema=False)
+def broker_settings():
+    """Serve the authenticated user's broker settings page."""
+    html = BROKER_SETTINGS_FILE.read_text(encoding="utf-8")
+    return HTMLResponse(content=html, media_type="text/html")
 
 
 @app.websocket("/ws/market-data/{symbol}")
