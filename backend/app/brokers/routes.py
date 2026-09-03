@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
@@ -38,24 +41,14 @@ def current_user_id(token: str = Depends(oauth2_scheme)) -> int:
     return user_id
 
 
-@router.get("")
+@router.get("",)
 def supported_brokers(user_id: int = Depends(current_user_id)) -> dict:
     return {"brokers": BrokerRegistry().names()}
 
 
 @router.get("/connections")
 def connections(user_id: int = Depends(current_user_id)) -> dict:
-    return {
-        "connections": [
-            {
-                "broker": c.broker,
-                "connected": c.connected,
-                "display_name": c.display_name,
-                "connected_at": c.connected_at.isoformat() if c.connected_at else None,
-            }
-            for c in broker_connections.list(user_id)
-        ]
-    }
+    return {"connections": [{"broker": c.broker, "connected": c.connected, "display_name": c.display_name, "connected_at": c.connected_at.isoformat() if c.connected_at else None} for c in broker_connections.list(user_id)]}
 
 
 @router.post("/connect")
@@ -63,30 +56,17 @@ def connect(payload: ConnectRequest, user_id: int = Depends(current_user_id)) ->
     broker = payload.broker.strip().lower()
     if broker != "angel_one":
         raise HTTPException(status_code=400, detail=f"Unsupported broker: {broker}")
-
     adapter = AngelOneAdapter()
     try:
-        result = adapter.connect(
-            api_key=payload.api_key,
-            client_code=payload.client_code,
-            password=payload.password,
-            totp_secret=payload.totp_secret,
-        )
+        result = adapter.connect(api_key=payload.api_key, client_code=payload.client_code, password=payload.password, totp_secret=payload.totp_secret)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Angel One connection failed: {exc}") from exc
-
     old = _sessions.get((user_id, broker))
     if old is not None:
         old.disconnect()
     _sessions[(user_id, broker)] = adapter
     item = broker_connections.connect(user_id, broker, payload.display_name)
-    return {
-        "connected": item.connected,
-        "broker": item.broker,
-        "display_name": item.display_name,
-        "client_code": result.get("client_code"),
-        "real_trading": False,
-    }
+    return {"connected": item.connected, "broker": item.broker, "display_name": item.display_name, "client_code": result.get("client_code"), "real_trading": False}
 
 
 @router.get("/{broker}/status")
@@ -94,12 +74,7 @@ def status(broker: str, user_id: int = Depends(current_user_id)) -> dict:
     key = (user_id, broker.strip().lower())
     adapter = _sessions.get(key)
     item = broker_connections.get(user_id, key[1])
-    return {
-        "broker": key[1],
-        "connected": bool(adapter and adapter.connected and item and item.connected),
-        "display_name": item.display_name if item else None,
-        "real_trading": False,
-    }
+    return {"broker": key[1], "connected": bool(adapter and adapter.connected and item and item.connected), "display_name": item.display_name if item else None, "real_trading": False}
 
 
 @router.delete("/{broker}")
@@ -110,3 +85,11 @@ def disconnect(broker: str, user_id: int = Depends(current_user_id)) -> dict:
         adapter.disconnect()
     broker_connections.disconnect(user_id, name)
     return {"connected": False, "broker": name, "real_trading": False}
+
+
+@router.get("/web/settings", include_in_schema=False)
+def broker_settings_page() -> HTMLResponse:
+    page = Path(__file__).resolve().parents[3] / "web" / "dashboard" / "broker.html"
+    if not page.exists():
+        raise HTTPException(status_code=404, detail="Broker settings page unavailable")
+    return HTMLResponse(content=page.read_text(encoding="utf-8"), media_type="text/html")
