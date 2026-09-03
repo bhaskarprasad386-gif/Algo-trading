@@ -122,15 +122,12 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
         executable_gap = future.bid - cash.ask
         executable_gap_pct = executable_gap / cash.ask * 100.0
 
-    # Gross/net profit is based on prices that can actually be crossed now.
     profit_gap = executable_gap if executable_gap is not None else gap
-    gross = profit_gap * future.lot_size
-    net = gross - config.charges - config.funding_cost
-    # Capital should reflect the cash leg's executable buy price when available,
-    # because ROI must not be overstated by using an LTP below the live ask.
+    gross = round(profit_gap * future.lot_size, 2)
+    net = round(gross - config.charges - config.funding_cost, 2)
     cash_capital_price = cash_execution_price if cash_execution_price is not None else cash.ltp
-    deployed = cash_capital_price * future.lot_size + future.margin_required
-    roi = (net / deployed * 100.0) if deployed > 0 else 0.0
+    deployed = round(cash_capital_price * future.lot_size + future.margin_required, 2)
+    roi = round((net / deployed * 100.0) if deployed > 0 else 0.0, 6)
 
     reasons: list[str] = []
     threshold_gap = executable_gap if executable_gap is not None else gap
@@ -151,7 +148,6 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
         reasons.append("volume_below_minimum")
     if future.oi < config.min_oi:
         reasons.append("oi_below_minimum")
-
     if config.require_two_sided_quotes and (cash.ask is None or future.bid is None):
         reasons.append("missing_executable_quotes")
     if config.max_bid_ask_spread_pct is not None:
@@ -164,7 +160,6 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
             reasons.append("cash_bid_ask_spread_above_maximum")
         elif cash_spread_pct is None:
             reasons.append("cash_bid_ask_unavailable")
-
     if future.expiry is not None:
         days = (future.expiry - date.today()).days
         if days < config.min_days_to_expiry:
