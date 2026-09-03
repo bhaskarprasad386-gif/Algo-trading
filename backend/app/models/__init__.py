@@ -8,8 +8,10 @@ from app.models.system_log import SystemLog
 from app.models.tick import Tick
 from app.models.user import User
 from app.models.account import TradingAccount
+from app.models.backtest_job import BacktestJob
+from app.models.backtest_job_result_chunk import BacktestJobResultChunk
 
 __all__ = [
     "User", "TradingAccount", "Session", "Instrument", "Tick", "Candle", "CashFutureHistory",
-    "Order", "Position", "SystemLog",
+    "Order", "Position", "SystemLog", "BacktestJob", "BacktestJobResultChunk",
 ]
