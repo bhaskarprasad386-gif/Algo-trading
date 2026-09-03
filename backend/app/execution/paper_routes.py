@@ -11,7 +11,6 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 
-from app.brokers.base import BrokerOrder
 from app.core.config import settings
 from app.core.security import ALGORITHM
 from app.execution.dual_engine import DualExecutionEngine, ExecutionConfig, ExecutionMode, Fill
