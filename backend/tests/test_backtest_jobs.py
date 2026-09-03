@@ -148,3 +148,61 @@ def test_full_fno_result_chunks_use_keyset_paging():
         ).delete()
         db.commit()
         db.close()
+
+
+def test_full_fno_worker_failure_preserves_already_committed_chunks(monkeypatch):
+    """A worker exception after a sink commit must not erase that durable chunk."""
+    Base.metadata.create_all(bind=engine)
+    job_id = "test-job-worker-failure"
+    db = SessionLocal()
+    try:
+        db.query(BacktestJobResultChunk).filter(
+            BacktestJobResultChunk.job_id == job_id,
+        ).delete()
+        db.query(BacktestJob).filter(BacktestJob.job_id == job_id).delete()
+        db.commit()
+        db.add(BacktestJob(
+            job_id=job_id,
+            status="queued",
+            symbol="__FULL_FNO__",
+            contract_month="BOTH",
+            requested_days=365,
+            progress_pct=0.0,
+            symbols_processed=0,
+            symbols_total=1,
+            message="Queued",
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    monkeypatch.setattr(backtest_jobs, "_is_cancelled", lambda _: False)
+
+    def fail_after_first_chunk(db, **kwargs):
+        kwargs["result_sink"](0, "RELIANCE", {"symbol": "RELIANCE", "net_profit": 123.45})
+        raise RuntimeError("simulated worker crash")
+
+    monkeypatch.setattr(backtest_jobs, "run_full_fno_backtest", fail_after_first_chunk)
+    backtest_jobs._run_full_fno_job(
+        job_id, 365, 5.0, 0.0, 10.0, 2.0, 30, "BOTH"
+    )
+
+    db = SessionLocal()
+    try:
+        job = backtest_jobs.get_job(db, job_id)
+        rows = backtest_jobs.get_result_chunks(db, job_id, after_sequence=None, limit=50)
+        assert job is not None
+        assert job.status == "failed"
+        assert len(rows) == 1
+        assert rows[0].sequence == 0
+        assert rows[0].symbol == "RELIANCE"
+        assert "123.45" in rows[0].result_json
+    finally:
+        db.query(BacktestJobResultChunk).filter(
+            BacktestJobResultChunk.job_id == job_id,
+        ).delete()
+        db.query(BacktestJob).filter(BacktestJob.job_id == job_id).delete()
+        db.commit()
+        db.close()
