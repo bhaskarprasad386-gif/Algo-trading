@@ -10,6 +10,7 @@ import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
+import retrofit2.http.Query
 import java.util.concurrent.TimeUnit
 
 data class MarketStatus(val status: String, val message: String)
@@ -22,23 +23,11 @@ data class PaperExitResponse(val status: String, val entry_price: Double? = null
 data class PaperPositionResponse(val status: String, val position: PaperPosition? = null)
 data class PaperOrder(val id: String, val symbol: String, val transaction_type: String, val price: Double? = null, val quantity: Double = 0.0, val status: String, val pnl: Double = 0.0)
 data class PaperOrdersResponse(val mode: String, val orders: List<PaperOrder> = emptyList())
-data class ScannerPaperEntryRequest(
-    val symbol: String,
-    val cash_price: Double,
-    val quantity: Double,
-    val future_price: Double? = null,
-    val gap: Double? = null,
-    val net_profit: Double? = null,
-    val executable: Boolean = true,
-    val stop_loss_pct: Double = 0.02,
-    val target_pct: Double = 0.04
-)
+data class ScannerPaperEntryRequest(val symbol: String, val cash_price: Double, val quantity: Double, val future_price: Double? = null, val gap: Double? = null, val net_profit: Double? = null, val executable: Boolean = true, val stop_loss_pct: Double = 0.02, val target_pct: Double = 0.04)
 data class ScannerPaperEntryResponse(val status: String, val mode: String, val source: String, val scanner_entry_price: Double, val order: PaperOrder, val position: PaperPosition? = null, val virtual_balance: Double = 0.0, val realized_pnl: Double = 0.0)
-
 data class CashFutureOpportunity(val symbol: String, val cash_price: Double = 0.0, val future_price: Double = 0.0, val gap: Double = 0.0, val gap_pct: Double = 0.0, val gross_spread_profit: Double = 0.0, val margin_required: Double = 0.0, val deployed_capital: Double = 0.0, val net_profit: Double = 0.0, val roi_pct: Double = 0.0, val executable: Boolean = false)
 data class CashFutureScanError(val symbol: String = "", val error: String = "")
 data class CashFutureScanResponse(val status: String, val scanner: String, val mode: String, val symbols_requested: List<String> = emptyList(), val scanned_observations: Int = 0, val opportunity_count: Int = 0, val data: List<CashFutureOpportunity> = emptyList(), val errors: List<CashFutureScanError> = emptyList())
-
 data class RegisterRequest(val email: String? = null, val mobile_number: String? = null, val password: String, val full_name: String? = null)
 data class LoginRequest(val identifier: String, val password: String)
 data class TokenResponse(val access_token: String, val token_type: String = "bearer")
@@ -51,6 +40,10 @@ data class BrokerConnectResponse(val connected: Boolean, val broker: String, val
 data class BrokerStatusResponse(val broker: String, val connected: Boolean, val display_name: String? = null, val real_trading: Boolean = false, val kill_switch: Boolean = true)
 data class SafetyResponse(val real_trading_enabled: Boolean = false, val kill_switch: Boolean = true, val enabled_at: String? = null, val broker_connected: Boolean = false, val live_order_routing: Boolean = false, val message: String? = null)
 data class RealTradingEnableRequest(val confirmation: String)
+
+data class FullFnoJobResponse(val id: String, val status: String, val progress_pct: Double = 0.0, val symbols_total: Int = 0, val symbols_processed: Int = 0, val result_json: String? = null)
+data class FullFnoResultChunk(val sequence: Int, val symbol: String, val result: Map<String, Any?> = emptyMap(), val created_at: String? = null)
+data class FullFnoResultsPage(val status: String, val job_id: String, val total: Int = 0, val offset: Int = 0, val limit: Int = 0, val after_sequence: Int? = null, val next_after_sequence: Int? = null, val data: List<FullFnoResultChunk> = emptyList())
 
 interface ApiInterface {
     @GET("/") suspend fun getRootStatus(): MarketStatus
@@ -72,6 +65,8 @@ interface ApiInterface {
     @POST("/api/v1/execution/paper/exit") suspend fun paperExit(@Body request: PaperExitRequest): PaperExitResponse
     @GET("/api/v1/execution/paper/orders") suspend fun paperOrders(): PaperOrdersResponse
     @GET("/api/v1/scanner/cash-future/live/auto") suspend fun cashFutureScan(): CashFutureScanResponse
+    @GET("/api/v1/scanner/cash-future/backtest/jobs/{job_id}") suspend fun fullFnoJob(@Path("job_id") jobId: String): FullFnoJobResponse
+    @GET("/api/v1/scanner/cash-future/backtest/jobs/{job_id}/results") suspend fun fullFnoResults(@Path("job_id") jobId: String, @Query("limit") limit: Int = 50, @Query("after_sequence") afterSequence: Int? = null): FullFnoResultsPage
 }
 
 object ApiService {
@@ -90,9 +85,7 @@ object ApiService {
             chain.proceed(authenticated)
         }).connectTimeout(10, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS).build()
     }
-    val retrofitService: ApiInterface by lazy {
-        Retrofit.Builder().client(httpClient).addConverterFactory(GsonConverterFactory.create()).baseUrl(BuildConfig.BACKEND_BASE_URL).build().create(ApiInterface::class.java)
-    }
+    val retrofitService: ApiInterface by lazy { Retrofit.Builder().client(httpClient).addConverterFactory(GsonConverterFactory.create()).baseUrl(BuildConfig.BACKEND_BASE_URL).build().create(ApiInterface::class.java) }
 }
 
 object AppContextHolder { var context: Context? = null }
