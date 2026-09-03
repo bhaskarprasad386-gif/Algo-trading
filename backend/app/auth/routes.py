@@ -60,7 +60,12 @@ def _ensure_account(db: Session, user: User) -> TradingAccount:
     account = db.query(TradingAccount).filter(TradingAccount.user_id == user.id).first()
     if account:
         return account
-    account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=PAPER_STARTING_BALANCE)
+    account = TradingAccount(
+        user_id=user.id,
+        mode="PAPER",
+        virtual_balance=PAPER_STARTING_BALANCE,
+        realized_pnl=0.0,
+    )
     db.add(account)
     db.flush()
     return account
@@ -143,6 +148,7 @@ def me(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
             "id": account.id,
             "mode": account.mode,
             "virtual_balance": account.virtual_balance,
+            "realized_pnl": account.realized_pnl,
             "is_active": account.is_active,
         },
     }
