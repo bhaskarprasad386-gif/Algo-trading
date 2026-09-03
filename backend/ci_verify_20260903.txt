@@ -1,1 +1,4 @@
-CI verification trigger for latest backend/auth/paper-trading fixes. No runtime application change.
+CI verification trigger for latest backend/auth/paper-trading fixes.
+
+Re-run after Android scanner/paper UI contract restoration (a45f60d16128f0ec008bc8cc336df568dd4d5db1).
+No runtime application change.
