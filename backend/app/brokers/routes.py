@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from app.brokers.angel_one import AngelOneAdapter
 from app.brokers.connections import broker_connections
 from app.brokers.registry import BrokerRegistry
+from app.brokers.safety import trading_safety
 from app.core.config import settings
 from app.core.security import ALGORITHM
 
@@ -27,6 +28,10 @@ class ConnectRequest(BaseModel):
     totp_secret: str = Field(min_length=1, max_length=300)
 
 
+class RealTradingEnableRequest(BaseModel):
+    confirmation: str = Field(min_length=1, max_length=100)
+
+
 _sessions: dict[tuple[int, str], AngelOneAdapter] = {}
 
 
@@ -41,7 +46,7 @@ def current_user_id(token: str = Depends(oauth2_scheme)) -> int:
     return user_id
 
 
-@router.get("",)
+@router.get("")
 def supported_brokers(user_id: int = Depends(current_user_id)) -> dict:
     return {"brokers": BrokerRegistry().names()}
 
@@ -49,6 +54,36 @@ def supported_brokers(user_id: int = Depends(current_user_id)) -> dict:
 @router.get("/connections")
 def connections(user_id: int = Depends(current_user_id)) -> dict:
     return {"connections": [{"broker": c.broker, "connected": c.connected, "display_name": c.display_name, "connected_at": c.connected_at.isoformat() if c.connected_at else None} for c in broker_connections.list(user_id)]}
+
+
+@router.get("/safety")
+def safety_status(user_id: int = Depends(current_user_id)) -> dict:
+    state = trading_safety.get(user_id)
+    return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "enabled_at": state.enabled_at.isoformat() if state.enabled_at else None}
+
+
+@router.post("/safety/enable")
+def enable_real_trading(payload: RealTradingEnableRequest, user_id: int = Depends(current_user_id)) -> dict:
+    if payload.confirmation.strip().upper() != "ENABLE REAL TRADING":
+        raise HTTPException(status_code=400, detail="Explicit confirmation required: ENABLE REAL TRADING")
+    connection = next((c for c in broker_connections.list(user_id) if c.connected), None)
+    if connection is None:
+        raise HTTPException(status_code=409, detail="Connect a broker before enabling real trading")
+    # Safety arming only: broker adapters still reject live order routing.
+    state = trading_safety.enable(user_id)
+    return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "live_order_routing": False, "message": "Real trading armed, but live order routing is still disabled."}
+
+
+@router.post("/safety/disable")
+def disable_real_trading(user_id: int = Depends(current_user_id)) -> dict:
+    state = trading_safety.disable(user_id)
+    return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "message": "Real trading disabled and kill switch engaged."}
+
+
+@router.post("/safety/kill-switch")
+def emergency_kill_switch(user_id: int = Depends(current_user_id)) -> dict:
+    state = trading_safety.disable(user_id)
+    return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "message": "Emergency kill switch engaged."}
 
 
 @router.post("/connect")
@@ -66,6 +101,7 @@ def connect(payload: ConnectRequest, user_id: int = Depends(current_user_id)) ->
         old.disconnect()
     _sessions[(user_id, broker)] = adapter
     item = broker_connections.connect(user_id, broker, payload.display_name)
+    trading_safety.disable(user_id)
     return {"connected": item.connected, "broker": item.broker, "display_name": item.display_name, "client_code": result.get("client_code"), "real_trading": False}
 
 
@@ -74,7 +110,8 @@ def status(broker: str, user_id: int = Depends(current_user_id)) -> dict:
     key = (user_id, broker.strip().lower())
     adapter = _sessions.get(key)
     item = broker_connections.get(user_id, key[1])
-    return {"broker": key[1], "connected": bool(adapter and adapter.connected and item and item.connected), "display_name": item.display_name if item else None, "real_trading": False}
+    state = trading_safety.get(user_id)
+    return {"broker": key[1], "connected": bool(adapter and adapter.connected and item and item.connected), "display_name": item.display_name if item else None, "real_trading": state.real_trading_enabled, "kill_switch": state.kill_switch}
 
 
 @router.delete("/{broker}")
@@ -84,7 +121,8 @@ def disconnect(broker: str, user_id: int = Depends(current_user_id)) -> dict:
     if adapter is not None:
         adapter.disconnect()
     broker_connections.disconnect(user_id, name)
-    return {"connected": False, "broker": name, "real_trading": False}
+    trading_safety.disable(user_id)
+    return {"connected": False, "broker": name, "real_trading": False, "kill_switch": True}
 
 
 @router.get("/web/settings", include_in_schema=False)
