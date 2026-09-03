@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import ALGORITHM
 from app.execution.dual_engine import DualExecutionEngine, ExecutionConfig, ExecutionMode, Fill
+from app.execution.payoff import PayoffLeg, payoff_summary
 from app.models import Order, Position, TradingAccount
 
 router = APIRouter(prefix="/api/v1/execution", tags=["Execution"])
@@ -55,6 +56,21 @@ class ScannerPaperEntryRequest(BaseModel):
     executable: bool = True
     stop_loss_pct: float = Field(0.02, ge=0)
     target_pct: float = Field(0.04, ge=0)
+
+
+class PaperPayoffLegRequest(BaseModel):
+    kind: str = Field(min_length=4, max_length=8)
+    side: str = Field(min_length=3, max_length=4)
+    strike: float | None = Field(default=None, gt=0)
+    entry_price: float = Field(..., ge=0)
+    quantity: float = Field(..., gt=0)
+    multiplier: float = Field(1.0, gt=0)
+
+
+class PaperPayoffRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=128)
+    underlying_prices: list[float] = Field(min_length=2, max_length=201)
+    legs: list[PaperPayoffLegRequest] = Field(min_length=1, max_length=20)
 
 
 def current_user_id(token: str = Depends(oauth2_scheme)) -> int:
@@ -274,6 +290,36 @@ def paper_position(user_id: int = Depends(current_user_id), db: Session = Depend
     if quote_error:
         payload["quote_error"] = quote_error
     return payload
+
+
+@router.post("/paper/payoff")
+def paper_payoff(request: PaperPayoffRequest, user_id: int = Depends(current_user_id)):
+    """Return deterministic multi-leg payoff analytics for an authenticated paper analysis."""
+    try:
+        legs = tuple(
+            PayoffLeg(
+                kind=leg.kind,
+                side=leg.side,
+                strike=leg.strike,
+                entry_price=leg.entry_price,
+                quantity=leg.quantity,
+                multiplier=leg.multiplier,
+            )
+            for leg in request.legs
+        )
+        prices = tuple(request.underlying_prices)
+        summary = payoff_summary(legs, prices)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {
+        "status": "success",
+        "mode": "paper",
+        "symbol": request.symbol.upper(),
+        "user_id": user_id,
+        "legs": [leg.model_dump() for leg in request.legs],
+        "analytics": summary,
+        "charges_status": "unavailable",
+    }
 
 
 @router.post("/paper/exit")
