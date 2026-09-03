@@ -73,7 +73,7 @@ def test_full_fno_job_queues_and_persists_job_state(monkeypatch):
         assert loaded is not None
         assert loaded.status == "queued"
         assert loaded.symbol == "__FULL_FNO__"
-        assert loaded.contract_month == "MULTI"
+        assert loaded.contract_month == "BOTH"
         assert loaded.requested_days == 365
         assert loaded.symbols_processed == 0
         assert loaded.symbols_total == 0
