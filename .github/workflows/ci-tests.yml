@@ -35,8 +35,4 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
 
-# CI verification trigger for persistent paper balance and realized P&L coverage
-# Incremental Full-F&O verification trigger: durable result sinking / bounded RAM
-# Keyset result API verification trigger: cursor pagination without deep OFFSET scans
-# Bounded result cleanup verification trigger: batch deletion without large transactions
 # Durable result integrity verification trigger: validate payloads and rollback failed chunk writes
