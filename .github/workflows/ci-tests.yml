@@ -38,3 +38,4 @@ jobs:
 # CI verification trigger for persistent paper balance and realized P&L coverage
 # Incremental Full-F&O verification trigger: durable result sinking / bounded RAM
 # Keyset result API verification trigger: cursor pagination without deep OFFSET scans
+# Bounded result cleanup verification trigger: batch deletion without large transactions
