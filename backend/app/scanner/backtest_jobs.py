@@ -166,8 +166,8 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
     try:
         if _is_cancelled(job_id):
             return
-        db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete()
-        db.commit()
+        # A newly-created job has no chunks. Do not delete here: already committed
+        # chunks must survive a worker retry/recovery path for this same job_id.
         _update(db, job_id, status="running", progress_pct=1.0,
                 message=f"Discovering persisted full F&O coverage ({future_selection})")
 
