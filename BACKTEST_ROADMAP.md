@@ -26,6 +26,13 @@ The backtest keeps **1-minute data as the source of truth**, but the user can co
 3. Maintain historical contract identity, expiry, **lot size**, volume, OI and executable bid/ask where available.
 4. Never invent missing historical data; unavailable data is reported explicitly.
 5. Preserve the complete 1-minute timeline from entry until expiry/settlement for every active trade.
+6. **Persistent historical data store:** once a historical period is successfully downloaded/imported, save the normalized 1-minute data locally in the application's persistent database/storage and mark its coverage by symbol, contract, date range and data version/hash.
+7. **Incremental synchronization:** every later backtest must first check the local coverage index and download only missing date ranges/contracts/minutes. Do not re-download an already verified historical year just because a new backtest is started.
+8. **Daily append:** after the initial historical load, newly available trading dates are appended to the same store; existing rows are deduplicated using timestamp + instrument/contract identity so repeated downloads cannot create duplicate observations.
+9. **Gap repair:** if the coverage index detects missing/corrupt minutes, request only those gaps for repair rather than downloading the entire dataset again.
+10. **Data-version awareness:** when source data is revised, replace/reconcile only the affected date range and retain source/version metadata so previous backtest runs remain reproducible.
+11. **Backtest reads from the store:** a backtest uses the canonical persisted 1-minute dataset and does not call the historical provider for every replay point.
+12. **Coverage gate:** before a run starts, show exactly what date range, symbols/contracts and minutes are locally available and fetch only the missing portions required for that run.
 
 ## Trade Replay Model
 For a trade entered on a historical date such as 1 January:
@@ -111,6 +118,9 @@ For a trade entered on a historical date such as 1 January:
 - Support multiple eligible opportunities while preventing capital over-allocation.
 - Handle contract expiry/rollover using historical contract mapping.
 - Historical gap-search results must be reproducible from the canonical minute ledger.
+- **Never redownload the full historical year for every backtest:** resolve requested coverage against the persisted data catalog first, then fetch only missing/repaired ranges.
+- **Persist successful downloads:** once a year/date range has passed data-quality validation, mark it complete and reuse it for future backtests.
+- **Append new dates automatically:** newly available historical/live-to-historical minutes are added incrementally while preserving existing validated data.
 
 ## Reports
 - Net P&L
@@ -138,6 +148,11 @@ For a trade entered on a historical date such as 1 January:
 
 ## Validation Gates
 - [ ] Historical 1-minute data ingestion verified.
+- [ ] Persistent data store and coverage catalog verified.
+- [ ] Incremental sync fetches only missing date ranges/contracts.
+- [ ] Repeated backtest does not redownload already validated data.
+- [ ] New trading dates append without duplicate observations.
+- [ ] Gap-repair downloads only missing/corrupt ranges.
 - [ ] Full eligible F&O universe coverage verified.
 - [ ] Spot/current-month/near-month contract matching verified.
 - [ ] Historical lot size mapping verified for every contract.
@@ -165,4 +180,4 @@ For a trade entered on a historical date such as 1 January:
 - [ ] Paper-trading results can be compared against the same strategy logic.
 
 ## Current Priority
-Build and verify the Cash–Future backtesting engine with the advanced replay/interval system, historical lot-size mapping, interval-wise gap/P&L ledger and historical gap-search capability first. Then harden it with data-quality, corporate-action/dividend, execution/microstructure, margin, anti-survivorship and statistical robustness controls before trusting any headline result. RSI, second scanner and real-money execution remain out of scope until this backtesting + paper-trading stage is validated.
+Build and verify the Cash–Future backtesting engine with the advanced replay/interval system, historical lot-size mapping, interval-wise gap/P&L ledger and historical gap-search capability first. The data layer must persist validated historical downloads and synchronize incrementally so subsequent backtests reuse existing data and fetch only missing/new/repaired ranges. Then harden it with data-quality, corporate-action/dividend, execution/microstructure, margin, anti-survivorship and statistical robustness controls before trusting any headline result. RSI, second scanner and real-money execution remain out of scope until this backtesting + paper-trading stage is validated.
