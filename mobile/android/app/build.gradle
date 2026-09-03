@@ -16,8 +16,8 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    def backendBaseUrl = project.findProperty("backendBaseUrl") ?: "http://10.0.2.2:8000/"
-    def backendWsUrl = project.findProperty("backendWsUrl") ?: "ws://10.0.2.2:8000"
+    def backendBaseUrl = project.findProperty("backendBaseUrl") ?: "https://algo-trading-backend-2.onrender.com/"
+    def backendWsUrl = project.findProperty("backendWsUrl") ?: "wss://algo-trading-backend-2.onrender.com"
 
     buildTypes {
         debug {

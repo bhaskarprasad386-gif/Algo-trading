@@ -10,12 +10,12 @@ on:
       backend_base_url:
         description: 'Backend HTTP base URL (must end with /)'
         required: false
-        default: 'http://10.0.2.2:8000/'
+        default: 'https://algo-trading-backend-2.onrender.com/'
         type: string
       backend_ws_url:
         description: 'Backend WebSocket URL'
         required: false
-        default: 'ws://10.0.2.2:8000'
+        default: 'wss://algo-trading-backend-2.onrender.com'
         type: string
 
 jobs:
@@ -41,8 +41,8 @@ jobs:
 
       - name: Compile Android debug build
         env:
-          BACKEND_BASE_URL: ${{ github.event.inputs.backend_base_url || 'http://10.0.2.2:8000/' }}
-          BACKEND_WS_URL: ${{ github.event.inputs.backend_ws_url || 'ws://10.0.2.2:8000' }}
+          BACKEND_BASE_URL: ${{ github.event.inputs.backend_base_url || 'https://algo-trading-backend-2.onrender.com/' }}
+          BACKEND_WS_URL: ${{ github.event.inputs.backend_ws_url || 'wss://algo-trading-backend-2.onrender.com' }}
         run: |
           gradle assembleDebug --no-daemon \
             -PbackendBaseUrl="$BACKEND_BASE_URL" \
