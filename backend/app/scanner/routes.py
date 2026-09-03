@@ -24,6 +24,7 @@ from app.scanner.backtest_jobs import (
     get_result_chunks,
     result_chunk_count,
 )
+from app.scanner.result_chunk_store import delete_result_chunks_batched
 
 router = APIRouter(prefix="/api/v1/scanner", tags=["Scanner"])
 
@@ -195,6 +196,18 @@ def cancel_cash_future_backtest_job(job_id: str, db: Session = Depends(get_db)):
     if not cancel_job(db, job_id):
         raise HTTPException(status_code=404, detail="backtest job not found or already finished")
     return {"status": "success", "job_id": job_id, "job_status": "cancelled"}
+
+
+@router.delete("/cash-future/backtest/jobs/{job_id}/results")
+def purge_cash_future_backtest_job_results(job_id: str, db: Session = Depends(get_db)):
+    """Purge durable Full-F&O result chunks only after the job is terminal."""
+    job = get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="backtest job not found")
+    if job.status not in {"completed", "failed", "cancelled"}:
+        raise HTTPException(status_code=409, detail="result chunks can only be purged for a terminal job")
+    deleted = delete_result_chunks_batched(db, job_id)
+    return {"status": "success", "job_id": job_id, "job_status": job.status, "deleted_chunks": deleted}
 
 
 @router.get("/cash-future/expiry-close")
