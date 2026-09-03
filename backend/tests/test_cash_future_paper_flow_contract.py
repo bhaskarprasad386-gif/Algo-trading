@@ -23,7 +23,7 @@ def test_cash_future_scanner_has_authenticated_paper_bridge():
     assert "ScannerPaperEntryRequest" in source
     assert 'result["source"] = "cash-future-scanner"' in source
     assert 'transaction_type="BUY"' in source
-    assert "cash_price=request.cash_price" in source
+    assert "price=request.cash_price" in source
 
 
 def test_scanner_paper_bridge_validates_executable_opportunity():
