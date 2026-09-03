@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from threading import Lock
 
 from sqlalchemy.orm import Session
@@ -12,9 +12,9 @@ from app.scanner.cash_future_backtest import BacktestConfig, run_backtest
 from app.scanner.cash_future_history_store import read_history
 
 
-# One bounded worker is intentional: a full-universe replay must never consume
-# all CPU/RAM and starve the API process. This is the first non-blocking layer;
-# a dedicated process queue can replace it later without changing the API.
+# Bounded worker: large replays must not consume every available worker and
+# starve lightweight API/UI operations. The queue contract allows a later
+# process-backed executor without changing clients.
 _EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="backtest-worker")
 _LOCK = Lock()
 _FUTURES: dict[str, Future] = {}
@@ -22,6 +22,22 @@ _FUTURES: dict[str, Future] = {}
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _new_job_id() -> str:
+    import uuid
+
+    return str(uuid.uuid4())
+
+
+def _update(db: Session, job_id: str, **values) -> None:
+    job = db.query(BacktestJob).filter(BacktestJob.job_id == job_id).first()
+    if job is None:
+        return
+    for key, value in values.items():
+        setattr(job, key, value)
+    job.updated_at = _utcnow()
+    db.commit()
 
 
 def create_job(
@@ -74,22 +90,6 @@ def create_job(
     return job
 
 
-def _new_job_id() -> str:
-    import uuid
-
-    return str(uuid.uuid4())
-
-
-def _update(db: Session, job_id: str, **values) -> None:
-    job = db.query(BacktestJob).filter(BacktestJob.job_id == job_id).first()
-    if job is None:
-        return
-    for key, value in values.items():
-        setattr(job, key, value)
-    job.updated_at = _utcnow()
-    db.commit()
-
-
 def _run_job(
     job_id: str,
     symbol: str,
@@ -105,14 +105,13 @@ def _run_job(
     try:
         _update(db, job_id, status="running", progress_pct=1.0, message="Loading validated history")
         end = datetime.utcnow()
-        points = read_history(db, symbol, contract_month, end - __import__("datetime").timedelta(days=days), end)
+        start = end - timedelta(days=days)
+        points = read_history(db, symbol, contract_month, start, end)
         _update(db, job_id, progress_pct=20.0, message=f"Loaded {len(points)} historical observations")
         if not points:
             _update(db, job_id, status="failed", progress_pct=100.0, message="No historical observations found")
             return
 
-        # Keep the actual replay out of the request lifecycle. Results are
-        # serialized to the durable job row after the bounded worker finishes.
         result = run_backtest(
             points,
             BacktestConfig(
