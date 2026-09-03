@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import Lock
@@ -72,12 +73,16 @@ def create_job(*, symbol: str, contract_month: str, days: int, min_entry_gap: fl
 
 def create_full_fno_job(*, days: int, min_entry_gap: float, exit_gap: float,
                         charges_per_trade: float, funding_cost_per_trade: float,
-                        max_holding_days: int) -> BacktestJob:
+                        max_holding_days: int, future_selection: str = "BOTH") -> BacktestJob:
     """Queue the full persisted stock-F&O universe without blocking the API/UI."""
+    selection = future_selection.upper()
+    if selection not in {"CURRENT", "NEAR", "BOTH"}:
+        raise ValueError("future_selection must be CURRENT, NEAR or BOTH")
+
     db = SessionLocal()
     try:
         job = BacktestJob(job_id=_new_job_id(), status="queued", symbol="__FULL_FNO__",
-                          contract_month="MULTI", requested_days=days, progress_pct=0.0,
+                          contract_month=selection, requested_days=days, progress_pct=0.0,
                           symbols_processed=0, symbols_total=0,
                           message="Queued full F&O backtest", created_at=_utcnow(), updated_at=_utcnow())
         db.add(job)
@@ -88,7 +93,7 @@ def create_full_fno_job(*, days: int, min_entry_gap: float, exit_gap: float,
         db.close()
 
     future = _EXECUTOR.submit(_run_full_fno_job, job_id, days, min_entry_gap, exit_gap,
-                              charges_per_trade, funding_cost_per_trade, max_holding_days)
+                              charges_per_trade, funding_cost_per_trade, max_holding_days, selection)
     with _LOCK:
         _FUTURES[job_id] = future
     return job
@@ -122,7 +127,7 @@ def _run_job(job_id: str, symbol: str, contract_month: str, days: int,
         ))
         if not _is_cancelled(job_id):
             _update(db, job_id, status="completed", progress_pct=100.0, symbols_processed=1,
-                    message="Backtest completed", result_json=str(result))
+                    message="Backtest completed", result_json=json.dumps(result, default=str))
     except Exception as exc:
         if not _is_cancelled(job_id):
             _update(db, job_id, status="failed", progress_pct=100.0, message=str(exc))
@@ -134,13 +139,13 @@ def _run_job(job_id: str, symbol: str, contract_month: str, days: int,
 
 def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: float,
                       charges_per_trade: float, funding_cost_per_trade: float,
-                      max_holding_days: int) -> None:
+                      max_holding_days: int, future_selection: str) -> None:
     db = SessionLocal()
     try:
         if _is_cancelled(job_id):
             return
         _update(db, job_id, status="running", progress_pct=1.0,
-                message="Discovering persisted full F&O coverage")
+                message=f"Discovering persisted full F&O coverage ({future_selection})")
 
         def progress(processed: int, total: int, message: str) -> None:
             if _is_cancelled(job_id):
@@ -151,8 +156,8 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
         result = run_full_fno_backtest(
             db, days=days, min_entry_gap=min_entry_gap, exit_gap=exit_gap,
             charges_per_trade=charges_per_trade, funding_cost_per_trade=funding_cost_per_trade,
-            max_holding_days=max_holding_days, progress=progress,
-            cancelled=lambda: _is_cancelled(job_id),
+            max_holding_days=max_holding_days, future_selection=future_selection,
+            progress=progress, cancelled=lambda: _is_cancelled(job_id),
         )
         if _is_cancelled(job_id) and result.get("status") != "cancelled":
             return
@@ -163,7 +168,7 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
                 symbols_processed=result.get("symbols_processed", 0),
                 symbols_total=result.get("symbols_total", 0),
                 message="Full F&O backtest completed" if status == "completed" else "Cancelled",
-                result_json=str(result))
+                result_json=json.dumps(result, default=str))
     except Exception as exc:
         if not _is_cancelled(job_id):
             _update(db, job_id, status="failed", progress_pct=100.0, message=str(exc))
