@@ -15,11 +15,13 @@ import java.util.concurrent.TimeUnit
 data class MarketStatus(val status: String, val message: String)
 data class PaperEntryRequest(val price: Double, val quantity: Double, val stop_loss_pct: Double = 0.02, val target_pct: Double = 0.04)
 data class PaperFill(val price: Double, val quantity: Double)
-data class PaperPosition(val mode: String, val quantity: Double, val entry_price: Double, val stop_loss: Double, val target: Double)
-data class PaperEntryResponse(val status: String, val mode: String, val fill: PaperFill, val entry_price: Double, val stop_loss: Double, val target: Double, val position: PaperPosition)
+data class PaperPosition(val symbol: String = "PAPER", val mode: String, val quantity: Double, val entry_price: Double, val stop_loss: Double, val target: Double)
+data class PaperEntryResponse(val status: String, val mode: String, val fill: PaperFill, val entry_price: Double, val stop_loss: Double, val target: Double, val position: PaperPosition, val virtual_balance: Double = 0.0, val realized_pnl: Double = 0.0)
 data class PaperExitRequest(val price: Double)
-data class PaperExitResponse(val status: String, val entry_price: Double? = null, val exit_price: Double? = null, val quantity: Double? = null, val pnl: Double = 0.0)
+data class PaperExitResponse(val status: String, val entry_price: Double? = null, val exit_price: Double? = null, val quantity: Double? = null, val pnl: Double = 0.0, val virtual_balance: Double = 0.0, val realized_pnl: Double = 0.0)
 data class PaperPositionResponse(val status: String, val position: PaperPosition? = null)
+data class PaperOrder(val id: String, val symbol: String, val transaction_type: String, val price: Double? = null, val quantity: Double = 0.0, val status: String, val pnl: Double = 0.0)
+data class PaperOrdersResponse(val mode: String, val orders: List<PaperOrder> = emptyList())
 
 data class CashFutureOpportunity(val symbol: String, val cash_price: Double = 0.0, val future_price: Double = 0.0, val gap: Double = 0.0, val gap_pct: Double = 0.0, val gross_spread_profit: Double = 0.0, val margin_required: Double = 0.0, val deployed_capital: Double = 0.0, val net_profit: Double = 0.0, val roi_pct: Double = 0.0, val executable: Boolean = false)
 data class CashFutureScanError(val symbol: String = "", val error: String = "")
@@ -29,7 +31,7 @@ data class RegisterRequest(val email: String? = null, val mobile_number: String?
 data class LoginRequest(val identifier: String, val password: String)
 data class TokenResponse(val access_token: String, val token_type: String = "bearer")
 
-data class AccountInfo(val id: Int, val mode: String, val virtual_balance: Double, val is_active: Boolean)
+data class AccountInfo(val id: Int, val mode: String, val virtual_balance: Double, val realized_pnl: Double = 0.0, val is_active: Boolean)
 data class UserInfo(val id: Int, val email: String? = null, val mobile_number: String? = null, val full_name: String? = null, val account: AccountInfo)
 
 data class BrokerConnectRequest(val broker: String = "angel_one", val display_name: String? = null, val api_key: String, val client_code: String, val password: String, val totp_secret: String)
@@ -57,6 +59,7 @@ interface ApiInterface {
     @POST("/api/v1/execution/paper/entry") suspend fun paperEntry(@Body request: PaperEntryRequest): PaperEntryResponse
     @GET("/api/v1/execution/paper/position") suspend fun paperPosition(): PaperPositionResponse
     @POST("/api/v1/execution/paper/exit") suspend fun paperExit(@Body request: PaperExitRequest): PaperExitResponse
+    @GET("/api/v1/execution/paper/orders") suspend fun paperOrders(): PaperOrdersResponse
     @GET("/api/v1/scanner/cash-future/live/auto") suspend fun cashFutureScan(): CashFutureScanResponse
 }
 
