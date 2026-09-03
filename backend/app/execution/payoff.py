@@ -51,9 +51,9 @@ def payoff_curve(legs: tuple[PayoffLeg, ...], prices: tuple[float, ...]) -> tupl
     return tuple(payoff_at_price(legs, price) for price in prices)
 
 
-def break_even_points(legs: tuple[PayoffLeg, ...], prices: tuple[float, ...]) -> tuple[float, ...]:
+def break_even_points(legs: tuple[PayoffLeg, ...], prices: tuple[float, ...]) -> list[float]:
     if len(prices) < 2:
-        return ()
+        return []
     values = payoff_curve(legs, prices)
     points: list[float] = []
     for left, right, pnl_left, pnl_right in zip(prices, prices[1:], values, values[1:]):
@@ -64,7 +64,7 @@ def break_even_points(legs: tuple[PayoffLeg, ...], prices: tuple[float, ...]) ->
             points.append(round(left + (right - left) * ratio, 8))
         elif pnl_right == 0:
             points.append(right)
-    return tuple(dict.fromkeys(points))
+    return list(dict.fromkeys(points))
 
 
 def payoff_summary(legs: tuple[PayoffLeg, ...], prices: tuple[float, ...]) -> dict:
@@ -74,7 +74,7 @@ def payoff_summary(legs: tuple[PayoffLeg, ...], prices: tuple[float, ...]) -> di
     return {
         "max_profit": max(values),
         "max_loss": min(values),
-        "break_even_points": list(break_even_points(legs, prices)),
+        "break_even_points": break_even_points(legs, prices),
         "prices": list(prices),
         "pnl": list(values),
     }

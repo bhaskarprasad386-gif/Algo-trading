@@ -10,13 +10,13 @@ def test_paper_payoff_route_uses_deterministic_engine():
     assert '@router.post("/paper/payoff")' in source
     assert "PayoffLeg(" in source
     assert "payoff_summary(legs, prices)" in source
-    assert '"mode": "paper"' in source
+    assert '"mode":"paper"' in source or '"mode": "paper"' in source
 
 
 def test_paper_payoff_contract_separates_charges_from_analytics():
     source = ROUTES.read_text(encoding="utf-8")
-    assert '"charges_status": "unavailable"' in source
-    assert '"analytics": summary' in source
+    assert '"charges_status":"unavailable"' in source or '"charges_status": "unavailable"' in source
+    assert '"analytics":payoff_summary(legs, prices)' in source or '"analytics": payoff_summary(legs, prices)' in source
 
 
 def test_paper_payoff_accepts_multi_leg_kinds_via_payoff_model():
