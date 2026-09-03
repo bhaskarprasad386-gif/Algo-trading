@@ -11,8 +11,9 @@ def test_android_scanner_result_retention_contract():
     assert "REFRESHING SCANNER..." in body
     assert "lastScannerResult = result" in body
     assert "REFRESH FAILED" in body
-    assert "Last Attempt: $failedAt" in body
+    assert "val failedAt = currentTimestamp()" in body
     assert 'Scanner Failed: ${error.message ?: "API error"}' in body
+    assert 'Last Attempt: ${currentTimestamp()}' in body
 
     scan_block = body.split("private fun runCashFutureScanner()", 1)[1]
     assert "lastScannerResult?.let" in scan_block
