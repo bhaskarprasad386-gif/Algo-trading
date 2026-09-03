@@ -55,6 +55,29 @@ def run_schema_migrations() -> None:
                 if name not in position_columns:
                     connection.execute(text(f"ALTER TABLE positions ADD COLUMN {name} {definition}"))
 
+        # Durable state for non-blocking backtest jobs on existing databases.
+        if "backtest_jobs" not in account_tables:
+            connection.execute(text("""
+                CREATE TABLE backtest_jobs (
+                    id INTEGER PRIMARY KEY,
+                    job_id VARCHAR(64) NOT NULL UNIQUE,
+                    status VARCHAR(16) NOT NULL DEFAULT 'queued',
+                    symbol VARCHAR(128) NOT NULL,
+                    contract_month VARCHAR(64) NOT NULL,
+                    requested_days INTEGER NOT NULL,
+                    progress_pct FLOAT NOT NULL DEFAULT 0.0,
+                    symbols_processed INTEGER NOT NULL DEFAULT 0,
+                    symbols_total INTEGER NOT NULL DEFAULT 0,
+                    message TEXT,
+                    result_json TEXT,
+                    created_at DATETIME,
+                    updated_at DATETIME
+                )
+            """))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_status ON backtest_jobs (status)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_job_id ON backtest_jobs (job_id)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_symbol ON backtest_jobs (symbol)"))
+
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_mobile_number ON users (mobile_number)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_id ON orders (user_id)"))
