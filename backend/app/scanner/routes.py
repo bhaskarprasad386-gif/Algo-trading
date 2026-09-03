@@ -141,12 +141,14 @@ def start_cash_future_backtest_job(symbol: str = Query(...), contract_month: str
 @router.post("/cash-future/backtest/full/jobs")
 def start_full_fno_backtest_job(days: int = Query(365, ge=1, le=3650), min_entry_gap: float = Query(0.0),
     exit_gap: float = Query(0.0), charges_per_trade: float = Query(0.0, ge=0),
-    funding_cost_per_trade: float = Query(0.0, ge=0), max_holding_days: int = Query(30, ge=1, le=3650)):
+    funding_cost_per_trade: float = Query(0.0, ge=0), max_holding_days: int = Query(30, ge=1, le=3650),
+    future_selection: str = Query("BOTH", pattern="^(CURRENT|NEAR|BOTH)$")):
     """Start full eligible stock-F&O backtest as a background job; UI remains non-blocking."""
     job = create_full_fno_job(days=days, min_entry_gap=min_entry_gap, exit_gap=exit_gap,
                               charges_per_trade=charges_per_trade, funding_cost_per_trade=funding_cost_per_trade,
-                              max_holding_days=max_holding_days)
-    return {"status": "accepted", "universe": "FULL_FNO_STOCK", "job": job.job_id}
+                              max_holding_days=max_holding_days, future_selection=future_selection)
+    return {"status": "accepted", "universe": "FULL_FNO_STOCK", "future_selection": future_selection,
+            "job": job.job_id}
 
 
 @router.get("/cash-future/backtest/jobs/{job_id}")
