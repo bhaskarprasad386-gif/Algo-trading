@@ -26,6 +26,17 @@ def test_cash_future_scanner_has_authenticated_paper_bridge():
     assert "cash_price=request.cash_price" in source
 
 
+def test_scanner_paper_bridge_validates_executable_opportunity():
+    source = PAPER_ROUTES.read_text(encoding="utf-8")
+    assert "executable: bool = True" in source
+    assert 'if not request.executable:' in source
+    assert '"Scanner opportunity is not executable"' in source
+    assert "future_price: float | None" in source
+    assert "net_profit: float | None" in source
+    assert "request.future_price <= request.cash_price" in source
+    assert "request.net_profit <= 0" in source
+
+
 def test_android_exposes_cash_future_paper_bridge():
     source = ANDROID_API.read_text(encoding="utf-8")
     assert '@POST("/api/v1/execution/paper/from-scanner")' in source
