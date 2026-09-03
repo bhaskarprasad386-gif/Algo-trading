@@ -7,8 +7,9 @@ from app.models.session import Session
 from app.models.system_log import SystemLog
 from app.models.tick import Tick
 from app.models.user import User
+from app.models.account import TradingAccount
 
 __all__ = [
-    "User", "Session", "Instrument", "Tick", "Candle", "CashFutureHistory",
+    "User", "TradingAccount", "Session", "Instrument", "Tick", "Candle", "CashFutureHistory",
     "Order", "Position", "SystemLog",
 ]
