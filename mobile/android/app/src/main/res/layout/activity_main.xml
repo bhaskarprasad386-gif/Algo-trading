@@ -36,6 +36,7 @@
 <Button android:id="@+id/btnKillSwitch" android:layout_width="match_parent" android:layout_height="46dp" android:text="KILL SWITCH"/>
 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="CASH–FUTURE SCANNER" android:textColor="#FFFFFF" android:textSize="14sp" android:textStyle="bold"/>
 <Button android:id="@+id/btnRunScanner" android:layout_width="match_parent" android:layout_height="46dp" android:text="RUN CASH–FUTURE SCAN"/>
+<Button android:id="@+id/btnScannerPaperExecute" android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="8dp" android:text="PAPER EXECUTE • NO EXECUTABLE OPPORTUNITY" android:enabled="false"/>
 <TextView android:id="@+id/tvScannerResult" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Scanner results will appear here." android:textColor="#DCE6F5" android:textSize="12sp" android:fontFamily="monospace" android:padding="12dp"/>
 <TextView android:id="@+id/tvScannerAutoRefreshStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Auto Refresh: OFF" android:textColor="#8295AE" android:textSize="11sp"/>
 <TextView android:id="@+id/tvScannerNextRefresh" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Next Refresh: —" android:textColor="#8295AE" android:textSize="11sp"/>
