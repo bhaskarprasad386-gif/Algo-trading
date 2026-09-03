@@ -16,6 +16,8 @@ class Position(Base):
     average_price = Column(Float, default=0.0)
     last_price = Column(Float, default=0.0)
     pnl = Column(Float, default=0.0)
+    stop_loss = Column(Float, nullable=True)
+    target = Column(Float, nullable=True)
 
     product_type = Column(String, default="INTRADAY")
     is_paper = Column(Boolean, default=True)
