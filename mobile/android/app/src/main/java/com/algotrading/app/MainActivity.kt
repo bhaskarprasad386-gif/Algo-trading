@@ -32,6 +32,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnPaperEntry: Button
     private lateinit var btnPaperPosition: Button
     private lateinit var btnPaperExit: Button
+    private lateinit var etBrokerApiKey: EditText
+    private lateinit var etBrokerClientCode: EditText
+    private lateinit var etBrokerPassword: EditText
+    private lateinit var etBrokerTotpSecret: EditText
+    private lateinit var btnConnectBroker: Button
+    private lateinit var btnDisconnectBroker: Button
+    private lateinit var tvBrokerStatus: TextView
 
     private val scannerRefreshHandler = Handler(Looper.getMainLooper())
     private lateinit var scannerRefreshRunnable: Runnable
@@ -58,6 +65,14 @@ class MainActivity : AppCompatActivity() {
         btnPaperEntry = findViewById(R.id.btnPaperEntry)
         btnPaperPosition = findViewById(R.id.btnPaperPosition)
         btnPaperExit = findViewById(R.id.btnPaperExit)
+        etBrokerApiKey = findViewById(R.id.etBrokerApiKey)
+        etBrokerClientCode = findViewById(R.id.etBrokerClientCode)
+        etBrokerPassword = findViewById(R.id.etBrokerPassword)
+        etBrokerTotpSecret = findViewById(R.id.etBrokerTotpSecret)
+        btnConnectBroker = findViewById(R.id.btnConnectBroker)
+        btnDisconnectBroker = findViewById(R.id.btnDisconnectBroker)
+        tvBrokerStatus = findViewById(R.id.tvBrokerStatus)
+
         scannerRefreshRunnable = Runnable { runCashFutureScanner() }
         scannerCountdownRunnable = object : Runnable {
             override fun run() {
@@ -76,12 +91,15 @@ class MainActivity : AppCompatActivity() {
         }
         updateScannerAutoRefreshStatus()
         checkServerStatus()
+        checkBrokerStatus()
         btnRunScanner.setOnClickListener { runCashFutureScanner() }
         cbScannerAutoRefresh.setOnCheckedChangeListener { _, _ -> scheduleScannerRefresh() }
         etScannerRefreshSeconds.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) scheduleScannerRefresh() }
         btnPaperEntry.setOnClickListener { paperEntry() }
         btnPaperExit.setOnClickListener { paperExit() }
         btnPaperPosition.setOnClickListener { paperPosition() }
+        btnConnectBroker.setOnClickListener { connectAngelOne() }
+        btnDisconnectBroker.setOnClickListener { disconnectAngelOne() }
     }
 
     override fun onDestroy() {
@@ -116,6 +134,60 @@ class MainActivity : AppCompatActivity() {
             withContext(Dispatchers.Main) { tvStatus.text = "Server Status: ${response.status}" }
         } catch (_: Exception) {
             withContext(Dispatchers.Main) { tvStatus.text = "Server Error: Offline" }
+        }
+    }
+
+    private fun checkBrokerStatus() = lifecycleScope.launch(Dispatchers.IO) {
+        try {
+            val response = ApiService.retrofitService.brokerStatus("angel_one")
+            withContext(Dispatchers.Main) { tvBrokerStatus.text = if (response.connected) "Broker Status: Angel One CONNECTED • Real Trading OFF" else "Broker Status: Angel One not connected • Real Trading OFF" }
+        } catch (_: Exception) {
+            withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Unable to check • Real Trading OFF" }
+        }
+    }
+
+    private fun connectAngelOne() {
+        val apiKey = etBrokerApiKey.text.toString().trim()
+        val clientCode = etBrokerClientCode.text.toString().trim()
+        val password = etBrokerPassword.text.toString()
+        val totpSecret = etBrokerTotpSecret.text.toString().trim()
+        if (apiKey.isBlank()) { etBrokerApiKey.error = "Enter API key"; return }
+        if (clientCode.isBlank()) { etBrokerClientCode.error = "Enter client code"; return }
+        if (password.isBlank()) { etBrokerPassword.error = "Enter password"; return }
+        if (totpSecret.isBlank()) { etBrokerTotpSecret.error = "Enter TOTP secret"; return }
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) {
+                btnConnectBroker.isEnabled = false
+                btnDisconnectBroker.isEnabled = false
+                tvBrokerStatus.text = "Broker Status: Connecting to Angel One…"
+            }
+            try {
+                val response = ApiService.retrofitService.connectBroker(BrokerConnectRequest(api_key = apiKey, client_code = clientCode, password = password, totp_secret = totpSecret))
+                withContext(Dispatchers.Main) {
+                    tvBrokerStatus.text = if (response.connected) "Broker Status: Angel One CONNECTED • Real Trading OFF" else "Broker Status: Connection failed • Real Trading OFF"
+                    etBrokerApiKey.text.clear()
+                    etBrokerPassword.text.clear()
+                    etBrokerTotpSecret.text.clear()
+                }
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Connection failed • ${error.message ?: "API error"} • Real Trading OFF" }
+            } finally {
+                withContext(Dispatchers.Main) {
+                    btnConnectBroker.isEnabled = true
+                    btnDisconnectBroker.isEnabled = true
+                }
+            }
+        }
+    }
+
+    private fun disconnectAngelOne() = lifecycleScope.launch(Dispatchers.IO) {
+        withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Disconnecting…" }
+        try {
+            ApiService.retrofitService.disconnectBroker("angel_one")
+            withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Angel One disconnected • Real Trading OFF" }
+        } catch (error: Exception) {
+            withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Disconnect failed • ${error.message ?: "API error"}" }
         }
     }
 
@@ -188,9 +260,7 @@ class MainActivity : AppCompatActivity() {
             withContext(Dispatchers.Main) {
                 btnRunScanner.isEnabled = true
                 btnRunScanner.text = "RUN CASH–FUTURE SCAN"
-                if (cbScannerAutoRefresh.isChecked) {
-                    tvScannerAutoRefreshStatus.text = "Auto Refresh: ON • READY"
-                } else {
+                if (cbScannerAutoRefresh.isChecked) tvScannerAutoRefreshStatus.text = "Auto Refresh: ON • READY" else {
                     tvScannerAutoRefreshStatus.text = "Auto Refresh: OFF"
                     tvScannerNextRefresh.text = "Next Refresh: —"
                 }
@@ -220,8 +290,7 @@ class MainActivity : AppCompatActivity() {
             } catch (error: Exception) {
                 val failedAt = currentTimestamp()
                 withContext(Dispatchers.Main) { tvPaperResult.text = "ENTRY FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
-            }
-            finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
+            } finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
         }
     }
 
@@ -237,8 +306,7 @@ class MainActivity : AppCompatActivity() {
         } catch (error: Exception) {
             val failedAt = currentTimestamp()
             withContext(Dispatchers.Main) { tvPaperResult.text = "POSITION CHECK FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
-        }
-        finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
+        } finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
     }
 
     private fun paperExit() {
@@ -253,8 +321,7 @@ class MainActivity : AppCompatActivity() {
             } catch (error: Exception) {
                 val failedAt = currentTimestamp()
                 withContext(Dispatchers.Main) { tvPaperResult.text = "EXIT FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
-            }
-            finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
+            } finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
         }
     }
 }
