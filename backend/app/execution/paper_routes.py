@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import ALGORITHM
 from app.execution.dual_engine import DualExecutionEngine, ExecutionConfig, ExecutionMode, Fill
+from app.execution.fill_accounting import FillAccountingState, apply_executed_fill
 from app.execution.payoff import PayoffLeg, payoff_summary
 from app.execution.strategy_legs import StrategyLegInput, build_cash_future_strategy, build_strategy_legs
 from app.models import Order, Position, TradingAccount
@@ -167,6 +168,12 @@ def _create_order(db: Session, *, user_id: int, symbol: str, side: str, price: f
     return {"id": order.order_id, "symbol": order.symbol, "transaction_type": order.transaction_type, "price": price, "quantity": quantity, "status": order.status, "pnl": pnl}
 
 
+def _accounting_after_fill(*, side: str, price: float, quantity: float, current_quantity: float, current_average_price: float, current_realized_pnl: float = 0.0) -> tuple[FillAccountingState, float]:
+    before = FillAccountingState(quantity=current_quantity, average_price=current_average_price, realized_pnl=current_realized_pnl)
+    after = apply_executed_fill(before, type("ConfirmedFill", (), {"side": side, "price": price, "quantity": quantity})())
+    return after, round(after.realized_pnl - before.realized_pnl, 8)
+
+
 @router.post("/paper/entry")
 def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     if _position(db, user_id) is not None:
@@ -202,7 +209,8 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
         engine = DualExecutionEngine(_paper_fill, config=ExecutionConfig(stop_loss_pct=request.stop_loss_pct, target_pct=request.target_pct))
         fill = engine.enter(request.price, request.quantity)
         state = engine.paper
-        active = Position(user_id=user_id, symbol=request.symbol, quantity=int(request.quantity) if request.quantity.is_integer() else round(request.quantity), average_price=state.entry_price, stop_loss=state.stop_loss, target=state.target)
+        accounting_state, _ = _accounting_after_fill(side="BUY", price=fill.price, quantity=fill.quantity, current_quantity=0, current_average_price=0, current_realized_pnl=account.realized_pnl)
+        active = Position(user_id=user_id, symbol=request.symbol, quantity=int(request.quantity) if request.quantity.is_integer() else round(request.quantity), average_price=accounting_state.average_price, stop_loss=state.stop_loss, target=state.target)
         db.add(active)
         account.virtual_balance = round(account.virtual_balance - cost, 8)
         pnl = 0.0
@@ -213,16 +221,19 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
         if request.quantity > float(active.quantity):
             raise HTTPException(status_code=400, detail="Sell quantity exceeds active paper position")
         fill = Fill(price=request.price, quantity=request.quantity)
-        pnl = round((fill.price - float(active.average_price)) * fill.quantity, 8)
+        accounting_state, pnl = _accounting_after_fill(side="SELL", price=fill.price, quantity=fill.quantity, current_quantity=float(active.quantity), current_average_price=float(active.average_price), current_realized_pnl=account.realized_pnl)
         account.virtual_balance = round(account.virtual_balance + _buy_cost(fill.price, fill.quantity), 8)
-        account.realized_pnl = round(account.realized_pnl + pnl, 8)
-        active.quantity = int(float(active.quantity) - request.quantity)
-        if active.quantity <= 0:
+        account.realized_pnl = accounting_state.realized_pnl
+        remaining_qty = accounting_state.quantity
+        if remaining_qty <= 0:
             db.delete(active)
+            remaining = None
+        else:
+            active.quantity = int(remaining_qty) if float(remaining_qty).is_integer() else round(remaining_qty)
+            remaining = active
         order = _create_order(db, user_id=user_id, symbol=request.symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl)
     db.commit()
-    remaining = None if side == "SELL" and active.quantity <= 0 else active
-    return {"status":"success","mode":"paper","order":order,"position":_position_payload(remaining),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+    return {"status":"success","mode":"paper","order":order,"position":_position_payload(remaining if side == "SELL" else active),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
 
 
 @router.post("/paper/from-scanner")
@@ -291,7 +302,6 @@ def _analytics_response(symbol: str, user_id: int, legs: tuple[PayoffLeg, ...], 
 
 @router.post("/paper/payoff")
 def paper_payoff(request: PaperPayoffRequest, user_id: int = Depends(current_user_id)):
-    """Return deterministic multi-leg payoff analytics for an authenticated paper analysis."""
     try:
         legs = tuple(PayoffLeg(kind=leg.kind, side=leg.side, strike=leg.strike, entry_price=leg.entry_price, quantity=leg.quantity, multiplier=leg.multiplier) for leg in request.legs)
         return _analytics_response(request.symbol, user_id, legs, tuple(request.underlying_prices))
@@ -301,7 +311,6 @@ def paper_payoff(request: PaperPayoffRequest, user_id: int = Depends(current_use
 
 @router.post("/paper/payoff/from-strategy")
 def paper_payoff_from_strategy(request: StrategyPayoffRequest, user_id: int = Depends(current_user_id)):
-    """Build explicit strategy legs, then calculate the deterministic payoff."""
     try:
         inputs = tuple(StrategyLegInput(kind=leg.kind, side=leg.side, entry_price=leg.entry_price, quantity=leg.quantity, strike=leg.strike, multiplier=leg.multiplier) for leg in request.legs)
         legs = build_strategy_legs(inputs)
@@ -312,7 +321,6 @@ def paper_payoff_from_strategy(request: StrategyPayoffRequest, user_id: int = De
 
 @router.post("/paper/payoff/from-cash-future")
 def paper_payoff_from_cash_future(request: CashFuturePayoffRequest, user_id: int = Depends(current_user_id)):
-    """Build the scanner's cash/future strategy and return its payoff analytics."""
     try:
         legs = build_cash_future_strategy(cash_entry_price=request.cash_entry_price, future_entry_price=request.future_entry_price, quantity=request.quantity, multiplier=request.multiplier)
         return _analytics_response(request.symbol, user_id, legs, tuple(request.underlying_prices))
@@ -328,11 +336,11 @@ def paper_exit(request: PaperExitRequest, user_id: int = Depends(current_user_id
         return {"status":"flat","position":None,"pnl":0.0,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
     entry_price = float(position.average_price)
     quantity = float(position.quantity)
-    pnl = round((request.price - entry_price) * quantity, 8)
-    proceeds = _buy_cost(request.price, quantity)
-    account.virtual_balance = round(account.virtual_balance + proceeds, 8)
-    account.realized_pnl = round(account.realized_pnl + pnl, 8)
-    order = _create_order(db, user_id=user_id, symbol=position.symbol, side="SELL", price=request.price, quantity=quantity, pnl=pnl)
+    fill = Fill(price=request.price, quantity=quantity)
+    accounting_state, pnl = _accounting_after_fill(side="SELL", price=fill.price, quantity=fill.quantity, current_quantity=quantity, current_average_price=entry_price, current_realized_pnl=account.realized_pnl)
+    account.virtual_balance = round(account.virtual_balance + _buy_cost(fill.price, quantity), 8)
+    account.realized_pnl = accounting_state.realized_pnl
+    order = _create_order(db, user_id=user_id, symbol=position.symbol, side="SELL", price=fill.price, quantity=quantity, pnl=pnl)
     db.delete(position)
     db.commit()
     return {"status":"closed","entry_price":entry_price,"exit_price":request.price,"quantity":quantity,"pnl":pnl,"order":order,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
