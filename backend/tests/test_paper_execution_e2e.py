@@ -21,7 +21,10 @@ def _session():
 
 
 def _paper_user(db):
-    user = User(username="paper-e2e")
+    user = User(
+        email="paper-e2e@example.test",
+        hashed_password="test-hash",
+    )
     db.add(user)
     db.flush()
     account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1_000_000.0, realized_pnl=0.0)
