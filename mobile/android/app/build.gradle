@@ -16,17 +16,19 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    def backendBaseUrl = project.findProperty("backendBaseUrl") ?: "http://10.0.2.2:8000/"
+    def backendWsUrl = project.findProperty("backendWsUrl") ?: "ws://10.0.2.2:8000"
+
     buildTypes {
         debug {
-            buildConfigField 'String', 'BACKEND_BASE_URL', '"http://10.0.2.2:8000/"'
-            buildConfigField 'String', 'BACKEND_WS_URL', '"ws://10.0.2.2:8000"'
+            buildConfigField 'String', 'BACKEND_BASE_URL', "\"${backendBaseUrl}\""
+            buildConfigField 'String', 'BACKEND_WS_URL', "\"${backendWsUrl}\""
         }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            // Set these values from a release-specific build configuration before deployment.
-            buildConfigField 'String', 'BACKEND_BASE_URL', '"https://YOUR_BACKEND_HOST/"'
-            buildConfigField 'String', 'BACKEND_WS_URL', '"wss://YOUR_BACKEND_HOST"'
+            buildConfigField 'String', 'BACKEND_BASE_URL', "\"${backendBaseUrl}\""
+            buildConfigField 'String', 'BACKEND_WS_URL', "\"${backendWsUrl}\""
         }
     }
 
