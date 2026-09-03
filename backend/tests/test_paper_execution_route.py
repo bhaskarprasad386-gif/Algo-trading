@@ -25,8 +25,12 @@ def test_paper_entry_requires_authentication():
     assert response.status_code == 401
 
 
-def test_paper_entry_calculates_fill_based_levels_for_authenticated_user():
+def test_paper_entry_calculates_fill_and_updates_persistent_balance():
     client = TestClient(app)
+    before = client.get("/api/v1/auth/me", headers=_auth_headers())
+    assert before.status_code == 200
+    starting_balance = before.json()["account"]["virtual_balance"]
+
     response = client.post(
         "/api/v1/execution/paper/entry",
         headers=_auth_headers(),
@@ -40,6 +44,18 @@ def test_paper_entry_calculates_fill_based_levels_for_authenticated_user():
     assert data["entry_price"] == 100.0
     assert data["stop_loss"] == 95.0
     assert data["target"] == 110.0
+    assert data["virtual_balance"] == starting_balance - 200.0
+
+    exit_response = client.post(
+        "/api/v1/execution/paper/exit",
+        headers=_auth_headers(),
+        json={"price": 105.0},
+    )
+    assert exit_response.status_code == 200
+    exit_data = exit_response.json()
+    assert exit_data["pnl"] == 10.0
+    assert exit_data["realized_pnl"] >= 10.0
+    assert exit_data["virtual_balance"] == starting_balance + 10.0
 
 
 def test_paper_entry_rejects_non_positive_values_for_authenticated_user():
