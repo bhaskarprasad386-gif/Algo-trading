@@ -24,8 +24,7 @@ def run_schema_migrations() -> None:
             if name not in columns:
                 connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
 
-        # Add persistent paper P&L to existing trading accounts.
-        account_tables = set(inspector.get_table_names(connection=connection))
+        account_tables = set(inspect(connection).get_table_names())
         if "trading_accounts" in account_tables:
             account_columns = {
                 column["name"] for column in inspect(connection).get_columns("trading_accounts")
@@ -35,7 +34,28 @@ def run_schema_migrations() -> None:
                     text("ALTER TABLE trading_accounts ADD COLUMN realized_pnl FLOAT DEFAULT 0.0")
                 )
 
-        # These indexes are safe on SQLite/PostgreSQL and preserve the
-        # one-account-per-email/mobile invariant for newly created users.
+        # Paper execution persistence for existing databases.
+        if "orders" in account_tables:
+            order_columns = {column["name"] for column in inspect(connection).get_columns("orders")}
+            for name, definition in {
+                "user_id": "INTEGER",
+                "price": "FLOAT",
+                "pnl": "FLOAT",
+            }.items():
+                if name not in order_columns:
+                    connection.execute(text(f"ALTER TABLE orders ADD COLUMN {name} {definition}"))
+
+        if "positions" in account_tables:
+            position_columns = {column["name"] for column in inspect(connection).get_columns("positions")}
+            for name, definition in {
+                "user_id": "INTEGER",
+                "stop_loss": "FLOAT",
+                "target": "FLOAT",
+            }.items():
+                if name not in position_columns:
+                    connection.execute(text(f"ALTER TABLE positions ADD COLUMN {name} {definition}"))
+
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_mobile_number ON users (mobile_number)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_id ON orders (user_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_positions_user_id ON positions (user_id)"))

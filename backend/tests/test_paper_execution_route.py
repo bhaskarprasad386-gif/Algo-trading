@@ -25,7 +25,7 @@ def test_paper_entry_requires_authentication():
     assert response.status_code == 401
 
 
-def test_paper_entry_calculates_fill_and_updates_persistent_balance():
+def test_paper_entry_persists_position_and_order_and_updates_balance():
     client = TestClient(app)
     before = client.get("/api/v1/auth/me", headers=_auth_headers())
     assert before.status_code == 200
@@ -45,6 +45,22 @@ def test_paper_entry_calculates_fill_and_updates_persistent_balance():
     assert data["stop_loss"] == 95.0
     assert data["target"] == 110.0
     assert data["virtual_balance"] == starting_balance - 200.0
+    assert data["order"]["transaction_type"] == "BUY"
+
+    # These GETs use fresh database sessions, proving state is not held only in process memory.
+    position_response = client.get("/api/v1/execution/paper/position", headers=_auth_headers())
+    assert position_response.status_code == 200
+    position = position_response.json()["position"]
+    assert position["symbol"] == "PAPER"
+    assert position["quantity"] == 2.0
+    assert position["entry_price"] == 100.0
+
+    orders_response = client.get("/api/v1/execution/paper/orders", headers=_auth_headers())
+    assert orders_response.status_code == 200
+    orders = orders_response.json()["orders"]
+    assert orders[-1]["transaction_type"] == "BUY"
+    assert orders[-1]["price"] == 100.0
+    assert orders[-1]["quantity"] == 2.0
 
     exit_response = client.post(
         "/api/v1/execution/paper/exit",
@@ -56,6 +72,15 @@ def test_paper_entry_calculates_fill_and_updates_persistent_balance():
     assert exit_data["pnl"] == 10.0
     assert exit_data["realized_pnl"] >= 10.0
     assert exit_data["virtual_balance"] == starting_balance + 10.0
+    assert exit_data["order"]["transaction_type"] == "SELL"
+
+    flat_response = client.get("/api/v1/execution/paper/position", headers=_auth_headers())
+    assert flat_response.status_code == 200
+    assert flat_response.json() == {"status": "flat", "position": None}
+
+    orders_after_exit = client.get("/api/v1/execution/paper/orders", headers=_auth_headers())
+    assert orders_after_exit.status_code == 200
+    assert orders_after_exit.json()["orders"][-1]["transaction_type"] == "SELL"
 
 
 def test_paper_entry_rejects_non_positive_values_for_authenticated_user():

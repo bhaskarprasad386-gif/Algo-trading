@@ -90,6 +90,9 @@ class Order(Base):
     quantity: Mapped[int] = mapped_column(Integer)
     transaction_type: Mapped[str] = mapped_column(String(8))
     status: Mapped[str] = mapped_column(String(32), index=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -100,6 +103,9 @@ class Position(Base):
     symbol: Mapped[str] = mapped_column(String(128), index=True)
     quantity: Mapped[int] = mapped_column(Integer, default=0)
     average_price: Mapped[float] = mapped_column(Float, default=0.0)
+    user_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    stop_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
+    target: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class SystemLog(Base):
