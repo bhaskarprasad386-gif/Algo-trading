@@ -48,14 +48,35 @@ app.include_router(paper_execution_router)
 
 DASHBOARD_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "index.html"
 BROKER_SETTINGS_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "broker.html"
+LOGIN_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "login.html"
 
 
 @app.get("/dashboard", include_in_schema=False)
 def dashboard():
-    """Serve the web dashboard with its Cash-Future scanner connector enabled."""
+    """Serve the web dashboard with authentication and Cash-Future scanner connector."""
     html = DASHBOARD_FILE.read_text(encoding="utf-8")
     connector = r'''
 <script>
+(function protectDashboard(){
+  const token=localStorage.getItem('authToken');
+  if(!token){window.location.replace('/dashboard/login');return;}
+  const originalFetch=window.fetch.bind(window);
+  window.fetch=function(input,init){
+    const opts=init?{...init}:{}, headers=new Headers(opts.headers||{});
+    const url=typeof input==='string'?input:(input&&input.url)||'';
+    if(url.includes('/api/v1/')&&!url.includes('/api/v1/auth/')){
+      headers.set('Authorization','Bearer '+token);
+      opts.headers=headers;
+    }
+    return originalFetch(input,opts).then(r=>{
+      if(r.status===401){localStorage.removeItem('authToken');window.location.replace('/dashboard/login');}
+      return r;
+    });
+  };
+  const settingsNav=[...document.querySelectorAll('.nav div')].find(x=>x.textContent.trim().toLowerCase()==='settings');
+  if(settingsNav) settingsNav.onclick=()=>{window.location.href='/dashboard/broker';};
+})();
+
 (async function connectCashFutureScanner(){
   const api=window.location.origin;
   const log=document.getElementById('terminal-logs');
@@ -91,6 +112,13 @@ def dashboard():
 </script>
 '''
     return HTMLResponse(content=html.replace("</body>", connector + "</body>"), media_type="text/html")
+
+
+@app.get("/dashboard/login", include_in_schema=False)
+def dashboard_login():
+    """Serve the web authentication page."""
+    html = LOGIN_FILE.read_text(encoding="utf-8")
+    return HTMLResponse(content=html, media_type="text/html")
 
 
 @app.get("/dashboard/broker", include_in_schema=False)
