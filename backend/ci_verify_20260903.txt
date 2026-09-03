@@ -1,0 +1,1 @@
+CI verification trigger for latest backend/auth/paper-trading fixes. No runtime application change.
