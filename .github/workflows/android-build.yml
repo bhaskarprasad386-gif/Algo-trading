@@ -6,6 +6,17 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      backend_base_url:
+        description: 'Backend HTTP base URL (must end with /)'
+        required: false
+        default: 'http://10.0.2.2:8000/'
+        type: string
+      backend_ws_url:
+        description: 'Backend WebSocket URL'
+        required: false
+        default: 'ws://10.0.2.2:8000'
+        type: string
 
 jobs:
   build:
@@ -29,7 +40,13 @@ jobs:
           gradle-version: '8.2'
 
       - name: Compile Android debug build
-        run: gradle assembleDebug --no-daemon
+        env:
+          BACKEND_BASE_URL: ${{ github.event.inputs.backend_base_url || 'http://10.0.2.2:8000/' }}
+          BACKEND_WS_URL: ${{ github.event.inputs.backend_ws_url || 'ws://10.0.2.2:8000' }}
+        run: |
+          gradle assembleDebug --no-daemon \
+            -PbackendBaseUrl="$BACKEND_BASE_URL" \
+            -PbackendWsUrl="$BACKEND_WS_URL"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
