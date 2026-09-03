@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -12,8 +12,24 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    username: Mapped[str] = mapped_column(String(128), unique=True, index=True)
-    password_hash: Mapped[str] = mapped_column(String(256))
+    username: Mapped[str | None] = mapped_column(String(128), unique=True, index=True, nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(320), unique=True, index=True, nullable=True)
+    mobile_number: Mapped[str | None] = mapped_column(String(20), unique=True, index=True, nullable=True)
+    hashed_password: Mapped[str] = mapped_column(String(256), default="", nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class TradingAccount(Base):
+    __tablename__ = "trading_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    mode: Mapped[str] = mapped_column(String(16), default="PAPER", nullable=False)
+    virtual_balance: Mapped[float] = mapped_column(Float, default=1_000_000.0, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -50,17 +66,9 @@ class Tick(Base):
 
 class Candle(Base):
     __tablename__ = "candles"
-    __table_args__ = (
-        Index(
-            "uq_candle_identity",
-            "token",
-            "timeframe",
-            "timestamp",
-            unique=True,
-        ),
-    )
+    __table_args__ = (Index("uq_candle_identity", "token", "timeframe", "timestamp", unique=True),)
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     token: Mapped[str] = mapped_column(String(64), index=True)
     symbol: Mapped[str] = mapped_column(String(128), index=True)
     timeframe: Mapped[str] = mapped_column(String(16), index=True)
