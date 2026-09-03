@@ -12,6 +12,7 @@ from app.models import BacktestJob, BacktestJobResultChunk
 from app.scanner.cash_future_backtest import BacktestConfig, run_backtest
 from app.scanner.cash_future_history_store import read_history
 from app.scanner.full_fno_backtest import run_full_fno_backtest
+from app.scanner.result_chunk_store import get_result_chunks_after
 
 
 _EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="backtest-worker")
@@ -165,7 +166,6 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
     try:
         if _is_cancelled(job_id):
             return
-        # Remove stale chunks if a job id is ever retried/reused by an external runner.
         db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete()
         db.commit()
         _update(db, job_id, status="running", progress_pct=1.0,
@@ -189,8 +189,6 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
             return
         status = "cancelled" if result.get("status") == "cancelled" else "completed"
         total = max(result.get("symbols_total", 0), 1)
-        # Store only a compact summary in BacktestJob. Detailed per-symbol results
-        # live in BacktestJobResultChunk and can be fetched page-by-page.
         summary = {key: value for key, value in result.items() if key != "results"}
         _update(db, job_id, status=status,
                 progress_pct=result.get("symbols_processed", 0) / total * 100.0,
@@ -211,8 +209,11 @@ def get_job(db: Session, job_id: str) -> BacktestJob | None:
     return db.query(BacktestJob).filter(BacktestJob.job_id == job_id).first()
 
 
-def get_result_chunks(db: Session, job_id: str, *, offset: int = 0, limit: int = 50) -> list[BacktestJobResultChunk]:
-    """Read durable full-F&O results in bounded pages."""
+def get_result_chunks(db: Session, job_id: str, *, offset: int = 0, limit: int = 50,
+                      after_sequence: int | None = None) -> list[BacktestJobResultChunk]:
+    """Read durable full-F&O results with legacy offset or efficient keyset paging."""
+    if after_sequence is not None:
+        return get_result_chunks_after(db, job_id, after_sequence=after_sequence, limit=limit)
     offset = max(0, offset)
     limit = min(max(1, limit), 200)
     return db.query(BacktestJobResultChunk).filter(
