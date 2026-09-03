@@ -15,6 +15,7 @@ from app.scanner.cash_future_history import (
     find_historical_gap_matches,
 )
 from app.scanner.cash_future_history_store import find_expiry_close, read_history, save_history_point
+from app.scanner.backtest_jobs import cancel_job, create_job, get_job
 
 router = APIRouter(prefix="/api/v1/scanner", tags=["Scanner"])
 
@@ -221,6 +222,64 @@ def cash_future_backtest(
         "history_days": days,
         "backtest": result,
     }
+
+
+@router.post("/cash-future/backtest/jobs")
+def start_cash_future_backtest_job(
+    symbol: str = Query(...),
+    contract_month: str = Query(...),
+    days: int = Query(365, ge=1, le=3650),
+    min_entry_gap: float = Query(0.0),
+    exit_gap: float = Query(0.0),
+    charges_per_trade: float = Query(0.0, ge=0),
+    funding_cost_per_trade: float = Query(0.0, ge=0),
+    max_holding_days: int = Query(30, ge=1, le=3650),
+):
+    """Queue a backtest and return immediately; heavy replay never runs in this request."""
+    return {
+        "status": "accepted",
+        "job": create_job(
+            symbol=symbol,
+            contract_month=contract_month,
+            days=days,
+            min_entry_gap=min_entry_gap,
+            exit_gap=exit_gap,
+            charges_per_trade=charges_per_trade,
+            funding_cost_per_trade=funding_cost_per_trade,
+            max_holding_days=max_holding_days,
+        ).job_id,
+    }
+
+
+@router.get("/cash-future/backtest/jobs/{job_id}")
+def cash_future_backtest_job_status(job_id: str, db: Session = Depends(get_db)):
+    job = get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="backtest job not found")
+    return {
+        "status": "success",
+        "job": {
+            "job_id": job.job_id,
+            "status": job.status,
+            "symbol": job.symbol,
+            "contract_month": job.contract_month,
+            "requested_days": job.requested_days,
+            "progress_pct": job.progress_pct,
+            "symbols_processed": job.symbols_processed,
+            "symbols_total": job.symbols_total,
+            "message": job.message,
+            "result": job.result_json,
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+        },
+    }
+
+
+@router.delete("/cash-future/backtest/jobs/{job_id}")
+def cancel_cash_future_backtest_job(job_id: str, db: Session = Depends(get_db)):
+    if not cancel_job(db, job_id):
+        raise HTTPException(status_code=404, detail="backtest job not found or already finished")
+    return {"status": "success", "job_id": job_id, "job_status": "cancelled"}
 
 
 @router.get("/cash-future/expiry-close")
