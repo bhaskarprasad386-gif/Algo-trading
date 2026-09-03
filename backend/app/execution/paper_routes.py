@@ -145,7 +145,6 @@ def _create_order(
 
 @router.post("/paper/entry")
 def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
-    """Simulate one paper long entry and reserve its cash from the account."""
     if _position(db, user_id) is not None:
         raise HTTPException(status_code=409, detail="A paper position is already active")
     account = _account(db, user_id)
@@ -165,7 +164,6 @@ def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_
 
 @router.post("/paper/order")
 def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
-    """Create a simulated BUY/SELL order with persistent paper state."""
     side = request.transaction_type.strip().upper()
     if side not in {"BUY", "SELL"}:
         raise HTTPException(status_code=400, detail="transaction_type must be BUY or SELL")
@@ -205,7 +203,6 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
 
 @router.post("/paper/from-scanner")
 def paper_from_scanner(request: ScannerPaperEntryRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
-    """Convert a validated Cash-Future scanner opportunity into a paper BUY."""
     if not request.executable:
         raise HTTPException(status_code=409, detail="Scanner opportunity is not executable")
     if request.future_price is not None and request.future_price <= request.cash_price:
@@ -238,13 +235,49 @@ def paper_orders(user_id: int = Depends(current_user_id), db: Session = Depends(
 def paper_position(user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     position = _position(db, user_id)
     if position is None:
-        return {"status":"flat","position":None}
-    return {"status":"active","position":_position_payload(position)}
+        return {"status":"flat","position":None,"mark_to_market":None}
+
+    current_ltp = None
+    quote_error = None
+    if position.symbol and position.symbol.upper() != "PAPER":
+        try:
+            from app.market_data.client import MarketDataClient
+            from app.market_data.instruments import InstrumentMaster
+
+            symbol = position.symbol.strip().upper()
+            instrument = InstrumentMaster().get_instrument(symbol, "NSE")
+            if instrument:
+                token = str(instrument.get("token", ""))
+                if token:
+                    response = MarketDataClient().ltp(exchange="NSE", tradingsymbol=symbol, symboltoken=token)
+                    data = response.get("data") or {}
+                    current_ltp = float(data["ltp"]) if data.get("ltp") is not None else None
+        except Exception as exc:
+            quote_error = str(exc)
+
+    quantity = float(position.quantity)
+    entry_price = float(position.average_price)
+    mtm = None
+    if current_ltp is not None:
+        gross_pnl = round((current_ltp - entry_price) * quantity, 8)
+        pnl_pct = round(((current_ltp - entry_price) / entry_price) * 100, 8) if entry_price else 0.0
+        mtm = {
+            "current_ltp": current_ltp,
+            "gross_pnl": gross_pnl,
+            "pnl_pct": pnl_pct,
+            "charges": None,
+            "net_pnl": None,
+            "charges_status": "unavailable",
+        }
+
+    payload = {"status":"active","position":_position_payload(position),"mark_to_market":mtm}
+    if quote_error:
+        payload["quote_error"] = quote_error
+    return payload
 
 
 @router.post("/paper/exit")
 def paper_exit(request: PaperExitRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
-    """Close the active paper position, return proceeds, and persist realized P&L."""
     account = _account(db, user_id)
     position = _position(db, user_id)
     if position is None:
