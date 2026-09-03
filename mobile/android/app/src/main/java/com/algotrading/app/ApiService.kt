@@ -22,7 +22,17 @@ data class PaperExitResponse(val status: String, val entry_price: Double? = null
 data class PaperPositionResponse(val status: String, val position: PaperPosition? = null)
 data class PaperOrder(val id: String, val symbol: String, val transaction_type: String, val price: Double? = null, val quantity: Double = 0.0, val status: String, val pnl: Double = 0.0)
 data class PaperOrdersResponse(val mode: String, val orders: List<PaperOrder> = emptyList())
-data class ScannerPaperEntryRequest(val symbol: String, val cash_price: Double, val quantity: Double, val stop_loss_pct: Double = 0.02, val target_pct: Double = 0.04)
+data class ScannerPaperEntryRequest(
+    val symbol: String,
+    val cash_price: Double,
+    val quantity: Double,
+    val future_price: Double? = null,
+    val gap: Double? = null,
+    val net_profit: Double? = null,
+    val executable: Boolean = true,
+    val stop_loss_pct: Double = 0.02,
+    val target_pct: Double = 0.04
+)
 data class ScannerPaperEntryResponse(val status: String, val mode: String, val source: String, val scanner_entry_price: Double, val order: PaperOrder, val position: PaperPosition? = null, val virtual_balance: Double = 0.0, val realized_pnl: Double = 0.0)
 
 data class CashFutureOpportunity(val symbol: String, val cash_price: Double = 0.0, val future_price: Double = 0.0, val gap: Double = 0.0, val gap_pct: Double = 0.0, val gross_spread_profit: Double = 0.0, val margin_required: Double = 0.0, val deployed_capital: Double = 0.0, val net_profit: Double = 0.0, val roi_pct: Double = 0.0, val executable: Boolean = false)
