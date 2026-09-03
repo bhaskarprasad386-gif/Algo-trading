@@ -28,6 +28,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvScannerAutoRefreshStatus: TextView
     private lateinit var tvScannerNextRefresh: TextView
     private lateinit var btnRunScanner: Button
+    private lateinit var btnScannerPaperExecute: Button
     private lateinit var cbScannerAutoRefresh: CheckBox
     private lateinit var etScannerRefreshSeconds: EditText
     private lateinit var btnPaperEntry: Button
@@ -51,6 +52,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var scannerCountdownRunnable: Runnable
     private var scannerCountdownSeconds = 0L
     private var lastScannerResult: String? = null
+    private var lastExecutableOpportunity: CashFutureOpportunity? = null
 
     private fun currentTimestamp(): String = SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(Date())
 
@@ -66,6 +68,7 @@ class MainActivity : AppCompatActivity() {
         tvScannerAutoRefreshStatus = findViewById(R.id.tvScannerAutoRefreshStatus)
         tvScannerNextRefresh = findViewById(R.id.tvScannerNextRefresh)
         btnRunScanner = findViewById(R.id.btnRunScanner)
+        btnScannerPaperExecute = findViewById(R.id.btnScannerPaperExecute)
         cbScannerAutoRefresh = findViewById(R.id.cbScannerAutoRefresh)
         etScannerRefreshSeconds = findViewById(R.id.etScannerRefreshSeconds)
         btnPaperEntry = findViewById(R.id.btnPaperEntry)
@@ -83,6 +86,7 @@ class MainActivity : AppCompatActivity() {
         btnEnableRealTrading = findViewById(R.id.btnEnableRealTrading)
         btnDisableRealTrading = findViewById(R.id.btnDisableRealTrading)
         btnKillSwitch = findViewById(R.id.btnKillSwitch)
+        btnScannerPaperExecute.isEnabled = false
 
         scannerRefreshRunnable = Runnable { runCashFutureScanner() }
         scannerCountdownRunnable = object : Runnable {
@@ -105,6 +109,7 @@ class MainActivity : AppCompatActivity() {
         checkBrokerStatus()
         checkSafetyStatus()
         btnRunScanner.setOnClickListener { runCashFutureScanner() }
+        btnScannerPaperExecute.setOnClickListener { paperExecuteScannerOpportunity() }
         cbScannerAutoRefresh.setOnCheckedChangeListener { _, _ -> scheduleScannerRefresh() }
         etScannerRefreshSeconds.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) scheduleScannerRefresh() }
         btnPaperEntry.setOnClickListener { paperEntry() }
@@ -255,11 +260,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun renderScannerPaperState() {
+        val opportunity = lastExecutableOpportunity
+        btnScannerPaperExecute.isEnabled = opportunity != null
+        btnScannerPaperExecute.text = opportunity?.let { "PAPER EXECUTE ${it.symbol} • ₹${it.cash_price}" } ?: "PAPER EXECUTE • NO EXECUTABLE OPPORTUNITY"
+    }
+
     private fun runCashFutureScanner(): Job = lifecycleScope.launch(Dispatchers.IO) {
-        withContext(Dispatchers.Main) { scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable); scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable); tvScannerNextRefresh.text = "Next Refresh: SCAN IN PROGRESS"; btnRunScanner.isEnabled = false; btnRunScanner.text = "SCANNING..."; tvScannerResult.text = lastScannerResult?.let { "$it\n\nREFRESHING SCANNER..." } ?: "SCAN IN PROGRESS\n\nRunning Cash–Future scanner..." }
+        withContext(Dispatchers.Main) { scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable); scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable); tvScannerNextRefresh.text = "Next Refresh: SCAN IN PROGRESS"; btnRunScanner.isEnabled = false; btnRunScanner.text = "SCANNING..."; btnScannerPaperExecute.isEnabled = false; tvScannerResult.text = lastScannerResult?.let { "$it\n\nREFRESHING SCANNER..." } ?: "SCAN IN PROGRESS\n\nRunning Cash–Future scanner..." }
         try {
             val response = ApiService.retrofitService.cashFutureScan()
             val completedAt = currentTimestamp()
+            val executable = response.data.filter { it.executable && it.future_price > it.cash_price && it.net_profit > 0 }
+                .maxWithOrNull(compareBy<CashFutureOpportunity> { it.roi_pct }.thenBy { it.net_profit })
             val result = if (response.data.isEmpty()) {
                 buildString {
                     append("SCAN COMPLETE — NO OPPORTUNITIES\n"); append("Last Scan: $completedAt\n\n"); append("Symbols requested: ${response.symbols_requested.size}\n"); append("Observations: ${response.scanned_observations}\n"); append("Executable opportunities: 0\n"); append("Errors: ${response.errors.size}\n\n"); append("No executable Cash–Future opportunities found.")
@@ -272,14 +285,46 @@ class MainActivity : AppCompatActivity() {
                         append("────────────────────\n"); append("${item.symbol}\n"); append("Cash: ₹${item.cash_price}\n"); append("Future: ₹${item.future_price}\n"); append("Gap: ₹${item.gap} (${item.gap_pct}%)\n"); append("Gross Spread: ₹${item.gross_spread_profit}\n"); append("Margin: ₹${item.margin_required}\n"); append("Deployed Capital: ₹${item.deployed_capital}\n"); append("Net Profit: ₹${item.net_profit}\n"); append("ROI: ${item.roi_pct}%\n"); append("Executable: ${if (item.executable) "YES" else "NO"}\n\n")
                     }
                     if (response.errors.isNotEmpty()) { append("ERRORS (${response.errors.size})\n"); response.errors.forEach { error -> append("${error.symbol}: ${error.error}\n") } }
+                    if (executable != null) { append("\nPAPER READY: ${executable.symbol} • ₹${executable.cash_price} • ROI ${executable.roi_pct}%\nPress PAPER EXECUTE to create a paper BUY.") }
                 }
             }
-            withContext(Dispatchers.Main) { lastScannerResult = result; tvScannerResult.text = result }
+            withContext(Dispatchers.Main) { lastExecutableOpportunity = executable; lastScannerResult = result; tvScannerResult.text = result; renderScannerPaperState() }
         } catch (error: Exception) {
             val failedAt = currentTimestamp()
-            withContext(Dispatchers.Main) { tvScannerResult.text = lastScannerResult?.let { "$it\n\nREFRESH FAILED\nLast Attempt: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}" } ?: "SCAN ERROR\n\nLast Scan: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}" }
+            withContext(Dispatchers.Main) { lastExecutableOpportunity = null; renderScannerPaperState(); tvScannerResult.text = lastScannerResult?.let { "$it\n\nREFRESH FAILED\nLast Attempt: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}" } ?: "SCAN ERROR\n\nLast Scan: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}" }
         } finally {
             withContext(Dispatchers.Main) { btnRunScanner.isEnabled = true; btnRunScanner.text = "RUN CASH–FUTURE SCAN"; if (cbScannerAutoRefresh.isChecked) tvScannerAutoRefreshStatus.text = "Auto Refresh: ON • READY" else { tvScannerAutoRefreshStatus.text = "Auto Refresh: OFF"; tvScannerNextRefresh.text = "Next Refresh: —" }; scheduleScannerRefresh() }
+        }
+    }
+
+    private fun paperExecuteScannerOpportunity() {
+        val opportunity = lastExecutableOpportunity ?: run { renderScannerPaperState(); return }
+        val quantity = etQuantity.text.toString().toDoubleOrNull()
+        if (quantity == null || quantity <= 0) { etQuantity.error = "Enter a positive paper quantity"; return }
+        lifecycleScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { btnScannerPaperExecute.isEnabled = false; btnScannerPaperExecute.text = "PAPER EXECUTING..."; tvPaperResult.text = "CASH–FUTURE PAPER ENTRY IN PROGRESS...\n\n${opportunity.symbol}\nCash Entry: ₹${opportunity.cash_price}\nFuture: ₹${opportunity.future_price}\nQuantity: $quantity" }
+            try {
+                val request = ScannerPaperEntryRequest(
+                    symbol = opportunity.symbol,
+                    cash_price = opportunity.cash_price,
+                    quantity = quantity,
+                    future_price = opportunity.future_price,
+                    gap = opportunity.gap,
+                    net_profit = opportunity.net_profit,
+                    executable = opportunity.executable
+                )
+                val response = ApiService.retrofitService.paperEntryFromScanner(request)
+                val completedAt = currentTimestamp()
+                withContext(Dispatchers.Main) {
+                    tvPaperResult.text = "CASH–FUTURE PAPER ENTRY SUCCESS\n\nCompleted: $completedAt\nSource: ${response.source}\nSymbol: ${opportunity.symbol}\nCash Entry: ₹${response.scanner_entry_price}\nFuture: ₹${opportunity.future_price}\nGap: ₹${opportunity.gap}\nScanner Net Profit: ₹${opportunity.net_profit}\nQuantity: ${response.order.quantity}\nOrder: ${response.order.id}\nStatus: ${response.order.status}\nVirtual Balance: ₹${response.virtual_balance}\nRealized P&L: ₹${response.realized_pnl}"
+                    lastExecutableOpportunity = null
+                    renderScannerPaperState()
+                }
+                paperPosition()
+            } catch (error: Exception) {
+                val failedAt = currentTimestamp()
+                withContext(Dispatchers.Main) { tvPaperResult.text = "CASH–FUTURE PAPER ENTRY FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}"; renderScannerPaperState() }
+            }
         }
     }
 
