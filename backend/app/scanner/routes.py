@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -15,15 +16,22 @@ from app.scanner.cash_future_history import (
     find_historical_gap_matches,
 )
 from app.scanner.cash_future_history_store import find_expiry_close, read_history, save_history_point
-from app.scanner.backtest_jobs import cancel_job, create_full_fno_job, create_job, get_job
+from app.scanner.backtest_jobs import (
+    cancel_job,
+    create_full_fno_job,
+    create_job,
+    get_job,
+    get_result_chunks,
+    result_chunk_count,
+)
 
 router = APIRouter(prefix="/api/v1/scanner", tags=["Scanner"])
 
 
 @router.get("/cash-future/evaluate")
 def cash_future_scanner(
-    symbol: str = Query(...), contract_month: str = Query("current"), cash_ltp: float = Query(..., gt=0),
-    future_ltp: float = Query(..., gt=0), lot_size: int = Query(..., gt=0), margin_required: float = Query(..., ge=0),
+    symbol: str = Query(...), contract_month: str = Query("current"), cash_ltp: float = Query(...),
+    future_ltp: float = Query(...), lot_size: int = Query(...), margin_required: float = Query(...),
     volume: int = Query(0, ge=0), oi: int = Query(0, ge=0), charges: float = Query(0.0, ge=0),
     funding_cost: float = Query(0.0, ge=0), min_gap: float = Query(0.0), min_gap_pct: float = Query(0.0),
     min_net_profit: float = Query(0.0), min_roi_pct: float = Query(0.0),
@@ -111,7 +119,7 @@ def query_cash_future_gap(symbol: str, contract_month: str, target_gap: float, t
 def cash_future_graph(symbol: str, contract_month: str, days: int = Query(30, ge=1, le=3650), db: Session = Depends(get_db)):
     end = datetime.utcnow()
     points = read_history(db, symbol, contract_month, end - timedelta(days=days), end)
-    return {"status": "success", "contract_month": contract_month, "series": build_graph_series(points, contract_month)}
+    return {"status": "success", "scanner": "cash-future", "series": build_graph_series(points, contract_month)}
 
 
 @router.get("/cash-future/backtest")
@@ -156,11 +164,26 @@ def cash_future_backtest_job_status(job_id: str, db: Session = Depends(get_db)):
     job = get_job(db, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="backtest job not found")
+    chunk_count = result_chunk_count(db, job_id)
     return {"status": "success", "job": {"job_id": job.job_id, "status": job.status, "symbol": job.symbol,
         "contract_month": job.contract_month, "requested_days": job.requested_days, "progress_pct": job.progress_pct,
-        "symbols_processed": job.symbols_processed, "symbols_total": job.symbols_total, "message": job.message,
-        "result": job.result_json, "created_at": job.created_at.isoformat() if job.created_at else None,
+        "symbols_processed": job.symbols_processed, "symbols_total": job.symbols_total, "result_chunks": chunk_count,
+        "message": job.message, "result": json.loads(job.result_json) if job.result_json else None,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
         "updated_at": job.updated_at.isoformat() if job.updated_at else None}}
+
+
+@router.get("/cash-future/backtest/jobs/{job_id}/results")
+def cash_future_backtest_job_results(job_id: str, offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200),
+                                     db: Session = Depends(get_db)):
+    job = get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="backtest job not found")
+    chunks = get_result_chunks(db, job_id, offset=offset, limit=limit)
+    return {"status": "success", "job_id": job_id, "offset": offset, "limit": limit,
+            "total": result_chunk_count(db, job_id),
+            "data": [{"sequence": c.sequence, "symbol": c.symbol, "result": json.loads(c.result_json),
+                      "created_at": c.created_at.isoformat() if c.created_at else None} for c in chunks]}
 
 
 @router.delete("/cash-future/backtest/jobs/{job_id}")
