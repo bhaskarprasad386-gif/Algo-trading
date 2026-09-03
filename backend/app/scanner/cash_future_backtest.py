@@ -22,21 +22,13 @@ class BacktestConfig:
 
 
 def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfig) -> dict:
-    """Enter at/above minimum gap and exit on convergence, expiry, or timeout.
+    """Process an already time-ordered iterable without materializing it.
 
-    A backtest never mixes CURRENT, NEAR, or exact contract identifiers. When
-    ``contract_month`` is supplied, only that contract is processed. When it is
-    omitted, mixed contract input is rejected rather than silently combining
-    unrelated expiry series.
+    Database callers should provide rows ordered by timestamp. When
+    ``contract_month`` is supplied, only that contract is processed. When it
+    is omitted, mixed contract input is rejected as soon as a different
+    contract is encountered rather than silently combining expiry series.
     """
-    raw_points = list(points)
-    contracts = {p.contract_month for p in raw_points}
-    if config.contract_month is not None:
-        raw_points = [p for p in raw_points if p.contract_month == config.contract_month]
-    elif len(contracts) > 1:
-        raise ValueError("backtest input contains multiple contract months; run each contract separately")
-
-    ordered = sorted(raw_points, key=lambda p: p.timestamp)
     trades = []
     equity = 0.0
     peak = 0.0
@@ -44,8 +36,17 @@ def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfi
     total_capital = 0.0
     equity_curve = []
     entry = None
+    seen_contract: str | None = None
 
-    for point in ordered:
+    for point in points:
+        if config.contract_month is not None and point.contract_month != config.contract_month:
+            continue
+
+        if seen_contract is None:
+            seen_contract = point.contract_month
+        elif config.contract_month is None and point.contract_month != seen_contract:
+            raise ValueError("backtest input contains multiple contract months; run each contract separately")
+
         if entry is None:
             if point.gap >= config.min_entry_gap:
                 entry = point
