@@ -53,7 +53,7 @@ def run_full_fno_backtest(
     total = len(symbols)
     processed = 0
     chunks_written = 0
-    results: list[dict] = [] if collect_results else []
+    results: list[dict] | None = [] if collect_results else None
     total_net_profit = 0.0
     max_drawdown = 0.0
     completed_symbols = 0
@@ -73,7 +73,7 @@ def run_full_fno_backtest(
                 "chunks_written": chunks_written,
                 "total_net_profit": total_net_profit,
                 "max_drawdown": max_drawdown,
-                "results": results if collect_results else None,
+                "results": results,
             }
 
         bars = iter_persisted_symbol_replay(db, symbol, start, end)
@@ -97,6 +97,7 @@ def run_full_fno_backtest(
             result_sink(processed, symbol, item)
             chunks_written += 1
         if collect_results:
+            assert results is not None
             results.append(item)
 
         total_net_profit += float(result.get("net_profit", 0.0) or 0.0)
@@ -121,5 +122,5 @@ def run_full_fno_backtest(
         "no_entry_symbols": no_entry_symbols,
         "total_net_profit": total_net_profit,
         "max_drawdown": max_drawdown,
-        "results": results if collect_results else None,
+        "results": results,
     }
