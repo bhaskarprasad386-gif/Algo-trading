@@ -49,6 +49,10 @@ class ScannerPaperEntryRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=128)
     cash_price: float = Field(..., gt=0)
     quantity: float = Field(..., gt=0)
+    future_price: float | None = Field(default=None, gt=0)
+    gap: float | None = None
+    net_profit: float | None = None
+    executable: bool = True
     stop_loss_pct: float = Field(0.02, ge=0)
     target_pct: float = Field(0.04, ge=0)
 
@@ -201,7 +205,13 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
 
 @router.post("/paper/from-scanner")
 def paper_from_scanner(request: ScannerPaperEntryRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
-    """Convert a Cash-Future scanner opportunity into a paper BUY using its cash price."""
+    """Convert a validated Cash-Future scanner opportunity into a paper BUY."""
+    if not request.executable:
+        raise HTTPException(status_code=409, detail="Scanner opportunity is not executable")
+    if request.future_price is not None and request.future_price <= request.cash_price:
+        raise HTTPException(status_code=409, detail="Scanner future price does not exceed cash price")
+    if request.net_profit is not None and request.net_profit <= 0:
+        raise HTTPException(status_code=409, detail="Scanner opportunity has no positive net profit")
     active = _position(db, user_id)
     if active is not None:
         raise HTTPException(status_code=409, detail="A paper position is already active")
@@ -212,6 +222,9 @@ def paper_from_scanner(request: ScannerPaperEntryRequest, user_id: int = Depends
     )
     result["source"] = "cash-future-scanner"
     result["scanner_entry_price"] = request.cash_price
+    result["scanner_future_price"] = request.future_price
+    result["scanner_gap"] = request.gap
+    result["scanner_net_profit"] = request.net_profit
     return result
 
 
