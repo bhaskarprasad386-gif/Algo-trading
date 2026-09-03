@@ -20,6 +20,7 @@ from app.core.database import get_db
 from app.core.security import ALGORITHM
 from app.execution.dual_engine import DualExecutionEngine, ExecutionConfig, ExecutionMode, Fill
 from app.execution.payoff import PayoffLeg, payoff_summary
+from app.execution.strategy_legs import StrategyLegInput, build_cash_future_strategy, build_strategy_legs
 from app.models import Order, Position, TradingAccount
 
 router = APIRouter(prefix="/api/v1/execution", tags=["Execution"])
@@ -71,6 +72,30 @@ class PaperPayoffRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=128)
     underlying_prices: list[float] = Field(min_length=2, max_length=201)
     legs: list[PaperPayoffLegRequest] = Field(min_length=1, max_length=20)
+
+
+class StrategyLegRequest(BaseModel):
+    kind: str = Field(min_length=4, max_length=8)
+    side: str = Field(min_length=3, max_length=4)
+    entry_price: float = Field(..., ge=0)
+    quantity: float = Field(..., gt=0)
+    strike: float | None = Field(default=None, gt=0)
+    multiplier: float = Field(1.0, gt=0)
+
+
+class StrategyPayoffRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=128)
+    underlying_prices: list[float] = Field(min_length=2, max_length=201)
+    legs: list[StrategyLegRequest] = Field(min_length=1, max_length=20)
+
+
+class CashFuturePayoffRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=128)
+    cash_entry_price: float = Field(..., gt=0)
+    future_entry_price: float = Field(..., gt=0)
+    quantity: float = Field(..., gt=0)
+    underlying_prices: list[float] = Field(min_length=2, max_length=201)
+    multiplier: float = Field(1.0, gt=0)
 
 
 def current_user_id(token: str = Depends(oauth2_scheme)) -> int:
@@ -125,16 +150,7 @@ def _position_payload(position: Position | None) -> dict | None:
     }
 
 
-def _create_order(
-    db: Session,
-    *,
-    user_id: int,
-    symbol: str,
-    side: str,
-    price: float,
-    quantity: float,
-    pnl: float = 0.0,
-) -> dict:
+def _create_order(db: Session, *, user_id: int, symbol: str, side: str, price: float, quantity: float, pnl: float = 0.0) -> dict:
     order_id = f"PAPER-{user_id}-{uuid.uuid4().hex[:16]}"
     order = Order(
         order_id=order_id,
@@ -148,15 +164,7 @@ def _create_order(
     )
     db.add(order)
     db.flush()
-    return {
-        "id": order.order_id,
-        "symbol": order.symbol,
-        "transaction_type": order.transaction_type,
-        "price": price,
-        "quantity": quantity,
-        "status": order.status,
-        "pnl": pnl,
-    }
+    return {"id": order.order_id, "symbol": order.symbol, "transaction_type": order.transaction_type, "price": price, "quantity": quantity, "status": order.status, "pnl": pnl}
 
 
 @router.post("/paper/entry")
@@ -228,11 +236,7 @@ def paper_from_scanner(request: ScannerPaperEntryRequest, user_id: int = Depends
     active = _position(db, user_id)
     if active is not None:
         raise HTTPException(status_code=409, detail="A paper position is already active")
-    result = paper_order(
-        PaperOrderRequest(symbol=request.symbol, transaction_type="BUY", price=request.cash_price, quantity=request.quantity, stop_loss_pct=request.stop_loss_pct, target_pct=request.target_pct),
-        user_id=user_id,
-        db=db,
-    )
+    result = paper_order(PaperOrderRequest(symbol=request.symbol, transaction_type="BUY", price=request.cash_price, quantity=request.quantity, stop_loss_pct=request.stop_loss_pct, target_pct=request.target_pct), user_id=user_id, db=db)
     result["source"] = "cash-future-scanner"
     result["scanner_entry_price"] = request.cash_price
     result["scanner_future_price"] = request.future_price
@@ -252,14 +256,12 @@ def paper_position(user_id: int = Depends(current_user_id), db: Session = Depend
     position = _position(db, user_id)
     if position is None:
         return {"status":"flat","position":None,"mark_to_market":None}
-
     current_ltp = None
     quote_error = None
     if position.symbol and position.symbol.upper() != "PAPER":
         try:
             from app.market_data.client import MarketDataClient
             from app.market_data.instruments import InstrumentMaster
-
             symbol = position.symbol.strip().upper()
             instrument = InstrumentMaster().get_instrument(symbol, "NSE")
             if instrument:
@@ -270,56 +272,52 @@ def paper_position(user_id: int = Depends(current_user_id), db: Session = Depend
                     current_ltp = float(data["ltp"]) if data.get("ltp") is not None else None
         except Exception as exc:
             quote_error = str(exc)
-
     quantity = float(position.quantity)
     entry_price = float(position.average_price)
     mtm = None
     if current_ltp is not None:
         gross_pnl = round((current_ltp - entry_price) * quantity, 8)
         pnl_pct = round(((current_ltp - entry_price) / entry_price) * 100, 8) if entry_price else 0.0
-        mtm = {
-            "current_ltp": current_ltp,
-            "gross_pnl": gross_pnl,
-            "pnl_pct": pnl_pct,
-            "charges": None,
-            "net_pnl": None,
-            "charges_status": "unavailable",
-        }
-
+        mtm = {"current_ltp": current_ltp, "gross_pnl": gross_pnl, "pnl_pct": pnl_pct, "charges": None, "net_pnl": None, "charges_status": "unavailable"}
     payload = {"status":"active","position":_position_payload(position),"mark_to_market":mtm}
     if quote_error:
         payload["quote_error"] = quote_error
     return payload
 
 
+def _analytics_response(symbol: str, user_id: int, legs: tuple[PayoffLeg, ...], prices: tuple[float, ...]) -> dict:
+    return {"status":"success","mode":"paper","symbol":symbol.upper(),"user_id":user_id,"legs":[{"kind":leg.kind,"side":leg.side,"strike":leg.strike,"entry_price":leg.entry_price,"quantity":leg.quantity,"multiplier":leg.multiplier} for leg in legs],"analytics":payoff_summary(legs, prices),"charges_status":"unavailable"}
+
+
 @router.post("/paper/payoff")
 def paper_payoff(request: PaperPayoffRequest, user_id: int = Depends(current_user_id)):
     """Return deterministic multi-leg payoff analytics for an authenticated paper analysis."""
     try:
-        legs = tuple(
-            PayoffLeg(
-                kind=leg.kind,
-                side=leg.side,
-                strike=leg.strike,
-                entry_price=leg.entry_price,
-                quantity=leg.quantity,
-                multiplier=leg.multiplier,
-            )
-            for leg in request.legs
-        )
-        prices = tuple(request.underlying_prices)
-        summary = payoff_summary(legs, prices)
+        legs = tuple(PayoffLeg(kind=leg.kind, side=leg.side, strike=leg.strike, entry_price=leg.entry_price, quantity=leg.quantity, multiplier=leg.multiplier) for leg in request.legs)
+        return _analytics_response(request.symbol, user_id, legs, tuple(request.underlying_prices))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    return {
-        "status": "success",
-        "mode": "paper",
-        "symbol": request.symbol.upper(),
-        "user_id": user_id,
-        "legs": [leg.model_dump() for leg in request.legs],
-        "analytics": summary,
-        "charges_status": "unavailable",
-    }
+
+
+@router.post("/paper/payoff/from-strategy")
+def paper_payoff_from_strategy(request: StrategyPayoffRequest, user_id: int = Depends(current_user_id)):
+    """Build explicit strategy legs, then calculate the deterministic payoff."""
+    try:
+        inputs = tuple(StrategyLegInput(kind=leg.kind, side=leg.side, entry_price=leg.entry_price, quantity=leg.quantity, strike=leg.strike, multiplier=leg.multiplier) for leg in request.legs)
+        legs = build_strategy_legs(inputs)
+        return _analytics_response(request.symbol, user_id, legs, tuple(request.underlying_prices))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@router.post("/paper/payoff/from-cash-future")
+def paper_payoff_from_cash_future(request: CashFuturePayoffRequest, user_id: int = Depends(current_user_id)):
+    """Build the scanner's cash/future strategy and return its payoff analytics."""
+    try:
+        legs = build_cash_future_strategy(cash_entry_price=request.cash_entry_price, future_entry_price=request.future_entry_price, quantity=request.quantity, multiplier=request.multiplier)
+        return _analytics_response(request.symbol, user_id, legs, tuple(request.underlying_prices))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @router.post("/paper/exit")
