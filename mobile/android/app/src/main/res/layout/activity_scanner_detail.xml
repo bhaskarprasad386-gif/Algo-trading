@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#08111F"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:id="@+id/tvDetailBack"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="8dp"
+            android:text="‹  Back to Scanner"
+            android:textColor="#8FCBFF"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/tvDetailTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Scanner Opportunity"
+            android:textColor="#FFFFFF"
+            android:textSize="28sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvDetailStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="OBSERVATION ONLY"
+            android:textColor="#FFD166"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="TRADE STRUCTURE"
+            android:textColor="#8FCBFF"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical"
+            android:background="#101D2D"
+            android:padding="14dp">
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Cash Price" android:textColor="#9FB0C3" />
+            <TextView android:id="@+id/tvCashValue" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="₹0.00" android:textColor="#FFFFFF" android:textSize="21sp" android:textStyle="bold" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="Future Price" android:textColor="#9FB0C3" />
+            <TextView android:id="@+id/tvFutureValue" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="₹0.00" android:textColor="#FFFFFF" android:textSize="21sp" android:textStyle="bold" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="Spread / Gap" android:textColor="#9FB0C3" />
+            <TextView android:id="@+id/tvGapValue" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="₹0.00 (0.00%)" android:textColor="#7FE29A" android:textSize="20sp" android:textStyle="bold" />
+        </LinearLayout>
+
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="20dp" android:text="CAPITAL &amp; RETURNS" android:textColor="#8FCBFF" android:textSize="13sp" android:textStyle="bold" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="vertical" android:background="#101D2D" android:padding="14dp">
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Gross Spread Profit" android:textColor="#9FB0C3" />
+            <TextView android:id="@+id/tvGrossValue" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="₹0.00" android:textColor="#FFFFFF" android:textSize="18sp" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="Margin Required" android:textColor="#9FB0C3" />
+            <TextView android:id="@+id/tvMarginValue" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="₹0.00" android:textColor="#FFFFFF" android:textSize="18sp" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="Deployed Capital" android:textColor="#9FB0C3" />
+            <TextView android:id="@+id/tvCapitalValue" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="₹0.00" android:textColor="#FFFFFF" android:textSize="18sp" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="Net Profit" android:textColor="#9FB0C3" />
+            <TextView android:id="@+id/tvNetValue" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="₹0.00" android:textColor="#7FE29A" android:textSize="23sp" android:textStyle="bold" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="ROI" android:textColor="#9FB0C3" />
+            <TextView android:id="@+id/tvRoiValue" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="0.00%" android:textColor="#7FE29A" android:textSize="20sp" android:textStyle="bold" />
+        </LinearLayout>
+
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="20dp" android:text="ANALYSIS &amp; RISK" android:textColor="#8FCBFF" android:textSize="13sp" android:textStyle="bold" />
+        <TextView android:id="@+id/tvAnalysisNote" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:background="#101D2D" android:padding="14dp" android:textColor="#D9E4F0" android:textSize="14sp" />
+    </LinearLayout>
+</ScrollView>
