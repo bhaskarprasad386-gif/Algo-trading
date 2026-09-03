@@ -5,6 +5,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
@@ -139,7 +140,7 @@ def _run_job(job_id: str, symbol: str, contract_month: str, days: int,
 
 
 def _persist_full_fno_chunk(job_id: str, sequence: int, symbol: str, result: dict) -> None:
-    """Durably commit one validated symbol result; duplicate sequence is idempotent."""
+    """Durably commit one validated symbol result; duplicate sequence is idempotent, including write races."""
     if not job_id or sequence < 0 or not symbol:
         raise ValueError("invalid full-F&O result chunk identity")
     if not isinstance(result, dict):
@@ -151,15 +152,24 @@ def _persist_full_fno_chunk(job_id: str, sequence: int, symbol: str, result: dic
             BacktestJobResultChunk.job_id == job_id,
             BacktestJobResultChunk.sequence == sequence,
         ).first()
-        if existing is None:
-            db.add(BacktestJobResultChunk(
-                job_id=job_id,
-                sequence=sequence,
-                symbol=symbol,
-                result_json=json.dumps(result, default=str),
-                created_at=_utcnow(),
-            ))
-            db.commit()
+        if existing is not None:
+            return
+        db.add(BacktestJobResultChunk(
+            job_id=job_id,
+            sequence=sequence,
+            symbol=symbol,
+            result_json=json.dumps(result, default=str),
+            created_at=_utcnow(),
+        ))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raced = db.query(BacktestJobResultChunk).filter(
+            BacktestJobResultChunk.job_id == job_id,
+            BacktestJobResultChunk.sequence == sequence,
+        ).first()
+        if raced is None:
+            raise
     except Exception:
         db.rollback()
         raise
