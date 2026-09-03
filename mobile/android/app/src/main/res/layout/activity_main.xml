@@ -66,6 +66,16 @@
             <TextView android:id="@+id/tvBrokerStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Broker Status: Not connected" android:textColor="#DCE6F5" android:textSize="12sp" />
         </LinearLayout>
 
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:background="#2A1B1B" android:orientation="vertical" android:padding="16dp" android:layout_marginBottom="16dp">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="REAL TRADING SAFETY" android:textColor="#FFFFFF" android:textSize="16sp" android:textStyle="bold" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="Real Trading is OFF by default. Enabling safety does not activate live order routing yet." android:textColor="#F3C5C5" android:textSize="11sp" />
+            <TextView android:id="@+id/tvSafetyStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="Safety: OFF • Kill Switch: ON" android:textColor="#FFFFFF" android:textSize="13sp" android:textStyle="bold" />
+            <Button android:id="@+id/btnEnableRealTrading" android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="8dp" android:text="ENABLE REAL TRADING SAFETY" android:textStyle="bold" />
+            <Button android:id="@+id/btnDisableRealTrading" android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="6dp" android:text="DISABLE REAL TRADING" />
+            <Button android:id="@+id/btnKillSwitch" android:layout_width="match_parent" android:layout_height="50dp" android:layout_marginTop="6dp" android:text="🚨 EMERGENCY KILL SWITCH" android:textStyle="bold" />
+            <TextView android:id="@+id/tvSafetyRouting" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Live order routing: DISABLED" android:textColor="#F3C5C5" android:textSize="11sp" />
+        </LinearLayout>
+
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="PAPER TRADE" android:textColor="#FFFFFF" android:textSize="14sp" android:textStyle="bold" android:layout_marginBottom="8dp" />
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:background="#101D31" android:orientation="vertical" android:padding="16dp">
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Quick trade simulator" android:textColor="#9FB0C7" android:textSize="11sp" android:layout_marginBottom="8dp" />
