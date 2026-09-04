@@ -22,6 +22,10 @@ class FullFnoBacktestActivity : AppCompatActivity() {
     private var nextSequence: Int? = null
     private var loading = false
 
+    companion object {
+        private const val MAX_RESULT_TEXT_CHARS = 20000
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_full_fno_backtest)
@@ -75,10 +79,10 @@ class FullFnoBacktestActivity : AppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     btnCancel.isEnabled = false
                     btnStart.isEnabled = true
-                    btnLoadMore.isEnabled = job.job.status != "failed"
-                    btnPurge.isEnabled = job.job.status == "completed" || job.job.status == "failed" || job.job.status == "cancelled"
+                    btnLoadMore.isEnabled = job.job.result_chunks > 0
+                    btnPurge.isEnabled = true
                 }
-                if (job.job.status == "completed") loadNextPageInternal(id)
+                if (job.job.result_chunks > 0) loadNextPageInternal(id)
                 return
             }
             delay(1500)
@@ -87,7 +91,7 @@ class FullFnoBacktestActivity : AppCompatActivity() {
 
     private fun cancelBacktest() = lifecycleScope.launch(Dispatchers.IO) {
         val id = jobId ?: return@launch
-        if (loading.not()) return@launch
+        if (!loading) return@launch
         withContext(Dispatchers.Main) { btnCancel.isEnabled = false; tvStatus.text = "Full-F&O: CANCELLING…" }
         try {
             val response = ApiService.retrofitService.cancelFullFnoJob(id)
@@ -117,9 +121,14 @@ class FullFnoBacktestActivity : AppCompatActivity() {
             }
         }
         withContext(Dispatchers.Main) {
-            tvResults.append(text)
+            val combined = (tvResults.text.toString() + text)
+            tvResults.text = if (combined.length <= MAX_RESULT_TEXT_CHARS) {
+                combined
+            } else {
+                "[Older results trimmed from device display to keep Android memory bounded]\n\n" + combined.takeLast(MAX_RESULT_TEXT_CHARS)
+            }
             nextSequence = page.next_after_sequence
-            btnLoadMore.isEnabled = page.next_after_sequence != null && page.data.size >= page.limit
+            btnLoadMore.isEnabled = page.next_after_sequence != null && page.data.isNotEmpty()
             tvStatus.text = "Full-F&O: loaded ${page.data.size} results • total ${page.total} • next ${page.next_after_sequence ?: "END"}"
         }
     }
