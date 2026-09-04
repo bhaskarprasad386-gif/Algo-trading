@@ -68,11 +68,9 @@ class CashFutureConfig:
         if self.max_cash_bid_ask_spread_pct is not None:
             non_negative["max_cash_bid_ask_spread_pct"] = self.max_cash_bid_ask_spread_pct
         for name, value in non_negative.items():
-            try:
-                finite = math.isfinite(value)
-            except TypeError as exc:
-                raise ValueError(f"{name} must be a finite number") from exc
-            if not finite:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{name} must be a finite number")
+            if not math.isfinite(value):
                 raise ValueError(f"{name} must be a finite number")
             if value < 0:
                 raise ValueError(f"{name} cannot be negative")
