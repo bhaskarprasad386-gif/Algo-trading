@@ -94,6 +94,23 @@ def test_non_positive_executable_gap_is_never_executable():
     assert "executable_gap_non_positive" in result.rejection_reasons
 
 
+def test_non_positive_quote_sides_are_rejected():
+    cash = calculate_cash_future(
+        CashQuote(symbol="ABC", ltp=100.0, bid=0.0, ask=100.0),
+        FutureQuote("ABC-FUT", "current", 102.0, 10, 1000, bid=101.0, ask=102.0),
+        CashFutureConfig(),
+    )
+    future = calculate_cash_future(
+        CashQuote(symbol="ABC", ltp=100.0, bid=99.0, ask=100.0),
+        FutureQuote("ABC-FUT", "current", 102.0, 10, 1000, bid=0.0, ask=102.0),
+        CashFutureConfig(),
+    )
+    assert cash.executable is False
+    assert "invalid_cash_bid_ask" in cash.rejection_reasons
+    assert future.executable is False
+    assert "invalid_future_bid_ask" in future.rejection_reasons
+
+
 def test_profit_and_roi_thresholds_are_part_of_executable_decision():
     result = calculate_cash_future(
         CashQuote(symbol="ABC", ltp=100.0, bid=99.0, ask=100.0),
@@ -114,4 +131,3 @@ def test_auto_route_filter_returns_only_strictly_executable_items():
         {"symbol": "TRUTHY_NOT_TRUE", "executable": 1},
     ]
     assert _filtered(data) == [{"symbol": "GOOD", "executable": True, "net_profit": 20}]
-
