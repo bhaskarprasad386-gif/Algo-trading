@@ -83,6 +83,17 @@ def test_malformed_quote_direction_is_rejected():
     assert "invalid_future_bid_ask" in future.rejection_reasons
 
 
+def test_non_positive_executable_gap_is_never_executable():
+    result = calculate_cash_future(
+        CashQuote(symbol="ABC", ltp=100.0, bid=99.0, ask=101.0),
+        FutureQuote("ABC-FUT", "current", 102.0, 10, 1000, bid=100.5, ask=102.0),
+        CashFutureConfig(),
+    )
+    assert result.executable_gap == pytest.approx(-0.5)
+    assert result.executable is False
+    assert "executable_gap_non_positive" in result.rejection_reasons
+
+
 def test_profit_and_roi_thresholds_are_part_of_executable_decision():
     result = calculate_cash_future(
         CashQuote(symbol="ABC", ltp=100.0, bid=99.0, ask=100.0),
