@@ -67,6 +67,45 @@ def test_full_fno_streams_symbol_results_to_sink_without_accumulating(monkeypatc
     assert all("ledger" not in item for _, _, item in chunks)
 
 
+def test_full_fno_sink_forces_streaming_even_if_collection_is_requested(monkeypatch):
+    monkeypatch.setattr(full_fno_backtest, "persisted_stock_symbols", lambda db: ["AAA", "BBB"])
+    monkeypatch.setattr(full_fno_backtest, "iter_persisted_symbol_replay", lambda db, symbol, start, end: iter(()))
+    captured_configs = []
+
+    def fake_backtest(bars, config, cancelled=None):
+        captured_configs.append(config)
+        return {
+            "status": "no_entry",
+            "future_selection": config.future_selection,
+            "starting_capital": config.starting_capital,
+            "ending_capital": config.starting_capital,
+            "net_profit": 0.0,
+        }
+
+    monkeypatch.setattr(full_fno_backtest, "run_cash_future_paper_backtest", fake_backtest)
+
+    chunks = []
+    result = full_fno_backtest.run_full_fno_backtest(
+        object(),
+        days=365,
+        min_entry_gap=5.0,
+        exit_gap=0.0,
+        charges_per_trade=0.0,
+        funding_cost_per_trade=0.0,
+        max_holding_days=30,
+        future_selection="BOTH",
+        result_sink=lambda sequence, symbol, item: chunks.append((sequence, symbol, item)),
+        collect_results=True,
+    )
+
+    assert result["status"] == "completed"
+    assert result["results"] is None
+    assert result["chunks_written"] == 2
+    assert [sequence for sequence, _, _ in chunks] == [0, 1]
+    assert all(config.collect_ledger is False for config in captured_configs)
+    assert all("ledger" not in item for _, _, item in chunks)
+
+
 def test_full_fno_cancellation_stops_before_next_symbol_and_writes_no_extra_chunk(monkeypatch):
     symbols_replayed = []
     monkeypatch.setattr(full_fno_backtest, "persisted_stock_symbols", lambda db: ["AAA", "BBB"])
