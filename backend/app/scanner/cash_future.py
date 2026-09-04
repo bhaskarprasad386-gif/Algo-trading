@@ -163,6 +163,11 @@ def _ltp_inside_quote(bid: Optional[float], ask: Optional[float], ltp: float) ->
     return bid <= ltp <= ask
 
 
+def _validate_result_finite(values: tuple[Optional[float], ...]) -> None:
+    if any(value is not None and not math.isfinite(value) for value in values):
+        raise ValueError("cash-future result must be finite")
+
+
 def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutureConfig) -> CashFutureResult:
     if not config.enabled:
         raise ValueError("cash-future scanner is disabled")
@@ -202,6 +207,25 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
     cash_capital_price = cash_execution_price if cash_execution_price is not None else cash.ltp
     deployed = round(cash_capital_price * future.lot_size + future.margin_required, 2)
     roi = round((net / deployed * 100.0) if deployed > 0 else 0.0, 6)
+    _validate_result_finite(
+        (
+            gap,
+            gap_pct,
+            executable_gap,
+            executable_gap_pct,
+            cash_execution_price,
+            future_execution_price,
+            cash_spread_pct,
+            future_spread_pct,
+            gross,
+            config.charges,
+            config.funding_cost,
+            net,
+            future.margin_required,
+            deployed,
+            roi,
+        )
+    )
     reasons: list[str] = []
     if cash.symbol.strip().upper() != future.symbol.strip().upper():
         reasons.append("symbol_mismatch")
