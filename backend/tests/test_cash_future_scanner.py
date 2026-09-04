@@ -111,6 +111,19 @@ def test_non_positive_quote_sides_are_rejected():
     assert "invalid_future_bid_ask" in future.rejection_reasons
 
 
+def test_one_sided_non_positive_quotes_are_rejected():
+    cases = [
+        (CashQuote(symbol="ABC", ltp=100.0, bid=0.0, ask=None), FutureQuote("ABC-FUT", "current", 102.0, 10, 1000, bid=101.0, ask=102.0), "invalid_cash_bid_ask"),
+        (CashQuote(symbol="ABC", ltp=100.0, bid=None, ask=0.0), FutureQuote("ABC-FUT", "current", 102.0, 10, 1000, bid=101.0, ask=102.0), "invalid_cash_bid_ask"),
+        (CashQuote(symbol="ABC", ltp=100.0, bid=99.0, ask=100.0), FutureQuote("ABC-FUT", "current", 102.0, 10, 1000, bid=0.0, ask=None), "invalid_future_bid_ask"),
+        (CashQuote(symbol="ABC", ltp=100.0, bid=99.0, ask=100.0), FutureQuote("ABC-FUT", "current", 102.0, 10, 1000, bid=None, ask=0.0), "invalid_future_bid_ask"),
+    ]
+    for cash, future, reason in cases:
+        result = calculate_cash_future(cash, future, CashFutureConfig())
+        assert result.executable is False
+        assert reason in result.rejection_reasons
+
+
 def test_profit_and_roi_thresholds_are_part_of_executable_decision():
     result = calculate_cash_future(
         CashQuote(symbol="ABC", ltp=100.0, bid=99.0, ask=100.0),
