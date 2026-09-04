@@ -77,6 +77,61 @@ def test_collector_keeps_current_and_near_separate(monkeypatch):
     assert result[0]["margin_required"] == 50000.0
 
 
+def test_collect_symbol_continues_when_current_contract_fails(monkeypatch):
+    saved = []
+
+    def fake_save(db, point, expiry_date=None):
+        saved.append(point)
+        return type("Row", (), {"id": len(saved)})()
+
+    class CurrentFails(FakeMarketClient):
+        def quote(self, exchange, tradingsymbol, symboltoken):
+            if tradingsymbol == "ABC30SEP2026FUT":
+                raise RuntimeError("current quote unavailable")
+            return super().quote(exchange, tradingsymbol, symboltoken)
+
+    monkeypatch.setattr("app.scanner.cash_future_collector.save_history_point", fake_save)
+    collector = CashFutureHistoryCollector(["ABC"], CurrentFails(), FakeMaster())
+    errors = []
+    result = collector.collect_symbol("ABC", object(), errors=errors)
+
+    assert [item["contract_month"] for item in result] == ["NEAR"]
+    assert [point.contract_month for point in saved] == ["NEAR"]
+    assert errors == [{
+        "symbol": "ABC",
+        "contract_month": "CURRENT",
+        "future_symbol": "ABC30SEP2026FUT",
+        "error": "current quote unavailable",
+    }]
+
+
+def test_collect_reports_contract_error_and_keeps_successful_near_result(monkeypatch):
+    saved = []
+
+    def fake_save(db, point, expiry_date=None):
+        saved.append(point)
+        return type("Row", (), {"id": len(saved)})()
+
+    class CurrentMarginFails(FakeMarketClient):
+        def margin(self, positions):
+            if positions[0]["token"] == "201":
+                raise RuntimeError("current margin unavailable")
+            return super().margin(positions)
+
+    monkeypatch.setattr("app.scanner.cash_future_collector.save_history_point", fake_save)
+    collector = CashFutureHistoryCollector(["ABC"], CurrentMarginFails(), FakeMaster())
+    result = collector.collect(object())
+
+    assert [item["contract_month"] for item in result["collected"]] == ["NEAR"]
+    assert [point.contract_month for point in saved] == ["NEAR"]
+    assert result["errors"] == [{
+        "symbol": "ABC",
+        "contract_month": "CURRENT",
+        "future_symbol": "ABC30SEP2026FUT",
+        "error": "current margin unavailable",
+    }]
+
+
 def test_full_quote_rejects_missing_fetched_data():
     with pytest.raises(ValueError, match="has no fetched quote"):
         _full_quote({"status": True, "data": {"fetched": []}})
