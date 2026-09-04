@@ -97,3 +97,39 @@ def test_full_quote_does_not_invent_bid_ask():
     assert quote["ltp"] == 100.0
     assert quote["bid"] is None
     assert quote["ask"] is None
+
+
+def test_full_quote_preserves_non_positive_quote_sides():
+    quote = _full_quote({
+        "status": True,
+        "data": {
+            "fetched": [{
+                "ltp": 100.0,
+                "tradeVolume": 10,
+                "opnInterest": 20,
+                "depth": {
+                    "buy": [{"price": 0}],
+                    "sell": [{"price": -1.5}],
+                },
+            }]
+        },
+    })
+    assert quote["bid"] == 0.0
+    assert quote["ask"] == -1.5
+
+
+def test_full_quote_keeps_unparseable_quote_side_missing():
+    quote = _full_quote({
+        "status": True,
+        "data": {
+            "fetched": [{
+                "ltp": 100.0,
+                "depth": {
+                    "buy": [{"price": "not-a-price"}],
+                    "sell": [{"price": "101.0"}],
+                },
+            }]
+        },
+    })
+    assert quote["bid"] is None
+    assert quote["ask"] == 101.0
