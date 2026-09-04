@@ -36,6 +36,22 @@ def test_config_rejects_non_finite_optional_limits():
         with pytest.raises(ValueError, match=field): CashFutureConfig(**{field: math.inf})
 
 
+@pytest.mark.parametrize("field", ["min_volume", "min_oi", "min_days_to_expiry", "history_days", "graph_days", "max_days_to_expiry"])
+def test_config_integer_fields_must_be_strict_non_negative_integers(field):
+    for value in (1.5, True, False):
+        with pytest.raises(ValueError, match=f"{field}.*non-negative integer"):
+            CashFutureConfig(**{field: value})
+    with pytest.raises(ValueError, match=f"{field} cannot be negative"):
+        CashFutureConfig(**{field: -1})
+
+
+def test_config_integer_fields_accept_zero_and_positive_integers():
+    config = CashFutureConfig(min_volume=1, min_oi=2, min_days_to_expiry=3, max_days_to_expiry=30, history_days=365, graph_days=30)
+    assert config.min_volume == 1
+    assert config.min_oi == 2
+    assert config.min_days_to_expiry == 3
+
+
 def test_calculator_rejects_non_finite_ltp_and_margin():
     cash, future = _quotes()
     with pytest.raises(ValueError, match="cash ltp"): calculate_cash_future(CashQuote("ABC", math.nan, 99.9, 100.1), future, CashFutureConfig())
