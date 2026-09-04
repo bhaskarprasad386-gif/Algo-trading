@@ -98,9 +98,11 @@ def test_cash_future_rejects_low_broker_margin_roi():
 
 def test_cash_future_live_auto_api_returns_only_executable_rows(monkeypatch):
     class FakeCollector:
-        def __init__(self, symbols, config):
+        def __init__(self, symbols, config, max_quote_age_seconds=None, max_quote_timestamp_skew_seconds=None):
             assert symbols == ["SBIN"]
             assert config.require_two_sided_quotes is True
+            assert max_quote_age_seconds == 15.0
+            assert max_quote_timestamp_skew_seconds == 5.0
 
         def collect(self, db):
             return {
@@ -125,8 +127,10 @@ def test_cash_future_live_auto_api_returns_only_executable_rows(monkeypatch):
 
 def test_cash_future_live_auto_api_sorts_executable_rows_by_net_profit(monkeypatch):
     class FakeCollector:
-        def __init__(self, symbols, config):
+        def __init__(self, symbols, config, max_quote_age_seconds=None, max_quote_timestamp_skew_seconds=None):
             assert config.require_two_sided_quotes is True
+            assert max_quote_age_seconds == 15.0
+            assert max_quote_timestamp_skew_seconds == 5.0
 
         def collect(self, db):
             return {
@@ -149,7 +153,7 @@ def test_cash_future_live_auto_api_sorts_executable_rows_by_net_profit(monkeypat
 
 def test_cash_future_live_auto_api_forwards_execution_filters(monkeypatch):
     class FakeCollector:
-        def __init__(self, symbols, config):
+        def __init__(self, symbols, config, max_quote_age_seconds=None, max_quote_timestamp_skew_seconds=None):
             assert symbols == ["SBIN"]
             assert config.min_gap == 1.25
             assert config.min_gap_pct == 0.75
@@ -162,6 +166,8 @@ def test_cash_future_live_auto_api_forwards_execution_filters(monkeypatch):
             assert config.charges == 12.0
             assert config.funding_cost == 4.0
             assert config.require_two_sided_quotes is True
+            assert max_quote_age_seconds == 15.0
+            assert max_quote_timestamp_skew_seconds == 5.0
 
         def collect(self, db):
             return {"collected": [], "errors": []}
