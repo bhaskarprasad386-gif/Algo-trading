@@ -92,6 +92,47 @@ def test_contract_selection_ignores_wrong_underlying_expired_and_duplicate_rows(
     assert [item["symbol"] for item in selected] == ["ABC30SEP2026FUT", "ABC29OCT2026FUT"]
 
 
+def test_contract_selection_ignores_missing_token_and_invalid_lot_size():
+    master = FakeMaster()
+    master.instruments.extend([
+        {"symbol": "ABC30SEP2026BADTOKEN", "name": "ABC", "token": "", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "100"},
+        {"symbol": "ABC30SEP2026ZEROLOT", "name": "ABC", "token": "305", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "0"},
+        {"symbol": "ABC30SEP2026BADLOT", "name": "ABC", "token": "306", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "not-a-lot"},
+    ])
+    collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), master)
+
+    selected = collector._future_instruments("ABC")
+
+    assert [item["symbol"] for item in selected] == ["ABC30SEP2026FUT", "ABC29OCT2026FUT"]
+
+
+def test_contract_selection_ignores_malformed_expiry():
+    master = FakeMaster()
+    master.instruments.append({
+        "symbol": "ABCBADDATEFUT", "name": "ABC", "token": "307", "exch_seg": "NFO",
+        "instrumenttype": "FUTSTK", "expiry": "not-a-date", "lotsize": "100",
+    })
+    collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), master)
+
+    selected = collector._future_instruments("ABC")
+
+    assert [item["symbol"] for item in selected] == ["ABC30SEP2026FUT", "ABC29OCT2026FUT"]
+
+
+def test_collect_reports_clear_error_when_no_eligible_contract_exists():
+    master = FakeMaster()
+    master.instruments = []
+    collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), master)
+
+    result = collector.collect(object())
+
+    assert result["collected"] == []
+    assert result["errors"] == [{
+        "symbol": "ABC",
+        "error": "no eligible NFO FUTSTK contracts found: ABC",
+    }]
+
+
 def test_collect_symbol_continues_when_current_contract_fails(monkeypatch):
     saved = []
 
