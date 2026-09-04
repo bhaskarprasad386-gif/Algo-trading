@@ -101,12 +101,16 @@ class CashFutureHistoryCollector:
         for item in rows:
             name = str(item.get("name", "")).strip().upper()
             tradingsymbol = str(item.get("symbol", "")).strip().upper()
-            # Use the master contract name as the authoritative underlying identity.
+            token = str(item.get("token") or "").strip()
+            lot_size = int(_number(item.get("lotsize") or item.get("lotSize"), 0))
+            # The master contract name is the authoritative underlying identity.
             # Do not use startswith(symbol): ABC must not accidentally match ABCBANK.
             if name != symbol or not tradingsymbol:
                 continue
             exp = _expiry(item.get("expiry"))
             if exp is None or exp < date.today():
+                continue
+            if not token or lot_size <= 0:
                 continue
             identity = (exp, tradingsymbol)
             if identity in seen:
@@ -141,9 +145,12 @@ class CashFutureHistoryCollector:
         cash_ltp = cash_quote["ltp"]
         if cash_ltp <= 0:
             raise ValueError(f"invalid cash LTP for {cash_symbol}")
+        futures = self._future_instruments(symbol)
+        if not futures:
+            raise ValueError(f"no eligible NFO FUTSTK contracts found: {symbol}")
         observation_time = datetime.now(IST).replace(microsecond=0)
         results: list[dict] = []
-        for label, future in zip(("CURRENT", "NEAR"), self._future_instruments(symbol)):
+        for label, future in zip(("CURRENT", "NEAR"), futures):
             future_symbol = str(future.get("symbol") or "").strip()
             try:
                 market_quote = _full_quote(self.market_client.quote("NFO", future_symbol, str(future["token"])))
