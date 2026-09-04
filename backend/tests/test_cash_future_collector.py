@@ -77,6 +77,21 @@ def test_collector_keeps_current_and_near_separate(monkeypatch):
     assert result[0]["margin_required"] == 50000.0
 
 
+def test_contract_selection_ignores_wrong_underlying_expired_and_duplicate_rows(monkeypatch):
+    master = FakeMaster()
+    master.instruments.extend([
+        {"symbol": "ABCBANK30SEP2026FUT", "name": "ABCBANK", "token": "301", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "100"},
+        {"symbol": "ABC31JUL2026FUT", "name": "ABC", "token": "302", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "31JUL2026", "lotsize": "100"},
+        {"symbol": "ABC30SEP2026FUT", "name": "ABC", "token": "303", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "100"},
+        {"symbol": "ABC30SEP2026OPT", "name": "ABC", "token": "304", "exch_seg": "NFO", "instrumenttype": "OPTSTK", "expiry": "30SEP2026", "lotsize": "100"},
+    ])
+    collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), master)
+
+    selected = collector._future_instruments("ABC")
+
+    assert [item["symbol"] for item in selected] == ["ABC30SEP2026FUT", "ABC29OCT2026FUT"]
+
+
 def test_collect_symbol_continues_when_current_contract_fails(monkeypatch):
     saved = []
 
