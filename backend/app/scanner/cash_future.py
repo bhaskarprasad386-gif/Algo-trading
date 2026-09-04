@@ -146,10 +146,17 @@ def _validate_result_finite(values: tuple[Optional[float], ...]) -> None:
 
 
 def _validate_contract_consistency(contract_month: str, expiry: Optional[date]) -> None:
-    if contract_month.upper() == "CURRENT":
+    """Validate canonical contract months while retaining CURRENT/NEAR selector labels.
+
+    CURRENT and NEAR are collector-level selector labels, not month values. A
+    canonical contract month must be YYYY-MM and, when expiry is known, must
+    match the expiry's year and month.
+    """
+    normalized = contract_month.strip().upper()
+    if normalized in {"CURRENT", "NEAR"}:
         return
     try:
-        parsed = datetime.strptime(contract_month, "%Y-%m")
+        parsed = datetime.strptime(normalized, "%Y-%m")
     except ValueError as exc:
         raise ValueError("contract_month must use YYYY-MM format") from exc
     if expiry is not None and (expiry.year, expiry.month) != (parsed.year, parsed.month):
