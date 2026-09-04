@@ -17,11 +17,7 @@ ResultSink = Callable[[int, str, dict], None]
 HistoricalContract: TypeAlias = tuple[str, date]
 
 
-def historical_current_near_contracts(
-    contracts: Sequence[HistoricalContract],
-    as_of: date,
-) -> tuple[HistoricalContract | None, HistoricalContract | None]:
-    """Select the historical current and next-near contracts by expiry."""
+def historical_current_near_contracts(contracts: Sequence[HistoricalContract], as_of: date) -> tuple[HistoricalContract | None, HistoricalContract | None]:
     ordered = sorted(contracts, key=lambda contract: contract[1])
     active = [contract for contract in ordered if contract[1] >= as_of]
     if not active:
@@ -32,7 +28,6 @@ def historical_current_near_contracts(
 
 
 def persisted_stock_symbols(db: Session) -> list[str]:
-    """Discover every stock symbol with persisted historical Cash-Future data."""
     rows = db.query(CashFutureHistory.symbol).distinct().order_by(CashFutureHistory.symbol).all()
     return [symbol.upper() for (symbol,) in rows]
 
@@ -51,100 +46,71 @@ def run_full_fno_backtest(
     cancelled: CancelCallback | None = None,
     result_sink: ResultSink | None = None,
     collect_results: bool = True,
+    resume_after_sequence: int | None = None,
 ) -> dict:
-    """Run the persisted F&O stock universe through the synchronized paper engine."""
+    """Run the persisted F&O stock universe, optionally resuming after durable chunks."""
     selection = future_selection.upper()
     if selection not in {"CURRENT", "NEAR", "BOTH"}:
         raise ValueError("future_selection must be CURRENT, NEAR or BOTH")
+    if resume_after_sequence is not None and resume_after_sequence < -1:
+        raise ValueError("resume_after_sequence must be >= -1")
 
     symbols = persisted_stock_symbols(db)
     total = len(symbols)
-    processed = 0
+    resume_count = max(0, (resume_after_sequence + 1) if resume_after_sequence is not None else 0)
+    if resume_count > total:
+        raise ValueError("resume_after_sequence exceeds persisted symbol universe")
+
+    processed = resume_count
     chunks_written = 0
     results: list[dict] | None = [] if collect_results else None
     total_net_profit = 0.0
     max_drawdown = 0.0
     completed_symbols = 0
     no_entry_symbols = 0
-
     end = datetime.utcnow()
     start = end - timedelta(days=days)
 
-    for symbol in symbols:
+    for sequence, symbol in enumerate(symbols):
+        if sequence < resume_count:
+            continue
         if cancelled is not None and cancelled():
-            return {
-                "status": "cancelled",
-                "universe": "FULL_FNO_STOCK",
-                "future_selection": selection,
-                "symbols_total": total,
-                "symbols_processed": processed,
-                "chunks_written": chunks_written,
-                "total_net_profit": total_net_profit,
-                "max_drawdown": max_drawdown,
-                "results": results,
-            }
+            return {"status": "cancelled", "universe": "FULL_FNO_STOCK", "future_selection": selection,
+                    "symbols_total": total, "symbols_processed": processed, "chunks_written": chunks_written,
+                    "total_net_profit": total_net_profit, "max_drawdown": max_drawdown, "results": results}
 
         bars = iter_persisted_symbol_replay(db, symbol, start, end)
         result = run_cash_future_paper_backtest(
             bars,
-            PaperBacktestConfig(
-                starting_capital=2_000_000.0,
-                min_entry_gap=min_entry_gap,
-                exit_gap=exit_gap,
-                charges_per_leg=charges_per_trade,
-                funding_cost_per_day=funding_cost_per_trade,
-                future_selection=selection,
-                max_holding_days=max_holding_days,
-                collect_ledger=collect_results,
-            ),
+            PaperBacktestConfig(starting_capital=2_000_000.0, min_entry_gap=min_entry_gap,
+                                exit_gap=exit_gap, charges_per_leg=charges_per_trade,
+                                funding_cost_per_day=funding_cost_per_trade, future_selection=selection,
+                                max_holding_days=max_holding_days, collect_ledger=collect_results),
             cancelled=cancelled,
         )
-
-        # Cancellation can happen while the current symbol is being replayed.
-        # Never persist that partially/just-completed result after cancellation.
         if result.get("status") == "cancelled" or (cancelled is not None and cancelled()):
-            return {
-                "status": "cancelled",
-                "universe": "FULL_FNO_STOCK",
-                "future_selection": selection,
-                "symbols_total": total,
-                "symbols_processed": processed,
-                "chunks_written": chunks_written,
-                "total_net_profit": total_net_profit,
-                "max_drawdown": max_drawdown,
-                "results": results,
-            }
+            return {"status": "cancelled", "universe": "FULL_FNO_STOCK", "future_selection": selection,
+                    "symbols_total": total, "symbols_processed": processed, "chunks_written": chunks_written,
+                    "total_net_profit": total_net_profit, "max_drawdown": max_drawdown, "results": results}
 
         item = {"symbol": symbol, **result}
-
         if result_sink is not None:
-            result_sink(processed, symbol, item)
+            result_sink(sequence, symbol, item)
             chunks_written += 1
         if collect_results:
             assert results is not None
             results.append(item)
-
         total_net_profit += float(result.get("net_profit", 0.0) or 0.0)
         max_drawdown = max(max_drawdown, float(result.get("max_drawdown", 0.0) or 0.0))
         if result.get("status") == "no_entry":
             no_entry_symbols += 1
         else:
             completed_symbols += 1
-
-        processed += 1
+        processed = sequence + 1
         if progress is not None:
             progress(processed, total, f"Processed {symbol}")
 
-    return {
-        "status": "completed",
-        "universe": "FULL_FNO_STOCK",
-        "future_selection": selection,
-        "symbols_total": total,
-        "symbols_processed": processed,
-        "chunks_written": chunks_written,
-        "contracts_processed": completed_symbols,
-        "no_entry_symbols": no_entry_symbols,
-        "total_net_profit": total_net_profit,
-        "max_drawdown": max_drawdown,
-        "results": results,
-    }
+    return {"status": "completed", "universe": "FULL_FNO_STOCK", "future_selection": selection,
+            "symbols_total": total, "symbols_processed": processed, "chunks_written": chunks_written,
+            "contracts_processed": completed_symbols, "no_entry_symbols": no_entry_symbols,
+            "total_net_profit": total_net_profit, "max_drawdown": max_drawdown, "results": results}
