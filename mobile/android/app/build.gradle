@@ -19,6 +19,16 @@ android {
     def backendBaseUrl = project.findProperty("backendBaseUrl") ?: "https://algo-trading-backend-2.onrender.com/"
     def backendWsUrl = project.findProperty("backendWsUrl") ?: "wss://algo-trading-backend-2.onrender.com"
 
+    if (backendBaseUrl.startsWith("http://")) {
+        throw new GradleException("backendBaseUrl must use HTTPS")
+    }
+    if (backendWsUrl.startsWith("ws://")) {
+        throw new GradleException("backendWsUrl must use WSS")
+    }
+    if (backendBaseUrl.contains("10.0.2.2") || backendWsUrl.contains("10.0.2.2")) {
+        throw new GradleException("emulator-only backend host 10.0.2.2 is not allowed")
+    }
+
     buildTypes {
         debug {
             buildConfigField 'String', 'BACKEND_BASE_URL', "\"${backendBaseUrl}\""
