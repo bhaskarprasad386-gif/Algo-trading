@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -73,8 +73,12 @@ def _normalize_for_store(rows: list[Any], instrument: HistoricalBacktestInstrume
     output: list[dict[str, Any]] = []
     for row in normalized:
         timestamp = _naive_datetime(row.get("timestamp"))
-        values = {"open": _finite_number(row.get("open"), "open"), "high": _finite_number(row.get("high"), "high"),
-                  "low": _finite_number(row.get("low"), "low"), "close": _finite_number(row.get("close"), "close")}
+        values = {
+            "open": _finite_number(row.get("open"), "open"),
+            "high": _finite_number(row.get("high"), "high"),
+            "low": _finite_number(row.get("low"), "low"),
+            "close": _finite_number(row.get("close"), "close"),
+        }
         if values["high"] < max(values["open"], values["close"]) or values["low"] > min(values["open"], values["close"]):
             raise ValueError("invalid historical candle OHLC range")
         output.append({
@@ -89,6 +93,28 @@ def _normalize_for_store(rows: list[Any], instrument: HistoricalBacktestInstrume
             "source": "angel_one", "data_version": row.get("data_version"), "source_hash": row.get("source_hash"),
         })
     return output
+
+
+def _contiguous_minute_ranges(bars: list[dict[str, Any]]) -> list[tuple[datetime, datetime]]:
+    """Return one coverage interval per contiguous 1-minute run.
+
+    Recording one broad interval for a sparse provider response would make an
+    internal missing minute look covered forever. Coverage therefore follows
+    the actual minute continuity of the validated rows.
+    """
+    timestamps = sorted({bar["timestamp"] for bar in bars})
+    if not timestamps:
+        return []
+    ranges: list[tuple[datetime, datetime]] = []
+    run_start = run_end = timestamps[0]
+    for timestamp in timestamps[1:]:
+        if timestamp - run_end == timedelta(minutes=1):
+            run_end = timestamp
+            continue
+        ranges.append((run_start, run_end))
+        run_start = run_end = timestamp
+    ranges.append((run_start, run_end))
+    return ranges
 
 
 def sync_historical_backtest_data(db: Session, *, instrument: HistoricalBacktestInstrument, start: datetime,
@@ -115,9 +141,11 @@ def sync_historical_backtest_data(db: Session, *, instrument: HistoricalBacktest
         if not bars:
             raise ValueError("historical provider returned no valid candles in requested range")
         written = upsert_1m_bars(db, bars)
-        record_coverage(db, key=instrument.key, symbol=instrument.symbol, segment=instrument.segment,
-                        contract_month=instrument.contract_month, start=range_start, end=range_end,
-                        row_count=written, data_version="angel_one_v1", source_hash=None, validated=True)
+        for coverage_start, coverage_end in _contiguous_minute_ranges(bars):
+            record_coverage(db, key=instrument.key, symbol=instrument.symbol, segment=instrument.segment,
+                            contract_month=instrument.contract_month, start=coverage_start, end=coverage_end,
+                            row_count=sum(1 for bar in bars if coverage_start <= bar["timestamp"] <= coverage_end),
+                            data_version="angel_one_v1", source_hash=None, validated=True)
         rows_written += written
         completed += 1
     return HistoricalBacktestSyncResult(instrument.key, start, end, len(ranges), completed, rows_written)
