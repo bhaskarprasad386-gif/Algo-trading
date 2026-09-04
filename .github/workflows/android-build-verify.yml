@@ -35,6 +35,10 @@ jobs:
         with:
           gradle-version: '8.2'
 
+      - name: Run Android unit tests
+        # Includes regression coverage for production backend URL configuration.
+        run: gradle testDebugUnitTest --no-daemon -PbackendBaseUrl="$BACKEND_BASE_URL" -PbackendWsUrl="$BACKEND_WS_URL"
+
       - name: Compile Android debug build
         # Build against the live Render backend, not the emulator-only 10.0.2.2 host.
         run: gradle assembleDebug --no-daemon -PbackendBaseUrl="$BACKEND_BASE_URL" -PbackendWsUrl="$BACKEND_WS_URL"
