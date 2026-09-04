@@ -32,6 +32,10 @@ class CashFutureConfig:
     universe: str = "NIFTY_50"
 
     def __post_init__(self) -> None:
+        for name, value in (("enabled", self.enabled), ("require_two_sided_quotes", self.require_two_sided_quotes)):
+            if not isinstance(value, bool):
+                raise ValueError(f"{name} must be a boolean")
+
         integer_fields = {
             "min_volume": self.min_volume,
             "min_oi": self.min_oi,
