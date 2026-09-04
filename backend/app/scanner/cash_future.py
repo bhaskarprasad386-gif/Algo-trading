@@ -261,8 +261,6 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
     if not _ltp_inside_quote(future.bid, future.ask, future.ltp):
         reasons.append("future_ltp_outside_bid_ask")
 
-    reasons = list(dict.fromkeys(reasons))
-
     if config.max_bid_ask_spread_pct is not None:
         if future_spread_pct is not None and future_spread_pct > config.max_bid_ask_spread_pct:
             reasons.append("bid_ask_spread_above_maximum")
@@ -279,6 +277,8 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
             reasons.append("days_to_expiry_below_minimum")
         if config.max_days_to_expiry is not None and days > config.max_days_to_expiry:
             reasons.append("days_to_expiry_above_maximum")
+
+    reasons = list(dict.fromkeys(reasons))
 
     return CashFutureResult(
         symbol=cash.symbol.upper(),
