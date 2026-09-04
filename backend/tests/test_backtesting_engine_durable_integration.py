@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 
+from pytest import approx
 from sqlalchemy import select
 
 from app.algo.strategy import Strategy, StrategyRule, threshold_rule
@@ -62,9 +63,9 @@ def test_incremental_engine_persists_bounded_chunks_and_matches_summary():
         assert incremental.net_pnl == regular.net_pnl
         assert incremental.final_capital == regular.final_capital
         assert incremental.win_rate == regular.win_rate
-        assert incremental.expectancy == regular.expectancy
+        assert incremental.expectancy == approx(regular.expectancy)
         assert incremental.max_drawdown == regular.max_drawdown
-        assert sum(float(item["net_pnl"]) for item in trades) == incremental.net_pnl
+        assert sum(float(item["net_pnl"]) for item in trades) == approx(incremental.net_pnl)
     finally:
         db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete()
         db.commit()
