@@ -153,6 +153,32 @@ def test_calculator_rejects_reversed_bid_ask(kind):
     )
 
 
+@pytest.mark.parametrize("kind", ["cash", "future"])
+def test_calculator_rejects_ltp_outside_complete_quote(kind):
+    cash, future = _quotes()
+    if kind == "cash":
+        cash = CashQuote(symbol="ABC", ltp=100.2, bid=99.9, ask=100.1)
+    else:
+        future = FutureQuote(**{**future.__dict__, "ltp": 104.5, "bid": 103.8, "ask": 104.2})
+
+    result = calculate_cash_future(cash, future, CashFutureConfig())
+
+    assert result.executable is False
+    assert f"{kind}_ltp_outside_bid_ask" in result.rejection_reasons
+
+
+def test_rejection_reasons_are_unique_after_all_hardening_checks():
+    cash, future = _quotes()
+    cash = CashQuote(symbol="ABC", ltp=100.0, bid=99.9, ask=100.1)
+    result = calculate_cash_future(
+        cash,
+        future,
+        CashFutureConfig(max_bid_ask_spread_pct=0.01, max_cash_bid_ask_spread_pct=0.01),
+    )
+
+    assert len(result.rejection_reasons) == len(set(result.rejection_reasons))
+
+
 def test_calculator_keeps_valid_two_sided_quotes_executable():
     cash, future = _quotes()
     result = calculate_cash_future(cash, future, CashFutureConfig())
