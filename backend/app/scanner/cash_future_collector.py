@@ -125,7 +125,8 @@ class CashFutureHistoryCollector:
                  instrument_master: InstrumentMaster | None = None,
                  config: CashFutureConfig | None = None,
                  symbol_timeout_seconds: float | None = 15.0,
-                 max_quote_age_seconds: float | None = 15.0):
+                 max_quote_age_seconds: float | None = 15.0,
+                 max_quote_timestamp_skew_seconds: float | None = 5.0):
         self.symbols = [s.strip().upper() for s in symbols if s.strip()]
         self.market_client = market_client or MarketDataClient()
         self.instrument_master = instrument_master or InstrumentMaster()
@@ -134,8 +135,11 @@ class CashFutureHistoryCollector:
             raise ValueError("symbol_timeout_seconds must be positive or None")
         if max_quote_age_seconds is not None and max_quote_age_seconds <= 0:
             raise ValueError("max_quote_age_seconds must be positive or None")
+        if max_quote_timestamp_skew_seconds is not None and max_quote_timestamp_skew_seconds <= 0:
+            raise ValueError("max_quote_timestamp_skew_seconds must be positive or None")
         self.symbol_timeout_seconds = symbol_timeout_seconds
         self.max_quote_age_seconds = max_quote_age_seconds
+        self.max_quote_timestamp_skew_seconds = max_quote_timestamp_skew_seconds
 
     def _future_instruments(self, symbol: str) -> list[dict]:
         master = self.instrument_master
@@ -192,6 +196,16 @@ class CashFutureHistoryCollector:
                 f"max {self.max_quote_age_seconds:g}s"
             )
 
+    def _validate_quote_timestamp_skew(self, cash_timestamp: datetime | None, future_timestamp: datetime | None, future_symbol: str) -> None:
+        if self.max_quote_timestamp_skew_seconds is None or cash_timestamp is None or future_timestamp is None:
+            return
+        skew = abs((future_timestamp - cash_timestamp).total_seconds())
+        if skew > self.max_quote_timestamp_skew_seconds:
+            raise ValueError(
+                f"cash-future quote timestamp skew for {future_symbol}: {skew:.1f}s exceeds "
+                f"max {self.max_quote_timestamp_skew_seconds:g}s"
+            )
+
     def collect_symbol(self, symbol: str, db, errors: list[dict] | None = None) -> list[dict]:
         """Collect all available contracts for one symbol without cross-contract failure leakage."""
         symbol = symbol.strip().upper()
@@ -226,6 +240,7 @@ class CashFutureHistoryCollector:
             try:
                 market_quote = _full_quote(self.market_client.quote("NFO", future_symbol, str(future["token"])))
                 self._validate_quote_freshness(label, future_symbol, market_quote["quote_timestamp"])
+                self._validate_quote_timestamp_skew(cash_quote["quote_timestamp"], market_quote["quote_timestamp"], future_symbol)
                 future_ltp = market_quote["ltp"]
                 if future_ltp <= 0:
                     raise ValueError(f"invalid future LTP for {future_symbol}")
@@ -251,6 +266,7 @@ class CashFutureHistoryCollector:
                 item = result.__dict__.copy()
                 item["contract_month"] = label
                 item["timestamp"] = observation_time.isoformat()
+                item["cash_quote_timestamp"] = cash_quote["quote_timestamp"].isoformat() if cash_quote["quote_timestamp"] else None
                 item["quote_timestamp"] = market_quote["quote_timestamp"].isoformat() if market_quote["quote_timestamp"] else None
                 save_history_point(db, CashFutureHistoryPoint(
                     symbol=symbol,
