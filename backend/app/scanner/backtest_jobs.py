@@ -157,7 +157,7 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
                                        max_holding_days=max_holding_days, future_selection=future_selection,
                                        progress=progress, cancelled=lambda: _is_cancelled(job_id),
                                        result_sink=lambda sequence, symbol, item: _persist_full_fno_chunk(job_id, sequence, symbol, item),
-                                       collect_results=False, resume_after_sequence=resume_after)
+                                       collect_results=False, resume_after_sequence=resume_after, durable_job_id=job_id)
         if _is_cancelled(job_id) and result.get("status") != "cancelled": return
         status = "cancelled" if result.get("status") == "cancelled" else "completed"
         total = max(result.get("symbols_total", 0), 1)
