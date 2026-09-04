@@ -35,6 +35,16 @@ def _number(value: Any, default: float | int = 0):
         return default
 
 
+def _quote_side(value: Any) -> float | None:
+    """Preserve malformed numeric quote sides so downstream validation can reject them."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _full_quote(response: dict) -> dict[str, Any]:
     data = response.get("data") if isinstance(response, dict) else None
     if not isinstance(data, dict):
@@ -48,14 +58,14 @@ def _full_quote(response: dict) -> dict[str, Any]:
     depth = item.get("depth") if isinstance(item.get("depth"), dict) else {}
     buys = depth.get("buy") if isinstance(depth.get("buy"), list) else []
     sells = depth.get("sell") if isinstance(depth.get("sell"), list) else []
-    bid = _number(buys[0].get("price")) if buys and isinstance(buys[0], dict) else None
-    ask = _number(sells[0].get("price")) if sells and isinstance(sells[0], dict) else None
+    bid = _quote_side(buys[0].get("price")) if buys and isinstance(buys[0], dict) else None
+    ask = _quote_side(sells[0].get("price")) if sells and isinstance(sells[0], dict) else None
     return {
         "ltp": _number(item.get("ltp")),
         "volume": int(_number(item.get("tradeVolume"))),
         "oi": int(_number(item.get("opnInterest"))),
-        "bid": bid if bid and bid > 0 else None,
-        "ask": ask if ask and ask > 0 else None,
+        "bid": bid,
+        "ask": ask,
     }
 
 
