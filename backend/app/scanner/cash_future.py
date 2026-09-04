@@ -164,6 +164,20 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
         elif future.ask < future.bid:
             reasons.append("invalid_future_bid_ask")
 
+    # A supplied quote side must itself be positive. Do not silently treat a
+    # malformed one-sided quote as merely unavailable market data.
+    if cash.bid is not None and cash.bid <= 0:
+        reasons.append("invalid_cash_bid_ask")
+    if cash.ask is not None and cash.ask <= 0:
+        reasons.append("invalid_cash_bid_ask")
+    if future.bid is not None and future.bid <= 0:
+        reasons.append("invalid_future_bid_ask")
+    if future.ask is not None and future.ask <= 0:
+        reasons.append("invalid_future_bid_ask")
+
+    # Keep rejection reasons deterministic and duplicate-free.
+    reasons = list(dict.fromkeys(reasons))
+
     if config.max_bid_ask_spread_pct is not None:
         if future_spread_pct is not None and future_spread_pct > config.max_bid_ask_spread_pct:
             reasons.append("bid_ask_spread_above_maximum")
