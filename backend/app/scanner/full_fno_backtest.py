@@ -83,7 +83,15 @@ def run_full_fno_backtest(
     resume_after_sequence: int | None = None,
     durable_job_id: str | None = None,
 ) -> dict:
-    """Run the persisted F&O stock universe, optionally resuming after durable chunks."""
+    """Run the persisted F&O stock universe, optionally resuming after durable chunks.
+
+    A result sink is the durable/background execution path. In that mode the runner
+    must remain streaming even if a caller accidentally requests result collection;
+    otherwise a full-universe run could retain every symbol result in RAM.
+    """
+    if result_sink is not None:
+        collect_results = False
+
     selection = future_selection.upper()
     if selection not in {"CURRENT", "NEAR", "BOTH"}:
         raise ValueError("future_selection must be CURRENT, NEAR or BOTH")
