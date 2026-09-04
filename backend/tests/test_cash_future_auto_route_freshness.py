@@ -1,4 +1,4 @@
-import pytest
+import inspect
 
 from app.scanner import auto_routes
 
@@ -39,10 +39,7 @@ def test_cash_future_auto_route_passes_quote_freshness_controls(monkeypatch):
     assert result["filters"]["max_quote_timestamp_skew_seconds"] == 4.5
 
 
-def test_cash_future_auto_route_rejects_non_positive_freshness_controls():
-    with pytest.raises(ValueError, match="gt=0"):
-        auto_routes.cash_future_live_auto_scanner(
-            limit=1,
-            max_quote_age_seconds=0,
-            db=object(),
-        )
+def test_cash_future_auto_route_freshness_query_constraints_are_positive():
+    parameters = inspect.signature(auto_routes.cash_future_live_auto_scanner).parameters
+    assert parameters["max_quote_age_seconds"].default.gt == 0
+    assert parameters["max_quote_timestamp_skew_seconds"].default.gt == 0
