@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 import time
@@ -46,6 +46,38 @@ def _quote_side(value: Any) -> float | None:
         return None
 
 
+def _quote_timestamp(value: Any) -> datetime | None:
+    """Parse common Angel One quote timestamps without inventing a timestamp."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+        if number > 10_000_000_000:
+            number /= 1000.0
+        try:
+            return datetime.fromtimestamp(number, tz=timezone.utc).astimezone(IST)
+        except (OverflowError, OSError, ValueError):
+            return None
+    text = str(value).strip()
+    if text.isdigit():
+        return _quote_timestamp(float(text))
+    normalized = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%d-%b-%Y %H:%M:%S", "%d-%b-%Y %H:%M:%S.%f"):
+            try:
+                parsed = datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                parsed = None
+        if parsed is None:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=IST)
+    return parsed.astimezone(IST)
+
+
 def _full_quote(response: dict) -> dict[str, Any]:
     data = response.get("data") if isinstance(response, dict) else None
     if not isinstance(data, dict):
@@ -61,12 +93,18 @@ def _full_quote(response: dict) -> dict[str, Any]:
     sells = depth.get("sell") if isinstance(depth.get("sell"), list) else []
     bid = _quote_side(buys[0].get("price")) if buys and isinstance(buys[0], dict) else None
     ask = _quote_side(sells[0].get("price")) if sells and isinstance(sells[0], dict) else None
+    timestamp = None
+    for key in ("exchangeTimestamp", "exchange_timestamp", "lastTradedTimestamp", "last_traded_timestamp", "timestamp", "quoteTime", "quote_time"):
+        timestamp = _quote_timestamp(item.get(key))
+        if timestamp is not None:
+            break
     return {
         "ltp": _number(item.get("ltp")),
         "volume": int(_number(item.get("tradeVolume"))),
         "oi": int(_number(item.get("opnInterest"))),
         "bid": bid,
         "ask": ask,
+        "quote_timestamp": timestamp,
     }
 
 
@@ -86,14 +124,18 @@ class CashFutureHistoryCollector:
     def __init__(self, symbols: Iterable[str], market_client: MarketDataClient | None = None,
                  instrument_master: InstrumentMaster | None = None,
                  config: CashFutureConfig | None = None,
-                 symbol_timeout_seconds: float | None = 15.0):
+                 symbol_timeout_seconds: float | None = 15.0,
+                 max_quote_age_seconds: float | None = 15.0):
         self.symbols = [s.strip().upper() for s in symbols if s.strip()]
         self.market_client = market_client or MarketDataClient()
         self.instrument_master = instrument_master or InstrumentMaster()
         self.config = config or CashFutureConfig()
         if symbol_timeout_seconds is not None and symbol_timeout_seconds <= 0:
             raise ValueError("symbol_timeout_seconds must be positive or None")
+        if max_quote_age_seconds is not None and max_quote_age_seconds <= 0:
+            raise ValueError("max_quote_age_seconds must be positive or None")
         self.symbol_timeout_seconds = symbol_timeout_seconds
+        self.max_quote_age_seconds = max_quote_age_seconds
 
     def _future_instruments(self, symbol: str) -> list[dict]:
         master = self.instrument_master
@@ -137,6 +179,19 @@ class CashFutureHistoryCollector:
         }])
         return _margin_required(response)
 
+    def _validate_quote_freshness(self, label: str, future_symbol: str, quote_timestamp: datetime | None) -> None:
+        if self.max_quote_age_seconds is None or quote_timestamp is None:
+            return
+        now = datetime.now(IST)
+        age = (now - quote_timestamp).total_seconds()
+        if age < 0:
+            return
+        if age > self.max_quote_age_seconds:
+            raise ValueError(
+                f"stale {label} quote for {future_symbol}: age {age:.1f}s exceeds "
+                f"max {self.max_quote_age_seconds:g}s"
+            )
+
     def collect_symbol(self, symbol: str, db, errors: list[dict] | None = None) -> list[dict]:
         """Collect all available contracts for one symbol without cross-contract failure leakage."""
         symbol = symbol.strip().upper()
@@ -169,6 +224,7 @@ class CashFutureHistoryCollector:
             future_symbol = str(future.get("symbol") or "").strip()
             try:
                 market_quote = _full_quote(self.market_client.quote("NFO", future_symbol, str(future["token"])))
+                self._validate_quote_freshness(label, future_symbol, market_quote["quote_timestamp"])
                 future_ltp = market_quote["ltp"]
                 if future_ltp <= 0:
                     raise ValueError(f"invalid future LTP for {future_symbol}")
@@ -208,6 +264,7 @@ class CashFutureHistoryCollector:
                     "rejection_reasons": list(quote.rejection_reasons), "volume": market_quote["volume"],
                     "oi": market_quote["oi"], "cash_bid": cash_quote["bid"], "cash_ask": cash_quote["ask"],
                     "future_bid": market_quote["bid"], "future_ask": market_quote["ask"],
+                    "quote_timestamp": market_quote["quote_timestamp"].isoformat() if market_quote["quote_timestamp"] else None,
                     "timestamp": observation_time.isoformat(),
                 })
             except Exception as exc:
