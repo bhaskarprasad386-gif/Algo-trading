@@ -11,8 +11,11 @@ from app.models.account import TradingAccount
 from app.models.backtest_job import BacktestJob
 from app.models.backtest_job_result_chunk import BacktestJobResultChunk
 from app.models.password_reset_token import PasswordResetToken
+from app.models.historical_market_bar import HistoricalMarketBar
+from app.models.backtest_data_coverage import BacktestDataCoverage
 
 __all__ = [
     "User", "TradingAccount", "Session", "Instrument", "Tick", "Candle", "CashFutureHistory",
     "Order", "Position", "SystemLog", "BacktestJob", "BacktestJobResultChunk", "PasswordResetToken",
+    "HistoricalMarketBar", "BacktestDataCoverage",
 ]
