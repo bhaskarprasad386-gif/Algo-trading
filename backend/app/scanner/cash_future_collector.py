@@ -121,7 +121,8 @@ class CashFutureHistoryCollector:
         }])
         return _margin_required(response)
 
-    def collect_symbol(self, symbol: str, db) -> list[dict]:
+    def collect_symbol(self, symbol: str, db, errors: list[dict] | None = None) -> list[dict]:
+        """Collect all available contracts for one symbol without cross-contract failure leakage."""
         symbol = symbol.strip().upper()
         cash_symbol = f"{symbol}-EQ"
         cash = self.instrument_master.get_instrument(cash_symbol, "NSE")
@@ -134,49 +135,59 @@ class CashFutureHistoryCollector:
         observation_time = datetime.now(IST).replace(microsecond=0)
         results: list[dict] = []
         for label, future in zip(("CURRENT", "NEAR"), self._future_instruments(symbol)):
-            future_symbol = str(future.get("symbol"))
-            market_quote = _full_quote(self.market_client.quote("NFO", future_symbol, str(future["token"])))
-            future_ltp = market_quote["ltp"]
-            if future_ltp <= 0:
-                raise ValueError(f"invalid future LTP for {future_symbol}")
-            expiry_date = _expiry(future.get("expiry"))
-            lot_size = int(float(future.get("lotsize") or future.get("lotSize") or 0))
-            if lot_size <= 0:
-                raise ValueError(f"invalid lot size for {future_symbol}")
-            margin_required = self._future_margin(future, future_ltp, lot_size)
-            quote = calculate_cash_future(
-                CashQuote(symbol=symbol, ltp=cash_ltp, bid=cash_quote["bid"], ask=cash_quote["ask"]),
-                FutureQuote(symbol=symbol, contract_month=label, ltp=future_ltp, lot_size=lot_size,
-                            margin_required=margin_required, volume=market_quote["volume"], oi=market_quote["oi"],
-                            bid=market_quote["bid"], ask=market_quote["ask"], expiry=expiry_date),
-                self.config,
-            )
-            point = CashFutureHistoryPoint(
-                timestamp=observation_time, symbol=symbol, contract_month=label,
-                cash_price=cash_ltp, future_price=future_ltp, gap=quote.gap, gap_pct=quote.gap_pct,
-                lot_size=lot_size, margin_required=margin_required, volume=market_quote["volume"], oi=market_quote["oi"],
-                cash_bid=cash_quote["bid"], cash_ask=cash_quote["ask"], future_bid=market_quote["bid"],
-                future_ask=market_quote["ask"], charges=quote.charges, funding_cost=quote.funding_cost,
-                net_profit=quote.net_profit, roi_pct=quote.roi_pct, expiry_date=expiry_date,
-            )
-            row = save_history_point(db, point, expiry_date=expiry_date)
-            results.append({
-                "id": row.id, "symbol": symbol, "contract_month": label, "future_symbol": future_symbol,
-                "expiry_date": expiry_date.isoformat() if expiry_date else None,
-                "cash_price": cash_ltp, "future_price": future_ltp, "gap": quote.gap, "gap_pct": quote.gap_pct,
-                "executable_gap": quote.executable_gap, "executable_gap_pct": quote.executable_gap_pct,
-                "cash_execution_price": quote.cash_execution_price, "future_execution_price": quote.future_execution_price,
-                "cash_bid_ask_spread_pct": quote.cash_bid_ask_spread_pct,
-                "future_bid_ask_spread_pct": quote.future_bid_ask_spread_pct,
-                "gross_spread_profit": quote.gross_spread_profit, "net_profit": quote.net_profit,
-                "charges": quote.charges, "funding_cost": quote.funding_cost,
-                "margin_required": margin_required, "deployed_capital": quote.deployed_capital,
-                "roi_pct": quote.roi_pct, "executable": quote.executable,
-                "rejection_reasons": list(quote.rejection_reasons), "volume": market_quote["volume"],
-                "oi": market_quote["oi"], "cash_bid": cash_quote["bid"], "cash_ask": cash_quote["ask"],
-                "future_bid": market_quote["bid"], "future_ask": market_quote["ask"],
-                "timestamp": observation_time.isoformat(),
-            })
+            future_symbol = str(future.get("symbol") or "").strip()
+            try:
+                market_quote = _full_quote(self.market_client.quote("NFO", future_symbol, str(future["token"])))
+                future_ltp = market_quote["ltp"]
+                if future_ltp <= 0:
+                    raise ValueError(f"invalid future LTP for {future_symbol}")
+                expiry_date = _expiry(future.get("expiry"))
+                lot_size = int(float(future.get("lotsize") or future.get("lotSize") or 0))
+                if lot_size <= 0:
+                    raise ValueError(f"invalid lot size for {future_symbol}")
+                margin_required = self._future_margin(future, future_ltp, lot_size)
+                quote = calculate_cash_future(
+                    CashQuote(symbol=symbol, ltp=cash_ltp, bid=cash_quote["bid"], ask=cash_quote["ask"]),
+                    FutureQuote(symbol=symbol, contract_month=label, ltp=future_ltp, lot_size=lot_size,
+                                margin_required=margin_required, volume=market_quote["volume"], oi=market_quote["oi"],
+                                bid=market_quote["bid"], ask=market_quote["ask"], expiry=expiry_date),
+                    self.config,
+                )
+                point = CashFutureHistoryPoint(
+                    timestamp=observation_time, symbol=symbol, contract_month=label,
+                    cash_price=cash_ltp, future_price=future_ltp, gap=quote.gap, gap_pct=quote.gap_pct,
+                    lot_size=lot_size, margin_required=margin_required, volume=market_quote["volume"], oi=market_quote["oi"],
+                    cash_bid=cash_quote["bid"], cash_ask=cash_quote["ask"], future_bid=market_quote["bid"],
+                    future_ask=market_quote["ask"], charges=quote.charges, funding_cost=quote.funding_cost,
+                    net_profit=quote.net_profit, roi_pct=quote.roi_pct, expiry_date=expiry_date,
+                )
+                row = save_history_point(db, point, expiry_date=expiry_date)
+                results.append({
+                    "id": row.id, "symbol": symbol, "contract_month": label, "future_symbol": future_symbol,
+                    "expiry_date": expiry_date.isoformat() if expiry_date else None,
+                    "cash_price": cash_ltp, "future_price": future_ltp, "gap": quote.gap, "gap_pct": quote.gap_pct,
+                    "executable_gap": quote.executable_gap, "executable_gap_pct": quote.executable_gap_pct,
+                    "cash_execution_price": quote.cash_execution_price, "future_execution_price": quote.future_execution_price,
+                    "cash_bid_ask_spread_pct": quote.cash_bid_ask_spread_pct,
+                    "future_bid_ask_spread_pct": quote.future_bid_ask_spread_pct,
+                    "gross_spread_profit": quote.gross_spread_profit, "net_profit": quote.net_profit,
+                    "charges": quote.charges, "funding_cost": quote.funding_cost,
+                    "margin_required": margin_required, "deployed_capital": quote.deployed_capital,
+                    "roi_pct": quote.roi_pct, "executable": quote.executable,
+                    "rejection_reasons": list(quote.rejection_reasons), "volume": market_quote["volume"],
+                    "oi": market_quote["oi"], "cash_bid": cash_quote["bid"], "cash_ask": cash_quote["ask"],
+                    "future_bid": market_quote["bid"], "future_ask": market_quote["ask"],
+                    "timestamp": observation_time.isoformat(),
+                })
+            except Exception as exc:
+                app_logger.error(f"Cash-Future {label} collection failed for {symbol}/{future_symbol}: {exc}")
+                if errors is not None:
+                    errors.append({
+                        "symbol": symbol,
+                        "contract_month": label,
+                        "future_symbol": future_symbol,
+                        "error": str(exc),
+                    })
         return results
 
     def collect(self, db) -> dict:
@@ -184,7 +195,7 @@ class CashFutureHistoryCollector:
         errors: list[dict] = []
         for symbol in self.symbols:
             try:
-                collected.extend(self.collect_symbol(symbol, db))
+                collected.extend(self.collect_symbol(symbol, db, errors=errors))
             except Exception as exc:
                 app_logger.error(f"Cash-Future history collection failed for {symbol}: {exc}")
                 errors.append({"symbol": symbol, "error": str(exc)})
