@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 from app.scanner import full_fno_backtest
 from app.scanner.synchronized_replay import ReplayBar
 
@@ -61,3 +63,58 @@ def test_full_fno_durable_sink_forces_bounded_result_mode(monkeypatch):
     assert result["total_net_profit"] == 20.0
     assert result["max_drawdown"] == 2.0
     assert result["results"] is None
+
+
+@pytest.mark.parametrize("selection", ["CURRENT", "NEAR", "BOTH"])
+def test_full_fno_passes_contract_selection_to_streaming_backtest(monkeypatch, selection):
+    seen = []
+
+    monkeypatch.setattr(full_fno_backtest, "persisted_stock_symbols", lambda db: ["AAA"])
+    monkeypatch.setattr(
+        full_fno_backtest,
+        "iter_persisted_symbol_replay",
+        lambda db, symbol, start, end: _bars(),
+    )
+
+    def fake_backtest(bars, config, cancelled=None):
+        assert config.collect_ledger is False
+        seen.append(config.future_selection)
+        list(bars)
+        return {"status": "completed", "net_profit": 1.0, "max_drawdown": 0.0}
+
+    monkeypatch.setattr(full_fno_backtest, "run_cash_future_paper_backtest", fake_backtest)
+
+    result = full_fno_backtest.run_full_fno_backtest(
+        object(),
+        days=365,
+        min_entry_gap=1.0,
+        exit_gap=0.0,
+        charges_per_trade=1.0,
+        funding_cost_per_trade=0.1,
+        max_holding_days=30,
+        future_selection=selection,
+        result_sink=lambda sequence, symbol, item: None,
+    )
+
+    assert seen == [selection]
+    assert result["future_selection"] == selection
+    assert result["results"] is None
+
+
+def test_full_fno_rejects_invalid_contract_selection_before_replay(monkeypatch):
+    called = []
+    monkeypatch.setattr(full_fno_backtest, "persisted_stock_symbols", lambda db: called.append(True))
+
+    with pytest.raises(ValueError, match="future_selection must be CURRENT, NEAR or BOTH"):
+        full_fno_backtest.run_full_fno_backtest(
+            object(),
+            days=365,
+            min_entry_gap=1.0,
+            exit_gap=0.0,
+            charges_per_trade=1.0,
+            funding_cost_per_trade=0.1,
+            max_holding_days=30,
+            future_selection="INVALID",
+        )
+
+    assert called == []
