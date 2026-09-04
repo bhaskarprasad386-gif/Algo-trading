@@ -96,16 +96,25 @@ class CashFutureHistoryCollector:
         rows = [item for item in master.instruments
                 if str(item.get("exch_seg", "")).upper() == "NFO"
                 and str(item.get("instrumenttype", "")).upper() == "FUTSTK"]
-        candidates: list[tuple[date, dict]] = []
+        candidates: list[tuple[date, str, dict]] = []
+        seen: set[tuple[date, str]] = set()
         for item in rows:
-            name = str(item.get("name", "")).upper()
-            tradingsymbol = str(item.get("symbol", "")).upper()
-            if name == symbol or tradingsymbol.startswith(symbol):
-                exp = _expiry(item.get("expiry"))
-                if exp and exp >= date.today():
-                    candidates.append((exp, item))
-        candidates.sort(key=lambda x: x[0])
-        return [item for _, item in candidates[:2]]
+            name = str(item.get("name", "")).strip().upper()
+            tradingsymbol = str(item.get("symbol", "")).strip().upper()
+            # Use the master contract name as the authoritative underlying identity.
+            # Do not use startswith(symbol): ABC must not accidentally match ABCBANK.
+            if name != symbol or not tradingsymbol:
+                continue
+            exp = _expiry(item.get("expiry"))
+            if exp is None or exp < date.today():
+                continue
+            identity = (exp, tradingsymbol)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            candidates.append((exp, tradingsymbol, item))
+        candidates.sort(key=lambda x: (x[0], x[1]))
+        return [item for _, _, item in candidates[:2]]
 
     def _future_margin(self, future: dict, future_ltp: float, lot_size: int) -> float:
         token = str(future.get("token") or "").strip()
