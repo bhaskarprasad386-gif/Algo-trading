@@ -168,6 +168,9 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
         raise ValueError("cash-future scanner is disabled")
     _validate_positive("cash ltp", cash.ltp)
     _validate_positive("future ltp", future.ltp)
+    if not isinstance(future.contract_month, str) or not future.contract_month.strip():
+        raise ValueError("contract_month must be a non-empty string")
+    contract_month = future.contract_month.strip()
     if isinstance(future.lot_size, bool) or not isinstance(future.lot_size, int):
         raise ValueError("lot_size must be a positive integer")
     if future.lot_size <= 0:
@@ -259,7 +262,7 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
     reasons = list(dict.fromkeys(reasons))
     return CashFutureResult(
         symbol=cash.symbol.upper(),
-        contract_month=future.contract_month,
+        contract_month=contract_month,
         cash_ltp=cash.ltp,
         future_ltp=future.ltp,
         gap=gap,
