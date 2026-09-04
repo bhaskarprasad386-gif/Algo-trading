@@ -133,6 +133,15 @@ def _bid_ask_spread_pct(bid: Optional[float], ask: Optional[float], ltp: float) 
     return (ask - bid) / ltp * 100.0
 
 
+def _ltp_inside_quote(bid: Optional[float], ask: Optional[float], ltp: float) -> bool:
+    """Return True when an LTP is consistent with a complete positive quote."""
+    if bid is None or ask is None or bid <= 0 or ask <= 0 or ltp <= 0:
+        return True
+    if ask < bid:
+        return False
+    return bid <= ltp <= ask
+
+
 def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutureConfig) -> CashFutureResult:
     """Calculate a cash-future opportunity using executable bid/ask prices."""
     if not config.enabled:
@@ -209,6 +218,11 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
         reasons.append("invalid_future_bid_ask")
     if future.ask is not None and future.ask <= 0:
         reasons.append("invalid_future_bid_ask")
+
+    if not _ltp_inside_quote(cash.bid, cash.ask, cash.ltp):
+        reasons.append("cash_ltp_outside_bid_ask")
+    if not _ltp_inside_quote(future.bid, future.ask, future.ltp):
+        reasons.append("future_ltp_outside_bid_ask")
 
     reasons = list(dict.fromkeys(reasons))
 
