@@ -23,7 +23,13 @@ def _expiry(value: object) -> date | None:
     return None
 
 
+def _plain(value):
+    """Normalize FastAPI Query defaults when the route is invoked directly in tests."""
+    return getattr(value, "default", value)
+
+
 def discover_cash_future_symbols(limit: int = 50) -> list[str]:
+    limit = _plain(limit)
     master = InstrumentMaster()
     master.search(exchange="NFO")
     today = date.today()
@@ -39,11 +45,10 @@ def discover_cash_future_symbols(limit: int = 50) -> list[str]:
         name = str(item.get("name", "")).strip().upper()
         if name:
             symbols.add(name)
-    return sorted(symbols)[:limit]
+    return sorted(symbols)[:int(limit)]
 
 
 def _filtered(data: list[dict]) -> list[dict]:
-    # The mobile/web clients receive only genuinely executable opportunities.
     return [item for item in data if item.get("executable") is True]
 
 
@@ -63,6 +68,18 @@ def cash_future_live_auto_scanner(
     db: Session = Depends(get_db),
 ):
     """Discover active stock futures and return only pairs passing execution checks."""
+    limit = _plain(limit)
+    min_gap = _plain(min_gap)
+    min_gap_pct = _plain(min_gap_pct)
+    min_net_profit = _plain(min_net_profit)
+    min_roi_pct = _plain(min_roi_pct)
+    min_volume = _plain(min_volume)
+    min_oi = _plain(min_oi)
+    max_bid_ask_spread_pct = _plain(max_bid_ask_spread_pct)
+    max_cash_bid_ask_spread_pct = _plain(max_cash_bid_ask_spread_pct)
+    charges = _plain(charges)
+    funding_cost = _plain(funding_cost)
+
     symbols = discover_cash_future_symbols(limit)
     if not symbols:
         raise HTTPException(status_code=404, detail="no active cash-future symbols found")
