@@ -7,7 +7,7 @@
         android:allowBackup="true"
         android:label="Algo Trading"
         android:supportsRtl="true"
-        android:usesCleartextTraffic="true"
+        android:usesCleartextTraffic="false"
         android:theme="@style/Theme.AppCompat.DayNight.DarkActionBar">
         <activity android:name=".ScannerDetailActivity" android:exported="false" />
         <activity android:name=".FullFnoBacktestActivity" android:exported="false" />
