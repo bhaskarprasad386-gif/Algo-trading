@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -217,9 +217,59 @@ def test_symbol_timeout_must_be_positive_or_none():
         CashFutureHistoryCollector(["ABC"], FakeMarketClient(), FakeMaster(), symbol_timeout_seconds=0)
 
 
-def test_full_quote_rejects_missing_fetched_data():
-    with pytest.raises(ValueError, match="has no fetched quote"):
-        _full_quote({"status": True, "data": {"fetched": []}})
+def test_quote_age_config_must_be_positive_or_none():
+    with pytest.raises(ValueError, match="max_quote_age_seconds must be positive or None"):
+        CashFutureHistoryCollector(["ABC"], FakeMarketClient(), FakeMaster(), max_quote_age_seconds=0)
+
+
+def test_full_quote_parses_epoch_milliseconds_timestamp():
+    timestamp = datetime.now().timestamp() * 1000
+    quote = _full_quote({
+        "status": True,
+        "data": {"fetched": [{"ltp": 100.0, "tradeVolume": 10, "opnInterest": 20, "timestamp": timestamp}]},
+    })
+    assert quote["quote_timestamp"] is not None
+    assert abs(quote["quote_timestamp"].timestamp() - timestamp / 1000) < 1
+
+
+def test_full_quote_parses_iso_timestamp():
+    quote = _full_quote({
+        "status": True,
+        "data": {"fetched": [{"ltp": 100.0, "timestamp": "2026-09-04T10:00:00+05:30"}]},
+    })
+    assert quote["quote_timestamp"].isoformat() == "2026-09-04T10:00:00+05:30"
+
+
+def test_full_quote_keeps_invalid_timestamp_unavailable():
+    quote = _full_quote({
+        "status": True,
+        "data": {"fetched": [{"ltp": 100.0, "timestamp": "not-a-timestamp"}]},
+    })
+    assert quote["quote_timestamp"] is None
+
+
+def test_quote_freshness_rejects_stale_timestamp():
+    collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), FakeMaster(), max_quote_age_seconds=15)
+    stale = datetime.now().astimezone() - timedelta(seconds=30)
+    with pytest.raises(ValueError, match="stale CURRENT quote for ABC30SEP2026FUT"):
+        collector._validate_quote_freshness("CURRENT", "ABC30SEP2026FUT", stale)
+
+
+def test_quote_freshness_accepts_fresh_timestamp():
+    collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), FakeMaster(), max_quote_age_seconds=15)
+    fresh = datetime.now().astimezone() - timedelta(seconds=2)
+    collector._validate_quote_freshness("CURRENT", "ABC30SEP2026FUT", fresh)
+
+
+def test_quote_freshness_ignores_missing_timestamp():
+    collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), FakeMaster(), max_quote_age_seconds=15)
+    collector._validate_quote_freshness("CURRENT", "ABC30SEP2026FUT", None)
+
+
+def test_quote_freshness_ignores_future_timestamp():
+    collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), FakeMaster(), max_quote_age_seconds=15)
+    future = datetime.now().astimezone() + timedelta(seconds=30)
+    collector._validate_quote_freshness("CURRENT", "ABC30SEP2026FUT", future)
 
 
 def test_full_quote_does_not_invent_bid_ask():
@@ -239,6 +289,11 @@ def test_full_quote_does_not_invent_bid_ask():
     assert quote["ask"] is None
 
 
+def test_full_quote_rejects_missing_fetched_data():
+    with pytest.raises(ValueError, match="has no fetched quote"):
+        _full_quote({"status": True, "data": {"fetched": []}})
+
+
 def test_full_quote_preserves_non_positive_quote_sides():
     quote = _full_quote({
         "status": True,
@@ -247,10 +302,7 @@ def test_full_quote_preserves_non_positive_quote_sides():
                 "ltp": 100.0,
                 "tradeVolume": 10,
                 "opnInterest": 20,
-                "depth": {
-                    "buy": [{"price": 0}],
-                    "sell": [{"price": -1.5}],
-                },
+                "depth": {"buy": [{"price": 0}], "sell": [{"price": -1.5}]},
             }]
         },
     })
@@ -264,10 +316,7 @@ def test_full_quote_keeps_unparseable_quote_side_missing():
         "data": {
             "fetched": [{
                 "ltp": 100.0,
-                "depth": {
-                    "buy": [{"price": "not-a-price"}],
-                    "sell": [{"price": "101.0"}],
-                },
+                "depth": {"buy": [{"price": "not-a-price"}], "sell": [{"price": "101.0"}]},
             }]
         },
     })
