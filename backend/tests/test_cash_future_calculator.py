@@ -52,5 +52,6 @@ def test_cash_future_accepts_valid_cost_configuration():
         future,
         CashFutureConfig(charges=10.0, funding_cost=20.0, min_gap=0.0),
     )
-    assert result.net_profit == 348.0
+    assert result.gross_spread_profit == 370.0
+    assert result.net_profit == 340.0
     assert result.executable is True
