@@ -210,10 +210,18 @@ class CashFutureHistoryCollector:
                 future_quote = FutureQuote(symbol=future_symbol, contract_month=label, ltp=future_ltp, lot_size=lot_size, margin_required=margin, volume=market_quote["volume"], oi=market_quote["oi"], bid=market_quote["bid"], ask=market_quote["ask"], expiry=_expiry(future.get("expiry")))
                 result = calculate_cash_future(CashQuote(symbol=cash_symbol, ltp=cash_ltp, bid=cash_quote["bid"], ask=cash_quote["ask"]), future_quote, self.config)
                 item = result.__dict__.copy()
-                item["contract_month"] = label
-                item["timestamp"] = observation_time.isoformat()
-                item["cash_quote_timestamp"] = cash_quote["quote_timestamp"].isoformat() if cash_quote["quote_timestamp"] else None
-                item["quote_timestamp"] = market_quote["quote_timestamp"].isoformat() if market_quote["quote_timestamp"] else None
+                item.update({
+                    "contract_month": label,
+                    "timestamp": observation_time.isoformat(),
+                    "volume": market_quote["volume"],
+                    "oi": market_quote["oi"],
+                    "cash_bid": cash_quote["bid"],
+                    "cash_ask": cash_quote["ask"],
+                    "future_bid": market_quote["bid"],
+                    "future_ask": market_quote["ask"],
+                    "cash_quote_timestamp": cash_quote["quote_timestamp"].isoformat() if cash_quote["quote_timestamp"] else None,
+                    "quote_timestamp": market_quote["quote_timestamp"].isoformat() if market_quote["quote_timestamp"] else None,
+                })
                 save_history_point(db, CashFutureHistoryPoint(symbol=symbol, contract_month=label, timestamp=observation_time, cash_price=cash_ltp, future_price=future_ltp, gap=result.gap, gap_pct=result.gap_pct, lot_size=lot_size, margin_required=margin, volume=market_quote["volume"], oi=market_quote["oi"], cash_bid=cash_quote["bid"], cash_ask=cash_quote["ask"], future_bid=market_quote["bid"], future_ask=market_quote["ask"], charges=self.config.charges, funding_cost=self.config.funding_cost, net_profit=result.net_profit, roi_pct=result.roi_pct, expiry_date=future_quote.expiry), expiry_date=future_quote.expiry)
                 results.append(item)
             except Exception as exc:
