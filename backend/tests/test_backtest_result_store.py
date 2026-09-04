@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 
+from pytest import approx
 from sqlalchemy import func, select
 
 from app.backtest.result_store import persist_trade_chunk
@@ -55,7 +56,7 @@ def test_result_chunk_is_durable_json_and_idempotent_by_job_sequence():
         assert count == 1
         assert payload[0]["entry_timestamp"] == "2026-01-02T09:15:00"
         assert payload[0]["exit_price"] == 102.0
-        assert payload[0]["net_pnl"] == 1.9
+        assert payload[0]["net_pnl"] == approx(1.9)
     finally:
         db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete()
         db.commit()
