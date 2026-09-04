@@ -48,3 +48,23 @@ def test_durable_prefix_aggregates_rejects_symbol_mismatch():
         db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete()
         db.commit()
         db.close()
+
+
+def test_durable_prefix_aggregates_isolated_between_jobs():
+    Base.metadata.create_all(bind=engine)
+    job_id = "aggregate-helper-job-a"
+    other_job_id = "aggregate-helper-job-b"
+    db = SessionLocal()
+    try:
+        db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id.in_([job_id, other_job_id])).delete(synchronize_session=False)
+        db.commit()
+        db.add_all([
+            BacktestJobResultChunk(job_id=job_id, sequence=0, symbol="AAA", result_json='{"status":"completed","net_profit":100,"max_drawdown":10}', created_at=datetime.utcnow()),
+            BacktestJobResultChunk(job_id=other_job_id, sequence=0, symbol="AAA", result_json='{"status":"completed","net_profit":9999,"max_drawdown":999}', created_at=datetime.utcnow()),
+        ])
+        db.commit()
+        assert _durable_prefix_aggregates(db, ["AAA"], 1, job_id) == (100.0, 10.0, 1, 0)
+    finally:
+        db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id.in_([job_id, other_job_id])).delete(synchronize_session=False)
+        db.commit()
+        db.close()
