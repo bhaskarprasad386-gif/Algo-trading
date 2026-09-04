@@ -104,6 +104,21 @@ def test_full_fno_result_chunks_use_keyset_paging():
         db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete(); db.commit(); db.close()
 
 
+def test_full_fno_resume_stops_at_first_missing_sequence():
+    """Recovery must not skip a durable gap and accidentally drop an uncommitted symbol."""
+    Base.metadata.create_all(bind=engine); job_id = "test-job-resume-gap"; db = SessionLocal()
+    try:
+        db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete(); db.commit()
+        db.add_all([
+            BacktestJobResultChunk(job_id=job_id, sequence=0, symbol="SYM0", result_json='{"sequence": 0}', created_at=datetime.utcnow()),
+            BacktestJobResultChunk(job_id=job_id, sequence=2, symbol="SYM2", result_json='{"sequence": 2}', created_at=datetime.utcnow()),
+            BacktestJobResultChunk(job_id=job_id, sequence=3, symbol="SYM3", result_json='{"sequence": 3}', created_at=datetime.utcnow()),
+        ]); db.commit()
+        assert backtest_jobs._last_contiguous_full_fno_sequence(db, job_id) == 0
+    finally:
+        db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete(); db.commit(); db.close()
+
+
 def test_full_fno_worker_failure_preserves_already_committed_chunks(monkeypatch):
     Base.metadata.create_all(bind=engine); job_id = "test-job-worker-failure"; db = SessionLocal()
     try:
