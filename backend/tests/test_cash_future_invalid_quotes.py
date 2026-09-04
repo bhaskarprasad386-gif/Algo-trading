@@ -1,5 +1,7 @@
 import math
 
+import pytest
+
 from app.scanner.cash_future import CashFutureConfig, CashQuote, FutureQuote, calculate_cash_future
 
 
@@ -26,17 +28,16 @@ def test_zero_cash_ask_is_never_executable():
         CashFutureConfig(),
     )
     assert result.executable is False
-    assert "missing_executable_quote" in result.rejection_reasons
+    assert "invalid_cash_bid_ask" in result.rejection_reasons
 
 
-def test_nonfinite_future_bid_is_never_executable():
-    result = calculate_cash_future(
-        CashQuote("ABC", 100.0, bid=99.9, ask=100.1),
-        _future(bid=math.inf),
-        CashFutureConfig(),
-    )
-    assert result.executable is False
-    assert "missing_executable_quote" in result.rejection_reasons
+def test_nonfinite_future_bid_is_rejected_at_input_validation():
+    with pytest.raises(ValueError, match="future bid must be a finite number"):
+        calculate_cash_future(
+            CashQuote("ABC", 100.0, bid=99.9, ask=100.1),
+            _future(bid=math.inf),
+            CashFutureConfig(),
+        )
 
 
 def test_negative_cash_ask_is_never_executable():
@@ -46,4 +47,4 @@ def test_negative_cash_ask_is_never_executable():
         CashFutureConfig(),
     )
     assert result.executable is False
-    assert "missing_executable_quote" in result.rejection_reasons
+    assert "invalid_cash_bid_ask" in result.rejection_reasons
