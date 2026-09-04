@@ -89,10 +89,14 @@ object ApiService {
         OkHttpClient.Builder().addInterceptor(Interceptor { chain ->
             val request = chain.request()
             val path = request.url.encodedPath
-            if (path.startsWith("/api/v1/auth/")) return@Interceptor chain.proceed(request)
+            val publicAuthEndpoint = path == "/api/v1/auth/login" || path == "/api/v1/auth/register"
             val token = AppContextHolder.context?.let { getToken(it) }
-            val authenticated = if (token.isNullOrBlank()) request else request.newBuilder().addHeader("Authorization", "Bearer $token").build()
-            chain.proceed(authenticated)
+            val authenticated = if (publicAuthEndpoint || token.isNullOrBlank()) request else request.newBuilder().addHeader("Authorization", "Bearer $token").build()
+            val response = chain.proceed(authenticated)
+            if (response.code == 401 && !publicAuthEndpoint) {
+                AppContextHolder.context?.let { clearToken(it) }
+            }
+            response
         }).connectTimeout(10, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS).build()
     }
     val retrofitService: ApiInterface by lazy { Retrofit.Builder().client(httpClient).addConverterFactory(GsonConverterFactory.create()).baseUrl(BuildConfig.BACKEND_BASE_URL).build().create(ApiInterface::class.java) }
