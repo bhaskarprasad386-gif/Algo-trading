@@ -67,3 +67,97 @@ def test_calculator_rejects_non_finite_ltp_and_margin():
             ),
             CashFutureConfig(),
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("cash bid", math.nan),
+        ("cash bid", math.inf),
+        ("cash bid", -math.inf),
+        ("cash ask", math.nan),
+        ("cash ask", math.inf),
+        ("cash ask", -math.inf),
+        ("future bid", math.nan),
+        ("future bid", math.inf),
+        ("future bid", -math.inf),
+        ("future ask", math.nan),
+        ("future ask", math.inf),
+        ("future ask", -math.inf),
+    ],
+)
+def test_calculator_rejects_non_finite_bid_ask_values(field, value):
+    cash, future = _quotes()
+    if field == "cash bid":
+        cash = CashQuote(symbol="ABC", ltp=100.0, bid=value, ask=100.1)
+    elif field == "cash ask":
+        cash = CashQuote(symbol="ABC", ltp=100.0, bid=99.9, ask=value)
+    elif field == "future bid":
+        future = FutureQuote(**{**future.__dict__, "bid": value})
+    else:
+        future = FutureQuote(**{**future.__dict__, "ask": value})
+
+    with pytest.raises(ValueError, match=field):
+        calculate_cash_future(cash, future, CashFutureConfig())
+
+
+@pytest.mark.parametrize(
+    ("kind", "value"),
+    [
+        ("cash bid", 0.0),
+        ("cash bid", -0.01),
+        ("cash ask", 0.0),
+        ("cash ask", -0.01),
+        ("future bid", 0.0),
+        ("future bid", -0.01),
+        ("future ask", 0.0),
+        ("future ask", -0.01),
+    ],
+)
+def test_calculator_never_marks_non_positive_quotes_executable(kind, value):
+    cash, future = _quotes()
+    if kind == "cash bid":
+        cash = CashQuote(symbol="ABC", ltp=100.0, bid=value, ask=100.1)
+    elif kind == "cash ask":
+        cash = CashQuote(symbol="ABC", ltp=100.0, bid=99.9, ask=value)
+    elif kind == "future bid":
+        future = FutureQuote(**{**future.__dict__, "bid": value})
+    else:
+        future = FutureQuote(**{**future.__dict__, "ask": value})
+
+    result = calculate_cash_future(cash, future, CashFutureConfig())
+
+    assert result.executable is False
+    assert (
+        "invalid_cash_bid_ask" in result.rejection_reasons
+        if kind.startswith("cash")
+        else "invalid_future_bid_ask" in result.rejection_reasons
+    )
+
+
+@pytest.mark.parametrize("kind", ["cash", "future"])
+def test_calculator_rejects_reversed_bid_ask(kind):
+    cash, future = _quotes()
+    if kind == "cash":
+        cash = CashQuote(symbol="ABC", ltp=100.0, bid=100.5, ask=100.1)
+    else:
+        future = FutureQuote(**{**future.__dict__, "bid": 104.5, "ask": 104.2})
+
+    result = calculate_cash_future(cash, future, CashFutureConfig())
+
+    assert result.executable is False
+    assert (
+        "invalid_cash_bid_ask" in result.rejection_reasons
+        if kind == "cash"
+        else "invalid_future_bid_ask" in result.rejection_reasons
+    )
+
+
+def test_calculator_keeps_valid_two_sided_quotes_executable():
+    cash, future = _quotes()
+    result = calculate_cash_future(cash, future, CashFutureConfig())
+
+    assert result.executable is True
+    assert result.executable_gap == pytest.approx(3.7)
+    assert result.cash_execution_price == pytest.approx(100.1)
+    assert result.future_execution_price == pytest.approx(103.8)
