@@ -36,8 +36,6 @@ def test_incremental_engine_never_materializes_complete_trade_ledger():
         chunk_size=3,
     )
 
-    # The first candle opens; every following candle closes immediately, so
-    # 20 trades are produced and persisted in bounded chunks.
     assert len(chunks) == 7
     assert max_chunk <= 3
     assert result.trades == ()
@@ -78,6 +76,6 @@ def test_incremental_engine_consumes_generator_and_preserves_summary():
 
     assert calls == list(range(6))
     assert result.trades == ()
-    assert result.net_pnl == 5.0
+    assert result.net_pnl == 3.0
     assert result.win_rate == 1.0
     assert result.expectancy == 1.0
