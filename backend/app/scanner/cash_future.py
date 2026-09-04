@@ -112,7 +112,7 @@ def _ltp_inside_quote(bid: Optional[float], ask: Optional[float], ltp: float) ->
 def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutureConfig) -> CashFutureResult:
     if not config.enabled: raise ValueError("cash-future scanner is disabled")
     _validate_positive("cash ltp", cash.ltp); _validate_positive("future ltp", future.ltp)
-    _validate_finite("lot_size", future.lot_size)
+    if isinstance(future.lot_size, bool) or not isinstance(future.lot_size, int): raise ValueError("lot_size must be a positive integer")
     if future.lot_size <= 0: raise ValueError("lot_size must be greater than zero")
     _validate_finite("margin_required", future.margin_required)
     if future.margin_required < 0: raise ValueError("margin_required cannot be negative")
