@@ -57,7 +57,12 @@ def _naive_datetime(value: Any) -> datetime:
 
 
 def _finite_number(value: Any, field: str) -> float:
-    number = float(value)
+    if isinstance(value, bool):
+        raise ValueError(f"invalid historical candle {field}")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid historical candle {field}") from exc
     if number != number or number in (float("inf"), float("-inf")):
         raise ValueError(f"invalid historical candle {field}")
     return number
