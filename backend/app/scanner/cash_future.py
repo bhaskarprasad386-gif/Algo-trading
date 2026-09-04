@@ -132,6 +132,8 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
     reasons: list[str] = []
     threshold_gap = executable_gap if executable_gap is not None else gap
     threshold_gap_pct = executable_gap_pct if executable_gap_pct is not None else gap_pct
+    if executable_gap is not None and executable_gap <= 0:
+        reasons.append("executable_gap_non_positive")
     if threshold_gap < config.min_gap:
         reasons.append("gap_below_minimum")
     if threshold_gap_pct < config.min_gap_pct:
