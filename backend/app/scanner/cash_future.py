@@ -127,13 +127,17 @@ class CashFutureResult:
     rejection_reasons: tuple[str, ...] = field(default_factory=tuple)
 
 
-def _validate_positive(name: str, value: float) -> None:
+def _validate_finite(name: str, value: float) -> None:
     try:
         finite = math.isfinite(value)
     except TypeError as exc:
         raise ValueError(f"{name} must be a finite number") from exc
     if not finite:
         raise ValueError(f"{name} must be a finite number")
+
+
+def _validate_positive(name: str, value: float) -> None:
+    _validate_finite(name, value)
     if value <= 0:
         raise ValueError(f"{name} must be greater than zero")
 
@@ -141,7 +145,7 @@ def _validate_positive(name: str, value: float) -> None:
 def _bid_ask_spread_pct(bid: Optional[float], ask: Optional[float], ltp: float) -> Optional[float]:
     if bid is None or ask is None:
         return None
-    if not all(math.isfinite(value) for value in (bid, ask, ltp)):
+    if not math.isfinite(bid) or not math.isfinite(ask) or not math.isfinite(ltp):
         return None
     if bid <= 0 or ask <= 0 or ltp <= 0 or ask < bid:
         return None
@@ -152,7 +156,7 @@ def _ltp_inside_quote(bid: Optional[float], ask: Optional[float], ltp: float) ->
     """Return True when an LTP is consistent with a complete positive quote."""
     if bid is None or ask is None or bid <= 0 or ask <= 0 or ltp <= 0:
         return True
-    if not all(math.isfinite(value) for value in (bid, ask, ltp)):
+    if not math.isfinite(bid) or not math.isfinite(ask) or not math.isfinite(ltp):
         return False
     if ask < bid:
         return False
@@ -165,16 +169,26 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
         raise ValueError("cash-future scanner is disabled")
     _validate_positive("cash ltp", cash.ltp)
     _validate_positive("future ltp", future.ltp)
+    _validate_finite("lot_size", future.lot_size)
     if future.lot_size <= 0:
         raise ValueError("lot_size must be greater than zero")
-    try:
-        margin_finite = math.isfinite(future.margin_required)
-    except TypeError as exc:
-        raise ValueError("margin_required must be a finite number") from exc
-    if not margin_finite:
-        raise ValueError("margin_required must be a finite number")
+    _validate_finite("margin_required", future.margin_required)
     if future.margin_required < 0:
         raise ValueError("margin_required cannot be negative")
+    _validate_finite("future volume", future.volume)
+    if future.volume < 0:
+        raise ValueError("future volume cannot be negative")
+    _validate_finite("future oi", future.oi)
+    if future.oi < 0:
+        raise ValueError("future oi cannot be negative")
+    for name, value in (
+        ("cash bid", cash.bid),
+        ("cash ask", cash.ask),
+        ("future bid", future.bid),
+        ("future ask", future.ask),
+    ):
+        if value is not None:
+            _validate_finite(name, value)
 
     gap = future.ltp - cash.ltp
     gap_pct = gap / cash.ltp * 100.0
@@ -186,11 +200,10 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
     cash_execution_price: Optional[float] = None
     future_execution_price: Optional[float] = None
     if cash.ask is not None and future.bid is not None and cash.ask > 0 and future.bid > 0:
-        if math.isfinite(cash.ask) and math.isfinite(future.bid):
-            cash_execution_price = cash.ask
-            future_execution_price = future.bid
-            executable_gap = future.bid - cash.ask
-            executable_gap_pct = executable_gap / cash.ask * 100.0
+        cash_execution_price = cash.ask
+        future_execution_price = future.bid
+        executable_gap = future.bid - cash.ask
+        executable_gap_pct = executable_gap / cash.ask * 100.0
 
     profit_gap = executable_gap if executable_gap is not None else gap
     gross = round(profit_gap * future.lot_size, 2)
@@ -224,23 +237,23 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
         reasons.append("missing_executable_quotes")
 
     if cash.bid is not None and cash.ask is not None:
-        if cash.bid <= 0 or cash.ask <= 0 or not math.isfinite(cash.bid) or not math.isfinite(cash.ask):
+        if cash.bid <= 0 or cash.ask <= 0:
             reasons.append("invalid_cash_bid_ask")
         elif cash.ask < cash.bid:
             reasons.append("invalid_cash_bid_ask")
     if future.bid is not None and future.ask is not None:
-        if future.bid <= 0 or future.ask <= 0 or not math.isfinite(future.bid) or not math.isfinite(future.ask):
+        if future.bid <= 0 or future.ask <= 0:
             reasons.append("invalid_future_bid_ask")
         elif future.ask < future.bid:
             reasons.append("invalid_future_bid_ask")
 
-    if cash.bid is not None and (cash.bid <= 0 or not math.isfinite(cash.bid)):
+    if cash.bid is not None and cash.bid <= 0:
         reasons.append("invalid_cash_bid_ask")
-    if cash.ask is not None and (cash.ask <= 0 or not math.isfinite(cash.ask)):
+    if cash.ask is not None and cash.ask <= 0:
         reasons.append("invalid_cash_bid_ask")
-    if future.bid is not None and (future.bid <= 0 or not math.isfinite(future.bid)):
+    if future.bid is not None and future.bid <= 0:
         reasons.append("invalid_future_bid_ask")
-    if future.ask is not None and (future.ask <= 0 or not math.isfinite(future.ask)):
+    if future.ask is not None and future.ask <= 0:
         reasons.append("invalid_future_bid_ask")
 
     if not _ltp_inside_quote(cash.bid, cash.ask, cash.ltp):
