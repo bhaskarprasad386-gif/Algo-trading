@@ -188,6 +188,35 @@ def test_collect_reports_contract_error_and_keeps_successful_near_result(monkeyp
     }]
 
 
+def test_symbol_timeout_guard_stops_remaining_contracts(monkeypatch):
+    saved = []
+
+    def fake_save(db, point, expiry_date=None):
+        saved.append(point)
+        return type("Row", (), {"id": len(saved)})()
+
+    ticks = iter((0.0, 16.0))
+    monkeypatch.setattr("app.scanner.cash_future_collector.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("app.scanner.cash_future_collector.save_history_point", fake_save)
+    collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), FakeMaster(), symbol_timeout_seconds=15)
+    errors = []
+    result = collector.collect_symbol("ABC", object(), errors=errors)
+
+    assert [item["contract_month"] for item in result] == []
+    assert saved == []
+    assert errors == [{
+        "symbol": "ABC",
+        "contract_month": "CURRENT",
+        "future_symbol": "ABC30SEP2026FUT",
+        "error": "cash-future symbol scan timeout after 15s",
+    }]
+
+
+def test_symbol_timeout_must_be_positive_or_none():
+    with pytest.raises(ValueError, match="symbol_timeout_seconds must be positive or None"):
+        CashFutureHistoryCollector(["ABC"], FakeMarketClient(), FakeMaster(), symbol_timeout_seconds=0)
+
+
 def test_full_quote_rejects_missing_fetched_data():
     with pytest.raises(ValueError, match="has no fetched quote"):
         _full_quote({"status": True, "data": {"fetched": []}})
