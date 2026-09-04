@@ -48,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnEnableRealTrading: Button
     private lateinit var btnDisableRealTrading: Button
     private lateinit var btnKillSwitch: Button
+    private lateinit var btnLogout: Button
 
     private val scannerRefreshHandler = Handler(Looper.getMainLooper())
     private lateinit var scannerRefreshRunnable: Runnable
@@ -60,6 +61,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppContextHolder.context = applicationContext
         setContentView(R.layout.activity_main)
         tvStatus = findViewById(R.id.tvStatus)
         etEntryPrice = findViewById(R.id.etEntryPrice)
@@ -89,6 +91,7 @@ class MainActivity : AppCompatActivity() {
         btnEnableRealTrading = findViewById(R.id.btnEnableRealTrading)
         btnDisableRealTrading = findViewById(R.id.btnDisableRealTrading)
         btnKillSwitch = findViewById(R.id.btnKillSwitch)
+        btnLogout = findViewById(R.id.btnLogout)
         btnScannerPaperExecute.isEnabled = false
         scannerRefreshRunnable = Runnable { runCashFutureScanner() }
         scannerCountdownRunnable = object : Runnable {
@@ -104,6 +107,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         updateScannerAutoRefreshStatus(); checkServerStatus(); checkBrokerStatus(); checkSafetyStatus()
+        btnLogout.setOnClickListener { confirmLogout() }
         btnRunScanner.setOnClickListener { runCashFutureScanner() }
         btnScannerPaperExecute.setOnClickListener { paperExecuteScannerOpportunity() }
         btnFullFnoBacktest.setOnClickListener { startActivity(Intent(this, FullFnoBacktestActivity::class.java)) }
@@ -116,6 +120,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() { scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable); scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable); super.onDestroy() }
+
+    private fun confirmLogout() {
+        AlertDialog.Builder(this).setTitle("Log out?").setMessage("Your local session token will be cleared. You will need to log in again to use authenticated trading features.").setNegativeButton("CANCEL", null).setPositiveButton("LOG OUT") { _, _ -> performLogout() }.show()
+    }
+
+    private fun performLogout() = lifecycleScope.launch(Dispatchers.IO) {
+        withContext(Dispatchers.Main) { btnLogout.isEnabled = false; tvStatus.text = "Logging out..." }
+        try { ApiService.retrofitService.logout() } catch (_: Exception) { /* Local token clearing is the safety fallback. */ }
+        ApiService.clearToken(this@MainActivity)
+        withContext(Dispatchers.Main) {
+            startActivity(Intent(this@MainActivity, AuthActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK })
+            finish()
+        }
+    }
 
     private fun updateScannerAutoRefreshStatus() { tvScannerAutoRefreshStatus.text = if (cbScannerAutoRefresh.isChecked) "Auto Refresh: ON" else "Auto Refresh: OFF" }
     private fun scheduleScannerRefresh() {
