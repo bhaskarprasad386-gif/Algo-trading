@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta
 from typing import Callable, Sequence, TypeAlias
 
 from sqlalchemy.orm import Session
 
 from app.models.cash_future_history import CashFutureHistory
+from app.models import BacktestJobResultChunk
 from app.scanner.cash_future_paper_backtest import PaperBacktestConfig, run_cash_future_paper_backtest
 from app.scanner.synchronized_replay import iter_persisted_symbol_replay
 
@@ -30,6 +32,32 @@ def historical_current_near_contracts(contracts: Sequence[HistoricalContract], a
 def persisted_stock_symbols(db: Session) -> list[str]:
     rows = db.query(CashFutureHistory.symbol).distinct().order_by(CashFutureHistory.symbol).all()
     return [symbol.upper() for (symbol,) in rows]
+
+
+def _durable_prefix_aggregates(db: Session, symbols: list[str], resume_count: int) -> tuple[float, float, int, int]:
+    """Rebuild summary metrics from already durable chunks without replaying them."""
+    if resume_count <= 0:
+        return 0.0, 0.0, 0, 0
+    rows = db.query(BacktestJobResultChunk).filter(
+        BacktestJobResultChunk.sequence < resume_count,
+    ).order_by(BacktestJobResultChunk.sequence).all()
+    if len(rows) != resume_count:
+        raise ValueError("durable full-F&O prefix is incomplete")
+    total_net_profit = 0.0
+    max_drawdown = 0.0
+    completed_symbols = 0
+    no_entry_symbols = 0
+    for expected_sequence, row in enumerate(rows):
+        if row.sequence != expected_sequence or row.symbol.upper() != symbols[expected_sequence].upper():
+            raise ValueError("durable full-F&O prefix does not match current symbol universe")
+        result = json.loads(row.result_json)
+        total_net_profit += float(result.get("net_profit", 0.0) or 0.0)
+        max_drawdown = max(max_drawdown, float(result.get("max_drawdown", 0.0) or 0.0))
+        if result.get("status") == "no_entry":
+            no_entry_symbols += 1
+        else:
+            completed_symbols += 1
+    return total_net_profit, max_drawdown, completed_symbols, no_entry_symbols
 
 
 def run_full_fno_backtest(
@@ -61,13 +89,10 @@ def run_full_fno_backtest(
     if resume_count > total:
         raise ValueError("resume_after_sequence exceeds persisted symbol universe")
 
+    total_net_profit, max_drawdown, completed_symbols, no_entry_symbols = _durable_prefix_aggregates(db, symbols, resume_count)
     processed = resume_count
     chunks_written = 0
     results: list[dict] | None = [] if collect_results else None
-    total_net_profit = 0.0
-    max_drawdown = 0.0
-    completed_symbols = 0
-    no_entry_symbols = 0
     end = datetime.utcnow()
     start = end - timedelta(days=days)
 
@@ -77,6 +102,7 @@ def run_full_fno_backtest(
         if cancelled is not None and cancelled():
             return {"status": "cancelled", "universe": "FULL_FNO_STOCK", "future_selection": selection,
                     "symbols_total": total, "symbols_processed": processed, "chunks_written": chunks_written,
+                    "contracts_processed": completed_symbols, "no_entry_symbols": no_entry_symbols,
                     "total_net_profit": total_net_profit, "max_drawdown": max_drawdown, "results": results}
 
         bars = iter_persisted_symbol_replay(db, symbol, start, end)
@@ -91,6 +117,7 @@ def run_full_fno_backtest(
         if result.get("status") == "cancelled" or (cancelled is not None and cancelled()):
             return {"status": "cancelled", "universe": "FULL_FNO_STOCK", "future_selection": selection,
                     "symbols_total": total, "symbols_processed": processed, "chunks_written": chunks_written,
+                    "contracts_processed": completed_symbols, "no_entry_symbols": no_entry_symbols,
                     "total_net_profit": total_net_profit, "max_drawdown": max_drawdown, "results": results}
 
         item = {"symbol": symbol, **result}
