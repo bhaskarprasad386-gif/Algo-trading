@@ -34,6 +34,43 @@ class CashFutureConfig:
     graph_days: int = 30
     universe: str = "NIFTY_50"
 
+    def __post_init__(self) -> None:
+        non_negative = {
+            "min_gap": self.min_gap,
+            "min_gap_pct": self.min_gap_pct,
+            "min_net_profit": self.min_net_profit,
+            "min_roi_pct": self.min_roi_pct,
+            "min_margin": self.min_margin,
+            "min_volume": self.min_volume,
+            "min_oi": self.min_oi,
+            "min_days_to_expiry": self.min_days_to_expiry,
+            "charges": self.charges,
+            "funding_cost": self.funding_cost,
+            "history_days": self.history_days,
+            "gap_match_tolerance": self.gap_match_tolerance,
+            "graph_days": self.graph_days,
+        }
+        if self.max_margin is not None:
+            non_negative["max_margin"] = self.max_margin
+        if self.max_days_to_expiry is not None:
+            non_negative["max_days_to_expiry"] = self.max_days_to_expiry
+        if self.max_bid_ask_spread_pct is not None:
+            non_negative["max_bid_ask_spread_pct"] = self.max_bid_ask_spread_pct
+        if self.max_cash_bid_ask_spread_pct is not None:
+            non_negative["max_cash_bid_ask_spread_pct"] = self.max_cash_bid_ask_spread_pct
+
+        for name, value in non_negative.items():
+            if value < 0:
+                raise ValueError(f"{name} cannot be negative")
+
+        if self.max_margin is not None and self.max_margin < self.min_margin:
+            raise ValueError("max_margin cannot be below min_margin")
+        if (
+            self.max_days_to_expiry is not None
+            and self.max_days_to_expiry < self.min_days_to_expiry
+        ):
+            raise ValueError("max_days_to_expiry cannot be below min_days_to_expiry")
+
 
 @dataclass(frozen=True)
 class FutureQuote:
@@ -164,8 +201,6 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
         elif future.ask < future.bid:
             reasons.append("invalid_future_bid_ask")
 
-    # A supplied quote side must itself be positive. Do not silently treat a
-    # malformed one-sided quote as merely unavailable market data.
     if cash.bid is not None and cash.bid <= 0:
         reasons.append("invalid_cash_bid_ask")
     if cash.ask is not None and cash.ask <= 0:
@@ -175,7 +210,6 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
     if future.ask is not None and future.ask <= 0:
         reasons.append("invalid_future_bid_ask")
 
-    # Keep rejection reasons deterministic and duplicate-free.
     reasons = list(dict.fromkeys(reasons))
 
     if config.max_bid_ask_spread_pct is not None:
