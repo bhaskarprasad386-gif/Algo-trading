@@ -177,6 +177,10 @@ def recover_interrupted_jobs() -> int:
     try:
         jobs = db.query(BacktestJob).filter(BacktestJob.status.in_(["queued", "running"])).all()
         for job in jobs:
+            with _LOCK:
+                active_future = _FUTURES.get(job.job_id)
+                if active_future is not None and not active_future.done():
+                    continue
             if not job.config_json:
                 job.status = "failed"; job.progress_pct = min(job.progress_pct, 99.0)
                 job.message = "Worker interrupted; durable chunks preserved; job configuration unavailable for safe recovery"; job.updated_at = _utcnow(); continue
