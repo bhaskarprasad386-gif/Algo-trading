@@ -114,3 +114,4 @@ def test_auto_route_filter_returns_only_strictly_executable_items():
         {"symbol": "TRUTHY_NOT_TRUE", "executable": 1},
     ]
     assert _filtered(data) == [{"symbol": "GOOD", "executable": True, "net_profit": 20}]
+
