@@ -65,6 +65,8 @@ def cash_future_live_auto_scanner(
     max_cash_bid_ask_spread_pct: float | None = Query(None, ge=0),
     charges: float = Query(0.0, ge=0),
     funding_cost: float = Query(0.0, ge=0),
+    max_quote_age_seconds: float | None = Query(15.0, gt=0),
+    max_quote_timestamp_skew_seconds: float | None = Query(5.0, gt=0),
     db: Session = Depends(get_db),
 ):
     """Discover active stock futures and return only pairs passing execution checks."""
@@ -79,6 +81,8 @@ def cash_future_live_auto_scanner(
     max_cash_bid_ask_spread_pct = _plain(max_cash_bid_ask_spread_pct)
     charges = _plain(charges)
     funding_cost = _plain(funding_cost)
+    max_quote_age_seconds = _plain(max_quote_age_seconds)
+    max_quote_timestamp_skew_seconds = _plain(max_quote_timestamp_skew_seconds)
 
     symbols = discover_cash_future_symbols(limit)
     if not symbols:
@@ -96,7 +100,12 @@ def cash_future_live_auto_scanner(
         funding_cost=funding_cost,
         require_two_sided_quotes=True,
     )
-    result = CashFutureHistoryCollector(symbols, config=config).collect(db)
+    result = CashFutureHistoryCollector(
+        symbols,
+        config=config,
+        max_quote_age_seconds=max_quote_age_seconds,
+        max_quote_timestamp_skew_seconds=max_quote_timestamp_skew_seconds,
+    ).collect(db)
     opportunities = _filtered(result["collected"])
     opportunities.sort(key=lambda item: (item.get("net_profit", 0), item.get("roi_pct", 0)), reverse=True)
     return {
@@ -119,6 +128,8 @@ def cash_future_live_auto_scanner(
             "max_cash_bid_ask_spread_pct": max_cash_bid_ask_spread_pct,
             "charges": charges,
             "funding_cost": funding_cost,
+            "max_quote_age_seconds": max_quote_age_seconds,
+            "max_quote_timestamp_skew_seconds": max_quote_timestamp_skew_seconds,
             "require_two_sided_quotes": True,
         },
     }
