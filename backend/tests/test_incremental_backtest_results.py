@@ -29,17 +29,19 @@ def test_paper_backtest_can_stream_without_minute_ledger():
 def test_full_fno_streams_symbol_results_to_sink_without_accumulating(monkeypatch):
     monkeypatch.setattr(full_fno_backtest, "persisted_stock_symbols", lambda db: ["AAA", "BBB"])
     monkeypatch.setattr(full_fno_backtest, "iter_persisted_symbol_replay", lambda db, symbol, start, end: iter(()))
-    monkeypatch.setattr(
-        full_fno_backtest,
-        "run_cash_future_paper_backtest",
-        lambda bars, config, cancelled=None: {
+    captured_configs = []
+
+    def fake_backtest(bars, config, cancelled=None):
+        captured_configs.append(config)
+        return {
             "status": "no_entry",
             "future_selection": config.future_selection,
             "starting_capital": config.starting_capital,
             "ending_capital": config.starting_capital,
             "net_profit": 0.0,
-        },
-    )
+        }
+
+    monkeypatch.setattr(full_fno_backtest, "run_cash_future_paper_backtest", fake_backtest)
 
     chunks = []
     result = full_fno_backtest.run_full_fno_backtest(
@@ -61,3 +63,5 @@ def test_full_fno_streams_symbol_results_to_sink_without_accumulating(monkeypatc
     assert result["symbols_processed"] == 2
     assert [symbol for _, symbol, _ in chunks] == ["AAA", "BBB"]
     assert [sequence for sequence, _, _ in chunks] == [0, 1]
+    assert all(config.collect_ledger is False for config in captured_configs)
+    assert all("ledger" not in item for _, _, item in chunks)
