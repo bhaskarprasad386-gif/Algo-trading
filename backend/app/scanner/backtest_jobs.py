@@ -113,7 +113,8 @@ def _run_job(job_id: str, symbol: str, contract_month: str, days: int, min_entry
 def _persist_full_fno_chunk(job_id: str, sequence: int, symbol: str, result: dict) -> None:
     if not job_id or sequence < 0 or not symbol: raise ValueError("invalid full-F&O result chunk identity")
     if not isinstance(result, dict): raise TypeError("full-F&O result chunk must be a dict")
-    if "ledger" in result: raise ValueError("full-F&O durable result chunk must not contain a minute ledger")
+    if "ledger" in result:
+        raise ValueError("durable full-F&O result chunk must not contain minute ledger")
     payload_json = json.dumps(result, default=str)
     db = SessionLocal()
     try:
