@@ -8,7 +8,7 @@ def _quotes(expiry):
         CashQuote(symbol="ABC", ltp=100.0, bid=99.9, ask=100.1),
         FutureQuote(
             symbol="ABC",
-            contract_month="2026-10",
+            contract_month=expiry.strftime("%Y-%m"),
             ltp=104.0,
             lot_size=100,
             margin_required=20_000.0,
