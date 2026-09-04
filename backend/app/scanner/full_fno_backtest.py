@@ -34,11 +34,17 @@ def persisted_stock_symbols(db: Session) -> list[str]:
     return [symbol.upper() for (symbol,) in rows]
 
 
-def _durable_prefix_aggregates(db: Session, symbols: list[str], resume_count: int) -> tuple[float, float, int, int]:
-    """Rebuild summary metrics from already durable chunks without replaying them."""
+def _durable_prefix_aggregates(
+    db: Session,
+    symbols: list[str],
+    resume_count: int,
+    job_id: str,
+) -> tuple[float, float, int, int]:
+    """Rebuild summary metrics from this job's durable chunks without replaying them."""
     if resume_count <= 0:
         return 0.0, 0.0, 0, 0
     rows = db.query(BacktestJobResultChunk).filter(
+        BacktestJobResultChunk.job_id == job_id,
         BacktestJobResultChunk.sequence < resume_count,
     ).order_by(BacktestJobResultChunk.sequence).all()
     if len(rows) != resume_count:
@@ -75,6 +81,7 @@ def run_full_fno_backtest(
     result_sink: ResultSink | None = None,
     collect_results: bool = True,
     resume_after_sequence: int | None = None,
+    durable_job_id: str | None = None,
 ) -> dict:
     """Run the persisted F&O stock universe, optionally resuming after durable chunks."""
     selection = future_selection.upper()
@@ -82,6 +89,8 @@ def run_full_fno_backtest(
         raise ValueError("future_selection must be CURRENT, NEAR or BOTH")
     if resume_after_sequence is not None and resume_after_sequence < -1:
         raise ValueError("resume_after_sequence must be >= -1")
+    if resume_after_sequence is not None and resume_after_sequence >= 0 and not durable_job_id:
+        raise ValueError("durable_job_id is required when resuming durable full-F&O results")
 
     symbols = persisted_stock_symbols(db)
     total = len(symbols)
@@ -89,7 +98,9 @@ def run_full_fno_backtest(
     if resume_count > total:
         raise ValueError("resume_after_sequence exceeds persisted symbol universe")
 
-    total_net_profit, max_drawdown, completed_symbols, no_entry_symbols = _durable_prefix_aggregates(db, symbols, resume_count)
+    total_net_profit, max_drawdown, completed_symbols, no_entry_symbols = _durable_prefix_aggregates(
+        db, symbols, resume_count, durable_job_id or ""
+    )
     processed = resume_count
     chunks_written = 0
     results: list[dict] | None = [] if collect_results else None
