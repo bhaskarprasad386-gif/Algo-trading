@@ -37,7 +37,6 @@ def _number(value: Any, default: float | int = 0):
 
 
 def _quote_side(value: Any) -> float | None:
-    """Preserve malformed numeric quote sides so downstream validation can reject them."""
     if value is None:
         return None
     try:
@@ -47,7 +46,6 @@ def _quote_side(value: Any) -> float | None:
 
 
 def _quote_timestamp(value: Any) -> datetime | None:
-    """Parse common Angel One quote timestamps without inventing a timestamp."""
     if value is None or value == "":
         return None
     if isinstance(value, (int, float)):
@@ -65,12 +63,13 @@ def _quote_timestamp(value: Any) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError:
+        parsed = None
         for fmt in ("%Y-%m-%d %H:%M:%S", "%d-%b-%Y %H:%M:%S", "%d-%b-%Y %H:%M:%S.%f"):
             try:
                 parsed = datetime.strptime(text, fmt)
                 break
             except ValueError:
-                parsed = None
+                pass
         if parsed is None:
             return None
     if parsed.tzinfo is None:
@@ -98,14 +97,7 @@ def _full_quote(response: dict) -> dict[str, Any]:
         timestamp = _quote_timestamp(item.get(key))
         if timestamp is not None:
             break
-    return {
-        "ltp": _number(item.get("ltp")),
-        "volume": int(_number(item.get("tradeVolume"))),
-        "oi": int(_number(item.get("opnInterest"))),
-        "bid": bid,
-        "ask": ask,
-        "quote_timestamp": timestamp,
-    }
+    return {"ltp": _number(item.get("ltp")), "volume": int(_number(item.get("tradeVolume"))), "oi": int(_number(item.get("opnInterest"))), "bid": bid, "ask": ask, "quote_timestamp": timestamp}
 
 
 def _margin_required(response: dict) -> float:
@@ -121,12 +113,7 @@ def _margin_required(response: dict) -> float:
 class CashFutureHistoryCollector:
     """Collect and persist CURRENT/NEAR Cash-Future observations."""
 
-    def __init__(self, symbols: Iterable[str], market_client: MarketDataClient | None = None,
-                 instrument_master: InstrumentMaster | None = None,
-                 config: CashFutureConfig | None = None,
-                 symbol_timeout_seconds: float | None = 15.0,
-                 max_quote_age_seconds: float | None = 15.0,
-                 max_quote_timestamp_skew_seconds: float | None = 5.0):
+    def __init__(self, symbols: Iterable[str], market_client: MarketDataClient | None = None, instrument_master: InstrumentMaster | None = None, config: CashFutureConfig | None = None, symbol_timeout_seconds: float | None = 15.0, max_quote_age_seconds: float | None = 15.0, max_quote_timestamp_skew_seconds: float | None = 5.0):
         self.symbols = [s.strip().upper() for s in symbols if s.strip()]
         self.market_client = market_client or MarketDataClient()
         self.instrument_master = instrument_master or InstrumentMaster()
@@ -144,9 +131,7 @@ class CashFutureHistoryCollector:
     def _future_instruments(self, symbol: str) -> list[dict]:
         master = self.instrument_master
         master.search(exchange="NFO")
-        rows = [item for item in master.instruments
-                if str(item.get("exch_seg", "")).upper() == "NFO"
-                and str(item.get("instrumenttype", "")).upper() == "FUTSTK"]
+        rows = [item for item in master.instruments if str(item.get("exch_seg", "")).upper() == "NFO" and str(item.get("instrumenttype", "")).upper() == "FUTSTK"]
         candidates: list[tuple[date, str, dict]] = []
         seen: set[tuple[date, str]] = set()
         for item in rows:
@@ -157,9 +142,7 @@ class CashFutureHistoryCollector:
             if name != symbol or not tradingsymbol:
                 continue
             exp = _expiry(item.get("expiry"))
-            if exp is None or exp < date.today():
-                continue
-            if not token or lot_size <= 0:
+            if exp is None or exp < date.today() or not token or lot_size <= 0:
                 continue
             identity = (exp, tradingsymbol)
             if identity in seen:
@@ -173,41 +156,24 @@ class CashFutureHistoryCollector:
         token = str(future.get("token") or "").strip()
         if not token:
             raise ValueError("future token is required for broker margin calculation")
-        response = self.market_client.margin([{
-            "exchange": "NFO",
-            "qty": lot_size,
-            "price": future_ltp,
-            "productType": "CARRYFORWARD",
-            "token": token,
-            "tradeType": "SELL",
-        }])
+        response = self.market_client.margin([{"exchange": "NFO", "qty": lot_size, "price": future_ltp, "productType": "CARRYFORWARD", "token": token, "tradeType": "SELL"}])
         return _margin_required(response)
 
     def _validate_quote_freshness(self, label: str, future_symbol: str, quote_timestamp: datetime | None) -> None:
         if self.max_quote_age_seconds is None or quote_timestamp is None:
             return
-        now = datetime.now(IST)
-        age = (now - quote_timestamp).total_seconds()
-        if age < 0:
-            return
-        if age > self.max_quote_age_seconds:
-            raise ValueError(
-                f"stale {label} quote for {future_symbol}: age {age:.1f}s exceeds "
-                f"max {self.max_quote_age_seconds:g}s"
-            )
+        age = (datetime.now(IST) - quote_timestamp).total_seconds()
+        if age >= 0 and age > self.max_quote_age_seconds:
+            raise ValueError(f"stale {label} quote for {future_symbol}: age {age:.1f}s exceeds max {self.max_quote_age_seconds:g}s")
 
     def _validate_quote_timestamp_skew(self, cash_timestamp: datetime | None, future_timestamp: datetime | None, future_symbol: str) -> None:
         if self.max_quote_timestamp_skew_seconds is None or cash_timestamp is None or future_timestamp is None:
             return
         skew = abs((future_timestamp - cash_timestamp).total_seconds())
         if skew > self.max_quote_timestamp_skew_seconds:
-            raise ValueError(
-                f"cash-future quote timestamp skew for {future_symbol}: {skew:.1f}s exceeds "
-                f"max {self.max_quote_timestamp_skew_seconds:g}s"
-            )
+            raise ValueError(f"cash-future quote timestamp skew for {future_symbol}: {skew:.1f}s exceeds max {self.max_quote_timestamp_skew_seconds:g}s")
 
     def collect_symbol(self, symbol: str, db, errors: list[dict] | None = None) -> list[dict]:
-        """Collect all available contracts for one symbol without cross-contract failure leakage."""
         symbol = symbol.strip().upper()
         started = time.monotonic()
         cash_symbol = f"{symbol}-EQ"
@@ -229,12 +195,7 @@ class CashFutureHistoryCollector:
                 message = f"cash-future symbol scan timeout after {self.symbol_timeout_seconds:g}s"
                 app_logger.warning(f"Cash-Future {symbol}: {message}")
                 if errors is not None:
-                    errors.append({
-                        "symbol": symbol,
-                        "contract_month": label,
-                        "future_symbol": str(future.get("symbol") or "").strip(),
-                        "error": message,
-                    })
+                    errors.append({"symbol": symbol, "contract_month": label, "future_symbol": str(future.get("symbol") or "").strip(), "error": message})
                 break
             future_symbol = str(future.get("symbol") or "").strip()
             try:
@@ -246,51 +207,19 @@ class CashFutureHistoryCollector:
                     raise ValueError(f"invalid future LTP for {future_symbol}")
                 lot_size = int(_number(future.get("lotsize") or future.get("lotSize"), 0))
                 margin = self._future_margin(future, future_ltp, lot_size)
-                future_quote = FutureQuote(
-                    symbol=future_symbol,
-                    contract_month=label,
-                    ltp=future_ltp,
-                    lot_size=lot_size,
-                    margin_required=margin,
-                    volume=market_quote["volume"],
-                    oi=market_quote["oi"],
-                    bid=market_quote["bid"],
-                    ask=market_quote["ask"],
-                    expiry=_expiry(future.get("expiry")),
-                )
-                result = calculate_cash_future(
-                    CashQuote(symbol=cash_symbol, ltp=cash_ltp, bid=cash_quote["bid"], ask=cash_quote["ask"]),
-                    future_quote,
-                    self.config,
-                )
+                future_quote = FutureQuote(symbol=future_symbol, contract_month=label, ltp=future_ltp, lot_size=lot_size, margin_required=margin, volume=market_quote["volume"], oi=market_quote["oi"], bid=market_quote["bid"], ask=market_quote["ask"], expiry=_expiry(future.get("expiry")))
+                result = calculate_cash_future(CashQuote(symbol=cash_symbol, ltp=cash_ltp, bid=cash_quote["bid"], ask=cash_quote["ask"]), future_quote, self.config)
                 item = result.__dict__.copy()
                 item["contract_month"] = label
                 item["timestamp"] = observation_time.isoformat()
                 item["cash_quote_timestamp"] = cash_quote["quote_timestamp"].isoformat() if cash_quote["quote_timestamp"] else None
                 item["quote_timestamp"] = market_quote["quote_timestamp"].isoformat() if market_quote["quote_timestamp"] else None
-                save_history_point(db, CashFutureHistoryPoint(
-                    symbol=symbol,
-                    contract_month=label,
-                    timestamp=observation_time,
-                    expiry_date=future_quote.expiry,
-                    cash_ltp=cash_ltp,
-                    future_ltp=future_ltp,
-                    gap=result.gap,
-                    gap_pct=result.gap_pct,
-                    margin_required=margin,
-                    volume=market_quote["volume"],
-                    oi=market_quote["oi"],
-                ), expiry_date=future_quote.expiry)
+                save_history_point(db, CashFutureHistoryPoint(symbol=symbol, contract_month=label, timestamp=observation_time, cash_price=cash_ltp, future_price=future_ltp, gap=result.gap, gap_pct=result.gap_pct, lot_size=lot_size, margin_required=margin, volume=market_quote["volume"], oi=market_quote["oi"], cash_bid=cash_quote["bid"], cash_ask=cash_quote["ask"], future_bid=market_quote["bid"], future_ask=market_quote["ask"], charges=self.config.charges, funding_cost=self.config.funding_cost, net_profit=result.net_profit, roi_pct=result.roi_pct, expiry_date=future_quote.expiry), expiry_date=future_quote.expiry)
                 results.append(item)
             except Exception as exc:
                 app_logger.warning(f"Cash-Future {symbol} {label} {future_symbol}: {exc}")
                 if errors is not None:
-                    errors.append({
-                        "symbol": symbol,
-                        "contract_month": label,
-                        "future_symbol": future_symbol,
-                        "error": str(exc),
-                    })
+                    errors.append({"symbol": symbol, "contract_month": label, "future_symbol": future_symbol, "error": str(exc)})
         return results
 
     def collect(self, db) -> dict[str, list]:
