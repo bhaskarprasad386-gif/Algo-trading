@@ -116,10 +116,9 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
     if future.lot_size <= 0: raise ValueError("lot_size must be greater than zero")
     _validate_finite("margin_required", future.margin_required)
     if future.margin_required < 0: raise ValueError("margin_required cannot be negative")
-    _validate_finite("future volume", future.volume)
-    if future.volume < 0: raise ValueError("future volume cannot be negative")
-    _validate_finite("future oi", future.oi)
-    if future.oi < 0: raise ValueError("future oi cannot be negative")
+    for name, value in (("future volume", future.volume), ("future oi", future.oi)):
+        if isinstance(value, bool) or not isinstance(value, int): raise ValueError(f"{name} must be a non-negative integer")
+        if value < 0: raise ValueError(f"{name} cannot be negative")
     for name, value in (("cash bid", cash.bid), ("cash ask", cash.ask), ("future bid", future.bid), ("future ask", future.ask)):
         if value is not None: _validate_finite(name, value)
     gap = future.ltp - cash.ltp; gap_pct = gap / cash.ltp * 100.0
