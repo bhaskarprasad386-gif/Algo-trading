@@ -150,6 +150,12 @@ def calculate_cash_future(cash: CashQuote, future: FutureQuote, config: CashFutu
         reasons.append("oi_below_minimum")
     if config.require_two_sided_quotes and (cash.ask is None or future.bid is None):
         reasons.append("missing_executable_quotes")
+
+    if cash.bid is not None and cash.ask is not None and cash.ask < cash.bid:
+        reasons.append("invalid_cash_bid_ask")
+    if future.bid is not None and future.ask is not None and future.ask < future.bid:
+        reasons.append("invalid_future_bid_ask")
+
     if config.max_bid_ask_spread_pct is not None:
         if future_spread_pct is not None and future_spread_pct > config.max_bid_ask_spread_pct:
             reasons.append("bid_ask_spread_above_maximum")
