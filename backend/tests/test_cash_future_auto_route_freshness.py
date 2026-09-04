@@ -41,5 +41,9 @@ def test_cash_future_auto_route_passes_quote_freshness_controls(monkeypatch):
 
 def test_cash_future_auto_route_freshness_query_constraints_are_positive():
     parameters = inspect.signature(auto_routes.cash_future_live_auto_scanner).parameters
-    assert parameters["max_quote_age_seconds"].default.gt == 0
-    assert parameters["max_quote_timestamp_skew_seconds"].default.gt == 0
+    age_query = parameters["max_quote_age_seconds"].default
+    skew_query = parameters["max_quote_timestamp_skew_seconds"].default
+    assert age_query.default == 15.0
+    assert skew_query.default == 5.0
+    assert any(getattr(metadata, "gt", None) == 0 for metadata in age_query.metadata)
+    assert any(getattr(metadata, "gt", None) == 0 for metadata in skew_query.metadata)
