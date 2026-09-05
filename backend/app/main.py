@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from app.core.config import settings
 from app.core.logger import app_logger
 from app.core.exceptions import TradingAppException, trading_exception_handler, global_exception_handler
-from app.core.database import engine, Base, SessionLocal
+from app.core.database import engine, Base, SessionLocal, check_database
 from app.core.schema_migrations import run_schema_migrations
 from app.models import User, Instrument, Order, Session, Position, SystemLog
 from app.auth.routes import router as auth_router
@@ -239,4 +239,9 @@ def root():
 
 @app.get("/health")
 def health_check():
+    try:
+        check_database()
+    except Exception as exc:
+        app_logger.error(f"Health check database failure: {exc}")
+        return {"status": "degraded", "app": settings.app_name, "version": "0.1.0", "database": "Disconnected"}
     return {"status": "ok", "app": settings.app_name, "version": "0.1.0", "database": "Connected"}
