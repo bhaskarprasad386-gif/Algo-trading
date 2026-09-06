@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
+from typing import Callable
 
 from .angelone_historical import AngelOneHistoricalSource
 from .cash_future_download_queue import CashFutureDownloadQueue, build_rollover_download_queue
@@ -26,6 +27,22 @@ class CashFutureHistoricalDownloadReport:
             result.failed_request_index is None for result in self.future_executions
         )
 
+    @property
+    def completed_chunks(self) -> int:
+        return self.spot_execution.completed_chunks + sum(
+            result.completed_chunks for result in self.future_executions
+        )
+
+    @property
+    def skipped_chunks(self) -> int:
+        return self.spot_execution.skipped_chunks + sum(
+            result.skipped_chunks for result in self.future_executions
+        )
+
+    @property
+    def processed_chunks(self) -> int:
+        return self.completed_chunks + self.skipped_chunks
+
 
 class CashFutureHistoricalDownloadService:
     """Download spot/future requests sequentially and persist each chunk immediately."""
@@ -39,17 +56,13 @@ class CashFutureHistoricalDownloadService:
 
     @staticmethod
     def _plan_for_request(request) -> HistoricalSyncPlan:
-        start_ns = request.start_ns
-        end_ns = request.end_ns
-        # Seven-day chunks are provider-safe for 1-minute data and remain conservative
-        # for other supported intervals. The underlying timestamp precision is preserved.
         chunk_ns = 7 * 24 * 60 * 60 * 1_000_000_000
         return build_chunked_plan(
             source=request.source,
             instrument=request.instrument,
             timeframe=request.timeframe,
-            start_ns=start_ns,
-            end_ns=end_ns,
+            start_ns=request.start_ns,
+            end_ns=request.end_ns,
             chunk_ns=chunk_ns,
         )
 
@@ -64,6 +77,7 @@ class CashFutureHistoricalDownloadService:
         timeframe: str = "1m",
         mode: str = "BOTH",
         retry_attempts: int = 3,
+        should_skip: Callable[[object], bool] | None = None,
     ) -> CashFutureHistoricalDownloadReport:
         queue = build_rollover_download_queue(
             catalog=self.contract_catalog,
@@ -79,6 +93,7 @@ class CashFutureHistoricalDownloadService:
             self.source,
             self._plan_for_request(queue.spot),
             retry_attempts=retry_attempts,
+            should_skip=should_skip,
         )
         if spot_result.failed_request_index is not None:
             return CashFutureHistoricalDownloadReport(
@@ -91,6 +106,7 @@ class CashFutureHistoricalDownloadService:
                 self.source,
                 self._plan_for_request(item.request),
                 retry_attempts=retry_attempts,
+                should_skip=should_skip,
             )
             future_results.append(result)
             if result.failed_request_index is not None:
