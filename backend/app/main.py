@@ -31,6 +31,8 @@ from app.brokers.routes import router as brokers_router
 from app.backtesting.download_status_routes import create_download_status_router
 from app.backtesting.cash_future_download_routes import CashFutureDownloadManager, create_cash_future_download_router
 from app.backtesting.historical_download_status import HistoricalDownloadStatusStore
+from app.backtesting.contract_master import ContractMasterCatalog
+from app.backtesting.contract_master_sync import DailyContractMasterSync
 
 run_schema_migrations()
 Base.metadata.create_all(bind=engine)
@@ -182,6 +184,7 @@ async def market_data_websocket(websocket: WebSocket, symbol: str):
         client.close()
 
 _history_collector_task: asyncio.Task | None = None
+_contract_master_sync_task: asyncio.Task | None = None
 IST = ZoneInfo("Asia/Kolkata")
 MARKET_OPEN = time(9, 15)
 MARKET_CLOSE = time(15, 30)
@@ -233,24 +236,53 @@ async def _cash_future_history_loop() -> None:
         await asyncio.sleep(interval)
 
 
+async def _contract_master_sync_loop() -> None:
+    interval = max(3600, settings.BACKTEST_CONTRACT_MASTER_SYNC_INTERVAL_SECONDS)
+    app_logger.info(f"Contract-master auto-sync started: every {interval}s")
+    while True:
+        try:
+            now = datetime.now(IST)
+            catalog = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
+            try:
+                syncer = DailyContractMasterSync(catalog)
+                result = await asyncio.to_thread(syncer.sync, snapshot_date=now.date())
+                if result.skipped:
+                    app_logger.debug(f"Contract-master snapshot already present for {result.snapshot_date}")
+                else:
+                    app_logger.info(f"Contract-master snapshot saved: {result.snapshot_date} ({result.records} stock futures)")
+            finally:
+                catalog.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            app_logger.error(f"Contract-master auto-sync failed: {exc}")
+        await asyncio.sleep(interval)
+
+
 @app.on_event("startup")
 async def startup_event():
-    global _history_collector_task
+    global _history_collector_task, _contract_master_sync_task
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
+    if settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
+        _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
     if _collector_enabled() and _history_collector_task is None:
         _history_collector_task = asyncio.create_task(_cash_future_history_loop())
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global _history_collector_task
-    if _history_collector_task is not None:
-        _history_collector_task.cancel()
-        try:
-            await _history_collector_task
-        except asyncio.CancelledError:
-            pass
-        _history_collector_task = None
+    global _history_collector_task, _contract_master_sync_task
+    for task in (_history_collector_task, _contract_master_sync_task):
+        if task is not None:
+            task.cancel()
+    for task in (_history_collector_task, _contract_master_sync_task):
+        if task is not None:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+    _history_collector_task = None
+    _contract_master_sync_task = None
     backtest_download_manager.close()
     backtest_status_store.close()
 
