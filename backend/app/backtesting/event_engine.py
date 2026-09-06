@@ -1,9 +1,11 @@
-"""Resolution-agnostic event-driven backtest replay foundation."""
+"""Resolution-agnostic event-driven backtest replay and execution."""
 
 from dataclasses import dataclass
 from typing import Callable, Iterable, Mapping
 
 from app.backtesting.events import EventReplayConfig, EventType, MarketEvent
+from app.backtesting.execution import ExecutionSimulator, SimFill, SimOrder
+from app.backtesting.portfolio import Portfolio, PortfolioSnapshot
 from app.backtesting.strategy import StrategyContext, StrategyDecision, validate_decision
 
 
@@ -17,6 +19,9 @@ class ReplayStats:
     first_timestamp_ns: int | None
     last_timestamp_ns: int | None
     decisions_emitted: int = 0
+    orders_submitted: int = 0
+    fills: int = 0
+    final_snapshot: PortfolioSnapshot | None = None
 
 
 class EventBacktestEngine:
@@ -24,11 +29,59 @@ class EventBacktestEngine:
 
     The engine never creates observations between source events. A strategy
     receives only the current event and history strictly before that event,
-    preventing look-ahead. Legacy callback strategies remain supported.
+    preventing look-ahead. Strategy decisions can now flow through the shared
+    execution simulator and portfolio, including multiple orders from one
+    event. Legacy callback strategies remain supported.
     """
 
-    def __init__(self, config: EventReplayConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: EventReplayConfig | None = None,
+        *,
+        execution: ExecutionSimulator | None = None,
+        portfolio: Portfolio | None = None,
+    ) -> None:
         self.config = config or EventReplayConfig()
+        self.execution = execution
+        self.portfolio = portfolio
+
+    @staticmethod
+    def _event_price(event: MarketEvent) -> float | None:
+        for key in ("price", "ltp", "last", "last_price", "mid"):
+            value = event.payload.get(key)
+            if isinstance(value, (int, float)) and value > 0:
+                return float(value)
+        bid = event.payload.get("bid")
+        ask = event.payload.get("ask")
+        if isinstance(bid, (int, float)) and isinstance(ask, (int, float)) and bid > 0 and ask > 0:
+            return (float(bid) + float(ask)) / 2.0
+        return None
+
+    def _execute_decision(self, decision: StrategyDecision, event: MarketEvent) -> tuple[SimFill, ...]:
+        if self.execution is None or self.portfolio is None or not decision.orders:
+            return ()
+        market_price = self._event_price(event)
+        if market_price is None:
+            raise ValueError("cannot execute strategy order: event has no executable price")
+        fills: list[SimFill] = []
+        for order in decision.orders:
+            if not isinstance(order, SimOrder):
+                raise TypeError("strategy orders must be SimOrder instances")
+            submitted = max(order.submitted_at_ns, event.timestamp_ns)
+            effective_order = SimOrder(
+                order_id=order.order_id,
+                instrument=order.instrument,
+                side=order.side,
+                quantity=order.quantity,
+                order_type=order.order_type,
+                limit_price=order.limit_price,
+                stop_price=order.stop_price,
+                submitted_at_ns=submitted,
+            )
+            fill = self.execution.execute(effective_order, market_price, event.timestamp_ns)
+            self.portfolio.apply_fill(fill)
+            fills.append(fill)
+        return tuple(fills)
 
     def run(
         self,
@@ -39,9 +92,7 @@ class EventBacktestEngine:
     ) -> ReplayStats:
         context_state: dict[str, object] = dict(state or {})
         history: list[MarketEvent] = []
-        seen = 0
-        dispatched = 0
-        decisions = 0
+        seen = dispatched = decisions = orders = fill_count = 0
         first: int | None = None
         last: int | None = None
         previous_key: tuple[int, int, str, str, int] | None = None
@@ -52,14 +103,7 @@ class EventBacktestEngine:
             timestamp_ns = raw_event.timestamp_ns
             if self.config.timestamp_unit != "ns":
                 timestamp_ns = self.config.to_ns(timestamp_ns)
-                event = MarketEvent(
-                    timestamp_ns=timestamp_ns,
-                    instrument=raw_event.instrument,
-                    event_type=raw_event.event_type,
-                    payload=raw_event.payload,
-                    sequence=raw_event.sequence,
-                    source=raw_event.source,
-                )
+                event = MarketEvent(timestamp_ns, raw_event.instrument, raw_event.event_type, raw_event.payload, raw_event.sequence, raw_event.source)
             else:
                 event = raw_event
 
@@ -79,15 +123,9 @@ class EventBacktestEngine:
                     starter(StrategyContext(event.timestamp_ns, tuple(), dict(context_state)))
                 started = True
 
-            if first is None:
-                first = event.timestamp_ns
+            first = event.timestamp_ns if first is None else first
             last = event.timestamp_ns
-
-            strategy_context = StrategyContext(
-                timestamp_ns=event.timestamp_ns,
-                history=tuple(history),
-                state=dict(context_state),
-            )
+            strategy_context = StrategyContext(event.timestamp_ns, tuple(history), dict(context_state))
             handler = getattr(strategy, "on_event", None)
             if callable(handler):
                 decision = handler(event, strategy_context)
@@ -96,6 +134,8 @@ class EventBacktestEngine:
                 validate_decision(decision)
                 if decision is not None:
                     decisions += 1
+                    orders += len(decision.orders)
+                    fill_count += len(self._execute_decision(decision, event))
             elif callable(strategy):
                 strategy(event, context_state)
             else:
@@ -115,4 +155,7 @@ class EventBacktestEngine:
             first_timestamp_ns=first,
             last_timestamp_ns=last,
             decisions_emitted=decisions,
+            orders_submitted=orders,
+            fills=fill_count,
+            final_snapshot=self.portfolio.snapshot() if self.portfolio is not None else None,
         )
