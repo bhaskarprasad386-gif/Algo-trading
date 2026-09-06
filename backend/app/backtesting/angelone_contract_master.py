@@ -1,11 +1,9 @@
-"""Angel One instrument-master ingestion for historical F&O token resolution.
-
-Angel One publishes a daily consolidated instrument master. This adapter imports
-that real provider data into the local contract catalog; it never invents tokens.
-"""
+"""Angel One instrument-master ingestion with dated snapshot retention."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import date, datetime
 from typing import Any, Iterable, Mapping
 
@@ -47,9 +45,9 @@ class AngelOneContractMasterSource:
     def normalize_futures(cls, rows: Iterable[Mapping[str, Any]]) -> tuple[ContractRecord, ...]:
         records: list[ContractRecord] = []
         for row in rows:
-            exchange = str(row.get("exch_seg", "")).upper()
-            instrument_type = str(row.get("instrumenttype", "")).upper()
-            if exchange != "NFO" or instrument_type != "FUTSTK":
+            if str(row.get("exch_seg", "")).upper() != "NFO":
+                continue
+            if str(row.get("instrumenttype", "")).upper() != "FUTSTK":
                 continue
             expiry = cls._expiry(row.get("expiry"))
             token = str(row.get("token", "")).strip()
@@ -61,18 +59,12 @@ class AngelOneContractMasterSource:
                 continue
             if expiry is None or not token or not symbol or not underlying or lot_size <= 0:
                 continue
-            records.append(
-                ContractRecord(
-                    exchange=exchange,
-                    symbol=symbol,
-                    token=token,
-                    expiry=expiry,
-                    instrument_type="STOCK_FUTURE",
-                    underlying=underlying,
-                    lot_size=lot_size,
-                )
-            )
+            records.append(ContractRecord("NFO", symbol, token, expiry, "STOCK_FUTURE", underlying, lot_size))
         return tuple(records)
 
-    def sync(self, catalog: ContractMasterCatalog) -> int:
-        return catalog.upsert(self.normalize_futures(self.fetch()))
+    def sync(self, catalog: ContractMasterCatalog, *, snapshot_date: date | None = None) -> int:
+        rows = self.fetch()
+        snapshot = snapshot_date or date.today()
+        canonical = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        digest = hashlib.sha256(canonical).hexdigest()
+        return catalog.upsert_snapshot(snapshot, self.normalize_futures(rows), payload_sha256=digest, fetched_at=datetime.utcnow())
