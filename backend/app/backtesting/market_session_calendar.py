@@ -14,8 +14,9 @@ MARKET_TZ = ZoneInfo("Asia/Kolkata")
 class MarketSessionCalendar:
     """Build regular weekday sessions with an explicit holiday/closure set.
 
-    Holiday data is deliberately injected rather than guessed, so a stale holiday
-    list can never silently turn a real missing market bar into a complete chunk.
+    Holiday data is deliberately injected rather than guessed. Session endpoints
+    are inclusive and use 15:29 for intraday bars so a 1-minute cadence represents
+    the regular NSE/NFO timestamps without inventing a 15:30 bar.
     """
 
     def __init__(
@@ -23,7 +24,7 @@ class MarketSessionCalendar:
         *,
         holidays: frozenset[date] = frozenset(),
         weekday_start: time = time(9, 15),
-        weekday_end: time = time(15, 30),
+        weekday_end: time = time(15, 29),
     ) -> None:
         if weekday_start >= weekday_end:
             raise ValueError("session start must be before session end")
