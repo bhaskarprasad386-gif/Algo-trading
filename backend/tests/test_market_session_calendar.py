@@ -21,11 +21,14 @@ def test_explicit_holiday_is_excluded():
     assert len(sessions) == 1
 
 
-def test_regular_session_is_915_to_1530_ist():
+def test_regular_session_ends_at_1529_ist_for_intraday_bars():
     calendar = MarketSessionCalendar()
     sessions = calendar.sessions(
         datetime(2026, 1, 5, tzinfo=MARKET_TZ),
         datetime(2026, 1, 5, 23, tzinfo=MARKET_TZ),
     )
     assert len(sessions) == 1
-    assert sessions[0].start_ns < sessions[0].end_ns
+    start = datetime.fromtimestamp(sessions[0].start_ns / 1_000_000_000, tz=timezone.utc).astimezone(MARKET_TZ)
+    end = datetime.fromtimestamp(sessions[0].end_ns / 1_000_000_000, tz=timezone.utc).astimezone(MARKET_TZ)
+    assert start.time().isoformat() == "09:15:00"
+    assert end.time().isoformat() == "15:29:00"
