@@ -106,6 +106,21 @@ class CashFutureHistoricalDownloadService:
     def _should_accept_chunk(self, request, _result) -> bool:
         return self._chunk_is_complete(request)
 
+    def _chunk_metrics(self, request) -> tuple[int, int, int, int | None]:
+        sessions = tuple(self.session_windows(request))
+        interval_ns = _TIMEFRAME_INTERVAL_NS.get(request.timeframe, 0)
+        if not sessions or not interval_ns:
+            return 0, 0, 0, None
+        expected_set = self.completeness._expected_timestamps(sessions, interval_ns)
+        if not expected_set:
+            return 0, 0, 0, None
+        actual_set = set(self.catalog.timestamps(
+            source=request.source, instrument=request.instrument,
+            timeframe=request.timeframe, start_ns=min(expected_set), end_ns=max(expected_set),
+        ))
+        missing_set = expected_set - actual_set
+        return len(expected_set), len(actual_set), len(missing_set), min(missing_set) if missing_set else None
+
     def _callbacks(self, job_id: str, sequence_offset: int):
         store = self.status_store
         if store is None:
@@ -118,31 +133,21 @@ class CashFutureHistoricalDownloadService:
                 instrument=request.instrument, start_ns=request.start_ns,
                 end_ns=request.end_ns, attempts=attempt,
             )
-            store.update_job(job_id, status="RUNNING")
 
         def skip(index, request):
             from .download_status_progress import persist_chunk_result
+            expected, actual, missing, first_missing = self._chunk_metrics(request)
             persist_chunk_result(
                 store, job_id=job_id, sequence=sequence_offset + index,
                 instrument=request.instrument, start_ns=request.start_ns,
                 end_ns=request.end_ns, attempts=0, status="SKIPPED",
+                expected_timestamps=expected, actual_timestamps=actual,
+                missing_timestamps=missing, first_missing_ns=first_missing,
             )
 
         def complete(index, request, result, attempt):
             from .download_status_progress import persist_chunk_result
-            sessions = tuple(self.session_windows(request))
-            interval_ns = _TIMEFRAME_INTERVAL_NS.get(request.timeframe, 0)
-            expected = actual = missing = 0
-            first_missing = None
-            if sessions and interval_ns:
-                expected_set = self.completeness._expected_timestamps(sessions, interval_ns)
-                actual_set = set(self.catalog.timestamps(
-                    source=request.source, instrument=request.instrument,
-                    timeframe=request.timeframe, start_ns=min(expected_set), end_ns=max(expected_set),
-                )) if expected_set else set()
-                missing_set = expected_set - actual_set
-                expected, actual, missing = len(expected_set), len(actual_set), len(missing_set)
-                first_missing = min(missing_set) if missing_set else None
+            expected, actual, missing, first_missing = self._chunk_metrics(request)
             persist_chunk_result(
                 store, job_id=job_id, sequence=sequence_offset + index,
                 instrument=request.instrument, start_ns=request.start_ns,
@@ -153,10 +158,13 @@ class CashFutureHistoricalDownloadService:
 
         def failed(index, request, error, attempts):
             from .download_status_progress import persist_chunk_result
+            expected, actual, missing, first_missing = self._chunk_metrics(request)
             persist_chunk_result(
                 store, job_id=job_id, sequence=sequence_offset + index,
                 instrument=request.instrument, start_ns=request.start_ns,
                 end_ns=request.end_ns, attempts=attempts, status="FAILED",
+                expected_timestamps=expected, actual_timestamps=actual,
+                missing_timestamps=missing, first_missing_ns=first_missing,
                 error=str(error),
             )
             store.update_job(job_id, status="FAILED", error=str(error))
