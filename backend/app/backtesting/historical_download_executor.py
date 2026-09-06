@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Callable, Iterable
+from typing import Callable
 
 from .historical_ingest import HistoricalIngestionService, HistoricalSource, HistoricalSyncResult
 from .historical_sync import HistoricalSyncPlan
@@ -14,14 +14,24 @@ from .historical_sync import HistoricalSyncPlan
 class DownloadExecutionResult:
     results: tuple[HistoricalSyncResult, ...]
     failed_request_index: int | None = None
+    skipped_request_indices: tuple[int, ...] = ()
 
     @property
     def completed_chunks(self) -> int:
+        """Chunks fetched successfully during this invocation."""
         return len(self.results)
+
+    @property
+    def skipped_chunks(self) -> int:
+        return len(self.skipped_request_indices)
+
+    @property
+    def processed_chunks(self) -> int:
+        return self.completed_chunks + self.skipped_chunks
 
 
 class ResumableHistoricalExecutor:
-    """Execute bounded requests sequentially; already durable chunks can be skipped."""
+    """Execute bounded requests sequentially; complete chunks can be skipped safely."""
 
     def __init__(self, service: HistoricalIngestionService, *, sleep: Callable[[float], None] = time.sleep) -> None:
         self.service = service
@@ -41,8 +51,10 @@ class ResumableHistoricalExecutor:
         if retry_delay_seconds < 0:
             raise ValueError("retry_delay_seconds cannot be negative")
         results: list[HistoricalSyncResult] = []
+        skipped: list[int] = []
         for index, request in enumerate(plan.requests):
             if should_skip is not None and should_skip(request):
+                skipped.append(index)
                 continue
             last_error: Exception | None = None
             for attempt in range(retry_attempts):
@@ -51,10 +63,10 @@ class ResumableHistoricalExecutor:
                     results.append(result)
                     last_error = None
                     break
-                except Exception as exc:  # provider/network errors are retried, then surfaced
+                except Exception as exc:
                     last_error = exc
                     if attempt + 1 < retry_attempts:
                         self.sleep(retry_delay_seconds * (2 ** attempt))
             if last_error is not None:
-                return DownloadExecutionResult(tuple(results), failed_request_index=index)
-        return DownloadExecutionResult(tuple(results), failed_request_index=None)
+                return DownloadExecutionResult(tuple(results), index, tuple(skipped))
+        return DownloadExecutionResult(tuple(results), None, tuple(skipped))
