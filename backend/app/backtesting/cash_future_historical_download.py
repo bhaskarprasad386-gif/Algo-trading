@@ -11,6 +11,7 @@ from .historical_catalog import HistoricalCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_download_status import HistoricalDownloadStatusStore
 from .historical_ingest import HistoricalIngestionService
+from .historical_ingest import HistoricalFetchRequest
 from .historical_sync import HistoricalSyncPlan, build_chunked_plan
 from .nse_session_calendars import nse_session_windows
 from .session_chunk_completeness import SessionChunk, SessionChunkCompleteness
@@ -32,7 +33,7 @@ def _default_session_windows(request: object) -> tuple[SessionWindow, ...]:
 
 @dataclass(frozen=True)
 class CashFutureHistoricalDownloadReport:
-    queue: CashFutureDownloadQueue
+    queue: CashFutureDownloadQueue | None
     spot_execution: DownloadExecutionResult
     future_executions: tuple[DownloadExecutionResult, ...]
     catalog_count: int
@@ -135,10 +136,43 @@ class CashFutureHistoricalDownloadService:
 
         return {"on_chunk_start": start, "on_chunk_skip": skip, "on_chunk_complete": complete, "on_chunk_failed": failed}
 
+    def _resume_plan(self, job_id: str) -> HistoricalSyncPlan:
+        if self.status_store is None:
+            raise ValueError("resume requires a durable status store")
+        chunks = self.status_store.incomplete_chunks(job_id)
+        requests = tuple(
+            HistoricalFetchRequest("angelone", chunk.instrument, self.status_store.job(job_id).timeframe, chunk.start_ns, chunk.end_ns)
+            for chunk in chunks
+        )
+        return HistoricalSyncPlan(requests)
+
     def run(self, *, spot_instrument: str, exchange: str, underlying: str, start, end,
             timeframe: str = "1m", mode: str = "BOTH", retry_attempts: int = 3,
             should_skip: Callable[[object], bool] | None = None, job_id: str | None = None,
             resume: bool = False) -> CashFutureHistoricalDownloadReport:
+        if resume:
+            if self.status_store is None or job_id is None:
+                raise ValueError("resume requires job_id and durable status store")
+            job = self.status_store.job(job_id)
+            if job is None:
+                raise KeyError(job_id)
+            chunks = self.status_store.incomplete_chunks(job_id)
+            if not chunks:
+                self.status_store.update_job(job_id, status="COMPLETE", error=None, catalog_count=self.catalog.count())
+                empty = DownloadExecutionResult(tuple(), None, tuple())
+                return CashFutureHistoricalDownloadReport(None, empty, tuple(), self.catalog.count())
+            plan = self._resume_plan(job_id)
+            self.status_store.update_job(job_id, status="RUNNING", error=None)
+            callbacks = self._callbacks(job_id, 0)
+            result = self.executor.run(
+                self.source, plan, retry_attempts=retry_attempts,
+                should_skip=should_skip or self._chunk_is_complete,
+                should_accept=self._chunk_is_complete, **callbacks,
+            )
+            if result.failed_request_index is None:
+                self.status_store.update_job(job_id, status="COMPLETE", catalog_count=self.catalog.count())
+            return CashFutureHistoricalDownloadReport(None, result, tuple(), self.catalog.count())
+
         queue = build_rollover_download_queue(catalog=self.contract_catalog, spot_instrument=spot_instrument, exchange=exchange,
                                                underlying=underlying, start=start, end=end, timeframe=timeframe, mode=mode)
         spot_plan = self._plan_for_request(queue.spot)
@@ -149,7 +183,7 @@ class CashFutureHistoricalDownloadService:
             end_ns = max([queue.spot.end_ns, *[item.request.end_ns for item in queue.futures]])
             self.status_store.create_job(job_id=job_id, mode=mode, timeframe=timeframe, spot_instrument=spot_instrument,
                                          exchange=exchange, underlying=underlying, start_ns=start_ns, end_ns=end_ns,
-                                         requested_chunks=total_chunks, reset_existing=not resume)
+                                         requested_chunks=total_chunks, reset_existing=True)
         effective_skip = should_skip or self._chunk_is_complete
         sequence_offset = 0
         callbacks = self._callbacks(job_id, sequence_offset) if job_id else {}
