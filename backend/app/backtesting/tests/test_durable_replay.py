@@ -76,5 +76,7 @@ def test_true_resume_restores_portfolio_strategy_market_state_and_cursor(tmp_pat
     DurableEventBacktestEngine(EventBacktestEngine(execution=ExecutionSimulator(), portfolio=full_portfolio), full_ledger, "full-run").run(events, Strategy())
     assert resumed_portfolio.snapshot().cash == full_portfolio.snapshot().cash
     assert resumed_portfolio.snapshot().equity == full_portfolio.snapshot().equity
-    assert resumed_portfolio.trades == full_portfolio.trades[2:]
+    # A true resume restores the committed prefix, so the final trade history
+    # must match the uninterrupted run in full, not only the replayed suffix.
+    assert resumed_portfolio.trades == full_portfolio.trades
     ledger.close(); full_ledger.close()
