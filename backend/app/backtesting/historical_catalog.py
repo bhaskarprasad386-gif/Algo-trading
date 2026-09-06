@@ -116,6 +116,18 @@ class HistoricalCatalog:
         ).fetchall()
         return tuple(HistoricalRecord(r[0], r[1], r[2], r[3], json.loads(r[4]), r[5]) for r in rows)
 
+    def timestamps(
+        self, *, source: str, instrument: str, timeframe: str, start_ns: int, end_ns: int
+    ) -> tuple[int, ...]:
+        """Return distinct stored timestamps in an inclusive range."""
+        if start_ns < 0 or end_ns < start_ns:
+            raise ValueError("invalid timestamp range")
+        rows = self._db.execute(
+            "SELECT DISTINCT timestamp_ns FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? AND timestamp_ns BETWEEN ? AND ? ORDER BY timestamp_ns",
+            (source, instrument, timeframe, start_ns, end_ns),
+        ).fetchall()
+        return tuple(int(row[0]) for row in rows)
+
     def watermark(self, *, source: str, instrument: str, timeframe: str) -> int | None:
         row = self._db.execute(
             "SELECT max_timestamp_ns FROM source_watermarks WHERE source=? AND instrument=? AND timeframe=?",
