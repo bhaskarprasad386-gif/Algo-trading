@@ -75,7 +75,7 @@ def test_event_strategy_receives_only_prior_history():
     strategy = Strategy()
     result = EventBacktestEngine().run(events, strategy)
     assert strategy.started and strategy.ended
-    assert strategy.histories == [(10,), (10,)] if False else [(), (10,)]
+    assert strategy.histories == [(), (10,)]
     assert result.decisions_emitted == 2
 
 
