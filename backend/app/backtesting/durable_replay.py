@@ -36,14 +36,20 @@ class DurableEventBacktestEngine:
                 starter = getattr(strategy, "on_start", None)
                 if callable(starter): starter(context)
             def on_event(self, event, context):
+                handler = getattr(strategy, "on_event", None)
+                if not callable(handler):
+                    decision = None
+                else:
+                    decision = handler(event, context)
+                    if decision is not None:
+                        if not isinstance(decision, StrategyDecision): raise TypeError("event strategy must return StrategyDecision or None")
+                # Commit the EVENT audit record only after strategy processing succeeds.
+                # This prevents an interrupted event from being recorded as committed work
+                # and then appearing twice when the durable cursor resumes from its checkpoint.
                 ledger.append(LedgerRecord(run_id, "EVENT", event.timestamp_ns,
                     {"instrument": event.instrument, "event_type": event.event_type.value,
                      "sequence": event.sequence, "source": event.source}))
-                handler = getattr(strategy, "on_event", None)
-                if not callable(handler): return None
-                decision = handler(event, context)
                 if decision is not None:
-                    if not isinstance(decision, StrategyDecision): raise TypeError("event strategy must return StrategyDecision or None")
                     ledger.append(LedgerRecord(run_id, "DECISION", event.timestamp_ns,
                         {"action": decision.action, "orders": len(decision.orders), "metadata": dict(decision.metadata)}))
                 return decision
