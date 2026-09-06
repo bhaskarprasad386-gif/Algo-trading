@@ -1,6 +1,6 @@
 import pytest
 
-from app.backtesting.ledger import BacktestLedger, Checkpoint, LedgerRecord
+from app.backtesting.ledger import BacktestLedger, Checkpoint, LedgerRecord, LEDGER_SCHEMA_VERSION
 
 
 def test_sqlite_ledger_persists_run_records_and_checkpoint(tmp_path):
@@ -44,6 +44,58 @@ def test_checkpoint_history_survives_reopen(tmp_path):
     assert [c.state["x"] for c in history] == [1, 2]
     assert reopened.load_checkpoint("run-history").state["x"] == 2
     reopened.close()
+
+
+def test_run_schema_and_source_fingerprint_persist_through_reopen(tmp_path):
+    path = tmp_path / "identity.sqlite"
+    ledger = BacktestLedger(str(path))
+    ledger.start_run("identity", "s", "1", 1000, schema_version=LEDGER_SCHEMA_VERSION,
+                     data_source_fingerprint="sha256:abc")
+    ledger.close()
+
+    reopened = BacktestLedger(str(path))
+    metadata = reopened.run_metadata("identity")
+    assert metadata["schema_version"] == LEDGER_SCHEMA_VERSION
+    assert metadata["data_source_fingerprint"] == "sha256:abc"
+    reopened.validate_resume("identity", schema_version=LEDGER_SCHEMA_VERSION,
+                             data_source_fingerprint="sha256:abc")
+    reopened.close()
+
+
+def test_resume_rejects_schema_version_mismatch():
+    ledger = BacktestLedger()
+    ledger.start_run("schema-mismatch", "s", "1", 1000, schema_version=LEDGER_SCHEMA_VERSION)
+    with pytest.raises(ValueError, match="schema_version mismatch"):
+        ledger.validate_resume("schema-mismatch", schema_version=LEDGER_SCHEMA_VERSION + 1)
+    ledger.close()
+
+
+def test_resume_rejects_data_source_fingerprint_mismatch():
+    ledger = BacktestLedger()
+    ledger.start_run("source-mismatch", "s", "1", 1000, data_source_fingerprint="sha256:old")
+    with pytest.raises(ValueError, match="data_source_fingerprint mismatch"):
+        ledger.validate_resume("source-mismatch", data_source_fingerprint="sha256:new")
+    ledger.close()
+
+
+def test_resume_rejects_missing_fingerprint_for_fingerprinted_run():
+    ledger = BacktestLedger()
+    ledger.start_run("source-missing", "s", "1", 1000, data_source_fingerprint="sha256:old")
+    with pytest.raises(ValueError, match="data_source_fingerprint mismatch"):
+        ledger.validate_resume("source-missing")
+    ledger.close()
+
+
+def test_checkpoint_does_not_change_run_identity():
+    ledger = BacktestLedger()
+    ledger.start_run("identity-stable", "s", "1", 1000, data_source_fingerprint="sha256:stable")
+    ledger.checkpoint(Checkpoint("identity-stable", 1, 10, {"x": 1}))
+    ledger.checkpoint(Checkpoint("identity-stable", 2, 20, {"x": 2}))
+    ledger.validate_resume("identity-stable", data_source_fingerprint="sha256:stable")
+    metadata = ledger.run_metadata("identity-stable")
+    assert metadata["schema_version"] == LEDGER_SCHEMA_VERSION
+    assert metadata["data_source_fingerprint"] == "sha256:stable"
+    ledger.close()
 
 
 def test_duplicate_run_id_is_rejected():
