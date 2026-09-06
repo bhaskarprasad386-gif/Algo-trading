@@ -4,7 +4,7 @@ from app.backtesting.events import EventType, MarketEvent
 from app.backtesting.ledger import BacktestLedger
 from app.backtesting.execution import ExecutionSimulator, ExecutionSide, SimOrder
 from app.backtesting.portfolio import Portfolio
-from app.backtesting.strategy import StrategyDecision
+from app.backtesting.strategy import StrategyDecision, restore_strategy_state
 
 
 def test_durable_replay_journals_events_decisions_and_checkpoint():
@@ -29,6 +29,38 @@ def test_durable_replay_journals_events_decisions_and_checkpoint():
     assert checkpoint is not None
     assert checkpoint.timestamp_ns == 10
     assert checkpoint.state["fills"] == 1
+    assert checkpoint.state["strategy_state"] == {}
+    ledger.close()
+
+
+def test_durable_replay_persists_and_restores_strategy_state():
+    ledger = BacktestLedger()
+    ledger.start_run("run-state", "stateful", "1", 1000)
+
+    class StatefulStrategy:
+        strategy_id = "stateful"
+        strategy_version = "1"
+        def __init__(self):
+            self.count = 0
+        def on_event(self, event, context):
+            self.count += 1
+            return None
+        def get_state(self):
+            return {"count": self.count}
+        def set_state(self, state):
+            self.count = int(state["count"])
+
+    strategy = StatefulStrategy()
+    durable = DurableEventBacktestEngine(EventBacktestEngine(), ledger, "run-state")
+    durable.run([MarketEvent(1, "X", EventType.TRADE, {"price": 10}), MarketEvent(2, "X", EventType.TRADE, {"price": 11})], strategy)
+
+    state = durable.checkpoint_state()
+    assert state is not None
+    assert state["strategy_state"] == {"count": 2}
+
+    restored = StatefulStrategy()
+    restore_strategy_state(restored, state["strategy_state"])
+    assert restored.count == 2
     ledger.close()
 
 
