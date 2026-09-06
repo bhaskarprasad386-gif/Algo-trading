@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Callable, Iterable, Mapping
 
 from app.backtesting.events import EventReplayConfig, EventType, MarketEvent
-from app.backtesting.execution import ExecutionSimulator, SimFill, SimOrder, OrderBook, DepthLevel, ExecutionSide, OrderType
+from app.backtesting.execution import ExecutionSimulator, SimFill, SimOrder, OrderBook, DepthLevel, ExecutionSide, OrderType, QueueEvidence
 from app.backtesting.order_lifecycle import OrderLifecycle, OrderStatus, TimeInForce, stop_triggered, tif_after_execution
 from app.backtesting.portfolio import Portfolio, PortfolioSnapshot, RiskViolation
 from app.backtesting.strategy import StrategyContext, StrategyDecision, validate_decision
@@ -39,6 +39,9 @@ class EventBacktestEngine:
         self._order_lifecycles: dict[str, OrderLifecycle] = {}
         self._open_orders: dict[str, SimOrder] = {}
         self._reserved_margin: dict[str, float] = {}
+        # Dynamic queue state is maintained separately from the immutable SimOrder.
+        # It changes only from explicit source-backed execution/cancellation evidence.
+        self._dynamic_queue_ahead: dict[str, int] = {}
 
     @property
     def order_states(self) -> Mapping[str, object]:
@@ -82,12 +85,43 @@ class EventBacktestEngine:
             return tuple(out)
         return OrderBook(bids=levels(bids), asks=levels(asks))
 
+    def _apply_queue_evidence(self, event: MarketEvent) -> None:
+        """Advance open-order queues from explicit per-level execution/cancel evidence.
+
+        A depth snapshot changing from N to M is deliberately insufficient evidence:
+        the missing quantity may be cancellation, trade, replacement, or feed loss.
+        The event must explicitly identify executed quantity and/or cancellation ahead.
+        """
+        raw = event.payload.get("queue_evidence")
+        if not isinstance(raw, (list, tuple)):
+            return
+        for item in raw:
+            if not isinstance(item, Mapping):
+                continue
+            try:
+                price = float(item["price"])
+                evidence = QueueEvidence(
+                    price=price,
+                    executed_quantity=int(item.get("executed_quantity", 0)),
+                    cancelled_quantity_ahead=int(item.get("cancelled_quantity_ahead", 0)),
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            for order_id, order in tuple(self._open_orders.items()):
+                if order.instrument != event.instrument:
+                    continue
+                if order.order_type != OrderType.LIMIT or order.limit_price != evidence.price:
+                    continue
+                current = self._dynamic_queue_ahead.get(order_id, order.queue_ahead_quantity)
+                self._dynamic_queue_ahead[order_id] = self.execution.advance_queue_ahead(current, evidence) if self.execution else current
+
     def _update_market_state(self, event: MarketEvent) -> None:
         self._latest_events[event.instrument] = event
         if event.event_type == EventType.DEPTH:
             book = self._book_from_event(event)
             if book is not None:
                 self._latest_books[event.instrument] = (event.timestamp_ns, book)
+            self._apply_queue_evidence(event)
 
     def _order_reference_price(self, order: SimOrder, observed: MarketEvent) -> float | None:
         book_state = self._latest_books.get(order.instrument)
@@ -99,8 +133,6 @@ class EventBacktestEngine:
 
     def _lifecycle(self, order: SimOrder, timestamp_ns: int) -> OrderLifecycle:
         lifecycle = self._order_lifecycles.get(order.order_id)
-        # Order IDs are immutable identities. Re-submitting an already terminal ID
-        # must not create a second fill for the same logical order.
         if lifecycle is None:
             lifecycle = OrderLifecycle(order)
             self._order_lifecycles[order.order_id] = lifecycle
@@ -114,6 +146,15 @@ class EventBacktestEngine:
             quantity=order.quantity, order_type=order.order_type, limit_price=order.limit_price,
             stop_price=order.stop_price, submitted_at_ns=max(order.submitted_at_ns, event.timestamp_ns),
             queue_ahead_quantity=order.queue_ahead_quantity, time_in_force=order.time_in_force)
+
+    def _execution_order(self, order: SimOrder) -> SimOrder:
+        queue = self._dynamic_queue_ahead.get(order.order_id, order.queue_ahead_quantity)
+        if queue == order.queue_ahead_quantity:
+            return order
+        return SimOrder(order_id=order.order_id, instrument=order.instrument, side=order.side,
+            quantity=order.quantity, order_type=order.order_type, limit_price=order.limit_price,
+            stop_price=order.stop_price, submitted_at_ns=order.submitted_at_ns,
+            queue_ahead_quantity=queue, time_in_force=order.time_in_force)
 
     def _try_execute_orders(self, orders: Iterable[SimOrder], event: MarketEvent) -> tuple[SimFill, ...]:
         if self.execution is None or self.portfolio is None:
@@ -133,7 +174,7 @@ class EventBacktestEngine:
             reference_price = self._order_reference_price(order, observed)
             if reference_price is None:
                 continue
-            candidates.append((order, observed, reference_price))
+            candidates.append((self._execution_order(order), observed, reference_price))
             lifecycles[order.order_id] = lifecycle
 
         fills: list[SimFill] = []
@@ -164,8 +205,6 @@ class EventBacktestEngine:
                 self.portfolio.apply_fills_atomic(fills, {k: v for k, v in marks.items() if v is not None and v > 0})
         except RiskViolation:
             self._risk_blocks += 1
-            # A risk-rejected execution attempt is not a valid open reservation.
-            # Cancel/release only the orders participating in this atomic attempt.
             for order, _, _ in candidates:
                 lifecycle = lifecycles[order.order_id]
                 if not lifecycle.state.terminal:
@@ -173,6 +212,7 @@ class EventBacktestEngine:
                 self.portfolio.release_margin(order.order_id)
                 self._reserved_margin.pop(order.order_id, None)
                 self._open_orders.pop(order.order_id, None)
+                self._dynamic_queue_ahead.pop(order.order_id, None)
             return ()
 
         filled_by_order: dict[str, int] = {}
@@ -205,8 +245,10 @@ class EventBacktestEngine:
                     self.portfolio.release_margin(order.order_id)
                 self._reserved_margin.pop(order.order_id, None)
                 self._open_orders.pop(order.order_id, None)
+                self._dynamic_queue_ahead.pop(order.order_id, None)
             else:
                 self._open_orders[order.order_id] = order
+                self._dynamic_queue_ahead[order.order_id] = order.queue_ahead_quantity
         return tuple(fills)
 
     def _execute_decision(self, decision: StrategyDecision, event: MarketEvent) -> tuple[SimFill, ...]:
@@ -230,6 +272,7 @@ class EventBacktestEngine:
                     self.portfolio.reserve_margin(order.order_id, reservation)
                     self._reserved_margin[order.order_id] = reservation
                 self._open_orders[order.order_id] = order
+                self._dynamic_queue_ahead.setdefault(order.order_id, order.queue_ahead_quantity)
                 effective_orders.append(order)
         except RiskViolation:
             self._risk_blocks += 1
@@ -237,6 +280,7 @@ class EventBacktestEngine:
                 self.portfolio.release_margin(order.order_id)
                 self._reserved_margin.pop(order.order_id, None)
                 self._open_orders.pop(order.order_id, None)
+                self._dynamic_queue_ahead.pop(order.order_id, None)
                 lifecycle = self._order_lifecycles.get(order.order_id)
                 if lifecycle is not None and not lifecycle.state.terminal:
                     lifecycle.reject("atomic order reservation risk violation", event.timestamp_ns)
@@ -260,6 +304,7 @@ class EventBacktestEngine:
                 {"order_id": o.order_id, "instrument": o.instrument, "side": o.side.value, "quantity": o.quantity,
                  "order_type": o.order_type.value, "limit_price": o.limit_price, "stop_price": o.stop_price,
                  "submitted_at_ns": o.submitted_at_ns, "queue_ahead_quantity": o.queue_ahead_quantity,
+                 "dynamic_queue_ahead": self._dynamic_queue_ahead.get(o.order_id, o.queue_ahead_quantity),
                  "time_in_force": o.time_in_force.value}
                 for o in self._open_orders.values()
             ],
@@ -267,7 +312,7 @@ class EventBacktestEngine:
         }
 
     def restore_market_state(self, state: Mapping[str, object]) -> None:
-        self._latest_events.clear(); self._latest_books.clear(); self._open_orders.clear(); self._reserved_margin.clear()
+        self._latest_events.clear(); self._latest_books.clear(); self._open_orders.clear(); self._reserved_margin.clear(); self._dynamic_queue_ahead.clear()
         for raw in state.get("latest_events", []):
             e = MarketEvent(int(raw["timestamp_ns"]), str(raw["instrument"]), EventType(raw["event_type"]),
                             dict(raw.get("payload", {})), raw.get("sequence"), raw.get("source"))
@@ -284,6 +329,7 @@ class EventBacktestEngine:
                 queue_ahead_quantity=int(raw.get("queue_ahead_quantity", 0)),
                 time_in_force=TimeInForce(raw["time_in_force"]))
             self._open_orders[order.order_id] = order
+            self._dynamic_queue_ahead[order.order_id] = int(raw.get("dynamic_queue_ahead", order.queue_ahead_quantity))
         self._reserved_margin.update({str(k): float(v) for k, v in state.get("reserved_margin", {}).items()})
 
     def run(self, events: Iterable[MarketEvent], strategy: object, *, state: Mapping[str, object] | None = None,
@@ -302,7 +348,7 @@ class EventBacktestEngine:
         self._risk_blocks = 0
         if start_event_index == 0:
             self._latest_events.clear(); self._latest_books.clear(); self._order_lifecycles.clear()
-            self._open_orders.clear(); self._reserved_margin.clear()
+            self._open_orders.clear(); self._reserved_margin.clear(); self._dynamic_queue_ahead.clear()
         for raw_index, raw_event in enumerate(events):
             seen += 1
             timestamp_ns = raw_event.timestamp_ns if self.config.timestamp_unit == "ns" else self.config.to_ns(raw_event.timestamp_ns)
