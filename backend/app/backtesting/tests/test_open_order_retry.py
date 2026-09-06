@@ -72,3 +72,25 @@ def test_ioc_residual_does_not_retry_on_next_event():
     assert result.final_snapshot.positions[0].quantity == 3
     assert engine.order_states["ioc-1"].status == OrderStatus.CANCELLED
     assert engine.open_orders == {}
+
+
+def test_terminal_order_id_cannot_be_resubmitted_for_a_second_fill():
+    class Strategy:
+        strategy_id = "idempotent-order"
+        strategy_version = "1"
+        def on_event(self, event, context):
+            if event.sequence in {1, 2}:
+                return StrategyDecision(action="BUY", orders=(SimOrder("same-id", "NIFTY", ExecutionSide.BUY, 2),))
+            return None
+
+    portfolio = Portfolio(100_000)
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    events = [
+        MarketEvent(1_000, "NIFTY", EventType.TRADE, {"price": 100.0}, sequence=1),
+        MarketEvent(2_000, "NIFTY", EventType.TRADE, {"price": 101.0}, sequence=2),
+    ]
+    result = engine.run(events, Strategy())
+    assert result.fills == 1
+    assert result.final_snapshot.positions[0].quantity == 2
+    assert engine.order_states["same-id"].status == OrderStatus.FILLED
+    assert result.final_snapshot.reserved_margin == pytest.approx(0)
