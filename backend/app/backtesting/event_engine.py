@@ -126,6 +126,12 @@ class EventBacktestEngine:
             if book_state is not None and book_state[0] == observed.timestamp_ns:
                 execution_result = self.execution.execute_depth(order, book_state[1], event.timestamp_ns)
                 if order.time_in_force == TimeInForce.FOK and execution_result.remaining_quantity > 0:
+                    # FOK is atomic: discard any partial execution and reject while
+                    # the lifecycle is still ACCEPTED. Do not attempt a second reject
+                    # after the state has changed.
+                    lifecycle = lifecycles[order.order_id]
+                    lifecycle.reject(execution_result.reason or "FOK not fully executable", event.timestamp_ns)
+                    self.portfolio.release_margin(order.order_id)
                     fill_results[order.order_id] = execution_result
                     continue
                 fills.extend(execution_result.fills)
@@ -154,9 +160,12 @@ class EventBacktestEngine:
             result = fill_results.get(order.order_id)
             if not order_fills and result is not None and result.rejected:
                 if order.time_in_force == TimeInForce.FOK:
-                    lifecycle.reject(result.reason or "FOK not fully executable", event.timestamp_ns)
+                    if lifecycle.state.status == OrderStatus.SUBMITTED:
+                        lifecycle.reject(result.reason or "FOK not fully executable", event.timestamp_ns)
                 elif order.time_in_force == TimeInForce.IOC:
                     lifecycle.cancel(event.timestamp_ns, result.reason or "IOC not executable")
+            if lifecycle.state.terminal:
+                continue
             remaining = lifecycle.state.remaining_quantity
             terminal_action = tif_after_execution(order.time_in_force, remaining)
             if terminal_action == OrderStatus.CANCELLED and not lifecycle.state.terminal:
