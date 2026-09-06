@@ -60,7 +60,7 @@ class OrderBook:
     def __post_init__(self) -> None:
         if tuple(sorted((x.price for x in self.bids), reverse=True)) != tuple(x.price for x in self.bids):
             raise ValueError("bids must be ordered best-to-worst")
-        if tuple(sorted((x.price for x in self.asks)) != tuple(x.price for x in self.asks)):
+        if tuple(sorted((x.price for x in self.asks)) != tuple(x.price for x in self.asks):
             raise ValueError("asks must be ordered best-to-worst")
 
 
@@ -122,8 +122,6 @@ class ExecutionSimulator:
 
         remaining = order.quantity
         fills: list[SimFill] = []
-        total_value = 0.0
-        total_qty = 0
         for level in levels:
             if remaining <= 0:
                 break
@@ -139,13 +137,11 @@ class ExecutionSimulator:
             take = min(remaining, level.quantity)
             fills.append(SimFill(order.order_id, order.instrument, order.side, take, level.price,
                                  timestamp_ns + self.config.latency_ns, take * self.config.fee_per_unit))
-            total_value += take * level.price
-            total_qty += take
             remaining -= take
             if not self.config.allow_partial_fills and remaining:
                 return ExecutionResult((), order.quantity, True, "insufficient displayed depth")
 
-        if total_qty == 0:
+        if not fills:
             return ExecutionResult((), order.quantity, True, "no executable price")
         return ExecutionResult(tuple(fills), remaining, False, None if remaining == 0 else "partial fill")
 
