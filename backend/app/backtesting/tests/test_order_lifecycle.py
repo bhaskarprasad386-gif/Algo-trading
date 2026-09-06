@@ -4,8 +4,8 @@ from app.backtesting.execution import ExecutionSide, OrderType, SimOrder
 from app.backtesting.order_lifecycle import OrderLifecycle, OrderStatus, TimeInForce, stop_triggered, tif_after_execution
 
 
-def make_order(order_id="o1", quantity=10, side=ExecutionSide.BUY, submitted_at_ns=100):
-    return SimOrder(order_id, "NIFTY", side, quantity, submitted_at_ns=submitted_at_ns)
+def make_order(order_id="o1", quantity=10, side=ExecutionSide.BUY, submitted_at_ns=100, instrument="NIFTY"):
+    return SimOrder(order_id, instrument, side, quantity, submitted_at_ns=submitted_at_ns)
 
 
 def test_partial_fill_then_fill_records_full_lifecycle():
@@ -47,7 +47,7 @@ def test_replace_rejects_instrument_side_and_timestamp_mismatch():
     lifecycle.accept(100)
 
     with pytest.raises(ValueError):
-        lifecycle.replace(make_order("new-instrument", submitted_at_ns=150)._replace(instrument="BANKNIFTY"), 150)
+        lifecycle.replace(make_order("new-instrument", submitted_at_ns=150, instrument="BANKNIFTY"), 150)
 
     with pytest.raises(ValueError):
         lifecycle.replace(make_order("new-side", side=ExecutionSide.SELL, submitted_at_ns=150), 150)
