@@ -16,6 +16,13 @@ class OrderType(str, Enum):
     STOP = "STOP"
 
 
+class TimeInForce(str, Enum):
+    DAY = "DAY"
+    GTC = "GTC"
+    IOC = "IOC"
+    FOK = "FOK"
+
+
 @dataclass(frozen=True)
 class SimOrder:
     order_id: str
@@ -27,6 +34,7 @@ class SimOrder:
     stop_price: float | None = None
     submitted_at_ns: int = 0
     queue_ahead_quantity: int = 0
+    time_in_force: TimeInForce = TimeInForce.DAY
 
     def __post_init__(self) -> None:
         if not self.order_id.strip() or not self.instrument.strip():
@@ -37,6 +45,8 @@ class SimOrder:
             raise ValueError("submitted_at_ns cannot be negative")
         if self.queue_ahead_quantity < 0:
             raise ValueError("queue_ahead_quantity cannot be negative")
+        if not isinstance(self.time_in_force, TimeInForce):
+            raise ValueError("invalid time_in_force")
         if self.order_type == OrderType.LIMIT and self.limit_price is None:
             raise ValueError("limit_price is required for LIMIT orders")
         if self.order_type == OrderType.STOP and self.stop_price is None:
@@ -134,12 +144,7 @@ class ExecutionSimulator:
         return tuple(accepted)
 
     def execute_depth(self, order: SimOrder, book: OrderBook, timestamp_ns: int) -> ExecutionResult:
-        """Consume displayed depth, optionally behind an explicit observed queue ahead.
-
-        `queue_ahead_quantity` is an input from observed order/queue evidence. It is
-        never inferred from an unrelated instrument or fabricated from time alone.
-        FOK performs an atomic executable-quantity check before producing fills.
-        """
+        """Consume displayed depth with explicit queue-ahead evidence."""
         if timestamp_ns < order.submitted_at_ns:
             raise ValueError("fill timestamp cannot precede order submission")
         levels = self._executable_levels(order, book)
