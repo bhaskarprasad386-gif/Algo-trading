@@ -42,6 +42,41 @@ def test_replace_requires_same_instrument_and_side_and_is_terminal():
         lifecycle.replace(replacement, 160)
 
 
+def test_replace_rejects_instrument_side_and_timestamp_mismatch():
+    lifecycle = OrderLifecycle(make_order("old"))
+    lifecycle.accept(100)
+
+    with pytest.raises(ValueError):
+        lifecycle.replace(make_order("new-instrument", submitted_at_ns=150)._replace(instrument="BANKNIFTY"), 150)
+
+    with pytest.raises(ValueError):
+        lifecycle.replace(make_order("new-side", side=ExecutionSide.SELL, submitted_at_ns=150), 150)
+
+    with pytest.raises(ValueError):
+        lifecycle.replace(make_order("new-time", submitted_at_ns=149), 150)
+
+
+def test_replaced_order_cannot_be_filled_after_replacement():
+    lifecycle = OrderLifecycle(make_order("old", quantity=10))
+    lifecycle.accept(100)
+    lifecycle.replace(make_order("replacement", quantity=5, submitted_at_ns=150), 150)
+
+    with pytest.raises(ValueError):
+        lifecycle.apply_fill(lifecycle.to_fill(101.0, 160, 10))
+
+
+def test_replacement_order_has_independent_lifecycle_identity():
+    original = OrderLifecycle(make_order("old", quantity=10))
+    original.accept(100)
+    replacement_order = make_order("replacement", quantity=5, submitted_at_ns=150)
+    original.replace(replacement_order, 150)
+
+    replacement = OrderLifecycle(replacement_order)
+    assert replacement.accept(150).status == OrderStatus.ACCEPTED
+    assert replacement.apply_fill(replacement.to_fill(101.0, 160, 5)).status == OrderStatus.FILLED
+    assert original.state.status == OrderStatus.REPLACED
+
+
 def test_ioc_and_fok_residual_actions_are_deterministic():
     assert tif_after_execution(TimeInForce.IOC, 0) == OrderStatus.FILLED
     assert tif_after_execution(TimeInForce.IOC, 2) == OrderStatus.CANCELLED
