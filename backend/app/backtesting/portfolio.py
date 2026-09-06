@@ -1,7 +1,7 @@
 """Capital, margin, position and P&L accounting for universal backtests."""
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
 from app.backtesting.config import DEFAULT_PAPER_CAPITAL
 from app.backtesting.execution import ExecutionSide, SimFill
@@ -233,6 +233,72 @@ class Portfolio:
         leverage = gross / equity if equity > 0 else 0.0
         drawdown = max(0.0, self._peak_equity - equity)
         return PortfolioSnapshot(self.cash, equity, self._realized_pnl, unrealized, tuple(self._positions.values()), gross, net, initial_margin, maintenance, available, leverage, drawdown, self._fees, self.reserved_margin)
+
+    def export_state(self) -> Mapping[str, Any]:
+        """Return a JSON-safe snapshot sufficient to restore portfolio accounting."""
+        return {
+            "initial_cash": self.initial_cash,
+            "cash": self.cash,
+            "risk_config": {
+                "initial_margin_rate": self.risk_config.initial_margin_rate,
+                "maintenance_margin_rate": self.risk_config.maintenance_margin_rate,
+                "max_gross_notional": self.risk_config.max_gross_notional,
+                "max_net_notional": self.risk_config.max_net_notional,
+                "max_leverage": self.risk_config.max_leverage,
+                "max_position_quantity": self.risk_config.max_position_quantity,
+                "max_drawdown": self.risk_config.max_drawdown,
+            },
+            "positions": [
+                {"instrument": p.instrument, "quantity": p.quantity, "average_price": p.average_price, "realized_pnl": p.realized_pnl}
+                for p in self._positions.values()
+            ],
+            "realized_pnl": self._realized_pnl,
+            "fees": self._fees,
+            "peak_equity": self._peak_equity,
+            "reserved_margin": dict(self._reserved_margin),
+            "trades": [
+                {"order_id": t.order_id, "instrument": t.instrument, "side": t.side.value, "quantity": t.quantity,
+                 "price": t.price, "gross_value": t.gross_value, "fee": t.fee,
+                 "realized_pnl_delta": t.realized_pnl_delta, "cash_after": t.cash_after,
+                 "equity_after": t.equity_after, "timestamp_ns": t.timestamp_ns}
+                for t in self._trades
+            ],
+        }
+
+    def restore_state(self, state: Mapping[str, Any]) -> None:
+        """Restore a previously exported portfolio state, rejecting incompatible risk config."""
+        if float(state.get("initial_cash", -1)) != self.initial_cash:
+            raise ValueError("portfolio initial_cash does not match checkpoint")
+        saved_cfg = dict(state.get("risk_config", {}))
+        current_cfg = {
+            "initial_margin_rate": self.risk_config.initial_margin_rate,
+            "maintenance_margin_rate": self.risk_config.maintenance_margin_rate,
+            "max_gross_notional": self.risk_config.max_gross_notional,
+            "max_net_notional": self.risk_config.max_net_notional,
+            "max_leverage": self.risk_config.max_leverage,
+            "max_position_quantity": self.risk_config.max_position_quantity,
+            "max_drawdown": self.risk_config.max_drawdown,
+        }
+        if saved_cfg != current_cfg:
+            raise ValueError("portfolio risk configuration does not match checkpoint")
+        positions: dict[str, Position] = {}
+        for raw in state.get("positions", []):
+            p = Position(str(raw["instrument"]), int(raw["quantity"]), float(raw["average_price"]), float(raw["realized_pnl"]))
+            if not p.instrument or p.quantity == 0:
+                continue
+            positions[p.instrument] = p
+        self.cash = float(state["cash"])
+        self._positions = positions
+        self._realized_pnl = float(state["realized_pnl"])
+        self._fees = float(state["fees"])
+        self._peak_equity = float(state["peak_equity"])
+        self._reserved_margin = {str(k): float(v) for k, v in dict(state.get("reserved_margin", {})).items()}
+        self._trades = [
+            TradeRecord(str(t["order_id"]), str(t["instrument"]), ExecutionSide(t["side"]), int(t["quantity"]),
+                        float(t["price"]), float(t["gross_value"]), float(t["fee"]), float(t["realized_pnl_delta"]),
+                        float(t["cash_after"]), float(t["equity_after"]), int(t["timestamp_ns"]))
+            for t in state.get("trades", [])
+        ]
 
     def apply_fills(self, fills: Iterable[SimFill], marks: dict[str, float] | None = None) -> PortfolioSnapshot:
         return self.apply_fills_atomic(fills, marks)
