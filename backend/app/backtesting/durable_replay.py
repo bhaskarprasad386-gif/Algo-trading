@@ -27,8 +27,22 @@ class DurableEventBacktestEngine:
         self.ledger.start_run(self.run_id, strategy_id, strategy_version, initial_capital,
                               metadata={"checkpoint_interval": self.checkpoint_interval})
 
+    @staticmethod
+    def _event_key(event: MarketEvent) -> tuple[object, ...]:
+        """Stable audit identity for one source event; used only for journal idempotency."""
+        return (event.timestamp_ns, event.instrument, event.event_type.value,
+                event.sequence, event.source)
+
     def _journal_strategy(self, strategy: object):
         ledger, run_id = self.ledger, self.run_id
+        existing_event_keys = {
+            (record.timestamp_ns,
+             record.payload.get("instrument"),
+             record.payload.get("event_type"),
+             record.payload.get("sequence"),
+             record.payload.get("source"))
+            for record in ledger.records(run_id, "EVENT")
+        }
         class JournalStrategy:
             strategy_id = getattr(strategy, "strategy_id", strategy.__class__.__name__)
             strategy_version = getattr(strategy, "strategy_version", "unknown")
@@ -43,12 +57,14 @@ class DurableEventBacktestEngine:
                     decision = handler(event, context)
                     if decision is not None:
                         if not isinstance(decision, StrategyDecision): raise TypeError("event strategy must return StrategyDecision or None")
-                # Commit the EVENT audit record only after strategy processing succeeds.
-                # This prevents an interrupted event from being recorded as committed work
-                # and then appearing twice when the durable cursor resumes from its checkpoint.
-                ledger.append(LedgerRecord(run_id, "EVENT", event.timestamp_ns,
-                    {"instrument": event.instrument, "event_type": event.event_type.value,
-                     "sequence": event.sequence, "source": event.source}))
+                # EVENT journaling is idempotent so an event that was already durably
+                # journaled before an interruption is not duplicated when replay resumes.
+                key = DurableEventBacktestEngine._event_key(event)
+                if key not in existing_event_keys:
+                    ledger.append(LedgerRecord(run_id, "EVENT", event.timestamp_ns,
+                        {"instrument": event.instrument, "event_type": event.event_type.value,
+                         "sequence": event.sequence, "source": event.source}))
+                    existing_event_keys.add(key)
                 if decision is not None:
                     ledger.append(LedgerRecord(run_id, "DECISION", event.timestamp_ns,
                         {"action": decision.action, "orders": len(decision.orders), "metadata": dict(decision.metadata)}))
