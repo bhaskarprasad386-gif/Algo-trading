@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Protocol, Sequence
+from typing import Any, Mapping, Protocol
 
 from app.backtesting.events import MarketEvent
 
@@ -40,6 +40,27 @@ class EventStrategy(Protocol):
 
     def on_end(self, context: StrategyContext) -> None:
         ...
+
+
+def strategy_state(strategy: object) -> Mapping[str, Any]:
+    """Return checkpointable strategy state when the strategy supports it."""
+    getter = getattr(strategy, "get_state", None)
+    if not callable(getter):
+        return {}
+    state = getter()
+    if not isinstance(state, Mapping):
+        raise TypeError("strategy get_state() must return a mapping")
+    return dict(state)
+
+
+def restore_strategy_state(strategy: object, state: Mapping[str, Any]) -> None:
+    """Restore checkpoint state; never silently discard strategy state."""
+    if not state:
+        return
+    setter = getattr(strategy, "set_state", None)
+    if not callable(setter):
+        raise ValueError("checkpoint contains strategy state but strategy cannot restore it")
+    setter(dict(state))
 
 
 def validate_decision(decision: StrategyDecision | None) -> None:
