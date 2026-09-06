@@ -12,3 +12,4 @@ websocket-client
 python-jose[cryptography]
 passlib[bcrypt]
 bcrypt<5
+httpx
