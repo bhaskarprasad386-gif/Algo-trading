@@ -33,6 +33,8 @@ class Settings(BaseSettings):
 
     # Durable historical contract-master snapshots
     BACKTEST_CONTRACT_DB: str = "./backtest_contract_master.sqlite3"
+    BACKTEST_CONTRACT_MASTER_AUTO_SYNC: bool = True
+    BACKTEST_CONTRACT_MASTER_SYNC_INTERVAL_SECONDS: int = 86400
 
     class Config:
         env_file = ".env"
