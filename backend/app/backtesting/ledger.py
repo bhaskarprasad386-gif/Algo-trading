@@ -61,6 +61,22 @@ class BacktestLedger:
                 FOREIGN KEY(run_id) REFERENCES runs(run_id)
             )
         """)
+        self._db.execute("""
+            CREATE TABLE IF NOT EXISTS checkpoint_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                event_index INTEGER NOT NULL,
+                timestamp_ns INTEGER NOT NULL,
+                state_json TEXT NOT NULL,
+                UNIQUE(run_id, event_index, timestamp_ns, state_json),
+                FOREIGN KEY(run_id) REFERENCES runs(run_id)
+            )
+        """)
+        # Preserve a latest checkpoint created by an older schema during upgrade.
+        self._db.execute("""
+            INSERT OR IGNORE INTO checkpoint_history(run_id,event_index,timestamp_ns,state_json)
+            SELECT run_id,event_index,timestamp_ns,state_json FROM checkpoints
+        """)
         self._db.commit()
 
     def close(self) -> None:
@@ -129,13 +145,21 @@ class BacktestLedger:
         if checkpoint.event_index < 0 or checkpoint.timestamp_ns < 0:
             raise ValueError("checkpoint indexes and timestamps cannot be negative")
         self._require_run(checkpoint.run_id)
-        self._db.execute(
-            "INSERT INTO checkpoints(run_id,event_index,timestamp_ns,state_json) VALUES(?,?,?,?) "
-            "ON CONFLICT(run_id) DO UPDATE SET event_index=excluded.event_index,timestamp_ns=excluded.timestamp_ns,state_json=excluded.state_json",
-            (checkpoint.run_id, checkpoint.event_index, checkpoint.timestamp_ns,
-             json.dumps(dict(checkpoint.state), sort_keys=True, default=str)),
-        )
-        self._db.commit()
+        state_json = json.dumps(dict(checkpoint.state), sort_keys=True, default=str)
+        try:
+            self._db.execute(
+                "INSERT OR IGNORE INTO checkpoint_history(run_id,event_index,timestamp_ns,state_json) VALUES(?,?,?,?)",
+                (checkpoint.run_id, checkpoint.event_index, checkpoint.timestamp_ns, state_json),
+            )
+            self._db.execute(
+                "INSERT INTO checkpoints(run_id,event_index,timestamp_ns,state_json) VALUES(?,?,?,?) "
+                "ON CONFLICT(run_id) DO UPDATE SET event_index=excluded.event_index,timestamp_ns=excluded.timestamp_ns,state_json=excluded.state_json",
+                (checkpoint.run_id, checkpoint.event_index, checkpoint.timestamp_ns, state_json),
+            )
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
 
     def load_checkpoint(self, run_id: str) -> Checkpoint | None:
         row = self._db.execute(
@@ -144,6 +168,14 @@ class BacktestLedger:
         if row is None:
             return None
         return Checkpoint(row[0], row[1], row[2], json.loads(row[3]))
+
+    def checkpoint_history(self, run_id: str) -> tuple[Checkpoint, ...]:
+        """Return all durable checkpoints in write order; latest remains available via load_checkpoint()."""
+        rows = self._db.execute(
+            "SELECT run_id,event_index,timestamp_ns,state_json FROM checkpoint_history WHERE run_id=? ORDER BY id",
+            (run_id,),
+        ).fetchall()
+        return tuple(Checkpoint(r[0], r[1], r[2], json.loads(r[3])) for r in rows)
 
     def records(self, run_id: str, record_type: str | None = None) -> tuple[LedgerRecord, ...]:
         if record_type is None:
