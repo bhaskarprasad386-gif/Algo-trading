@@ -1,9 +1,11 @@
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
+from app.backtesting.cash_future_download_queue import CashFutureDownloadQueue, CashFutureSegmentDownload
 from app.backtesting.cash_future_historical_download import CashFutureHistoricalDownloadService
 from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
 from app.backtesting.historical_catalog import HistoricalCatalog
-from app.backtesting.historical_ingest import HistoricalRecord
+from app.backtesting.historical_ingest import HistoricalFetchRequest, HistoricalRecord, HistoricalSyncResult
 from app.backtesting.session_gap_planner import SessionWindow
 
 
@@ -48,6 +50,7 @@ def _run_kwargs():
         timeframe="1m",
         mode="CURRENT",
         retry_attempts=1,
+        session_windows=lambda _: (),
     )
 
 
@@ -66,15 +69,17 @@ def test_partial_provider_failure_can_resume_without_duplicate_rows():
     catalog = HistoricalCatalog()
     contracts = _contracts()
     first = CashFutureHistoricalDownloadService(
-        catalog, contracts, source=FakeSource(fail_instrument="NFO:101:SBINJAN")
-    ).run(**_run_kwargs())
+        catalog, contracts, source=FakeSource(fail_instrument="NFO:101:SBINJAN"), session_windows=lambda _: ()
+    ).run(**{k: v for k, v in _run_kwargs().items() if k != "session_windows"})
     assert not first.completed
     assert first.spot_execution.failed_request_index is None
     assert len(first.future_executions) == 1
     assert first.future_executions[0].failed_request_index == 0
     assert catalog.count() == 1
 
-    recovered = CashFutureHistoricalDownloadService(catalog, contracts, source=FakeSource()).run(**_run_kwargs())
+    recovered = CashFutureHistoricalDownloadService(catalog, contracts, source=FakeSource(), session_windows=lambda _: ()).run(
+        **{k: v for k, v in _run_kwargs().items() if k != "session_windows"}
+    )
     assert recovered.completed
     assert catalog.count() == 3
 
@@ -92,9 +97,10 @@ def test_complete_chunk_uses_session_completeness_to_skip():
     ])
     service.session_windows = lambda _: (SessionWindow(0, 120 * 1_000_000_000),)
     assert service._should_skip_chunk(request)
+    assert service._should_accept_chunk(request, None)
 
 
-def test_missing_middle_bar_prevents_skip():
+def test_missing_middle_bar_prevents_skip_and_acceptance():
     catalog = HistoricalCatalog()
     service = CashFutureHistoricalDownloadService(catalog, _contracts(), source=FakeSource())
     request = type("R", (), {
@@ -107,6 +113,60 @@ def test_missing_middle_bar_prevents_skip():
     ])
     service.session_windows = lambda _: (SessionWindow(0, 120 * 1_000_000_000),)
     assert not service._should_skip_chunk(request)
+    assert not service._should_accept_chunk(request, None)
+
+
+@dataclass
+class FakeExecutor:
+    accept_callbacks: list | None = None
+
+    def __post_init__(self):
+        if self.accept_callbacks is None:
+            self.accept_callbacks = []
+
+    def run(self, _source, plan, **kwargs):
+        callback = kwargs.get("should_accept")
+        assert callback is not None
+        self.accept_callbacks.append(callback)
+        request = plan.requests[0]
+        assert callback(request, HistoricalSyncResult(request, 0, 0, request.end_ns)) is True
+        return type("R", (), {"failed_request_index": None, "completed_chunks": 1, "skipped_chunks": 0})()
+
+
+def test_run_wires_completeness_acceptance_to_spot_and_future(monkeypatch):
+    import app.backtesting.cash_future_historical_download as module
+
+    start = 0
+    end = 60 * 1_000_000_000
+    catalog = HistoricalCatalog()
+    catalog.ingest([
+        HistoricalRecord("angelone", "NSE:1:SBIN", "1m", start, {"close": 1}),
+        HistoricalRecord("angelone", "NSE:1:SBIN", "1m", end, {"close": 2}),
+    ])
+    service = CashFutureHistoricalDownloadService(
+        catalog, _contracts(), source=object(), executor=FakeExecutor(),
+        session_windows=lambda _: (SessionWindow(start, end),),
+    )
+    spot = HistoricalFetchRequest("angelone", "NSE:1:SBIN", "1m", start, end)
+    future = HistoricalFetchRequest("angelone", "NFO:101:SBINJAN", "1m", start, end)
+    queue = CashFutureDownloadQueue(
+        spot=spot,
+        futures=(CashFutureSegmentDownload(segment=object(), request=future),),
+    )
+    monkeypatch.setattr(module, "build_rollover_download_queue", lambda **_kwargs: queue)
+
+    report = service.run(
+        spot_instrument=spot.instrument,
+        exchange="NFO",
+        underlying="SBIN",
+        start=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        end=datetime(2026, 1, 2, 0, 1, tzinfo=timezone.utc),
+        timeframe="1m",
+        mode="CURRENT",
+    )
+
+    assert report.completed is True
+    assert len(service.executor.accept_callbacks) == 2
 
 
 def test_request_planner_keeps_chunks_non_overlapping():
