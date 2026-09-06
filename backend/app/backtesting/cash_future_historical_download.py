@@ -91,7 +91,7 @@ class CashFutureHistoricalDownloadService:
         interval_ns = _TIMEFRAME_INTERVAL_NS.get(request.timeframe, 0)
         if not sessions or not interval_ns:
             return 0, 0, 0, None
-        expected_set = self.completeness._expected_timestamps(sessions, interval_ns)
+        expected_set = self.completeness.expected_timestamps(sessions, interval_ns)
         if not expected_set:
             return 0, 0, 0, None
         actual_set = set(self.catalog.timestamps(source=request.source, instrument=request.instrument, timeframe=request.timeframe,
