@@ -38,7 +38,7 @@ class EventBacktestEngine:
         self.execution = execution
         self.portfolio = portfolio
         self._latest_events: dict[str, MarketEvent] = {}
-        self._latest_books: dict[str, OrderBook] = {}
+        self._latest_books: dict[str, tuple[int, OrderBook]] = {}
 
     @staticmethod
     def _event_price(event: MarketEvent, side: ExecutionSide | None = None) -> float | None:
@@ -83,7 +83,9 @@ class EventBacktestEngine:
         if event.event_type == EventType.DEPTH:
             book = self._book_from_event(event)
             if book is not None:
-                self._latest_books[event.instrument] = book
+                # Store the snapshot timestamp separately so a later quote/trade
+                # cannot accidentally execute against an older book snapshot.
+                self._latest_books[event.instrument] = (event.timestamp_ns, book)
 
     def _execute_decision(self, decision: StrategyDecision, event: MarketEvent) -> tuple[SimFill, ...]:
         if self.execution is None or self.portfolio is None or not decision.orders:
@@ -96,14 +98,15 @@ class EventBacktestEngine:
             effective_order = SimOrder(order_id=order.order_id, instrument=order.instrument, side=order.side,
                                        quantity=order.quantity, order_type=order.order_type,
                                        limit_price=order.limit_price, stop_price=order.stop_price,
-                                       submitted_at_ns=submitted)
+                                       submitted_at_ns=submitted,
+                                       queue_ahead_quantity=order.queue_ahead_quantity)
             observed = self._latest_events.get(order.instrument)
             if observed is None or observed.timestamp_ns > event.timestamp_ns:
                 continue
 
-            book = self._latest_books.get(order.instrument)
-            if book is not None:
-                result = self.execution.execute_depth(effective_order, book, observed.timestamp_ns)
+            book_state = self._latest_books.get(order.instrument)
+            if book_state is not None and book_state[0] == observed.timestamp_ns:
+                result = self.execution.execute_depth(effective_order, book_state[1], observed.timestamp_ns)
                 if result.rejected and not result.fills:
                     continue
                 for fill in result.fills:
@@ -111,6 +114,9 @@ class EventBacktestEngine:
                     fills.append(fill)
                 continue
 
+            # If the latest event is newer than the latest depth snapshot, the
+            # old book is stale. Fall back only to the newer event's executable
+            # quote/price; never reuse stale depth to invent a fill.
             market_price = self._event_price(observed, order.side)
             if market_price is None:
                 continue
