@@ -1,5 +1,7 @@
 from datetime import date, datetime, timezone
 
+import pytest
+
 from app.backtesting.cash_future_historical_download import CashFutureHistoricalDownloadService
 from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
 from app.backtesting.historical_catalog import HistoricalCatalog
@@ -7,7 +9,14 @@ from app.backtesting.historical_ingest import HistoricalRecord
 
 
 class FakeSource:
+    def __init__(self, fail_instrument=None):
+        self.fail_instrument = fail_instrument
+        self.calls = []
+
     def fetch(self, request):
+        self.calls.append(request)
+        if request.instrument == self.fail_instrument:
+            raise RuntimeError("temporary provider failure")
         yield HistoricalRecord(
             request.source,
             request.instrument,
@@ -30,24 +39,58 @@ def _contracts():
     return contracts
 
 
+def _run_kwargs():
+    return dict(
+        spot_instrument="NSE:3045:SBIN",
+        exchange="NFO",
+        underlying="SBIN",
+        start=datetime(2026, 1, 29, tzinfo=timezone.utc),
+        end=datetime(2026, 2, 2, tzinfo=timezone.utc),
+        timeframe="1m",
+        mode="CURRENT",
+        retry_attempts=0,
+    )
+
+
 def test_downloader_persists_spot_and_exact_rollover_contracts():
     catalog = HistoricalCatalog()
     service = CashFutureHistoricalDownloadService(catalog, _contracts(), source=FakeSource())
-    report = service.run(
-        spot_instrument="NSE:3045:SBIN", exchange="NFO", underlying="SBIN",
-        start=datetime(2026, 1, 29, tzinfo=timezone.utc),
-        end=datetime(2026, 2, 2, tzinfo=timezone.utc),
-        timeframe="1m", mode="CURRENT",
-    )
+    report = service.run(**_run_kwargs())
     assert report.completed
     assert len(report.future_executions) == 2
     assert [x.request.instrument for x in report.queue.futures] == ["NFO:101:SBINJAN", "NFO:102:SBINFEB"]
     assert catalog.count() == 3
 
 
+def test_partial_provider_failure_can_resume_without_duplicate_rows():
+    catalog = HistoricalCatalog()
+    contracts = _contracts()
+    failing = FakeSource(fail_instrument="NFO:101:SBINJAN")
+    first = CashFutureHistoricalDownloadService(catalog, contracts, source=failing).run(**_run_kwargs())
+    assert not first.completed
+    assert first.spot_execution.failed_request_index is None
+    assert len(first.future_executions) == 1
+    assert first.future_executions[0].failed_request_index == 0
+    assert catalog.count() == 1
+
+    recovered = CashFutureHistoricalDownloadService(catalog, contracts, source=FakeSource()).run(**_run_kwargs())
+    assert recovered.completed
+    assert catalog.count() == 3
+
+
 def test_request_planner_keeps_chunks_non_overlapping():
-    request = next(iter(CashFutureHistoricalDownloadService._plan_for_request(
-        type("R", (), {"source": "angelone", "instrument": "NSE:3045:SBIN", "timeframe": "1m",
-                         "start_ns": 0, "end_ns": 14 * 24 * 60 * 60 * 1_000_000_000})()
-    ).requests))
-    assert request.start_ns == 0
+    request_type = type(
+        "R",
+        (),
+        {
+            "source": "angelone",
+            "instrument": "NSE:3045:SBIN",
+            "timeframe": "1m",
+            "start_ns": 0,
+            "end_ns": 14 * 24 * 60 * 60 * 1_000_000_000,
+        },
+    )
+    plan = CashFutureHistoricalDownloadService._plan_for_request(request_type())
+    assert len(plan.requests) == 3
+    for previous, current in zip(plan.requests, plan.requests[1:]):
+        assert previous.end_ns + 1 == current.start_ns
