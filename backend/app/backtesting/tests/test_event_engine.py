@@ -4,7 +4,8 @@ import pytest
 
 from app.backtesting.event_engine import EventBacktestEngine
 from app.backtesting.events import EventReplayConfig, EventType, MarketEvent
-from app.backtesting.execution import ExecutionSimulator, ExecutionSide, SimOrder
+from app.backtesting.execution import ExecutionSimulator, ExecutionSide, SimOrder, TimeInForce
+from app.backtesting.order_lifecycle import OrderStatus
 from app.backtesting.portfolio import Portfolio, RiskConfig
 from app.backtesting.strategy import StrategyDecision
 
@@ -74,6 +75,7 @@ def test_event_strategy_order_uses_instrument_quote_and_ask_for_buy():
     assert result.fills == 1 and result.final_snapshot is not None
     assert result.final_snapshot.cash == pytest.approx(98_990)
     assert result.final_snapshot.positions[0].quantity == 10
+    assert engine.order_states["o1"].status == OrderStatus.FILLED
 
 
 def test_risk_blocked_order_does_not_change_portfolio():
@@ -202,6 +204,48 @@ def test_strategy_order_queue_ahead_is_preserved_by_event_engine():
     result = engine.run([MarketEvent(1_000, "NIFTY", EventType.DEPTH, {"asks": [[100.0, 5]], "bids": [[99.0, 5]]})], Strategy())
     assert result.fills == 1
     assert result.final_snapshot.cash == pytest.approx(99_700)
+
+
+def test_ioc_partial_fill_is_cancelled_after_executable_quantity():
+    class Strategy:
+        strategy_id = "ioc"; strategy_version = "1"
+        def on_event(self, event, context):
+            return StrategyDecision(action="BUY", orders=(SimOrder("ioc-1", "NIFTY", ExecutionSide.BUY, 10, time_in_force=TimeInForce.IOC),))
+    portfolio = Portfolio(100_000)
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    result = engine.run([MarketEvent(1_000, "NIFTY", EventType.DEPTH, {"asks": [[100.0, 3]], "bids": [[99.0, 5]]})], Strategy())
+    assert result.fills == 1
+    assert result.final_snapshot.positions[0].quantity == 3
+    assert engine.order_states["ioc-1"].status == OrderStatus.CANCELLED
+    assert engine.order_states["ioc-1"].remaining_quantity == 7
+
+
+def test_fok_is_atomic_when_depth_cannot_fill_entire_order():
+    class Strategy:
+        strategy_id = "fok"; strategy_version = "1"
+        def on_event(self, event, context):
+            return StrategyDecision(action="BUY", orders=(SimOrder("fok-1", "NIFTY", ExecutionSide.BUY, 10, time_in_force=TimeInForce.FOK),))
+    portfolio = Portfolio(100_000)
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    result = engine.run([MarketEvent(1_000, "NIFTY", EventType.DEPTH, {"asks": [[100.0, 3]], "bids": [[99.0, 5]]})], Strategy())
+    assert result.fills == 0
+    assert result.final_snapshot.positions == ()
+    assert engine.order_states["fok-1"].status == OrderStatus.REJECTED
+
+
+def test_stop_order_waits_for_observed_trigger_before_execution():
+    class Strategy:
+        strategy_id = "stop"; strategy_version = "1"
+        def on_event(self, event, context):
+            return StrategyDecision(action="BUY", orders=(SimOrder("stop-1", "NIFTY", ExecutionSide.BUY, 2, order_type=__import__("app.backtesting.execution", fromlist=["OrderType"]).OrderType.STOP, stop_price=101.0),))
+    portfolio = Portfolio(100_000)
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    result = engine.run([
+        MarketEvent(1_000, "NIFTY", EventType.TRADE, {"price": 100.0}),
+        MarketEvent(2_000, "NIFTY", EventType.TRADE, {"price": 101.0}),
+    ], Strategy())
+    assert result.fills == 1
+    assert engine.order_states["stop-1"].status == OrderStatus.FILLED
 
 
 def test_strategy_must_return_strategy_decision_or_none():
