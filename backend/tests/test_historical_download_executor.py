@@ -36,3 +36,27 @@ def test_failure_reports_exact_chunk_and_stops_without_fake_data():
     )
     assert result.failed_request_index == 0
     assert result.completed_chunks == 0
+
+
+def test_incomplete_chunk_is_retried_and_not_marked_complete():
+    requests = (HistoricalFetchRequest("x", "i", "1m", 0, 0),)
+    service = FakeService()
+    accepted = iter((False, True))
+    result = ResumableHistoricalExecutor(service, sleep=lambda _: None).run(
+        object(), HistoricalSyncPlan(requests), retry_attempts=2,
+        should_accept=lambda _request, _result: next(accepted),
+    )
+    assert result.failed_request_index is None
+    assert result.completed_chunks == 1
+    assert service.calls == 2
+
+
+def test_permanently_incomplete_chunk_is_failure():
+    requests = (HistoricalFetchRequest("x", "i", "1m", 0, 0),)
+    service = FakeService()
+    result = ResumableHistoricalExecutor(service, sleep=lambda _: None).run(
+        object(), HistoricalSyncPlan(requests), retry_attempts=2,
+        should_accept=lambda _request, _result: False,
+    )
+    assert result.failed_request_index == 0
+    assert result.completed_chunks == 0
