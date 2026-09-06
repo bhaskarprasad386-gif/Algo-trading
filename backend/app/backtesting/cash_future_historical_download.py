@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
+from .angelone_historical import AngelOneHistoricalSource
 from .cash_future_download_queue import CashFutureDownloadQueue, build_rollover_download_queue
+from .historical_catalog import HistoricalCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_ingest import HistoricalIngestionService
-from .historical_catalog import HistoricalCatalog
-from .angelone_historical import AngelOneHistoricalSource
+from .historical_sync import HistoricalSyncPlan, build_chunked_plan
 
 
 @dataclass(frozen=True)
@@ -27,44 +28,48 @@ class CashFutureHistoricalDownloadReport:
 
 
 class CashFutureHistoricalDownloadService:
-    """Download each spot/future segment sequentially and persist every chunk immediately."""
+    """Download spot/future segments sequentially and persist every chunk immediately."""
 
-    def __init__(self, catalog: HistoricalCatalog, *, source=None, executor=None) -> None:
+    def __init__(self, catalog: HistoricalCatalog, contract_catalog, *, source=None, executor=None) -> None:
         self.catalog = catalog
+        self.contract_catalog = contract_catalog
         self.ingestion = HistoricalIngestionService(catalog)
         self.source = source or AngelOneHistoricalSource()
         self.executor = executor or ResumableHistoricalExecutor(self.ingestion)
 
     @staticmethod
-    def _plan_for_request(request):
-        from .historical_sync import HistoricalSyncPlan, build_chunked_plan
-        from .historical_download_plan import utc_ns
-        from datetime import timedelta
-        start = datetime.fromtimestamp(request.start_ns / 1_000_000_000)
-        end = datetime.fromtimestamp(request.end_ns / 1_000_000_000)
-        chunk = timedelta(days=7)
-        return build_chunked_plan(request.source, request.instrument, request.timeframe,
-                                  utc_ns(start), utc_ns(end), int(chunk.total_seconds() * 1_000_000_000))
+    def _plan_for_request(request) -> HistoricalSyncPlan:
+        chunk_ns = 7 * 24 * 60 * 60 * 1_000_000_000
+        return build_chunked_plan(
+            request.source, request.instrument, request.timeframe,
+            request.start_ns, request.end_ns, chunk_ns,
+        )
 
     def run(self, *, spot_instrument: str, exchange: str, underlying: str,
             start: datetime, end: datetime, timeframe: str = "1m", mode: str = "BOTH",
             retry_attempts: int = 3) -> CashFutureHistoricalDownloadReport:
+        if start.tzinfo is None or end.tzinfo is None:
+            raise ValueError("start and end must be timezone-aware")
+        if end < start:
+            raise ValueError("end must not precede start")
         queue = build_rollover_download_queue(
-            catalog=self._contract_catalog,
+            catalog=self.contract_catalog,
             spot_instrument=spot_instrument, exchange=exchange, underlying=underlying,
             start=start, end=end, timeframe=timeframe, mode=mode,
         )
-        spot_result = self.executor.run(self.source, self._plan_for_request(queue.spot),
-                                        retry_attempts=retry_attempts)
+        spot_result = self.executor.run(
+            self.source, self._plan_for_request(queue.spot), retry_attempts=retry_attempts
+        )
         if spot_result.failed_request_index is not None:
             return CashFutureHistoricalDownloadReport(queue, spot_result, tuple(), self.catalog.count())
-        future_results = []
+        future_results: list[DownloadExecutionResult] = []
         for item in queue.futures:
-            result = self.executor.run(self.source, self._plan_for_request(item.request),
-                                       retry_attempts=retry_attempts)
+            result = self.executor.run(
+                self.source, self._plan_for_request(item.request), retry_attempts=retry_attempts
+            )
             future_results.append(result)
             if result.failed_request_index is not None:
                 break
-        return CashFutureHistoricalDownloadReport(queue, spot_result, tuple(future_results), self.catalog.count())
-
-    _contract_catalog = None
+        return CashFutureHistoricalDownloadReport(
+            queue, spot_result, tuple(future_results), self.catalog.count()
+        )
