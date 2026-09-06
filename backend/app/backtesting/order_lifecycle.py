@@ -76,8 +76,8 @@ class OrderLifecycle:
     def reject(self, reason: str, timestamp_ns: int = 0) -> OrderState:
         if not reason.strip():
             raise ValueError("reject reason is required")
-        if self.state.status != OrderStatus.SUBMITTED:
-            raise ValueError("only SUBMITTED orders can be rejected")
+        if self.state.status not in {OrderStatus.SUBMITTED, OrderStatus.ACCEPTED}:
+            raise ValueError("only SUBMITTED or ACCEPTED orders can be rejected")
         return self._transition(OrderStatus.REJECTED, timestamp_ns, reason=reason)
 
     def cancel(self, timestamp_ns: int = 0, reason: str = "cancelled") -> OrderState:
