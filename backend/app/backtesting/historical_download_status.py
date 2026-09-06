@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -53,6 +54,7 @@ class HistoricalDownloadStatusStore:
 
     def __init__(self, path: str = ":memory:") -> None:
         self.path = path
+        self._lock = threading.RLock()
         self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA foreign_keys=ON")
@@ -99,7 +101,8 @@ class HistoricalDownloadStatusStore:
             self._db.execute("DROP TABLE download_chunks_legacy")
 
     def close(self) -> None:
-        self._db.close()
+        with self._lock:
+            self._db.close()
 
     @staticmethod
     def _now_ns() -> int:
@@ -109,68 +112,73 @@ class HistoricalDownloadStatusStore:
                    exchange: str, underlying: str, start_ns: int, end_ns: int,
                    requested_chunks: int = 0, status: str = "QUEUED",
                    updated_at_ns: int | None = None) -> None:
-        if not job_id.strip():
-            raise ValueError("job_id is required")
-        if status not in self.VALID_JOB_STATUSES:
-            raise ValueError(f"invalid job status: {status}")
-        if start_ns < 0 or end_ns < start_ns or requested_chunks < 0:
-            raise ValueError("invalid job range or chunk count")
-        existing = self.job(job_id)
-        if existing is not None:
-            self.update_job(job_id, status=status, requested_chunks=requested_chunks,
-                            completed_chunks=0, skipped_chunks=0, failed_chunks=0,
-                            catalog_count=0, error=None,
-                            updated_at_ns=updated_at_ns or self._now_ns())
-            return
-        self._db.execute(
-            "INSERT INTO download_jobs(job_id,mode,timeframe,spot_instrument,exchange,underlying,start_ns,end_ns,status,requested_chunks,updated_at_ns) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (job_id, mode, timeframe, spot_instrument, exchange, underlying, start_ns, end_ns,
-             status, requested_chunks, updated_at_ns or self._now_ns()),
-        )
-        self._db.commit()
+        with self._lock:
+            if not job_id.strip():
+                raise ValueError("job_id is required")
+            if status not in self.VALID_JOB_STATUSES:
+                raise ValueError(f"invalid job status: {status}")
+            if start_ns < 0 or end_ns < start_ns or requested_chunks < 0:
+                raise ValueError("invalid job range or chunk count")
+            existing = self.job(job_id)
+            if existing is not None:
+                self.update_job(job_id, status=status, requested_chunks=requested_chunks,
+                                completed_chunks=0, skipped_chunks=0, failed_chunks=0,
+                                catalog_count=0, error=None,
+                                updated_at_ns=updated_at_ns or self._now_ns())
+                return
+            self._db.execute(
+                "INSERT INTO download_jobs(job_id,mode,timeframe,spot_instrument,exchange,underlying,start_ns,end_ns,status,requested_chunks,updated_at_ns) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (job_id, mode, timeframe, spot_instrument, exchange, underlying, start_ns, end_ns,
+                 status, requested_chunks, updated_at_ns or self._now_ns()),
+            )
+            self._db.commit()
 
     def update_job(self, job_id: str, **fields: Any) -> None:
-        allowed = {"status", "requested_chunks", "completed_chunks", "skipped_chunks",
-                   "failed_chunks", "catalog_count", "error", "updated_at_ns"}
-        unknown = set(fields) - allowed
-        if unknown:
-            raise ValueError(f"unsupported job fields: {sorted(unknown)}")
-        if "status" in fields and fields["status"] not in self.VALID_JOB_STATUSES:
-            raise ValueError(f"invalid job status: {fields['status']}")
-        if not fields:
-            return
-        fields.setdefault("updated_at_ns", self._now_ns())
-        assignments = ", ".join(f"{key}=?" for key in fields)
-        values = [fields[key] for key in fields] + [job_id]
-        cursor = self._db.execute(f"UPDATE download_jobs SET {assignments} WHERE job_id=?", values)
-        if cursor.rowcount != 1:
-            raise KeyError(job_id)
-        self._db.commit()
+        with self._lock:
+            allowed = {"status", "requested_chunks", "completed_chunks", "skipped_chunks",
+                       "failed_chunks", "catalog_count", "error", "updated_at_ns"}
+            unknown = set(fields) - allowed
+            if unknown:
+                raise ValueError(f"unsupported job fields: {sorted(unknown)}")
+            if "status" in fields and fields["status"] not in self.VALID_JOB_STATUSES:
+                raise ValueError(f"invalid job status: {fields['status']}")
+            if not fields:
+                return
+            fields.setdefault("updated_at_ns", self._now_ns())
+            assignments = ", ".join(f"{key}=?" for key in fields)
+            values = [fields[key] for key in fields] + [job_id]
+            cursor = self._db.execute(f"UPDATE download_jobs SET {assignments} WHERE job_id=?", values)
+            if cursor.rowcount != 1:
+                raise KeyError(job_id)
+            self._db.commit()
 
     def upsert_chunk(self, chunk: DownloadChunkStatus) -> None:
-        if chunk.status not in self.VALID_CHUNK_STATUSES:
-            raise ValueError(f"invalid chunk status: {chunk.status}")
-        if chunk.sequence < 0 or chunk.start_ns < 0 or chunk.end_ns < chunk.start_ns:
-            raise ValueError("invalid chunk range")
-        self._db.execute("""INSERT INTO download_chunks(
-            job_id,sequence,instrument,start_ns,end_ns,status,attempts,expected_timestamps,
-            actual_timestamps,missing_timestamps,first_missing_ns,error,updated_at_ns)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(job_id,sequence,instrument) DO UPDATE SET
-            start_ns=excluded.start_ns,end_ns=excluded.end_ns,status=excluded.status,
-            attempts=excluded.attempts,expected_timestamps=excluded.expected_timestamps,
-            actual_timestamps=excluded.actual_timestamps,missing_timestamps=excluded.missing_timestamps,
-            first_missing_ns=excluded.first_missing_ns,error=excluded.error,updated_at_ns=excluded.updated_at_ns""",
-            (chunk.job_id, chunk.sequence, chunk.instrument, chunk.start_ns, chunk.end_ns,
-             chunk.status, chunk.attempts, chunk.expected_timestamps, chunk.actual_timestamps,
-             chunk.missing_timestamps, chunk.first_missing_ns, chunk.error,
-             chunk.updated_at_ns or self._now_ns()))
-        self._db.commit()
+        with self._lock:
+            if chunk.status not in self.VALID_CHUNK_STATUSES:
+                raise ValueError(f"invalid chunk status: {chunk.status}")
+            if chunk.sequence < 0 or chunk.start_ns < 0 or chunk.end_ns < chunk.start_ns:
+                raise ValueError("invalid chunk range")
+            self._db.execute("""INSERT INTO download_chunks(
+                job_id,sequence,instrument,start_ns,end_ns,status,attempts,expected_timestamps,
+                actual_timestamps,missing_timestamps,first_missing_ns,error,updated_at_ns)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(job_id,sequence,instrument) DO UPDATE SET
+                start_ns=excluded.start_ns,end_ns=excluded.end_ns,status=excluded.status,
+                attempts=excluded.attempts,expected_timestamps=excluded.expected_timestamps,
+                actual_timestamps=excluded.actual_timestamps,missing_timestamps=excluded.missing_timestamps,
+                first_missing_ns=excluded.first_missing_ns,error=excluded.error,updated_at_ns=excluded.updated_at_ns""",
+                (chunk.job_id, chunk.sequence, chunk.instrument, chunk.start_ns, chunk.end_ns,
+                 chunk.status, chunk.attempts, chunk.expected_timestamps, chunk.actual_timestamps,
+                 chunk.missing_timestamps, chunk.first_missing_ns, chunk.error,
+                 chunk.updated_at_ns or self._now_ns()))
+            self._db.commit()
 
     def job(self, job_id: str) -> DownloadJobStatus | None:
-        row = self._db.execute("SELECT job_id,mode,timeframe,spot_instrument,exchange,underlying,start_ns,end_ns,status,requested_chunks,completed_chunks,skipped_chunks,failed_chunks,catalog_count,updated_at_ns,error FROM download_jobs WHERE job_id=?", (job_id,)).fetchone()
-        return DownloadJobStatus(*row) if row else None
+        with self._lock:
+            row = self._db.execute("SELECT job_id,mode,timeframe,spot_instrument,exchange,underlying,start_ns,end_ns,status,requested_chunks,completed_chunks,skipped_chunks,failed_chunks,catalog_count,updated_at_ns,error FROM download_jobs WHERE job_id=?", (job_id,)).fetchone()
+            return DownloadJobStatus(*row) if row else None
 
     def chunks(self, job_id: str) -> tuple[DownloadChunkStatus, ...]:
-        rows = self._db.execute("SELECT job_id,sequence,instrument,start_ns,end_ns,status,attempts,expected_timestamps,actual_timestamps,missing_timestamps,first_missing_ns,error,updated_at_ns FROM download_chunks WHERE job_id=? ORDER BY sequence,instrument", (job_id,)).fetchall()
-        return tuple(DownloadChunkStatus(*row) for row in rows)
+        with self._lock:
+            rows = self._db.execute("SELECT job_id,sequence,instrument,start_ns,end_ns,status,attempts,expected_timestamps,actual_timestamps,missing_timestamps,first_missing_ns,error,updated_at_ns FROM download_chunks WHERE job_id=? ORDER BY sequence,instrument", (job_id,)).fetchall()
+            return tuple(DownloadChunkStatus(*row) for row in rows)
