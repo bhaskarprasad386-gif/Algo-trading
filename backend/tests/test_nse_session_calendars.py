@@ -37,7 +37,7 @@ def test_future_regular_session_ends_at_1539_ist():
         datetime(2026, 2, 18, 23, 59, tzinfo=timezone.utc),
     )
     assert len(windows) == 1
-    assert windows[0].end_ns == _ns(datetime(2026, 2, 18, 10, 09, tzinfo=timezone.utc))
+    assert windows[0].end_ns == _ns(datetime(2026, 2, 18, 10, 9, tzinfo=timezone.utc))
 
 
 def test_daily_requests_do_not_use_intraday_session_windows():
