@@ -5,7 +5,7 @@ from typing import Callable, Iterable, Mapping
 
 from app.backtesting.events import EventReplayConfig, EventType, MarketEvent
 from app.backtesting.execution import ExecutionSimulator, SimFill, SimOrder, OrderBook, DepthLevel, ExecutionSide
-from app.backtesting.portfolio import Portfolio, PortfolioSnapshot
+from app.backtesting.portfolio import Portfolio, PortfolioSnapshot, RiskViolation
 from app.backtesting.strategy import StrategyContext, StrategyDecision, validate_decision
 
 LegacyEventStrategy = Callable[[MarketEvent, Mapping[str, object]], object]
@@ -20,6 +20,7 @@ class ReplayStats:
     decisions_emitted: int = 0
     orders_submitted: int = 0
     fills: int = 0
+    risk_blocks: int = 0
     final_snapshot: PortfolioSnapshot | None = None
 
 
@@ -39,6 +40,7 @@ class EventBacktestEngine:
         self.portfolio = portfolio
         self._latest_events: dict[str, MarketEvent] = {}
         self._latest_books: dict[str, tuple[int, OrderBook]] = {}
+        self._risk_blocks = 0
 
     @staticmethod
     def _event_price(event: MarketEvent, side: ExecutionSide | None = None) -> float | None:
@@ -83,46 +85,81 @@ class EventBacktestEngine:
         if event.event_type == EventType.DEPTH:
             book = self._book_from_event(event)
             if book is not None:
-                # Store the snapshot timestamp separately so a later quote/trade
-                # cannot accidentally execute against an older book snapshot.
                 self._latest_books[event.instrument] = (event.timestamp_ns, book)
+
+    def _order_reference_price(self, order: SimOrder, observed: MarketEvent) -> float | None:
+        book_state = self._latest_books.get(order.instrument)
+        if book_state is not None and book_state[0] == observed.timestamp_ns:
+            levels = book_state[1].asks if order.side == ExecutionSide.BUY else book_state[1].bids
+            if levels:
+                return levels[0].price
+        return self._event_price(observed, order.side)
 
     def _execute_decision(self, decision: StrategyDecision, event: MarketEvent) -> tuple[SimFill, ...]:
         if self.execution is None or self.portfolio is None or not decision.orders:
             return ()
-        fills: list[SimFill] = []
-        for order in decision.orders:
-            if not isinstance(order, SimOrder):
-                raise TypeError("strategy orders must be SimOrder instances")
-            submitted = max(order.submitted_at_ns, event.timestamp_ns)
-            effective_order = SimOrder(order_id=order.order_id, instrument=order.instrument, side=order.side,
-                                       quantity=order.quantity, order_type=order.order_type,
-                                       limit_price=order.limit_price, stop_price=order.stop_price,
-                                       submitted_at_ns=submitted,
-                                       queue_ahead_quantity=order.queue_ahead_quantity)
-            observed = self._latest_events.get(order.instrument)
-            if observed is None or observed.timestamp_ns > event.timestamp_ns:
-                continue
+        effective_orders: list[SimOrder] = []
+        reservations: dict[str, float] = {}
+        try:
+            for order in decision.orders:
+                if not isinstance(order, SimOrder):
+                    raise TypeError("strategy orders must be SimOrder instances")
+                submitted = max(order.submitted_at_ns, event.timestamp_ns)
+                effective_order = SimOrder(order_id=order.order_id, instrument=order.instrument, side=order.side,
+                                           quantity=order.quantity, order_type=order.order_type,
+                                           limit_price=order.limit_price, stop_price=order.stop_price,
+                                           submitted_at_ns=submitted,
+                                           queue_ahead_quantity=order.queue_ahead_quantity)
+                observed = self._latest_events.get(order.instrument)
+                if observed is None or observed.timestamp_ns > event.timestamp_ns:
+                    continue
+                reference_price = self._order_reference_price(effective_order, observed)
+                if reference_price is None:
+                    continue
+                reservation = effective_order.quantity * reference_price * self.portfolio.risk_config.initial_margin_rate
+                self.portfolio.reserve_margin(effective_order.order_id, reservation)
+                reservations[effective_order.order_id] = reservation
+                effective_orders.append(effective_order)
+        except RiskViolation:
+            self._risk_blocks += 1
+            for order_id in reservations:
+                self.portfolio.release_margin(order_id)
+            return ()
 
+        fills: list[SimFill] = []
+        for order in effective_orders:
+            observed = self._latest_events[order.instrument]
             book_state = self._latest_books.get(order.instrument)
             if book_state is not None and book_state[0] == observed.timestamp_ns:
-                result = self.execution.execute_depth(effective_order, book_state[1], observed.timestamp_ns)
-                if result.rejected and not result.fills:
-                    continue
-                for fill in result.fills:
-                    self.portfolio.apply_fill(fill)
-                    fills.append(fill)
-                continue
+                result = self.execution.execute_depth(order, book_state[1], observed.timestamp_ns)
+                order_fills = result.fills
+            else:
+                market_price = self._event_price(observed, order.side)
+                order_fills = () if market_price is None else (self.execution.execute(order, market_price, observed.timestamp_ns),)
+            fills.extend(order_fills)
 
-            # If the latest event is newer than the latest depth snapshot, the
-            # old book is stale. Fall back only to the newer event's executable
-            # quote/price; never reuse stale depth to invent a fill.
-            market_price = self._event_price(observed, order.side)
-            if market_price is None:
-                continue
-            fill = self.execution.execute(effective_order, market_price, observed.timestamp_ns)
-            self.portfolio.apply_fill(fill)
-            fills.append(fill)
+        try:
+            if fills:
+                marks = {instrument: self._event_price(event, None) for instrument, event in self._latest_events.items()}
+                marks = {k: v for k, v in marks.items() if v is not None and v > 0}
+                self.portfolio.apply_fills_atomic(fills, marks)
+        except RiskViolation:
+            self._risk_blocks += 1
+            for order_id in reservations:
+                self.portfolio.release_margin(order_id)
+            return ()
+
+        filled_by_order: dict[str, int] = {}
+        for fill in fills:
+            filled_by_order[fill.order_id] = filled_by_order.get(fill.order_id, 0) + fill.quantity
+        for order in effective_orders:
+            reservation = reservations[order.order_id]
+            filled_qty = filled_by_order.get(order.order_id, 0)
+            if filled_qty >= order.quantity or filled_qty == 0:
+                self.portfolio.release_margin(order.order_id)
+            else:
+                per_unit = reservation / order.quantity
+                self.portfolio.release_margin(order.order_id, per_unit * filled_qty)
         return tuple(fills)
 
     def run(self, events: Iterable[MarketEvent], strategy: object, *, state: Mapping[str, object] | None = None) -> ReplayStats:
@@ -133,6 +170,7 @@ class EventBacktestEngine:
         last: int | None = None
         previous_key: tuple[int, int, str, str, int] | None = None
         started = False
+        self._risk_blocks = 0
         self._latest_events.clear()
         self._latest_books.clear()
 
@@ -181,4 +219,5 @@ class EventBacktestEngine:
                 finisher(StrategyContext(last if last is not None else 0, tuple(history), dict(context_state)))
         return ReplayStats(events_seen=seen, events_dispatched=dispatched, first_timestamp_ns=first,
                            last_timestamp_ns=last, decisions_emitted=decisions, orders_submitted=orders,
-                           fills=fill_count, final_snapshot=self.portfolio.snapshot() if self.portfolio is not None else None)
+                           fills=fill_count, risk_blocks=self._risk_blocks,
+                           final_snapshot=self.portfolio.snapshot() if self.portfolio is not None else None)
