@@ -1,3 +1,5 @@
+import pytest
+
 from app.backtesting.ledger import BacktestLedger, Checkpoint, LedgerRecord
 
 
@@ -24,4 +26,44 @@ def test_checkpoint_is_updated_atomically():
     ledger.checkpoint(Checkpoint("run-2", 1, 10, {"x": 1}))
     ledger.checkpoint(Checkpoint("run-2", 2, 20, {"x": 2}))
     assert ledger.load_checkpoint("run-2").state["x"] == 2
+    ledger.close()
+
+
+def test_duplicate_run_id_is_rejected():
+    ledger = BacktestLedger()
+    ledger.start_run("run-3", "s", "1", 1000)
+    with pytest.raises(ValueError, match="already exists"):
+        ledger.start_run("run-3", "s", "2", 2000)
+    ledger.close()
+
+
+def test_records_and_checkpoints_require_existing_run():
+    ledger = BacktestLedger()
+    with pytest.raises(ValueError, match="unknown run_id"):
+        ledger.append(LedgerRecord("missing", "FILL", 1, {}))
+    with pytest.raises(ValueError, match="unknown run_id"):
+        ledger.checkpoint(Checkpoint("missing", 1, 1, {}))
+    ledger.close()
+
+
+def test_append_batch_is_atomic_and_persists_all_records():
+    ledger = BacktestLedger()
+    ledger.start_run("run-4", "s", "1", 1000)
+    count = ledger.append_batch(
+        LedgerRecord("run-4", "EVENT", i, {"value": i}) for i in range(3)
+    )
+    assert count == 3
+    assert [r.payload["value"] for r in ledger.records("run-4")] == [0, 1, 2]
+    ledger.close()
+
+
+def test_append_batch_rolls_back_when_any_record_is_invalid():
+    ledger = BacktestLedger()
+    ledger.start_run("run-5", "s", "1", 1000)
+    with pytest.raises(ValueError, match="timestamp_ns cannot be negative"):
+        ledger.append_batch([
+            LedgerRecord("run-5", "EVENT", 1, {"value": 1}),
+            LedgerRecord("run-5", "EVENT", -1, {"value": 2}),
+        ])
+    assert ledger.records("run-5") == ()
     ledger.close()
