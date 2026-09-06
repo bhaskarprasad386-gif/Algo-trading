@@ -41,7 +41,7 @@ Fast, modular, mobile-first advanced F&O algo-trading platform. GitHub is the so
 - [x] Add normalized market events for BAR, QUOTE, TRADE, DEPTH and CUSTOM event types.
 - [x] Add explicit nanosecond/microsecond/millisecond timestamp normalization without fabricating events.
 - [x] Add ordered event replay with optional event-type filtering and tests.
-- [ ] Connect event replay to generic strategy → signal → risk → execution interfaces.
+- [x] Connect event replay to generic strategy → signal → risk → execution interfaces.
 - [ ] Add realistic execution simulator: market/limit/stop, slippage, latency, partial fills, rejection, cancellation, multi-leg execution and charges.
 - [ ] Support strategy-specific data requirements so only required resolution/instruments are downloaded.
 - [ ] Support candle/tick/high-resolution/order-book backtests through the same engine.
@@ -88,6 +88,7 @@ Fast, modular, mobile-first advanced F&O algo-trading platform. GitHub is the so
 - Angel One broker connection and real-trading safety/kill-switch foundation exists.
 - Cash–Future scanner and basic paper execution path exists.
 - Generic high-resolution market-event model and replay foundation added in the current checkpoint.
+- Generic event Strategy → Signal → Risk → Execution pipeline foundation added with deterministic tests.
 
 ## Multi-Broker
 - [ ] Common adapter interface: authenticate/connect/disconnect, live quotes/stream, positions, orders, order status, holdings, funds/margin and supported contract metadata.
