@@ -28,6 +28,8 @@ from app.scanner.auto_routes import router as auto_scanner_router
 from app.execution.paper_routes import router as paper_execution_router
 from app.scanner.cash_future_collector import CashFutureHistoryCollector
 from app.brokers.routes import router as brokers_router
+from app.backtesting.download_status_routes import create_download_status_router
+from app.backtesting.historical_download_status import HistoricalDownloadStatusStore
 
 run_schema_migrations()
 Base.metadata.create_all(bind=engine)
@@ -45,6 +47,14 @@ app.include_router(market_data_router)
 app.include_router(scanner_router)
 app.include_router(auto_scanner_router)
 app.include_router(paper_execution_router)
+
+# Durable backtesting-download status is kept in its own SQLite file so API
+# requests never depend on an in-memory status object. The path can be
+# overridden for deployments through the BACKTEST_STATUS_DB environment var.
+BACKTEST_STATUS_DB = Path(settings.BACKTEST_STATUS_DB)
+BACKTEST_STATUS_DB.parent.mkdir(parents=True, exist_ok=True)
+backtest_status_store = HistoricalDownloadStatusStore(str(BACKTEST_STATUS_DB))
+app.include_router(create_download_status_router(backtest_status_store))
 
 DASHBOARD_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "index.html"
 BROKER_SETTINGS_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "broker.html"
@@ -230,6 +240,7 @@ async def shutdown_event():
         except asyncio.CancelledError:
             pass
         _history_collector_task = None
+    backtest_status_store.close()
 
 
 @app.get("/")
