@@ -4,6 +4,7 @@ from app.backtesting.cash_future_historical_download import CashFutureHistorical
 from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
 from app.backtesting.historical_catalog import HistoricalCatalog
 from app.backtesting.historical_ingest import HistoricalRecord
+from app.backtesting.session_gap_planner import SessionWindow
 
 
 class FakeSource:
@@ -64,43 +65,56 @@ def test_downloader_persists_spot_and_exact_rollover_contracts():
 def test_partial_provider_failure_can_resume_without_duplicate_rows():
     catalog = HistoricalCatalog()
     contracts = _contracts()
-    failing = FakeSource(fail_instrument="NFO:101:SBINJAN")
-    first = CashFutureHistoricalDownloadService(catalog, contracts, source=failing).run(**_run_kwargs())
+    first = CashFutureHistoricalDownloadService(
+        catalog, contracts, source=FakeSource(fail_instrument="NFO:101:SBINJAN")
+    ).run(**_run_kwargs())
     assert not first.completed
     assert first.spot_execution.failed_request_index is None
     assert len(first.future_executions) == 1
     assert first.future_executions[0].failed_request_index == 0
     assert catalog.count() == 1
 
-    recovered_source = FakeSource()
-    recovered = CashFutureHistoricalDownloadService(catalog, contracts, source=recovered_source).run(**_run_kwargs())
+    recovered = CashFutureHistoricalDownloadService(catalog, contracts, source=FakeSource()).run(**_run_kwargs())
     assert recovered.completed
     assert catalog.count() == 3
 
 
-def test_complete_chunks_can_be_skipped_and_reported():
+def test_complete_chunk_uses_session_completeness_to_skip():
     catalog = HistoricalCatalog()
-    source = FakeSource()
-    service = CashFutureHistoricalDownloadService(catalog, _contracts(), source=source)
-    report = service.run(**_run_kwargs(), should_skip=lambda request: True)
-    assert report.completed
-    assert report.completed_chunks == 0
-    assert report.skipped_chunks == 3
-    assert report.processed_chunks == 3
-    assert source.calls == []
+    service = CashFutureHistoricalDownloadService(catalog, _contracts(), source=FakeSource())
+    request = type("R", (), {
+        "source": "x", "instrument": "NSE:1:SBIN", "timeframe": "1m",
+        "start_ns": 0, "end_ns": 120 * 1_000_000_000,
+    })()
+    catalog.ingest([
+        HistoricalRecord("x", "NSE:1:SBIN", "1m", timestamp, {"close": 1})
+        for timestamp in (0, 60 * 1_000_000_000, 120 * 1_000_000_000)
+    ])
+    service.session_windows = lambda _: (SessionWindow(0, 120 * 1_000_000_000),)
+    assert service._should_skip_chunk(request)
+
+
+def test_missing_middle_bar_prevents_skip():
+    catalog = HistoricalCatalog()
+    service = CashFutureHistoricalDownloadService(catalog, _contracts(), source=FakeSource())
+    request = type("R", (), {
+        "source": "x", "instrument": "NSE:1:SBIN", "timeframe": "1m",
+        "start_ns": 0, "end_ns": 120 * 1_000_000_000,
+    })()
+    catalog.ingest([
+        HistoricalRecord("x", "NSE:1:SBIN", "1m", timestamp, {"close": 1})
+        for timestamp in (0, 120 * 1_000_000_000)
+    ])
+    service.session_windows = lambda _: (SessionWindow(0, 120 * 1_000_000_000),)
+    assert not service._should_skip_chunk(request)
 
 
 def test_request_planner_keeps_chunks_non_overlapping():
     request_type = type(
-        "R",
-        (),
-        {
-            "source": "angelone",
-            "instrument": "NSE:3045:SBIN",
-            "timeframe": "1m",
-            "start_ns": 0,
-            "end_ns": 14 * 24 * 60 * 60 * 1_000_000_000,
-        },
+        "R", (), {
+            "source": "angelone", "instrument": "NSE:3045:SBIN", "timeframe": "1m",
+            "start_ns": 0, "end_ns": 14 * 24 * 60 * 60 * 1_000_000_000,
+        }
     )
     plan = CashFutureHistoricalDownloadService._plan_for_request(request_type())
     assert len(plan.requests) == 3
