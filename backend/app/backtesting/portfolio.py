@@ -164,7 +164,9 @@ class Portfolio:
         if cfg.max_net_notional is not None and abs(projected_net) > cfg.max_net_notional:
             raise RiskViolation("max net notional exceeded")
         projected_margin = projected_gross * cfg.initial_margin_rate
-        if projected_margin > equity + 1e-9:
+        own_reservation = self._reserved_margin.get(fill.order_id, 0.0)
+        other_reservations = max(0.0, self.reserved_margin - own_reservation)
+        if projected_margin > equity - other_reservations + 1e-9:
             raise RiskViolation("insufficient available margin")
         if cfg.max_leverage is not None and equity > 0 and projected_gross / equity > cfg.max_leverage:
             raise RiskViolation("max leverage exceeded")
