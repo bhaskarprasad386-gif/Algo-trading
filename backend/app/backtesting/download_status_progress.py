@@ -13,29 +13,82 @@ def _refresh_job_counters(store: HistoricalDownloadStatusStore, job_id: str) -> 
     completed = sum(c.status == "COMPLETE" for c in chunks)
     skipped = sum(c.status == "SKIPPED" for c in chunks)
     failed = sum(c.status == "FAILED" for c in chunks)
-    store.update_job(job_id, completed_chunks=completed, skipped_chunks=skipped,
-                     failed_chunks=failed, catalog_count=job.catalog_count)
+    store.update_job(
+        job_id,
+        completed_chunks=completed,
+        skipped_chunks=skipped,
+        failed_chunks=failed,
+        catalog_count=job.catalog_count,
+    )
 
 
-def persist_chunk_start(store: HistoricalDownloadStatusStore, *, job_id: str, sequence: int,
-                        instrument: str, start_ns: int, end_ns: int, attempts: int) -> None:
-    store.upsert_chunk(DownloadChunkStatus(
-        job_id=job_id, sequence=sequence, instrument=instrument,
-        start_ns=start_ns, end_ns=end_ns, status="RUNNING", attempts=attempts,
-    ))
+def persist_chunk_start(
+    store: HistoricalDownloadStatusStore,
+    *,
+    job_id: str,
+    sequence: int,
+    instrument: str,
+    start_ns: int,
+    end_ns: int,
+    attempts: int,
+    expected_timestamps: int = 0,
+    actual_timestamps: int = 0,
+    missing_timestamps: int = 0,
+    first_missing_ns: int | None = None,
+) -> None:
+    """Persist a RUNNING attempt without erasing prior completeness metrics."""
+    existing = next(
+        (c for c in store.chunks(job_id) if c.sequence == sequence and c.instrument == instrument),
+        None,
+    )
+    store.upsert_chunk(
+        DownloadChunkStatus(
+            job_id=job_id,
+            sequence=sequence,
+            instrument=instrument,
+            start_ns=start_ns,
+            end_ns=end_ns,
+            status="RUNNING",
+            attempts=attempts,
+            expected_timestamps=expected_timestamps or (existing.expected_timestamps if existing else 0),
+            actual_timestamps=actual_timestamps or (existing.actual_timestamps if existing else 0),
+            missing_timestamps=missing_timestamps or (existing.missing_timestamps if existing else 0),
+            first_missing_ns=first_missing_ns if first_missing_ns is not None else (existing.first_missing_ns if existing else None),
+        )
+    )
     store.update_job(job_id, status="RUNNING")
 
 
-def persist_chunk_result(store: HistoricalDownloadStatusStore, *, job_id: str, sequence: int,
-                         instrument: str, start_ns: int, end_ns: int, attempts: int,
-                         status: str, expected_timestamps: int = 0,
-                         actual_timestamps: int = 0, missing_timestamps: int = 0,
-                         first_missing_ns: int | None = None, error: str | None = None) -> None:
-    store.upsert_chunk(DownloadChunkStatus(
-        job_id=job_id, sequence=sequence, instrument=instrument,
-        start_ns=start_ns, end_ns=end_ns, status=status, attempts=attempts,
-        expected_timestamps=expected_timestamps, actual_timestamps=actual_timestamps,
-        missing_timestamps=missing_timestamps, first_missing_ns=first_missing_ns,
-        error=error,
-    ))
+def persist_chunk_result(
+    store: HistoricalDownloadStatusStore,
+    *,
+    job_id: str,
+    sequence: int,
+    instrument: str,
+    start_ns: int,
+    end_ns: int,
+    attempts: int,
+    status: str,
+    expected_timestamps: int = 0,
+    actual_timestamps: int = 0,
+    missing_timestamps: int = 0,
+    first_missing_ns: int | None = None,
+    error: str | None = None,
+) -> None:
+    store.upsert_chunk(
+        DownloadChunkStatus(
+            job_id=job_id,
+            sequence=sequence,
+            instrument=instrument,
+            start_ns=start_ns,
+            end_ns=end_ns,
+            status=status,
+            attempts=attempts,
+            expected_timestamps=expected_timestamps,
+            actual_timestamps=actual_timestamps,
+            missing_timestamps=missing_timestamps,
+            first_missing_ns=first_missing_ns,
+            error=error,
+        )
+    )
     _refresh_job_counters(store, job_id)
