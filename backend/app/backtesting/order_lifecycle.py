@@ -1,6 +1,6 @@
 """Deterministic open-order lifecycle for universal backtests."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 from app.backtesting.execution import ExecutionSide, OrderType, SimFill, SimOrder
@@ -51,13 +51,7 @@ class OrderState:
 
     @property
     def terminal(self) -> bool:
-        return self.status in {
-            OrderStatus.FILLED,
-            OrderStatus.REJECTED,
-            OrderStatus.CANCELLED,
-            OrderStatus.EXPIRED,
-            OrderStatus.REPLACED,
-        }
+        return self.status in {OrderStatus.FILLED, OrderStatus.REJECTED, OrderStatus.CANCELLED, OrderStatus.EXPIRED, OrderStatus.REPLACED}
 
 
 class OrderLifecycle:
@@ -76,15 +70,7 @@ class OrderLifecycle:
         if self.state.terminal:
             raise ValueError("terminal order cannot transition")
         event = LifecycleEvent(self.state.order.order_id, status, timestamp_ns, self.state.filled_quantity, self.state.remaining_quantity, reason, replacement_order_id)
-        self.state = OrderState(
-            order=self.state.order,
-            status=status,
-            filled_quantity=self.state.filled_quantity,
-            average_fill_price=self.state.average_fill_price,
-            reject_reason=reason if status == OrderStatus.REJECTED else self.state.reject_reason,
-            time_in_force=self.state.time_in_force,
-            events=self.state.events + (event,),
-        )
+        self.state = OrderState(self.state.order, status, self.state.filled_quantity, self.state.average_fill_price, reason if status == OrderStatus.REJECTED else self.state.reject_reason, self.state.time_in_force, self.state.events + (event,))
         return self.state
 
     def accept(self, timestamp_ns: int = 0) -> OrderState:
@@ -100,11 +86,15 @@ class OrderLifecycle:
         return self._transition(OrderStatus.REJECTED, timestamp_ns, reason=reason)
 
     def cancel(self, timestamp_ns: int = 0, reason: str = "cancelled") -> OrderState:
+        if self.state.terminal:
+            raise ValueError("terminal order cannot be cancelled")
         if self.state.status not in {OrderStatus.ACCEPTED, OrderStatus.PARTIALLY_FILLED}:
             raise ValueError("only open orders can be cancelled")
         return self._transition(OrderStatus.CANCELLED, timestamp_ns, reason=reason)
 
     def expire(self, timestamp_ns: int = 0, reason: str = "expired") -> OrderState:
+        if self.state.terminal:
+            raise ValueError("terminal order cannot expire")
         if self.state.status not in {OrderStatus.ACCEPTED, OrderStatus.PARTIALLY_FILLED}:
             raise ValueError("only open orders can expire")
         return self._transition(OrderStatus.EXPIRED, timestamp_ns, reason=reason)
