@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,7 @@ class BacktestLedger:
     def __init__(self, path: str = ":memory:") -> None:
         self.path = path
         self._db = sqlite3.connect(path)
+        self._db.execute("PRAGMA foreign_keys=ON")
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("""
             CREATE TABLE IF NOT EXISTS runs (
@@ -72,26 +73,62 @@ class BacktestLedger:
             raise ValueError("run and strategy identifiers are required")
         if initial_capital < 0:
             raise ValueError("initial_capital cannot be negative")
-        self._db.execute(
-            "INSERT INTO runs(run_id,strategy_id,strategy_version,strategy_hash,initial_capital,metadata_json) VALUES(?,?,?,?,?,?)",
-            (run_id, strategy_id, strategy_version, strategy_hash, float(initial_capital), json.dumps(dict(metadata or {}), sort_keys=True)),
-        )
-        self._db.commit()
+        try:
+            self._db.execute(
+                "INSERT INTO runs(run_id,strategy_id,strategy_version,strategy_hash,initial_capital,metadata_json) VALUES(?,?,?,?,?,?)",
+                (run_id, strategy_id, strategy_version, strategy_hash, float(initial_capital), json.dumps(dict(metadata or {}), sort_keys=True)),
+            )
+            self._db.commit()
+        except sqlite3.IntegrityError as exc:
+            self._db.rollback()
+            raise ValueError(f"run_id already exists: {run_id}") from exc
 
-    def append(self, record: LedgerRecord) -> None:
+    def _require_run(self, run_id: str) -> None:
+        if self._db.execute("SELECT 1 FROM runs WHERE run_id=?", (run_id,)).fetchone() is None:
+            raise ValueError(f"unknown run_id: {run_id}")
+
+    @staticmethod
+    def _record_params(record: LedgerRecord) -> tuple[str, str, int, str]:
         if record.timestamp_ns < 0:
             raise ValueError("timestamp_ns cannot be negative")
         if not record.run_id.strip() or not record.record_type.strip():
             raise ValueError("run_id and record_type are required")
+        return (record.run_id, record.record_type, record.timestamp_ns,
+                json.dumps(dict(record.payload), sort_keys=True, default=str))
+
+    def append(self, record: LedgerRecord) -> None:
+        self._require_run(record.run_id)
         self._db.execute(
             "INSERT INTO records(run_id,record_type,timestamp_ns,payload_json) VALUES(?,?,?,?)",
-            (record.run_id, record.record_type, record.timestamp_ns, json.dumps(dict(record.payload), sort_keys=True, default=str)),
+            self._record_params(record),
         )
         self._db.commit()
+
+    def append_batch(self, records: Iterable[LedgerRecord]) -> int:
+        """Append many records in one transaction and return the count."""
+        rows = list(records)
+        if not rows:
+            return 0
+        for record in rows:
+            self._record_params(record)
+        run_ids = {record.run_id for record in rows}
+        for run_id in run_ids:
+            self._require_run(run_id)
+        try:
+            self._db.executemany(
+                "INSERT INTO records(run_id,record_type,timestamp_ns,payload_json) VALUES(?,?,?,?)",
+                (self._record_params(record) for record in rows),
+            )
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
+        return len(rows)
 
     def checkpoint(self, checkpoint: Checkpoint) -> None:
         if checkpoint.event_index < 0 or checkpoint.timestamp_ns < 0:
             raise ValueError("checkpoint indexes and timestamps cannot be negative")
+        self._require_run(checkpoint.run_id)
         self._db.execute(
             "INSERT INTO checkpoints(run_id,event_index,timestamp_ns,state_json) VALUES(?,?,?,?) "
             "ON CONFLICT(run_id) DO UPDATE SET event_index=excluded.event_index,timestamp_ns=excluded.timestamp_ns,state_json=excluded.state_json",
