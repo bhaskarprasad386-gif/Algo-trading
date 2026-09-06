@@ -1,7 +1,5 @@
 from datetime import date, datetime, timezone
 
-import pytest
-
 from app.backtesting.cash_future_historical_download import CashFutureHistoricalDownloadService
 from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
 from app.backtesting.historical_catalog import HistoricalCatalog
@@ -48,18 +46,19 @@ def _run_kwargs():
         end=datetime(2026, 2, 2, tzinfo=timezone.utc),
         timeframe="1m",
         mode="CURRENT",
-        retry_attempts=0,
+        retry_attempts=1,
     )
 
 
 def test_downloader_persists_spot_and_exact_rollover_contracts():
     catalog = HistoricalCatalog()
-    service = CashFutureHistoricalDownloadService(catalog, _contracts(), source=FakeSource())
-    report = service.run(**_run_kwargs())
+    source = FakeSource()
+    report = CashFutureHistoricalDownloadService(catalog, _contracts(), source=source).run(**_run_kwargs())
     assert report.completed
     assert len(report.future_executions) == 2
     assert [x.request.instrument for x in report.queue.futures] == ["NFO:101:SBINJAN", "NFO:102:SBINFEB"]
     assert catalog.count() == 3
+    assert report.processed_chunks == 3
 
 
 def test_partial_provider_failure_can_resume_without_duplicate_rows():
@@ -73,9 +72,22 @@ def test_partial_provider_failure_can_resume_without_duplicate_rows():
     assert first.future_executions[0].failed_request_index == 0
     assert catalog.count() == 1
 
-    recovered = CashFutureHistoricalDownloadService(catalog, contracts, source=FakeSource()).run(**_run_kwargs())
+    recovered_source = FakeSource()
+    recovered = CashFutureHistoricalDownloadService(catalog, contracts, source=recovered_source).run(**_run_kwargs())
     assert recovered.completed
     assert catalog.count() == 3
+
+
+def test_complete_chunks_can_be_skipped_and_reported():
+    catalog = HistoricalCatalog()
+    source = FakeSource()
+    service = CashFutureHistoricalDownloadService(catalog, _contracts(), source=source)
+    report = service.run(**_run_kwargs(), should_skip=lambda request: True)
+    assert report.completed
+    assert report.completed_chunks == 0
+    assert report.skipped_chunks == 3
+    assert report.processed_chunks == 3
+    assert source.calls == []
 
 
 def test_request_planner_keeps_chunks_non_overlapping():
