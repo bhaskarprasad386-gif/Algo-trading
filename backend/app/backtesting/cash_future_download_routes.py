@@ -28,13 +28,13 @@ class CashFutureDownloadStartRequest(BaseModel):
 
 
 class CashFutureDownloadManager:
-    """Own persistent catalogs and launch downloads without blocking FastAPI."""
+    """Launch durable downloads without sharing SQLite connections across threads."""
 
     def __init__(self, *, data_db: str, contract_db: str, status_store: HistoricalDownloadStatusStore) -> None:
         Path(data_db).parent.mkdir(parents=True, exist_ok=True)
         Path(contract_db).parent.mkdir(parents=True, exist_ok=True)
-        self.catalog = HistoricalCatalog(data_db)
-        self.contract_catalog = ContractMasterCatalog(contract_db)
+        self.data_db = data_db
+        self.contract_db = contract_db
         self.status_store = status_store
         self._tasks: set[asyncio.Task] = set()
 
@@ -56,9 +56,9 @@ class CashFutureDownloadManager:
         return start, end
 
     async def _run(self, job_id: str, request: CashFutureDownloadStartRequest, start: datetime, end: datetime) -> None:
-        service = CashFutureHistoricalDownloadService(
-            self.catalog, self.contract_catalog, status_store=self.status_store,
-        )
+        catalog = HistoricalCatalog(self.data_db)
+        contract_catalog = ContractMasterCatalog(self.contract_db)
+        service = CashFutureHistoricalDownloadService(catalog, contract_catalog, status_store=self.status_store)
         try:
             await asyncio.to_thread(
                 service.run,
@@ -74,15 +74,17 @@ class CashFutureDownloadManager:
             )
             job = self.status_store.job(job_id)
             if job is not None and job.status not in {"COMPLETE", "FAILED"}:
-                self.status_store.update_job(job_id, status="COMPLETE", catalog_count=self.catalog.count())
+                self.status_store.update_job(job_id, status="COMPLETE", catalog_count=catalog.count())
         except Exception as exc:
             if self.status_store.job(job_id) is not None:
-                self.status_store.update_job(job_id, status="FAILED", error=str(exc), catalog_count=self.catalog.count())
+                self.status_store.update_job(job_id, status="FAILED", error=str(exc), catalog_count=catalog.count())
+        finally:
+            catalog.close()
+            contract_catalog.close()
 
     def start(self, request: CashFutureDownloadStartRequest) -> str:
         start, end = self._validate(request)
         job_id = uuid.uuid4().hex
-        # The service fills the exact chunk count after resolving historical contracts.
         self.status_store.create_job(
             job_id=job_id, mode=request.mode.upper(), timeframe=request.timeframe,
             spot_instrument=request.spot_instrument.strip(), exchange=request.exchange.strip().upper(),
@@ -96,8 +98,8 @@ class CashFutureDownloadManager:
         return job_id
 
     def close(self) -> None:
-        self.catalog.close()
-        self.contract_catalog.close()
+        # Worker-owned SQLite connections are closed by _run().
+        self._tasks.clear()
 
 
 def create_cash_future_download_router(manager: CashFutureDownloadManager) -> APIRouter:
