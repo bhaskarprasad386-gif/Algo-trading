@@ -11,10 +11,9 @@ from .historical_catalog import HistoricalCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_ingest import HistoricalIngestionService
 from .historical_sync import HistoricalSyncPlan, build_chunked_plan
-from .nse_session_calendars import nse_session_windows_2026
+from .nse_session_calendars import nse_session_windows
 from .session_chunk_completeness import SessionChunk, SessionChunkCompleteness
 from .session_gap_planner import SessionWindow
-
 
 _TIMEFRAME_INTERVAL_NS = {
     "1m": 60 * 1_000_000_000,
@@ -30,10 +29,9 @@ _INTRADAY_TIMEFRAMES = frozenset(_TIMEFRAME_INTERVAL_NS) - {"1d"}
 
 
 def _default_session_windows(request: object) -> tuple[SessionWindow, ...]:
-    """Use the versioned segment-aware NSE calendars for intraday completeness."""
     if request.timeframe not in _INTRADAY_TIMEFRAMES:
         return ()
-    return tuple(nse_session_windows_2026(request))
+    return tuple(nse_session_windows(request))
 
 
 @dataclass(frozen=True)
@@ -69,15 +67,8 @@ class CashFutureHistoricalDownloadReport:
 class CashFutureHistoricalDownloadService:
     """Download spot/future requests sequentially and persist each chunk immediately."""
 
-    def __init__(
-        self,
-        catalog: HistoricalCatalog,
-        contract_catalog,
-        *,
-        source=None,
-        executor=None,
-        session_windows: Callable[[object], Iterable[SessionWindow]] | None = None,
-    ) -> None:
+    def __init__(self, catalog: HistoricalCatalog, contract_catalog, *, source=None, executor=None,
+                 session_windows: Callable[[object], Iterable[SessionWindow]] | None = None) -> None:
         self.catalog = catalog
         self.contract_catalog = contract_catalog
         self.ingestion = HistoricalIngestionService(catalog)
@@ -88,14 +79,10 @@ class CashFutureHistoricalDownloadService:
 
     @staticmethod
     def _plan_for_request(request) -> HistoricalSyncPlan:
-        chunk_ns = 7 * 24 * 60 * 60 * 1_000_000_000
         return build_chunked_plan(
-            source=request.source,
-            instrument=request.instrument,
-            timeframe=request.timeframe,
-            start_ns=request.start_ns,
-            end_ns=request.end_ns,
-            chunk_ns=chunk_ns,
+            source=request.source, instrument=request.instrument, timeframe=request.timeframe,
+            start_ns=request.start_ns, end_ns=request.end_ns,
+            chunk_ns=7 * 24 * 60 * 60 * 1_000_000_000,
         )
 
     def _should_skip_chunk(self, request) -> bool:
@@ -106,60 +93,27 @@ class CashFutureHistoricalDownloadService:
         if not sessions:
             return False
         return self.completeness.is_complete(
-            source=request.source,
-            instrument=request.instrument,
-            timeframe=request.timeframe,
-            interval_ns=interval_ns,
-            chunk=SessionChunk(request.start_ns, request.end_ns),
-            sessions=sessions,
+            source=request.source, instrument=request.instrument, timeframe=request.timeframe,
+            interval_ns=interval_ns, chunk=SessionChunk(request.start_ns, request.end_ns), sessions=sessions,
         )
 
-    def run(
-        self,
-        *,
-        spot_instrument: str,
-        exchange: str,
-        underlying: str,
-        start,
-        end,
-        timeframe: str = "1m",
-        mode: str = "BOTH",
-        retry_attempts: int = 3,
-        should_skip: Callable[[object], bool] | None = None,
-    ) -> CashFutureHistoricalDownloadReport:
+    def run(self, *, spot_instrument: str, exchange: str, underlying: str, start, end,
+            timeframe: str = "1m", mode: str = "BOTH", retry_attempts: int = 3,
+            should_skip: Callable[[object], bool] | None = None) -> CashFutureHistoricalDownloadReport:
         queue = build_rollover_download_queue(
-            catalog=self.contract_catalog,
-            spot_instrument=spot_instrument,
-            exchange=exchange,
-            underlying=underlying,
-            start=start,
-            end=end,
-            timeframe=timeframe,
-            mode=mode,
+            catalog=self.contract_catalog, spot_instrument=spot_instrument, exchange=exchange,
+            underlying=underlying, start=start, end=end, timeframe=timeframe, mode=mode,
         )
         effective_skip = should_skip or self._should_skip_chunk
-        spot_result = self.executor.run(
-            self.source,
-            self._plan_for_request(queue.spot),
-            retry_attempts=retry_attempts,
-            should_skip=effective_skip,
-        )
+        spot_result = self.executor.run(self.source, self._plan_for_request(queue.spot),
+                                        retry_attempts=retry_attempts, should_skip=effective_skip)
         if spot_result.failed_request_index is not None:
-            return CashFutureHistoricalDownloadReport(
-                queue, spot_result, tuple(), self.catalog.count()
-            )
-
-        future_results: list[DownloadExecutionResult] = []
+            return CashFutureHistoricalDownloadReport(queue, spot_result, tuple(), self.catalog.count())
+        future_results = []
         for item in queue.futures:
-            result = self.executor.run(
-                self.source,
-                self._plan_for_request(item.request),
-                retry_attempts=retry_attempts,
-                should_skip=effective_skip,
-            )
+            result = self.executor.run(self.source, self._plan_for_request(item.request),
+                                       retry_attempts=retry_attempts, should_skip=effective_skip)
             future_results.append(result)
             if result.failed_request_index is not None:
                 break
-        return CashFutureHistoricalDownloadReport(
-            queue, spot_result, tuple(future_results), self.catalog.count()
-        )
+        return CashFutureHistoricalDownloadReport(queue, spot_result, tuple(future_results), self.catalog.count())
