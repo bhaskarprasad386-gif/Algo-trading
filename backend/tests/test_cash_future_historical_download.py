@@ -142,6 +142,8 @@ def test_run_wires_completeness_acceptance_to_spot_and_future(monkeypatch):
     catalog.ingest([
         HistoricalRecord("angelone", "NSE:1:SBIN", "1m", start, {"close": 1}),
         HistoricalRecord("angelone", "NSE:1:SBIN", "1m", end, {"close": 2}),
+        HistoricalRecord("angelone", "NFO:101:SBINJAN", "1m", start, {"close": 1}),
+        HistoricalRecord("angelone", "NFO:101:SBINJAN", "1m", end, {"close": 2}),
     ])
     service = CashFutureHistoricalDownloadService(
         catalog, _contracts(), source=object(), executor=FakeExecutor(),
