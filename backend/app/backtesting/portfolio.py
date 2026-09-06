@@ -14,7 +14,7 @@ class RiskViolation(ValueError):
 @dataclass(frozen=True)
 class RiskConfig:
     initial_margin_rate: float = 1.0
-    maintenance_margin_rate: float = 1.0
+    maintenance_margin_rate: float | None = None
     max_gross_notional: float | None = None
     max_net_notional: float | None = None
     max_leverage: float | None = None
@@ -24,10 +24,12 @@ class RiskConfig:
     def __post_init__(self) -> None:
         if not 0 < self.initial_margin_rate <= 1:
             raise ValueError("initial_margin_rate must be in (0, 1]")
-        if not 0 < self.maintenance_margin_rate <= 1:
+        maintenance = self.initial_margin_rate if self.maintenance_margin_rate is None else self.maintenance_margin_rate
+        if not 0 < maintenance <= 1:
             raise ValueError("maintenance_margin_rate must be in (0, 1]")
-        if self.maintenance_margin_rate > self.initial_margin_rate:
+        if maintenance > self.initial_margin_rate:
             raise ValueError("maintenance_margin_rate cannot exceed initial_margin_rate")
+        object.__setattr__(self, "maintenance_margin_rate", maintenance)
         for name in ("max_gross_notional", "max_net_notional", "max_leverage", "max_drawdown"):
             value = getattr(self, name)
             if value is not None and value < 0:
@@ -152,7 +154,7 @@ class Portfolio:
         cfg = self.risk_config
         if cfg.max_position_quantity is not None and abs(new_qty) > cfg.max_position_quantity:
             raise RiskViolation("max position quantity exceeded")
-        gross, net, unrealized, equity = self._metrics(marks)
+        gross, net, _, equity = self._metrics(marks)
         current_notional = abs(old.quantity * marks[fill.instrument])
         projected_notional = abs(new_qty * marks[fill.instrument])
         projected_gross = gross - current_notional + projected_notional
@@ -203,26 +205,13 @@ class Portfolio:
         if self.risk_config.max_drawdown is not None and snapshot.drawdown > self.risk_config.max_drawdown:
             raise RiskViolation("max drawdown exceeded")
         self._peak_equity = max(self._peak_equity, snapshot.equity)
-        self._trades.append(TradeRecord(
-            order_id=fill.order_id,
-            instrument=fill.instrument,
-            side=fill.side,
-            quantity=fill.quantity,
-            price=fill.price,
-            gross_value=fill.quantity * fill.price,
-            fee=fill.fee,
-            realized_pnl_delta=realized_delta,
-            cash_after=self.cash,
-            equity_after=snapshot.equity,
-            timestamp_ns=fill.filled_at_ns,
-        ))
+        self._trades.append(TradeRecord(fill.order_id, fill.instrument, fill.side, fill.quantity, fill.price, fill.quantity * fill.price, fill.fee, realized_delta, self.cash, snapshot.equity, fill.filled_at_ns))
         return position
 
     def apply_fills_atomic(self, fills: Iterable[SimFill], marks: dict[str, float] | None = None) -> PortfolioSnapshot:
         """Apply a multi-leg fill batch atomically; risk failure rolls back all legs."""
         fills = tuple(fills)
-        state = (self.cash, dict(self._positions), self._realized_pnl, self._fees,
-                 self._peak_equity, dict(self._reserved_margin), list(self._trades))
+        state = (self.cash, dict(self._positions), self._realized_pnl, self._fees, self._peak_equity, dict(self._reserved_margin), list(self._trades))
         try:
             for fill in fills:
                 self.apply_fill(fill, marks)
@@ -243,22 +232,7 @@ class Portfolio:
         available = max(0.0, equity - initial_margin - self.reserved_margin)
         leverage = gross / equity if equity > 0 else 0.0
         drawdown = max(0.0, self._peak_equity - equity)
-        return PortfolioSnapshot(
-            cash=self.cash,
-            equity=equity,
-            realized_pnl=self._realized_pnl,
-            unrealized_pnl=unrealized,
-            positions=tuple(self._positions.values()),
-            gross_notional=gross,
-            net_notional=net,
-            initial_margin=initial_margin,
-            maintenance_margin=maintenance,
-            available_margin=available,
-            leverage=leverage,
-            drawdown=drawdown,
-            fees=self._fees,
-            reserved_margin=self.reserved_margin,
-        )
+        return PortfolioSnapshot(self.cash, equity, self._realized_pnl, unrealized, tuple(self._positions.values()), gross, net, initial_margin, maintenance, available, leverage, drawdown, self._fees, self.reserved_margin)
 
     def apply_fills(self, fills: Iterable[SimFill], marks: dict[str, float] | None = None) -> PortfolioSnapshot:
         return self.apply_fills_atomic(fills, marks)
