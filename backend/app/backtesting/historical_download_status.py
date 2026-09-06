@@ -90,8 +90,7 @@ class HistoricalDownloadStatusStore:
             actual_timestamps INTEGER NOT NULL DEFAULT 0, missing_timestamps INTEGER NOT NULL DEFAULT 0,
             first_missing_ns INTEGER, fetched_records INTEGER NOT NULL DEFAULT 0,
             inserted_records INTEGER NOT NULL DEFAULT 0, error TEXT, updated_at_ns INTEGER NOT NULL,
-            PRIMARY KEY(job_id, sequence, instrument),
-            FOREIGN KEY(job_id) REFERENCES download_jobs(job_id) ON DELETE CASCADE
+            PRIMARY KEY(job_id, sequence, instrument), FOREIGN KEY(job_id) REFERENCES download_jobs(job_id) ON DELETE CASCADE
         )""")
         cols = self._db.execute("PRAGMA table_info(download_chunks)").fetchall()
         pk_cols = {row[1] for row in cols if row[5]}
@@ -104,20 +103,16 @@ class HistoricalDownloadStatusStore:
                 actual_timestamps INTEGER NOT NULL DEFAULT 0, missing_timestamps INTEGER NOT NULL DEFAULT 0,
                 first_missing_ns INTEGER, fetched_records INTEGER NOT NULL DEFAULT 0,
                 inserted_records INTEGER NOT NULL DEFAULT 0, error TEXT, updated_at_ns INTEGER NOT NULL,
-                PRIMARY KEY(job_id, sequence, instrument),
-                FOREIGN KEY(job_id) REFERENCES download_jobs(job_id) ON DELETE CASCADE
+                PRIMARY KEY(job_id, sequence, instrument), FOREIGN KEY(job_id) REFERENCES download_jobs(job_id) ON DELETE CASCADE
             )""")
-            self._db.execute("""INSERT INTO download_chunks(
-                job_id,sequence,instrument,start_ns,end_ns,status,attempts,expected_timestamps,
-                actual_timestamps,missing_timestamps,first_missing_ns,error,updated_at_ns)
-                SELECT job_id,sequence,instrument,start_ns,end_ns,status,attempts,expected_timestamps,
-                actual_timestamps,missing_timestamps,first_missing_ns,error,updated_at_ns
-                FROM download_chunks_legacy""")
+            self._db.execute("""INSERT INTO download_chunks(job_id,sequence,instrument,start_ns,end_ns,status,attempts,expected_timestamps,actual_timestamps,missing_timestamps,first_missing_ns,error,updated_at_ns)
+                SELECT job_id,sequence,instrument,start_ns,end_ns,status,attempts,expected_timestamps,actual_timestamps,missing_timestamps,first_missing_ns,error,updated_at_ns FROM download_chunks_legacy""")
             self._db.execute("DROP TABLE download_chunks_legacy")
             return
-        if "fetched_records" not in {row[1] for row in cols}:
+        names = {row[1] for row in cols}
+        if "fetched_records" not in names:
             self._db.execute("ALTER TABLE download_chunks ADD COLUMN fetched_records INTEGER NOT NULL DEFAULT 0")
-        if "inserted_records" not in {row[1] for row in cols}:
+        if "inserted_records" not in names:
             self._db.execute("ALTER TABLE download_chunks ADD COLUMN inserted_records INTEGER NOT NULL DEFAULT 0")
 
     def close(self) -> None:
@@ -131,7 +126,7 @@ class HistoricalDownloadStatusStore:
     def create_job(self, *, job_id: str, mode: str, timeframe: str, spot_instrument: str,
                    exchange: str, underlying: str, start_ns: int, end_ns: int,
                    requested_chunks: int = 0, status: str = "QUEUED",
-                   updated_at_ns: int | None = None) -> None:
+                   updated_at_ns: int | None = None, reset_existing: bool = True) -> None:
         with self._lock:
             if not job_id.strip():
                 raise ValueError("job_id is required")
@@ -141,23 +136,26 @@ class HistoricalDownloadStatusStore:
                 raise ValueError("invalid job range or chunk count")
             existing = self.job(job_id)
             if existing is not None:
+                if not reset_existing:
+                    self.update_job(job_id, requested_chunks=requested_chunks, status=status, error=None,
+                                    updated_at_ns=updated_at_ns or self._now_ns())
+                    return
                 self.update_job(job_id, status=status, requested_chunks=requested_chunks,
-                                completed_chunks=0, skipped_chunks=0, failed_chunks=0,
-                                catalog_count=0, fetched_records=0, inserted_records=0, error=None,
+                                completed_chunks=0, skipped_chunks=0, failed_chunks=0, catalog_count=0,
+                                fetched_records=0, inserted_records=0, error=None,
                                 updated_at_ns=updated_at_ns or self._now_ns())
                 return
             self._db.execute(
                 "INSERT INTO download_jobs(job_id,mode,timeframe,spot_instrument,exchange,underlying,start_ns,end_ns,status,requested_chunks,fetched_records,inserted_records,updated_at_ns) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (job_id, mode, timeframe, spot_instrument, exchange, underlying, start_ns, end_ns,
-                 status, requested_chunks, 0, 0, updated_at_ns or self._now_ns()),
+                (job_id, mode, timeframe, spot_instrument, exchange, underlying, start_ns, end_ns, status,
+                 requested_chunks, 0, 0, updated_at_ns or self._now_ns()),
             )
             self._db.commit()
 
     def update_job(self, job_id: str, **fields: Any) -> None:
         with self._lock:
-            allowed = {"status", "requested_chunks", "completed_chunks", "skipped_chunks",
-                       "failed_chunks", "catalog_count", "fetched_records", "inserted_records",
-                       "error", "updated_at_ns"}
+            allowed = {"status", "requested_chunks", "completed_chunks", "skipped_chunks", "failed_chunks",
+                       "catalog_count", "fetched_records", "inserted_records", "error", "updated_at_ns"}
             unknown = set(fields) - allowed
             if unknown:
                 raise ValueError(f"unsupported job fields: {sorted(unknown)}")
@@ -179,20 +177,11 @@ class HistoricalDownloadStatusStore:
                 raise ValueError(f"invalid chunk status: {chunk.status}")
             if chunk.sequence < 0 or chunk.start_ns < 0 or chunk.end_ns < chunk.start_ns:
                 raise ValueError("invalid chunk range")
-            self._db.execute("""INSERT INTO download_chunks(
-                job_id,sequence,instrument,start_ns,end_ns,status,attempts,expected_timestamps,
-                actual_timestamps,missing_timestamps,first_missing_ns,fetched_records,inserted_records,error,updated_at_ns)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(job_id,sequence,instrument) DO UPDATE SET
-                start_ns=excluded.start_ns,end_ns=excluded.end_ns,status=excluded.status,
-                attempts=excluded.attempts,expected_timestamps=excluded.expected_timestamps,
-                actual_timestamps=excluded.actual_timestamps,missing_timestamps=excluded.missing_timestamps,
-                first_missing_ns=excluded.first_missing_ns,fetched_records=excluded.fetched_records,
-                inserted_records=excluded.inserted_records,error=excluded.error,updated_at_ns=excluded.updated_at_ns""",
-                (chunk.job_id, chunk.sequence, chunk.instrument, chunk.start_ns, chunk.end_ns,
-                 chunk.status, chunk.attempts, chunk.expected_timestamps, chunk.actual_timestamps,
-                 chunk.missing_timestamps, chunk.first_missing_ns, chunk.fetched_records,
-                 chunk.inserted_records, chunk.error, chunk.updated_at_ns or self._now_ns()))
+            self._db.execute("""INSERT INTO download_chunks(job_id,sequence,instrument,start_ns,end_ns,status,attempts,expected_timestamps,actual_timestamps,missing_timestamps,first_missing_ns,fetched_records,inserted_records,error,updated_at_ns)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id,sequence,instrument) DO UPDATE SET start_ns=excluded.start_ns,end_ns=excluded.end_ns,status=excluded.status,attempts=excluded.attempts,expected_timestamps=excluded.expected_timestamps,actual_timestamps=excluded.actual_timestamps,missing_timestamps=excluded.missing_timestamps,first_missing_ns=excluded.first_missing_ns,fetched_records=excluded.fetched_records,inserted_records=excluded.inserted_records,error=excluded.error,updated_at_ns=excluded.updated_at_ns""",
+                (chunk.job_id, chunk.sequence, chunk.instrument, chunk.start_ns, chunk.end_ns, chunk.status, chunk.attempts,
+                 chunk.expected_timestamps, chunk.actual_timestamps, chunk.missing_timestamps, chunk.first_missing_ns,
+                 chunk.fetched_records, chunk.inserted_records, chunk.error, chunk.updated_at_ns or self._now_ns()))
             self._db.commit()
 
     def job(self, job_id: str) -> DownloadJobStatus | None:
