@@ -66,6 +66,13 @@ def test_insufficient_margin_rejects_projected_position():
         p.apply_fill(fill("b", "X", ExecutionSide.BUY, 11, 100))
 
 
+def test_fill_respects_other_pending_margin_reservations():
+    p = Portfolio(100_000, RiskConfig(initial_margin_rate=0.5))
+    p.reserve_margin("other-order", 60_000)
+    with pytest.raises(RiskViolation, match="insufficient available margin"):
+        p.apply_fill(fill("fill-order", "X", ExecutionSide.BUY, 100, 1_000))
+
+
 def test_max_position_and_notional_limits_are_enforced():
     p = Portfolio(100_000, RiskConfig(initial_margin_rate=0.1, max_position_quantity=10, max_gross_notional=1_000))
     p.apply_fill(fill("b", "X", ExecutionSide.BUY, 10, 100))
