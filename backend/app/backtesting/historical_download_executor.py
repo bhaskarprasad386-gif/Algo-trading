@@ -18,7 +18,6 @@ class DownloadExecutionResult:
 
     @property
     def completed_chunks(self) -> int:
-        """Chunks fetched and accepted successfully during this invocation."""
         return len(self.results)
 
     @property
@@ -46,6 +45,10 @@ class ResumableHistoricalExecutor:
         retry_delay_seconds: float = 1.0,
         should_skip: Callable[[object], bool] | None = None,
         should_accept: Callable[[object, HistoricalSyncResult], bool] | None = None,
+        on_chunk_start: Callable[[int, object, int], None] | None = None,
+        on_chunk_skip: Callable[[int, object], None] | None = None,
+        on_chunk_complete: Callable[[int, object, HistoricalSyncResult, int], None] | None = None,
+        on_chunk_failed: Callable[[int, object, Exception, int], None] | None = None,
     ) -> DownloadExecutionResult:
         if retry_attempts < 1:
             raise ValueError("retry_attempts must be positive")
@@ -56,20 +59,28 @@ class ResumableHistoricalExecutor:
         for index, request in enumerate(plan.requests):
             if should_skip is not None and should_skip(request):
                 skipped.append(index)
+                if on_chunk_skip is not None:
+                    on_chunk_skip(index, request)
                 continue
             last_error: Exception | None = None
-            for attempt in range(retry_attempts):
+            for attempt in range(1, retry_attempts + 1):
+                if on_chunk_start is not None:
+                    on_chunk_start(index, request, attempt)
                 try:
                     result = self.service.sync(source, request)
                     if should_accept is not None and not should_accept(request, result):
                         raise ValueError("historical chunk failed completeness validation")
                     results.append(result)
                     last_error = None
+                    if on_chunk_complete is not None:
+                        on_chunk_complete(index, request, result, attempt)
                     break
                 except Exception as exc:
                     last_error = exc
-                    if attempt + 1 < retry_attempts:
-                        self.sleep(retry_delay_seconds * (2 ** attempt))
+                    if attempt < retry_attempts:
+                        self.sleep(retry_delay_seconds * (2 ** (attempt - 1)))
             if last_error is not None:
+                if on_chunk_failed is not None:
+                    on_chunk_failed(index, request, last_error, retry_attempts)
                 return DownloadExecutionResult(tuple(results), index, tuple(skipped))
         return DownloadExecutionResult(tuple(results), None, tuple(skipped))
