@@ -65,3 +65,19 @@ def test_reject_is_only_allowed_before_acceptance():
     assert state.reject_reason == "risk limit"
     with pytest.raises(ValueError):
         lifecycle.accept(101)
+
+
+def test_lifecycle_checkpoint_round_trip_preserves_partial_order_and_history():
+    lifecycle = OrderLifecycle(make_order("resume", quantity=10))
+    lifecycle.accept(100)
+    lifecycle.apply_fill(lifecycle.to_fill(100.0, 110, 4))
+
+    restored = OrderLifecycle.restore_state(lifecycle.export_state())
+
+    assert restored.state.order == lifecycle.state.order
+    assert restored.state.status == OrderStatus.PARTIALLY_FILLED
+    assert restored.state.filled_quantity == 4
+    assert restored.state.remaining_quantity == 6
+    assert restored.state.average_fill_price == pytest.approx(100.0)
+    assert restored.state.events == lifecycle.state.events
+    assert restored.to_fill(101.0, 120, 6).quantity == 6
