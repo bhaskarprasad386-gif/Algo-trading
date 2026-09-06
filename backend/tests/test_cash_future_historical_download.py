@@ -5,6 +5,7 @@ from app.backtesting.cash_future_download_queue import CashFutureDownloadQueue, 
 from app.backtesting.cash_future_historical_download import CashFutureHistoricalDownloadService
 from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
 from app.backtesting.historical_catalog import HistoricalCatalog
+from app.backtesting.historical_download_status import DownloadChunkStatus, HistoricalDownloadStatusStore
 from app.backtesting.historical_ingest import HistoricalFetchRequest, HistoricalRecord, HistoricalSyncResult
 from app.backtesting.session_gap_planner import SessionWindow
 
@@ -96,11 +97,10 @@ def test_complete_chunk_uses_session_completeness_to_skip():
         for timestamp in (0, 60 * 1_000_000_000, 120 * 1_000_000_000)
     ])
     service.session_windows = lambda _: (SessionWindow(0, 120 * 1_000_000_000),)
-    assert service._should_skip_chunk(request)
-    assert service._should_accept_chunk(request, None)
+    assert service._chunk_is_complete(request)
 
 
-def test_missing_middle_bar_prevents_skip_and_acceptance():
+def test_missing_middle_bar_prevents_completeness():
     catalog = HistoricalCatalog()
     service = CashFutureHistoricalDownloadService(catalog, _contracts(), source=FakeSource())
     request = type("R", (), {
@@ -112,8 +112,7 @@ def test_missing_middle_bar_prevents_skip_and_acceptance():
         for timestamp in (0, 120 * 1_000_000_000)
     ])
     service.session_windows = lambda _: (SessionWindow(0, 120 * 1_000_000_000),)
-    assert not service._should_skip_chunk(request)
-    assert not service._should_accept_chunk(request, None)
+    assert not service._chunk_is_complete(request)
 
 
 @dataclass
@@ -182,3 +181,32 @@ def test_request_planner_keeps_chunks_non_overlapping():
     assert len(plan.requests) == 3
     for previous, current in zip(plan.requests, plan.requests[1:]):
         assert previous.end_ns + 1 == current.start_ns
+
+
+def test_resume_preserves_original_sequence_and_historical_instrument_identity():
+    catalog = HistoricalCatalog()
+    status = HistoricalDownloadStatusStore()
+    job_id = "resume-job"
+    start = 1_000
+    end = 2_000
+    status.create_job(job_id=job_id, mode="CURRENT", timeframe="1m", spot_instrument="NSE:3045:SBIN",
+                      exchange="NFO", underlying="SBIN", start_ns=start, end_ns=end, requested_chunks=3)
+    for sequence, instrument, chunk_start in (
+        (0, "NSE:3045:SBIN", start),
+        (1, "NFO:101:SBINJAN", start),
+        (2, "NFO:102:SBINFEB", 1_500),
+    ):
+        status.upsert_chunk(DownloadChunkStatus(job_id, sequence, instrument, chunk_start, end, "COMPLETE" if sequence == 0 else "FAILED", 1))
+
+    source = FakeSource()
+    service = CashFutureHistoricalDownloadService(catalog, _contracts(), source=source, status_store=status,
+                                                  session_windows=lambda _: ())
+    report = service.run(spot_instrument="NSE:3045:SBIN", exchange="NFO", underlying="SBIN",
+                         start=datetime.fromtimestamp(start / 1e9, tz=timezone.utc),
+                         end=datetime.fromtimestamp(end / 1e9, tz=timezone.utc), timeframe="1m",
+                         mode="CURRENT", retry_attempts=1, job_id=job_id, resume=True)
+    assert report.completed
+    assert [request.instrument for request in source.calls] == ["NFO:101:SBINJAN", "NFO:102:SBINFEB"]
+    assert [chunk.sequence for chunk in status.chunks(job_id)] == [0, 1, 2]
+    assert all(chunk.status == "COMPLETE" for chunk in status.chunks(job_id))
+    status.close()
