@@ -11,7 +11,7 @@ from .historical_catalog import HistoricalCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_ingest import HistoricalIngestionService
 from .historical_sync import HistoricalSyncPlan, build_chunked_plan
-from .nse_session_calendar import nse_session_windows_for_request
+from .nse_session_calendars import nse_session_windows_2026
 from .session_chunk_completeness import SessionChunk, SessionChunkCompleteness
 from .session_gap_planner import SessionWindow
 
@@ -30,10 +30,10 @@ _INTRADAY_TIMEFRAMES = frozenset(_TIMEFRAME_INTERVAL_NS) - {"1d"}
 
 
 def _default_session_windows(request: object) -> tuple[SessionWindow, ...]:
-    """Use segment-aware versioned NSE calendars for intraday completeness."""
+    """Use the versioned segment-aware NSE calendars for intraday completeness."""
     if request.timeframe not in _INTRADAY_TIMEFRAMES:
         return ()
-    return tuple(nse_session_windows_for_request(request))
+    return tuple(nse_session_windows_2026(request))
 
 
 @dataclass(frozen=True)
