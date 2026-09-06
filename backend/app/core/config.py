@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     # Durable historical-download progress database
     BACKTEST_STATUS_DB: str = "./backtest_download_status.sqlite3"
 
+    # Durable historical market-data database (separate from API/job status)
+    BACKTEST_DATA_DB: str = "./backtest_market_data.sqlite3"
+
+    # Durable historical contract-master snapshots
+    BACKTEST_CONTRACT_DB: str = "./backtest_contract_master.sqlite3"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
