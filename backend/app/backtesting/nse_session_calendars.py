@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import datetime, time, timezone
 
 from .market_session_calendar import MarketSessionCalendar
 from .nse_2026_holidays import (
@@ -28,11 +28,7 @@ def nse_stock_future_2026_calendar() -> MarketSessionCalendar:
 
 
 def nse_calendar_for_instrument_2026(instrument: str) -> MarketSessionCalendar:
-    """Return the correct 2026 regular session calendar from an instrument key.
-
-    NSE cash keys normally start with ``NSE:``, while NFO stock-future keys
-    start with ``NFO:``. Unknown exchanges fail closed instead of guessing.
-    """
+    """Return the correct 2026 regular session calendar from an instrument key."""
     exchange = instrument.split(":", 1)[0].upper()
     if exchange == "NSE":
         return nse_equity_2026_calendar()
@@ -52,6 +48,6 @@ def nse_session_windows_2026(request: object) -> tuple:
         return tuple()
     start_ns = getattr(request, "start_ns")
     end_ns = getattr(request, "end_ns")
-    start = datetime.fromtimestamp(start_ns / 1_000_000_000)
-    end = datetime.fromtimestamp(end_ns / 1_000_000_000)
+    start = datetime.fromtimestamp(start_ns / 1_000_000_000, tz=timezone.utc)
+    end = datetime.fromtimestamp(end_ns / 1_000_000_000, tz=timezone.utc)
     return nse_calendar_for_instrument_2026(getattr(request, "instrument")).sessions(start, end)
