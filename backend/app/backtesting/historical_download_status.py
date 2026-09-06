@@ -193,3 +193,17 @@ class HistoricalDownloadStatusStore:
         with self._lock:
             rows = self._db.execute("SELECT job_id,sequence,instrument,start_ns,end_ns,status,attempts,expected_timestamps,actual_timestamps,missing_timestamps,first_missing_ns,fetched_records,inserted_records,error,updated_at_ns FROM download_chunks WHERE job_id=? ORDER BY sequence,instrument", (job_id,)).fetchall()
             return tuple(DownloadChunkStatus(*row) for row in rows)
+
+    def incomplete_chunks(self, job_id: str) -> tuple[DownloadChunkStatus, ...]:
+        """Return only chunks that must be replayed, preserving their exact identity/range."""
+        with self._lock:
+            rows = self._db.execute(
+                """SELECT job_id,sequence,instrument,start_ns,end_ns,status,attempts,
+                          expected_timestamps,actual_timestamps,missing_timestamps,
+                          first_missing_ns,fetched_records,inserted_records,error,updated_at_ns
+                   FROM download_chunks
+                   WHERE job_id=? AND (status NOT IN ('COMPLETE','SKIPPED') OR missing_timestamps > 0)
+                   ORDER BY sequence,instrument""",
+                (job_id,),
+            ).fetchall()
+            return tuple(DownloadChunkStatus(*row) for row in rows)
