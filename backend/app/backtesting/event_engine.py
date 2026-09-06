@@ -126,9 +126,6 @@ class EventBacktestEngine:
             if book_state is not None and book_state[0] == observed.timestamp_ns:
                 execution_result = self.execution.execute_depth(order, book_state[1], event.timestamp_ns)
                 if order.time_in_force == TimeInForce.FOK and execution_result.remaining_quantity > 0:
-                    # FOK is atomic: discard any partial execution and reject while
-                    # the lifecycle is still ACCEPTED. Do not attempt a second reject
-                    # after the state has changed.
                     lifecycle = lifecycles[order.order_id]
                     lifecycle.reject(execution_result.reason or "FOK not fully executable", event.timestamp_ns)
                     self.portfolio.release_margin(order.order_id)
@@ -160,19 +157,18 @@ class EventBacktestEngine:
             result = fill_results.get(order.order_id)
             if not order_fills and result is not None and result.rejected:
                 if order.time_in_force == TimeInForce.FOK:
-                    if lifecycle.state.status == OrderStatus.SUBMITTED:
+                    if lifecycle.state.status in {OrderStatus.SUBMITTED, OrderStatus.ACCEPTED}:
                         lifecycle.reject(result.reason or "FOK not fully executable", event.timestamp_ns)
                 elif order.time_in_force == TimeInForce.IOC:
                     lifecycle.cancel(event.timestamp_ns, result.reason or "IOC not executable")
-            if lifecycle.state.terminal:
-                continue
             remaining = lifecycle.state.remaining_quantity
             terminal_action = tif_after_execution(order.time_in_force, remaining)
             if terminal_action == OrderStatus.CANCELLED and not lifecycle.state.terminal:
                 lifecycle.cancel(event.timestamp_ns, "IOC residual cancelled")
             elif terminal_action == OrderStatus.REJECTED and not lifecycle.state.terminal:
                 lifecycle.reject("FOK residual rejected", event.timestamp_ns)
-            reservation = reservations[order.order_id]; filled_qty = filled_by_order.get(order.order_id, 0)
+            reservation = reservations[order.order_id]
+            filled_qty = filled_by_order.get(order.order_id, 0)
             if lifecycle.state.terminal:
                 self.portfolio.release_margin(order.order_id)
             elif filled_qty:
