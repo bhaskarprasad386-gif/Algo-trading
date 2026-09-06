@@ -58,9 +58,11 @@ class OrderBook:
     asks: tuple[DepthLevel, ...] = ()
 
     def __post_init__(self) -> None:
-        if tuple(sorted((x.price for x in self.bids), reverse=True)) != tuple(x.price for x in self.bids):
+        bid_prices = tuple(x.price for x in self.bids)
+        ask_prices = tuple(x.price for x in self.asks)
+        if bid_prices != tuple(sorted(bid_prices, reverse=True)):
             raise ValueError("bids must be ordered best-to-worst")
-        if tuple(sorted((x.price for x in self.asks)) != tuple(x.price for x in self.asks):
+        if ask_prices != tuple(sorted(ask_prices)):
             raise ValueError("asks must be ordered best-to-worst")
 
 
