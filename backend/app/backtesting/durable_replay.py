@@ -7,7 +7,7 @@ from typing import Iterable, Mapping
 
 from app.backtesting.event_engine import EventBacktestEngine, ReplayStats
 from app.backtesting.events import MarketEvent
-from app.backtesting.ledger import BacktestLedger, Checkpoint, LedgerRecord
+from app.backtesting.ledger import BacktestLedger, Checkpoint, LedgerRecord, LEDGER_SCHEMA_VERSION
 from app.backtesting.order_lifecycle import OrderLifecycle
 from app.backtesting.strategy import StrategyDecision, restore_strategy_state, strategy_state
 
@@ -22,11 +22,17 @@ class DurableEventBacktestEngine:
         self.engine, self.ledger, self.run_id = engine, ledger, run_id
         self.checkpoint_interval = checkpoint_interval
 
-    def start_run(self, strategy: object, initial_capital: float) -> None:
+    def start_run(self, strategy: object, initial_capital: float, *,
+                  schema_version: int = LEDGER_SCHEMA_VERSION,
+                  data_source_fingerprint: str | None = None) -> None:
         strategy_id = str(getattr(strategy, "strategy_id", strategy.__class__.__name__))
         strategy_version = str(getattr(strategy, "strategy_version", "unknown"))
-        self.ledger.start_run(self.run_id, strategy_id, strategy_version, initial_capital,
-                              metadata={"checkpoint_interval": self.checkpoint_interval})
+        self.ledger.start_run(
+            self.run_id, strategy_id, strategy_version, initial_capital,
+            metadata={"checkpoint_interval": self.checkpoint_interval},
+            schema_version=schema_version,
+            data_source_fingerprint=data_source_fingerprint,
+        )
 
     @staticmethod
     def _event_key(event: MarketEvent) -> tuple[object, ...]:
@@ -100,12 +106,18 @@ class DurableEventBacktestEngine:
         self.ledger.checkpoint(Checkpoint(self.run_id, source_cursor, int(extra.get("timestamp_ns", 0)), state))
 
     def run(self, events: Iterable[MarketEvent], strategy: object, *, state: Mapping[str, object] | None = None,
-            resume: bool = False) -> ReplayStats:
+            resume: bool = False, schema_version: int = LEDGER_SCHEMA_VERSION,
+            data_source_fingerprint: str | None = None) -> ReplayStats:
         source_events = tuple(events)
         checkpoint = self.ledger.load_checkpoint(self.run_id) if resume else None
         context_state = dict(state or {})
         start_cursor = 0
         if resume:
+            self.ledger.validate_resume(
+                self.run_id,
+                schema_version=schema_version,
+                data_source_fingerprint=data_source_fingerprint,
+            )
             if checkpoint is None: raise ValueError("no checkpoint available for resume")
             saved = checkpoint.state
             start_cursor = int(saved.get("source_cursor", checkpoint.event_index))
