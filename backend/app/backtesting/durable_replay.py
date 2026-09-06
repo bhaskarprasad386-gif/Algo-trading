@@ -8,6 +8,7 @@ from typing import Iterable, Mapping
 from app.backtesting.event_engine import EventBacktestEngine, ReplayStats
 from app.backtesting.events import MarketEvent
 from app.backtesting.ledger import BacktestLedger, Checkpoint, LedgerRecord
+from app.backtesting.order_lifecycle import OrderLifecycle
 from app.backtesting.strategy import StrategyDecision, restore_strategy_state, strategy_state
 
 
@@ -57,8 +58,6 @@ class DurableEventBacktestEngine:
                     decision = handler(event, context)
                     if decision is not None:
                         if not isinstance(decision, StrategyDecision): raise TypeError("event strategy must return StrategyDecision or None")
-                # EVENT journaling is idempotent so an event that was already durably
-                # journaled before an interruption is not duplicated when replay resumes.
                 key = DurableEventBacktestEngine._event_key(event)
                 if key not in existing_event_keys:
                     ledger.append(LedgerRecord(run_id, "EVENT", event.timestamp_ns,
@@ -74,12 +73,30 @@ class DurableEventBacktestEngine:
                 if callable(finisher): finisher(context)
         return JournalStrategy()
 
+    def _lifecycle_state(self) -> list[Mapping[str, object]]:
+        """Serialize every known order lifecycle, including open partial/STOP orders."""
+        return [lifecycle.export_state() for lifecycle in self.engine._order_lifecycles.values()]
+
+    def _restore_lifecycle_state(self, raw_state: object) -> None:
+        """Restore lifecycle state before replaying the next source event."""
+        self.engine._order_lifecycles.clear()
+        if raw_state is None:
+            return
+        if not isinstance(raw_state, (list, tuple)):
+            raise ValueError("invalid order_lifecycle_state checkpoint")
+        for raw in raw_state:
+            if not isinstance(raw, Mapping):
+                raise ValueError("invalid order lifecycle checkpoint entry")
+            lifecycle = OrderLifecycle.restore_state(raw)
+            self.engine._order_lifecycles[lifecycle.state.order.order_id] = lifecycle
+
     def _save_checkpoint(self, source_cursor: int, dispatched: int, extra: Mapping[str, object], strategy: object) -> None:
         state = dict(extra)
         state["source_cursor"] = source_cursor
         state["events_dispatched"] = dispatched
         state["strategy_state"] = dict(strategy_state(strategy))
         state["portfolio_state"] = dict(self.engine.portfolio.export_state()) if self.engine.portfolio is not None else None
+        state["order_lifecycle_state"] = self._lifecycle_state()
         self.ledger.checkpoint(Checkpoint(self.run_id, source_cursor, int(extra.get("timestamp_ns", 0)), state))
 
     def run(self, events: Iterable[MarketEvent], strategy: object, *, state: Mapping[str, object] | None = None,
@@ -100,8 +117,10 @@ class DurableEventBacktestEngine:
             if isinstance(saved_context, Mapping): context_state = dict(saved_context)
             market_state = saved.get("market_state")
             if isinstance(market_state, Mapping): self.engine.restore_market_state(market_state)
+            self._restore_lifecycle_state(saved.get("order_lifecycle_state"))
             self.ledger.append(LedgerRecord(self.run_id, "RUN_RESUME", checkpoint.timestamp_ns,
-                                            {"source_cursor": start_cursor, "event_index": checkpoint.event_index}))
+                                            {"source_cursor": start_cursor, "event_index": checkpoint.event_index,
+                                             "open_orders_restored": sum(not x.state.terminal for x in self.engine._order_lifecycles.values())}))
         elif source_events:
             self.ledger.append(LedgerRecord(self.run_id, "RUN_START", source_events[0].timestamp_ns,
                                             {"event_count": len(source_events)}))
@@ -120,6 +139,7 @@ class DurableEventBacktestEngine:
             "context_state": context_state, "strategy_state": dict(strategy_state(strategy)),
             "portfolio_state": dict(self.engine.portfolio.export_state()) if self.engine.portfolio is not None else None,
             "market_state": self.engine.market_state(),
+            "order_lifecycle_state": self._lifecycle_state(),
             "final_snapshot": asdict(result.final_snapshot) if result.final_snapshot is not None else None,
         }
         self.ledger.checkpoint(Checkpoint(self.run_id, len(source_events), result.last_timestamp_ns or 0, final_state))
