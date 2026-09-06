@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import datetime, time, timezone
 
 from .market_session_calendar import MarketSessionCalendar
 from .nse_2025_holidays import (
