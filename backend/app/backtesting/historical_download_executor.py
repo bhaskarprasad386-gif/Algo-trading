@@ -18,7 +18,7 @@ class DownloadExecutionResult:
 
     @property
     def completed_chunks(self) -> int:
-        """Chunks fetched successfully during this invocation."""
+        """Chunks fetched and accepted successfully during this invocation."""
         return len(self.results)
 
     @property
@@ -31,7 +31,7 @@ class DownloadExecutionResult:
 
 
 class ResumableHistoricalExecutor:
-    """Execute bounded requests sequentially; complete chunks can be skipped safely."""
+    """Execute bounded requests sequentially; incomplete chunks are retried."""
 
     def __init__(self, service: HistoricalIngestionService, *, sleep: Callable[[float], None] = time.sleep) -> None:
         self.service = service
@@ -45,6 +45,7 @@ class ResumableHistoricalExecutor:
         retry_attempts: int = 3,
         retry_delay_seconds: float = 1.0,
         should_skip: Callable[[object], bool] | None = None,
+        should_accept: Callable[[object, HistoricalSyncResult], bool] | None = None,
     ) -> DownloadExecutionResult:
         if retry_attempts < 1:
             raise ValueError("retry_attempts must be positive")
@@ -60,6 +61,8 @@ class ResumableHistoricalExecutor:
             for attempt in range(retry_attempts):
                 try:
                     result = self.service.sync(source, request)
+                    if should_accept is not None and not should_accept(request, result):
+                        raise ValueError("historical chunk failed completeness validation")
                     results.append(result)
                     last_error = None
                     break
