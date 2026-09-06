@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from .cash_future_download_routes import CashFutureDownloadManager
 from .download_status_api import download_status_payload
 from .historical_download_status import HistoricalDownloadStatusStore
 
 
-def create_download_status_router(store: HistoricalDownloadStatusStore) -> APIRouter:
-    """Create the read-only status router.
-
-    Job creation/start remains owned by ``CashFutureDownloadManager`` so the
-    POST endpoint is registered exactly once by the application.
-    """
+def create_download_status_router(
+    store: HistoricalDownloadStatusStore,
+    manager: CashFutureDownloadManager | None = None,
+) -> APIRouter:
+    """Create status-only routes, optionally retaining backward-compatible start access."""
     router = APIRouter(prefix="/api/v1/backtesting", tags=["backtesting"])
 
     @router.get("/cash-future/downloads/{job_id}")
