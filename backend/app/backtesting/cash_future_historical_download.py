@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable, Iterable
 
 from .angelone_historical import AngelOneHistoricalSource
@@ -12,6 +12,8 @@ from .historical_catalog import HistoricalCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_ingest import HistoricalIngestionService
 from .historical_sync import HistoricalSyncPlan, build_chunked_plan
+from .market_session_calendar import MARKET_TZ, MarketSessionCalendar
+from .nse_2026_holidays import NSE_FNO_TRADING_HOLIDAYS_2026
 from .session_chunk_completeness import SessionChunk, SessionChunkCompleteness
 from .session_gap_planner import SessionWindow
 
@@ -26,6 +28,19 @@ _TIMEFRAME_INTERVAL_NS = {
     "1h": 60 * 60 * 1_000_000_000,
     "1d": 24 * 60 * 60 * 1_000_000_000,
 }
+_INTRADAY_TIMEFRAMES = frozenset(_TIMEFRAME_INTERVAL_NS) - {"1d"}
+
+
+def _default_session_windows(request: object) -> tuple[SessionWindow, ...]:
+    """Use the versioned holiday calendar for intraday completeness checks."""
+    timeframe = request.timeframe
+    if timeframe not in _INTRADAY_TIMEFRAMES:
+        return ()
+    start = datetime.fromtimestamp(request.start_ns / 1_000_000_000, tz=timezone.utc)
+    end = datetime.fromtimestamp(request.end_ns / 1_000_000_000, tz=timezone.utc)
+    return MarketSessionCalendar(holidays=NSE_FNO_TRADING_HOLIDAYS_2026).sessions(
+        start.astimezone(MARKET_TZ), end.astimezone(MARKET_TZ)
+    )
 
 
 @dataclass(frozen=True)
@@ -76,7 +91,7 @@ class CashFutureHistoricalDownloadService:
         self.source = source or AngelOneHistoricalSource()
         self.executor = executor or ResumableHistoricalExecutor(self.ingestion)
         self.completeness = SessionChunkCompleteness(catalog)
-        self.session_windows = session_windows
+        self.session_windows = session_windows or _default_session_windows
 
     @staticmethod
     def _plan_for_request(request) -> HistoricalSyncPlan:
@@ -91,12 +106,12 @@ class CashFutureHistoricalDownloadService:
         )
 
     def _should_skip_chunk(self, request) -> bool:
-        if self.session_windows is None:
-            return False
         interval_ns = _TIMEFRAME_INTERVAL_NS.get(request.timeframe)
         if interval_ns is None:
             raise ValueError(f"unsupported timeframe for completeness checks: {request.timeframe}")
         sessions = tuple(self.session_windows(request))
+        if not sessions:
+            return False
         return self.completeness.is_complete(
             source=request.source,
             instrument=request.instrument,
