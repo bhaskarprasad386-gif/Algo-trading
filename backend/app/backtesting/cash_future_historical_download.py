@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Callable, Iterable
 
 from .angelone_historical import AngelOneHistoricalSource
@@ -12,8 +11,7 @@ from .historical_catalog import HistoricalCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_ingest import HistoricalIngestionService
 from .historical_sync import HistoricalSyncPlan, build_chunked_plan
-from .market_session_calendar import MARKET_TZ, MarketSessionCalendar
-from .nse_2026_holidays import NSE_FNO_TRADING_HOLIDAYS_2026
+from .nse_session_calendar import nse_session_windows_for_request
 from .session_chunk_completeness import SessionChunk, SessionChunkCompleteness
 from .session_gap_planner import SessionWindow
 
@@ -32,15 +30,10 @@ _INTRADAY_TIMEFRAMES = frozenset(_TIMEFRAME_INTERVAL_NS) - {"1d"}
 
 
 def _default_session_windows(request: object) -> tuple[SessionWindow, ...]:
-    """Use the versioned holiday calendar for intraday completeness checks."""
-    timeframe = request.timeframe
-    if timeframe not in _INTRADAY_TIMEFRAMES:
+    """Use segment-aware versioned NSE calendars for intraday completeness."""
+    if request.timeframe not in _INTRADAY_TIMEFRAMES:
         return ()
-    start = datetime.fromtimestamp(request.start_ns / 1_000_000_000, tz=timezone.utc)
-    end = datetime.fromtimestamp(request.end_ns / 1_000_000_000, tz=timezone.utc)
-    return MarketSessionCalendar(holidays=NSE_FNO_TRADING_HOLIDAYS_2026).sessions(
-        start.astimezone(MARKET_TZ), end.astimezone(MARKET_TZ)
-    )
+    return tuple(nse_session_windows_for_request(request))
 
 
 @dataclass(frozen=True)
@@ -127,8 +120,8 @@ class CashFutureHistoricalDownloadService:
         spot_instrument: str,
         exchange: str,
         underlying: str,
-        start: datetime,
-        end: datetime,
+        start,
+        end,
         timeframe: str = "1m",
         mode: str = "BOTH",
         retry_attempts: int = 3,
