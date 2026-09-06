@@ -1,209 +1,176 @@
-# Cash–Future Backtesting Roadmap
+# Universal Advanced Backtesting Roadmap
 
-## Scope
-- Strategy: Cash–Future arbitrage only.
-- Backtest period: previous 1 year (365 days).
-- Starting capital: ₹20,00,000.
-- Source resolution: 1-minute historical data.
-- Universe: complete historically eligible F&O stock universe; do not use a manually selected stock list.
-- Spot leg: NSE cash/equity data.
-- Futures legs: current-month and near-month futures contracts, mapped by the historical replay date and actual contract expiry.
+## 1. Scope & Architecture
+- Strategy-agnostic event-driven backtesting engine; Cash–Future is one adapter, not the engine boundary.
+- Any strategy implementing the stable event-strategy contract must be backtestable.
+- Targets: Cash–Future, futures, options, multi-leg options, calendar spreads, rollover, lead/lag, cross-instrument arbitrage and custom event strategies.
+- Android/mobile-first UI; heavy backtests run in background workers and never block UI/API requests.
+- Default paper-backtest capital: ₹1,00,00,000 (₹1 crore).
+- GitHub remains the source of truth; every engine/data/model change is versioned and reproducible.
 
-## Full F&O Universe & Non-Blocking App Performance
-- Every backtest must scan the **complete historically eligible NSE F&O stock universe** for the requested period; no eligible stock may be silently omitted because the universe is large.
-- Index derivatives are not treated as Cash–Future stock trades; only securities with a corresponding cash/equity leg participate in this strategy.
-- The full-universe backtest must run as a **background/asynchronous job**, never on the Android UI/main thread and never inside a blocking request handler.
-- The app UI must remain responsive while a large backtest is running: scrolling, navigation, status polling, cancellation and other non-backtest screens must continue to work.
-- Backtest work must be processed in bounded batches/chunks with controlled memory usage rather than loading the entire F&O universe and full-year minute dataset into RAM at once.
-- Historical data must be read from the persistent validated data store in streaming/chunked form; the engine must not repeatedly fetch the same year of data into memory.
-- Results must be written incrementally to persistent job/result storage so an interrupted or restarted UI session does not lose completed work.
-- The API should return a job ID immediately for a large backtest and expose progress such as queued/running/completed/failed/cancelled, percentage, symbols processed, trades/opportunities processed and current date range.
-- Users must be able to cancel a running backtest safely; cancellation must stop future work without corrupting already validated historical data or completed result records.
-- Backtest concurrency must be bounded so multiple users/jobs cannot exhaust CPU, RAM, database connections or storage and cause the server/app to hang.
-- The engine must isolate heavy backtest computation from lightweight API/UI operations; a slow backtest must not block login, scanner, paper trading, health checks or dashboard requests.
-- If the backend is unavailable or restarted, the mobile app must show job status/recovery state instead of freezing or continuously retrying.
-- For Android/local execution, heavy processing must use background workers/services with progress reporting and resource limits; never execute the complete full-F&O yearly replay directly in the UI lifecycle.
-- Performance acceptance gate: full eligible F&O universe + 1 year of 1-minute data must complete through the job pipeline without UI freeze, ANR, request timeout caused by synchronous computation, uncontrolled memory growth or data corruption.
+## 2. Universal Event & Time Engine
+- Canonical timestamp: integer Unix epoch nanoseconds (`timestamp_ns`).
+- Support tick, trade, quote, depth, millisecond, microsecond, second, minute, daily and other provider-native resolutions when actually available.
+- Replay controls: 1us, 10us, 100us, 1ms, 10ms, 100ms, 1s, 5s, 15s, 1m, 5m, 15m, 1h, 1d and custom steps where valid.
+- Preserve original source timestamps; never fabricate microsecond/tick observations from minute data.
+- Deterministic same-timestamp ordering using sequence/source/event ordering.
+- No-look-ahead: strategy history contains only observations already available before the decision; execution uses point-in-time market state.
+- Higher-timeframe views are deterministic resamples of immutable source observations.
 
-## Advanced Replay & Chart Interval Controls
-The backtest keeps **1-minute data as the source of truth**, but the user can control how the historical replay advances and how the chart is displayed.
+## 3. Historical Data Platform
+- Persistent canonical historical store for raw and normalized observations.
+- Coverage catalog by instrument, contract, date range, source/provider, version and checksum.
+- Incremental ingestion: download only missing ranges/contracts.
+- Daily append with timestamp + instrument/contract deduplication.
+- Gap detection and targeted gap repair.
+- Version-aware reconciliation when a provider revises historical data.
+- Dataset lineage and immutable manifests for reproducibility.
+- Data-quality scoring: completeness, duplicates, timestamp integrity, stale quotes, crossed/locked books, impossible prices and missing depth.
+- Historical derivatives identity by underlying, expiry, strike, call/put, contract ID and lot size.
+- Point-in-time option-chain membership and historically eligible F&O universe to prevent survivorship bias.
+- Corporate actions, dividends, symbol changes, delistings and contract changes handled with historical effective dates.
 
-- Replay interval options: **1m, 5m, 10m, 15m, 30m, 1h, 1d**.
-- When the user selects an interval, the backtest replay advances by exactly that interval.
-- The chart uses the selected interval for displayed candles/points, while the underlying 1-minute observations remain available for drill-down and audit.
-- Higher intervals are generated deterministically from the 1-minute source; no synthetic higher-timeframe source data is required.
-- Switching intervals never changes the underlying backtest result or historical ledger.
-- Minute-dependent calculations (execution, funding, MTM P&L, gap tracking and expiry) remain based on the 1-minute timeline.
-- UI shows selected interval, replay timestamp, progress, and step forward/back controls.
+## 4. Market Microstructure & Depth
+- Quotes: bid/ask and sizes, spread and executable prices.
+- Trades: last trade, size, volume and OI where available.
+- Order-book depth: multiple bid/ask levels and displayed liquidity.
+- Microstructure analytics: spread, quoted depth, executed volume, imbalance, microprice, VWAP/TWAP, trade intensity and liquidity scores.
+- Circuit/price-band and session constraints where source data supports them.
+- Missing/stale/crossed data is rejected or flagged, never silently invented.
 
-## Data & Synchronization
-1. Ingest/import real historical NSE spot and F&O data.
-2. Normalize timestamps and synchronize Spot/current-month/near-month observations at 1-minute resolution.
-3. Maintain historical contract identity, expiry, **lot size**, volume, OI and executable bid/ask where available.
-4. Never invent missing historical data; unavailable data is reported explicitly.
-5. Preserve the complete 1-minute timeline from entry until expiry/settlement for every active trade.
-6. **Persistent historical data store:** once a historical period is successfully downloaded/imported, save the normalized 1-minute data locally in the application's persistent database/storage and mark its coverage by symbol, contract, date range and data version/hash.
-7. **Incremental synchronization:** every later backtest must first check the local coverage index and download only missing date ranges/contracts/minutes. Do not re-download an already verified historical year just because a new backtest is started.
-8. **Daily append:** after the initial historical load, newly available trading dates are appended to the same store; existing rows are deduplicated using timestamp + instrument/contract identity so repeated downloads cannot create duplicate observations.
-9. **Gap repair:** if the coverage index detects missing/corrupt minutes, request only those gaps for repair rather than downloading the entire dataset again.
-10. **Data-version awareness:** when source data is revised, replace/reconcile only the affected date range and retain source/version metadata so previous backtest runs remain reproducible.
-11. **Backtest reads from the store:** a backtest uses the canonical persisted 1-minute dataset and does not call the historical provider for every replay point.
-12. **Coverage gate:** before a run starts, show exactly what date range, symbols/contracts and minutes are locally available and fetch only the missing portions required for that run.
+## 5. Order & Execution Engine
+### Completed foundation
+- Point-in-time independent multi-leg execution.
+- BUY uses executable ask and SELL uses executable bid when available.
+- Depth execution consumes actual displayed levels and supports partial fills.
+- No-liquidity conditions do not create synthetic fills.
+- Order lifecycle foundation: submitted/accepted/partial/filled/cancelled/rejected/expired/replaced.
+- Time-in-force foundation: DAY/GTC/IOC/FOK.
+- Cancel/replace semantics and deterministic lifecycle tests.
 
-## Trade Replay Model
-For a trade entered on a historical date such as 1 January:
-1. Buy the Spot leg at the historical executable cash price.
-2. Track the historical current-month Future short leg.
-3. Track the historical near-month Future short leg.
-4. Keep all three legs synchronized at every available 1-minute timestamp until trade completion/expiry.
-5. At each minute calculate and store spot price, current-future price, near-future price, current and near gaps/basis, executable bid/ask, **contract lot size**, position value, charges, funding, mark-to-market P&L and cumulative net P&L.
-6. Profit must be calculated from the actual historical gap and applicable lot size, with charges/funding/slippage included. The ledger must retain enough detail to explain how each interval's P&L was produced.
-7. Preserve the full trade timeline so the same trade can later be replayed at 1m, 5m, 10m, 15m, 30m, 1h or 1d steps.
+### Next milestones
+- Queue position and queue-delay model when sequence/depth evidence exists.
+- Dynamic order-book depletion and cancel/reinsert behavior.
+- STOP trigger lifecycle from observed market events.
+- Bracket/OCO orders and trailing stops.
+- Conditional orders and linked multi-leg order groups.
+- Signal-to-submit, network, acknowledgement and fill latency model.
+- Seed-controlled randomized latency stress.
+- Market-impact models: participation/volume-share, temporary/permanent impact stress, separated from observed prices.
+- Conservative execution model with explicit unsupported-data warnings.
 
-## Gap & Profit-by-Interval Analysis
-- Every replay point must show: timestamp, spot price, current Future price, near Future price, current gap, near gap, executable gap where available, lot size, quantity/lots, gross spread value and net P&L.
-- Gap-based profit must be shown **for every selected replay interval**, not only at entry/exit.
-- The UI should show both per-interval P&L change and cumulative P&L.
-- For a selected historical point, the system must be able to answer questions such as: **“Pichhle period mein itna gap kab mila tha?”**
-- Historical gap lookup must return the exact historical date/time(s), symbol, contract/month, spot price, future price, near-future price, gap, executable gap, lot size, liquidity/execution status and the corresponding gross/net profit estimate.
-- Lookup must respect the data available at that historical timestamp and must not use future information.
-- Users should be able to search/filter by symbol, minimum/maximum gap, date range, contract month, lot size and executable status.
-- If the same gap occurred multiple times, return ranked matches such as closest match, largest executable gap and most profitable historical occurrence, with timestamps.
+## 6. Portfolio, Capital & Risk Engine
+- Correct cash, market value, equity and realized/unrealized P&L accounting.
+- ₹1 crore initial capital and configurable account constraints.
+- Margin, leverage, notional and capital-locking enforcement.
+- Prevent double allocation of the same capital/margin.
+- Position concentration, sector/instrument exposure and correlated exposure controls.
+- Max loss, drawdown, turnover and liquidity risk limits.
+- Futures/options margin and collateral simulation.
+- Portfolio margin / SPAN-like configurable model where historical inputs are available.
+- Margin calls, blocked/released collateral and liquidation rules.
+- Funding, financing, borrow costs, dividends and futures carry.
 
-## Expiry & Roll Handling
-- Expiry is determined from the historical contract calendar for the replay date, never from today's date.
-- If the current-month contract expires before the trade is completed, apply the configured historical rollover/settlement rule and continue tracking the appropriate historical contract.
-- On expiry day, replay and valuation continue through the configured market close, with **3:30 PM** as the expiry-day cutoff for this strategy.
-- Expiry/settlement automatically closes or settles the applicable leg(s) and calculates final realized P&L, charges and funding.
-- Historical contract selection must not use future knowledge of contracts that were not yet available at that timestamp.
+## 7. Strategy Layer
+- Stable `EventStrategy` contract with version and strategy identity.
+- Strategy parameters and configuration hash stored with every run.
+- Strategy context includes point-in-time event/history, contract metadata, portfolio, open orders, capital, risk, fees, slippage and execution model.
+- Strategy decisions emit explicit order type, quantity, price, TIF and execution constraints.
+- Universal event-strategy lifecycle: start → event replay → end.
+- Adapters to validate: Cash–Future, options multi-leg, futures, rollover, calendar spread, advanced arbitrage and at least two materially different strategies.
 
-## Graphs & Advanced Analysis
-- Main synchronized graph: Spot + current-month Future + near-month Future on the same time axis.
-- Gap/basis graph: current-future minus spot and near-future minus spot, including executable gap where bid/ask data permits.
-- P&L graph: minute-level mark-to-market and cumulative net P&L.
-- Position/capital graph: deployed value, available capital, margin/funding and utilization.
-- Chart intervals: **1m, 5m, 10m, 15m, 30m, 1h, 1d**.
-- Selected interval changes displayed/replay granularity, not the underlying 1-minute source.
-- Graph tooltips should expose lot size and gap-derived P&L for the selected timestamp/interval.
-- 1d views are generated only from historical 1-minute observations within market sessions.
+## 8. Options & Derivatives
+- Point-in-time option-chain membership.
+- Expiry/strike/call-put/contract identity and lot-size history.
+- Multi-leg independent fills and residual/unhedged exposure.
+- Greeks and volatility-surface inputs when source data supports them.
+- Exercise/assignment/settlement rules where applicable.
+- Futures rollover based on actual historical contract transitions, liquidity and execution—not today's contract map.
+- Calendar/term-structure spread handling.
 
-## Opportunity Calculation
-- Track headline gap: `future_price - spot_price`.
-- Prefer executable prices: cash ask + futures bid for the entry direction, and appropriate opposite executable prices for exit.
-- Track bid/ask spread and reject opportunities that fail configured liquidity/execution checks.
-- Calculate gross spread P&L, brokerage/statutory charges, funding cost, slippage and net P&L using the historical contract lot size and actual position quantity.
+## 9. Session & Contract Calendar
+- Historical trading calendar, holidays and special sessions.
+- Pre-open, regular session, auctions, halts and instrument-specific sessions.
+- Historical expiry/settlement timestamps.
+- No `date.today()` for historical replay decisions.
+- Cash/F&O contract transitions use replay-date availability only.
 
-## Realism & Anti-False-Profit Controls
-- **Point-in-time data only:** at each historical minute, the engine may use only information that was actually available by that timestamp.
-- **No survivorship bias:** use the historically eligible F&O universe, including securities that later became inactive/delisted where historical data exists.
-- **Corporate-action correctness:** apply historical stock splits, bonuses, dividends and other relevant cash-market adjustments consistently; do not silently mix adjusted and unadjusted series.
-- **Dividend-aware basis:** record ex-date/dividend effects separately so cash–future basis is not mistaken for pure arbitrage profit.
-- **Trading-calendar correctness:** use the historical NSE trading calendar, holidays, special sessions and actual market-close times.
-- **Data-quality gates:** detect missing minutes, duplicate rows, timestamp collisions, stale quotes, impossible prices, crossed/negative spreads and contract mismatches; flag or reject affected periods rather than filling silently.
-- **Executable fill model:** model bid/ask fills, spread crossing, latency, partial fills, quantity limits, rejected orders and unavailable liquidity where the source data supports it.
-- **Conservative fill rule:** never assume the best displayed price if the order could not realistically have executed there.
-- **Slippage stress:** support normal, conservative and severe slippage assumptions and show how results change.
-- **Cost stress:** rerun with increased brokerage/fees/funding assumptions to test whether the edge survives higher costs.
-- **Margin realism:** model historical futures margin/available capital, mark-to-market cash movements and margin utilization; reject trades when capital/margin is insufficient.
-- **Capital locking:** reserve capital/margin for open positions and prevent overlapping trades from using the same funds twice.
-- **Rollover realism:** include historical rollover price difference, transaction costs and execution constraints when switching contracts.
-- **Market microstructure filters:** account for liquidity, volume, OI, spread width, circuit/price-band constraints and stale/missing quotes where applicable.
-- **Session rules:** respect pre-open/regular-market windows and do not create fills outside the strategy's configured trading session.
-- **Failure simulation:** test data outages, missing one leg, broker/order rejection, partial execution and delayed execution so the engine does not convert failures into imaginary profits.
-- **Reproducibility:** every run stores strategy version, data version/hash, parameters, cost model, slippage model, calendar version and engine version.
+## 10. Durable Backtest Jobs & Performance
+- Large jobs submitted asynchronously with immediate job ID.
+- Durable states: queued, running, progress, completed, failed, cancelled and recoverable.
+- Chunked/partitioned replay by date/symbol/contract with bounded memory.
+- Incremental result persistence; completed results survive UI navigation/restart.
+- Cancellation must not corrupt validated source data or completed results.
+- Resource governor and bounded worker concurrency.
+- Heavy workers isolated from login, scanner, paper trading, health and dashboard requests.
+- Checkpoint/resume for long-running jobs.
+- Safe parallel replay only where mathematically independent.
+- Result caching for identical reproducible runs.
 
-## Robustness & Statistical Validation
-- **Walk-forward validation:** optimize only on historical training windows and evaluate on untouched forward windows.
-- **Out-of-sample testing:** keep a final unseen period that is never used for parameter selection.
-- **Parameter sensitivity:** test ranges around every configurable threshold; prefer stable performance regions rather than a single optimum.
-- **Cross-regime testing:** report performance separately for trending, volatile, low-volatility, gap-up/gap-down and stressed market periods where identifiable.
-- **Cross-sectional robustness:** show results by stock, sector, contract month and liquidity bucket so one symbol cannot hide a weak strategy.
-- **Monte Carlo trade-order test:** reshuffle trade outcomes/order and estimate drawdown and risk distributions rather than relying on one historical sequence.
-- **Bootstrap confidence ranges:** provide uncertainty bands for expectancy, win rate and P&L-related metrics where statistically appropriate.
-- **Trade-count sufficiency:** clearly warn when a result is based on too few independent opportunities to be statistically meaningful.
-- **Benchmark comparison:** compare strategy results against simple cash/future or passive reference baselines where meaningful.
-- **Backtest vs paper reconciliation:** compare identical signals, timestamps, executable assumptions and costs between historical replay and forward paper trading.
-- **Robustness score:** produce a separate score based on OOS stability, cost/slippage stress, parameter sensitivity, drawdown behavior and data coverage; never present it as a probability of future profit.
+## 11. Audit, Explainability & Reproducibility
+- Immutable run metadata: strategy ID/version/hash, engine version, dataset/version/checksum, parameters, calendar, cost/slippage/latency models and random seed.
+- Audit trail for signals, orders, lifecycle transitions, fills, cancellations, rejections, risk blocks and exits.
+- Per-leg timestamps, executable edge, hedge ratio, slippage and residual exposure for arbitrage.
+- Every reported P&L value traceable to source observations and execution events.
 
-## Backtest Engine Rules
-- No look-ahead bias.
-- Signal and execution timing must be explicitly defined; do not execute using information unavailable at the signal timestamp.
-- Minute-level ledger remains the canonical audit trail even when replay advances in larger intervals.
-- Use replay-date expiry/DTE, never `date.today()` for historical trades.
-- Enforce ₹20 lakh available-capital and margin/deployment constraints.
-- Support multiple eligible opportunities while preventing capital over-allocation.
-- Handle contract expiry/rollover using historical contract mapping.
-- Historical gap-search results must be reproducible from the canonical minute ledger.
-- **Never redownload the full historical year for every backtest:** resolve requested coverage against the persisted data catalog first, then fetch only missing/repaired ranges.
-- **Persist successful downloads:** once a year/date range has passed data-quality validation, mark it complete and reuse it for future backtests.
-- **Append new dates automatically:** newly available historical/live-to-historical minutes are added incrementally while preserving existing validated data.
-- **Never run a full-universe yearly replay synchronously in the UI/API request path:** submit it as a background job with bounded workers, chunked data access and incremental result persistence.
-- **Never load the entire full-F&O yearly minute dataset into memory at once:** process by date/symbol/contract partitions with bounded memory.
-- **Never let backtest workers starve core app services:** enforce worker/resource limits and isolate heavy computation from API/UI operations.
-- **Job state is durable:** queued/running/progress/completed/failed/cancelled state and partial results survive UI navigation and are recoverable after restart where the storage backend supports it.
+## 12. Robustness & Validation
+- Walk-forward optimization with untouched out-of-sample windows.
+- Parameter sensitivity and stability regions.
+- Regime-separated analysis: trend, volatility, low-volatility, gaps and stressed periods where identifiable.
+- Cross-sectional analysis by symbol, sector, contract and liquidity bucket.
+- Monte Carlo trade-order reshuffling and execution uncertainty.
+- Bootstrap confidence ranges where statistically appropriate.
+- Slippage, latency, fee and funding stress scenarios.
+- Scenario engine and sensitivity analysis.
+- Trade-count/statistical sufficiency warnings.
+- Backtest vs forward-paper reconciliation.
+- Robustness score is diagnostic, never a probability of future profit.
 
-## Reports
-- Net P&L
-- ROI
-- Maximum drawdown
-- Win rate
-- Profit factor
-- Number of trades
-- Equity curve
-- Monthly and yearly performance
-- Stock/contract-wise performance
-- Expiry-wise performance
-- Opportunity/rejection statistics
-- Full minute-by-minute trade ledger
-- **Lot-size and quantity-wise P&L**
-- **Gap-wise and interval-wise P&L**
-- **Historical gap occurrence/search report** with exact timestamps
-- Replay/interval comparison: 1m vs 5m vs 10m vs 15m vs 30m vs 1h vs 1d
-- Data-coverage and data-quality report
-- Slippage/cost stress report
-- Walk-forward and out-of-sample report
-- Parameter-sensitivity report
-- Monte Carlo/robustness report
-- Per-stock/sector/liquidity/regime breakdown
-- **Full-F&O universe coverage report**
-- **Backtest job progress/runtime/resource report**
+## 13. Reports & Exports
+- Net P&L, ROI, drawdown, win rate, profit factor, turnover and trade count.
+- Equity curve and monthly/yearly performance.
+- Position, margin, capital utilization and liquidity usage.
+- Per-symbol/sector/contract/expiry/regime performance.
+- Full order lifecycle and fill ledger.
+- Per-leg multi-leg execution report.
+- Data coverage and data-quality report.
+- Slippage/cost/latency stress report.
+- Walk-forward/OOS/parameter/Monte Carlo reports.
+- Downloadable durable backtest result datasets.
 
-## Validation Gates
-- [ ] Historical 1-minute data ingestion verified.
-- [ ] Persistent data store and coverage catalog verified.
-- [ ] Incremental sync fetches only missing date ranges/contracts.
-- [ ] Repeated backtest does not redownload already validated data.
-- [ ] New trading dates append without duplicate observations.
-- [ ] Gap-repair downloads only missing/corrupt ranges.
-- [ ] Full eligible F&O universe coverage verified.
-- [ ] Full-F&O backtest runs asynchronously/background without UI freeze or ANR.
-- [ ] Backtest computation is chunked/bounded and does not load the complete yearly dataset into RAM.
-- [ ] Backtest worker/resource concurrency limits prevent app/server starvation.
-- [ ] Backtest job progress/cancellation/recovery is verified.
-- [ ] Spot/current-month/near-month contract matching verified.
-- [ ] Historical lot size mapping verified for every contract.
-- [ ] Full minute-level trade ledger verified.
-- [ ] Replay interval engine verified for 1m/5m/10m/15m/30m/1h/1d.
-- [ ] Gap and lot-size based P&L verified at every replay interval.
-- [ ] Historical gap lookup returns exact timestamps and reproducible values.
-- [ ] Spot/current/near synchronized graphs verified.
-- [ ] Executable entry/exit pricing verified.
-- [ ] Charges/funding/slippage verified.
-- [ ] Data-quality and missing-minute gates verified.
-- [ ] Corporate-action/dividend handling verified.
-- [ ] Historical calendar/session handling verified.
-- [ ] Partial-fill/rejection/latency behavior verified.
-- [ ] No-look-ahead tests verified.
-- [ ] Survivorship-bias controls verified.
-- [ ] ₹20 lakh capital/margin constraints verified.
-- [ ] Expiry-day 3:30 PM handling verified.
-- [ ] Automatic expiry/settlement and final P&L verified.
-- [ ] Cost/slippage stress tests verified.
-- [ ] Walk-forward and out-of-sample validation verified.
-- [ ] Parameter-sensitivity and robustness tests verified.
-- [ ] Monte Carlo/uncertainty analysis verified.
-- [ ] Backtest report and equity curve verified.
-- [ ] Paper-trading results can be compared against the same strategy logic.
+## 14. Validation Gates
+- [x] Generic event model and nanosecond timestamp foundation.
+- [x] Stable strategy contract and lifecycle foundation.
+- [x] Point-in-time independent multi-leg execution.
+- [x] Depth-aware multi-level execution foundation.
+- [x] Partial-fill and no-liquidity behavior.
+- [x] Order lifecycle foundation and deterministic tests.
+- [x] DAY/GTC/IOC/FOK foundation and cancel/replace foundation.
+- [ ] Queue-aware execution and dynamic depth.
+- [ ] STOP/bracket/OCO/trailing lifecycle.
+- [ ] Correct portfolio market-value/equity and cumulative P&L.
+- [ ] Margin/capital/risk enforcement.
+- [ ] Historical options/futures/rollover adapters.
+- [ ] Persistent data catalog + incremental sync + gap repair.
+- [ ] Point-in-time corporate actions and survivorship controls.
+- [ ] Full-F&O background job pipeline and durable recovery.
+- [ ] Microstructure analytics and liquidity scoring.
+- [ ] Latency/impact stress models.
+- [ ] Walk-forward/OOS/Monte Carlo/sensitivity validation.
+- [ ] Full report/export pipeline.
+- [ ] End-to-end validation with real historical datasets.
 
-## Current Priority
-Build and verify the Cash–Future backtesting engine with the advanced replay/interval system, historical lot-size mapping, interval-wise gap/P&L ledger and historical gap-search capability first. The data layer must persist validated historical downloads and synchronize incrementally so subsequent backtests reuse existing data and fetch only missing/new/repaired ranges. The complete eligible F&O stock universe must be processed through a background/chunked job architecture so the Android/web UI remains responsive even for a full 1-year 1-minute replay. Then harden it with data-quality, corporate-action/dividend, execution/microstructure, margin, anti-survivorship and statistical robustness controls before trusting any headline result. RSI, second scanner and real-money execution remain out of scope until this backtesting + paper-trading stage is validated.
+## 15. Execution Order From Here
+1. Queue-aware execution + dynamic depth.
+2. Portfolio/equity/P&L correction + margin/risk/capital locking.
+3. Durable order/job/result ledger + checkpoint/resume.
+4. Persistent historical catalog + incremental ingestion/dedup/gap repair.
+5. Options/futures/rollover and advanced-arbitrage adapters.
+6. Session/calendar/corporate-action/survivorship controls.
+7. Microstructure, latency and market-impact models.
+8. Full-F&O asynchronous pipeline and resource governor.
+9. Reports, exports, robustness and OOS validation.
+10. End-to-end real-data verification and Android/mobile integration.
+
+## Non-Negotiable Data Rule
+Architecture may support arbitrary timestamp precision, including microseconds, but a microsecond backtest is valid only when the verified source dataset actually contains microsecond-or-finer observations. Minute data must never be expanded into fake microsecond observations.
