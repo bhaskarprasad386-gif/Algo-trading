@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Mapping
 
 from app.backtesting.execution import ExecutionSide, OrderType, SimFill, SimOrder, TimeInForce
 
@@ -127,6 +128,71 @@ class OrderLifecycle:
         if qty <= 0 or qty > remaining:
             raise ValueError("invalid fill quantity")
         return SimFill(self.state.order.order_id, self.state.order.instrument, self.state.order.side, qty, price, timestamp_ns, fee)
+
+    def export_state(self) -> Mapping[str, object]:
+        """Serialize complete lifecycle state for durable checkpoint/resume."""
+        order = self.state.order
+        return {
+            "order": {
+                "order_id": order.order_id,
+                "instrument": order.instrument,
+                "side": order.side.value,
+                "quantity": order.quantity,
+                "order_type": order.order_type.value,
+                "limit_price": order.limit_price,
+                "stop_price": order.stop_price,
+                "submitted_at_ns": order.submitted_at_ns,
+                "queue_ahead_quantity": order.queue_ahead_quantity,
+                "time_in_force": order.time_in_force.value,
+            },
+            "status": self.state.status.value,
+            "filled_quantity": self.state.filled_quantity,
+            "average_fill_price": self.state.average_fill_price,
+            "reject_reason": self.state.reject_reason,
+            "time_in_force": self.state.time_in_force.value,
+            "events": [
+                {"order_id": e.order_id, "status": e.status.value, "timestamp_ns": e.timestamp_ns,
+                 "filled_quantity": e.filled_quantity, "remaining_quantity": e.remaining_quantity,
+                 "reason": e.reason, "replacement_order_id": e.replacement_order_id}
+                for e in self.state.events
+            ],
+        }
+
+    @classmethod
+    def restore_state(cls, raw: Mapping[str, object]) -> "OrderLifecycle":
+        """Restore a lifecycle previously produced by export_state()."""
+        order_raw = raw["order"]
+        if not isinstance(order_raw, Mapping):
+            raise ValueError("invalid lifecycle order state")
+        order = SimOrder(
+            order_id=str(order_raw["order_id"]), instrument=str(order_raw["instrument"]),
+            side=ExecutionSide(str(order_raw["side"])), quantity=int(order_raw["quantity"]),
+            order_type=OrderType(str(order_raw.get("order_type", OrderType.MARKET.value))),
+            limit_price=order_raw.get("limit_price"), stop_price=order_raw.get("stop_price"),
+            submitted_at_ns=int(order_raw.get("submitted_at_ns", 0)),
+            queue_ahead_quantity=int(order_raw.get("queue_ahead_quantity", 0)),
+            time_in_force=TimeInForce(str(order_raw.get("time_in_force", TimeInForce.DAY.value))),
+        )
+        lifecycle = cls(order)
+        events = []
+        for raw_event in raw.get("events", []):
+            if not isinstance(raw_event, Mapping):
+                raise ValueError("invalid lifecycle event")
+            events.append(LifecycleEvent(
+                order_id=str(raw_event["order_id"]), status=OrderStatus(str(raw_event["status"])),
+                timestamp_ns=int(raw_event["timestamp_ns"]), filled_quantity=int(raw_event["filled_quantity"]),
+                remaining_quantity=int(raw_event["remaining_quantity"]), reason=raw_event.get("reason"),
+                replacement_order_id=raw_event.get("replacement_order_id"),
+            ))
+        lifecycle.state = OrderState(
+            order=order, status=OrderStatus(str(raw["status"])),
+            filled_quantity=int(raw.get("filled_quantity", 0)),
+            average_fill_price=float(raw.get("average_fill_price", 0.0)),
+            reject_reason=raw.get("reject_reason"),
+            time_in_force=TimeInForce(str(raw.get("time_in_force", order.time_in_force.value))),
+            events=tuple(events),
+        )
+        return lifecycle
 
 
 def stop_triggered(order: SimOrder, observed_price: float) -> bool:
