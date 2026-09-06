@@ -25,9 +25,12 @@ class SessionChunkCompleteness:
         self.catalog = catalog
 
     @staticmethod
-    def _expected_timestamps(
+    def expected_timestamps(
         sessions: tuple[SessionWindow, ...], interval_ns: int
     ) -> set[int]:
+        """Return the exact cadence expected inside the supplied market sessions."""
+        if interval_ns <= 0:
+            raise ValueError("interval_ns must be positive")
         expected: set[int] = set()
         for session in sessions:
             timestamp = session.start_ns
@@ -59,7 +62,7 @@ class SessionChunkCompleteness:
         if not relevant:
             return True
 
-        expected = self._expected_timestamps(relevant, interval_ns)
+        expected = self.expected_timestamps(relevant, interval_ns)
         if not expected:
             return True
         actual = set(
