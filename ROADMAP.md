@@ -3,6 +3,12 @@
 ## Vision
 Fast, modular, mobile-first advanced F&O algo-trading platform. GitHub is the source of truth. Build small verified checkpoints; no large untested dumps.
 
+## Current Product Focus — Locked
+1. **Universal Advanced Backtesting** — one event-driven engine for any strategy, from daily/1-minute strategies through tick, high-resolution and order-book strategies. Use the highest real source resolution required by the strategy; never fabricate millisecond events from candles. Historical window is up to 1 year, or the maximum reliable/legally available period when less is available.
+2. **Live Scanner** — real market data during market hours, with strategy-specific data requirements and durable results.
+3. **Live Paper Trading** — real-market-data simulation for any supported strategy/instrument/order type. Real broker order routing is OFF.
+4. **High-resolution data accumulation** — when live high-resolution/tick/order-book data is available and required, persist it incrementally for future backtesting; do not collect millisecond data for strategies that do not need it.
+
 ## Non-negotiable product principles
 - UI must be advanced, attractive and colourful but simple to operate.
 - UI is decoupled from data/strategy/execution so cards, charts, colours, ordering and visibility can be customized later without rewriting core logic.
@@ -10,6 +16,7 @@ Fast, modular, mobile-first advanced F&O algo-trading platform. GitHub is the so
 - Prefer official primary data first; never silently substitute stale/unknown data.
 - Performance first: avoid blocking UI work, redundant requests, excessive polling and unbounded memory growth.
 - Paper and live trading remain isolated and fail-safe.
+- **Real-money algo trading remains disabled until explicitly approved after all safety, idempotency, reconciliation and E2E gates pass.**
 
 ## Data Source Priority
 1. NSE/BSE official feeds/APIs/licensed data where available.
@@ -26,7 +33,38 @@ Fast, modular, mobile-first advanced F&O algo-trading platform. GitHub is the so
 - Broker abstraction/registry supports multiple simultaneous connections.
 - Bounded caches, request coalescing, pagination and incremental persistence for large workloads.
 - No full-year/full-F&O minute ledger held in RAM.
+- Event-driven replay must preserve source timestamps/sequence and must not invent higher-frequency observations.
 - Target low software processing latency based on measured benchmarks; never promise exchange execution latency.
+
+## Universal Backtesting
+- [ ] Extend the existing candle backtest foundation into a strategy-agnostic event-driven engine.
+- [x] Add normalized market events for BAR, QUOTE, TRADE, DEPTH and CUSTOM event types.
+- [x] Add explicit nanosecond/microsecond/millisecond timestamp normalization without fabricating events.
+- [x] Add ordered event replay with optional event-type filtering and tests.
+- [ ] Connect event replay to generic strategy → signal → risk → execution interfaces.
+- [ ] Add realistic execution simulator: market/limit/stop, slippage, latency, partial fills, rejection, cancellation, multi-leg execution and charges.
+- [ ] Support strategy-specific data requirements so only required resolution/instruments are downloaded.
+- [ ] Support candle/tick/high-resolution/order-book backtests through the same engine.
+- [ ] Support up to 1 year historical data, or the maximum reliable/legally available period when less is available.
+- [ ] Validate Cash–Future, Synthetic Future and Order Book strategies against appropriate source-resolution datasets.
+
+## Live Paper Trading
+- [ ] Replace the current fixed-demo paper order stub with a persistent production-grade paper broker.
+- [ ] Common strategy/execution contract shared by paper and future live adapters.
+- [ ] Real-time LTP/quote/depth driven fills and MTM.
+- [ ] BUY/SELL, market/limit/SL, quantity/lots, multi-leg orders, modify/cancel/square-off.
+- [ ] Partial fills, rejection states, realistic latency/slippage and charges.
+- [ ] Positions, order book, trade book, realized/unrealized P&L, margin/capital tracking.
+- [ ] Idempotency, reconciliation, restart recovery and durable audit ledger.
+- [ ] Persist required live tick/high-resolution data for future backtesting.
+
+## Live Scanner & Analysis
+- [ ] Cash–Future scanner on live market data.
+- [ ] Strategy-specific live data subscriptions; high-resolution only where required.
+- [ ] Scanner result opens dedicated Live Analysis/P&L screen.
+- [ ] Actual paper fills, quantity, average fill, live price and applicable charges drive paper P&L.
+- [ ] Combined F&O strategy payoff graph with break-even, max profit/loss, profit/loss zones and live-price marker.
+- [ ] Paper/live separation and reconciliation safeguards.
 
 ## Data Lifecycle — Core Rule
 1. Startup checks/updates missing historical/off-market data.
@@ -35,6 +73,7 @@ Fast, modular, mobile-first advanced F&O algo-trading platform. GitHub is the so
 4. Live streams operate during actual market hours; holidays/off-market periods stop unnecessary streaming.
 5. Manual historical/off-market sync remains available.
 6. Historical data is idempotent: same token + timeframe + timestamp cannot create duplicates.
+7. Required high-resolution live events are appended durably so future backtests can reuse them.
 
 ## Verified Foundation So Far
 - Backend/app foundation and health checks.
@@ -44,17 +83,11 @@ Fast, modular, mobile-first advanced F&O algo-trading platform. GitHub is the so
 - Stable candle normalization layer.
 - Candle storage identity checkpoint verified with unique `(token, timeframe, timestamp)` and upsert semantics.
 - Strategy Builder foundation verified.
-- Backtesting Engine foundation and CAGR/Sharpe/Sortino/expectancy/drawdown metrics verified through CI checkpoints.
+- Existing candle Backtesting Engine foundation and CAGR/Sharpe/Sortino/expectancy/drawdown metrics verified through CI checkpoints.
 - Durable incremental Full-F&O result sinking, cancellation handling, bounded cleanup, cursor-paged API and bounded Android viewer implemented through verified checkpoints.
 - Angel One broker connection and real-trading safety/kill-switch foundation exists.
-- Cash–Future scanner and paper execution path exists.
-
-## Current Next Work — Performance + Reliable Data Foundation
-- [ ] Audit live market-data paths for blocking calls, redundant requests and unnecessary polling.
-- [ ] Add/standardize source provenance and freshness metadata.
-- [ ] Add bounded caching/request coalescing where safe.
-- [ ] Add performance regression tests for latency, memory and duplicate requests.
-- [ ] Keep long-running Full-F&O results incrementally persisted and paged.
+- Cash–Future scanner and basic paper execution path exists.
+- Generic high-resolution market-event model and replay foundation added in the current checkpoint.
 
 ## Multi-Broker
 - [ ] Common adapter interface: authenticate/connect/disconnect, live quotes/stream, positions, orders, order status, holdings, funds/margin and supported contract metadata.
@@ -74,12 +107,6 @@ Fast, modular, mobile-first advanced F&O algo-trading platform. GitHub is the so
 - [ ] Semantic colours: positive/negative/warning/information based on market meaning.
 - [ ] Current/Previous/Change/% Change and freshness/source display for major metrics.
 - [ ] UI configuration hooks so layout, cards, charts, theme and visibility can be customized later.
-
-## Scanner & Live Analysis
-- [ ] Scanner result opens dedicated Live Analysis/P&L screen.
-- [ ] Actual live fills, quantity, average fill, live price and applicable charges drive live P&L.
-- [ ] Combined F&O strategy payoff graph with break-even, max profit/loss, profit/loss zones and live-price marker.
-- [ ] Paper/live separation and reconciliation safeguards.
 
 ## Alerts & Event Radar
 - [ ] Custom Alert Builder: WHAT → CONDITION → THRESHOLD → LEVEL → DELIVERY.
@@ -101,7 +128,7 @@ Before a checkpoint is complete:
 - No credentials committed to Git.
 - Data provenance/freshness is preserved where supported.
 - UI remains responsive under scanner/backtest refresh.
-- Live order routing remains disabled until safety, idempotency and reconciliation gates are explicitly verified.
+- Real live order routing remains disabled until safety, idempotency and reconciliation gates are explicitly verified.
 
 ## Development Rule
 **One step → inspect → implement → test → fresh CI → verify PASS → update roadmap/checkpoint.**
