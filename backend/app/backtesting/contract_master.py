@@ -69,6 +69,10 @@ class ContractMasterCatalog:
         rows = self._db.execute("SELECT snapshot_date FROM contract_master_snapshots ORDER BY snapshot_date").fetchall()
         return tuple(date.fromisoformat(r[0]) for r in rows)
 
+    def latest_snapshot_date(self) -> date | None:
+        row = self._db.execute("SELECT snapshot_date FROM contract_master_snapshots ORDER BY snapshot_date DESC LIMIT 1").fetchone()
+        return None if row is None else date.fromisoformat(row[0])
+
     def contracts(self, *, exchange: str, underlying: str, as_of: date, instrument_type: str = "STOCK_FUTURE") -> tuple[ContractRecord, ...]:
         row = self._db.execute("SELECT snapshot_date FROM contract_master_snapshots WHERE snapshot_date<=? ORDER BY snapshot_date DESC LIMIT 1", (as_of.isoformat(),)).fetchone()
         if row is None:
