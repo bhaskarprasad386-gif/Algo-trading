@@ -7,9 +7,9 @@ or fallback market data is generated.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 from app.algo.auth import AngelOneAuth
 
@@ -28,17 +28,13 @@ INTERVAL_MAP = {
     "1d": "ONE_DAY",
 }
 
-
-@dataclass(frozen=True)
-class AngelOneInstrument:
-    exchange: str
-    symboltoken: str
-    symbol: str
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def _ns_to_angel_datetime(timestamp_ns: int) -> str:
+    """Format a UTC nanosecond timestamp in the IST format Angel One expects."""
     dt = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, tz=timezone.utc)
-    return dt.astimezone().strftime("%Y-%m-%d %H:%M")
+    return dt.astimezone(IST).strftime("%Y-%m-%d %H:%M")
 
 
 def _timestamp_ns(value: Any) -> int:
@@ -68,8 +64,6 @@ class AngelOneHistoricalSource:
         if request.start_ns > request.end_ns:
             raise ValueError("invalid historical range")
 
-        # Instrument is encoded as EXCHANGE:TOKEN[:DISPLAY_SYMBOL]. This keeps
-        # provider identity explicit without requiring a global mutable master.
         parts = request.instrument.split(":")
         if len(parts) < 2 or not parts[0] or not parts[1]:
             raise ValueError("instrument must be EXCHANGE:TOKEN or EXCHANGE:TOKEN:SYMBOL")
