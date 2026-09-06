@@ -76,7 +76,31 @@ def test_true_resume_restores_portfolio_strategy_market_state_and_cursor(tmp_pat
     DurableEventBacktestEngine(EventBacktestEngine(execution=ExecutionSimulator(), portfolio=full_portfolio), full_ledger, "full-run").run(events, Strategy())
     assert resumed_portfolio.snapshot().cash == full_portfolio.snapshot().cash
     assert resumed_portfolio.snapshot().equity == full_portfolio.snapshot().equity
-    # A true resume restores the committed prefix, so the final trade history
-    # must match the uninterrupted run in full, not only the replayed suffix.
     assert resumed_portfolio.trades == full_portfolio.trades
     ledger.close(); full_ledger.close()
+
+
+def test_resume_rejects_schema_version_mismatch(tmp_path):
+    ledger = BacktestLedger(str(tmp_path / "schema.sqlite"))
+    ledger.start_run("schema-run", "s", "1", 1000, schema_version=2, data_source_fingerprint="source-a")
+    durable = DurableEventBacktestEngine(EventBacktestEngine(), ledger, "schema-run")
+    try:
+        durable.run([], lambda event, state: None, resume=True, schema_version=3, data_source_fingerprint="source-a")
+    except ValueError as exc:
+        assert "schema_version mismatch" in str(exc)
+    else:
+        raise AssertionError("schema mismatch must block resume")
+    ledger.close()
+
+
+def test_resume_rejects_data_source_fingerprint_mismatch(tmp_path):
+    ledger = BacktestLedger(str(tmp_path / "fingerprint.sqlite"))
+    ledger.start_run("fingerprint-run", "s", "1", 1000, schema_version=2, data_source_fingerprint="source-a")
+    durable = DurableEventBacktestEngine(EventBacktestEngine(), ledger, "fingerprint-run")
+    try:
+        durable.run([], lambda event, state: None, resume=True, schema_version=2, data_source_fingerprint="source-b")
+    except ValueError as exc:
+        assert "data_source_fingerprint mismatch" in str(exc)
+    else:
+        raise AssertionError("data source mismatch must block resume")
+    ledger.close()
