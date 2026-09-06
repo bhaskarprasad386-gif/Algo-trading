@@ -15,6 +15,7 @@ from app.algo.auth import AngelOneAuth
 
 from .historical_catalog import HistoricalRecord
 from .historical_ingest import HistoricalFetchRequest
+from .historical_rate_limiter import HistoricalRateLimiter
 
 
 INTERVAL_MAP = {
@@ -54,8 +55,9 @@ class AngelOneHistoricalSource:
 
     source_name = "angelone"
 
-    def __init__(self, auth: AngelOneAuth | None = None) -> None:
+    def __init__(self, auth: AngelOneAuth | None = None, *, limiter: HistoricalRateLimiter | None = None) -> None:
         self.auth = auth or AngelOneAuth()
+        self.limiter = limiter or HistoricalRateLimiter()
 
     def fetch(self, request: HistoricalFetchRequest) -> Iterable[HistoricalRecord]:
         interval = INTERVAL_MAP.get(request.timeframe)
@@ -78,6 +80,7 @@ class AngelOneHistoricalSource:
             "fromdate": _ns_to_angel_datetime(request.start_ns),
             "todate": _ns_to_angel_datetime(request.end_ns),
         }
+        self.limiter.acquire()
         response = client.getCandleData(params)
         if not isinstance(response, dict) or not response.get("status"):
             message = response.get("message", "Angel One historical API failed") if isinstance(response, dict) else "invalid Angel One response"
