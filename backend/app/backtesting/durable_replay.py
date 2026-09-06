@@ -8,7 +8,7 @@ from typing import Iterable, Mapping
 from app.backtesting.event_engine import EventBacktestEngine, ReplayStats
 from app.backtesting.events import MarketEvent
 from app.backtesting.ledger import BacktestLedger, Checkpoint, LedgerRecord
-from app.backtesting.strategy import StrategyDecision
+from app.backtesting.strategy import StrategyDecision, strategy_state
 
 
 class DurableEventBacktestEngine:
@@ -79,18 +79,19 @@ class DurableEventBacktestEngine:
 
         journaled = JournalStrategy()
         result = self.engine.run(source_events, journaled, state=state)
+        checkpoint_state = {
+            "events_seen": result.events_seen,
+            "events_dispatched": result.events_dispatched,
+            "decisions_emitted": result.decisions_emitted,
+            "orders_submitted": result.orders_submitted,
+            "fills": result.fills,
+            "risk_blocks": result.risk_blocks,
+            "state": dict(state or {}),
+            "strategy_state": dict(strategy_state(strategy)),
+            "final_snapshot": asdict(result.final_snapshot) if result.final_snapshot is not None else None,
+        }
         ledger.checkpoint(Checkpoint(
-            run_id, result.events_dispatched, result.last_timestamp_ns or 0,
-            {
-                "events_seen": result.events_seen,
-                "events_dispatched": result.events_dispatched,
-                "decisions_emitted": result.decisions_emitted,
-                "orders_submitted": result.orders_submitted,
-                "fills": result.fills,
-                "risk_blocks": result.risk_blocks,
-                "state": dict(state or {}),
-                "final_snapshot": asdict(result.final_snapshot) if result.final_snapshot is not None else None,
-            },
+            run_id, result.events_dispatched, result.last_timestamp_ns or 0, checkpoint_state,
         ))
         ledger.append(LedgerRecord(
             run_id, "RUN_END", result.last_timestamp_ns or 0,
@@ -102,3 +103,8 @@ class DurableEventBacktestEngine:
     def resume_cursor(self) -> int:
         checkpoint = self.ledger.load_checkpoint(self.run_id)
         return 0 if checkpoint is None else checkpoint.event_index
+
+    def checkpoint_state(self) -> Mapping[str, object] | None:
+        """Return the persisted state needed by the next resume layer."""
+        checkpoint = self.ledger.load_checkpoint(self.run_id)
+        return None if checkpoint is None else dict(checkpoint.state)
