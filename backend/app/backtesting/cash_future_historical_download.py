@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable
+from typing import Callable, Iterable
 
 from .angelone_historical import AngelOneHistoricalSource
 from .cash_future_download_queue import CashFutureDownloadQueue, build_rollover_download_queue
@@ -12,6 +12,20 @@ from .historical_catalog import HistoricalCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_ingest import HistoricalIngestionService
 from .historical_sync import HistoricalSyncPlan, build_chunked_plan
+from .session_chunk_completeness import SessionChunk, SessionChunkCompleteness
+from .session_gap_planner import SessionWindow
+
+
+_TIMEFRAME_INTERVAL_NS = {
+    "1m": 60 * 1_000_000_000,
+    "3m": 3 * 60 * 1_000_000_000,
+    "5m": 5 * 60 * 1_000_000_000,
+    "10m": 10 * 60 * 1_000_000_000,
+    "15m": 15 * 60 * 1_000_000_000,
+    "30m": 30 * 60 * 1_000_000_000,
+    "1h": 60 * 60 * 1_000_000_000,
+    "1d": 24 * 60 * 60 * 1_000_000_000,
+}
 
 
 @dataclass(frozen=True)
@@ -47,12 +61,22 @@ class CashFutureHistoricalDownloadReport:
 class CashFutureHistoricalDownloadService:
     """Download spot/future requests sequentially and persist each chunk immediately."""
 
-    def __init__(self, catalog: HistoricalCatalog, contract_catalog, *, source=None, executor=None) -> None:
+    def __init__(
+        self,
+        catalog: HistoricalCatalog,
+        contract_catalog,
+        *,
+        source=None,
+        executor=None,
+        session_windows: Callable[[object], Iterable[SessionWindow]] | None = None,
+    ) -> None:
         self.catalog = catalog
         self.contract_catalog = contract_catalog
         self.ingestion = HistoricalIngestionService(catalog)
         self.source = source or AngelOneHistoricalSource()
         self.executor = executor or ResumableHistoricalExecutor(self.ingestion)
+        self.completeness = SessionChunkCompleteness(catalog)
+        self.session_windows = session_windows
 
     @staticmethod
     def _plan_for_request(request) -> HistoricalSyncPlan:
@@ -64,6 +88,22 @@ class CashFutureHistoricalDownloadService:
             start_ns=request.start_ns,
             end_ns=request.end_ns,
             chunk_ns=chunk_ns,
+        )
+
+    def _should_skip_chunk(self, request) -> bool:
+        if self.session_windows is None:
+            return False
+        interval_ns = _TIMEFRAME_INTERVAL_NS.get(request.timeframe)
+        if interval_ns is None:
+            raise ValueError(f"unsupported timeframe for completeness checks: {request.timeframe}")
+        sessions = tuple(self.session_windows(request))
+        return self.completeness.is_complete(
+            source=request.source,
+            instrument=request.instrument,
+            timeframe=request.timeframe,
+            interval_ns=interval_ns,
+            chunk=SessionChunk(request.start_ns, request.end_ns),
+            sessions=sessions,
         )
 
     def run(
@@ -89,11 +129,12 @@ class CashFutureHistoricalDownloadService:
             timeframe=timeframe,
             mode=mode,
         )
+        effective_skip = should_skip or self._should_skip_chunk
         spot_result = self.executor.run(
             self.source,
             self._plan_for_request(queue.spot),
             retry_attempts=retry_attempts,
-            should_skip=should_skip,
+            should_skip=effective_skip,
         )
         if spot_result.failed_request_index is not None:
             return CashFutureHistoricalDownloadReport(
@@ -106,7 +147,7 @@ class CashFutureHistoricalDownloadService:
                 self.source,
                 self._plan_for_request(item.request),
                 retry_attempts=retry_attempts,
-                should_skip=should_skip,
+                should_skip=effective_skip,
             )
             future_results.append(result)
             if result.failed_request_index is not None:
