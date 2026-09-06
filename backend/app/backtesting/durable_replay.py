@@ -1,4 +1,4 @@
-"""Durable replay wrapper that journals events, decisions and checkpoints."""
+"""Durable replay wrapper that journals events, decisions and resumable checkpoints."""
 
 from __future__ import annotations
 
@@ -8,103 +8,108 @@ from typing import Iterable, Mapping
 from app.backtesting.event_engine import EventBacktestEngine, ReplayStats
 from app.backtesting.events import MarketEvent
 from app.backtesting.ledger import BacktestLedger, Checkpoint, LedgerRecord
-from app.backtesting.strategy import StrategyDecision, strategy_state
+from app.backtesting.strategy import StrategyDecision, restore_strategy_state, strategy_state
 
 
 class DurableEventBacktestEngine:
-    """Event engine with an append-only audit journal and resumable cursor."""
+    """Event engine with an append-only audit journal and true stateful resume."""
 
     def __init__(self, engine: EventBacktestEngine, ledger: BacktestLedger,
                  run_id: str, *, checkpoint_interval: int = 1) -> None:
-        if not run_id.strip():
-            raise ValueError("run_id is required")
-        if checkpoint_interval <= 0:
-            raise ValueError("checkpoint_interval must be positive")
-        self.engine = engine
-        self.ledger = ledger
-        self.run_id = run_id
+        if not run_id.strip(): raise ValueError("run_id is required")
+        if checkpoint_interval <= 0: raise ValueError("checkpoint_interval must be positive")
+        self.engine, self.ledger, self.run_id = engine, ledger, run_id
         self.checkpoint_interval = checkpoint_interval
 
     def start_run(self, strategy: object, initial_capital: float) -> None:
         strategy_id = str(getattr(strategy, "strategy_id", strategy.__class__.__name__))
         strategy_version = str(getattr(strategy, "strategy_version", "unknown"))
-        self.ledger.start_run(
-            self.run_id, strategy_id, strategy_version, initial_capital,
-            metadata={"checkpoint_interval": self.checkpoint_interval},
-        )
+        self.ledger.start_run(self.run_id, strategy_id, strategy_version, initial_capital,
+                              metadata={"checkpoint_interval": self.checkpoint_interval})
 
-    def run(self, events: Iterable[MarketEvent], strategy: object,
-            *, state: Mapping[str, object] | None = None) -> ReplayStats:
-        source_events = tuple(events)
-        ledger = self.ledger
-        run_id = self.run_id
-        ledger.append(LedgerRecord(
-            run_id, "RUN_START", source_events[0].timestamp_ns if source_events else 0,
-            {"event_count": len(source_events)},
-        ))
-
+    def _journal_strategy(self, strategy: object):
+        ledger, run_id = self.ledger, self.run_id
         class JournalStrategy:
             strategy_id = getattr(strategy, "strategy_id", strategy.__class__.__name__)
             strategy_version = getattr(strategy, "strategy_version", "unknown")
-
             def on_start(self, context):
                 starter = getattr(strategy, "on_start", None)
-                if callable(starter):
-                    starter(context)
-
+                if callable(starter): starter(context)
             def on_event(self, event, context):
-                ledger.append(LedgerRecord(
-                    run_id, "EVENT", event.timestamp_ns,
+                ledger.append(LedgerRecord(run_id, "EVENT", event.timestamp_ns,
                     {"instrument": event.instrument, "event_type": event.event_type.value,
-                     "sequence": event.sequence, "source": event.source},
-                ))
+                     "sequence": event.sequence, "source": event.source}))
                 handler = getattr(strategy, "on_event", None)
-                if not callable(handler):
-                    return None
+                if not callable(handler): return None
                 decision = handler(event, context)
                 if decision is not None:
-                    if not isinstance(decision, StrategyDecision):
-                        raise TypeError("event strategy must return StrategyDecision or None")
-                    ledger.append(LedgerRecord(
-                        run_id, "DECISION", event.timestamp_ns,
-                        {"action": decision.action, "orders": len(decision.orders),
-                         "metadata": dict(decision.metadata)},
-                    ))
+                    if not isinstance(decision, StrategyDecision): raise TypeError("event strategy must return StrategyDecision or None")
+                    ledger.append(LedgerRecord(run_id, "DECISION", event.timestamp_ns,
+                        {"action": decision.action, "orders": len(decision.orders), "metadata": dict(decision.metadata)}))
                 return decision
-
             def on_end(self, context):
                 finisher = getattr(strategy, "on_end", None)
-                if callable(finisher):
-                    finisher(context)
+                if callable(finisher): finisher(context)
+        return JournalStrategy()
 
-        journaled = JournalStrategy()
-        result = self.engine.run(source_events, journaled, state=state)
-        checkpoint_state = {
-            "events_seen": result.events_seen,
-            "events_dispatched": result.events_dispatched,
-            "decisions_emitted": result.decisions_emitted,
-            "orders_submitted": result.orders_submitted,
-            "fills": result.fills,
-            "risk_blocks": result.risk_blocks,
-            "state": dict(state or {}),
-            "strategy_state": dict(strategy_state(strategy)),
+    def _save_checkpoint(self, source_cursor: int, dispatched: int, extra: Mapping[str, object], strategy: object) -> None:
+        state = dict(extra)
+        state["source_cursor"] = source_cursor
+        state["events_dispatched"] = dispatched
+        state["strategy_state"] = dict(strategy_state(strategy))
+        state["portfolio_state"] = dict(self.engine.portfolio.export_state()) if self.engine.portfolio is not None else None
+        self.ledger.checkpoint(Checkpoint(self.run_id, source_cursor, int(extra.get("timestamp_ns", 0)), state))
+
+    def run(self, events: Iterable[MarketEvent], strategy: object, *, state: Mapping[str, object] | None = None,
+            resume: bool = False) -> ReplayStats:
+        source_events = tuple(events)
+        checkpoint = self.ledger.load_checkpoint(self.run_id) if resume else None
+        context_state = dict(state or {})
+        start_cursor = 0
+        if resume:
+            if checkpoint is None: raise ValueError("no checkpoint available for resume")
+            saved = checkpoint.state
+            start_cursor = int(saved.get("source_cursor", checkpoint.event_index))
+            saved_portfolio = saved.get("portfolio_state")
+            if saved_portfolio is not None and self.engine.portfolio is not None:
+                self.engine.portfolio.restore_state(saved_portfolio)
+            restore_strategy_state(strategy, dict(saved.get("strategy_state", {})))
+            saved_context = saved.get("context_state")
+            if isinstance(saved_context, Mapping): context_state = dict(saved_context)
+            market_state = saved.get("market_state")
+            if isinstance(market_state, Mapping): self.engine.restore_market_state(market_state)
+            self.ledger.append(LedgerRecord(self.run_id, "RUN_RESUME", checkpoint.timestamp_ns,
+                                            {"source_cursor": start_cursor, "event_index": checkpoint.event_index}))
+        elif source_events:
+            self.ledger.append(LedgerRecord(self.run_id, "RUN_START", source_events[0].timestamp_ns,
+                                            {"event_count": len(source_events)}))
+
+        journaled = self._journal_strategy(strategy)
+        def checkpoint_callback(source_cursor: int, dispatched: int, extra: Mapping[str, object]) -> None:
+            payload = dict(extra); payload["timestamp_ns"] = source_events[source_cursor - 1].timestamp_ns if source_cursor else 0
+            self._save_checkpoint(source_cursor, dispatched, payload, strategy)
+
+        result = self.engine.run(source_events, journaled, state=context_state, start_event_index=start_cursor,
+                                 checkpoint_callback=checkpoint_callback, checkpoint_interval=self.checkpoint_interval)
+        final_state = {
+            "source_cursor": len(source_events), "events_seen": result.events_seen,
+            "events_dispatched": result.events_dispatched, "decisions_emitted": result.decisions_emitted,
+            "orders_submitted": result.orders_submitted, "fills": result.fills, "risk_blocks": result.risk_blocks,
+            "context_state": context_state, "strategy_state": dict(strategy_state(strategy)),
+            "portfolio_state": dict(self.engine.portfolio.export_state()) if self.engine.portfolio is not None else None,
+            "market_state": self.engine.market_state(),
             "final_snapshot": asdict(result.final_snapshot) if result.final_snapshot is not None else None,
         }
-        ledger.checkpoint(Checkpoint(
-            run_id, result.events_dispatched, result.last_timestamp_ns or 0, checkpoint_state,
-        ))
-        ledger.append(LedgerRecord(
-            run_id, "RUN_END", result.last_timestamp_ns or 0,
-            {"events_dispatched": result.events_dispatched, "fills": result.fills,
-             "risk_blocks": result.risk_blocks},
-        ))
+        self.ledger.checkpoint(Checkpoint(self.run_id, len(source_events), result.last_timestamp_ns or 0, final_state))
+        self.ledger.append(LedgerRecord(self.run_id, "RUN_END", result.last_timestamp_ns or 0,
+                                        {"events_dispatched": result.events_dispatched, "fills": result.fills,
+                                         "risk_blocks": result.risk_blocks}))
         return result
 
     def resume_cursor(self) -> int:
         checkpoint = self.ledger.load_checkpoint(self.run_id)
-        return 0 if checkpoint is None else checkpoint.event_index
+        return 0 if checkpoint is None else int(checkpoint.state.get("source_cursor", checkpoint.event_index))
 
     def checkpoint_state(self) -> Mapping[str, object] | None:
-        """Return the persisted state needed by the next resume layer."""
         checkpoint = self.ledger.load_checkpoint(self.run_id)
         return None if checkpoint is None else dict(checkpoint.state)
