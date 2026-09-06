@@ -30,6 +30,15 @@ def test_timestamp_normalization():
     assert value == int(datetime(2026, 9, 1, 3, 45, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
 
 
+def test_epoch_timestamp_units_normalize_to_same_ns():
+    seconds = 1_756_701_900
+    expected = seconds * 1_000_000_000
+    assert _timestamp_ns(seconds) == expected
+    assert _timestamp_ns(seconds * 1_000) == expected
+    assert _timestamp_ns(seconds * 1_000_000) == expected
+    assert _timestamp_ns(seconds * 1_000_000_000) == expected
+
+
 def test_candle_rows_are_normalized_to_historical_records():
     source = AngelOneHistoricalSource(auth=FakeAuth())
     start = _timestamp_ns("2026-09-01T09:14:00+05:30")
