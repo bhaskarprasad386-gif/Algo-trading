@@ -39,8 +39,16 @@ def _ns_to_angel_datetime(timestamp_ns: int) -> str:
 
 
 def _timestamp_ns(value: Any) -> int:
+    """Normalize epoch seconds/milliseconds/microseconds/nanoseconds or ISO time to ns."""
     if isinstance(value, (int, float)):
-        return int(value * 1_000_000_000) if float(value) < 10_000_000_000 else int(value)
+        numeric = float(value)
+        if numeric < 10_000_000_000:
+            return int(numeric * 1_000_000_000)
+        if numeric < 10_000_000_000_000:
+            return int(numeric * 1_000_000)
+        if numeric < 10_000_000_000_000_000:
+            return int(numeric * 1_000)
+        return int(numeric)
     text = str(value).strip()
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
