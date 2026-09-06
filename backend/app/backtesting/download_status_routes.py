@@ -1,27 +1,20 @@
-"""FastAPI endpoints for durable historical-download progress and job start."""
+"""FastAPI endpoints for durable historical-download progress."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from app.core.config import settings
-
-from .cash_future_download_routes import CashFutureDownloadManager, CashFutureDownloadStartRequest
 from .download_status_api import download_status_payload
 from .historical_download_status import HistoricalDownloadStatusStore
 
 
 def create_download_status_router(store: HistoricalDownloadStatusStore) -> APIRouter:
-    router = APIRouter(prefix="/api/v1/backtesting", tags=["backtesting"])
-    manager = CashFutureDownloadManager(
-        data_db=settings.BACKTEST_DATA_DB,
-        contract_db=settings.BACKTEST_CONTRACT_DB,
-        status_store=store,
-    )
+    """Create the read-only status router.
 
-    @router.post("/cash-future/downloads", status_code=202)
-    def start_cash_future_download(request: CashFutureDownloadStartRequest) -> dict:
-        return {"job_id": manager.start(request), "status": "QUEUED"}
+    Job creation/start remains owned by ``CashFutureDownloadManager`` so the
+    POST endpoint is registered exactly once by the application.
+    """
+    router = APIRouter(prefix="/api/v1/backtesting", tags=["backtesting"])
 
     @router.get("/cash-future/downloads/{job_id}")
     def get_cash_future_download_status(job_id: str) -> dict:
