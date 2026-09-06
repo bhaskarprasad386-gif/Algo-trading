@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from .historical_ingest import HistoricalFetchRequest
 from .historical_sync import HistoricalSyncPlan, build_chunked_plan
 
 
@@ -28,13 +27,34 @@ def utc_ns(value: datetime) -> int:
 
 
 def one_year_range(*, end: datetime) -> tuple[int, int]:
-    """Return a calendar-year lookback ending at ``end``; no market data is invented."""
+    """Return a calendar-year lookback ending at ``end`` without invalid dates."""
     if end.tzinfo is None:
         end = end.replace(tzinfo=timezone.utc)
-    start = end.replace(year=end.year - 1)
+    try:
+        start = end.replace(year=end.year - 1)
+    except ValueError:
+        # Feb 29 has no prior-year equivalent; use Feb 28 instead.
+        start = end.replace(year=end.year - 1, day=28)
     return utc_ns(start), utc_ns(end)
 
 
-def build_one_year_plan(*, source: str, instrument: str, timeframe: str, end: datetime, chunk: timedelta) -> HistoricalSyncPlan:
+def build_one_year_plan(
+    *,
+    source: str,
+    instrument: str,
+    timeframe: str,
+    end: datetime,
+    chunk: timedelta,
+) -> HistoricalSyncPlan:
     start_ns, end_ns = one_year_range(end=end)
-    return build_chunked_plan(source=source, instrument=instrument, timeframe=timeframe, start_ns=start_ns, end_ns=end_ns, chunk_ns=int(chunk.total_seconds() * 1_000_000_000))
+    chunk_ns = int(chunk.total_seconds() * 1_000_000_000)
+    if chunk_ns <= 0:
+        raise ValueError("chunk must be positive")
+    return build_chunked_plan(
+        source=source,
+        instrument=instrument,
+        timeframe=timeframe,
+        start_ns=start_ns,
+        end_ns=end_ns,
+        chunk_ns=chunk_ns,
+    )
