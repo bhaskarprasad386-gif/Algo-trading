@@ -41,6 +41,30 @@ class SimOrder:
 
 
 @dataclass(frozen=True)
+class DepthLevel:
+    price: float
+    quantity: int
+
+    def __post_init__(self) -> None:
+        if self.price <= 0 or self.quantity < 0:
+            raise ValueError("depth price must be positive and quantity non-negative")
+
+
+@dataclass(frozen=True)
+class OrderBook:
+    """Point-in-time executable order-book snapshot, best level first."""
+
+    bids: tuple[DepthLevel, ...] = ()
+    asks: tuple[DepthLevel, ...] = ()
+
+    def __post_init__(self) -> None:
+        if tuple(sorted((x.price for x in self.bids), reverse=True)) != tuple(x.price for x in self.bids):
+            raise ValueError("bids must be ordered best-to-worst")
+        if tuple(sorted((x.price for x in self.asks)) != tuple(x.price for x in self.asks)):
+            raise ValueError("asks must be ordered best-to-worst")
+
+
+@dataclass(frozen=True)
 class SimFill:
     order_id: str
     instrument: str
@@ -52,10 +76,19 @@ class SimFill:
 
 
 @dataclass(frozen=True)
+class ExecutionResult:
+    fills: tuple[SimFill, ...]
+    remaining_quantity: int
+    rejected: bool = False
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
 class ExecutionConfig:
     slippage_bps: float = 0.0
     latency_ns: int = 0
     fee_per_unit: float = 0.0
+    allow_partial_fills: bool = True
 
     def __post_init__(self) -> None:
         if self.slippage_bps < 0 or self.latency_ns < 0 or self.fee_per_unit < 0:
@@ -63,7 +96,7 @@ class ExecutionConfig:
 
 
 class ExecutionSimulator:
-    """Small deterministic simulator; future depth-aware matching extends this contract."""
+    """Execution model supporting normal prices and real point-in-time depth."""
 
     def __init__(self, config: ExecutionConfig | None = None) -> None:
         self.config = config or ExecutionConfig()
@@ -76,15 +109,45 @@ class ExecutionSimulator:
         fill_time = timestamp_ns + self.config.latency_ns
         direction = 1 if order.side == ExecutionSide.BUY else -1
         price = market_price * (1 + direction * self.config.slippage_bps / 10_000)
-        return SimFill(
-            order_id=order.order_id,
-            instrument=order.instrument,
-            side=order.side,
-            quantity=order.quantity,
-            price=price,
-            filled_at_ns=fill_time,
-            fee=order.quantity * self.config.fee_per_unit,
-        )
+        return SimFill(order.order_id, order.instrument, order.side, order.quantity, price, fill_time,
+                       order.quantity * self.config.fee_per_unit)
+
+    def execute_depth(self, order: SimOrder, book: OrderBook, timestamp_ns: int) -> ExecutionResult:
+        """Consume only executable displayed depth; never invent liquidity or prices."""
+        if timestamp_ns < order.submitted_at_ns:
+            raise ValueError("fill timestamp cannot precede order submission")
+        levels = book.asks if order.side == ExecutionSide.BUY else book.bids
+        if not levels:
+            return ExecutionResult((), order.quantity, True, "no executable depth")
+
+        remaining = order.quantity
+        fills: list[SimFill] = []
+        total_value = 0.0
+        total_qty = 0
+        for level in levels:
+            if remaining <= 0:
+                break
+            if level.quantity <= 0:
+                continue
+            if order.order_type == OrderType.LIMIT:
+                if order.limit_price is None:
+                    raise ValueError("limit_price is required for LIMIT orders")
+                if order.side == ExecutionSide.BUY and level.price > order.limit_price:
+                    break
+                if order.side == ExecutionSide.SELL and level.price < order.limit_price:
+                    break
+            take = min(remaining, level.quantity)
+            fills.append(SimFill(order.order_id, order.instrument, order.side, take, level.price,
+                                 timestamp_ns + self.config.latency_ns, take * self.config.fee_per_unit))
+            total_value += take * level.price
+            total_qty += take
+            remaining -= take
+            if not self.config.allow_partial_fills and remaining:
+                return ExecutionResult((), order.quantity, True, "insufficient displayed depth")
+
+        if total_qty == 0:
+            return ExecutionResult((), order.quantity, True, "no executable price")
+        return ExecutionResult(tuple(fills), remaining, False, None if remaining == 0 else "partial fill")
 
     def execute_many(self, orders: Iterable[tuple[SimOrder, float, int]]) -> tuple[SimFill, ...]:
         return tuple(self.execute(order, price, timestamp_ns) for order, price, timestamp_ns in orders)
