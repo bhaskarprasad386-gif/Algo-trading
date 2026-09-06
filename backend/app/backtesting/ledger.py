@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
 
+LEDGER_SCHEMA_VERSION = 2
+
+
 @dataclass(frozen=True)
 class LedgerRecord:
     run_id: str
@@ -39,9 +42,12 @@ class BacktestLedger:
                 strategy_version TEXT NOT NULL,
                 strategy_hash TEXT,
                 initial_capital REAL NOT NULL,
-                metadata_json TEXT NOT NULL
+                metadata_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL DEFAULT 2,
+                data_source_fingerprint TEXT
             )
         """)
+        self._migrate_runs_metadata()
         self._db.execute("""
             CREATE TABLE IF NOT EXISTS records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,20 +85,36 @@ class BacktestLedger:
         """)
         self._db.commit()
 
+    def _migrate_runs_metadata(self) -> None:
+        columns = {row[1] for row in self._db.execute("PRAGMA table_info(runs)").fetchall()}
+        if "schema_version" not in columns:
+            self._db.execute(
+                f"ALTER TABLE runs ADD COLUMN schema_version INTEGER NOT NULL DEFAULT {LEDGER_SCHEMA_VERSION}"
+            )
+        if "data_source_fingerprint" not in columns:
+            self._db.execute("ALTER TABLE runs ADD COLUMN data_source_fingerprint TEXT")
+
     def close(self) -> None:
         self._db.close()
 
     def start_run(self, run_id: str, strategy_id: str, strategy_version: str,
                   initial_capital: float, *, strategy_hash: str | None = None,
-                  metadata: Mapping[str, Any] | None = None) -> None:
+                  metadata: Mapping[str, Any] | None = None,
+                  schema_version: int = LEDGER_SCHEMA_VERSION,
+                  data_source_fingerprint: str | None = None) -> None:
         if not run_id.strip() or not strategy_id.strip() or not strategy_version.strip():
             raise ValueError("run and strategy identifiers are required")
         if initial_capital < 0:
             raise ValueError("initial_capital cannot be negative")
+        if schema_version <= 0:
+            raise ValueError("schema_version must be positive")
+        if data_source_fingerprint is not None and not data_source_fingerprint.strip():
+            raise ValueError("data_source_fingerprint cannot be empty")
         try:
             self._db.execute(
-                "INSERT INTO runs(run_id,strategy_id,strategy_version,strategy_hash,initial_capital,metadata_json) VALUES(?,?,?,?,?,?)",
-                (run_id, strategy_id, strategy_version, strategy_hash, float(initial_capital), json.dumps(dict(metadata or {}), sort_keys=True)),
+                "INSERT INTO runs(run_id,strategy_id,strategy_version,strategy_hash,initial_capital,metadata_json,schema_version,data_source_fingerprint) VALUES(?,?,?,?,?,?,?,?)",
+                (run_id, strategy_id, strategy_version, strategy_hash, float(initial_capital),
+                 json.dumps(dict(metadata or {}), sort_keys=True), int(schema_version), data_source_fingerprint),
             )
             self._db.commit()
         except sqlite3.IntegrityError as exc:
@@ -102,6 +124,25 @@ class BacktestLedger:
     def _require_run(self, run_id: str) -> None:
         if self._db.execute("SELECT 1 FROM runs WHERE run_id=?", (run_id,)).fetchone() is None:
             raise ValueError(f"unknown run_id: {run_id}")
+
+    def validate_resume(self, run_id: str, *, schema_version: int = LEDGER_SCHEMA_VERSION,
+                        data_source_fingerprint: str | None = None) -> None:
+        """Reject resume when the persisted schema/source identity does not match."""
+        row = self._db.execute(
+            "SELECT schema_version,data_source_fingerprint FROM runs WHERE run_id=?", (run_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"unknown run_id: {run_id}")
+        stored_schema, stored_fingerprint = int(row[0]), row[1]
+        if stored_schema != int(schema_version):
+            raise ValueError(
+                f"unsafe resume: schema_version mismatch (stored={stored_schema}, requested={schema_version})"
+            )
+        if stored_fingerprint != data_source_fingerprint:
+            raise ValueError(
+                "unsafe resume: data_source_fingerprint mismatch "
+                f"(stored={stored_fingerprint!r}, requested={data_source_fingerprint!r})"
+            )
 
     @staticmethod
     def _record_params(record: LedgerRecord) -> tuple[str, str, int, str]:
@@ -191,9 +232,10 @@ class BacktestLedger:
 
     def run_metadata(self, run_id: str) -> Mapping[str, Any] | None:
         row = self._db.execute(
-            "SELECT strategy_id,strategy_version,strategy_hash,initial_capital,metadata_json FROM runs WHERE run_id=?", (run_id,)
+            "SELECT strategy_id,strategy_version,strategy_hash,initial_capital,metadata_json,schema_version,data_source_fingerprint FROM runs WHERE run_id=?", (run_id,)
         ).fetchone()
         if row is None:
             return None
         return {"strategy_id": row[0], "strategy_version": row[1], "strategy_hash": row[2],
-                "initial_capital": row[3], "metadata": json.loads(row[4])}
+                "initial_capital": row[3], "metadata": json.loads(row[4]),
+                "schema_version": row[5], "data_source_fingerprint": row[6]}
