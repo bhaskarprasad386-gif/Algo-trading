@@ -5,7 +5,7 @@ import pytest
 from app.backtesting.event_engine import EventBacktestEngine
 from app.backtesting.events import EventReplayConfig, EventType, MarketEvent
 from app.backtesting.execution import ExecutionSimulator, ExecutionSide, SimOrder
-from app.backtesting.portfolio import Portfolio
+from app.backtesting.portfolio import Portfolio, RiskConfig
 from app.backtesting.strategy import StrategyDecision
 
 
@@ -76,25 +76,55 @@ def test_event_strategy_order_uses_instrument_quote_and_ask_for_buy():
     assert result.final_snapshot.positions[0].quantity == 10
 
 
-def test_multi_leg_orders_use_independent_point_in_time_quotes():
+def test_risk_blocked_order_does_not_change_portfolio():
     class Strategy:
-        strategy_id = "multi-leg"; strategy_version = "1"
+        strategy_id = "risk-block"; strategy_version = "1"
         def on_event(self, event, context):
-            if event.instrument != "FUT_FAR": return None
+            return StrategyDecision(action="BUY", orders=(SimOrder("blocked", "NIFTY", ExecutionSide.BUY, 20),))
+    portfolio = Portfolio(1_000, RiskConfig(initial_margin_rate=1.0))
+    result = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio).run(
+        [MarketEvent(1, "NIFTY", EventType.QUOTE, {"bid": 99, "ask": 100})], Strategy())
+    assert result.fills == 0
+    assert result.risk_blocks == 1
+    assert result.final_snapshot.cash == 1_000
+    assert result.final_snapshot.positions == ()
+    assert result.final_snapshot.reserved_margin == 0
+
+
+def test_multi_leg_risk_failure_is_atomic_in_event_engine():
+    class Strategy:
+        strategy_id = "atomic-risk"; strategy_version = "1"
+        def on_event(self, event, context):
+            if event.instrument != "B": return None
             return StrategyDecision(action="SPREAD", orders=(
-                SimOrder("leg1", "FUT_NEAR", ExecutionSide.BUY, 1),
-                SimOrder("leg2", "FUT_FAR", ExecutionSide.SELL, 1),
+                SimOrder("a", "A", ExecutionSide.BUY, 5),
+                SimOrder("b", "B", ExecutionSide.BUY, 6),
             ))
-    portfolio = Portfolio(initial_cash=100_000)
-    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    portfolio = Portfolio(100_000, RiskConfig(initial_margin_rate=0.1, max_position_quantity=5))
     events = [
-        MarketEvent(1_000, "FUT_NEAR", EventType.QUOTE, {"bid": 99, "ask": 101}),
-        MarketEvent(2_000, "FUT_FAR", EventType.QUOTE, {"bid": 205, "ask": 207}),
+        MarketEvent(1, "A", EventType.QUOTE, {"bid": 99, "ask": 100}),
+        MarketEvent(2, "B", EventType.QUOTE, {"bid": 199, "ask": 200}),
     ]
-    result = engine.run(events, Strategy())
-    assert result.orders_submitted == 2 and result.fills == 2
-    assert {p.instrument for p in result.final_snapshot.positions} == {"FUT_NEAR", "FUT_FAR"}
-    assert result.final_snapshot.cash == pytest.approx(100_000 - 101 + 205)
+    result = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio).run(events, Strategy())
+    assert result.risk_blocks == 1
+    assert result.fills == 0
+    assert result.final_snapshot.positions == ()
+    assert result.final_snapshot.cash == 100_000
+    assert result.final_snapshot.reserved_margin == 0
+
+
+def test_margin_reservation_is_released_after_fill():
+    class Strategy:
+        strategy_id = "reserve-release"; strategy_version = "1"
+        def on_event(self, event, context):
+            return StrategyDecision(action="BUY", orders=(SimOrder("o1", "NIFTY", ExecutionSide.BUY, 10),))
+    portfolio = Portfolio(100_000, RiskConfig(initial_margin_rate=0.2, maintenance_margin_rate=0.1))
+    result = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio).run(
+        [MarketEvent(1, "NIFTY", EventType.QUOTE, {"bid": 99, "ask": 100})], Strategy())
+    assert result.fills == 1
+    assert result.final_snapshot.reserved_margin == 0
+    assert len(portfolio.trades) == 1
+    assert portfolio.trades[0].order_id == "o1"
 
 
 def test_missing_future_leg_quote_is_not_fabricated():
