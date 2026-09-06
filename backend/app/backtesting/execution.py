@@ -80,6 +80,25 @@ class OrderBook:
 
 
 @dataclass(frozen=True)
+class QueueEvidence:
+    """Observed events that can legitimately advance a resting queue position.
+
+    A disappearing depth level is not treated as a fill: the caller must supply
+    explicit executed or cancelled quantity supported by source data.
+    """
+
+    price: float
+    executed_quantity: int = 0
+    cancelled_quantity_ahead: int = 0
+
+    def __post_init__(self) -> None:
+        if self.price <= 0:
+            raise ValueError("queue evidence price must be positive")
+        if self.executed_quantity < 0 or self.cancelled_quantity_ahead < 0:
+            raise ValueError("queue evidence quantities cannot be negative")
+
+
+@dataclass(frozen=True)
 class SimFill:
     order_id: str
     instrument: str
@@ -115,6 +134,14 @@ class ExecutionSimulator:
 
     def __init__(self, config: ExecutionConfig | None = None) -> None:
         self.config = config or ExecutionConfig()
+
+    @staticmethod
+    def advance_queue_ahead(queue_ahead_quantity: int, evidence: QueueEvidence) -> int:
+        """Advance a resting queue only from explicit source-backed evidence."""
+        if queue_ahead_quantity < 0:
+            raise ValueError("queue_ahead_quantity cannot be negative")
+        consumed = evidence.executed_quantity + evidence.cancelled_quantity_ahead
+        return max(0, queue_ahead_quantity - consumed)
 
     def execute(self, order: SimOrder, market_price: float, timestamp_ns: int) -> SimFill:
         if market_price <= 0:
