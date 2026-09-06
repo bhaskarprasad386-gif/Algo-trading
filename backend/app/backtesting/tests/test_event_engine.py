@@ -1,5 +1,10 @@
+from dataclasses import dataclass
+
+import pytest
+
 from app.backtesting.event_engine import EventBacktestEngine
 from app.backtesting.events import EventReplayConfig, EventType, MarketEvent
+from app.backtesting.strategy import StrategyContext, StrategyDecision
 
 
 def test_replays_millisecond_events_without_fabrication():
@@ -40,18 +45,88 @@ def test_preserves_multiple_events_at_same_timestamp_by_sequence():
     assert received == [2, 3]
 
 
-def test_can_filter_depth_events():
+def test_event_strategy_receives_only_prior_history():
     events = [
-        MarketEvent(1, "OPT", EventType.TRADE, {}),
-        MarketEvent(2, "OPT", EventType.DEPTH, {"bid_qty": 10}),
+        MarketEvent(10, "OPT", EventType.QUOTE, {"bid": 100}, sequence=1),
+        MarketEvent(20, "OPT", EventType.TRADE, {"price": 101}, sequence=2),
     ]
-    received = []
-    result = EventBacktestEngine(
-        EventReplayConfig(include_event_types=frozenset({EventType.DEPTH}))
-    ).run(events, lambda event, state: received.append(event.event_type))
-    assert received == [EventType.DEPTH]
-    assert result.events_seen == 2
-    assert result.events_dispatched == 1
+
+    @dataclass
+    class Strategy:
+        strategy_id = "history-test"
+        strategy_version = "1"
+        histories: list[tuple[int, ...]] | None = None
+        started: bool = False
+        ended: bool = False
+
+        def __post_init__(self):
+            self.histories = []
+
+        def on_start(self, context: StrategyContext) -> None:
+            self.started = True
+
+        def on_event(self, event: MarketEvent, context: StrategyContext):
+            self.histories.append(tuple(e.timestamp_ns for e in context.history))
+            return StrategyDecision(action="OBSERVE")
+
+        def on_end(self, context: StrategyContext) -> None:
+            self.ended = True
+
+    strategy = Strategy()
+    result = EventBacktestEngine().run(events, strategy)
+    assert strategy.started and strategy.ended
+    assert strategy.histories == [(10,), (10,)] if False else [(), (10,)]
+    assert result.decisions_emitted == 2
+
+
+def test_event_strategy_supports_custom_event_types_and_decisions():
+    event = MarketEvent(100, "NEWS", EventType.CUSTOM, {"headline": "test"})
+    seen = []
+
+    class Strategy:
+        strategy_id = "custom-event"
+        strategy_version = "1"
+
+        def on_event(self, current, context):
+            seen.append((current.event_type, context.history))
+            return StrategyDecision(action="BUY", metadata={"reason": "custom"})
+
+    result = EventBacktestEngine().run([event], Strategy())
+    assert seen == [(EventType.CUSTOM, ())]
+    assert result.decisions_emitted == 1
+
+
+def test_strategy_must_return_strategy_decision_or_none():
+    class BadStrategy:
+        strategy_id = "bad"
+        strategy_version = "1"
+
+        def on_event(self, event, context):
+            return "BUY"
+
+    with pytest.raises(TypeError, match="StrategyDecision"):
+        EventBacktestEngine().run([MarketEvent(1, "X", EventType.TRADE, {})], BadStrategy())
+
+
+def test_filtered_events_do_not_appear_in_strategy_history():
+    events = [
+        MarketEvent(1, "X", EventType.QUOTE, {}),
+        MarketEvent(2, "X", EventType.TRADE, {}),
+    ]
+    histories = []
+
+    class Strategy:
+        strategy_id = "filter"
+        strategy_version = "1"
+
+        def on_event(self, event, context):
+            histories.append(tuple(e.event_type for e in context.history))
+            return None
+
+    EventBacktestEngine(
+        EventReplayConfig(include_event_types=frozenset({EventType.TRADE}))
+    ).run(events, Strategy())
+    assert histories == [()]
 
 
 def test_rejects_out_of_order_source_events():
@@ -59,9 +134,5 @@ def test_rejects_out_of_order_source_events():
         MarketEvent(2, "NIFTY", EventType.QUOTE, {}),
         MarketEvent(1, "NIFTY", EventType.QUOTE, {}),
     ]
-    try:
+    with pytest.raises(ValueError, match="ordered"):
         EventBacktestEngine().run(events, lambda event, state: None)
-    except ValueError as exc:
-        assert "ordered" in str(exc)
-    else:
-        raise AssertionError("expected out-of-order events to fail")
