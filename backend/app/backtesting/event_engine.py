@@ -25,13 +25,7 @@ class ReplayStats:
 
 
 class EventBacktestEngine:
-    """Replay source events with point-in-time, instrument-specific execution.
-
-    The engine never fabricates observations between source events. Each order
-    uses only the latest market state already observed for its own instrument,
-    so multi-leg strategies cannot accidentally fill one leg from another
-    instrument's quote or from a future observation.
-    """
+    """Replay source events with point-in-time, instrument-specific execution."""
 
     def __init__(self, config: EventReplayConfig | None = None, *, execution: ExecutionSimulator | None = None,
                  portfolio: Portfolio | None = None) -> None:
@@ -131,11 +125,11 @@ class EventBacktestEngine:
             observed = self._latest_events[order.instrument]
             book_state = self._latest_books.get(order.instrument)
             if book_state is not None and book_state[0] == observed.timestamp_ns:
-                result = self.execution.execute_depth(order, book_state[1], observed.timestamp_ns)
+                result = self.execution.execute_depth(order, book_state[1], event.timestamp_ns)
                 order_fills = result.fills
             else:
                 market_price = self._event_price(observed, order.side)
-                order_fills = () if market_price is None else (self.execution.execute(order, market_price, observed.timestamp_ns),)
+                order_fills = () if market_price is None else (self.execution.execute(order, market_price, event.timestamp_ns),)
             fills.extend(order_fills)
 
         try:
