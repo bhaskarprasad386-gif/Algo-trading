@@ -5,6 +5,7 @@ from typing import Callable, Iterable, Mapping
 
 from app.backtesting.events import EventReplayConfig, EventType, MarketEvent
 from app.backtesting.execution import ExecutionSimulator, SimFill, SimOrder, OrderBook, DepthLevel, ExecutionSide
+from app.backtesting.order_lifecycle import OrderLifecycle, OrderStatus, TimeInForce, stop_triggered, tif_after_execution
 from app.backtesting.portfolio import Portfolio, PortfolioSnapshot, RiskViolation
 from app.backtesting.strategy import StrategyContext, StrategyDecision, validate_decision
 
@@ -35,6 +36,12 @@ class EventBacktestEngine:
         self._latest_events: dict[str, MarketEvent] = {}
         self._latest_books: dict[str, tuple[int, OrderBook]] = {}
         self._risk_blocks = 0
+        self._order_lifecycles: dict[str, OrderLifecycle] = {}
+
+    @property
+    def order_states(self) -> Mapping[str, object]:
+        """Expose the deterministic lifecycle state of orders seen during replay."""
+        return {order_id: lifecycle.state for order_id, lifecycle in self._order_lifecycles.items()}
 
     @staticmethod
     def _event_price(event: MarketEvent, side: ExecutionSide | None = None) -> float | None:
@@ -75,18 +82,34 @@ class EventBacktestEngine:
             if levels: return levels[0].price
         return self._event_price(observed, order.side)
 
+    def _lifecycle(self, order: SimOrder, timestamp_ns: int) -> OrderLifecycle:
+        lifecycle = self._order_lifecycles.get(order.order_id)
+        if lifecycle is None or lifecycle.state.terminal:
+            lifecycle = OrderLifecycle(order)
+            self._order_lifecycles[order.order_id] = lifecycle
+            lifecycle.accept(timestamp_ns)
+        elif lifecycle.state.status == OrderStatus.SUBMITTED:
+            lifecycle.accept(timestamp_ns)
+        return lifecycle
+
     def _execute_decision(self, decision: StrategyDecision, event: MarketEvent) -> tuple[SimFill, ...]:
         if self.execution is None or self.portfolio is None or not decision.orders: return ()
-        effective_orders, reservations = [], {}
+        effective_orders, reservations, lifecycles = [], {}, {}
         try:
             for order in decision.orders:
                 if not isinstance(order, SimOrder): raise TypeError("strategy orders must be SimOrder instances")
                 submitted = max(order.submitted_at_ns, event.timestamp_ns)
                 effective_order = SimOrder(order_id=order.order_id, instrument=order.instrument, side=order.side,
                     quantity=order.quantity, order_type=order.order_type, limit_price=order.limit_price,
-                    stop_price=order.stop_price, submitted_at_ns=submitted, queue_ahead_quantity=order.queue_ahead_quantity)
+                    stop_price=order.stop_price, submitted_at_ns=submitted, queue_ahead_quantity=order.queue_ahead_quantity,
+                    time_in_force=order.time_in_force)
+                lifecycle = self._lifecycle(effective_order, submitted)
+                lifecycles[effective_order.order_id] = lifecycle
                 observed = self._latest_events.get(order.instrument)
                 if observed is None or observed.timestamp_ns > event.timestamp_ns: continue
+                observed_price = self._event_price(observed, None)
+                if effective_order.order_type.name == "STOP" and (observed_price is None or not stop_triggered(effective_order, observed_price)):
+                    continue
                 reference_price = self._order_reference_price(effective_order, observed)
                 if reference_price is None: continue
                 reservation = effective_order.quantity * reference_price * self.portfolio.risk_config.initial_margin_rate
@@ -97,13 +120,22 @@ class EventBacktestEngine:
             for order_id in reservations: self.portfolio.release_margin(order_id)
             return ()
         fills = []
+        fill_results = {}
         for order in effective_orders:
             observed = self._latest_events[order.instrument]; book_state = self._latest_books.get(order.instrument)
             if book_state is not None and book_state[0] == observed.timestamp_ns:
-                fills.extend(self.execution.execute_depth(order, book_state[1], event.timestamp_ns).fills)
+                execution_result = self.execution.execute_depth(order, book_state[1], event.timestamp_ns)
+                if order.time_in_force == TimeInForce.FOK and execution_result.remaining_quantity > 0:
+                    fill_results[order.order_id] = execution_result
+                    continue
+                fills.extend(execution_result.fills)
+                fill_results[order.order_id] = execution_result
             else:
                 price = self._event_price(observed, order.side)
-                if price is not None: fills.append(self.execution.execute(order, price, event.timestamp_ns))
+                if price is not None:
+                    fill = self.execution.execute(order, price, event.timestamp_ns)
+                    fills.append(fill)
+                    fill_results[order.order_id] = type("ExecutionResult", (), {"remaining_quantity": 0, "rejected": False, "reason": None})()
         try:
             if fills:
                 marks = {i: self._event_price(e, None) for i, e in self._latest_events.items()}
@@ -115,9 +147,27 @@ class EventBacktestEngine:
         filled_by_order = {}
         for fill in fills: filled_by_order[fill.order_id] = filled_by_order.get(fill.order_id, 0) + fill.quantity
         for order in effective_orders:
+            lifecycle = lifecycles[order.order_id]
+            order_fills = tuple(fill for fill in fills if fill.order_id == order.order_id)
+            for fill in order_fills:
+                lifecycle.apply_fill(fill)
+            result = fill_results.get(order.order_id)
+            if not order_fills and result is not None and result.rejected:
+                if order.time_in_force == TimeInForce.FOK:
+                    lifecycle.reject(result.reason or "FOK not fully executable", event.timestamp_ns)
+                elif order.time_in_force == TimeInForce.IOC:
+                    lifecycle.cancel(event.timestamp_ns, result.reason or "IOC not executable")
+            remaining = lifecycle.state.remaining_quantity
+            terminal_action = tif_after_execution(order.time_in_force, remaining)
+            if terminal_action == OrderStatus.CANCELLED and not lifecycle.state.terminal:
+                lifecycle.cancel(event.timestamp_ns, "IOC residual cancelled")
+            elif terminal_action == OrderStatus.REJECTED and not lifecycle.state.terminal:
+                lifecycle.reject("FOK residual rejected", event.timestamp_ns)
             reservation = reservations[order.order_id]; filled_qty = filled_by_order.get(order.order_id, 0)
-            if filled_qty >= order.quantity or filled_qty == 0: self.portfolio.release_margin(order.order_id)
-            else: self.portfolio.release_margin(order.order_id, reservation / order.quantity * filled_qty)
+            if lifecycle.state.terminal:
+                self.portfolio.release_margin(order.order_id)
+            elif filled_qty:
+                self.portfolio.release_margin(order.order_id, reservation / order.quantity * filled_qty)
         return tuple(fills)
 
     def market_state(self) -> Mapping[str, object]:
@@ -152,7 +202,7 @@ class EventBacktestEngine:
         if checkpoint_interval is not None and checkpoint_interval <= 0: raise ValueError("checkpoint_interval must be positive")
         context_state = dict(state or {}); history = []; seen = dispatched = decisions = orders = fill_count = 0
         first = last = None; previous_key = None; started = False; self._risk_blocks = 0
-        if start_event_index == 0: self._latest_events.clear(); self._latest_books.clear()
+        if start_event_index == 0: self._latest_events.clear(); self._latest_books.clear(); self._order_lifecycles.clear()
         for raw_index, raw_event in enumerate(events):
             seen += 1
             timestamp_ns = raw_event.timestamp_ns if self.config.timestamp_unit == "ns" else self.config.to_ns(raw_event.timestamp_ns)
