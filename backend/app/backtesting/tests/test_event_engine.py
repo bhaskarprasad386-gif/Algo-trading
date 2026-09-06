@@ -6,7 +6,7 @@ from app.backtesting.event_engine import EventBacktestEngine
 from app.backtesting.events import EventReplayConfig, EventType, MarketEvent
 from app.backtesting.execution import ExecutionSimulator, ExecutionSide, SimOrder
 from app.backtesting.portfolio import Portfolio
-from app.backtesting.strategy import StrategyContext, StrategyDecision
+from app.backtesting.strategy import StrategyDecision
 
 
 def test_replays_millisecond_events_without_fabrication():
@@ -121,6 +121,57 @@ def test_same_timestamp_quotes_can_fill_both_legs():
     events = [MarketEvent(1_000, "FUT_NEAR", EventType.QUOTE, {"bid": 99, "ask": 101}, sequence=1), MarketEvent(1_000, "FUT_FAR", EventType.QUOTE, {"bid": 205, "ask": 207}, sequence=2)]
     result = engine.run(events, Strategy())
     assert result.fills == 2
+
+
+def test_stale_depth_is_not_used_after_a_newer_quote():
+    class Strategy:
+        strategy_id = "stale-depth"; strategy_version = "1"
+        def on_event(self, event, context):
+            if event.event_type != EventType.QUOTE:
+                return None
+            return StrategyDecision(action="BUY", orders=(SimOrder("o1", "NIFTY", ExecutionSide.BUY, 2),))
+    portfolio = Portfolio(initial_cash=100_000)
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    events = [
+        MarketEvent(1_000, "NIFTY", EventType.DEPTH, {"asks": [[100.0, 10]], "bids": [[99.0, 10]]}),
+        MarketEvent(2_000, "NIFTY", EventType.QUOTE, {"bid": 104.0, "ask": 105.0}),
+    ]
+    result = engine.run(events, Strategy())
+    assert result.fills == 1
+    assert result.final_snapshot.cash == pytest.approx(99_790)
+
+
+def test_latest_depth_snapshot_replaces_previous_depth_without_fabrication():
+    class Strategy:
+        strategy_id = "dynamic-depth"; strategy_version = "1"
+        def on_event(self, event, context):
+            if event.sequence != 3:
+                return None
+            return StrategyDecision(action="BUY", orders=(SimOrder("o1", "NIFTY", ExecutionSide.BUY, 4),))
+    portfolio = Portfolio(initial_cash=100_000)
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    events = [
+        MarketEvent(1_000, "NIFTY", EventType.DEPTH, {"asks": [[100.0, 10]], "bids": [[99.0, 10]]}, sequence=1),
+        MarketEvent(1_500, "NIFTY", EventType.DEPTH, {"asks": [[101.0, 2], [101.5, 5]], "bids": [[100.0, 7]]}, sequence=2),
+        MarketEvent(1_500, "NIFTY", EventType.QUOTE, {"bid": 100.0, "ask": 101.0}, sequence=3),
+    ]
+    result = engine.run(events, Strategy())
+    assert result.fills == 2
+    assert result.final_snapshot.cash == pytest.approx(100_000 - 2 * 101.0 - 2 * 101.5)
+
+
+def test_strategy_order_queue_ahead_is_preserved_by_event_engine():
+    class Strategy:
+        strategy_id = "queue-preserve"; strategy_version = "1"
+        def on_event(self, event, context):
+            if event.event_type != EventType.DEPTH:
+                return None
+            return StrategyDecision(action="BUY", orders=(SimOrder("o1", "NIFTY", ExecutionSide.BUY, 3, queue_ahead_quantity=2),))
+    portfolio = Portfolio(initial_cash=100_000)
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    result = engine.run([MarketEvent(1_000, "NIFTY", EventType.DEPTH, {"asks": [[100.0, 5]], "bids": [[99.0, 5]]})], Strategy())
+    assert result.fills == 1
+    assert result.final_snapshot.cash == pytest.approx(99_700)
 
 
 def test_strategy_must_return_strategy_decision_or_none():
