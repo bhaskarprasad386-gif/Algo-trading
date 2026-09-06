@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from enum import Enum
 
-from app.backtesting.execution import ExecutionSide, OrderType, SimFill, SimOrder
+from app.backtesting.execution import ExecutionSide, OrderType, SimFill, SimOrder, TimeInForce
 
 
 class OrderStatus(str, Enum):
@@ -15,13 +15,6 @@ class OrderStatus(str, Enum):
     CANCELLED = "CANCELLED"
     EXPIRED = "EXPIRED"
     REPLACED = "REPLACED"
-
-
-class TimeInForce(str, Enum):
-    DAY = "DAY"
-    GTC = "GTC"
-    IOC = "IOC"
-    FOK = "FOK"
 
 
 @dataclass(frozen=True)
@@ -59,10 +52,11 @@ class OrderLifecycle:
 
     TERMINAL = {OrderStatus.FILLED, OrderStatus.REJECTED, OrderStatus.CANCELLED, OrderStatus.EXPIRED, OrderStatus.REPLACED}
 
-    def __init__(self, order: SimOrder, time_in_force: TimeInForce = TimeInForce.DAY) -> None:
-        if not isinstance(time_in_force, TimeInForce):
+    def __init__(self, order: SimOrder, time_in_force: TimeInForce | None = None) -> None:
+        tif = order.time_in_force if time_in_force is None else time_in_force
+        if not isinstance(tif, TimeInForce):
             raise ValueError("invalid time_in_force")
-        self.state = OrderState(order=order, status=OrderStatus.SUBMITTED, time_in_force=time_in_force)
+        self.state = OrderState(order=order, status=OrderStatus.SUBMITTED, time_in_force=tif)
 
     def _transition(self, status: OrderStatus, timestamp_ns: int, *, reason: str | None = None, replacement_order_id: str | None = None) -> OrderState:
         if timestamp_ns < self.state.order.submitted_at_ns:
