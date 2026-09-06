@@ -85,17 +85,24 @@ class CashFutureHistoricalDownloadService:
             chunk_ns=7 * 24 * 60 * 60 * 1_000_000_000,
         )
 
-    def _should_skip_chunk(self, request) -> bool:
+    def _chunk_is_complete(self, request) -> bool:
         interval_ns = _TIMEFRAME_INTERVAL_NS.get(request.timeframe)
         if interval_ns is None:
             raise ValueError(f"unsupported timeframe for completeness checks: {request.timeframe}")
         sessions = tuple(self.session_windows(request))
         if not sessions:
-            return False
+            return True
         return self.completeness.is_complete(
             source=request.source, instrument=request.instrument, timeframe=request.timeframe,
             interval_ns=interval_ns, chunk=SessionChunk(request.start_ns, request.end_ns), sessions=sessions,
         )
+
+    def _should_skip_chunk(self, request) -> bool:
+        return self._chunk_is_complete(request)
+
+    def _should_accept_chunk(self, request, _result) -> bool:
+        """Accept provider output only after the persisted chunk is complete."""
+        return self._chunk_is_complete(request)
 
     def run(self, *, spot_instrument: str, exchange: str, underlying: str, start, end,
             timeframe: str = "1m", mode: str = "BOTH", retry_attempts: int = 3,
@@ -105,14 +112,24 @@ class CashFutureHistoricalDownloadService:
             underlying=underlying, start=start, end=end, timeframe=timeframe, mode=mode,
         )
         effective_skip = should_skip or self._should_skip_chunk
-        spot_result = self.executor.run(self.source, self._plan_for_request(queue.spot),
-                                        retry_attempts=retry_attempts, should_skip=effective_skip)
+        spot_result = self.executor.run(
+            self.source,
+            self._plan_for_request(queue.spot),
+            retry_attempts=retry_attempts,
+            should_skip=effective_skip,
+            should_accept=self._should_accept_chunk,
+        )
         if spot_result.failed_request_index is not None:
             return CashFutureHistoricalDownloadReport(queue, spot_result, tuple(), self.catalog.count())
         future_results = []
         for item in queue.futures:
-            result = self.executor.run(self.source, self._plan_for_request(item.request),
-                                       retry_attempts=retry_attempts, should_skip=effective_skip)
+            result = self.executor.run(
+                self.source,
+                self._plan_for_request(item.request),
+                retry_attempts=retry_attempts,
+                should_skip=effective_skip,
+                should_accept=self._should_accept_chunk,
+            )
             future_results.append(result)
             if result.failed_request_index is not None:
                 break
