@@ -28,7 +28,7 @@ class CashFutureHistoricalDownloadReport:
 
 
 class CashFutureHistoricalDownloadService:
-    """Download spot/future segments sequentially and persist every chunk immediately."""
+    """Download spot/future requests sequentially and persist each chunk immediately."""
 
     def __init__(self, catalog: HistoricalCatalog, contract_catalog, *, source=None, executor=None) -> None:
         self.catalog = catalog
@@ -39,33 +39,58 @@ class CashFutureHistoricalDownloadService:
 
     @staticmethod
     def _plan_for_request(request) -> HistoricalSyncPlan:
+        start_ns = request.start_ns
+        end_ns = request.end_ns
+        # Seven-day chunks are provider-safe for 1-minute data and remain conservative
+        # for other supported intervals. The underlying timestamp precision is preserved.
         chunk_ns = 7 * 24 * 60 * 60 * 1_000_000_000
         return build_chunked_plan(
-            request.source, request.instrument, request.timeframe,
-            request.start_ns, request.end_ns, chunk_ns,
+            source=request.source,
+            instrument=request.instrument,
+            timeframe=request.timeframe,
+            start_ns=start_ns,
+            end_ns=end_ns,
+            chunk_ns=chunk_ns,
         )
 
-    def run(self, *, spot_instrument: str, exchange: str, underlying: str,
-            start: datetime, end: datetime, timeframe: str = "1m", mode: str = "BOTH",
-            retry_attempts: int = 3) -> CashFutureHistoricalDownloadReport:
-        if start.tzinfo is None or end.tzinfo is None:
-            raise ValueError("start and end must be timezone-aware")
-        if end < start:
-            raise ValueError("end must not precede start")
+    def run(
+        self,
+        *,
+        spot_instrument: str,
+        exchange: str,
+        underlying: str,
+        start: datetime,
+        end: datetime,
+        timeframe: str = "1m",
+        mode: str = "BOTH",
+        retry_attempts: int = 3,
+    ) -> CashFutureHistoricalDownloadReport:
         queue = build_rollover_download_queue(
             catalog=self.contract_catalog,
-            spot_instrument=spot_instrument, exchange=exchange, underlying=underlying,
-            start=start, end=end, timeframe=timeframe, mode=mode,
+            spot_instrument=spot_instrument,
+            exchange=exchange,
+            underlying=underlying,
+            start=start,
+            end=end,
+            timeframe=timeframe,
+            mode=mode,
         )
         spot_result = self.executor.run(
-            self.source, self._plan_for_request(queue.spot), retry_attempts=retry_attempts
+            self.source,
+            self._plan_for_request(queue.spot),
+            retry_attempts=retry_attempts,
         )
         if spot_result.failed_request_index is not None:
-            return CashFutureHistoricalDownloadReport(queue, spot_result, tuple(), self.catalog.count())
+            return CashFutureHistoricalDownloadReport(
+                queue, spot_result, tuple(), self.catalog.count()
+            )
+
         future_results: list[DownloadExecutionResult] = []
         for item in queue.futures:
             result = self.executor.run(
-                self.source, self._plan_for_request(item.request), retry_attempts=retry_attempts
+                self.source,
+                self._plan_for_request(item.request),
+                retry_attempts=retry_attempts,
             )
             future_results.append(result)
             if result.failed_request_index is not None:
