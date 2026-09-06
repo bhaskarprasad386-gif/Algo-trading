@@ -60,3 +60,28 @@ def test_chunk_upsert_is_idempotent():
     assert rows[0].status == "COMPLETE"
     assert rows[0].attempts == 2
     store.close()
+
+
+def test_incomplete_chunks_preserve_exact_identity_and_exclude_completed():
+    store = HistoricalDownloadStatusStore()
+    store.create_job(
+        job_id="job-3", mode="BOTH", timeframe="1m", spot_instrument="NSE:SPOT",
+        exchange="NFO", underlying="ABC", start_ns=0, end_ns=300,
+    )
+    rows = [
+        DownloadChunkStatus("job-3", 0, "NSE:SPOT", 0, 99, "COMPLETE", 1),
+        DownloadChunkStatus("job-3", 1, "NFO:111:ABC26SEP", 100, 199, "FAILED", 3),
+        DownloadChunkStatus("job-3", 2, "NFO:222:ABC26OCT", 200, 299, "RUNNING", 1),
+        DownloadChunkStatus("job-3", 3, "NFO:333:ABC26NOV", 300, 300, "SKIPPED", 0),
+        DownloadChunkStatus("job-3", 4, "NFO:444:ABC26DEC", 301, 399, "COMPLETE", 1, missing_timestamps=2),
+    ]
+    for row in rows:
+        store.upsert_chunk(row)
+
+    incomplete = store.incomplete_chunks("job-3")
+    assert [(row.sequence, row.instrument, row.start_ns, row.end_ns) for row in incomplete] == [
+        (1, "NFO:111:ABC26SEP", 100, 199),
+        (2, "NFO:222:ABC26OCT", 200, 299),
+        (4, "NFO:444:ABC26DEC", 301, 399),
+    ]
+    store.close()
