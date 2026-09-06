@@ -29,6 +29,7 @@ from app.execution.paper_routes import router as paper_execution_router
 from app.scanner.cash_future_collector import CashFutureHistoryCollector
 from app.brokers.routes import router as brokers_router
 from app.backtesting.download_status_routes import create_download_status_router
+from app.backtesting.cash_future_download_routes import CashFutureDownloadManager, create_cash_future_download_router
 from app.backtesting.historical_download_status import HistoricalDownloadStatusStore
 
 run_schema_migrations()
@@ -55,6 +56,16 @@ BACKTEST_STATUS_DB = Path(settings.BACKTEST_STATUS_DB)
 BACKTEST_STATUS_DB.parent.mkdir(parents=True, exist_ok=True)
 backtest_status_store = HistoricalDownloadStatusStore(str(BACKTEST_STATUS_DB))
 app.include_router(create_download_status_router(backtest_status_store))
+
+# Long-running Cash-Future historical downloads use separate durable data and
+# contract-master databases. The manager opens those databases only inside its
+# worker thread; the status store is internally locked for API/worker sharing.
+backtest_download_manager = CashFutureDownloadManager(
+    data_db=settings.BACKTEST_DATA_DB,
+    contract_db=settings.BACKTEST_CONTRACT_DB,
+    status_store=backtest_status_store,
+)
+app.include_router(create_cash_future_download_router(backtest_download_manager))
 
 DASHBOARD_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "index.html"
 BROKER_SETTINGS_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "broker.html"
@@ -240,6 +251,7 @@ async def shutdown_event():
         except asyncio.CancelledError:
             pass
         _history_collector_task = None
+    backtest_download_manager.close()
     backtest_status_store.close()
 
 
