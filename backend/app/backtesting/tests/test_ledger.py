@@ -26,7 +26,24 @@ def test_checkpoint_is_updated_atomically():
     ledger.checkpoint(Checkpoint("run-2", 1, 10, {"x": 1}))
     ledger.checkpoint(Checkpoint("run-2", 2, 20, {"x": 2}))
     assert ledger.load_checkpoint("run-2").state["x"] == 2
+    history = ledger.checkpoint_history("run-2")
+    assert [(c.event_index, c.timestamp_ns) for c in history] == [(1, 10), (2, 20)]
     ledger.close()
+
+
+def test_checkpoint_history_survives_reopen(tmp_path):
+    path = tmp_path / "checkpoint-history.sqlite"
+    ledger = BacktestLedger(str(path))
+    ledger.start_run("run-history", "s", "1", 1000)
+    ledger.checkpoint(Checkpoint("run-history", 1, 10, {"x": 1}))
+    ledger.checkpoint(Checkpoint("run-history", 2, 20, {"x": 2}))
+    ledger.close()
+
+    reopened = BacktestLedger(str(path))
+    history = reopened.checkpoint_history("run-history")
+    assert [c.state["x"] for c in history] == [1, 2]
+    assert reopened.load_checkpoint("run-history").state["x"] == 2
+    reopened.close()
 
 
 def test_duplicate_run_id_is_rejected():
