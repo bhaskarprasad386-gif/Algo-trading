@@ -17,9 +17,8 @@ from .session_chunk_completeness import SessionChunk, SessionChunkCompleteness
 from .session_gap_planner import SessionWindow
 
 _TIMEFRAME_INTERVAL_NS = {
-    "1m": 60 * 1_000_000_000, "3m": 3 * 60 * 1_000_000_000,
-    "5m": 5 * 60 * 1_000_000_000, "10m": 10 * 60 * 1_000_000_000,
-    "15m": 15 * 60 * 1_000_000_000, "30m": 30 * 60 * 1_000_000_000,
+    "1m": 60 * 1_000_000_000, "3m": 3 * 60 * 1_000_000_000, "5m": 5 * 60 * 1_000_000_000,
+    "10m": 10 * 60 * 1_000_000_000, "15m": 15 * 60 * 1_000_000_000, "30m": 30 * 60 * 1_000_000_000,
     "1h": 60 * 60 * 1_000_000_000, "1d": 24 * 60 * 60 * 1_000_000_000,
 }
 _INTRADAY_TIMEFRAMES = frozenset(_TIMEFRAME_INTERVAL_NS) - {"1d"}
@@ -83,9 +82,8 @@ class CashFutureHistoricalDownloadService:
         sessions = tuple(self.session_windows(request))
         if not sessions:
             return True
-        return self.completeness.is_complete(source=request.source, instrument=request.instrument,
-                                             timeframe=request.timeframe, interval_ns=interval_ns,
-                                             chunk=SessionChunk(request.start_ns, request.end_ns), sessions=sessions)
+        return self.completeness.is_complete(source=request.source, instrument=request.instrument, timeframe=request.timeframe,
+                                             interval_ns=interval_ns, chunk=SessionChunk(request.start_ns, request.end_ns), sessions=sessions)
 
     def _chunk_metrics(self, request) -> tuple[int, int, int, int | None]:
         sessions = tuple(self.session_windows(request))
@@ -95,8 +93,8 @@ class CashFutureHistoricalDownloadService:
         expected_set = self.completeness._expected_timestamps(sessions, interval_ns)
         if not expected_set:
             return 0, 0, 0, None
-        actual_set = set(self.catalog.timestamps(source=request.source, instrument=request.instrument,
-                                                  timeframe=request.timeframe, start_ns=min(expected_set), end_ns=max(expected_set)))
+        actual_set = set(self.catalog.timestamps(source=request.source, instrument=request.instrument, timeframe=request.timeframe,
+                                                  start_ns=min(expected_set), end_ns=max(expected_set)))
         missing_set = expected_set - actual_set
         return len(expected_set), len(actual_set), len(missing_set), min(missing_set) if missing_set else None
 
@@ -124,8 +122,7 @@ class CashFutureHistoricalDownloadService:
             persist_chunk_result(store, job_id=job_id, sequence=sequence_offset + index, instrument=request.instrument,
                                  start_ns=request.start_ns, end_ns=request.end_ns, attempts=attempt, status="COMPLETE",
                                  expected_timestamps=expected, actual_timestamps=actual, missing_timestamps=missing,
-                                 first_missing_ns=first_missing, fetched_records=result.fetched,
-                                 inserted_records=result.inserted)
+                                 first_missing_ns=first_missing, fetched_records=result.fetched, inserted_records=result.inserted)
 
         def failed(index, request, error, attempts):
             from .download_status_progress import persist_chunk_result
@@ -140,10 +137,10 @@ class CashFutureHistoricalDownloadService:
 
     def run(self, *, spot_instrument: str, exchange: str, underlying: str, start, end,
             timeframe: str = "1m", mode: str = "BOTH", retry_attempts: int = 3,
-            should_skip: Callable[[object], bool] | None = None, job_id: str | None = None) -> CashFutureHistoricalDownloadReport:
-        queue = build_rollover_download_queue(catalog=self.contract_catalog, spot_instrument=spot_instrument,
-                                               exchange=exchange, underlying=underlying, start=start, end=end,
-                                               timeframe=timeframe, mode=mode)
+            should_skip: Callable[[object], bool] | None = None, job_id: str | None = None,
+            resume: bool = False) -> CashFutureHistoricalDownloadReport:
+        queue = build_rollover_download_queue(catalog=self.contract_catalog, spot_instrument=spot_instrument, exchange=exchange,
+                                               underlying=underlying, start=start, end=end, timeframe=timeframe, mode=mode)
         spot_plan = self._plan_for_request(queue.spot)
         future_plans = tuple(self._plan_for_request(item.request) for item in queue.futures)
         total_chunks = len(spot_plan.requests) + sum(len(plan.requests) for plan in future_plans)
@@ -152,7 +149,7 @@ class CashFutureHistoricalDownloadService:
             end_ns = max([queue.spot.end_ns, *[item.request.end_ns for item in queue.futures]])
             self.status_store.create_job(job_id=job_id, mode=mode, timeframe=timeframe, spot_instrument=spot_instrument,
                                          exchange=exchange, underlying=underlying, start_ns=start_ns, end_ns=end_ns,
-                                         requested_chunks=total_chunks)
+                                         requested_chunks=total_chunks, reset_existing=not resume)
         effective_skip = should_skip or self._chunk_is_complete
         sequence_offset = 0
         callbacks = self._callbacks(job_id, sequence_offset) if job_id else {}
@@ -173,6 +170,6 @@ class CashFutureHistoricalDownloadService:
         if self.status_store is not None and job_id is not None:
             completed = spot_result.completed_chunks + sum(r.completed_chunks for r in future_results)
             skipped = spot_result.skipped_chunks + sum(r.skipped_chunks for r in future_results)
-            self.status_store.update_job(job_id, status="COMPLETE", completed_chunks=completed,
-                                         skipped_chunks=skipped, failed_chunks=0, catalog_count=self.catalog.count())
+            self.status_store.update_job(job_id, status="COMPLETE", completed_chunks=completed, skipped_chunks=skipped,
+                                         failed_chunks=0, catalog_count=self.catalog.count())
         return CashFutureHistoricalDownloadReport(queue, spot_result, tuple(future_results), self.catalog.count())
