@@ -1,4 +1,4 @@
-"""Durable replay wrapper that journals events, decisions, fills and checkpoints."""
+"""Durable replay wrapper that journals events, decisions and checkpoints."""
 
 from __future__ import annotations
 
@@ -12,12 +12,7 @@ from app.backtesting.strategy import StrategyDecision
 
 
 class DurableEventBacktestEngine:
-    """Event engine with an append-only audit journal and resumable cursor.
-
-    The underlying replay remains deterministic; the ledger records the exact
-    source-event cursor and audit information needed to inspect or resume a
-    run. No market observations are synthesized during recovery.
-    """
+    """Event engine with an append-only audit journal and resumable cursor."""
 
     def __init__(self, engine: EventBacktestEngine, ledger: BacktestLedger,
                  run_id: str, *, checkpoint_interval: int = 1) -> None:
@@ -41,8 +36,10 @@ class DurableEventBacktestEngine:
     def run(self, events: Iterable[MarketEvent], strategy: object,
             *, state: Mapping[str, object] | None = None) -> ReplayStats:
         source_events = tuple(events)
-        self.ledger.append(LedgerRecord(
-            self.run_id, "RUN_START", source_events[0].timestamp_ns if source_events else 0,
+        ledger = self.ledger
+        run_id = self.run_id
+        ledger.append(LedgerRecord(
+            run_id, "RUN_START", source_events[0].timestamp_ns if source_events else 0,
             {"event_count": len(source_events)},
         ))
 
@@ -66,6 +63,8 @@ class DurableEventBacktestEngine:
                     return None
                 decision = handler(event, context)
                 if decision is not None:
+                    if not isinstance(decision, StrategyDecision):
+                        raise TypeError("event strategy must return StrategyDecision or None")
                     ledger.append(LedgerRecord(
                         run_id, "DECISION", event.timestamp_ns,
                         {"action": decision.action, "orders": len(decision.orders),
@@ -80,10 +79,8 @@ class DurableEventBacktestEngine:
 
         journaled = JournalStrategy()
         result = self.engine.run(source_events, journaled, state=state)
-        checkpoint = Checkpoint(
-            self.run_id,
-            result.events_dispatched,
-            result.last_timestamp_ns or 0,
+        ledger.checkpoint(Checkpoint(
+            run_id, result.events_dispatched, result.last_timestamp_ns or 0,
             {
                 "events_seen": result.events_seen,
                 "events_dispatched": result.events_dispatched,
@@ -94,10 +91,9 @@ class DurableEventBacktestEngine:
                 "state": dict(state or {}),
                 "final_snapshot": asdict(result.final_snapshot) if result.final_snapshot is not None else None,
             },
-        )
-        self.ledger.checkpoint(checkpoint)
-        self.ledger.append(LedgerRecord(
-            self.run_id, "RUN_END", result.last_timestamp_ns or 0,
+        ))
+        ledger.append(LedgerRecord(
+            run_id, "RUN_END", result.last_timestamp_ns or 0,
             {"events_dispatched": result.events_dispatched, "fills": result.fills,
              "risk_blocks": result.risk_blocks},
         ))
