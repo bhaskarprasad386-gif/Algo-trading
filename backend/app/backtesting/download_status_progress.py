@@ -13,11 +13,15 @@ def _refresh_job_counters(store: HistoricalDownloadStatusStore, job_id: str) -> 
     completed = sum(c.status == "COMPLETE" for c in chunks)
     skipped = sum(c.status == "SKIPPED" for c in chunks)
     failed = sum(c.status == "FAILED" for c in chunks)
+    fetched = sum(c.fetched_records for c in chunks)
+    inserted = sum(c.inserted_records for c in chunks)
     store.update_job(
         job_id,
         completed_chunks=completed,
         skipped_chunks=skipped,
         failed_chunks=failed,
+        fetched_records=fetched,
+        inserted_records=inserted,
         catalog_count=job.catalog_count,
     )
 
@@ -54,6 +58,8 @@ def persist_chunk_start(
             actual_timestamps=actual_timestamps or (existing.actual_timestamps if existing else 0),
             missing_timestamps=missing_timestamps or (existing.missing_timestamps if existing else 0),
             first_missing_ns=first_missing_ns if first_missing_ns is not None else (existing.first_missing_ns if existing else None),
+            fetched_records=existing.fetched_records if existing else 0,
+            inserted_records=existing.inserted_records if existing else 0,
         )
     )
     store.update_job(job_id, status="RUNNING")
@@ -73,6 +79,8 @@ def persist_chunk_result(
     actual_timestamps: int = 0,
     missing_timestamps: int = 0,
     first_missing_ns: int | None = None,
+    fetched_records: int = 0,
+    inserted_records: int = 0,
     error: str | None = None,
 ) -> None:
     store.upsert_chunk(
@@ -87,7 +95,9 @@ def persist_chunk_result(
             expected_timestamps=expected_timestamps,
             actual_timestamps=actual_timestamps,
             missing_timestamps=missing_timestamps,
-            first_missing_ns=first_missing_ns,
+            first_missing_ns=missing_timestamps and first_missing_ns or first_missing_ns,
+            fetched_records=fetched_records,
+            inserted_records=inserted_records,
             error=error,
         )
     )
