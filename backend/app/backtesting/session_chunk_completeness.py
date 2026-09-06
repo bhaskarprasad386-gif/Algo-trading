@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .historical_catalog import HistoricalCatalog
-from .session_gap_planner import SessionAwareGapPlanner, SessionWindow
+from .session_gap_planner import SessionWindow
 
 
 @dataclass(frozen=True)
@@ -19,11 +19,22 @@ class SessionChunk:
 
 
 class SessionChunkCompleteness:
-    """Determine whether a chunk has all expected timestamps inside supplied sessions."""
+    """Prove completeness by enumerating every expected timestamp in each session."""
 
     def __init__(self, catalog: HistoricalCatalog) -> None:
         self.catalog = catalog
-        self.gap_planner = SessionAwareGapPlanner(catalog)
+
+    @staticmethod
+    def _expected_timestamps(
+        sessions: tuple[SessionWindow, ...], interval_ns: int
+    ) -> set[int]:
+        expected: set[int] = set()
+        for session in sessions:
+            timestamp = session.start_ns
+            while timestamp <= session.end_ns:
+                expected.add(timestamp)
+                timestamp += interval_ns
+        return expected
 
     def is_complete(
         self,
@@ -47,11 +58,17 @@ class SessionChunkCompleteness:
         )
         if not relevant:
             return True
-        gaps = self.gap_planner.plan(
-            source=source,
-            instrument=instrument,
-            timeframe=timeframe,
-            interval_ns=interval_ns,
-            sessions=relevant,
+
+        expected = self._expected_timestamps(relevant, interval_ns)
+        if not expected:
+            return True
+        actual = set(
+            self.catalog.timestamps(
+                source=source,
+                instrument=instrument,
+                timeframe=timeframe,
+                start_ns=min(expected),
+                end_ns=max(expected),
+            )
         )
-        return not gaps
+        return expected.issubset(actual)
