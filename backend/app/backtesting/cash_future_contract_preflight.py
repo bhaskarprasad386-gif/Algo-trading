@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+from .nse_session_calendars import nse_session_windows
+
+MARKET_TZ = ZoneInfo("Asia/Kolkata")
 
 
 @dataclass(frozen=True)
@@ -21,6 +26,7 @@ class ContractCoverageReport:
     modes: tuple[str, ...]
     checked_days: int
     gaps: tuple[ContractCoverageGap, ...]
+    checked_trading_days: int = 0
 
     @property
     def complete(self) -> bool:
@@ -36,7 +42,7 @@ class ContractCoverageReport:
 
 
 class CashFutureContractPreflight:
-    """Validate historical contract identity before any market-data request starts."""
+    """Validate historical contract identity only on actual NSE trading days."""
 
     def __init__(self, contract_catalog) -> None:
         self.contract_catalog = contract_catalog
@@ -50,16 +56,38 @@ class CashFutureContractPreflight:
             return (normalized,)
         raise ValueError("mode must be CURRENT, NEAR or BOTH")
 
+    @staticmethod
+    def _trading_dates(*, exchange: str, start: date, end: date) -> frozenset[date]:
+        start_ns = int(datetime.combine(start, time.min, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+        end_ns = int(datetime.combine(end, time.max, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+        request = type("SessionRequest", (), {
+            "timeframe": "1m",
+            "start_ns": start_ns,
+            "end_ns": end_ns,
+            "instrument": f"{exchange}:0:CONTRACT-PREFLIGHT",
+        })()
+        return frozenset(
+            datetime.fromtimestamp(window.start_ns / 1_000_000_000, tz=timezone.utc)
+            .astimezone(MARKET_TZ).date()
+            for window in nse_session_windows(request)
+        )
+
     def check(self, *, exchange: str, underlying: str, start: date, end: date, mode: str = "BOTH") -> ContractCoverageReport:
         if end < start:
             raise ValueError("end must not precede start")
         modes = self._modes(mode)
         snapshots = tuple(self.contract_catalog.snapshot_dates())
+        trading_dates = self._trading_dates(exchange=exchange, start=start, end=end)
         gaps: list[ContractCoverageGap] = []
         checked = 0
+        checked_trading = 0
         cursor = start
         while cursor <= end:
             checked += 1
+            if cursor not in trading_dates:
+                cursor += timedelta(days=1)
+                continue
+            checked_trading += 1
             snapshot_available = any(snapshot <= cursor for snapshot in snapshots)
             for leg in modes:
                 if not snapshot_available:
@@ -75,7 +103,7 @@ class CashFutureContractPreflight:
                 except (LookupError, ValueError) as exc:
                     gaps.append(ContractCoverageGap(cursor, leg, str(exc), "CONTRACT"))
             cursor += timedelta(days=1)
-        return ContractCoverageReport(start, end, modes, checked, tuple(gaps))
+        return ContractCoverageReport(start, end, modes, checked, tuple(gaps), checked_trading)
 
     def require_complete(self, **kwargs) -> ContractCoverageReport:
         report = self.check(**kwargs)
