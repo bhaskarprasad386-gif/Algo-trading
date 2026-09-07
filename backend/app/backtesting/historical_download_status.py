@@ -12,6 +12,7 @@ from typing import Any
 @dataclass(frozen=True)
 class DownloadJobStatus:
     job_id: str
+    source: str
     mode: str
     timeframe: str
     spot_instrument: str
@@ -63,7 +64,7 @@ class HistoricalDownloadStatusStore:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA foreign_keys=ON")
         self._db.execute("""CREATE TABLE IF NOT EXISTS download_jobs (
-            job_id TEXT PRIMARY KEY, mode TEXT NOT NULL, timeframe TEXT NOT NULL,
+            job_id TEXT PRIMARY KEY, source TEXT NOT NULL DEFAULT 'angelone', mode TEXT NOT NULL, timeframe TEXT NOT NULL,
             spot_instrument TEXT NOT NULL, exchange TEXT NOT NULL, underlying TEXT NOT NULL,
             start_ns INTEGER NOT NULL, end_ns INTEGER NOT NULL, status TEXT NOT NULL,
             requested_chunks INTEGER NOT NULL DEFAULT 0, completed_chunks INTEGER NOT NULL DEFAULT 0,
@@ -77,6 +78,8 @@ class HistoricalDownloadStatusStore:
 
     def _ensure_job_schema(self) -> None:
         cols = {row[1] for row in self._db.execute("PRAGMA table_info(download_jobs)").fetchall()}
+        if "source" not in cols:
+            self._db.execute("ALTER TABLE download_jobs ADD COLUMN source TEXT NOT NULL DEFAULT 'angelone'")
         if "fetched_records" not in cols:
             self._db.execute("ALTER TABLE download_jobs ADD COLUMN fetched_records INTEGER NOT NULL DEFAULT 0")
         if "inserted_records" not in cols:
@@ -123,13 +126,13 @@ class HistoricalDownloadStatusStore:
     def _now_ns() -> int:
         return time.time_ns()
 
-    def create_job(self, *, job_id: str, mode: str, timeframe: str, spot_instrument: str,
+    def create_job(self, *, job_id: str, source: str = "angelone", mode: str, timeframe: str, spot_instrument: str,
                    exchange: str, underlying: str, start_ns: int, end_ns: int,
                    requested_chunks: int = 0, status: str = "QUEUED",
                    updated_at_ns: int | None = None, reset_existing: bool = True) -> None:
         with self._lock:
-            if not job_id.strip():
-                raise ValueError("job_id is required")
+            if not job_id.strip() or not source.strip():
+                raise ValueError("job_id and source are required")
             if status not in self.VALID_JOB_STATUSES:
                 raise ValueError(f"invalid job status: {status}")
             if start_ns < 0 or end_ns < start_ns or requested_chunks < 0:
@@ -137,28 +140,30 @@ class HistoricalDownloadStatusStore:
             existing = self.job(job_id)
             if existing is not None:
                 if not reset_existing:
-                    self.update_job(job_id, requested_chunks=requested_chunks, status=status, error=None,
+                    self.update_job(job_id, source=source, requested_chunks=requested_chunks, status=status, error=None,
                                     updated_at_ns=updated_at_ns or self._now_ns())
                     return
-                self.update_job(job_id, status=status, requested_chunks=requested_chunks,
+                self.update_job(job_id, source=source, status=status, requested_chunks=requested_chunks,
                                 completed_chunks=0, skipped_chunks=0, failed_chunks=0, catalog_count=0,
                                 fetched_records=0, inserted_records=0, error=None,
                                 updated_at_ns=updated_at_ns or self._now_ns())
                 return
             self._db.execute(
-                "INSERT INTO download_jobs(job_id,mode,timeframe,spot_instrument,exchange,underlying,start_ns,end_ns,status,requested_chunks,fetched_records,inserted_records,updated_at_ns) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (job_id, mode, timeframe, spot_instrument, exchange, underlying, start_ns, end_ns, status,
+                "INSERT INTO download_jobs(job_id,source,mode,timeframe,spot_instrument,exchange,underlying,start_ns,end_ns,status,requested_chunks,fetched_records,inserted_records,updated_at_ns) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (job_id, source, mode, timeframe, spot_instrument, exchange, underlying, start_ns, end_ns, status,
                  requested_chunks, 0, 0, updated_at_ns or self._now_ns()),
             )
             self._db.commit()
 
     def update_job(self, job_id: str, **fields: Any) -> None:
         with self._lock:
-            allowed = {"status", "requested_chunks", "completed_chunks", "skipped_chunks", "failed_chunks",
+            allowed = {"source", "status", "requested_chunks", "completed_chunks", "skipped_chunks", "failed_chunks",
                        "catalog_count", "fetched_records", "inserted_records", "error", "updated_at_ns"}
             unknown = set(fields) - allowed
             if unknown:
                 raise ValueError(f"unsupported job fields: {sorted(unknown)}")
+            if "source" in fields and not str(fields["source"]).strip():
+                raise ValueError("source is required")
             if "status" in fields and fields["status"] not in self.VALID_JOB_STATUSES:
                 raise ValueError(f"invalid job status: {fields['status']}")
             if not fields:
@@ -186,7 +191,7 @@ class HistoricalDownloadStatusStore:
 
     def job(self, job_id: str) -> DownloadJobStatus | None:
         with self._lock:
-            row = self._db.execute("SELECT job_id,mode,timeframe,spot_instrument,exchange,underlying,start_ns,end_ns,status,requested_chunks,completed_chunks,skipped_chunks,failed_chunks,catalog_count,fetched_records,inserted_records,updated_at_ns,error FROM download_jobs WHERE job_id=?", (job_id,)).fetchone()
+            row = self._db.execute("SELECT job_id,source,mode,timeframe,spot_instrument,exchange,underlying,start_ns,end_ns,status,requested_chunks,completed_chunks,skipped_chunks,failed_chunks,catalog_count,fetched_records,inserted_records,updated_at_ns,error FROM download_jobs WHERE job_id=?", (job_id,)).fetchone()
             return DownloadJobStatus(*row) if row else None
 
     def chunks(self, job_id: str) -> tuple[DownloadChunkStatus, ...]:
