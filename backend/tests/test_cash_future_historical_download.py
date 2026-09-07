@@ -11,6 +11,8 @@ from app.backtesting.session_gap_planner import SessionWindow
 
 
 class FakeSource:
+    source_name = "angelone"
+
     def __init__(self, fail_instrument=None):
         self.fail_instrument = fail_instrument
         self.calls = []
