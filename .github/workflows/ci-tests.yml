@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SECRET_KEY: ci-test-secret-key-not-for-production
+      PYTHONPATH: ..
     defaults:
       run:
         working-directory: backend
@@ -35,4 +36,4 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
 
-# Fresh backend verification after market-session syntax restoration
+# Backend test path includes repository root so package imports resolve from the backend working directory.
