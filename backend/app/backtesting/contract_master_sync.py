@@ -24,7 +24,7 @@ class DailyContractMasterSync:
         self.source = source or AngelOneContractMasterSource()
 
     def sync(self, *, snapshot_date: date | None = None, force: bool = False) -> ContractMasterSyncResult:
-        target = snapshot_date or date.today()
+        target = snapshot_date or self.source.market_date()
         if not force and target in self.catalog.snapshot_dates():
             return ContractMasterSyncResult(target, 0, skipped=True)
         records = self.source.sync(self.catalog, snapshot_date=target)
