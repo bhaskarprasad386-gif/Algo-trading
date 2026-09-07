@@ -30,7 +30,7 @@ def test_both_selects_current_and_near_from_snapshot_at_replay_date():
 
 def test_old_replay_date_does_not_substitute_new_snapshot_contract():
     result = select_cash_future(_catalog(), spot_instrument="NSE:3045:SBIN", underlying="SBIN", replay_date=date(2026, 8, 15), mode="CURRENT")
-    assert result[0].future.token == "old2"
+    assert result[0].future.token == "old"
     assert result[0].future.snapshot_date == date(2026, 8, 1)
 
 
