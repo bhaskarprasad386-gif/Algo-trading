@@ -5,38 +5,21 @@ from __future__ import annotations
 from datetime import datetime, time, timezone
 
 from .market_session_calendar import MarketSessionCalendar
-from .nse_2025_holidays import (
-    NSE_EQUITY_TRADING_HOLIDAYS_2025,
-    NSE_FNO_TRADING_HOLIDAYS_2025,
-)
-from .nse_2026_holidays import (
-    NSE_EQUITY_TRADING_HOLIDAYS_2026,
-    NSE_FNO_TRADING_HOLIDAYS_2026,
-)
+from .nse_2025_holidays import NSE_EQUITY_TRADING_HOLIDAYS_2025, NSE_FNO_TRADING_HOLIDAYS_2025
+from .nse_2026_holidays import NSE_EQUITY_TRADING_HOLIDAYS_2026, NSE_FNO_TRADING_HOLIDAYS_2026
 
 
 def _calendar_for_year(exchange: str, year: int) -> MarketSessionCalendar:
     if year == 2025:
-        equity_holidays = NSE_EQUITY_TRADING_HOLIDAYS_2025
-        fno_holidays = NSE_FNO_TRADING_HOLIDAYS_2025
+        equity_holidays, fno_holidays = NSE_EQUITY_TRADING_HOLIDAYS_2025, NSE_FNO_TRADING_HOLIDAYS_2025
     elif year == 2026:
-        equity_holidays = NSE_EQUITY_TRADING_HOLIDAYS_2026
-        fno_holidays = NSE_FNO_TRADING_HOLIDAYS_2026
+        equity_holidays, fno_holidays = NSE_EQUITY_TRADING_HOLIDAYS_2026, NSE_FNO_TRADING_HOLIDAYS_2026
     else:
         raise ValueError(f"unsupported NSE calendar year: {year}")
-
     if exchange == "NSE":
-        return MarketSessionCalendar(
-            holidays=equity_holidays,
-            weekday_start=time(9, 15),
-            weekday_end=time(15, 29),
-        )
+        return MarketSessionCalendar(holidays=equity_holidays, weekday_start=time(9, 15), weekday_end=time(15, 29))
     if exchange == "NFO":
-        return MarketSessionCalendar(
-            holidays=fno_holidays,
-            weekday_start=time(9, 15),
-            weekday_end=time(15, 39),
-        )
+        return MarketSessionCalendar(holidays=fno_holidays, weekday_start=time(9, 15), weekday_end=time(15, 39))
     raise ValueError(f"unsupported NSE instrument exchange: {exchange}")
 
 
@@ -74,6 +57,16 @@ def nse_session_windows(request: object) -> tuple:
     end = datetime.fromtimestamp(getattr(request, "end_ns") / 1_000_000_000, tz=timezone.utc)
     exchange = getattr(request, "instrument").split(":", 1)[0].upper()
     return _calendar_windows(start, end, exchange)
+
+
+def nse_daily_timestamps(request: object) -> tuple[int, ...]:
+    """Return one expected daily candle timestamp per valid trading session."""
+    if getattr(request, "timeframe") != "1d":
+        raise ValueError("daily timestamp planning requires timeframe='1d'")
+    start = datetime.fromtimestamp(getattr(request, "start_ns") / 1_000_000_000, tz=timezone.utc)
+    end = datetime.fromtimestamp(getattr(request, "end_ns") / 1_000_000_000, tz=timezone.utc)
+    exchange = getattr(request, "instrument").split(":", 1)[0].upper()
+    return tuple(window.start_ns for window in _calendar_windows(start, end, exchange))
 
 
 def nse_session_windows_2026(request: object) -> tuple:
