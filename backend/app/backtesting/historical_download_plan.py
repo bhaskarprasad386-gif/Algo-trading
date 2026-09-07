@@ -33,7 +33,6 @@ def one_year_range(*, end: datetime) -> tuple[int, int]:
     try:
         start = end.replace(year=end.year - 1)
     except ValueError:
-        # Feb 29 has no prior-year equivalent; use Feb 28 instead.
         start = end.replace(year=end.year - 1, day=28)
     return utc_ns(start), utc_ns(end)
 
@@ -44,8 +43,21 @@ def build_one_year_plan(
     instrument: str,
     timeframe: str,
     end: datetime,
-    chunk: timedelta,
+    chunk: timedelta | None = None,
+    chunk_days: int | None = None,
 ) -> HistoricalSyncPlan:
+    """Build a one-year plan.
+
+    ``chunk`` is the canonical API; ``chunk_days`` remains supported for older
+    callers and tests so the planner stays backwards compatible.
+    """
+    if chunk is not None and chunk_days is not None:
+        raise ValueError("provide either chunk or chunk_days, not both")
+    if chunk is None:
+        days = 7 if chunk_days is None else chunk_days
+        if days <= 0:
+            raise ValueError("chunk_days must be positive")
+        chunk = timedelta(days=days)
     start_ns, end_ns = one_year_range(end=end)
     chunk_ns = int(chunk.total_seconds() * 1_000_000_000)
     if chunk_ns <= 0:
