@@ -75,11 +75,13 @@ def test_incomplete_chunk_is_replayed_instead_of_marked_complete():
         first_missing_ns=60, fetched_records=2, inserted_records=2,
     )
     row = store.chunks("incomplete-1")[0]
-    assert row.status == "COMPLETE"
+    assert row.status == "FAILED"
     assert row.missing_timestamps == 1
     assert store.incomplete_chunks("incomplete-1")[0].sequence == 0
-    assert store.job("incomplete-1").completed_chunks == 1
-    assert store.job("incomplete-1").failed_chunks == 1
+    job = store.job("incomplete-1")
+    assert job is not None
+    assert job.completed_chunks == 0
+    assert job.failed_chunks == 1
     store.close()
 
 
