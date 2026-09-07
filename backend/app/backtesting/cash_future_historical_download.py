@@ -9,7 +9,7 @@ from .angelone_historical import AngelOneHistoricalSource
 from .cash_future_download_queue import CashFutureDownloadQueue, build_rollover_download_queue
 from .historical_catalog import HistoricalCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
-from .historical_download_status import HistoricalDownloadStatusStore
+from .historical_download_status import DownloadChunkStatus, HistoricalDownloadStatusStore
 from .historical_ingest import HistoricalIngestionService, HistoricalFetchRequest
 from .historical_sync import HistoricalSyncPlan, build_chunked_plan
 from .nse_session_calendars import nse_daily_timestamps, nse_session_windows
@@ -19,10 +19,12 @@ from .session_gap_planner import SessionWindow
 _TIMEFRAME_INTERVAL_NS = {"1m": 60*1_000_000_000, "3m": 3*60*1_000_000_000, "5m": 5*60*1_000_000_000, "10m": 10*60*1_000_000_000, "15m": 15*60*1_000_000_000, "30m": 30*60*1_000_000_000, "1h": 60*60*1_000_000_000, "1d": 24*60*60*1_000_000_000}
 _INTRADAY_TIMEFRAMES = frozenset(_TIMEFRAME_INTERVAL_NS) - {"1d"}
 
+
 def _default_session_windows(request: object) -> tuple[SessionWindow, ...]:
     if request.timeframe not in _INTRADAY_TIMEFRAMES:
         return ()
     return tuple(nse_session_windows(request))
+
 
 @dataclass(frozen=True)
 class CashFutureHistoricalDownloadReport:
@@ -30,21 +32,27 @@ class CashFutureHistoricalDownloadReport:
     spot_execution: DownloadExecutionResult
     future_executions: tuple[DownloadExecutionResult, ...]
     catalog_count: int
+
     @property
     def completed(self) -> bool:
         return self.spot_execution.failed_request_index is None and all(r.failed_request_index is None for r in self.future_executions)
+
     @property
     def completed_chunks(self) -> int:
         return self.spot_execution.completed_chunks + sum(r.completed_chunks for r in self.future_executions)
+
     @property
     def skipped_chunks(self) -> int:
         return self.spot_execution.skipped_chunks + sum(r.skipped_chunks for r in self.future_executions)
+
     @property
     def processed_chunks(self) -> int:
         return self.completed_chunks + self.skipped_chunks
 
+
 class CashFutureHistoricalDownloadService:
     """Download spot/future requests sequentially and persist each chunk immediately."""
+
     def __init__(self, catalog: HistoricalCatalog, contract_catalog, *, source=None, executor=None, session_windows: Callable[[object], Iterable[SessionWindow]] | None = None, status_store: HistoricalDownloadStatusStore | None = None) -> None:
         self.catalog = catalog
         self.contract_catalog = contract_catalog
@@ -98,6 +106,17 @@ class CashFutureHistoricalDownloadService:
         missing_set = expected_set - actual_set
         return len(expected_set), len(actual_set), len(missing_set), min(missing_set) if missing_set else None
 
+    def _register_plan(self, job_id: str, plans: tuple[HistoricalSyncPlan, ...]) -> None:
+        """Register the entire plan before network work so progress is visible immediately."""
+        if self.status_store is None:
+            return
+        sequence = 0
+        for plan in plans:
+            for request in plan.requests:
+                expected, actual, missing, first_missing = self._chunk_metrics(request)
+                self.status_store.upsert_chunk(DownloadChunkStatus(job_id=job_id, sequence=sequence, instrument=request.instrument, start_ns=request.start_ns, end_ns=request.end_ns, status="QUEUED", attempts=0, expected_timestamps=expected, actual_timestamps=actual, missing_timestamps=missing, first_missing_ns=first_missing))
+                sequence += 1
+
     def _callbacks(self, job_id: str, sequence_offset: int = 0, sequence_numbers: tuple[int, ...] | None = None):
         store = self.status_store
         if store is None: return {}
@@ -149,11 +168,13 @@ class CashFutureHistoricalDownloadService:
             queue = build_rollover_download_queue(catalog=self.contract_catalog, spot_instrument=spot_instrument, exchange=exchange, underlying=underlying, start=start, end=end, timeframe=timeframe, mode=mode, source=self.source_name)
             spot_plan = self._plan_for_request(queue.spot)
             future_plans = tuple(self._plan_for_request(item.request) for item in queue.futures)
-            total_chunks = len(spot_plan.requests) + sum(len(plan.requests) for plan in future_plans)
+            all_plans = (spot_plan, *future_plans)
+            total_chunks = sum(len(plan.requests) for plan in all_plans)
             if self.status_store is not None and job_id is not None:
                 start_ns = min([queue.spot.start_ns, *[item.request.start_ns for item in queue.futures]])
                 end_ns = max([queue.spot.end_ns, *[item.request.end_ns for item in queue.futures]])
                 self.status_store.create_job(job_id=job_id, mode=mode, timeframe=timeframe, spot_instrument=spot_instrument, exchange=exchange, underlying=underlying, start_ns=start_ns, end_ns=end_ns, requested_chunks=total_chunks, source=self.source_name, reset_existing=True)
+                self._register_plan(job_id, all_plans)
             effective_skip = should_skip or self._chunk_is_complete; sequence_offset = 0
             spot_result = self.executor.run(self.source, spot_plan, retry_attempts=retry_attempts, should_skip=effective_skip, should_accept=self._chunk_is_complete, **(self._callbacks(job_id, sequence_offset) if job_id else {}))
             sequence_offset += len(spot_plan.requests)
