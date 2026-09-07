@@ -19,6 +19,8 @@ class FakeSource:
         self.calls.append(request)
         if request.instrument == self.fail_instrument:
             raise RuntimeError("temporary provider failure")
+        # Return both boundaries so the strict completeness check can prove
+        # the bounded test chunk complete when session validation is disabled.
         yield HistoricalRecord(
             request.source,
             request.instrument,
@@ -26,6 +28,14 @@ class FakeSource:
             request.start_ns,
             {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
         )
+        if request.end_ns != request.start_ns:
+            yield HistoricalRecord(
+                request.source,
+                request.instrument,
+                request.timeframe,
+                request.end_ns,
+                {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1},
+            )
 
 
 def _contracts():
@@ -58,11 +68,11 @@ def _run_kwargs():
 def test_downloader_persists_spot_and_exact_rollover_contracts():
     catalog = HistoricalCatalog()
     source = FakeSource()
-    report = CashFutureHistoricalDownloadService(catalog, _contracts(), source=source).run(**_run_kwargs())
+    report = CashFutureHistoricalDownloadService(catalog, _contracts(), source=source, session_windows=lambda _: ()).run(**_run_kwargs())
     assert report.completed
     assert len(report.future_executions) == 2
     assert [x.request.instrument for x in report.queue.futures] == ["NFO:101:SBINJAN", "NFO:102:SBINFEB"]
-    assert catalog.count() == 3
+    assert catalog.count() == 6
     assert report.processed_chunks == 3
 
 
@@ -71,18 +81,18 @@ def test_partial_provider_failure_can_resume_without_duplicate_rows():
     contracts = _contracts()
     first = CashFutureHistoricalDownloadService(
         catalog, contracts, source=FakeSource(fail_instrument="NFO:101:SBINJAN"), session_windows=lambda _: ()
-    ).run(**{k: v for k, v in _run_kwargs().items() if k != "session_windows"})
+    ).run(**_run_kwargs())
     assert not first.completed
     assert first.spot_execution.failed_request_index is None
     assert len(first.future_executions) == 1
     assert first.future_executions[0].failed_request_index == 0
-    assert catalog.count() == 1
+    assert catalog.count() == 2
 
     recovered = CashFutureHistoricalDownloadService(catalog, contracts, source=FakeSource(), session_windows=lambda _: ()).run(
-        **{k: v for k, v in _run_kwargs().items() if k != "session_windows"}
+        **_run_kwargs()
     )
     assert recovered.completed
-    assert catalog.count() == 3
+    assert catalog.count() == 6
 
 
 def test_complete_chunk_uses_session_completeness_to_skip():
