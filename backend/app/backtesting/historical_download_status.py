@@ -143,6 +143,10 @@ class HistoricalDownloadStatusStore:
                     self.update_job(job_id, source=source, requested_chunks=requested_chunks, status=status, error=None,
                                     updated_at_ns=updated_at_ns or self._now_ns())
                     return
+                # A fresh run with the same job id must not inherit chunks from
+                # the previous plan; otherwise stale instruments/ranges can make
+                # aggregate progress and resume semantics incorrect.
+                self._db.execute("DELETE FROM download_chunks WHERE job_id=?", (job_id,))
                 self.update_job(job_id, source=source, status=status, requested_chunks=requested_chunks,
                                 completed_chunks=0, skipped_chunks=0, failed_chunks=0, catalog_count=0,
                                 fetched_records=0, inserted_records=0, error=None,
