@@ -11,6 +11,7 @@ class ContractCoverageGap:
     date: date
     mode: str
     reason: str
+    kind: str = "CONTRACT"
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,14 @@ class ContractCoverageReport:
     @property
     def complete(self) -> bool:
         return not self.gaps
+
+    @property
+    def missing_snapshot_dates(self) -> tuple[date, ...]:
+        return tuple(sorted({gap.date for gap in self.gaps if gap.kind == "SNAPSHOT"}))
+
+    @property
+    def missing_contract_dates(self) -> tuple[date, ...]:
+        return tuple(sorted({gap.date for gap in self.gaps if gap.kind == "CONTRACT"}))
 
 
 class CashFutureContractPreflight:
@@ -45,23 +54,36 @@ class CashFutureContractPreflight:
         if end < start:
             raise ValueError("end must not precede start")
         modes = self._modes(mode)
+        snapshots = tuple(self.contract_catalog.snapshot_dates())
         gaps: list[ContractCoverageGap] = []
         checked = 0
         cursor = start
         while cursor <= end:
             checked += 1
+            snapshot_available = any(snapshot <= cursor for snapshot in snapshots)
             for leg in modes:
+                if not snapshot_available:
+                    gaps.append(ContractCoverageGap(
+                        cursor,
+                        leg,
+                        f"no historical contract-master snapshot for {cursor.isoformat()}",
+                        "SNAPSHOT",
+                    ))
+                    continue
                 try:
                     self.contract_catalog.resolve(exchange=exchange, underlying=underlying, as_of=cursor, mode=leg)
                 except (LookupError, ValueError) as exc:
-                    gaps.append(ContractCoverageGap(cursor, leg, str(exc)))
+                    gaps.append(ContractCoverageGap(cursor, leg, str(exc), "CONTRACT"))
             cursor += timedelta(days=1)
         return ContractCoverageReport(start, end, modes, checked, tuple(gaps))
 
     def require_complete(self, **kwargs) -> ContractCoverageReport:
         report = self.check(**kwargs)
         if not report.complete:
-            sample = "; ".join(f"{gap.date.isoformat()} {gap.mode}: {gap.reason}" for gap in report.gaps[:5])
+            sample = "; ".join(
+                f"{gap.date.isoformat()} {gap.mode} [{gap.kind}]: {gap.reason}"
+                for gap in report.gaps[:5]
+            )
             suffix = "" if len(report.gaps) <= 5 else f"; +{len(report.gaps) - 5} more"
             raise LookupError(f"historical Cash-Future contract coverage incomplete: {sample}{suffix}")
         return report
