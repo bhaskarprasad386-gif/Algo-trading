@@ -6,12 +6,14 @@ import hashlib
 import json
 from datetime import date, datetime
 from typing import Any, Iterable, Mapping
+from zoneinfo import ZoneInfo
 
 import requests
 
 from .contract_master import ContractMasterCatalog, ContractRecord
 
 ANGEL_ONE_MASTER_URL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+MARKET_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
 
 class AngelOneContractMasterSource:
@@ -28,6 +30,14 @@ class AngelOneContractMasterSource:
         if not isinstance(payload, list):
             raise ValueError("Angel One instrument master must be a JSON list")
         return tuple(row for row in payload if isinstance(row, dict))
+
+    @staticmethod
+    def market_date(now: datetime | None = None) -> date:
+        """Return the provider snapshot date in the NSE/Angel One market timezone."""
+        current = now or datetime.now(MARKET_TIMEZONE)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=MARKET_TIMEZONE)
+        return current.astimezone(MARKET_TIMEZONE).date()
 
     @staticmethod
     def _expiry(value: Any) -> date | None:
@@ -64,7 +74,7 @@ class AngelOneContractMasterSource:
 
     def sync(self, catalog: ContractMasterCatalog, *, snapshot_date: date | None = None) -> int:
         rows = self.fetch()
-        snapshot = snapshot_date or date.today()
+        snapshot = snapshot_date or self.market_date()
         canonical = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         digest = hashlib.sha256(canonical).hexdigest()
-        return catalog.upsert_snapshot(snapshot, self.normalize_futures(rows), payload_sha256=digest, fetched_at=datetime.utcnow())
+        return catalog.upsert_snapshot(snapshot, self.normalize_futures(rows), payload_sha256=digest, fetched_at=datetime.now(MARKET_TIMEZONE).replace(tzinfo=None))
