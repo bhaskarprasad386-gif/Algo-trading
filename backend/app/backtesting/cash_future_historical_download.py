@@ -124,9 +124,6 @@ class CashFutureHistoricalDownloadService:
         try:
             if resume:
                 if self.status_store is None or job_id is None: raise ValueError("resume requires job_id and durable status store")
-                # Validate the persisted provider before interpreting chunk state.
-                # A provider mismatch must never be silently converted into a
-                # completed/no-op resume, even when no chunks are currently listed.
                 plan, sequence_numbers = self._resume_plan(job_id)
                 if not plan.requests:
                     self.status_store.update_job(job_id, status="COMPLETE", error=None, catalog_count=self.catalog.count())
@@ -137,7 +134,7 @@ class CashFutureHistoricalDownloadService:
                 if result.failed_request_index is None: self.status_store.update_job(job_id, status="COMPLETE", catalog_count=self.catalog.count())
                 return CashFutureHistoricalDownloadReport(None, result, tuple(), self.catalog.count())
 
-            queue = build_rollover_download_queue(catalog=self.contract_catalog, spot_instrument=spot_instrument, exchange=exchange, underlying=underlying, start=start, end=end, timeframe=timeframe, mode=mode)
+            queue = build_rollover_download_queue(catalog=self.contract_catalog, spot_instrument=spot_instrument, exchange=exchange, underlying=underlying, start=start, end=end, timeframe=timeframe, mode=mode, source=self.source_name)
             spot_plan = self._plan_for_request(queue.spot)
             future_plans = tuple(self._plan_for_request(item.request) for item in queue.futures)
             total_chunks = len(spot_plan.requests) + sum(len(plan.requests) for plan in future_plans)
