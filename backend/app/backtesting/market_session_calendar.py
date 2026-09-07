@@ -57,5 +57,6 @@ class MarketSessionCalendar:
                     self._ns(datetime.combine(day, session_start, tzinfo=MARKET_TZ)),
                     self._ns(datetime.combine(day, session_end, tzinfo=MARKET_TZ)),
                 )
+            )
             day += timedelta(days=1)
         return tuple(result)
