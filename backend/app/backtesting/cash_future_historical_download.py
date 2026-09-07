@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable, Iterable
 
 from .angelone_historical import AngelOneHistoricalSource
+from .cash_future_contract_preflight import CashFutureContractPreflight
 from .cash_future_download_queue import CashFutureDownloadQueue, build_rollover_download_queue
 from .historical_catalog import HistoricalCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
@@ -62,6 +63,7 @@ class CashFutureHistoricalDownloadService:
         self.completeness = SessionChunkCompleteness(catalog)
         self.session_windows = session_windows or _default_session_windows
         self.status_store = status_store
+        self.contract_preflight = CashFutureContractPreflight(contract_catalog)
 
     @property
     def source_name(self) -> str:
@@ -107,7 +109,6 @@ class CashFutureHistoricalDownloadService:
         return len(expected_set), len(actual_set), len(missing_set), min(missing_set) if missing_set else None
 
     def _register_plan(self, job_id: str, plans: tuple[HistoricalSyncPlan, ...]) -> None:
-        """Register the entire plan before network work so progress is visible immediately."""
         if self.status_store is None:
             return
         sequence = 0
@@ -165,6 +166,9 @@ class CashFutureHistoricalDownloadService:
                 if result.failed_request_index is None: self.status_store.update_job(job_id, status="COMPLETE", catalog_count=self.catalog.count())
                 return CashFutureHistoricalDownloadReport(None, result, tuple(), self.catalog.count())
 
+            start_date = start.astimezone(__import__("zoneinfo").zoneinfo.ZoneInfo("Asia/Kolkata")).date() if getattr(start, "tzinfo", None) else start.date()
+            end_date = end.astimezone(__import__("zoneinfo").zoneinfo.ZoneInfo("Asia/Kolkata")).date() if getattr(end, "tzinfo", None) else end.date()
+            self.contract_preflight.require_complete(exchange=exchange, underlying=underlying, start=start_date, end=end_date, mode=mode)
             queue = build_rollover_download_queue(catalog=self.contract_catalog, spot_instrument=spot_instrument, exchange=exchange, underlying=underlying, start=start, end=end, timeframe=timeframe, mode=mode, source=self.source_name)
             spot_plan = self._plan_for_request(queue.spot)
             future_plans = tuple(self._plan_for_request(item.request) for item in queue.futures)
