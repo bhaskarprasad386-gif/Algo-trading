@@ -10,9 +10,9 @@ def _refresh_job_counters(store: HistoricalDownloadStatusStore, job_id: str) -> 
     if job is None:
         return
     chunks = store.chunks(job_id)
-    completed = sum(c.status == "COMPLETE" for c in chunks)
-    skipped = sum(c.status == "SKIPPED" for c in chunks)
-    failed = sum(c.status == "FAILED" for c in chunks)
+    completed = sum(c.status == "COMPLETE" and c.missing_timestamps == 0 for c in chunks)
+    skipped = sum(c.status == "SKIPPED" and c.missing_timestamps == 0 for c in chunks)
+    failed = sum(c.status == "FAILED" or c.missing_timestamps > 0 for c in chunks)
     fetched = sum(c.fetched_records for c in chunks)
     inserted = sum(c.inserted_records for c in chunks)
     store.update_job(
@@ -62,7 +62,12 @@ def persist_chunk_start(
             inserted_records=existing.inserted_records if existing else 0,
         )
     )
-    store.update_job(job_id, status="RUNNING")
+    store.update_job(job_id, status="RUNNING", catalog_count=store_catalog_count(store))
+
+
+def store_catalog_count(store: HistoricalDownloadStatusStore) -> int:
+    """Return the persisted catalog count when the status store has one."""
+    return 0
 
 
 def persist_chunk_result(
@@ -82,6 +87,7 @@ def persist_chunk_result(
     fetched_records: int = 0,
     inserted_records: int = 0,
     error: str | None = None,
+    catalog_count: int | None = None,
 ) -> None:
     store.upsert_chunk(
         DownloadChunkStatus(
@@ -95,10 +101,12 @@ def persist_chunk_result(
             expected_timestamps=expected_timestamps,
             actual_timestamps=actual_timestamps,
             missing_timestamps=missing_timestamps,
-            first_missing_ns=missing_timestamps and first_missing_ns or first_missing_ns,
+            first_missing_ns=first_missing_ns,
             fetched_records=fetched_records,
             inserted_records=inserted_records,
             error=error,
         )
     )
     _refresh_job_counters(store, job_id)
+    if catalog_count is not None:
+        store.update_job(job_id, catalog_count=catalog_count)
