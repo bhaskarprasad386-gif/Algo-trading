@@ -9,6 +9,7 @@ from typing import Iterable, Mapping
 from .cash_future_ledger import CashFutureLedgerWriter
 from .cash_future_replay import CashFutureBar, CashFutureReplayRunner, CashFutureReplayTrade
 from .cash_future_selection import select_cash_future
+from .cash_future_readiness import CashFutureReadinessGate
 from .contract_master import ContractMasterCatalog
 
 
@@ -20,7 +21,7 @@ class CashFutureReplayPlan:
 
 
 class HistoricalCashFutureReplay:
-    """Resolve contracts at entry, replay each leg, and optionally persist results."""
+    """Resolve contracts and optionally enforce historical-data readiness before replay."""
 
     def __init__(self, catalog: ContractMasterCatalog, runner: CashFutureReplayRunner | None = None) -> None:
         self.catalog = catalog
@@ -39,7 +40,14 @@ class HistoricalCashFutureReplay:
         quantity: int = 1,
         charges: Mapping[str, float] | None = None,
         ledger_writer: CashFutureLedgerWriter | None = None,
+        readiness_gate: CashFutureReadinessGate | None = None,
+        readiness_kwargs: Mapping[str, object] | None = None,
     ) -> CashFutureReplayPlan:
+        if readiness_gate is not None:
+            if readiness_kwargs is None:
+                raise ValueError("readiness_kwargs is required when readiness_gate is supplied")
+            readiness_gate.require_complete(**dict(readiness_kwargs))
+
         selections = select_cash_future(
             self.catalog,
             spot_instrument=spot_instrument,
