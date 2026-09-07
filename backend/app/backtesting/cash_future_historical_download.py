@@ -12,7 +12,7 @@ from .historical_download_executor import DownloadExecutionResult, ResumableHist
 from .historical_download_status import HistoricalDownloadStatusStore
 from .historical_ingest import HistoricalIngestionService, HistoricalFetchRequest
 from .historical_sync import HistoricalSyncPlan, build_chunked_plan
-from .nse_session_calendars import nse_session_windows
+from .nse_session_calendars import nse_daily_timestamps, nse_session_windows
 from .session_chunk_completeness import SessionChunk, SessionChunkCompleteness
 from .session_gap_planner import SessionWindow
 
@@ -68,6 +68,12 @@ class CashFutureHistoricalDownloadService:
         return build_chunked_plan(source=request.source, instrument=request.instrument, timeframe=request.timeframe, start_ns=request.start_ns, end_ns=request.end_ns, chunk_ns=7*24*60*60*1_000_000_000)
 
     def _chunk_is_complete(self, request, result=None) -> bool:
+        if request.timeframe == "1d":
+            expected = set(nse_daily_timestamps(request))
+            if not expected:
+                return True
+            actual = set(self.catalog.timestamps(source=request.source, instrument=request.instrument, timeframe=request.timeframe, start_ns=min(expected), end_ns=max(expected)))
+            return expected.issubset(actual)
         interval_ns = _TIMEFRAME_INTERVAL_NS.get(request.timeframe)
         if interval_ns is None:
             raise ValueError(f"unsupported timeframe for completeness checks: {request.timeframe}")
@@ -78,6 +84,12 @@ class CashFutureHistoricalDownloadService:
         return self.completeness.is_complete(source=request.source, instrument=request.instrument, timeframe=request.timeframe, interval_ns=interval_ns, chunk=SessionChunk(request.start_ns, request.end_ns), sessions=sessions)
 
     def _chunk_metrics(self, request) -> tuple[int, int, int, int | None]:
+        if request.timeframe == "1d":
+            expected_set = set(nse_daily_timestamps(request))
+            if not expected_set: return 0, 0, 0, None
+            actual_set = set(self.catalog.timestamps(source=request.source, instrument=request.instrument, timeframe=request.timeframe, start_ns=min(expected_set), end_ns=max(expected_set)))
+            missing_set = expected_set - actual_set
+            return len(expected_set), len(actual_set), len(missing_set), min(missing_set) if missing_set else None
         sessions = tuple(self.session_windows(request)); interval_ns = _TIMEFRAME_INTERVAL_NS.get(request.timeframe, 0)
         if not sessions or not interval_ns: return 0, 0, 0, None
         expected_set = self.completeness.expected_timestamps(sessions, interval_ns)
