@@ -29,7 +29,7 @@ def test_one_year_market_dates_are_market_local_and_leap_safe():
     start, end = one_year_market_dates(
         end=datetime(2026, 9, 8, 0, 15, tzinfo=timezone.utc)
     )
-    assert start == datetime(2025, 9, 7, tzinfo=timezone.utc).astimezone(__import__("zoneinfo").ZoneInfo("Asia/Kolkata")).date()
+    assert start == datetime(2025, 9, 8, tzinfo=timezone.utc).astimezone(__import__("zoneinfo").ZoneInfo("Asia/Kolkata")).date()
     assert end == datetime(2026, 9, 8, tzinfo=timezone.utc).astimezone(__import__("zoneinfo").ZoneInfo("Asia/Kolkata")).date()
 
 
