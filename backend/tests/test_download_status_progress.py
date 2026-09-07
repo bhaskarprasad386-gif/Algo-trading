@@ -66,6 +66,23 @@ def test_job_counters_sum_independent_spot_and_future_chunks():
     store.close()
 
 
+def test_incomplete_chunk_is_replayed_instead_of_marked_complete():
+    store = _store("incomplete-1")
+    persist_chunk_result(
+        store, job_id="incomplete-1", sequence=0, instrument="NSE:SPOT",
+        start_ns=0, end_ns=60, attempts=1, status="COMPLETE",
+        expected_timestamps=3, actual_timestamps=2, missing_timestamps=1,
+        first_missing_ns=60, fetched_records=2, inserted_records=2,
+    )
+    row = store.chunks("incomplete-1")[0]
+    assert row.status == "COMPLETE"
+    assert row.missing_timestamps == 1
+    assert store.incomplete_chunks("incomplete-1")[0].sequence == 0
+    assert store.job("incomplete-1").completed_chunks == 1
+    assert store.job("incomplete-1").failed_chunks == 1
+    store.close()
+
+
 def test_legacy_status_schema_migrates_new_counters():
     import sqlite3
     import tempfile
