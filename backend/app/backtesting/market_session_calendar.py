@@ -52,11 +52,10 @@ class MarketSessionCalendar:
             else:
                 day += timedelta(days=1)
                 continue
-            result.append(
-                SessionWindow(
-                    self._ns(datetime.combine(day, session_start, tzinfo=MARKET_TZ)),
-                    self._ns(datetime.combine(day, session_end, tzinfo=MARKET_TZ)),
-                )
+            window = SessionWindow(
+                self._ns(datetime.combine(day, session_start, tzinfo=MARKET_TZ)),
+                self._ns(datetime.combine(day, session_end, tzinfo=MARKET_TZ)),
             )
+            result.append(window)
             day += timedelta(days=1)
         return tuple(result)
