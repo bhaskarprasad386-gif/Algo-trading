@@ -39,11 +39,14 @@ class MarketSessionCalendar:
     def sessions(self, start: datetime, end: datetime) -> tuple[SessionWindow, ...]:
         if end < start:
             raise ValueError("end must not precede start")
-        start_local = start.astimezone(MARKET_TZ).date()
-        end_local = end.astimezone(MARKET_TZ).date()
+        # Requests are expressed in UTC nanoseconds.  Treat their UTC calendar
+        # dates as the requested market dates; converting the end instant to IST
+        # would incorrectly pull the following trading day into a full-day range.
+        start_date = start.astimezone(timezone.utc).date()
+        end_date = end.astimezone(timezone.utc).date()
         result: list[SessionWindow] = []
-        day = start_local
-        while day <= end_local:
+        day = start_date
+        while day <= end_date:
             special = self.special_sessions.get(day)
             if special is not None:
                 session_start, session_end = special
