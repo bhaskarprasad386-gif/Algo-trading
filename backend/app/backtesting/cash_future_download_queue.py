@@ -11,6 +11,7 @@ from .historical_ingest import HistoricalFetchRequest
 
 
 MARKET_TZ = ZoneInfo("Asia/Kolkata")
+DEFAULT_SOURCE = "angelone"
 
 
 @dataclass(frozen=True)
@@ -52,8 +53,12 @@ def build_rollover_download_queue(
     end: datetime,
     timeframe: str = "1m",
     mode: str = "BOTH",
+    source: str = DEFAULT_SOURCE,
 ) -> CashFutureDownloadQueue:
     """Create exact-token future requests using Indian market-local day boundaries."""
+    source = str(source).strip()
+    if not source:
+        raise ValueError("historical download source cannot be empty")
     if end < start:
         raise ValueError("end must not precede start")
     segments_by_leg = build_mode_segments(
@@ -63,7 +68,7 @@ def build_rollover_download_queue(
         mode=mode,
     )
     start_ns, end_ns = _ns(start), _ns(end)
-    spot = HistoricalFetchRequest("angelone", spot_instrument, timeframe, start_ns, end_ns)
+    spot = HistoricalFetchRequest(source, spot_instrument, timeframe, start_ns, end_ns)
     items: list[CashFutureSegmentDownload] = []
     for segments in segments_by_leg:
         for segment in segments:
@@ -73,7 +78,7 @@ def build_rollover_download_queue(
             items.append(CashFutureSegmentDownload(
                 segment,
                 HistoricalFetchRequest(
-                    "angelone",
+                    source,
                     f"{segment.future.exchange}:{segment.future.token}:{segment.future.symbol}",
                     timeframe,
                     _ns(seg_start), _ns(seg_end),
