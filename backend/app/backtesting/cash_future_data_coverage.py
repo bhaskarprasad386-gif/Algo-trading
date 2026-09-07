@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .cash_future_download_report import CashFutureDownloadProgressReport, CashFutureDownloadReporter
+from .cash_future_download_report import (
+    CashFutureDownloadProgressReport,
+    CashFutureDownloadReporter,
+)
 from .cash_future_download_queue import CashFutureDownloadQueue
-from .session_gap_planner import SessionWindow
 from .historical_catalog import HistoricalCatalog
+from .session_gap_planner import SessionWindow
 
 
 @dataclass(frozen=True)
-class CashFutureDataCoverageAudit:
+class CashFutureDataCoverageReport:
     mode: str
     report: CashFutureDownloadProgressReport
 
@@ -52,7 +55,7 @@ class CashFutureDataCoverageAudit:
         interval_ns: int,
         spot_sessions: tuple[SessionWindow, ...],
         future_sessions: dict[str, tuple[SessionWindow, ...]] | None = None,
-    ) -> CashFutureDataCoverageAudit:
+    ) -> CashFutureDataCoverageReport:
         report = self.reporter.report(
             queue=queue,
             mode=mode,
@@ -60,9 +63,9 @@ class CashFutureDataCoverageAudit:
             spot_sessions=spot_sessions,
             future_sessions=future_sessions,
         )
-        return CashFutureDataCoverageAudit(mode=mode, report=report)
+        return CashFutureDataCoverageReport(mode=mode, report=report)
 
-    def require_complete(self, **kwargs) -> CashFutureDataCoverageAudit:
+    def require_complete(self, **kwargs) -> CashFutureDataCoverageReport:
         audit = self.audit(**kwargs)
         if not audit.complete:
             raise LookupError(
