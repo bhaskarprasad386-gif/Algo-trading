@@ -124,12 +124,14 @@ class CashFutureHistoricalDownloadService:
         try:
             if resume:
                 if self.status_store is None or job_id is None: raise ValueError("resume requires job_id and durable status store")
-                chunks = self.status_store.incomplete_chunks(job_id)
-                if not chunks:
+                # Validate the persisted provider before interpreting chunk state.
+                # A provider mismatch must never be silently converted into a
+                # completed/no-op resume, even when no chunks are currently listed.
+                plan, sequence_numbers = self._resume_plan(job_id)
+                if not plan.requests:
                     self.status_store.update_job(job_id, status="COMPLETE", error=None, catalog_count=self.catalog.count())
                     empty = DownloadExecutionResult(tuple(), None, tuple())
                     return CashFutureHistoricalDownloadReport(None, empty, tuple(), self.catalog.count())
-                plan, sequence_numbers = self._resume_plan(job_id)
                 self.status_store.update_job(job_id, status="RUNNING", error=None)
                 result = self.executor.run(self.source, plan, retry_attempts=retry_attempts, should_skip=should_skip or self._chunk_is_complete, should_accept=self._chunk_is_complete, **self._callbacks(job_id, sequence_numbers=sequence_numbers))
                 if result.failed_request_index is None: self.status_store.update_job(job_id, status="COMPLETE", catalog_count=self.catalog.count())
