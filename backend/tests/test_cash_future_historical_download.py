@@ -220,3 +220,20 @@ def test_resume_preserves_original_sequence_and_historical_instrument_identity()
     assert [chunk.sequence for chunk in status.chunks(job_id)] == [0, 1, 2]
     assert all(chunk.status == "COMPLETE" for chunk in status.chunks(job_id))
     status.close()
+
+
+def test_failed_or_incomplete_chunk_is_not_reported_complete_after_retry():
+    """Regression guard: strict completeness must reject a retry with missing data."""
+    catalog = HistoricalCatalog()
+    service = CashFutureHistoricalDownloadService(catalog, _contracts(), source=FakeSource())
+    request = type("R", (), {
+        "source": "angelone", "instrument": "NSE:1:SBIN", "timeframe": "1m",
+        "start_ns": 0, "end_ns": 180 * 1_000_000_000,
+    })()
+    # Deliberately omit the middle expected bar.
+    catalog.ingest([
+        HistoricalRecord("angelone", "NSE:1:SBIN", "1m", timestamp, {"close": 1})
+        for timestamp in (0, 60 * 1_000_000_000, 180 * 1_000_000_000)
+    ])
+    service.session_windows = lambda _: (SessionWindow(0, 180 * 1_000_000_000),)
+    assert service._chunk_is_complete(request) is False
