@@ -71,7 +71,7 @@ def test_preflight_ignores_nse_fno_holiday():
     )
     assert report.checked_trading_days == 1
     assert report.complete
-    assert catalog.resolved_dates == [date(2026, 1, 26)] or catalog.resolved_dates == [date(2026, 1, 25)]
+    assert catalog.resolved_dates == [date(2026, 1, 25)]
 
 
 def test_preflight_rejects_unsupported_exchange_via_calendar():
