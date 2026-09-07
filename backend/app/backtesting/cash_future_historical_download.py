@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable, Iterable
+from zoneinfo import ZoneInfo
 
 from .angelone_historical import AngelOneHistoricalSource
 from .cash_future_contract_preflight import CashFutureContractPreflight
@@ -17,6 +18,7 @@ from .nse_session_calendars import nse_daily_timestamps, nse_session_windows
 from .session_chunk_completeness import SessionChunk, SessionChunkCompleteness
 from .session_gap_planner import SessionWindow
 
+MARKET_TZ = ZoneInfo("Asia/Kolkata")
 _TIMEFRAME_INTERVAL_NS = {"1m": 60*1_000_000_000, "3m": 3*60*1_000_000_000, "5m": 5*60*1_000_000_000, "10m": 10*60*1_000_000_000, "15m": 15*60*1_000_000_000, "30m": 30*60*1_000_000_000, "1h": 60*60*1_000_000_000, "1d": 24*60*60*1_000_000_000}
 _INTRADAY_TIMEFRAMES = frozenset(_TIMEFRAME_INTERVAL_NS) - {"1d"}
 
@@ -166,8 +168,8 @@ class CashFutureHistoricalDownloadService:
                 if result.failed_request_index is None: self.status_store.update_job(job_id, status="COMPLETE", catalog_count=self.catalog.count())
                 return CashFutureHistoricalDownloadReport(None, result, tuple(), self.catalog.count())
 
-            start_date = start.astimezone(__import__("zoneinfo").zoneinfo.ZoneInfo("Asia/Kolkata")).date() if getattr(start, "tzinfo", None) else start.date()
-            end_date = end.astimezone(__import__("zoneinfo").zoneinfo.ZoneInfo("Asia/Kolkata")).date() if getattr(end, "tzinfo", None) else end.date()
+            start_date = start.astimezone(MARKET_TZ).date() if getattr(start, "tzinfo", None) else start.date()
+            end_date = end.astimezone(MARKET_TZ).date() if getattr(end, "tzinfo", None) else end.date()
             self.contract_preflight.require_complete(exchange=exchange, underlying=underlying, start=start_date, end=end_date, mode=mode)
             queue = build_rollover_download_queue(catalog=self.contract_catalog, spot_instrument=spot_instrument, exchange=exchange, underlying=underlying, start=start, end=end, timeframe=timeframe, mode=mode, source=self.source_name)
             spot_plan = self._plan_for_request(queue.spot)
