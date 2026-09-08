@@ -146,7 +146,7 @@ def test_quote_only_limit_order_does_not_cross_its_limit_price():
     class LimitStrategy:
         def on_event(self, event, context):
             if event.timestamp_ns == 1_000:
-                return StrategyDecision(orders=(SimOrder(
+                return StrategyDecision(action="BUY", orders=(SimOrder(
                     "L1", "NSE:SBIN", ExecutionSide.BUY, 10,
                     order_type=OrderType.LIMIT, limit_price=98.0,
                 ),))
