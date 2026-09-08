@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 
 Side = Literal["BUY", "SELL"]
@@ -43,7 +43,7 @@ class HighResolutionTrade:
 
 
 class HighResolutionPositionLedger:
-    """Keep only currently open positions and running aggregates; trades are emitted."""
+    """Keep only open positions and aggregates; expose a JSON-safe checkpoint state."""
 
     def __init__(self) -> None:
         self._open: dict[str, ExecutionFill] = {}
@@ -75,6 +75,47 @@ class HighResolutionPositionLedger:
         self._net_pnl += trade.net_pnl
         self._closed_trades += 1
         return trade
+
+    def snapshot_state(self) -> dict[str, Any]:
+        return {
+            "open": {
+                instrument: {
+                    "side": fill.side,
+                    "quantity": fill.quantity,
+                    "price": fill.price,
+                    "timestamp_ns": fill.timestamp_ns,
+                }
+                for instrument, fill in self._open.items()
+            },
+            "net_pnl": self._net_pnl,
+            "closed_trades": self._closed_trades,
+        }
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        open_state = state.get("open", {})
+        if not isinstance(open_state, dict):
+            raise ValueError("invalid position checkpoint")
+        restored: dict[str, ExecutionFill] = {}
+        for instrument, raw in open_state.items():
+            if not isinstance(raw, dict):
+                raise ValueError("invalid position checkpoint")
+            side = str(raw.get("side", "")).upper()
+            if side != "BUY":
+                raise ValueError("only BUY-open positions are supported")
+            quantity = int(raw.get("quantity", 0))
+            price = float(raw.get("price", 0))
+            timestamp_ns = int(raw.get("timestamp_ns", -1))
+            fill = ExecutionFill(side, str(instrument), quantity, price, timestamp_ns)
+            if quantity <= 0 or price <= 0 or timestamp_ns < 0:
+                raise ValueError("invalid position checkpoint")
+            restored[str(instrument)] = fill
+        net_pnl = float(state.get("net_pnl", 0.0))
+        closed_trades = int(state.get("closed_trades", 0))
+        if closed_trades < 0:
+            raise ValueError("invalid closed trade count")
+        self._open = restored
+        self._net_pnl = net_pnl
+        self._closed_trades = closed_trades
 
     @property
     def net_pnl(self) -> float:
