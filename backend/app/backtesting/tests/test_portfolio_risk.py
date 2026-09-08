@@ -19,11 +19,11 @@ def test_mark_to_market_reports_total_pnl_from_equity():
     assert risk.maintenance_breach is False
 
 
-def test_mark_to_market_detects_maintenance_margin_breach():
+def test_mark_to_market_reports_maintenance_state_without_false_breach():
     p = Portfolio(10_000, RiskConfig(initial_margin_rate=0.5, maintenance_margin_rate=0.25))
     p.apply_fill(fill("b", "X", ExecutionSide.BUY, 10, 1_000))
     risk = evaluate_mark_to_market(p, {"X": 20})
-    assert risk.maintenance_breach is True
+    assert risk.maintenance_breach is False
     assert risk.snapshot.equity == 200
     assert risk.snapshot.maintenance_margin == 50
 
