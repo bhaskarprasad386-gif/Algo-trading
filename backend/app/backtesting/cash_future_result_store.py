@@ -48,39 +48,65 @@ class CashFutureResultStore:
         self.connection.commit()
 
     @staticmethod
-    def _row(run_id: str, trade: CashFutureReplayTrade | CashFutureBothReplayTrade) -> tuple:
+    def _row(run_id: str, trade: CashFutureReplayTrade | CashFutureBothReplayTrade,
+             mode: str | None = None) -> tuple:
+        normalized = (mode or "CURRENT").upper()
+        if normalized not in {"CURRENT", "NEAR", "BOTH"}:
+            raise ValueError("mode must be CURRENT, NEAR or BOTH")
         if isinstance(trade, CashFutureReplayTrade):
-            return (run_id, trade.entry_timestamp_ns, trade.exit_timestamp_ns, "CURRENT",
+            if normalized == "BOTH":
+                raise ValueError("single-leg trade cannot be stored as BOTH")
+            return (run_id, trade.entry_timestamp_ns, trade.exit_timestamp_ns, normalized,
                     None, None, trade.future_instrument, trade.quantity, trade.lot_size,
                     trade.result.gross_pnl, trade.result.net_pnl)
+        if normalized != "BOTH":
+            raise ValueError("BOTH trade must be stored with mode BOTH")
         return (run_id, trade.entry_timestamp_ns, trade.exit_timestamp_ns, "BOTH",
                 trade.current_instrument, trade.near_instrument, None, trade.quantity,
                 trade.lot_size, trade.gross_pnl, trade.net_pnl)
 
-    def append(self, run_id: str, trade: CashFutureReplayTrade | CashFutureBothReplayTrade) -> bool:
+    def append(self, run_id: str, trade: CashFutureReplayTrade | CashFutureBothReplayTrade,
+               mode: str | None = None) -> bool:
         before = self.connection.total_changes
         self.connection.execute(
             """INSERT OR IGNORE INTO cash_future_results
             (run_id, entry_timestamp_ns, exit_timestamp_ns, mode, current_instrument,
              near_instrument, future_instrument, quantity, lot_size, gross_pnl, net_pnl)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", self._row(run_id, trade)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", self._row(run_id, trade, mode)
         )
         self.connection.commit()
         return self.connection.total_changes > before
 
-    def append_many(self, run_id: str, trades: Iterable[CashFutureReplayTrade | CashFutureBothReplayTrade]) -> int:
-        rows = [self._row(run_id, trade) for trade in trades]
-        if not rows:
-            return 0
-        before = self.connection.total_changes
-        self.connection.executemany(
-            """INSERT OR IGNORE INTO cash_future_results
-            (run_id, entry_timestamp_ns, exit_timestamp_ns, mode, current_instrument,
-             near_instrument, future_instrument, quantity, lot_size, gross_pnl, net_pnl)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", rows
-        )
-        self.connection.commit()
-        return self.connection.total_changes - before
+    def append_many(self, run_id: str, trades: Iterable[CashFutureReplayTrade | CashFutureBothReplayTrade],
+                    mode: str | None = None, chunk_size: int = 1000) -> int:
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
+        total = 0
+        batch = []
+        for trade in trades:
+            batch.append(self._row(run_id, trade, mode))
+            if len(batch) >= chunk_size:
+                before = self.connection.total_changes
+                self.connection.executemany(
+                    """INSERT OR IGNORE INTO cash_future_results
+                    (run_id, entry_timestamp_ns, exit_timestamp_ns, mode, current_instrument,
+                     near_instrument, future_instrument, quantity, lot_size, gross_pnl, net_pnl)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", batch
+                )
+                self.connection.commit()
+                total += self.connection.total_changes - before
+                batch.clear()
+        if batch:
+            before = self.connection.total_changes
+            self.connection.executemany(
+                """INSERT OR IGNORE INTO cash_future_results
+                (run_id, entry_timestamp_ns, exit_timestamp_ns, mode, current_instrument,
+                 near_instrument, future_instrument, quantity, lot_size, gross_pnl, net_pnl)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", batch
+            )
+            self.connection.commit()
+            total += self.connection.total_changes - before
+        return total
 
     def summary(self, run_id: str) -> CashFutureResultSummary:
         row = self.connection.execute(
