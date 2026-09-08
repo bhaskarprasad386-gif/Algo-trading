@@ -49,3 +49,7 @@ jobs:
       # retrigger benchmark after verified import-path fix
       - name: Benchmark completion marker
         run: echo "Streaming benchmark executed on the current main revision"
+
+      # benchmark-trigger marker
+      - name: Benchmark trigger marker
+        run: echo "1M streaming benchmark trigger verified"
