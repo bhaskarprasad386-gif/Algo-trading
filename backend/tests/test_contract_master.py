@@ -20,8 +20,8 @@ def _master() -> ContractMasterCatalog:
 
 def test_current_and_near_are_expiry_ordered_for_replay_date():
     catalog = _master()
-    assert catalog.resolve(exchange="NFO", underlying="ABC", as_of=date(2026, 9, 7), mode="CURRENT").token == "101"
-    assert catalog.resolve(exchange="NFO", underlying="ABC", as_of=date(2026, 9, 7), mode="NEAR").token == "102"
+    assert catalog.resolve(exchange="NFO", underlying="ABC", as_of=date(2026, 9, 1), mode="CURRENT").token == "101"
+    assert catalog.resolve(exchange="NFO", underlying="ABC", as_of=date(2026, 9, 1), mode="NEAR").token == "102"
     catalog.close()
 
 
