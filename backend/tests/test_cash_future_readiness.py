@@ -43,7 +43,8 @@ def test_readiness_gate_is_incomplete_when_contracts_and_data_are_missing():
     assert not report.complete
     assert report.missing_snapshot_dates
     assert report.data.incomplete_chunks == 2
-    assert report.missing_timestamps == 2
+    # Missing timestamps are aggregated across both spot and future legs.
+    assert report.missing_timestamps == 4
 
 
 def test_readiness_gate_fail_closed_with_combined_reason():
