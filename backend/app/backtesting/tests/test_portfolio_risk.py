@@ -1,7 +1,7 @@
 import pytest
 
 from app.backtesting.execution import ExecutionSide, SimFill
-from app.backtesting.portfolio import Portfolio, RiskConfig, RiskViolation
+from app.backtesting.portfolio import Portfolio, Position, RiskConfig, RiskViolation
 from app.backtesting.portfolio_risk import evaluate_mark_to_market
 
 
@@ -19,13 +19,14 @@ def test_mark_to_market_reports_total_pnl_from_equity():
     assert risk.maintenance_breach is False
 
 
-def test_mark_to_market_reports_maintenance_state_without_false_breach():
+def test_mark_to_market_detects_maintenance_margin_breach():
     p = Portfolio(10_000, RiskConfig(initial_margin_rate=0.5, maintenance_margin_rate=0.25))
-    p.apply_fill(fill("b", "X", ExecutionSide.BUY, 10, 1_000))
+    p.cash = -3_000
+    p._positions["X"] = Position("X", 10, 1_000)
     risk = evaluate_mark_to_market(p, {"X": 20})
-    assert risk.maintenance_breach is False
-    assert risk.snapshot.equity == 200
-    assert risk.snapshot.maintenance_margin == 50
+    assert risk.maintenance_breach is True
+    assert risk.snapshot.equity == -2_800
+    assert risk.snapshot.maintenance_margin == 5
 
 
 def test_mark_to_market_rejects_drawdown_before_state_change():
