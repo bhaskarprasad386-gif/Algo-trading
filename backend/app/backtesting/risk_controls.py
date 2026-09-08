@@ -43,13 +43,10 @@ def evaluate_market_risk(portfolio: Portfolio, marks: Mapping[str, float] | None
 
 
 def enforce_market_risk(portfolio: Portfolio, marks: Mapping[str, float] | None = None) -> MarketRiskState:
-    """Fail closed when a new market mark breaches a configured hard risk limit.
-
-    This is intentionally side-effect free: liquidation is an execution policy and is
-    handled separately. A caller can therefore stop accepting new orders while keeping
-    the current position state intact for deterministic reporting/recovery.
-    """
+    """Fail closed when current marks breach any configured hard risk limit."""
     state = evaluate_market_risk(portfolio, marks)
+    if state.margin_call:
+        raise RiskViolation("maintenance margin breached")
     if state.max_drawdown_breached:
         raise RiskViolation("max drawdown exceeded")
     if portfolio.risk_config.max_gross_notional is not None and state.gross_notional > portfolio.risk_config.max_gross_notional + 1e-9:
