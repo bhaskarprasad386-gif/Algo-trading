@@ -60,3 +60,35 @@ def test_permanently_incomplete_chunk_is_failure():
     )
     assert result.failed_request_index == 0
     assert result.completed_chunks == 0
+
+
+def test_bounded_mode_does_not_retain_all_completed_results():
+    requests = tuple(HistoricalFetchRequest("x", "i", "1m", n, n) for n in range(1000))
+    service = FakeService()
+    observed = []
+    result = ResumableHistoricalExecutor(
+        service, sleep=lambda _: None, collect_results=False
+    ).run(
+        object(),
+        HistoricalSyncPlan(requests),
+        retry_attempts=1,
+        on_chunk_complete=lambda index, _request, chunk_result, _attempt: observed.append(
+            (index, chunk_result.inserted)
+        ),
+    )
+    assert result.failed_request_index is None
+    assert result.completed_chunks == 1000
+    assert result.results == ()
+    assert len(observed) == 1000
+    assert service.calls == 1000
+
+
+def test_bounded_mode_preserves_completed_count_when_later_chunk_fails():
+    requests = tuple(HistoricalFetchRequest("x", "i", "1m", n, n) for n in range(5))
+    service = FakeService(failures=2)
+    result = ResumableHistoricalExecutor(
+        service, sleep=lambda _: None, collect_results=False
+    ).run(object(), HistoricalSyncPlan(requests), retry_attempts=1)
+    assert result.failed_request_index == 2
+    assert result.completed_chunks == 2
+    assert result.results == ()
