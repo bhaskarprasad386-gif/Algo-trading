@@ -39,10 +39,10 @@ def test_high_resolution_trades_append_incrementally(tmp_path):
     ledger.start_run("run-2", "strategy", "1", 1000)
     writer = HighResolutionLedgerWriter(ledger, "run-2")
 
-    assert writer.append_many(trade(ts, float(ts)) for ts in (1, 2, 3)) == 3
+    assert writer.append_many(trade(ts, float(ts)) for ts in (6, 7, 8)) == 3
     records = ledger.records("run-2", HIGH_RESOLUTION_TRADE_RECORD)
-    assert [r.timestamp_ns for r in records] == [1, 2, 3]
-    assert [r.payload["net_pnl"] for r in records] == [0.5, 1.5, 2.5]
+    assert [r.timestamp_ns for r in records] == [6, 7, 8]
+    assert [r.payload["net_pnl"] for r in records] == [5.5, 6.5, 7.5]
     ledger.close()
 
 
