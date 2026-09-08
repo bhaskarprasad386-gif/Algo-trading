@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
@@ -162,8 +162,9 @@ def sync_historical_backtest_data(
     end: datetime,
     client: HistoricalDataClient | None = None,
     interval: str = "ONE_MINUTE",
+    progress_fn: Callable[[int, int, int], None] | None = None,
 ) -> HistoricalBacktestSyncResult:
-    """Fetch only uncovered ranges, chunk provider requests, and durably store validated bars."""
+    """Fetch only uncovered ranges, checkpoint coverage after each chunk, and report progress."""
     if start >= end:
         raise ValueError("historical sync start must be before end")
     if not instrument.symbol.strip() or not instrument.token.strip():
@@ -178,6 +179,10 @@ def sync_historical_backtest_data(
     historical_client = client or HistoricalDataClient()
     completed = 0
     rows_written = 0
+    total_ranges = len(ranges)
+    if progress_fn:
+        progress_fn(0, total_ranges, 0)
+
     for range_start, range_end in ranges:
         response = historical_client.get_candles(
             instrument.exchange,
@@ -213,4 +218,6 @@ def sync_historical_backtest_data(
         rows_written += written
         if _has_no_minute_gap(bars, range_start, range_end):
             completed += 1
-    return HistoricalBacktestSyncResult(instrument.key, start, end, len(ranges), completed, rows_written)
+        if progress_fn:
+            progress_fn(completed, total_ranges, rows_written)
+    return HistoricalBacktestSyncResult(instrument.key, start, end, total_ranges, completed, rows_written)
