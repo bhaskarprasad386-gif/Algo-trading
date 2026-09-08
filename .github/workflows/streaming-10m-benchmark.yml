@@ -43,3 +43,4 @@ jobs:
         run: python benchmarks/benchmark_1m_streaming.py --events "${{ inputs.events || '10000000' }}" --batch-size "${{ inputs.batch_size || '10000' }}"
       - name: Benchmark completion marker
         run: echo "10M streaming benchmark executed successfully"
+# retrigger
