@@ -31,7 +31,7 @@ def _instrument():
     )
 
 
-def test_sync_fetches_missing_range_and_records_coverage(monkeypatch):
+def test_sync_fetches_missing_range_and_records_half_open_coverage(monkeypatch):
     client = FakeClient()
     calls = []
     coverage = []
@@ -50,6 +50,9 @@ def test_sync_fetches_missing_range_and_records_coverage(monkeypatch):
     assert calls[0][0]["close"] == 101.0
     assert len(coverage) == 1
     assert coverage[0]["validated"] is True
+    assert coverage[0]["start"] == start
+    assert coverage[0]["end"] == end
+    assert coverage[0]["row_count"] == 1
     assert result.completed and result.rows_written == 1
 
 
@@ -67,8 +70,6 @@ def test_sync_records_sparse_provider_response_as_separate_coverage_runs(monkeyp
     monkeypatch.setattr(sync, "record_coverage", lambda db, **kwargs: coverage.append(kwargs))
 
     start = datetime(2026, 1, 2, 9, 15)
-    # Half-open range [09:15, 09:18) includes both provider candles and
-    # deliberately leaves 09:16 missing, so completion must remain false.
     end = datetime(2026, 1, 2, 9, 18)
     result = sync.sync_historical_backtest_data(
         object(), instrument=_instrument(), start=start, end=end, client=client
@@ -77,8 +78,8 @@ def test_sync_records_sparse_provider_response_as_separate_coverage_runs(monkeyp
     assert not result.completed
     assert result.rows_written == 2
     assert [(item["start"], item["end"], item["row_count"]) for item in coverage] == [
-        (datetime(2026, 1, 2, 9, 15), datetime(2026, 1, 2, 9, 15), 1),
-        (datetime(2026, 1, 2, 9, 17), datetime(2026, 1, 2, 9, 17), 1),
+        (datetime(2026, 1, 2, 9, 15), datetime(2026, 1, 2, 9, 16), 1),
+        (datetime(2026, 1, 2, 9, 17), datetime(2026, 1, 2, 9, 18), 1),
     ]
 
 
