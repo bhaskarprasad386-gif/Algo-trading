@@ -7,12 +7,13 @@ from app.backtesting.contract_master import ContractMasterCatalog, ContractRecor
 
 def _master() -> ContractMasterCatalog:
     catalog = ContractMasterCatalog()
-    catalog.upsert(
+    catalog.upsert_snapshot(
+        date(2026, 9, 1),
         [
             ContractRecord("NFO", "ABC26SEP", "101", date(2026, 9, 24), "STOCK_FUTURE", "ABC", 100),
             ContractRecord("NFO", "ABC26OCT", "102", date(2026, 10, 29), "STOCK_FUTURE", "ABC", 100),
             ContractRecord("NFO", "ABC26NOV", "103", date(2026, 11, 26), "STOCK_FUTURE", "ABC", 100),
-        ]
+        ],
     )
     return catalog
 
@@ -39,7 +40,10 @@ def test_no_historical_contract_means_fail_closed():
 
 def test_index_futures_are_not_returned_by_stock_future_resolver():
     catalog = ContractMasterCatalog()
-    catalog.upsert([ContractRecord("NFO", "NIFTY26SEP", "201", date(2026, 9, 24), "INDEX_FUTURE", "NIFTY", 65)])
+    catalog.upsert_snapshot(
+        date(2026, 9, 1),
+        [ContractRecord("NFO", "NIFTY26SEP", "201", date(2026, 9, 24), "INDEX_FUTURE", "NIFTY", 65)],
+    )
     with pytest.raises(LookupError):
         catalog.resolve(exchange="NFO", underlying="NIFTY", as_of=date(2026, 9, 7), mode="CURRENT")
     catalog.close()
