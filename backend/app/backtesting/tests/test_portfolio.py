@@ -97,6 +97,15 @@ def test_atomic_multi_leg_failure_rolls_back_all_portfolio_changes():
     assert p.trades == ()
 
 
+def test_max_drawdown_rejects_fill_before_mutating_state():
+    p = Portfolio(100_000, RiskConfig(initial_margin_rate=1.0, max_drawdown=100))
+    p.apply_fill(fill("b", "X", ExecutionSide.BUY, 10, 100))
+    before = p.export_state()
+    with pytest.raises(RiskViolation, match="max drawdown"):
+        p.apply_fill(fill("s", "X", ExecutionSide.SELL, 10, 80))
+    assert p.export_state() == before
+
+
 def test_trade_ledger_records_capital_and_realized_pnl():
     p = Portfolio(100_000)
     p.apply_fill(fill("buy", "X", ExecutionSide.BUY, 10, 100, 2))
