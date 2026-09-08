@@ -17,8 +17,10 @@ def test_rollover_sync_maps_each_future_window_to_distinct_contracts():
     rows = [_row("ABCJAN", "1", "30JAN2025"), _row("ABCFEB", "2", "27FEB2025")]
     calls = []
 
-    def fake_sync(db, *, instrument, start, end, client, interval):
+    def fake_sync(db, *, instrument, start, end, client, interval, progress_fn=None):
         calls.append((instrument.token, start, end))
+        if progress_fn:
+            progress_fn(1, 1, 10)
         return _result(instrument, start, end)
 
     result = sync_cash_future_rollover_history(None, cash=cash, instrument_master_rows=rows, underlying="ABC", start=datetime(2025, 1, 1), end=datetime(2025, 3, 1), sync_fn=fake_sync)
@@ -26,6 +28,34 @@ def test_rollover_sync_maps_each_future_window_to_distinct_contracts():
     assert [token for token, _, _ in calls] == ["100", "1", "2"]
     assert result.completed
     assert result.rows_written == 30
+
+
+def test_rollover_sync_reports_aggregate_leg_progress():
+    cash = HistoricalBacktestInstrument("ABC-EQ", "100", "NSE", "NSE", "CASH")
+    rows = [_row("ABCJAN", "1", "30JAN2025"), _row("ABCFEB", "2", "27FEB2025")]
+    progress = []
+
+    def fake_sync(db, *, instrument, start, end, client, interval, progress_fn=None):
+        if progress_fn:
+            progress_fn(1, 1, 10)
+        return _result(instrument, start, end)
+
+    result = sync_cash_future_rollover_history(
+        None,
+        cash=cash,
+        instrument_master_rows=rows,
+        underlying="ABC",
+        start=datetime(2025, 1, 1),
+        end=datetime(2025, 3, 1),
+        sync_fn=fake_sync,
+        progress_fn=lambda completed, total, rows_written: progress.append((completed, total, rows_written)),
+    )
+
+    assert result.completed
+    assert progress[0] == (0, 3, 0)
+    assert progress[-1] == (3, 3, 30)
+    assert any(item == (1, 3, 10) for item in progress)
+    assert any(item == (2, 3, 20) for item in progress)
 
 
 def test_rollover_sync_requires_a_contract_covering_period():
