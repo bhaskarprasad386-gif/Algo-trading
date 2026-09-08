@@ -35,6 +35,13 @@ def test_invalid_cash_instrument_format_fails_closed(value):
         _normalise_cash_instrument(master, value, "NSE")
 
 
+def test_colon_form_exchange_mismatch_fails_closed():
+    master = InstrumentMaster()
+
+    with pytest.raises(ValueError, match="exchange mismatch"):
+        _normalise_cash_instrument(master, "BSE:500325:RELIANCE", "NSE")
+
+
 def test_resolved_non_nse_cash_instrument_fails_closed():
     class FakeMaster:
         def resolve_cash_instrument(self, tradingsymbol, exchange="NSE"):
