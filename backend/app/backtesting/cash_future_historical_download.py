@@ -61,7 +61,7 @@ class CashFutureHistoricalDownloadService:
         self.contract_catalog = contract_catalog
         self.ingestion = HistoricalIngestionService(catalog)
         self.source = source or AngelOneHistoricalSource()
-        self.executor = executor or ResumableHistoricalExecutor(self.ingestion)
+        self.executor = executor or ResumableHistoricalExecutor(self.ingestion, collect_results=False)
         self.completeness = SessionChunkCompleteness(catalog)
         self.session_windows = session_windows or _default_session_windows
         self.status_store = status_store
