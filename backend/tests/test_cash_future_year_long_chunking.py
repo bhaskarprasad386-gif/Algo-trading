@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from math import ceil
 
 from app.backtesting.historical_ingest import HistoricalFetchRequest
-from app.backtesting.cash_future_historical_download import build_chunked_plan
+from app.backtesting.historical_sync import build_chunked_plan
 
 
 NANOSECOND = 1_000_000_000
@@ -15,7 +15,14 @@ def test_year_range_is_split_into_exact_bounded_weekly_requests():
     end = int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() * NANOSECOND)
     request = HistoricalFetchRequest("fake", "NIFTY", "1m", start, end)
 
-    plan = build_chunked_plan(request, WEEK_NS)
+    plan = build_chunked_plan(
+        source=request.source,
+        instrument=request.instrument,
+        timeframe=request.timeframe,
+        start_ns=request.start_ns,
+        end_ns=request.end_ns,
+        chunk_ns=WEEK_NS,
+    )
     requests = plan.requests
 
     expected_count = ceil((end - start + 1) / WEEK_NS)
@@ -39,7 +46,14 @@ def test_leap_year_range_has_no_gap_or_overlap():
     end = int(datetime(2025, 1, 1, tzinfo=timezone.utc).timestamp() * NANOSECOND)
     request = HistoricalFetchRequest("fake", "NIFTY", "1m", start, end)
 
-    requests = build_chunked_plan(request, WEEK_NS).requests
+    requests = build_chunked_plan(
+        source=request.source,
+        instrument=request.instrument,
+        timeframe=request.timeframe,
+        start_ns=request.start_ns,
+        end_ns=request.end_ns,
+        chunk_ns=WEEK_NS,
+    ).requests
 
     assert requests[0].start_ns == start
     assert requests[-1].end_ns == end
