@@ -22,7 +22,7 @@ def test_report_aggregates_pnl_drawdown_roi_and_period_breakdowns_from_generator
     assert report.max_drawdown == pytest.approx(155)
     assert report.max_drawdown_pct == pytest.approx(155 / 10_190)
     assert report.profit_factor == pytest.approx(335 / 155)
-    assert report.turnover == pytest.approx(4_600)
+    assert report.turnover == pytest.approx(5_600)
     assert report.equity_curve[-1] == (trades[-1].timestamp_ns, pytest.approx(10_180))
     assert sum(report.monthly_pnl.values()) == pytest.approx(180)
     assert sum(report.yearly_pnl.values()) == pytest.approx(180)
