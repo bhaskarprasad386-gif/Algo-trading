@@ -72,7 +72,8 @@ def test_sync_records_sparse_provider_response_as_separate_coverage_runs(monkeyp
         object(), instrument=_instrument(), start=start, end=end, client=client
     )
 
-    assert result.completed and result.rows_written == 2
+    assert not result.completed
+    assert result.rows_written == 2
     assert [(item["start"], item["end"], item["row_count"]) for item in coverage] == [
         (datetime(2026, 1, 2, 9, 15), datetime(2026, 1, 2, 9, 15), 1),
         (datetime(2026, 1, 2, 9, 17), datetime(2026, 1, 2, 9, 17), 1),
