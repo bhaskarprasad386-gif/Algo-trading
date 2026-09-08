@@ -24,7 +24,12 @@ class CounterStrategy:
 
 def event_stream(count: int):
     for i in range(count):
-        yield MarketEvent(timestamp_ns=i + 1, sequence=i, instrument="BENCH", price=100.0, quantity=1, payload={"i": i})
+        yield MarketEvent(
+            timestamp_ns=i + 1,
+            sequence=i,
+            instrument="BENCH",
+            data=(("price", 100.0), ("i", i)),
+        )
 
 
 def main() -> None:
