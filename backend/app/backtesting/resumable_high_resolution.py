@@ -1,12 +1,12 @@
-"""Restartable high-resolution streaming replay with durable checkpoints."""
+"""Restartable high-resolution streaming replay with atomic durable state."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 import sqlite3
 from typing import Any, Iterable, Protocol
 
-from app.backtesting.checkpoint import CheckpointStore, ReplayCheckpoint
-from app.backtesting.event_dedup import EventDedupStore
+from app.backtesting.atomic_replay import AtomicReplayStore
+from app.backtesting.checkpoint import ReplayCheckpoint
 from app.backtesting.high_resolution_ledger import HighResolutionLedgerWriter
 from app.backtesting.high_resolution_pnl import ExecutionFill, HighResolutionPositionLedger
 from app.backtesting.universal import MarketEvent, ordered_events
@@ -27,12 +27,11 @@ class ResumableBacktestResult:
 
 
 class ResumableHighResolutionRunner:
-    """Runs high-resolution execution with durable strategy and position recovery."""
+    """Runs replay with one durable transaction for dedup, trades and checkpoint."""
 
     def __init__(self, connection: sqlite3.Connection, run_id: str,
                  position_ledger: HighResolutionPositionLedger | None = None) -> None:
-        self.checkpoints = CheckpointStore(connection)
-        self.dedup = EventDedupStore(connection)
+        self.store = AtomicReplayStore(connection)
         self.run_id = run_id
         self.positions = position_ledger or HighResolutionPositionLedger()
 
@@ -73,7 +72,7 @@ class ResumableHighResolutionRunner:
 
     def run(self, events: Iterable[MarketEvent], strategy: ResumableStrategy,
             ledger_writer: HighResolutionLedgerWriter | None = None) -> ResumableBacktestResult:
-        checkpoint = self.checkpoints.load(self.run_id)
+        checkpoint = self.store.load_checkpoint(self.run_id)
         resume_key = None if checkpoint is None else (checkpoint.timestamp_ns, checkpoint.sequence)
         processed = 0 if checkpoint is None else checkpoint.processed_events
         if checkpoint is not None:
@@ -83,21 +82,32 @@ class ResumableHighResolutionRunner:
             key = (event.timestamp_ns, event.sequence)
             if resume_key is not None and key <= resume_key:
                 continue
-            if not self.dedup.mark_if_new(self.run_id, event.timestamp_ns, event.sequence):
-                continue
-            processed += 1
-            signal = strategy.on_event(event)
-            fill = self._fill(signal, event)
-            if fill is not None:
-                signals += 1
-                trade = self.positions.add(fill)
+            self.store.begin()
+            try:
+                if not self.store.mark_if_new(self.run_id, event.timestamp_ns, event.sequence):
+                    self.store.rollback()
+                    continue
+                processed += 1
+                signal = strategy.on_event(event)
+                fill = self._fill(signal, event)
+                trade = None
+                if fill is not None:
+                    signals += 1
+                    trade = self.positions.add(fill)
+                    if trade is not None:
+                        self.store.append_trade(self.run_id, trade)
+                self.store.save_checkpoint(ReplayCheckpoint(
+                    self.run_id, event.timestamp_ns, event.sequence,
+                    processed, self.positions.net_pnl,
+                    {"strategy": self._strategy_state(strategy), "positions": self.positions.snapshot_state()},
+                ))
+                self.store.commit()
                 if trade is not None and ledger_writer is not None:
+                    # Optional external ledger is a post-commit export; atomic durability is in store.
                     ledger_writer.append(trade)
-            self.checkpoints.save(ReplayCheckpoint(
-                self.run_id, event.timestamp_ns, event.sequence,
-                processed, self.positions.net_pnl,
-                {"strategy": self._strategy_state(strategy), "positions": self.positions.snapshot_state()},
-            ))
+            except Exception:
+                self.store.rollback()
+                raise
         return ResumableBacktestResult(
             processed, signals, self.positions.closed_trades,
             self.positions.net_pnl, self.positions.open_positions, resume_key)
