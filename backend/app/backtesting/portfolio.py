@@ -170,6 +170,11 @@ class Portfolio:
             raise RiskViolation("insufficient available margin")
         if cfg.max_leverage is not None and equity > 0 and projected_gross / equity > cfg.max_leverage:
             raise RiskViolation("max leverage exceeded")
+        if cfg.max_drawdown is not None:
+            projected_equity = self.cash - signed * fill.price - fill.fee + projected_net
+            projected_drawdown = max(0.0, self._peak_equity - projected_equity)
+            if projected_drawdown > cfg.max_drawdown + 1e-9:
+                raise RiskViolation("max drawdown exceeded")
 
     def apply_fill(self, fill: SimFill, marks: dict[str, float] | None = None) -> Position:
         self.validate_fill(fill, marks)
@@ -204,8 +209,6 @@ class Portfolio:
         else:
             self._positions[fill.instrument] = position
         snapshot = self.snapshot(marks)
-        if self.risk_config.max_drawdown is not None and snapshot.drawdown > self.risk_config.max_drawdown:
-            raise RiskViolation("max drawdown exceeded")
         self._peak_equity = max(self._peak_equity, snapshot.equity)
         self._trades.append(TradeRecord(fill.order_id, fill.instrument, fill.side, fill.quantity, fill.price, fill.quantity * fill.price, fill.fee, realized_delta, self.cash, snapshot.equity, fill.filled_at_ns))
         return position
