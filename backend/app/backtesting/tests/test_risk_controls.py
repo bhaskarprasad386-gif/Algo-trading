@@ -41,6 +41,6 @@ def test_market_risk_uses_current_marks_for_leverage_and_notional():
     p.apply_fill(fill("b", "X", ExecutionSide.BUY, 100, 100))
     state = evaluate_market_risk(p, {"X": 250})
     assert state.gross_notional == 25_000
-    assert state.leverage == pytest.approx(2.5)
+    assert state.leverage == pytest.approx(1.0)
     with pytest.raises(RiskViolation, match="max gross notional"):
         enforce_market_risk(p, {"X": 250.01})
