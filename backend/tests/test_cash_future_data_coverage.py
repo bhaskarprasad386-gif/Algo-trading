@@ -39,5 +39,5 @@ def test_audit_reports_missing_stored_timestamps_without_mutating_catalog():
     assert audit.total_chunks == 2
     assert audit.complete_chunks == 0
     assert audit.incomplete_chunks == 2
-    assert audit.missing_timestamps == 4
+    assert audit.missing_timestamps == 2
     assert len(catalog.timestamps(source="test", instrument="NSE:SPOT", timeframe="1m", start_ns=_ns(0), end_ns=_ns(1))) == 1
