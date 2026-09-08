@@ -33,7 +33,7 @@ def create_historical_sync_job(
     start: datetime,
     end: datetime,
 ) -> BacktestJob:
-    """Create or reset a durable acquisition checkpoint."""
+    """Create a durable acquisition checkpoint, or resume an existing one."""
     job = db.scalar(select(BacktestJob).where(BacktestJob.job_id == job_id))
     if job is None:
         job = BacktestJob(
@@ -42,25 +42,22 @@ def create_historical_sync_job(
             symbol=symbol,
             contract_month=contract_month,
             requested_days=requested_days,
+            result_json=json.dumps(
+                {
+                    "kind": "historical_sync",
+                    "instrument": instrument,
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "completed_ranges": 0,
+                    "total_ranges": 0,
+                    "rows_written": 0,
+                },
+                sort_keys=True,
+            ),
         )
         db.add(job)
     job.status = "running"
-    job.progress_pct = 0.0
-    job.symbols_processed = 0
-    job.symbols_total = 0
-    job.message = "historical acquisition started"
-    job.result_json = json.dumps(
-        {
-            "kind": "historical_sync",
-            "instrument": instrument,
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-            "completed_ranges": 0,
-            "total_ranges": 0,
-            "rows_written": 0,
-        },
-        sort_keys=True,
-    )
+    job.message = "historical acquisition started/resumed"
     job.updated_at = datetime.utcnow()
     db.commit()
     return job
@@ -94,6 +91,18 @@ def checkpoint_historical_sync_job(
     job.symbols_total = total_ranges
     job.message = message
     job.result_json = json.dumps(state, sort_keys=True)
+    job.updated_at = datetime.utcnow()
+    db.commit()
+    return job
+
+
+def fail_historical_sync_job(db: Session, *, job_id: str, message: str) -> BacktestJob:
+    """Persist a failed state while leaving already imported data resumable."""
+    job = db.scalar(select(BacktestJob).where(BacktestJob.job_id == job_id))
+    if job is None:
+        raise ValueError(f"historical sync job not found: {job_id}")
+    job.status = "failed"
+    job.message = message
     job.updated_at = datetime.utcnow()
     db.commit()
     return job
