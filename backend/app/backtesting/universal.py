@@ -32,7 +32,7 @@ def ordered_events(events: Iterable[MarketEvent]) -> list[MarketEvent]:
     return sorted(normalized, key=lambda event: (event.timestamp_ns, event.instrument, event.sequence))
 
 def streaming_events(events: Iterable[MarketEvent]) -> Iterable[MarketEvent]:
-    """O(1)-event-memory iterator for sources already ordered by replay key."""
+    """O(1)-event-memory iterator for sources already ordered by canonical key."""
     previous_key = None
     for source_event in events:
         event = normalize_event(source_event)
