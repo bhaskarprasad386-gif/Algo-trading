@@ -1,8 +1,4 @@
-"""1M-event streaming replay benchmark.
-
-Generates events lazily, runs the resumable high-resolution engine, and reports
-throughput plus memory/durable-storage metrics.
-"""
+"""1M-event streaming replay benchmark."""
 
 from __future__ import annotations
 
@@ -28,14 +24,7 @@ class CounterStrategy:
 
 def event_stream(count: int):
     for i in range(count):
-        yield MarketEvent(
-            timestamp_ns=i + 1,
-            sequence=i,
-            instrument="BENCH",
-            price=100.0,
-            quantity=1,
-            payload={"i": i},
-        )
+        yield MarketEvent(timestamp_ns=i + 1, sequence=i, instrument="BENCH", price=100.0, quantity=1, payload={"i": i})
 
 
 def main() -> None:
@@ -50,18 +39,13 @@ def main() -> None:
         db_path = Path(tmp) / "benchmark.sqlite3"
         conn = sqlite3.connect(db_path)
         strategy = CounterStrategy()
-        runner = ResumableHighResolutionRunner(
-            conn,
-            "benchmark-1m",
-            batch_size=args.batch_size,
-        )
+        runner = ResumableHighResolutionRunner(conn, "benchmark-1m", batch_size=args.batch_size)
         tracemalloc.start()
         started = time.perf_counter()
         result = runner.run(event_stream(args.events), strategy)
         elapsed = time.perf_counter() - started
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
-
         persisted_events = runner.store.count_events("benchmark-1m")
         persisted_trades = runner.store.count_trades("benchmark-1m")
         conn.commit()
@@ -77,7 +61,6 @@ def main() -> None:
     print(f"events_per_second={rate:.2f}")
     print(f"peak_python_mb={peak / (1024 * 1024):.2f}")
     print(f"sqlite_mb={sqlite_bytes / (1024 * 1024):.2f}")
-
     if result.events_processed != args.events or strategy.seen != args.events:
         raise SystemExit("benchmark event count mismatch")
     if persisted_events != args.events or persisted_trades != 0:
