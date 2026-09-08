@@ -3,8 +3,10 @@ from datetime import date
 import pytest
 
 from app.backtesting.cash_future_strategy_replay import HistoricalCashFutureReplay
+from app.backtesting.cash_future_readiness import CashFutureReadinessGate
 from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
 from app.backtesting.cash_future_replay import CashFutureBar
+from app.backtesting.historical_catalog import HistoricalCatalog
 
 
 def _catalog():
@@ -29,7 +31,6 @@ def test_both_resolves_two_locked_legs_and_replays_them():
                       replay_date=date(2026, 9, 1), mode="BOTH", entry_timestamps=[1], exit_timestamps=[2], quantity=1)
     assert [x.future_instrument for x in plan.trades] == [sep, oct_]
     assert [x.lot_size for x in plan.trades] == [750, 750]
-    # (105-100 + 103-97) * 750 = 8,250 for each leg.
     assert [x.result.gross_pnl for x in plan.trades] == [8250, 8250]
 
 
@@ -38,3 +39,23 @@ def test_missing_selected_future_bars_fail_closed():
     with pytest.raises(LookupError):
         runner.run({}, spot_instrument="NSE:3045:SBIN", underlying="SBIN", replay_date=date(2026, 9, 1),
                    mode="CURRENT", entry_timestamps=[1], exit_timestamps=[2])
+
+
+def test_replay_enforces_readiness_gate_before_contract_selection():
+    class FailingGate:
+        def require_complete(self, **kwargs):
+            raise LookupError("Cash-Future backtest readiness incomplete: contract gaps")
+
+    runner = HistoricalCashFutureReplay(_catalog())
+    with pytest.raises(LookupError, match="Cash-Future backtest readiness incomplete"):
+        runner.run(
+            {},
+            spot_instrument="NSE:3045:SBIN",
+            underlying="SBIN",
+            replay_date=date(2026, 9, 1),
+            mode="CURRENT",
+            entry_timestamps=[1],
+            exit_timestamps=[2],
+            readiness_gate=FailingGate(),
+            readiness_kwargs={"any": "valid"},
+        )
