@@ -25,6 +25,35 @@ class CashFutureReplayTrade:
     result: CashFutureTrade
 
 
+class CashFutureContractLock:
+    """Lock the historical contract selected at entry; rollover cannot replace it."""
+
+    def __init__(self, *, mode: str, contracts: Mapping[str, str]) -> None:
+        mode = mode.upper()
+        if mode not in {"CURRENT", "NEAR", "BOTH"}:
+            raise ValueError("mode must be CURRENT, NEAR or BOTH")
+        required = ("CURRENT", "NEAR") if mode == "BOTH" else (mode,)
+        missing = [leg for leg in required if not contracts.get(leg)]
+        if missing:
+            raise LookupError(f"missing historical contract identity for: {', '.join(missing)}")
+        self.mode = mode
+        self._contracts = {leg: contracts[leg] for leg in required}
+
+    @property
+    def contracts(self) -> Mapping[str, str]:
+        return dict(self._contracts)
+
+    def require(self, leg: str, instrument: str) -> None:
+        expected = self._contracts.get(leg.upper())
+        if expected is None:
+            raise LookupError(f"contract leg {leg!r} is not selected")
+        if instrument != expected:
+            raise ValueError(
+                f"historical rollover cannot replace open {leg.upper()} leg: "
+                f"expected {expected}, got {instrument}"
+            )
+
+
 class CashFutureReplayRunner:
     """Replay pre-aligned spot/future bars without inventing missing prices."""
 
@@ -38,7 +67,11 @@ class CashFutureReplayRunner:
         lot_size: int,
         quantity: int = 1,
         charges: Mapping[str, float] | None = None,
+        contract_lock: CashFutureContractLock | None = None,
+        contract_leg: str = "CURRENT",
     ) -> tuple[CashFutureReplayTrade, ...]:
+        if contract_lock is not None:
+            contract_lock.require(contract_leg, future_instrument)
         by_ts = {bar.timestamp_ns: bar for bar in bars}
         entries = tuple(entry_timestamps)
         exits = tuple(exit_timestamps)
