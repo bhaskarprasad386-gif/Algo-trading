@@ -1,9 +1,9 @@
-"""Deterministic timestamp ordering for tick and event replay."""
+"""Deterministic streaming ordering for tick and event replay."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -21,20 +21,37 @@ class ReplayEvent:
 
 
 class DeterministicEventReplay:
-    """Replay events in exact timestamp/sequence order without fabricating precision."""
+    """Replay timestamped events deterministically without inventing precision."""
 
     @staticmethod
     def order(events: Iterable[ReplayEvent]) -> Iterator[ReplayEvent]:
-        ordered = sorted(events, key=lambda event: (event.timestamp_ns, event.sequence))
-        yield from ordered
+        """Yield in timestamp/sequence order; input is materialized only for sorting."""
+        yield from sorted(events, key=lambda event: (event.timestamp_ns, event.sequence))
 
     @staticmethod
     def validate(events: Iterable[ReplayEvent]) -> tuple[ReplayEvent, ...]:
         ordered = tuple(DeterministicEventReplay.order(events))
-        seen: set[tuple[int, int]] = set()
-        for event in ordered:
-            identity = (event.timestamp_ns, event.sequence)
-            if identity in seen:
-                raise ValueError("duplicate event timestamp/sequence identity")
-            seen.add(identity)
+        DeterministicEventReplay._validate_unique(ordered)
         return ordered
+
+    @staticmethod
+    def _validate_unique(events: Iterable[ReplayEvent]) -> None:
+        previous: tuple[int, int] | None = None
+        for event in events:
+            identity = (event.timestamp_ns, event.sequence)
+            if identity == previous:
+                raise ValueError("duplicate event timestamp/sequence identity")
+            previous = identity
+
+    @staticmethod
+    def validate_ordered(events: Iterable[ReplayEvent]) -> Iterator[ReplayEvent]:
+        """Validate an already timestamp/sequence-sorted stream without buffering it."""
+        previous: tuple[int, int] | None = None
+        for event in events:
+            identity = (event.timestamp_ns, event.sequence)
+            if previous is not None and identity < previous:
+                raise ValueError("events are not in deterministic timestamp/sequence order")
+            if identity == previous:
+                raise ValueError("duplicate event timestamp/sequence identity")
+            previous = identity
+            yield event
