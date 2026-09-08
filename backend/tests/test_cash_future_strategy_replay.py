@@ -3,8 +3,10 @@ from datetime import date
 import pytest
 
 from app.backtesting.cash_future_strategy_replay import HistoricalCashFutureReplay
+from app.backtesting.cash_future_readiness import CashFutureReadinessGate
 from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
 from app.backtesting.cash_future_replay import CashFutureBar
+from app.backtesting.historical_catalog import HistoricalCatalog
 
 
 def _catalog():
@@ -38,3 +40,31 @@ def test_missing_selected_future_bars_fail_closed():
     with pytest.raises(LookupError):
         runner.run({}, spot_instrument="NSE:3045:SBIN", underlying="SBIN", replay_date=date(2026, 9, 1),
                    mode="CURRENT", entry_timestamps=[1], exit_timestamps=[2])
+
+
+def test_replay_enforces_readiness_gate_before_contract_selection():
+    gate = CashFutureReadinessGate(
+        contract_catalog=ContractMasterCatalog(),
+        historical_catalog=HistoricalCatalog(),
+    )
+    runner = HistoricalCashFutureReplay(_catalog())
+    with pytest.raises(LookupError, match="Cash-Future backtest readiness incomplete"):
+        runner.run(
+            {},
+            spot_instrument="NSE:3045:SBIN",
+            underlying="SBIN",
+            replay_date=date(2026, 9, 1),
+            mode="CURRENT",
+            entry_timestamps=[1],
+            exit_timestamps=[2],
+            readiness_gate=gate,
+            readiness_kwargs={
+                "exchange": "NFO",
+                "underlying": "SBIN",
+                "end": __import__("datetime").datetime(2026, 9, 1),
+                "mode": "CURRENT",
+                "queue": None,
+                "sessions": (),
+                "interval_ns": 60_000_000_000,
+            },
+        )
