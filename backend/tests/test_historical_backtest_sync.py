@@ -56,6 +56,15 @@ def test_sync_fetches_missing_range_and_records_half_open_coverage(monkeypatch):
     assert result.completed and result.rows_written == 1
 
 
+def test_contiguous_single_bar_coverage_ends_at_next_minute():
+    start = datetime(2026, 1, 2, 9, 15)
+    bars = [{"timestamp": start}]
+
+    assert sync._contiguous_minute_ranges(bars) == [
+        (start, datetime(2026, 1, 2, 9, 16))
+    ]
+
+
 def test_sync_records_sparse_provider_response_as_separate_coverage_runs(monkeypatch):
     client = FakeClient(response={
         "status": True,
