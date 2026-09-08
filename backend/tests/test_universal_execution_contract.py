@@ -15,6 +15,10 @@ from app.backtesting.order_lifecycle import (
     stop_triggered,
     tif_after_execution,
 )
+from app.backtesting.event_engine import EventBacktestEngine
+from app.backtesting.events import EventType, MarketEvent
+from app.backtesting.portfolio import Portfolio
+from app.backtesting.strategy import StrategyDecision
 
 
 def test_depth_execution_consumes_multiple_levels_and_preserves_point_in_time_prices():
@@ -132,3 +136,28 @@ def test_lifecycle_export_restore_keeps_fill_and_terminal_state():
 
     restored.cancel(5_200, "end of replay")
     assert restored.state.status == OrderStatus.CANCELLED
+
+
+def test_quote_only_limit_order_does_not_cross_its_limit_price():
+    simulator = ExecutionSimulator()
+    portfolio = Portfolio(initial_cash=1_000_000)
+    engine = EventBacktestEngine(execution=simulator, portfolio=portfolio)
+
+    class LimitStrategy:
+        def on_event(self, event, context):
+            if event.timestamp_ns == 1_000:
+                return StrategyDecision(orders=(SimOrder(
+                    "L1", "NSE:SBIN", ExecutionSide.BUY, 10,
+                    order_type=OrderType.LIMIT, limit_price=98.0,
+                ),))
+            return None
+
+    events = (
+        MarketEvent(1_000, "NSE:SBIN", EventType.QUOTE, {"bid": 99.0, "ask": 100.0}),
+        MarketEvent(2_000, "NSE:SBIN", EventType.QUOTE, {"bid": 99.0, "ask": 100.0}),
+    )
+    stats = engine.run(events, LimitStrategy())
+
+    assert stats.fills == 0
+    assert engine.order_states["L1"].status == OrderStatus.ACCEPTED
+    assert engine.order_states["L1"].remaining_quantity == 10
