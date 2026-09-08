@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from typing import Any, Iterable
 
 from app.market_data.historical_backtest_sync import HistoricalBacktestInstrument
+from app.market_data.session_calendar import NSE_SESSION_CLOSE, NSE_SESSION_OPEN
 
 
 @dataclass(frozen=True)
@@ -92,8 +93,16 @@ def select_contract(chain: list[FuturesContract], timestamp: datetime) -> Future
     return eligible[0] if eligible else None
 
 
+def _next_trading_session_open(expiry: date) -> datetime:
+    """Return the next weekday session open after a contract expiry date."""
+    day = expiry + timedelta(days=1)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    return datetime.combine(day, NSE_SESSION_OPEN)
+
+
 def map_rollover(chain: list[FuturesContract], start: datetime, end: datetime) -> list[tuple[datetime, datetime, FuturesContract]]:
-    """Return non-overlapping date windows mapped to successive futures contracts."""
+    """Map contracts to non-overlapping windows, keeping expiry-day trading with the expiring contract."""
     if start >= end:
         raise ValueError("rollover start must be before end")
     selected = [contract for contract in chain if contract.expiry_date >= start.date()]
@@ -104,8 +113,11 @@ def map_rollover(chain: list[FuturesContract], start: datetime, end: datetime) -
     for index, contract in enumerate(selected):
         if cursor >= end:
             break
-        next_boundary = datetime.combine(contract.expiry_date, datetime.min.time())
-        window_end = min(end, next_boundary) if index < len(selected) - 1 else end
+        if index < len(selected) - 1:
+            next_boundary = _next_trading_session_open(contract.expiry_date)
+            window_end = min(end, next_boundary)
+        else:
+            window_end = end
         if cursor < window_end:
             windows.append((cursor, window_end, contract))
         cursor = window_end
