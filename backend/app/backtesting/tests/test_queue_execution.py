@@ -57,3 +57,13 @@ def test_queue_ahead_never_creates_synthetic_liquidity():
     assert result.remaining_quantity == 10
     assert result.rejected is True
     assert result.reason == "queue ahead not depleted"
+
+
+def test_queue_evidence_at_other_price_does_not_advance_order():
+    simulator = ExecutionSimulator()
+    queue = simulator.advance_queue_ahead(5, QueueEvidence(101.0, executed_quantity=5))
+    assert queue == 0
+    order = SimOrder("queue-4", "NIFTY", ExecutionSide.BUY, 2, order_type=OrderType.LIMIT, limit_price=100.0, queue_ahead_quantity=5)
+    blocked = simulator.execute_depth(order, OrderBook(asks=(DepthLevel(100.0, 2),)), 5_000)
+    assert blocked.fills == ()
+    assert blocked.remaining_quantity == 2
