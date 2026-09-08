@@ -199,7 +199,7 @@ class CashFutureHistoricalDownloadService:
             start_date = start.astimezone(MARKET_TZ).date() if getattr(start, "tzinfo", None) else start.date()
             end_date = end.astimezone(MARKET_TZ).date() if getattr(end, "tzinfo", None) else end.date()
             self.contract_preflight.require_complete(exchange=exchange, underlying=underlying, start=start_date, end=end_date, mode=mode)
-            resolved_spot_instrument = _normalise_cash_instrument(self.instrument_master, spot_instrument, exchange)
+            resolved_spot_instrument = _normalise_cash_instrument(self.instrument_master, spot_instrument, "NSE")
             queue = build_rollover_download_queue(catalog=self.contract_catalog, spot_instrument=resolved_spot_instrument, exchange=exchange, underlying=underlying, start=start, end=end, timeframe=timeframe, mode=mode, source=self.source_name)
             spot_plan = self._plan_for_request(queue.spot)
             future_plans = tuple(self._plan_for_request(item.request) for item in queue.futures)
