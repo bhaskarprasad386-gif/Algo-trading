@@ -59,14 +59,15 @@ def test_order_book_requires_best_to_worst_ordering():
         OrderBook(asks=(DepthLevel(101.0, 1), DepthLevel(100.0, 1)))
 
 
-def test_queue_ahead_delays_execution_without_inventing_liquidity():
+def test_queue_ahead_requires_explicit_source_evidence():
     book = OrderBook(asks=(DepthLevel(100.0, 5), DepthLevel(100.5, 5)))
     order = SimOrder("queue", "NIFTY", ExecutionSide.BUY, 4, submitted_at_ns=1, queue_ahead_quantity=3)
     result = ExecutionSimulator().execute_depth(order, book, 2)
 
-    assert [f.quantity for f in result.fills] == [2, 2]
-    assert [f.price for f in result.fills] == [100.0, 100.5]
-    assert result.remaining_quantity == 0
+    assert result.fills == ()
+    assert result.rejected
+    assert result.remaining_quantity == 4
+    assert result.reason == "queue ahead not depleted"
 
 
 def test_queue_ahead_can_leave_order_unfilled_when_observed_depth_is_consumed():
