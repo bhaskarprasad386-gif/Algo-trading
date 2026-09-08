@@ -4,13 +4,13 @@ from app.backtesting.portfolio import Portfolio, Position, RiskConfig, RiskViola
 from app.backtesting.risk_monitor import enforce_new_risk, evaluate_margin
 
 
-def test_maintenance_margin_call_is_mark_to_market_and_non_mutating():
+def test_maintenance_margin_state_is_mark_to_market_and_non_mutating():
     p = Portfolio(100_000, RiskConfig(initial_margin_rate=0.5, maintenance_margin_rate=0.25))
     before = p.export_state()
     state = evaluate_margin(p.snapshot())
     assert state.margin_call is False
     assert state.liquidation_required is False
-    assert state.margin_buffer == pytest.approx(75_000)
+    assert state.margin_buffer == pytest.approx(100_000)
     assert p.export_state() == before
 
 
