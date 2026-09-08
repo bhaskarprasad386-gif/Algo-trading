@@ -25,7 +25,7 @@ class FakeMarketClient:
         return self.api
 
 
-def test_historical_client_retries_transient_exception(monkeypatch):
+def test_historical_client_retries_transient_exception():
     api = FakeSmartApi([RuntimeError("temporary"), {
         "status": True,
         "data": [["2026-01-02T09:15:00", 100, 102, 99, 101, 10]],
@@ -42,7 +42,7 @@ def test_historical_client_retries_transient_exception(monkeypatch):
     assert sleeps == [0.25]
 
 
-def test_historical_client_uses_exponential_backoff(monkeypatch):
+def test_historical_client_uses_exponential_backoff():
     api = FakeSmartApi([RuntimeError("one"), RuntimeError("two"), {
         "status": True,
         "data": [],
@@ -65,7 +65,7 @@ def test_historical_client_surfaces_final_provider_failure():
     with pytest.raises(TradingAppException) as exc:
         client.get_candles("NSE", "2885", "ONE_MINUTE", "2026-01-02 09:15", "2026-01-02 09:16")
 
-    assert exc.value.code == "HistoricalDataRequestError"
+    assert exc.value.name == "HistoricalDataRequestError"
     assert api.calls == 2
 
 
@@ -76,5 +76,5 @@ def test_historical_client_rejects_wrong_date_format_without_provider_call():
     with pytest.raises(TradingAppException) as exc:
         client.get_candles("NSE", "2885", "ONE_MINUTE", "2026-01-02T09:15", "2026-01-02 09:16")
 
-    assert exc.value.code == "InvalidDateFormat"
+    assert exc.value.name == "InvalidDateFormat"
     assert api.calls == 0
