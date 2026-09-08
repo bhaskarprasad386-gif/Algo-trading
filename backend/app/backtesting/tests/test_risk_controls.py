@@ -27,13 +27,15 @@ def test_enforce_market_risk_fails_closed_on_mark_to_market_drawdown():
         enforce_market_risk(p, {"X": 40})
 
 
-def test_market_risk_detects_maintenance_margin_call():
-    p = Portfolio(10_000, RiskConfig(initial_margin_rate=0.5, maintenance_margin_rate=0.25))
-    p.apply_fill(fill("b", "X", ExecutionSide.BUY, 100, 100))
-    state = evaluate_market_risk(p, {"X": 30})
-    assert state.equity == 3_000
-    assert state.maintenance_margin == 750
-    assert state.margin_call is False
+def test_enforce_market_risk_blocks_new_risk_on_maintenance_margin_call():
+    p = Portfolio(100_000, RiskConfig(initial_margin_rate=0.5, maintenance_margin_rate=0.4))
+    p.apply_fill(fill("b", "X", ExecutionSide.BUY, 300, 500))
+    before = p.export_state()
+    state = evaluate_market_risk(p, {"X": 100})
+    assert state.margin_call is True
+    with pytest.raises(RiskViolation, match="maintenance margin"):
+        enforce_market_risk(p, {"X": 100})
+    assert p.export_state() == before
 
 
 def test_market_risk_uses_current_marks_for_leverage_and_notional():
