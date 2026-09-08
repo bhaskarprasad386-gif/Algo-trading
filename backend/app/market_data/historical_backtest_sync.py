@@ -12,6 +12,10 @@ from app.backtest.data_store import instrument_key, missing_ranges, record_cover
 from app.market_data.candle_normalizer import normalize_candles
 from app.market_data.historical import HistoricalDataClient
 
+# Angel One documents a 30-day maximum window for ONE_MINUTE history.
+# Keeping this as a constant makes the provider constraint explicit and testable.
+MAX_ONE_MINUTE_REQUEST_DAYS = 30
+
 
 @dataclass(frozen=True)
 class HistoricalBacktestInstrument:
@@ -96,12 +100,7 @@ def _normalize_for_store(rows: list[Any], instrument: HistoricalBacktestInstrume
 
 
 def _contiguous_minute_ranges(bars: list[dict[str, Any]]) -> list[tuple[datetime, datetime]]:
-    """Return one coverage interval per contiguous 1-minute run.
-
-    Recording one broad interval for a sparse provider response would make an
-    internal missing minute look covered forever. Coverage therefore follows
-    the actual minute continuity of the validated rows.
-    """
+    """Return one coverage interval per contiguous 1-minute run."""
     timestamps = sorted({bar["timestamp"] for bar in bars})
     if not timestamps:
         return []
@@ -117,35 +116,83 @@ def _contiguous_minute_ranges(bars: list[dict[str, Any]]) -> list[tuple[datetime
     return ranges
 
 
-def sync_historical_backtest_data(db: Session, *, instrument: HistoricalBacktestInstrument, start: datetime,
-                                  end: datetime, client: HistoricalDataClient | None = None,
-                                  interval: str = "ONE_MINUTE") -> HistoricalBacktestSyncResult:
-    """Fetch only uncovered ranges and durably store validated 1-minute candles."""
+def _chunk_range(start: datetime, end: datetime, *, max_days: int = MAX_ONE_MINUTE_REQUEST_DAYS) -> list[tuple[datetime, datetime]]:
+    """Split a provider range into inclusive windows within the provider limit."""
+    if start >= end:
+        return []
+    if max_days <= 0:
+        raise ValueError("max_days must be positive")
+    step = timedelta(days=max_days)
+    result: list[tuple[datetime, datetime]] = []
+    cursor = start
+    while cursor < end:
+        chunk_end = min(cursor + step, end)
+        result.append((cursor, chunk_end))
+        cursor = chunk_end
+    return result
+
+
+def _provider_datetime(value: datetime) -> str:
+    """Format timestamps exactly as required by Angel One historical API."""
+    return value.strftime("%Y-%m-%d %H:%M")
+
+
+def sync_historical_backtest_data(
+    db: Session,
+    *,
+    instrument: HistoricalBacktestInstrument,
+    start: datetime,
+    end: datetime,
+    client: HistoricalDataClient | None = None,
+    interval: str = "ONE_MINUTE",
+) -> HistoricalBacktestSyncResult:
+    """Fetch only uncovered ranges, chunk provider requests, and durably store validated bars."""
     if start >= end:
         raise ValueError("historical sync start must be before end")
     if not instrument.symbol.strip() or not instrument.token.strip():
         raise ValueError("historical instrument symbol and token are required")
 
-    ranges = missing_ranges(db, instrument.key, start, end)
+    uncovered = missing_ranges(db, instrument.key, start, end)
+    ranges = (
+        [window for gap_start, gap_end in uncovered for window in _chunk_range(gap_start, gap_end)]
+        if interval == "ONE_MINUTE"
+        else uncovered
+    )
     historical_client = client or HistoricalDataClient()
     completed = 0
     rows_written = 0
     for range_start, range_end in ranges:
-        response = historical_client.get_candles(instrument.exchange, instrument.token, interval,
-                                                 range_start.isoformat(sep=" "), range_end.isoformat(sep=" "))
+        response = historical_client.get_candles(
+            instrument.exchange,
+            instrument.token,
+            interval,
+            _provider_datetime(range_start),
+            _provider_datetime(range_end),
+        )
         raw_rows = response.get("data") if isinstance(response, dict) else None
         if not isinstance(raw_rows, list) or not raw_rows:
             raise ValueError("historical provider returned no candle data")
-        bars = [bar for bar in _normalize_for_store(raw_rows, instrument)
-                if range_start <= bar["timestamp"] <= range_end]
+        bars = [
+            bar for bar in _normalize_for_store(raw_rows, instrument)
+            if range_start <= bar["timestamp"] <= range_end
+        ]
         if not bars:
             raise ValueError("historical provider returned no valid candles in requested range")
         written = upsert_1m_bars(db, bars)
         for coverage_start, coverage_end in _contiguous_minute_ranges(bars):
-            record_coverage(db, key=instrument.key, symbol=instrument.symbol, segment=instrument.segment,
-                            contract_month=instrument.contract_month, start=coverage_start, end=coverage_end,
-                            row_count=sum(1 for bar in bars if coverage_start <= bar["timestamp"] <= coverage_end),
-                            data_version="angel_one_v1", source_hash=None, validated=True)
+            record_coverage(
+                db,
+                key=instrument.key,
+                symbol=instrument.symbol,
+                segment=instrument.segment,
+                contract_month=instrument.contract_month,
+                start=coverage_start,
+                end=coverage_end,
+                row_count=sum(1 for bar in bars if coverage_start <= bar["timestamp"] <= coverage_end),
+                data_version="angel_one_v1",
+                source_hash=None,
+                validated=True,
+            )
         rows_written += written
         completed += 1
     return HistoricalBacktestSyncResult(instrument.key, start, end, len(ranges), completed, rows_written)
