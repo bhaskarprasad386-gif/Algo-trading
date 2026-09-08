@@ -29,6 +29,21 @@ class Strategy:
         return all(rule.evaluate(context) for rule in self.rules)
 
 
+@dataclass(frozen=True)
+class ThresholdStrategy:
+    """Compatibility strategy for deterministic threshold entry/exit rules."""
+
+    field: str
+    threshold: float
+    above: bool = True
+
+    def evaluate(self, context: Mapping[str, float]) -> bool:
+        if self.field not in context:
+            return False
+        value = float(context[self.field])
+        return value >= self.threshold if self.above else value <= self.threshold
+
+
 def threshold_rule(field: str, minimum: float | None = None, maximum: float | None = None) -> Rule:
     if minimum is None and maximum is None:
         raise ValueError("minimum or maximum is required")
