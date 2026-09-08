@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -62,6 +62,16 @@ def test_contiguous_single_bar_coverage_ends_at_next_minute():
 
     assert sync._contiguous_minute_ranges(bars) == [
         (start, datetime(2026, 1, 2, 9, 16))
+    ]
+
+
+def test_provider_range_is_chunked_at_30_day_boundary():
+    start = datetime(2026, 1, 1, 9, 15)
+    end = start + timedelta(days=31)
+
+    assert sync._chunk_range(start, end) == [
+        (start, start + timedelta(days=30)),
+        (start + timedelta(days=30), end),
     ]
 
 
