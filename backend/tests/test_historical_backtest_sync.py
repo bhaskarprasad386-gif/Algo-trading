@@ -67,7 +67,9 @@ def test_sync_records_sparse_provider_response_as_separate_coverage_runs(monkeyp
     monkeypatch.setattr(sync, "record_coverage", lambda db, **kwargs: coverage.append(kwargs))
 
     start = datetime(2026, 1, 2, 9, 15)
-    end = datetime(2026, 1, 2, 9, 17)
+    # Half-open range [09:15, 09:18) includes both provider candles and
+    # deliberately leaves 09:16 missing, so completion must remain false.
+    end = datetime(2026, 1, 2, 9, 18)
     result = sync.sync_historical_backtest_data(
         object(), instrument=_instrument(), start=start, end=end, client=client
     )
