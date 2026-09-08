@@ -76,6 +76,12 @@ class CashFutureBacktestPipeline:
                 return float(value)
         raise ValueError(f"historical record has no positive price: {record.instrument} @ {record.timestamp_ns}")
 
+    @staticmethod
+    def _timestamp_ns(value: datetime) -> int:
+        if value.tzinfo is None:
+            raise ValueError("start/end datetimes must be timezone-aware")
+        return int(value.timestamp() * 1_000_000_000)
+
     def _resolve(self, *, exchange: str, underlying: str, as_of: datetime, mode: str):
         return self.contract_catalog.resolve(exchange=exchange, underlying=underlying, as_of=as_of.date(), mode=mode)
 
@@ -116,14 +122,16 @@ class CashFutureBacktestPipeline:
         normalized = mode.upper()
         if normalized not in {"CURRENT", "NEAR", "BOTH"}:
             raise ValueError("mode must be CURRENT, NEAR or BOTH")
+        start_ns = self._timestamp_ns(start)
+        end_ns = self._timestamp_ns(end)
         if end < start or entry_timestamp_ns >= exit_timestamp_ns:
             raise ValueError("invalid backtest range or entry/exit timestamps")
         entries = tuple(entry_timestamps or (entry_timestamp_ns,))
         exits = tuple(exit_timestamps or (exit_timestamp_ns,))
         if len(entries) != len(exits):
             raise ValueError("entry and exit timestamps must have equal length")
-        if any(ts < start.timestamp_ns() for ts in entries) or any(ts > end.timestamp_ns() for ts in exits):
-            raise ValueError("trade timestamps must be inside requested backtest range")
+        if any(entry < start_ns or exit > end_ns or entry >= exit for entry, exit in zip(entries, exits)):
+            raise ValueError("trade timestamps must be inside requested backtest range and entry must precede exit")
 
         readiness = self.readiness.require_complete(
             exchange=exchange, underlying=underlying, end=end, queue=queue, mode=normalized,
@@ -131,7 +139,7 @@ class CashFutureBacktestPipeline:
         )
         entry_dt = datetime.fromtimestamp(entries[0] / 1_000_000_000, tz=timezone.utc)
         spot_records = self._records(source=source, instrument=spot_instrument, timeframe=timeframe,
-                                     start_ns=start.timestamp_ns(), end_ns=end.timestamp_ns())
+                                     start_ns=start_ns, end_ns=end_ns)
         runner = CashFutureReplayRunner()
 
         if normalized == "BOTH":
@@ -143,10 +151,8 @@ class CashFutureBacktestPipeline:
                 raise ValueError("CURRENT and NEAR lot sizes must match for BOTH replay")
             bars = self._sync_both(
                 spot_records,
-                self._records(source=source, instrument=current_instrument, timeframe=timeframe,
-                              start_ns=start.timestamp_ns(), end_ns=end.timestamp_ns()),
-                self._records(source=source, instrument=near_instrument, timeframe=timeframe,
-                              start_ns=start.timestamp_ns(), end_ns=end.timestamp_ns()),
+                self._records(source=source, instrument=current_instrument, timeframe=timeframe, start_ns=start_ns, end_ns=end_ns),
+                self._records(source=source, instrument=near_instrument, timeframe=timeframe, start_ns=start_ns, end_ns=end_ns),
                 current_instrument, near_instrument,
             )
             lock = CashFutureContractLock(mode="BOTH", contracts={"CURRENT": current_instrument, "NEAR": near_instrument})
@@ -158,8 +164,7 @@ class CashFutureBacktestPipeline:
             future_instrument = self._instrument(contract)
             bars = self._sync_one(
                 spot_records,
-                self._records(source=source, instrument=future_instrument, timeframe=timeframe,
-                              start_ns=start.timestamp_ns(), end_ns=end.timestamp_ns()),
+                self._records(source=source, instrument=future_instrument, timeframe=timeframe, start_ns=start_ns, end_ns=end_ns),
             )
             lock = CashFutureContractLock(mode=normalized, contracts={normalized: future_instrument})
             trades = runner.run(bars, entry_timestamps=entries, exit_timestamps=exits,
@@ -171,7 +176,7 @@ class CashFutureBacktestPipeline:
         if self.result_store is not None:
             if not run_id or not run_id.strip():
                 raise ValueError("run_id is required when result_store is configured")
-            self.result_store.append_many(run_id, trades)
+            self.result_store.append_many(run_id, trades, mode=normalized)
             summary = self.result_store.summary(run_id)
             persisted_trade_count = summary.trade_count
             persisted_gross_pnl = summary.gross_pnl
