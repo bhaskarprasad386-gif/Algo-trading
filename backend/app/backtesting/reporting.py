@@ -56,6 +56,8 @@ def build_report(initial_capital: float, trades: Iterable[BacktestTrade]) -> Bac
     max_dd_pct = 0.0
     turnover = 0.0
     wins = losses = 0
+    gains = losses_abs = 0.0
+    trade_count = 0
     monthly: dict[str, float] = {}
     yearly: dict[str, float] = {}
     curve: list[tuple[int, float]] = []
@@ -66,6 +68,7 @@ def build_report(initial_capital: float, trades: Iterable[BacktestTrade]) -> Bac
         values = (trade.entry_value, trade.exit_value, trade.fees)
         if not all(isfinite(v) and v >= 0 for v in values):
             raise ValueError("trade values must be finite and non-negative")
+
         pnl = trade.net_pnl
         equity += pnl
         peak = max(peak, equity)
@@ -75,8 +78,10 @@ def build_report(initial_capital: float, trades: Iterable[BacktestTrade]) -> Bac
         turnover += trade.entry_value + trade.exit_value
         if pnl > 0:
             wins += 1
+            gains += pnl
         elif pnl < 0:
             losses += 1
+            losses_abs += -pnl
 
         dt = datetime.fromtimestamp(trade.timestamp_ns / 1_000_000_000, tz=timezone.utc)
         month = f"{dt.year:04d}-{dt.month:02d}"
@@ -84,26 +89,10 @@ def build_report(initial_capital: float, trades: Iterable[BacktestTrade]) -> Bac
         monthly[month] = monthly.get(month, 0.0) + pnl
         yearly[year] = yearly.get(year, 0.0) + pnl
         curve.append((trade.timestamp_ns, equity))
+        trade_count += 1
 
+    profit_factor = gains / losses_abs if losses_abs > 0 else (float("inf") if gains > 0 else 0.0)
     net_pnl = equity - initial_capital
-    gross_profit = sum(max(0.0, p.net_pnl) for p in trades)
-    gross_loss = sum(min(0.0, p.net_pnl) for p in trades)
-    # Re-iterating an input iterable would be unsafe for generators, so derive PF
-    # from the compact trade-independent accumulators below when necessary.
-    if curve:
-        # Recompute from equity deltas without retaining every trade.
-        gains = losses_abs = 0.0
-        previous = initial_capital
-        for _, current in curve:
-            delta = current - previous
-            if delta > 0:
-                gains += delta
-            elif delta < 0:
-                losses_abs += -delta
-            previous = current
-        profit_factor = gains / losses_abs if losses_abs > 0 else (float("inf") if gains > 0 else 0.0)
-    else:
-        profit_factor = 0.0
 
     return BacktestReport(
         initial_capital=initial_capital,
@@ -115,7 +104,7 @@ def build_report(initial_capital: float, trades: Iterable[BacktestTrade]) -> Bac
         win_rate=wins / (wins + losses) if wins + losses else 0.0,
         profit_factor=profit_factor,
         turnover=turnover,
-        trade_count=len(curve),
+        trade_count=trade_count,
         wins=wins,
         losses=losses,
         equity_curve=tuple(curve),
