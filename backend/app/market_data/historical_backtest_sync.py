@@ -13,8 +13,6 @@ from app.market_data.candle_normalizer import normalize_candles
 from app.market_data.historical import HistoricalDataClient
 from app.market_data.session_calendar import session_ranges_for_instrument
 
-# Angel One documents a 30-day maximum window for ONE_MINUTE history.
-# Keeping this as a constant makes the provider constraint explicit and testable.
 MAX_ONE_MINUTE_REQUEST_DAYS = 30
 
 
@@ -134,7 +132,6 @@ def _chunk_range(start: datetime, end: datetime, *, max_days: int = MAX_ONE_MINU
 
 
 def _provider_datetime(value: datetime) -> str:
-    """Format timestamps exactly as required by Angel One historical API."""
     return value.strftime("%Y-%m-%d %H:%M")
 
 
@@ -144,6 +141,17 @@ def _missing_session_ranges(db: Session, instrument: HistoricalBacktestInstrumen
     for session_start, session_end in session_ranges_for_instrument(start, end, segment=instrument.segment):
         ranges.extend(missing_ranges(db, instrument.key, session_start, session_end))
     return ranges
+
+
+def _has_no_minute_gap(bars: list[dict[str, Any]], start: datetime, end: datetime) -> bool:
+    """Validate a provider response against the requested half-open minute window."""
+    if start >= end:
+        return True
+    timestamps = sorted({bar["timestamp"] for bar in bars if start <= bar["timestamp"] < end})
+    expected = int((end - start).total_seconds() // 60)
+    if len(timestamps) != expected:
+        return False
+    return all(timestamp == start + timedelta(minutes=index) for index, timestamp in enumerate(timestamps))
 
 
 def sync_historical_backtest_data(
@@ -183,7 +191,7 @@ def sync_historical_backtest_data(
             raise ValueError("historical provider returned no candle data")
         bars = [
             bar for bar in _normalize_for_store(raw_rows, instrument)
-            if range_start <= bar["timestamp"] <= range_end
+            if range_start <= bar["timestamp"] < range_end
         ]
         if not bars:
             raise ValueError("historical provider returned no valid candles in requested range")
@@ -203,7 +211,6 @@ def sync_historical_backtest_data(
                 validated=True,
             )
         rows_written += written
-        # A provider response with an internal gap must not be reported complete.
-        if not _missing_session_ranges(db, instrument, range_start, range_end):
+        if _has_no_minute_gap(bars, range_start, range_end):
             completed += 1
     return HistoricalBacktestSyncResult(instrument.key, start, end, len(ranges), completed, rows_written)
