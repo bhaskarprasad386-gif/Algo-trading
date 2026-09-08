@@ -38,13 +38,26 @@ def test_select_contract_never_selects_expired_contract():
     assert select_contract(chain, datetime(2025, 2, 28)) is None
 
 
-def test_map_rollover_creates_non_overlapping_contract_windows():
+def test_map_rollover_keeps_expiry_day_with_expiring_contract():
     chain = build_futures_chain(
         [_row("ABCJAN", "1", "30JAN2025"), _row("ABCFEB", "2", "27FEB2025")],
         underlying="ABC",
     )
-    windows = map_rollover(chain, datetime(2025, 1, 1), datetime(2025, 3, 1))
-    assert [(start.date().isoformat(), end.date().isoformat(), contract.token) for start, end, contract in windows] == [
-        ("2025-01-01", "2025-01-30", "1"),
-        ("2025-01-30", "2025-02-27", "2"),
-    ]
+    windows = map_rollover(chain, datetime(2025, 1, 29, 9, 15), datetime(2025, 3, 1, 15, 30))
+    assert windows[0] == (
+        datetime(2025, 1, 29, 9, 15),
+        datetime(2025, 1, 31, 9, 15),
+        chain[0],
+    )
+    assert windows[1][0] == datetime(2025, 1, 31, 9, 15)
+    assert windows[1][2] == chain[1]
+
+
+def test_map_rollover_uses_expiry_day_session_before_next_contract():
+    chain = build_futures_chain(
+        [_row("ABCJAN", "1", "30JAN2025"), _row("ABCFEB", "2", "27FEB2025")],
+        underlying="ABC",
+    )
+    windows = map_rollover(chain, datetime(2025, 1, 1, 9, 15), datetime(2025, 2, 1, 15, 30))
+    assert windows[0][1] == datetime(2025, 1, 31, 9, 15)
+    assert windows[1][0] == datetime(2025, 1, 31, 9, 15)
