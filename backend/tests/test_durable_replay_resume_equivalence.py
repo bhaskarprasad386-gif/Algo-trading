@@ -83,7 +83,7 @@ def test_interrupted_resume_matches_fresh_orders_fills_and_portfolio():
     with pytest.raises(RuntimeError, match="intentional interruption"):
         interrupted.run(EVENTS, interrupted_strategy, data_source_fingerprint="events-v1")
 
-    checkpoint = interrupted_ledger.load_checkpoint("resume")
+    checkpoint = resumed_ledger.load_checkpoint("resume")
     assert checkpoint is not None
     assert checkpoint.state["source_cursor"] == 3
     assert checkpoint.state["strategy_state"] == {"count": 3}
