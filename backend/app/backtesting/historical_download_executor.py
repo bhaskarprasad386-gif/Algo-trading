@@ -15,10 +15,11 @@ class DownloadExecutionResult:
     results: tuple[HistoricalSyncResult, ...]
     failed_request_index: int | None = None
     skipped_request_indices: tuple[int, ...] = ()
+    completed_count: int | None = None
 
     @property
     def completed_chunks(self) -> int:
-        return len(self.results)
+        return self.completed_count if self.completed_count is not None else len(self.results)
 
     @property
     def skipped_chunks(self) -> int:
@@ -30,11 +31,18 @@ class DownloadExecutionResult:
 
 
 class ResumableHistoricalExecutor:
-    """Execute bounded requests sequentially; incomplete chunks are retried."""
+    """Execute bounded requests sequentially; optionally retain no historical results."""
 
-    def __init__(self, service: HistoricalIngestionService, *, sleep: Callable[[float], None] = time.sleep) -> None:
+    def __init__(
+        self,
+        service: HistoricalIngestionService,
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+        collect_results: bool = True,
+    ) -> None:
         self.service = service
         self.sleep = sleep
+        self.collect_results = collect_results
 
     def run(
         self,
@@ -56,6 +64,7 @@ class ResumableHistoricalExecutor:
             raise ValueError("retry_delay_seconds cannot be negative")
         results: list[HistoricalSyncResult] = []
         skipped: list[int] = []
+        completed_count = 0
         for index, request in enumerate(plan.requests):
             if should_skip is not None and should_skip(request):
                 skipped.append(index)
@@ -70,7 +79,9 @@ class ResumableHistoricalExecutor:
                     result = self.service.sync(source, request)
                     if should_accept is not None and not should_accept(request, result):
                         raise ValueError("historical chunk failed completeness validation")
-                    results.append(result)
+                    completed_count += 1
+                    if self.collect_results:
+                        results.append(result)
                     last_error = None
                     if on_chunk_complete is not None:
                         on_chunk_complete(index, request, result, attempt)
@@ -82,5 +93,9 @@ class ResumableHistoricalExecutor:
             if last_error is not None:
                 if on_chunk_failed is not None:
                     on_chunk_failed(index, request, last_error, retry_attempts)
-                return DownloadExecutionResult(tuple(results), index, tuple(skipped))
-        return DownloadExecutionResult(tuple(results), None, tuple(skipped))
+                return DownloadExecutionResult(
+                    tuple(results), index, tuple(skipped), completed_count=completed_count
+                )
+        return DownloadExecutionResult(
+            tuple(results), None, tuple(skipped), completed_count=completed_count
+        )
