@@ -192,7 +192,7 @@ def test_latest_depth_snapshot_replaces_previous_depth_without_fabrication():
     assert result.final_snapshot.cash == pytest.approx(100_000 - 2 * 101.0 - 2 * 101.5)
 
 
-def test_strategy_order_queue_ahead_is_preserved_by_event_engine():
+def test_strategy_order_queue_ahead_requires_observed_evidence():
     class Strategy:
         strategy_id = "queue-preserve"; strategy_version = "1"
         def on_event(self, event, context):
@@ -202,8 +202,10 @@ def test_strategy_order_queue_ahead_is_preserved_by_event_engine():
     portfolio = Portfolio(initial_cash=100_000)
     engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
     result = engine.run([MarketEvent(1_000, "NIFTY", EventType.DEPTH, {"asks": [[100.0, 5]], "bids": [[99.0, 5]]})], Strategy())
-    assert result.fills == 1
-    assert result.final_snapshot.cash == pytest.approx(99_700)
+    assert result.fills == 0
+    assert result.final_snapshot.cash == pytest.approx(100_000)
+    assert engine.order_states["o1"].status == OrderStatus.ACCEPTED
+    assert engine.order_states["o1"].remaining_quantity == 3
 
 
 def test_ioc_partial_fill_is_cancelled_after_executable_quantity():
