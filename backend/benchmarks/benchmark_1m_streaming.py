@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
+import sys
 import tempfile
 import time
 import tracemalloc
 from pathlib import Path
+
+# The workflow executes this file from backend/benchmarks, so make the
+# backend package importable without requiring PYTHONPATH configuration.
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
 
 from app.backtesting.resumable_high_resolution import ResumableHighResolutionRunner
 from app.backtesting.universal import MarketEvent
