@@ -27,7 +27,7 @@ class ResumableBacktestResult:
 
 
 class ResumableHighResolutionRunner:
-    """Runs replay with one durable transaction for dedup, trades and checkpoint."""
+    """Runs replay with one durable transaction and in-memory rollback on failure."""
 
     def __init__(self, connection: sqlite3.Connection, run_id: str,
                  position_ledger: HighResolutionPositionLedger | None = None) -> None:
@@ -82,6 +82,13 @@ class ResumableHighResolutionRunner:
             key = (event.timestamp_ns, event.sequence)
             if resume_key is not None and key <= resume_key:
                 continue
+
+            # Snapshot mutable execution state before entering the DB transaction.
+            # If strategy/execution fails, the failed event must leave no in-memory mutation.
+            before_positions = self.positions.snapshot_state()
+            before_strategy = self._strategy_state(strategy)
+            before_processed = processed
+            before_signals = signals
             self.store.begin()
             try:
                 if not self.store.mark_if_new(self.run_id, event.timestamp_ns, event.sequence):
@@ -107,6 +114,12 @@ class ResumableHighResolutionRunner:
                     ledger_writer.append(trade)
             except Exception:
                 self.store.rollback()
+                self.positions.restore_state(before_positions)
+                restore = getattr(strategy, "restore_state", None)
+                if callable(restore):
+                    restore(before_strategy)
+                processed = before_processed
+                signals = before_signals
                 raise
         return ResumableBacktestResult(
             processed, signals, self.positions.closed_trades,
