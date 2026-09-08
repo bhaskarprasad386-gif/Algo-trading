@@ -171,40 +171,39 @@ class ExecutionSimulator:
         return tuple(accepted)
 
     def execute_depth(self, order: SimOrder, book: OrderBook, timestamp_ns: int) -> ExecutionResult:
-        """Consume displayed depth with explicit queue-ahead evidence."""
+        """Consume displayed depth only after any known queue-ahead is depleted."""
         if timestamp_ns < order.submitted_at_ns:
             raise ValueError("fill timestamp cannot precede order submission")
         levels = self._executable_levels(order, book)
         if not levels:
             return ExecutionResult((), order.quantity, True, "no executable depth")
 
+        # A resting queue position is an unavailable portion of displayed depth.
+        # It may only be consumed by explicit source-backed QueueEvidence. Never
+        # infer that the queue traded merely because the level is still displayed.
+        if order.queue_ahead_quantity > 0:
+            return ExecutionResult((), order.quantity, True, "queue ahead not depleted")
+
         executable = sum(level.quantity for level in levels)
-        effective_executable = max(0, executable - order.queue_ahead_quantity)
-        if order.time_in_force == TimeInForce.FOK and effective_executable < order.quantity:
+        if order.time_in_force == TimeInForce.FOK and executable < order.quantity:
             return ExecutionResult((), order.quantity, True, "insufficient displayed depth for FOK")
-        if not self.config.allow_partial_fills and effective_executable < order.quantity:
+        if not self.config.allow_partial_fills and executable < order.quantity:
             return ExecutionResult((), order.quantity, True, "insufficient displayed depth")
 
         remaining = order.quantity
-        queue_remaining = order.queue_ahead_quantity
         fills: list[SimFill] = []
         for level in levels:
             if remaining <= 0:
                 break
             if level.quantity <= 0:
                 continue
-            consumed_for_queue = min(queue_remaining, level.quantity)
-            queue_remaining -= consumed_for_queue
-            available = level.quantity - consumed_for_queue
-            if available <= 0:
-                continue
-            take = min(remaining, available)
+            take = min(remaining, level.quantity)
             fills.append(SimFill(order.order_id, order.instrument, order.side, take, level.price,
                                  timestamp_ns + self.config.latency_ns, take * self.config.fee_per_unit))
             remaining -= take
 
         if not fills:
-            return ExecutionResult((), order.quantity, True, "queue ahead not depleted")
+            return ExecutionResult((), order.quantity, True, "no executable quantity")
         return ExecutionResult(tuple(fills), remaining, False, None if remaining == 0 else "partial fill")
 
     def execute_many(self, orders: Iterable[tuple[SimOrder, float, int]]) -> tuple[SimFill, ...]:
