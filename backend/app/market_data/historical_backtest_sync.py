@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.backtest.data_store import instrument_key, missing_ranges, record_coverage, upsert_1m_bars
 from app.market_data.candle_normalizer import normalize_candles
 from app.market_data.historical import HistoricalDataClient
+from app.market_data.session_calendar import session_ranges_for_instrument
 
 # Angel One documents a 30-day maximum window for ONE_MINUTE history.
 # Keeping this as a constant makes the provider constraint explicit and testable.
@@ -137,6 +138,14 @@ def _provider_datetime(value: datetime) -> str:
     return value.strftime("%Y-%m-%d %H:%M")
 
 
+def _missing_session_ranges(db: Session, instrument: HistoricalBacktestInstrument, start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+    """Find missing data only inside actual NSE/NFO day sessions."""
+    ranges: list[tuple[datetime, datetime]] = []
+    for session_start, session_end in session_ranges_for_instrument(start, end, segment=instrument.segment):
+        ranges.extend(missing_ranges(db, instrument.key, session_start, session_end))
+    return ranges
+
+
 def sync_historical_backtest_data(
     db: Session,
     *,
@@ -152,7 +161,7 @@ def sync_historical_backtest_data(
     if not instrument.symbol.strip() or not instrument.token.strip():
         raise ValueError("historical instrument symbol and token are required")
 
-    uncovered = missing_ranges(db, instrument.key, start, end)
+    uncovered = _missing_session_ranges(db, instrument, start, end)
     ranges = (
         [window for gap_start, gap_end in uncovered for window in _chunk_range(gap_start, gap_end)]
         if interval == "ONE_MINUTE"
@@ -194,5 +203,7 @@ def sync_historical_backtest_data(
                 validated=True,
             )
         rows_written += written
-        completed += 1
+        # A provider response with an internal gap must not be reported complete.
+        if not _missing_session_ranges(db, instrument, range_start, range_end):
+            completed += 1
     return HistoricalBacktestSyncResult(instrument.key, start, end, len(ranges), completed, rows_written)
