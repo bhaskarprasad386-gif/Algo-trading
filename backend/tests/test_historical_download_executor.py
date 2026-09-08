@@ -17,6 +17,18 @@ class FakeService:
         return HistoricalSyncResult(request, inserted=1, fetched=1, final_watermark_ns=request.end_ns)
 
 
+@dataclass
+class FailOnCallService:
+    calls: int = 0
+    fail_on_call: int = 0
+
+    def sync(self, source, request):
+        self.calls += 1
+        if self.calls == self.fail_on_call:
+            raise RuntimeError("permanent provider failure")
+        return HistoricalSyncResult(request, inserted=1, fetched=1, final_watermark_ns=request.end_ns)
+
+
 def test_retries_failed_chunk_then_continues():
     requests = tuple(HistoricalFetchRequest("x", "i", "1m", n, n) for n in range(3))
     service = FakeService(failures=1)
@@ -85,7 +97,7 @@ def test_bounded_mode_does_not_retain_all_completed_results():
 
 def test_bounded_mode_preserves_completed_count_when_later_chunk_fails():
     requests = tuple(HistoricalFetchRequest("x", "i", "1m", n, n) for n in range(5))
-    service = FakeService(failures=2)
+    service = FailOnCallService(fail_on_call=3)
     result = ResumableHistoricalExecutor(
         service, sleep=lambda _: None, collect_results=False
     ).run(object(), HistoricalSyncPlan(requests), retry_attempts=1)
