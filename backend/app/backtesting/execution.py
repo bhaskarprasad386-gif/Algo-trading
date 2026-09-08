@@ -180,6 +180,8 @@ class ExecutionSimulator:
 
         executable = sum(level.quantity for level in levels)
         effective_executable = max(0, executable - order.queue_ahead_quantity)
+        if order.time_in_force == TimeInForce.FOK and effective_executable < order.quantity:
+            return ExecutionResult((), order.quantity, True, "insufficient displayed depth for FOK")
         if not self.config.allow_partial_fills and effective_executable < order.quantity:
             return ExecutionResult((), order.quantity, True, "insufficient displayed depth")
 
