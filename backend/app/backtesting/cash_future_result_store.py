@@ -23,6 +23,7 @@ class CashFutureResultStore:
         self.connection = connection
         self.connection.execute(
             """CREATE TABLE IF NOT EXISTS cash_future_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id TEXT NOT NULL,
                 entry_timestamp_ns INTEGER NOT NULL,
                 exit_timestamp_ns INTEGER NOT NULL,
@@ -33,10 +34,15 @@ class CashFutureResultStore:
                 quantity INTEGER NOT NULL,
                 lot_size INTEGER NOT NULL,
                 gross_pnl REAL NOT NULL,
-                net_pnl REAL NOT NULL,
-                PRIMARY KEY (run_id, entry_timestamp_ns, exit_timestamp_ns, mode,
-                             COALESCE(future_instrument, ''), COALESCE(current_instrument, ''),
-                             COALESCE(near_instrument, ''))
+                net_pnl REAL NOT NULL
+            )"""
+        )
+        self.connection.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS ux_cash_future_results_identity
+            ON cash_future_results (
+                run_id, entry_timestamp_ns, exit_timestamp_ns, mode,
+                COALESCE(future_instrument, ''), COALESCE(current_instrument, ''),
+                COALESCE(near_instrument, '')
             )"""
         )
         self.connection.commit()
@@ -52,13 +58,12 @@ class CashFutureResultStore:
                 trade.lot_size, trade.gross_pnl, trade.net_pnl)
 
     def append(self, run_id: str, trade: CashFutureReplayTrade | CashFutureBothReplayTrade) -> bool:
-        row = self._row(run_id, trade)
         before = self.connection.total_changes
         self.connection.execute(
             """INSERT OR IGNORE INTO cash_future_results
             (run_id, entry_timestamp_ns, exit_timestamp_ns, mode, current_instrument,
              near_instrument, future_instrument, quantity, lot_size, gross_pnl, net_pnl)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", row
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", self._row(run_id, trade)
         )
         self.connection.commit()
         return self.connection.total_changes > before
