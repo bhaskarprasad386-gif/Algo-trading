@@ -235,8 +235,23 @@ class EventBacktestEngine:
             else:
                 price = self._event_price(observed, order.side)
                 if price is not None:
-                    fills.append(self.execution.execute(order, price, event.timestamp_ns))
-                    results[order.order_id] = type("ExecutionResult", (), {"remaining_quantity": 0, "rejected": False, "reason": None})()
+                    executable = True
+                    reason = None
+                    if order.order_type == OrderType.LIMIT:
+                        if order.limit_price is None:
+                            executable = False
+                            reason = "limit_price is required"
+                        elif order.side == ExecutionSide.BUY and price > order.limit_price:
+                            executable = False
+                            reason = "limit price not executable"
+                        elif order.side == ExecutionSide.SELL and price < order.limit_price:
+                            executable = False
+                            reason = "limit price not executable"
+                    if executable:
+                        fills.append(self.execution.execute(order, price, event.timestamp_ns))
+                        results[order.order_id] = type("ExecutionResult", (), {"remaining_quantity": 0, "rejected": False, "reason": None})()
+                    else:
+                        results[order.order_id] = type("ExecutionResult", (), {"remaining_quantity": order.quantity, "rejected": False, "reason": reason})()
         try:
             if fills:
                 marks = {i: self._event_price(e, None) for i, e in self._latest_events.items()}
