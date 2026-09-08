@@ -56,6 +56,35 @@ def test_sync_fetches_missing_range_and_records_half_open_coverage(monkeypatch):
     assert result.completed and result.rows_written == 1
 
 
+def test_progress_callback_reports_initial_and_chunk_completion(monkeypatch):
+    client = FakeClient(response={
+        "status": True,
+        "data": [
+            ["2026-01-02T09:15:00", 100, 102, 99, 101, 5000],
+            ["2026-01-02T09:16:00", 101, 103, 100, 102, 5001],
+        ],
+    })
+    progress = []
+    monkeypatch.setattr(sync, "missing_ranges", lambda db, key, start, end: [
+        (datetime(2026, 1, 2, 9, 15), datetime(2026, 1, 2, 9, 16)),
+        (datetime(2026, 1, 2, 9, 16), datetime(2026, 1, 2, 9, 17)),
+    ])
+    monkeypatch.setattr(sync, "upsert_1m_bars", lambda db, bars: len(bars))
+    monkeypatch.setattr(sync, "record_coverage", lambda db, **kwargs: None)
+
+    result = sync.sync_historical_backtest_data(
+        object(),
+        instrument=_instrument(),
+        start=datetime(2026, 1, 2, 9, 15),
+        end=datetime(2026, 1, 2, 9, 17),
+        client=client,
+        progress_fn=lambda completed, total, rows: progress.append((completed, total, rows)),
+    )
+
+    assert progress == [(0, 2, 0), (1, 2, 1), (2, 2, 2)]
+    assert result.completed and result.rows_written == 2
+
+
 def test_contiguous_single_bar_coverage_ends_at_next_minute():
     start = datetime(2026, 1, 2, 9, 15)
     bars = [{"timestamp": start}]
