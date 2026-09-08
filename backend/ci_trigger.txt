@@ -1,2 +1,2 @@
 CI trigger checkpoint
-cash-future futures rollover chain
+cash-future rollover historical sync integration
