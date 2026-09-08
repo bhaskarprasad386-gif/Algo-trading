@@ -12,6 +12,11 @@ from app.backtest.data_store import instrument_key, missing_ranges, record_cover
 from app.market_data.candle_normalizer import normalize_candles
 from app.market_data.historical import HistoricalDataClient
 from app.market_data.session_calendar import session_ranges_for_instrument
+from app.market_data.historical_sync_jobs import (
+    checkpoint_historical_sync_job,
+    create_historical_sync_job,
+    fail_historical_sync_job,
+)
 
 MAX_ONE_MINUTE_REQUEST_DAYS = 30
 
@@ -154,6 +159,20 @@ def _has_no_minute_gap(bars: list[dict[str, Any]], start: datetime, end: datetim
     return all(timestamp == start + timedelta(minutes=index) for index, timestamp in enumerate(timestamps))
 
 
+def _job_instrument(instrument: HistoricalBacktestInstrument) -> dict[str, Any]:
+    expiry = instrument.expiry_date.isoformat() if instrument.expiry_date is not None else None
+    return {
+        "symbol": instrument.symbol,
+        "token": instrument.token,
+        "exchange": instrument.exchange,
+        "segment": instrument.segment,
+        "instrument_type": instrument.instrument_type,
+        "contract_month": instrument.contract_month,
+        "expiry_date": expiry,
+        "lot_size": instrument.lot_size,
+    }
+
+
 def sync_historical_backtest_data(
     db: Session,
     *,
@@ -163,61 +182,99 @@ def sync_historical_backtest_data(
     client: HistoricalDataClient | None = None,
     interval: str = "ONE_MINUTE",
     progress_fn: Callable[[int, int, int], None] | None = None,
+    job_id: str | None = None,
 ) -> HistoricalBacktestSyncResult:
-    """Fetch only uncovered ranges, checkpoint coverage after each chunk, and report progress."""
+    """Fetch uncovered ranges, checkpoint each durable chunk, and report progress."""
     if start >= end:
         raise ValueError("historical sync start must be before end")
     if not instrument.symbol.strip() or not instrument.token.strip():
         raise ValueError("historical instrument symbol and token are required")
 
-    uncovered = _missing_session_ranges(db, instrument, start, end)
-    ranges = (
-        [window for gap_start, gap_end in uncovered for window in _chunk_range(gap_start, gap_end)]
-        if interval == "ONE_MINUTE"
-        else uncovered
-    )
-    historical_client = client or HistoricalDataClient()
-    completed = 0
-    rows_written = 0
-    total_ranges = len(ranges)
-    if progress_fn:
-        progress_fn(0, total_ranges, 0)
-
-    for range_start, range_end in ranges:
-        response = historical_client.get_candles(
-            instrument.exchange,
-            instrument.token,
-            interval,
-            _provider_datetime(range_start),
-            _provider_datetime(range_end),
+    if job_id:
+        requested_days = max(1, (end - start).days + (1 if (end - start).seconds else 0))
+        create_historical_sync_job(
+            db,
+            job_id=job_id,
+            symbol=instrument.symbol,
+            contract_month=instrument.contract_month or "SPOT",
+            requested_days=requested_days,
+            instrument=_job_instrument(instrument),
+            start=start,
+            end=end,
         )
-        raw_rows = response.get("data") if isinstance(response, dict) else None
-        if not isinstance(raw_rows, list) or not raw_rows:
-            raise ValueError("historical provider returned no candle data")
-        bars = [
-            bar for bar in _normalize_for_store(raw_rows, instrument)
-            if range_start <= bar["timestamp"] < range_end
-        ]
-        if not bars:
-            raise ValueError("historical provider returned no valid candles in requested range")
-        written = upsert_1m_bars(db, bars)
-        for coverage_start, coverage_end in _contiguous_minute_ranges(bars):
-            record_coverage(
-                db,
-                key=instrument.key,
-                symbol=instrument.symbol,
-                segment=instrument.segment,
-                contract_month=instrument.contract_month,
-                start=coverage_start,
-                end=coverage_end,
-                row_count=sum(1 for bar in bars if coverage_start <= bar["timestamp"] < coverage_end),
-                data_version="angel_one_v1",
-                source_hash=None,
-                validated=True,
-            )
-        rows_written += written
-        if _has_no_minute_gap(bars, range_start, range_end):
-            completed += 1
+
+    try:
+        uncovered = _missing_session_ranges(db, instrument, start, end)
+        ranges = (
+            [window for gap_start, gap_end in uncovered for window in _chunk_range(gap_start, gap_end)]
+            if interval == "ONE_MINUTE"
+            else uncovered
+        )
+        historical_client = client or HistoricalDataClient()
+        completed = 0
+        rows_written = 0
+        total_ranges = len(ranges)
         if progress_fn:
-            progress_fn(completed, total_ranges, rows_written)
-    return HistoricalBacktestSyncResult(instrument.key, start, end, total_ranges, completed, rows_written)
+            progress_fn(0, total_ranges, 0)
+        if job_id:
+            checkpoint_historical_sync_job(
+                db, job_id=job_id, completed_ranges=0, total_ranges=total_ranges,
+                rows_written=0, message="checkpoint initialized",
+            )
+
+        for range_start, range_end in ranges:
+            response = historical_client.get_candles(
+                instrument.exchange,
+                instrument.token,
+                interval,
+                _provider_datetime(range_start),
+                _provider_datetime(range_end),
+            )
+            raw_rows = response.get("data") if isinstance(response, dict) else None
+            if not isinstance(raw_rows, list) or not raw_rows:
+                raise ValueError("historical provider returned no candle data")
+            bars = [
+                bar for bar in _normalize_for_store(raw_rows, instrument)
+                if range_start <= bar["timestamp"] < range_end
+            ]
+            if not bars:
+                raise ValueError("historical provider returned no valid candles in requested range")
+            written = upsert_1m_bars(db, bars)
+            for coverage_start, coverage_end in _contiguous_minute_ranges(bars):
+                record_coverage(
+                    db,
+                    key=instrument.key,
+                    symbol=instrument.symbol,
+                    segment=instrument.segment,
+                    contract_month=instrument.contract_month,
+                    start=coverage_start,
+                    end=coverage_end,
+                    row_count=sum(1 for bar in bars if coverage_start <= bar["timestamp"] < coverage_end),
+                    data_version="angel_one_v1",
+                    source_hash=None,
+                    validated=True,
+                )
+            rows_written += written
+            if _has_no_minute_gap(bars, range_start, range_end):
+                completed += 1
+            if progress_fn:
+                progress_fn(completed, total_ranges, rows_written)
+            if job_id:
+                checkpoint_historical_sync_job(
+                    db, job_id=job_id, completed_ranges=completed, total_ranges=total_ranges,
+                    rows_written=rows_written,
+                    message="chunk stored; remaining ranges resume from coverage",
+                )
+
+        result = HistoricalBacktestSyncResult(instrument.key, start, end, total_ranges, completed, rows_written)
+        if job_id:
+            checkpoint_historical_sync_job(
+                db, job_id=job_id, completed_ranges=completed, total_ranges=total_ranges,
+                rows_written=rows_written, status="completed" if result.completed else "partial",
+                message="historical acquisition completed" if result.completed else "historical acquisition partial; resumable",
+            )
+        return result
+    except Exception as exc:
+        if job_id:
+            fail_historical_sync_job(db, job_id=job_id, message=str(exc))
+        raise
