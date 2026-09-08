@@ -77,7 +77,9 @@ def test_batch_resume_does_not_reprocess_committed_events(tmp_path):
         [MarketEvent(1, "NIFTY", 1), MarketEvent(2, "NIFTY", 2), MarketEvent(3, "NIFTY", 3), MarketEvent(4, "NIFTY", 4)],
         second,
     )
-    assert second.seen == [4]
+    # Checkpoint state is restored before replay, so strategy-local state is preserved;
+    # only the new event is delivered after the committed checkpoint.
+    assert second.seen == [1, 2, 3, 4]
     assert result.events_processed == 4
     assert AtomicReplayStore(conn).count_events("resume") == 4
     conn.close()
