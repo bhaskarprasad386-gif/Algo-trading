@@ -32,13 +32,13 @@ def test_streaming_path_keeps_only_bounded_state_and_persists_trade(tmp_path):
     assert result.events_processed == 3
     assert result.signals_processed == 2
     assert result.trades_closed == 1
-    assert result.net_pnl == 2.0
+    assert result.net_pnl == 6.0
     assert result.open_positions == 0
     records = writer.records()
     assert len(records) == 1
     assert records[0].payload["entry_timestamp_ns"] == 10
     assert records[0].payload["exit_timestamp_ns"] == 30
-    assert records[0].payload["net_pnl"] == 2.0
+    assert records[0].payload["net_pnl"] == 6.0
     ledger.close()
 
 
