@@ -9,7 +9,12 @@ from app.backtesting.execution import (
     SimOrder,
     TimeInForce,
 )
-from app.backtesting.order_lifecycle import OrderLifecycle, OrderStatus, stop_triggered
+from app.backtesting.order_lifecycle import (
+    OrderLifecycle,
+    OrderStatus,
+    stop_triggered,
+    tif_after_execution,
+)
 
 
 def test_depth_execution_consumes_multiple_levels_and_preserves_point_in_time_prices():
@@ -71,6 +76,29 @@ def test_ioc_partial_and_fok_insufficient_depth_have_different_terminal_semantic
     assert fok_result.fills == ()
     assert fok_result.rejected
     assert fok_result.remaining_quantity == 50
+
+
+def test_fok_with_enough_depth_fills_atomically_across_levels():
+    simulator = ExecutionSimulator()
+    book = OrderBook(
+        asks=(DepthLevel(100.0, 30), DepthLevel(100.5, 20)),
+    )
+    order = SimOrder("F2", "NSE:SBIN", ExecutionSide.BUY, 50, time_in_force=TimeInForce.FOK)
+
+    result = simulator.execute_depth(order, book, 3_100)
+
+    assert not result.rejected
+    assert result.remaining_quantity == 0
+    assert [(f.quantity, f.price) for f in result.fills] == [(30, 100.0), (20, 100.5)]
+
+
+def test_tif_terminal_actions_are_exact_for_filled_ioc_fok_and_resting_orders():
+    assert tif_after_execution(TimeInForce.IOC, 0) == OrderStatus.FILLED
+    assert tif_after_execution(TimeInForce.FOK, 0) == OrderStatus.FILLED
+    assert tif_after_execution(TimeInForce.IOC, 1) == OrderStatus.CANCELLED
+    assert tif_after_execution(TimeInForce.FOK, 1) == OrderStatus.REJECTED
+    assert tif_after_execution(TimeInForce.DAY, 1) is None
+    assert tif_after_execution(TimeInForce.GTC, 1) is None
 
 
 def test_stop_trigger_is_observation_driven_and_latency_is_applied_to_fill_timestamp():
