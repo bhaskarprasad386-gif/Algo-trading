@@ -12,6 +12,7 @@ class MarketEvent:
     def __post_init__(self) -> None:
         if self.timestamp_ns < 0: raise ValueError("timestamp_ns must be non-negative")
         if not self.instrument: raise ValueError("instrument is required")
+        if self.sequence < 0: raise ValueError("sequence must be non-negative")
     @property
     def context(self) -> dict[str, Any]: return dict(self.data)
 
@@ -29,18 +30,18 @@ def normalize_event(event: MarketEvent) -> MarketEvent:
 
 def ordered_events(events: Iterable[MarketEvent]) -> list[MarketEvent]:
     normalized = [normalize_event(event) for event in events]
-    return sorted(normalized, key=lambda event: (event.timestamp_ns, event.instrument, event.sequence))
+    return sorted(normalized, key=lambda event: (event.timestamp_ns, event.sequence, event.instrument))
 
 def streaming_events(events: Iterable[MarketEvent]) -> Iterable[MarketEvent]:
-    """O(1)-event-memory iterator for sources already ordered by canonical key."""
+    """O(1)-event-memory iterator for sources ordered by durable replay identity."""
     previous_key = None
     for source_event in events:
         event = normalize_event(source_event)
-        key = (event.timestamp_ns, event.instrument, event.sequence)
+        identity = (event.timestamp_ns, event.sequence)
         if previous_key is not None:
-            if key < previous_key: raise ValueError("stream is not deterministically ordered")
-            if key == previous_key: raise ValueError("duplicate replay event identity")
-        previous_key = key
+            if identity < previous_key: raise ValueError("stream is not deterministically ordered")
+            if identity == previous_key: raise ValueError("duplicate replay event identity")
+        previous_key = identity
         yield event
 
 def validate_source_resolution(events: Iterable[MarketEvent], minimum_timestamp_delta_ns: int) -> None:
