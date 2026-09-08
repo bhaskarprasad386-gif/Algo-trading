@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from app.backtesting.high_resolution_pnl import HighResolutionTrade
 from app.backtesting.ledger import BacktestLedger, LedgerRecord
 
-RECORD_TYPE = "high_resolution_trade"
+HIGH_RESOLUTION_TRADE_RECORD = "high_resolution_trade"
 
 
 class HighResolutionLedgerWriter:
@@ -21,6 +21,8 @@ class HighResolutionLedgerWriter:
 
     @staticmethod
     def _record(run_id: str, trade: HighResolutionTrade) -> LedgerRecord:
+        if not trade.instrument.strip():
+            raise ValueError("trade instrument is required")
         if trade.quantity <= 0:
             raise ValueError("trade quantity must be positive")
         if trade.entry_timestamp_ns < 0 or trade.exit_timestamp_ns < 0:
@@ -29,7 +31,7 @@ class HighResolutionLedgerWriter:
             raise ValueError("exit timestamp cannot precede entry timestamp")
         return LedgerRecord(
             run_id=run_id,
-            record_type=RECORD_TYPE,
+            record_type=HIGH_RESOLUTION_TRADE_RECORD,
             timestamp_ns=trade.exit_timestamp_ns,
             payload={
                 "instrument": trade.instrument,
@@ -51,3 +53,7 @@ class HighResolutionLedgerWriter:
         return self.ledger.append_batch(
             self._record(self.run_id, trade) for trade in trades
         )
+
+    def records(self) -> tuple[LedgerRecord, ...]:
+        """Read persisted trades; storage, not the writer, owns the history."""
+        return self.ledger.records(self.run_id, HIGH_RESOLUTION_TRADE_RECORD)
