@@ -42,8 +42,9 @@ def sync_cash_future_rollover_history(
     client=None,
     interval: str = "ONE_MINUTE",
     sync_fn: Callable = sync_historical_backtest_data,
+    progress_fn: Callable[[int, int, int], None] | None = None,
 ) -> CashFutureRolloverSyncResult:
-    """Sync cash continuously and each expiry-specific futures contract separately."""
+    """Sync cash and expiry-specific futures with aggregate incremental progress."""
     if start >= end:
         raise ValueError("cash/future rollover sync start must be before end")
     if cash.instrument_type.upper() != "CASH":
@@ -56,18 +57,40 @@ def sync_cash_future_rollover_history(
     if not windows:
         raise ValueError("no eligible NFO futures contracts cover the requested period")
 
-    cash_result = sync_fn(db, instrument=cash, start=start, end=end, client=client, interval=interval)
+    total_legs = 1 + len(windows)
+    completed_legs = 0
+    rows_written = 0
+    if progress_fn:
+        progress_fn(0, total_legs, 0)
+
+    def sync_leg(instrument, leg_start, leg_end):
+        nonlocal completed_legs, rows_written
+
+        def leg_progress(_completed: int, _total: int, leg_rows: int) -> None:
+            nonlocal rows_written
+            if progress_fn:
+                progress_fn(completed_legs, total_legs, rows_written + leg_rows)
+
+        result = sync_fn(
+            db,
+            instrument=instrument,
+            start=leg_start,
+            end=leg_end,
+            client=client,
+            interval=interval,
+            progress_fn=leg_progress,
+        )
+        completed_legs += 1 if result.completed else 0
+        rows_written += result.rows_written
+        if progress_fn:
+            progress_fn(completed_legs, total_legs, rows_written)
+        return result
+
+    cash_result = sync_leg(cash, start, end)
     future_results: list[HistoricalBacktestSyncResult] = []
     used_contracts: list[FuturesContract] = []
     for window_start, window_end, contract in windows:
-        future_results.append(sync_fn(
-            db,
-            instrument=contract.instrument,
-            start=window_start,
-            end=window_end,
-            client=client,
-            interval=interval,
-        ))
+        future_results.append(sync_leg(contract.instrument, window_start, window_end))
         used_contracts.append(contract)
 
     return CashFutureRolloverSyncResult(
