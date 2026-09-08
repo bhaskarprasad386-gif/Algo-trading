@@ -48,4 +48,4 @@ def test_index_futures_are_not_returned_by_stock_future_resolver():
         catalog.resolve(exchange="NFO", underlying="NIFTY", as_of=date(2026, 9, 7), mode="CURRENT")
     catalog.close()
 
-# Keep historical snapshot resolution deterministic for replay-date tests.
+# CI retrigger marker.
