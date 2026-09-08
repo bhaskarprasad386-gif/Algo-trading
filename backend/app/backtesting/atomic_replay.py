@@ -124,3 +124,13 @@ class AtomicReplayStore:
         fields = ("instrument", "quantity", "entry_timestamp_ns", "exit_timestamp_ns",
                   "entry_price", "exit_price", "gross_pnl", "fees", "net_pnl")
         return [dict(zip(fields, row)) for row in rows]
+
+    def count_events(self, run_id: str) -> int:
+        return int(self._db.execute(
+            "SELECT COUNT(*) FROM atomic_replay_events WHERE run_id=?", (run_id,)
+        ).fetchone()[0])
+
+    def count_trades(self, run_id: str) -> int:
+        return int(self._db.execute(
+            "SELECT COUNT(*) FROM atomic_replay_trades WHERE run_id=?", (run_id,)
+        ).fetchone()[0])
