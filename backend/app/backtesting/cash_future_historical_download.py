@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Callable, Iterable
 from zoneinfo import ZoneInfo
 
+from app.market_data.instruments import InstrumentMaster
+
 from .angelone_historical import AngelOneHistoricalSource
 from .cash_future_contract_preflight import CashFutureContractPreflight
 from .cash_future_download_queue import CashFutureDownloadQueue, build_rollover_download_queue
@@ -27,6 +29,25 @@ def _default_session_windows(request: object) -> tuple[SessionWindow, ...]:
     if request.timeframe not in _INTRADAY_TIMEFRAMES:
         return ()
     return tuple(nse_session_windows(request))
+
+
+def _normalise_cash_instrument(master: InstrumentMaster, value: str, exchange: str) -> str:
+    """Return an Angel One-compatible cash instrument, resolving plain symbols safely."""
+    instrument = str(value).strip()
+    if not instrument:
+        raise ValueError("cash instrument cannot be empty")
+    if ":" in instrument:
+        parts = instrument.split(":")
+        if len(parts) not in (2, 3) or not all(part.strip() for part in parts[:2]):
+            raise ValueError(f"invalid cash instrument format: {instrument!r}")
+        return instrument
+    resolved = master.resolve_cash_instrument(instrument, exchange="NSE")
+    token = str(resolved["token"]).strip()
+    symbol = str(resolved.get("symbol") or instrument).strip()
+    resolved_exchange = str(resolved.get("exch_seg") or "NSE").strip().upper()
+    if resolved_exchange != "NSE":
+        raise LookupError(f"resolved cash instrument is not NSE: {resolved_exchange}:{symbol}")
+    return f"NSE:{token}:{symbol}"
 
 
 @dataclass(frozen=True)
@@ -56,7 +77,7 @@ class CashFutureHistoricalDownloadReport:
 class CashFutureHistoricalDownloadService:
     """Download spot/future requests sequentially and persist each chunk immediately."""
 
-    def __init__(self, catalog: HistoricalCatalog, contract_catalog, *, source=None, executor=None, session_windows: Callable[[object], Iterable[SessionWindow]] | None = None, status_store: HistoricalDownloadStatusStore | None = None) -> None:
+    def __init__(self, catalog: HistoricalCatalog, contract_catalog, *, source=None, executor=None, session_windows: Callable[[object], Iterable[SessionWindow]] | None = None, status_store: HistoricalDownloadStatusStore | None = None, instrument_master: InstrumentMaster | None = None) -> None:
         self.catalog = catalog
         self.contract_catalog = contract_catalog
         self.ingestion = HistoricalIngestionService(catalog)
@@ -65,6 +86,7 @@ class CashFutureHistoricalDownloadService:
         self.completeness = SessionChunkCompleteness(catalog)
         self.session_windows = session_windows or _default_session_windows
         self.status_store = status_store
+        self.instrument_master = instrument_master or InstrumentMaster()
         self.contract_preflight = CashFutureContractPreflight(contract_catalog)
 
     @property
@@ -111,8 +133,7 @@ class CashFutureHistoricalDownloadService:
         return len(expected_set), len(actual_set), len(missing_set), min(missing_set) if missing_set else None
 
     def _register_plan(self, job_id: str, plans: tuple[HistoricalSyncPlan, ...]) -> None:
-        if self.status_store is None:
-            return
+        if self.status_store is None: return
         sequence = 0
         for plan in plans:
             for request in plan.requests:
@@ -171,7 +192,8 @@ class CashFutureHistoricalDownloadService:
             start_date = start.astimezone(MARKET_TZ).date() if getattr(start, "tzinfo", None) else start.date()
             end_date = end.astimezone(MARKET_TZ).date() if getattr(end, "tzinfo", None) else end.date()
             self.contract_preflight.require_complete(exchange=exchange, underlying=underlying, start=start_date, end=end_date, mode=mode)
-            queue = build_rollover_download_queue(catalog=self.contract_catalog, spot_instrument=spot_instrument, exchange=exchange, underlying=underlying, start=start, end=end, timeframe=timeframe, mode=mode, source=self.source_name)
+            resolved_spot_instrument = _normalise_cash_instrument(self.instrument_master, spot_instrument, exchange)
+            queue = build_rollover_download_queue(catalog=self.contract_catalog, spot_instrument=resolved_spot_instrument, exchange=exchange, underlying=underlying, start=start, end=end, timeframe=timeframe, mode=mode, source=self.source_name)
             spot_plan = self._plan_for_request(queue.spot)
             future_plans = tuple(self._plan_for_request(item.request) for item in queue.futures)
             all_plans = (spot_plan, *future_plans)
@@ -179,7 +201,7 @@ class CashFutureHistoricalDownloadService:
             if self.status_store is not None and job_id is not None:
                 start_ns = min([queue.spot.start_ns, *[item.request.start_ns for item in queue.futures]])
                 end_ns = max([queue.spot.end_ns, *[item.request.end_ns for item in queue.futures]])
-                self.status_store.create_job(job_id=job_id, mode=mode, timeframe=timeframe, spot_instrument=spot_instrument, exchange=exchange, underlying=underlying, start_ns=start_ns, end_ns=end_ns, requested_chunks=total_chunks, source=self.source_name, reset_existing=True)
+                self.status_store.create_job(job_id=job_id, mode=mode, timeframe=timeframe, spot_instrument=resolved_spot_instrument, exchange=exchange, underlying=underlying, start_ns=start_ns, end_ns=end_ns, requested_chunks=total_chunks, source=self.source_name, reset_existing=True)
                 self._register_plan(job_id, all_plans)
             effective_skip = should_skip or self._chunk_is_complete; sequence_offset = 0
             spot_result = self.executor.run(self.source, spot_plan, retry_attempts=retry_attempts, should_skip=effective_skip, should_accept=self._chunk_is_complete, **(self._callbacks(job_id, sequence_offset) if job_id else {}))
