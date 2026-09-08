@@ -1,0 +1,45 @@
+name: Streaming 10M Benchmark
+
+on:
+  push:
+    paths:
+      - "backend/benchmarks/benchmark_1m_streaming.py"
+      - "backend/app/backtesting/**"
+      - ".github/workflows/streaming-10m-benchmark.yml"
+  workflow_dispatch:
+    inputs:
+      events:
+        description: Number of events
+        required: true
+        default: "10000000"
+      batch_size:
+        description: Atomic batch size
+        required: true
+        default: "10000"
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
+      - name: Verify backend import
+        working-directory: backend
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend
+        run: python -c "from app.backtesting.resumable_high_resolution import ResumableHighResolutionRunner; print('backend import OK')"
+      - name: Run streaming benchmark
+        working-directory: backend
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend
+        run: python benchmarks/benchmark_1m_streaming.py --events "${{ inputs.events || '10000000' }}" --batch-size "${{ inputs.batch_size || '10000' }}"
+      - name: Benchmark completion marker
+        run: echo "10M streaming benchmark executed successfully"
