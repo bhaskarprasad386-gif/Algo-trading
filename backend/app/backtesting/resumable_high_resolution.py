@@ -27,7 +27,7 @@ class ResumableBacktestResult:
 
 
 class ResumableHighResolutionRunner:
-    """Runs the same high-resolution execution path while persisting resume position."""
+    """Runs high-resolution execution with durable strategy and position recovery."""
 
     def __init__(self, connection: sqlite3.Connection, run_id: str,
                  position_ledger: HighResolutionPositionLedger | None = None) -> None:
@@ -50,7 +50,7 @@ class ResumableHighResolutionRunner:
         return ExecutionFill(side, event.instrument, quantity, price, event.timestamp_ns)
 
     @staticmethod
-    def _state(strategy: Any) -> dict[str, Any]:
+    def _strategy_state(strategy: Any) -> dict[str, Any]:
         snapshot = getattr(strategy, "snapshot_state", None)
         if callable(snapshot):
             value = snapshot()
@@ -58,11 +58,26 @@ class ResumableHighResolutionRunner:
                 return value
         return {}
 
+    def _restore(self, strategy: Any, state: dict[str, Any]) -> None:
+        if not isinstance(state, dict):
+            raise ValueError("invalid checkpoint state")
+        position_state = state.get("positions")
+        if isinstance(position_state, dict):
+            self.positions.restore_state(position_state)
+        strategy_state = state.get("strategy")
+        restore = getattr(strategy, "restore_state", None)
+        if strategy_state is not None and callable(restore):
+            if not isinstance(strategy_state, dict):
+                raise ValueError("invalid strategy checkpoint")
+            restore(strategy_state)
+
     def run(self, events: Iterable[MarketEvent], strategy: ResumableStrategy,
             ledger_writer: HighResolutionLedgerWriter | None = None) -> ResumableBacktestResult:
         checkpoint = self.checkpoints.load(self.run_id)
         resume_key = None if checkpoint is None else (checkpoint.timestamp_ns, checkpoint.sequence)
         processed = 0 if checkpoint is None else checkpoint.processed_events
+        if checkpoint is not None:
+            self._restore(strategy, checkpoint.state)
         signals = 0
         for event in ordered_events(events):
             key = (event.timestamp_ns, event.sequence)
@@ -80,7 +95,9 @@ class ResumableHighResolutionRunner:
                     ledger_writer.append(trade)
             self.checkpoints.save(ReplayCheckpoint(
                 self.run_id, event.timestamp_ns, event.sequence,
-                processed, self.positions.net_pnl, self._state(strategy)))
+                processed, self.positions.net_pnl,
+                {"strategy": self._strategy_state(strategy), "positions": self.positions.snapshot_state()},
+            ))
         return ResumableBacktestResult(
             processed, signals, self.positions.closed_trades,
             self.positions.net_pnl, self.positions.open_positions, resume_key)
