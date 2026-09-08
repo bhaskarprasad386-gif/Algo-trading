@@ -53,6 +53,8 @@ class HighResolutionEventRunner:
         price_key: str = "price",
     ) -> float:
         """Replay and persist completed trades incrementally; only open state stays in RAM."""
+        if writer.run_id != run_id:
+            raise ValueError("writer run_id does not match requested run_id")
         ordered = DeterministicEventReplay.validate(events)
         positions = HighResolutionPositionLedger()
         for event in ordered:
@@ -70,5 +72,5 @@ class HighResolutionEventRunner:
             )
             trade = positions.add(result)
             if trade is not None:
-                writer.append(run_id, trade)
+                writer.append(trade)
         return positions.finalize()
