@@ -10,7 +10,7 @@ def fill(order_id, instrument, side, quantity, price, fee=0.0):
 
 def test_mark_to_market_risk_detects_maintenance_margin_breach_without_mutation():
     p = Portfolio(100_000, RiskConfig(initial_margin_rate=0.5, maintenance_margin_rate=0.4))
-    p.apply_fill(fill("b", "X", ExecutionSide.BUY, 100, 500))
+    p.apply_fill(fill("b", "X", ExecutionSide.BUY, 300, 500))
     before = p.export_state()
     with pytest.raises(RiskViolation, match="maintenance margin"):
         p.validate_mark_to_market({"X": 100})
