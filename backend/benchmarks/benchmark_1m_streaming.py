@@ -1,14 +1,15 @@
 """Opt-in 1M-event scalability benchmark for the streaming replay path.
 
-This benchmark deliberately generates events lazily and reports bounded-memory
-and durable-store metrics without materializing the event stream or trade list.
-Run from the backend directory with the project's Python environment.
+The benchmark generates events lazily and reports throughput, Python peak
+memory, and durable SQLite size without materializing the event stream or
+loading the complete trade history.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import sqlite3
 import tempfile
 import time
 import tracemalloc
@@ -41,7 +42,7 @@ def events(count: int):
             sequence=i,
             instrument="BENCH",
             event_type="tick",
-            payload={"price": 100.0 + (i % 10) * 0.01},
+            context={"price": 100.0 + (i % 10) * 0.01},
         )
 
 
@@ -56,26 +57,28 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="algo-trading-bench-") as tmp:
         db_path = os.path.join(tmp, "benchmark.sqlite3")
         strategy = CounterStrategy()
-        store = AtomicReplayStore(db_path)
+        connection = sqlite3.connect(db_path)
+        store = AtomicReplayStore(connection)
         runner = ResumableHighResolutionRunner(
-            store=store,
+            connection=connection,
             run_id="benchmark-1m",
             batch_size=args.batch_size,
         )
 
         tracemalloc.start()
         started = time.perf_counter()
-        result = runner.run(strategy, events(args.events))
+        result = runner.run(events(args.events), strategy)
         elapsed = time.perf_counter() - started
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
+        connection.close()
         db_bytes = os.path.getsize(db_path)
         persisted_events = store.count_events("benchmark-1m")
         persisted_trades = store.count_trades("benchmark-1m")
-        rate = result.processed_events / elapsed if elapsed else 0.0
+        rate = result.events_processed / elapsed if elapsed else 0.0
 
-        print(f"events={result.processed_events}")
+        print(f"events={result.events_processed}")
         print(f"strategy_seen={strategy.seen}")
         print(f"persisted_events={persisted_events}")
         print(f"persisted_trades={persisted_trades}")
@@ -84,7 +87,7 @@ def main() -> None:
         print(f"peak_python_mb={peak / (1024 * 1024):.2f}")
         print(f"sqlite_mb={db_bytes / (1024 * 1024):.2f}")
 
-        if result.processed_events != args.events or strategy.seen != args.events:
+        if result.events_processed != args.events or strategy.seen != args.events:
             raise SystemExit("processed event count mismatch")
         if persisted_events != args.events:
             raise SystemExit("durable event count mismatch")
