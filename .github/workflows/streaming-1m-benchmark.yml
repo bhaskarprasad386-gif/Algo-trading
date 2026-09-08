@@ -1,6 +1,11 @@
 name: Streaming 1M Benchmark
 
 on:
+  push:
+    paths:
+      - "backend/benchmarks/benchmark_1m_streaming.py"
+      - "backend/app/backtesting/**"
+      - ".github/workflows/streaming-1m-benchmark.yml"
   workflow_dispatch:
     inputs:
       events:
@@ -31,4 +36,4 @@ jobs:
 
       - name: Run streaming benchmark
         working-directory: backend
-        run: python benchmarks/benchmark_1m_streaming.py --events "${{ inputs.events }}" --batch-size "${{ inputs.batch_size }}"
+        run: python benchmarks/benchmark_1m_streaming.py --events "${{ inputs.events || '1000000' }}" --batch-size "${{ inputs.batch_size || '10000' }}"
