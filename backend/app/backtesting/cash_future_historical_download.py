@@ -34,12 +34,19 @@ def _default_session_windows(request: object) -> tuple[SessionWindow, ...]:
 def _normalise_cash_instrument(master: InstrumentMaster, value: str, exchange: str) -> str:
     """Return an Angel One-compatible cash instrument, resolving plain symbols safely."""
     instrument = str(value).strip()
+    requested_exchange = str(exchange).strip().upper()
     if not instrument:
         raise ValueError("cash instrument cannot be empty")
+    if not requested_exchange:
+        raise ValueError("cash exchange cannot be empty")
     if ":" in instrument:
         parts = instrument.split(":")
-        if len(parts) not in (2, 3) or not all(part.strip() for part in parts[:2]):
+        if len(parts) not in (2, 3) or not all(part.strip() for part in parts):
             raise ValueError(f"invalid cash instrument format: {instrument!r}")
+        if parts[0].strip().upper() != requested_exchange:
+            raise ValueError(
+                f"cash instrument exchange mismatch: requested={requested_exchange}, instrument={parts[0].strip().upper()}"
+            )
         return instrument
     resolved = master.resolve_cash_instrument(instrument, exchange="NSE")
     token = str(resolved["token"]).strip()
