@@ -184,12 +184,18 @@ class CashFutureHistoricalDownloadService:
             effective_skip = should_skip or self._chunk_is_complete; sequence_offset = 0
             spot_result = self.executor.run(self.source, spot_plan, retry_attempts=retry_attempts, should_skip=effective_skip, should_accept=self._chunk_is_complete, **(self._callbacks(job_id, sequence_offset) if job_id else {}))
             sequence_offset += len(spot_plan.requests)
-            if spot_result.failed_request_index is not None: return CashFutureHistoricalDownloadReport(queue, spot_result, tuple(), self.catalog.count())
+            if spot_result.failed_request_index is not None:
+                if self.status_store is not None and job_id is not None:
+                    self.status_store.update_job(job_id, status="FAILED", error=f"spot chunk failed at request {spot_result.failed_request_index}")
+                return CashFutureHistoricalDownloadReport(queue, spot_result, tuple(), self.catalog.count())
             future_results = []
             for item, plan in zip(queue.futures, future_plans):
                 result = self.executor.run(self.source, plan, retry_attempts=retry_attempts, should_skip=effective_skip, should_accept=self._chunk_is_complete, **(self._callbacks(job_id, sequence_offset) if job_id else {}))
                 future_results.append(result); sequence_offset += len(plan.requests)
-                if result.failed_request_index is not None: return CashFutureHistoricalDownloadReport(queue, spot_result, tuple(future_results), self.catalog.count())
+                if result.failed_request_index is not None:
+                    if self.status_store is not None and job_id is not None:
+                        self.status_store.update_job(job_id, status="FAILED", error=f"future chunk failed at request {result.failed_request_index}")
+                    return CashFutureHistoricalDownloadReport(queue, spot_result, tuple(future_results), self.catalog.count())
             if self.status_store is not None and job_id is not None:
                 completed = spot_result.completed_chunks + sum(r.completed_chunks for r in future_results); skipped = spot_result.skipped_chunks + sum(r.skipped_chunks for r in future_results)
                 self.status_store.update_job(job_id, status="COMPLETE", completed_chunks=completed, skipped_chunks=skipped, failed_chunks=0, catalog_count=self.catalog.count())
