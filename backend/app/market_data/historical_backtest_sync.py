@@ -99,7 +99,7 @@ def _normalize_for_store(rows: list[Any], instrument: HistoricalBacktestInstrume
 
 
 def _contiguous_minute_ranges(bars: list[dict[str, Any]]) -> list[tuple[datetime, datetime]]:
-    """Return one coverage interval per contiguous 1-minute run."""
+    """Return half-open coverage intervals for contiguous 1-minute runs."""
     timestamps = sorted({bar["timestamp"] for bar in bars})
     if not timestamps:
         return []
@@ -109,14 +109,14 @@ def _contiguous_minute_ranges(bars: list[dict[str, Any]]) -> list[tuple[datetime
         if timestamp - run_end == timedelta(minutes=1):
             run_end = timestamp
             continue
-        ranges.append((run_start, run_end))
+        ranges.append((run_start, run_end + timedelta(minutes=1)))
         run_start = run_end = timestamp
-    ranges.append((run_start, run_end))
+    ranges.append((run_start, run_end + timedelta(minutes=1)))
     return ranges
 
 
 def _chunk_range(start: datetime, end: datetime, *, max_days: int = MAX_ONE_MINUTE_REQUEST_DAYS) -> list[tuple[datetime, datetime]]:
-    """Split a provider range into inclusive windows within the provider limit."""
+    """Split a provider range into windows within the provider limit."""
     if start >= end:
         return []
     if max_days <= 0:
@@ -205,7 +205,7 @@ def sync_historical_backtest_data(
                 contract_month=instrument.contract_month,
                 start=coverage_start,
                 end=coverage_end,
-                row_count=sum(1 for bar in bars if coverage_start <= bar["timestamp"] <= coverage_end),
+                row_count=sum(1 for bar in bars if coverage_start <= bar["timestamp"] < coverage_end),
                 data_version="angel_one_v1",
                 source_hash=None,
                 validated=True,
