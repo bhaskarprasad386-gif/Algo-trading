@@ -176,6 +176,22 @@ class Portfolio:
             if projected_drawdown > cfg.max_drawdown + 1e-9:
                 raise RiskViolation("max drawdown exceeded")
 
+    def validate_mark_to_market(self, marks: dict[str, float] | None = None) -> PortfolioSnapshot:
+        """Validate current marked equity/exposure without mutating portfolio state."""
+        snapshot = self.snapshot(marks)
+        cfg = self.risk_config
+        if cfg.max_gross_notional is not None and snapshot.gross_notional > cfg.max_gross_notional + 1e-9:
+            raise RiskViolation("max gross notional exceeded")
+        if cfg.max_net_notional is not None and abs(snapshot.net_notional) > cfg.max_net_notional + 1e-9:
+            raise RiskViolation("max net notional exceeded")
+        if cfg.max_leverage is not None and snapshot.equity > 0 and snapshot.leverage > cfg.max_leverage + 1e-9:
+            raise RiskViolation("max leverage exceeded")
+        if snapshot.equity + 1e-9 < snapshot.maintenance_margin:
+            raise RiskViolation("maintenance margin breached")
+        if cfg.max_drawdown is not None and snapshot.drawdown > cfg.max_drawdown + 1e-9:
+            raise RiskViolation("max drawdown exceeded")
+        return snapshot
+
     def apply_fill(self, fill: SimFill, marks: dict[str, float] | None = None) -> Position:
         self.validate_fill(fill, marks)
         old = self._positions.get(fill.instrument, Position(fill.instrument))
@@ -240,7 +256,6 @@ class Portfolio:
         return PortfolioSnapshot(self.cash, equity, self._realized_pnl, unrealized, tuple(self._positions.values()), gross, net, initial_margin, maintenance, available, leverage, drawdown, self._fees, self.reserved_margin)
 
     def export_state(self) -> Mapping[str, Any]:
-        """Return a JSON-safe snapshot sufficient to restore portfolio accounting."""
         return {
             "initial_cash": self.initial_cash,
             "cash": self.cash,
@@ -253,37 +268,19 @@ class Portfolio:
                 "max_position_quantity": self.risk_config.max_position_quantity,
                 "max_drawdown": self.risk_config.max_drawdown,
             },
-            "positions": [
-                {"instrument": p.instrument, "quantity": p.quantity, "average_price": p.average_price, "realized_pnl": p.realized_pnl}
-                for p in self._positions.values()
-            ],
+            "positions": [{"instrument": p.instrument, "quantity": p.quantity, "average_price": p.average_price, "realized_pnl": p.realized_pnl} for p in self._positions.values()],
             "realized_pnl": self._realized_pnl,
             "fees": self._fees,
             "peak_equity": self._peak_equity,
             "reserved_margin": dict(self._reserved_margin),
-            "trades": [
-                {"order_id": t.order_id, "instrument": t.instrument, "side": t.side.value, "quantity": t.quantity,
-                 "price": t.price, "gross_value": t.gross_value, "fee": t.fee,
-                 "realized_pnl_delta": t.realized_pnl_delta, "cash_after": t.cash_after,
-                 "equity_after": t.equity_after, "timestamp_ns": t.timestamp_ns}
-                for t in self._trades
-            ],
+            "trades": [{"order_id": t.order_id, "instrument": t.instrument, "side": t.side.value, "quantity": t.quantity, "price": t.price, "gross_value": t.gross_value, "fee": t.fee, "realized_pnl_delta": t.realized_pnl_delta, "cash_after": t.cash_after, "equity_after": t.equity_after, "timestamp_ns": t.timestamp_ns} for t in self._trades],
         }
 
     def restore_state(self, state: Mapping[str, Any]) -> None:
-        """Restore a previously exported portfolio state, rejecting incompatible risk config."""
         if float(state.get("initial_cash", -1)) != self.initial_cash:
             raise ValueError("portfolio initial_cash does not match checkpoint")
         saved_cfg = dict(state.get("risk_config", {}))
-        current_cfg = {
-            "initial_margin_rate": self.risk_config.initial_margin_rate,
-            "maintenance_margin_rate": self.risk_config.maintenance_margin_rate,
-            "max_gross_notional": self.risk_config.max_gross_notional,
-            "max_net_notional": self.risk_config.max_net_notional,
-            "max_leverage": self.risk_config.max_leverage,
-            "max_position_quantity": self.risk_config.max_position_quantity,
-            "max_drawdown": self.risk_config.max_drawdown,
-        }
+        current_cfg = {"initial_margin_rate": self.risk_config.initial_margin_rate, "maintenance_margin_rate": self.risk_config.maintenance_margin_rate, "max_gross_notional": self.risk_config.max_gross_notional, "max_net_notional": self.risk_config.max_net_notional, "max_leverage": self.risk_config.max_leverage, "max_position_quantity": self.risk_config.max_position_quantity, "max_drawdown": self.risk_config.max_drawdown}
         if saved_cfg != current_cfg:
             raise ValueError("portfolio risk configuration does not match checkpoint")
         positions: dict[str, Position] = {}
@@ -298,12 +295,7 @@ class Portfolio:
         self._fees = float(state["fees"])
         self._peak_equity = float(state["peak_equity"])
         self._reserved_margin = {str(k): float(v) for k, v in dict(state.get("reserved_margin", {})).items()}
-        self._trades = [
-            TradeRecord(str(t["order_id"]), str(t["instrument"]), ExecutionSide(t["side"]), int(t["quantity"]),
-                        float(t["price"]), float(t["gross_value"]), float(t["fee"]), float(t["realized_pnl_delta"]),
-                        float(t["cash_after"]), float(t["equity_after"]), int(t["timestamp_ns"]))
-            for t in state.get("trades", [])
-        ]
+        self._trades = [TradeRecord(str(t["order_id"]), str(t["instrument"]), ExecutionSide(t["side"]), int(t["quantity"]), float(t["price"]), float(t["gross_value"]), float(t["fee"]), float(t["realized_pnl_delta"]), float(t["cash_after"]), float(t["equity_after"]), int(t["timestamp_ns"])) for t in state.get("trades", [])]
 
     def apply_fills(self, fills: Iterable[SimFill], marks: dict[str, float] | None = None) -> PortfolioSnapshot:
         return self.apply_fills_atomic(fills, marks)
