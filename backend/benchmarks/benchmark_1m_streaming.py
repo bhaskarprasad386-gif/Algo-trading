@@ -72,11 +72,12 @@ def main() -> None:
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
-        connection.close()
-        db_bytes = os.path.getsize(db_path)
+        # Query durable metrics before closing the connection owned by the store.
         persisted_events = store.count_events("benchmark-1m")
         persisted_trades = store.count_trades("benchmark-1m")
+        db_bytes = os.path.getsize(db_path)
         rate = result.events_processed / elapsed if elapsed else 0.0
+        connection.close()
 
         print(f"events={result.events_processed}")
         print(f"strategy_seen={strategy.seen}")
