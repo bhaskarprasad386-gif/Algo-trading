@@ -45,3 +45,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/backend
         run: python benchmarks/benchmark_1m_streaming.py --events "${{ inputs.events || '1000000' }}" --batch-size "${{ inputs.batch_size || '10000' }}"
+
+      # retrigger benchmark after verified import-path fix
+      - name: Benchmark completion marker
+        run: echo "Streaming benchmark executed on the current main revision"
