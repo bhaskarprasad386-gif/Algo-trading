@@ -8,6 +8,10 @@ from app.backtesting.cash_future_pipeline import CashFutureBacktestPipeline
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 
 
+TEST_T1 = 1_767_225_601_000_000_000
+TEST_T2 = 1_767_225_602_000_000_000
+
+
 class FakeReadiness:
     def __init__(self, complete: bool = True):
         self.complete = complete
@@ -41,7 +45,7 @@ def _catalog():
         "NIFTY-CURRENT": (105.0, 101.0),
         "NIFTY-NEAR": (106.0, 102.0),
     }.items():
-        for ts, price in zip((1_000_000_000, 2_000_000_000), prices):
+        for ts, price in zip((TEST_T1, TEST_T2), prices):
             rows.append(HistoricalRecord("test", instrument, "1s", ts, {"close": price}))
     catalog.ingest(rows)
     return catalog
@@ -68,8 +72,8 @@ def _run(mode: str):
         spot_instrument="SPOT",
         quantity=1,
         default_lot_size=25,
-        entry_timestamp_ns=1_000_000_000,
-        exit_timestamp_ns=2_000_000_000,
+        entry_timestamp_ns=TEST_T1,
+        exit_timestamp_ns=TEST_T2,
     )
     return result, contracts, readiness
 
@@ -122,8 +126,8 @@ def test_readiness_failure_happens_before_contract_or_data_replay():
             end=datetime(2026, 1, 2, tzinfo=timezone.utc), mode="CURRENT",
             source="test", timeframe="1s", interval_ns=1_000_000_000,
             queue=object(), spot_instrument="SPOT", quantity=1,
-            default_lot_size=25, entry_timestamp_ns=1_000_000_000,
-            exit_timestamp_ns=2_000_000_000,
+            default_lot_size=25, entry_timestamp_ns=TEST_T1,
+            exit_timestamp_ns=TEST_T2,
         )
     assert contracts.calls == []
 
@@ -131,8 +135,8 @@ def test_readiness_failure_happens_before_contract_or_data_replay():
 def test_pipeline_does_not_allow_unknown_price_payload():
     catalog = HistoricalCatalog()
     catalog.ingest([
-        HistoricalRecord("test", "SPOT", "1s", 1_000_000_000, {"close": 100}),
-        HistoricalRecord("test", "NIFTY-CURRENT", "1s", 1_000_000_000, {"volume": 10}),
+        HistoricalRecord("test", "SPOT", "1s", TEST_T1, {"close": 100}),
+        HistoricalRecord("test", "NIFTY-CURRENT", "1s", TEST_T1, {"volume": 10}),
     ])
     pipeline = CashFutureBacktestPipeline(
         contract_catalog=FakeContractCatalog(),
@@ -146,6 +150,6 @@ def test_pipeline_does_not_allow_unknown_price_payload():
             end=datetime(2026, 1, 2, tzinfo=timezone.utc), mode="CURRENT",
             source="test", timeframe="1s", interval_ns=1_000_000_000,
             queue=object(), spot_instrument="SPOT", quantity=1,
-            default_lot_size=25, entry_timestamp_ns=1_000_000_000,
-            exit_timestamp_ns=2_000_000_000,
+            default_lot_size=25, entry_timestamp_ns=TEST_T1,
+            exit_timestamp_ns=TEST_T2,
         )
