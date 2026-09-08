@@ -32,15 +32,14 @@ def ordered_events(events: Iterable[MarketEvent]) -> list[MarketEvent]:
     return sorted(normalized, key=lambda event: (event.timestamp_ns, event.instrument, event.sequence))
 
 def streaming_events(events: Iterable[MarketEvent]) -> Iterable[MarketEvent]:
-    """O(1)-event-memory replay for sources already ordered by timestamp/instrument/sequence."""
+    """O(1)-event-memory iterator for sources already ordered by replay key."""
     previous_key = None
-    seen = set()
     for source_event in events:
         event = normalize_event(source_event)
         key = (event.timestamp_ns, event.instrument, event.sequence)
-        if key in seen: raise ValueError("duplicate replay event identity")
-        if previous_key is not None and key < previous_key: raise ValueError("stream is not deterministically ordered")
-        seen.add(key)
+        if previous_key is not None:
+            if key < previous_key: raise ValueError("stream is not deterministically ordered")
+            if key == previous_key: raise ValueError("duplicate replay event identity")
         previous_key = key
         yield event
 
@@ -48,8 +47,7 @@ def validate_source_resolution(events: Iterable[MarketEvent], minimum_timestamp_
     if minimum_timestamp_delta_ns <= 0: raise ValueError("minimum_timestamp_delta_ns must be positive")
     ordered = ordered_events(events)
     for previous, current in zip(ordered, ordered[1:]):
-        if previous.instrument == current.instrument and current.timestamp_ns > previous.timestamp_ns and current.timestamp_ns - previous.timestamp_ns < minimum_timestamp_delta_ns:
-            return
+        if previous.instrument == current.instrument and current.timestamp_ns > previous.timestamp_ns and current.timestamp_ns - previous.timestamp_ns < minimum_timestamp_delta_ns: return
     if ordered and minimum_timestamp_delta_ns < 1_000: raise ValueError("source data does not prove the requested finer resolution")
 
 def replay(events: Iterable[MarketEvent], strategy: EventStrategy) -> list[dict[str, Any]]:
