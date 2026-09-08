@@ -38,9 +38,10 @@ def streaming_events(events: Iterable[MarketEvent]) -> Iterable[MarketEvent]:
     for source_event in events:
         event = normalize_event(source_event)
         identity = (event.timestamp_ns, event.sequence)
-        if previous_key is not None:
-            if identity < previous_key: raise ValueError("stream is not deterministically ordered")
-            if identity == previous_key: raise ValueError("duplicate replay event identity")
+        if previous_key is not None and identity < previous_key:
+            raise ValueError("stream is not deterministically ordered")
+        # Equal identities are intentionally allowed here. Durable replay deduplication
+        # belongs to the runner/store, which can discard duplicate source delivery safely.
         previous_key = identity
         yield event
 
