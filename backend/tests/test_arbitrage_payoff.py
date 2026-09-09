@@ -24,9 +24,11 @@ def test_box_payoff_contains_four_real_entry_legs_and_fixed_expiry_payoff():
         ("PUT", "BUY", 110.0, 2.0),
         ("PUT", "SELL", 100.0, 5.0),
     ]
-    assert payoff_at_price(result.legs, 90.0) == 7.0
-    assert payoff_at_price(result.legs, 105.0) == 7.0
-    assert payoff_at_price(result.legs, 120.0) == 7.0
+    # The four real fills produce a net premium credit of 1, so expiry payoff
+    # is the 10-point box value plus that 1-point credit.
+    assert payoff_at_price(result.legs, 90.0) == 11.0
+    assert payoff_at_price(result.legs, 105.0) == 11.0
+    assert payoff_at_price(result.legs, 120.0) == 11.0
     assert result.metadata["quote_timestamp_ns"] == 1
 
 
