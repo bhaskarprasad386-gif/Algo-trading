@@ -59,6 +59,7 @@ class HistoricalArbitrageRunner:
         self._audit_sequence = 0
         self._realized_pnl = 0.0
         self.completed = 0
+        self._finalized = False
 
     @property
     def open_positions(self) -> tuple[OpenPosition, ...]:
@@ -87,7 +88,10 @@ class HistoricalArbitrageRunner:
         exit_selector: Callable[[OpenPosition, Mapping[str, Any]], ExitExecution | None],
         *,
         equity_selector: Callable[[Mapping[str, Any], float], EquityPoint | None] | None = None,
+        finalize: bool = True,
     ) -> int:
+        if self._finalized:
+            raise RuntimeError("historical arbitrage runner is already finalized")
         try:
             for event in events:
                 self._sequence += 1
@@ -147,11 +151,19 @@ class HistoricalArbitrageRunner:
                     "reason": "no later executable exit in supplied historical data",
                     "entry_timestamp_ns": position.timestamp_ns,
                 })
-            self.writer.complete()
+            if finalize:
+                self.finalize()
             return self.completed
         except Exception as exc:
             self.writer.fail(str(exc))
             raise
+
+    def finalize(self) -> None:
+        """Mark the run complete after all optional result artifacts are persisted."""
+        if self._finalized:
+            return
+        self.writer.complete()
+        self._finalized = True
 
 
 __all__ = ["ExitExecution", "HistoricalArbitrageRunner", "OpenPosition"]
