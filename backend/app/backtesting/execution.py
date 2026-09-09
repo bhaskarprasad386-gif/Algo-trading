@@ -118,6 +118,21 @@ class ExecutionResult:
 
 
 @dataclass(frozen=True)
+class AtomicExecutionResult:
+    """All-or-nothing result for a multi-leg execution attempt.
+
+    Leg results retain diagnostics, while ``fills`` is empty whenever any leg
+    fails to fully execute. The simulator has no external state mutation, so
+    rollback is represented by withholding all tentative fills from commit.
+    """
+
+    fills: tuple[SimFill, ...]
+    leg_results: tuple[ExecutionResult, ...]
+    rejected: bool = False
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
 class ExecutionConfig:
     slippage_bps: float = 0.0
     latency_ns: int = 0
@@ -281,3 +296,30 @@ class ExecutionSimulator:
 
     def execute_many(self, orders: Iterable[tuple[SimOrder, float, int]]) -> tuple[SimFill, ...]:
         return tuple(self.execute(order, price, timestamp_ns) for order, price, timestamp_ns in orders)
+
+    def execute_many_atomic(
+        self,
+        legs: Iterable[tuple[SimOrder, OrderBook, int]],
+    ) -> AtomicExecutionResult:
+        """Execute multi-leg orders transactionally: commit only full-leg success.
+
+        Each leg is simulated independently first. If every leg fills completely,
+        all fills are returned as the committed transaction. If any leg rejects
+        or partially fills, every tentative fill is discarded and the result is
+        marked rejected, preventing a backtest from inventing an unhedged leg.
+        """
+        leg_results = tuple(
+            self.execute_depth(order, book, timestamp_ns)
+            for order, book, timestamp_ns in legs
+        )
+        if not leg_results:
+            return AtomicExecutionResult((), (), True, "atomic transaction has no legs")
+        if any(result.rejected or result.remaining_quantity != 0 for result in leg_results):
+            return AtomicExecutionResult(
+                (),
+                leg_results,
+                True,
+                "atomic rollback: one or more legs did not fully execute",
+            )
+        fills = tuple(fill for result in leg_results for fill in result.fills)
+        return AtomicExecutionResult(fills, leg_results, False, None)
