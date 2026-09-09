@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from .contract_master import ContractMasterCatalog, ContractRecord
+from .index_contracts import IndexContractMaster
 
 ANGEL_ONE_MASTER_URL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
 MARKET_TIMEZONE = ZoneInfo("Asia/Kolkata")
@@ -72,9 +73,22 @@ class AngelOneContractMasterSource:
             records.append(ContractRecord("NFO", symbol, token, expiry, "STOCK_FUTURE", underlying, lot_size))
         return tuple(records)
 
+    @staticmethod
+    def normalize_index_futures(rows: Iterable[Mapping[str, Any]]) -> tuple[ContractRecord, ...]:
+        """Return all provider index futures, across supported exchange segments."""
+        return IndexContractMaster.normalize(rows)
+
     def sync(self, catalog: ContractMasterCatalog, *, snapshot_date: date | None = None) -> int:
         rows = self.fetch()
         snapshot = snapshot_date or self.market_date()
         canonical = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         digest = hashlib.sha256(canonical).hexdigest()
         return catalog.upsert_snapshot(snapshot, self.normalize_futures(rows), payload_sha256=digest, fetched_at=datetime.now(MARKET_TIMEZONE).replace(tzinfo=None))
+
+    def sync_index_futures(self, catalog: ContractMasterCatalog, *, snapshot_date: date | None = None) -> int:
+        """Persist the dynamically discovered index-futures universe for a snapshot."""
+        rows = self.fetch()
+        snapshot = snapshot_date or self.market_date()
+        canonical = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        digest = hashlib.sha256(canonical).hexdigest()
+        return catalog.upsert_snapshot(snapshot, self.normalize_index_futures(rows), payload_sha256=digest, fetched_at=datetime.now(MARKET_TIMEZONE).replace(tzinfo=None))
