@@ -12,14 +12,12 @@ from .arbitrage_payoff import build_strategy_payoff
 from .backtest_result import BacktestRunWriter, PayoffSnapshot
 from .historical_arbitrage_runner import ExitExecution, HistoricalArbitrageRunner, OpenPosition
 
-
 EntrySelector = Callable[[Mapping[str, Any]], Iterable[OpenPosition]]
 ExitSelector = Callable[[OpenPosition, Mapping[str, Any]], ExitExecution | None]
 
 
 @dataclass(frozen=True)
 class HistoricalArbitrageBacktestResult:
-    """Small immutable result handle; detailed trades remain in the ledger."""
     run_id: str
     completed_trades: int
     unresolved_trades: int
@@ -57,7 +55,7 @@ class HistoricalArbitrageBacktestService:
         return HistoricalArbitrageBacktestResult(
             run_id=self.writer.spec.run_id,
             completed_trades=runner.completed,
-            unresolved_trades=len(runner.open_positions),
+            unresolved_trades=runner.open_positions_count,
             realized_pnl=runner.realized_pnl,
             payoff=payoff,
         )
@@ -74,12 +72,7 @@ class HistoricalArbitrageBacktestService:
         payoff_timestamp_ns: int | None = None,
         equity_selector: Callable[[Mapping[str, Any], float], Any] | None = None,
     ) -> HistoricalArbitrageBacktestResult:
-        """Build a registered adapter and replay it without strategy fallback.
-
-        When payoff prices are supplied but explicit legs are not, the first
-        executable entry event automatically supplies the strategy-specific
-        multi-leg payoff definition. No synthetic market prices are created.
-        """
+        """Replay a registered strategy and optionally derive payoff from its entry quote."""
         adapter = build_strategy_adapter(strategy_id, parameters)
         captured: list[Mapping[str, Any]] = []
 
@@ -105,7 +98,8 @@ class HistoricalArbitrageBacktestService:
                 captured[0],
                 direction=(parameters or {}).get("direction"),
             )
-            sequence = self.writer.ledger.events(self.writer.spec.run_id)[-1]["sequence"] + 1
+            existing_events = self.writer.ledger.events(self.writer.spec.run_id)
+            sequence = (existing_events[-1]["sequence"] + 1) if existing_events else 0
             timestamp_ns = self.writer.spec.end_ns if payoff_timestamp_ns is None else payoff_timestamp_ns
             payoff = self.writer.record_payoff(sequence, timestamp_ns, strategy_payoff.legs, payoff_prices)
             return HistoricalArbitrageBacktestResult(
