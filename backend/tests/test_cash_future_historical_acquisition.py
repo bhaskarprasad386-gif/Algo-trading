@@ -151,3 +151,41 @@ def test_both_mode_keeps_current_and_near_rollover_legs_independent(tmp_path):
         "NFO:102:SBINFEB", "NFO:103:SBINMAR",
     ]
     assert [item.segment.future.token for item in queue.futures] == ["101", "102", "102", "103"]
+
+
+def test_gap_repair_crosses_expiry_with_exact_historical_tokens(tmp_path):
+    service, history, source = _service(tmp_path)
+    jan_session = SessionWindow(
+        int(datetime(2026, 1, 29, 3, 45, tzinfo=timezone.utc).timestamp() * 1_000_000_000),
+        int(datetime(2026, 1, 29, 3, 47, tzinfo=timezone.utc).timestamp() * 1_000_000_000),
+    )
+    feb_session = SessionWindow(
+        int(datetime(2026, 1, 30, 3, 45, tzinfo=timezone.utc).timestamp() * 1_000_000_000),
+        int(datetime(2026, 1, 30, 3, 47, tzinfo=timezone.utc).timestamp() * 1_000_000_000),
+    )
+    start = datetime(2026, 1, 29, 3, 45, tzinfo=timezone.utc)
+    end = datetime(2026, 1, 30, 3, 47, tzinfo=timezone.utc)
+
+    for timestamp in range(jan_session.start_ns, jan_session.end_ns + 1, 60 * 1_000_000_000):
+        history.ingest([HistoricalRecord(
+            "angelone", "NFO:101:SBINJAN", "1m", timestamp, {"close": 100.0}
+        )])
+
+    result = service.acquire(
+        spot_instrument="NSE:3045:SBIN", exchange="NFO", underlying="SBIN",
+        start=start, end=end,
+        spot_sessions=(jan_session, feb_session),
+        future_sessions={
+            "NFO:101:SBINJAN": (jan_session,),
+            "NFO:102:SBINFEB": (feb_session,),
+        },
+        timeframe="1m", mode="CURRENT", retry_attempts=1,
+    )
+
+    assert result.execution.failed_request_index is None
+    assert result.execution.results == ()
+    future_requests = [r for r in source.requests if r.instrument.startswith("NFO:")]
+    assert future_requests
+    assert {r.instrument for r in future_requests} == {"NFO:102:SBINFEB"}
+    assert all(r.start_ns >= feb_session.start_ns for r in future_requests)
+    assert all(r.end_ns <= feb_session.end_ns for r in future_requests)
