@@ -170,19 +170,37 @@ class ExecutionSimulator:
             accepted.append(level)
         return tuple(accepted)
 
-    def execute_depth(self, order: SimOrder, book: OrderBook, timestamp_ns: int) -> ExecutionResult:
-        """Consume displayed depth only after any known queue-ahead is depleted."""
+    def execute_depth(
+        self,
+        order: SimOrder,
+        book: OrderBook,
+        timestamp_ns: int,
+        queue_evidence: Iterable[QueueEvidence] = (),
+    ) -> ExecutionResult:
+        """Consume displayed depth after applying explicit queue evidence.
+
+        Queue advancement is price-specific and can combine executed quantity
+        with cancellations ahead. A book disappearing or shrinking by itself
+        never creates a fill.
+        """
         if timestamp_ns < order.submitted_at_ns:
             raise ValueError("fill timestamp cannot precede order submission")
         levels = self._executable_levels(order, book)
         if not levels:
             return ExecutionResult((), order.quantity, True, "no executable depth")
 
-        # A resting queue position is an unavailable portion of displayed depth.
-        # It may only be consumed by explicit source-backed QueueEvidence. Never
-        # infer that the queue traded merely because the level is still displayed.
-        if order.queue_ahead_quantity > 0:
-            return ExecutionResult((), order.quantity, True, "queue ahead not depleted")
+        queue_ahead = order.queue_ahead_quantity
+        evidence_by_price: dict[float, int] = {}
+        for evidence in queue_evidence:
+            evidence_by_price[evidence.price] = evidence_by_price.get(evidence.price, 0) + (
+                evidence.executed_quantity + evidence.cancelled_quantity_ahead
+            )
+
+        best_price = levels[0].price
+        if queue_ahead > 0:
+            queue_ahead = max(0, queue_ahead - evidence_by_price.get(best_price, 0))
+            if queue_ahead > 0:
+                return ExecutionResult((), order.quantity, True, "queue ahead not depleted")
 
         executable = sum(level.quantity for level in levels)
         if order.time_in_force == TimeInForce.FOK and executable < order.quantity:
@@ -204,6 +222,61 @@ class ExecutionSimulator:
 
         if not fills:
             return ExecutionResult((), order.quantity, True, "no executable quantity")
+        return ExecutionResult(tuple(fills), remaining, False, None if remaining == 0 else "partial fill")
+
+    def execute_depth_updates(
+        self,
+        order: SimOrder,
+        updates: Iterable[tuple[int, OrderBook, Iterable[QueueEvidence]]],
+    ) -> ExecutionResult:
+        """Replay timestamped book updates without reusing stale displayed depth.
+
+        Each level's quantity is treated as currently displayed liquidity. Across
+        updates, only quantity newly displayed above the simulator's consumed
+        amount is executable; unchanged depth cannot be filled twice. Resting
+        queue-ahead is reduced only by explicit evidence at the order price.
+        """
+        remaining = order.quantity
+        queue_ahead = order.queue_ahead_quantity
+        consumed_by_price: dict[float, int] = {}
+        fills: list[SimFill] = []
+
+        for timestamp_ns, book, evidence in updates:
+            if remaining <= 0:
+                break
+            if timestamp_ns < order.submitted_at_ns:
+                raise ValueError("fill timestamp cannot precede order submission")
+            levels = self._executable_levels(order, book)
+            if not levels:
+                continue
+
+            evidence_by_price: dict[float, int] = {}
+            for item in evidence:
+                evidence_by_price[item.price] = evidence_by_price.get(item.price, 0) + (
+                    item.executed_quantity + item.cancelled_quantity_ahead
+                )
+            if queue_ahead > 0:
+                queue_ahead = max(0, queue_ahead - evidence_by_price.get(levels[0].price, 0))
+                if queue_ahead > 0:
+                    continue
+
+            for level in levels:
+                already_consumed = consumed_by_price.get(level.price, 0)
+                newly_available = max(0, level.quantity - already_consumed)
+                if newly_available <= 0:
+                    continue
+                take = min(remaining, newly_available)
+                fills.append(SimFill(order.order_id, order.instrument, order.side, take, level.price,
+                                     timestamp_ns + self.config.latency_ns, take * self.config.fee_per_unit))
+                consumed_by_price[level.price] = already_consumed + take
+                remaining -= take
+                if remaining <= 0:
+                    break
+
+        if not fills:
+            return ExecutionResult((), order.quantity, True, "no executable depth")
+        if order.time_in_force == TimeInForce.FOK and remaining:
+            return ExecutionResult((), order.quantity, True, "insufficient displayed depth for FOK")
         return ExecutionResult(tuple(fills), remaining, False, None if remaining == 0 else "partial fill")
 
     def execute_many(self, orders: Iterable[tuple[SimOrder, float, int]]) -> tuple[SimFill, ...]:
