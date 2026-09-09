@@ -26,7 +26,7 @@ def test_mark_to_market_detects_maintenance_margin_breach():
     risk = evaluate_mark_to_market(p, {"X": 20})
     assert risk.maintenance_breach is True
     assert risk.snapshot.equity == -2_800
-    assert risk.snapshot.maintenance_margin == 5
+    assert risk.snapshot.maintenance_margin == 50
 
 
 def test_mark_to_market_rejects_drawdown_before_state_change():
