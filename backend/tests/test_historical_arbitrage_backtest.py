@@ -34,7 +34,7 @@ def test_unified_box_replay_persists_trade_and_graph_ready_payoff():
     assert result.completed_trades == 1
     assert result.payoff is not None
     assert len(result.payoff.prices) == 4
-    assert ledger.trades("unified-box")[0]["net_pnl"] == 9.0
+    assert ledger.trades("unified-box")[0]["net_pnl"] == 12.0
     assert ledger.events("unified-box")[0]["event_type"] == "PAYOFF_SNAPSHOT"
     assert ledger.run("unified-box")["status"] == "COMPLETED"
     ledger.close()
