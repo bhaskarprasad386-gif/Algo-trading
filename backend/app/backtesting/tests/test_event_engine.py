@@ -272,3 +272,42 @@ def test_rejects_out_of_order_source_events():
     events = [MarketEvent(2, "NIFTY", EventType.QUOTE, {}), MarketEvent(1, "NIFTY", EventType.QUOTE, {})]
     with pytest.raises(ValueError, match="ordered"):
         EventBacktestEngine().run(events, lambda event, state: None)
+
+
+def test_margin_call_blocks_new_risk_after_mark_to_market_breach():
+    class Strategy:
+        strategy_id = "margin-block"; strategy_version = "1"
+        def on_event(self, event, context):
+            if event.timestamp_ns == 1_000:
+                return StrategyDecision(action="BUY", orders=(SimOrder("open", "X", ExecutionSide.BUY, 300),))
+            return StrategyDecision(action="BUY", orders=(SimOrder("add", "X", ExecutionSide.BUY, 1),))
+
+    portfolio = Portfolio(100_000, RiskConfig(initial_margin_rate=0.5, maintenance_margin_rate=0.4))
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    result = engine.run([
+        MarketEvent(1_000, "X", EventType.QUOTE, {"bid": 499, "ask": 500}),
+        MarketEvent(2_000, "X", EventType.QUOTE, {"bid": 99, "ask": 100}),
+    ], Strategy())
+    assert result.fills == 1
+    assert result.risk_blocks == 1
+    assert result.final_snapshot.positions[0].quantity == 300
+    assert engine.order_states["add"].status == OrderStatus.REJECTED
+
+
+def test_margin_call_still_allows_risk_reducing_close_order():
+    class Strategy:
+        strategy_id = "margin-unwind"; strategy_version = "1"
+        def on_event(self, event, context):
+            if event.timestamp_ns == 1_000:
+                return StrategyDecision(action="BUY", orders=(SimOrder("open", "X", ExecutionSide.BUY, 300),))
+            return StrategyDecision(action="SELL", orders=(SimOrder("close", "X", ExecutionSide.SELL, 300),))
+
+    portfolio = Portfolio(100_000, RiskConfig(initial_margin_rate=0.5, maintenance_margin_rate=0.4))
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    result = engine.run([
+        MarketEvent(1_000, "X", EventType.QUOTE, {"bid": 499, "ask": 500}),
+        MarketEvent(2_000, "X", EventType.QUOTE, {"bid": 100, "ask": 101}),
+    ], Strategy())
+    assert result.risk_blocks == 0
+    assert result.fills == 2
+    assert result.final_snapshot.positions == ()
