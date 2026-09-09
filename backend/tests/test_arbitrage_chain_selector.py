@@ -1,5 +1,3 @@
-import pytest
-
 from backend.app.backtesting.arbitrage_chain_selector import (
     ChainContract,
     pair_by_strike,
@@ -51,10 +49,13 @@ def test_synthetic_index_uses_fifteen_actual_positions_each_side():
     assert [c.strike for c in selected] == [*range(5, 20), *range(21, 36)]
 
 
-def test_missing_box_strikes_are_reported_as_incomplete_not_fabricated():
+def test_missing_box_strikes_shift_actual_positions_without_fabrication():
     contracts = [c for c in chain() if c.strike not in {15, 19, 25}]
-    with pytest.raises(ValueError, match="incomplete"):
-        select_box_stock(contracts, atm=20)
+    selected = select_box_stock(contracts, atm=20)
+    strikes = [c.strike for c in selected]
+    assert len(strikes) == 10
+    assert set(strikes).isdisjoint({15, 19, 25})
+    assert all(c.strike in {x.strike for x in contracts} for c in selected)
 
 
 def test_synthetic_missing_strikes_are_not_fabricated():
