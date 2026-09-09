@@ -109,7 +109,8 @@ class ResumableHistoricalExecutor:
         def should_skip(request: object) -> bool:
             return index_for(request) not in pending
         def mark_start(index: int, request: object, attempt: int) -> None:
-            job_store.start_chunk(job_id, index)
+            if attempt == 1:
+                job_store.start_chunk(job_id, index)
             if on_chunk_start is not None:
                 on_chunk_start(index, request, attempt)
         def mark_complete(index: int, request: object, result: HistoricalSyncResult, attempt: int) -> None:
