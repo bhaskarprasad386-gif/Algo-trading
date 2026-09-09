@@ -43,7 +43,7 @@ class ExitExecution:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.timestamp_ns < 0 or self.exit_price < 0 or self.gross_pnl < 0:
+        if self.timestamp_ns < 0 or self.exit_price < 0:
             raise ValueError("invalid historical exit")
         if self.fees < 0 or self.slippage < 0:
             raise ValueError("fees/slippage cannot be negative")
