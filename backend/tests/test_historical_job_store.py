@@ -64,3 +64,22 @@ def test_finish_does_not_hide_terminal_failure(tmp_path):
     assert job.state == "failed"
     assert job.failed_chunk == 0
     assert job.error == "permanent provider error"
+
+
+def test_recover_running_chunks_after_worker_crash(tmp_path):
+    path = str(tmp_path / "jobs.db")
+    store = HistoricalJobStore(path)
+    store.create(job_id="job-1", run_id="run-1", plan_fingerprint="fp", total_chunks=3)
+    store.start_chunk("job-1", 0)
+    store.start_chunk("job-1", 1)
+    assert store.chunk_state("job-1", 0) == ("running", 1, None)
+    assert store.chunk_state("job-1", 1) == ("running", 1, None)
+    store.close()
+
+    resumed = HistoricalJobStore(path)
+    assert resumed.recover_running_chunks("job-1") == (0, 1)
+    assert resumed.pending_indices("job-1") == (0, 1, 2)
+    assert resumed.chunk_state("job-1", 0) == ("recoverable", 1, None)
+    assert resumed.chunk_state("job-1", 1) == ("recoverable", 1, None)
+    assert resumed.get("job-1").state == "recoverable"
+    assert resumed.recover_running_chunks("job-1") == ()
