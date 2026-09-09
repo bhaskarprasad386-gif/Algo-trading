@@ -1,0 +1,134 @@
+"""Durable job/chunk state for restart-safe historical acquisition."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+from dataclasses import dataclass
+from typing import Any, Mapping
+
+
+_JOB_STATES = {"queued", "running", "progress", "completed", "failed", "cancelled", "recoverable"}
+_CHUNK_STATES = {"pending", "running", "completed", "skipped", "failed", "recoverable"}
+
+
+@dataclass(frozen=True)
+class HistoricalJob:
+    job_id: str
+    run_id: str
+    plan_fingerprint: str
+    state: str
+    total_chunks: int
+    completed_chunks: int
+    skipped_chunks: int
+    failed_chunk: int | None
+    error: str | None
+
+
+class HistoricalJobStore:
+    """SQLite-backed job ledger; only scalar metadata is persisted, never raw market rows."""
+
+    def __init__(self, path: str = ":memory:") -> None:
+        self.path = path
+        self._db = sqlite3.connect(path)
+        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("""CREATE TABLE IF NOT EXISTS historical_jobs (
+            job_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, plan_fingerprint TEXT NOT NULL,
+            state TEXT NOT NULL, total_chunks INTEGER NOT NULL, completed_chunks INTEGER NOT NULL DEFAULT 0,
+            skipped_chunks INTEGER NOT NULL DEFAULT 0, failed_chunk INTEGER, error TEXT,
+            CHECK(state IN ('queued','running','progress','completed','failed','cancelled','recoverable'))
+        )""")
+        self._db.execute("""CREATE TABLE IF NOT EXISTS historical_job_chunks (
+            job_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, state TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0, error TEXT,
+            PRIMARY KEY(job_id, chunk_index),
+            FOREIGN KEY(job_id) REFERENCES historical_jobs(job_id) ON DELETE CASCADE,
+            CHECK(state IN ('pending','running','completed','skipped','failed','recoverable'))
+        )""")
+        self._db.commit()
+
+    def close(self) -> None:
+        self._db.close()
+
+    @staticmethod
+    def fingerprint(requests: tuple[Mapping[str, Any], ...]) -> str:
+        canonical = json.dumps([dict(r) for r in requests], sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def create(self, *, job_id: str, run_id: str, plan_fingerprint: str, total_chunks: int) -> HistoricalJob:
+        if not job_id.strip() or not run_id.strip() or not plan_fingerprint.strip():
+            raise ValueError("job_id, run_id and plan_fingerprint are required")
+        if total_chunks < 0:
+            raise ValueError("total_chunks cannot be negative")
+        self._db.execute(
+            "INSERT INTO historical_jobs(job_id,run_id,plan_fingerprint,state,total_chunks) VALUES(?,?,?,?,?)",
+            (job_id, run_id, plan_fingerprint, "queued", total_chunks),
+        )
+        self._db.executemany(
+            "INSERT INTO historical_job_chunks(job_id,chunk_index,state) VALUES(?,?,?)",
+            ((job_id, i, "pending") for i in range(total_chunks)),
+        )
+        self._db.commit()
+        return self.get(job_id)
+
+    def get(self, job_id: str) -> HistoricalJob:
+        row = self._db.execute(
+            "SELECT job_id,run_id,plan_fingerprint,state,total_chunks,completed_chunks,skipped_chunks,failed_chunk,error FROM historical_jobs WHERE job_id=?",
+            (job_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(job_id)
+        return HistoricalJob(*row)
+
+    def pending_indices(self, job_id: str) -> tuple[int, ...]:
+        rows = self._db.execute(
+            "SELECT chunk_index FROM historical_job_chunks WHERE job_id=? AND state IN ('pending','recoverable') ORDER BY chunk_index",
+            (job_id,),
+        ).fetchall()
+        return tuple(int(row[0]) for row in rows)
+
+    def start_chunk(self, job_id: str, chunk_index: int) -> None:
+        self._db.execute(
+            "UPDATE historical_job_chunks SET state='running', attempts=attempts+1, error=NULL WHERE job_id=? AND chunk_index=?",
+            (job_id, chunk_index),
+        )
+        self._db.execute("UPDATE historical_jobs SET state='running' WHERE job_id=?", (job_id,))
+        self._db.commit()
+
+    def complete_chunk(self, job_id: str, chunk_index: int, *, skipped: bool = False) -> None:
+        state = "skipped" if skipped else "completed"
+        self._db.execute(
+            "UPDATE historical_job_chunks SET state=?, error=NULL WHERE job_id=? AND chunk_index=?",
+            (state, job_id, chunk_index),
+        )
+        self._refresh_counts(job_id)
+
+    def fail_chunk(self, job_id: str, chunk_index: int, error: str, *, recoverable: bool = True) -> None:
+        state = "recoverable" if recoverable else "failed"
+        self._db.execute(
+            "UPDATE historical_job_chunks SET state=?, error=? WHERE job_id=? AND chunk_index=?",
+            (state, error, job_id, chunk_index),
+        )
+        self._db.execute(
+            "UPDATE historical_jobs SET state=?, failed_chunk=?, error=? WHERE job_id=?",
+            (state, chunk_index, error, job_id),
+        )
+        self._db.commit()
+
+    def finish(self, job_id: str) -> HistoricalJob:
+        self._refresh_counts(job_id)
+        pending = self.pending_indices(job_id)
+        state = "completed" if not pending else "progress"
+        self._db.execute("UPDATE historical_jobs SET state=? WHERE job_id=?", (state, job_id))
+        self._db.commit()
+        return self.get(job_id)
+
+    def _refresh_counts(self, job_id: str) -> None:
+        completed = int(self._db.execute("SELECT COUNT(*) FROM historical_job_chunks WHERE job_id=? AND state='completed'", (job_id,)).fetchone()[0])
+        skipped = int(self._db.execute("SELECT COUNT(*) FROM historical_job_chunks WHERE job_id=? AND state='skipped'", (job_id,)).fetchone()[0])
+        self._db.execute(
+            "UPDATE historical_jobs SET completed_chunks=?, skipped_chunks=?, state='progress' WHERE job_id=?",
+            (completed, skipped, job_id),
+        )
+        self._db.commit()
