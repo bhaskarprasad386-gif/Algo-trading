@@ -21,11 +21,11 @@ def test_mark_to_market_reports_total_pnl_from_equity():
 
 def test_mark_to_market_detects_maintenance_margin_breach():
     p = Portfolio(10_000, RiskConfig(initial_margin_rate=0.5, maintenance_margin_rate=0.25))
-    p.cash = -3_000
+    p.cash = -1_000
     p._positions["X"] = Position("X", 10, 1_000)
     risk = evaluate_mark_to_market(p, {"X": 20})
     assert risk.maintenance_breach is True
-    assert risk.snapshot.equity == -2_800
+    assert risk.snapshot.equity == -800
     assert risk.snapshot.maintenance_margin == 50
 
 
