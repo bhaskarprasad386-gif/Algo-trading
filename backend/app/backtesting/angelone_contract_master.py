@@ -79,11 +79,13 @@ class AngelOneContractMasterSource:
         return IndexContractMaster.normalize(rows)
 
     def sync(self, catalog: ContractMasterCatalog, *, snapshot_date: date | None = None) -> int:
+        """Replace the complete provider snapshot so stock/index segments cannot erase each other."""
         rows = self.fetch()
         snapshot = snapshot_date or self.market_date()
         canonical = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         digest = hashlib.sha256(canonical).hexdigest()
-        return catalog.upsert_snapshot(snapshot, self.normalize_futures(rows), payload_sha256=digest, fetched_at=datetime.now(MARKET_TIMEZONE).replace(tzinfo=None))
+        records = self.normalize_futures(rows) + self.normalize_index_futures(rows)
+        return catalog.upsert_snapshot(snapshot, records, payload_sha256=digest, fetched_at=datetime.now(MARKET_TIMEZONE).replace(tzinfo=None))
 
     def sync_index_futures(self, catalog: ContractMasterCatalog, *, snapshot_date: date | None = None) -> int:
         """Merge the dynamically discovered index-futures universe into a snapshot."""
