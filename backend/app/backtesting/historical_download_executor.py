@@ -151,6 +151,9 @@ class ResumableHistoricalExecutor:
                 total_chunks=len(plan.requests),
             )
 
+        # A previous process may have died after marking a chunk running. Only
+        # recover at the explicit durable-run boundary, never while a worker is active.
+        job_store.recover_running_chunks(job_id)
         pending = set(job_store.pending_indices(job_id))
 
         def index_for(request: object) -> int:
