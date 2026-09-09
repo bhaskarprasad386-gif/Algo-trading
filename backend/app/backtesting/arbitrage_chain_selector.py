@@ -10,7 +10,9 @@ from dataclasses import dataclass
 from typing import Iterable, Sequence
 
 
-SUPPORTED_VENUES = frozenset({"NSE", "BSE", "COMMODITY"})
+# NSE/BSE are equity/index venues; MCX is the supported commodity exchange.
+# COMMODITY is retained as a normalized venue alias for existing datasets.
+SUPPORTED_VENUES = frozenset({"NSE", "BSE", "MCX", "COMMODITY"})
 SUPPORTED_INSTRUMENT_CLASSES = frozenset({"STOCK", "INDEX", "COMMODITY"})
 
 
@@ -91,27 +93,33 @@ def select_box_stock(contracts: Sequence[ChainContract], *, atm: float) -> tuple
     """NIFTY-50 stock Box universe: exactly five positions below and five above ATM."""
     if not contracts or contracts[0].instrument_class != "STOCK":
         raise ValueError("Box stock selection requires stock option contracts")
-    return _select_side_positions(contracts, atm=atm, positions_below=5, positions_above=5)
+    selected = _select_side_positions(contracts, atm=atm, positions_below=5, positions_above=5)
+    if len(selected) != 10:
+        raise ValueError("historical Box stock chain is incomplete: five positions are required on each side")
+    return selected
 
 
 def select_box_index(contracts: Sequence[ChainContract], *, atm: float) -> tuple[ChainContract, ...]:
     """Index Box universe: positions 3 through 15 on each side of ATM."""
     if not contracts or contracts[0].instrument_class != "INDEX":
         raise ValueError("Box index selection requires index option contracts")
-    return _select_side_positions(
+    selected = _select_side_positions(
         contracts, atm=atm, positions_below=15, positions_above=15, exclude_between=2
     )
+    if len(selected) != 26:
+        raise ValueError("historical Box index chain is incomplete: positions 3 through 15 are required on both sides")
+    return selected
 
 
 def select_synthetic_stock(contracts: Sequence[ChainContract], *, atm: float) -> tuple[ChainContract, ...]:
-    """Liquid stock Synthetic universe: five actual chain positions either side of ATM."""
+    """Liquid stock Synthetic universe: up to five actual chain positions either side of ATM."""
     if not contracts or contracts[0].instrument_class != "STOCK":
         raise ValueError("Synthetic stock selection requires stock option contracts")
     return _select_side_positions(contracts, atm=atm, positions_below=5, positions_above=5)
 
 
 def select_synthetic_index(contracts: Sequence[ChainContract], *, atm: float) -> tuple[ChainContract, ...]:
-    """Liquid index Synthetic universe: fifteen actual chain positions either side of ATM."""
+    """Liquid index Synthetic universe: up to fifteen actual chain positions either side of ATM."""
     if not contracts or contracts[0].instrument_class != "INDEX":
         raise ValueError("Synthetic index selection requires index option contracts")
     return _select_side_positions(contracts, atm=atm, positions_below=15, positions_above=15)
