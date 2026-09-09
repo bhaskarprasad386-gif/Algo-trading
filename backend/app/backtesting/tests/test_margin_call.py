@@ -10,7 +10,7 @@ from app.backtesting.risk_controls import (
 
 
 def test_margin_call_lifecycle_enters_and_recovers_after_mtm_breach():
-    portfolio = Portfolio(100_000, RiskConfig(initial_margin_rate=1.0, maintenance_margin_rate=0.5))
+    portfolio = Portfolio(200_000, RiskConfig(initial_margin_rate=1.0, maintenance_margin_rate=0.5))
     portfolio._positions["X"] = Position("X", -100, 1_000)
 
     healthy = evaluate_market_risk(portfolio, {"X": 1_000})
