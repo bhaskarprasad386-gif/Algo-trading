@@ -1,4 +1,4 @@
-"""Incremental historical strategy runner with auditable entry/exit persistence."""
+"""Incremental historical strategy runner with auditable result persistence."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping
 
 from .backtest_result import BacktestRunWriter
-from .result_ledger import EquityPoint
+from .result_ledger import BacktestTrade, EquityPoint
 
 
 @dataclass(frozen=True)
@@ -49,26 +49,26 @@ class HistoricalStrategyRunner:
                 if execution is not None:
                     self.writer.ledger.append_trades(
                         self.writer.spec.run_id,
-                        [{
-                            "trade_id": execution.trade_id,
-                            "sequence": self._sequence,
-                            "timestamp_ns": execution.timestamp_ns,
-                            "instrument": execution.instrument,
-                            "side": execution.side,
-                            "quantity": execution.quantity,
-                            "entry_price": execution.entry_price,
-                            "exit_price": execution.exit_price,
-                            "gross_pnl": execution.gross_pnl,
-                            "fees": execution.fees,
-                            "slippage": execution.slippage,
-                            "net_pnl": execution.gross_pnl - execution.fees - execution.slippage,
-                            "contract": execution.contract,
-                            "expiry": execution.expiry,
-                            "strike": execution.strike,
-                            "leg": execution.leg,
-                            "data_resolution": execution.data_resolution,
-                            "metadata": dict(execution.metadata or {}),
-                        }],
+                        [BacktestTrade(
+                            trade_id=execution.trade_id,
+                            sequence=self._sequence,
+                            timestamp_ns=execution.timestamp_ns,
+                            instrument=execution.instrument,
+                            side=execution.side,
+                            quantity=execution.quantity,
+                            entry_price=execution.entry_price,
+                            exit_price=execution.exit_price,
+                            gross_pnl=execution.gross_pnl,
+                            fees=execution.fees,
+                            slippage=execution.slippage,
+                            net_pnl=execution.gross_pnl - execution.fees - execution.slippage,
+                            contract=execution.contract or "",
+                            expiry=str(execution.expiry) if execution.expiry is not None else "",
+                            strike=execution.strike,
+                            leg=execution.leg or "",
+                            data_resolution=execution.data_resolution or "",
+                            metadata=dict(execution.metadata or {}),
+                        )],
                     )
                     completed += 1
                 if "equity" in event:
