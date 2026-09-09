@@ -9,6 +9,16 @@ Fast, modular, mobile-first advanced F&O algo-trading platform. GitHub is the so
 3. **Live Paper Trading** — real-market-data simulation for any supported strategy/instrument/order type. Real broker order routing is OFF.
 4. **High-resolution data accumulation** — when live 1-second/tick/order-book data is available and required, persist it incrementally for future backtesting; do not collect high-resolution data for strategies that do not need it.
 
+## Stock/Future Data Rule — Locked
+- **Stock Cash and Stock Futures both target genuine 1-second data** whenever the source actually provides it.
+- If genuine 1-second history is unavailable for a stock/future contract, retain the **highest genuine source resolution available**; never synthesize 1-second/tick/microsecond observations from lower-resolution candles.
+- Upcoming/live stock-future 1-second events must be **appended incrementally to the existing historical dataset**, not stored as a separate duplicate dataset.
+- Historical + upcoming data must remain durable, deduplicated and restart-safe; late-arriving/gap-repair data merges into the same store.
+- Stock-future identity must preserve exact exchange/segment, token, symbol, expiry, lot size and tick size so different expiries cannot be mixed accidentally.
+- Stock Cash vs Stock Future, Near vs Next, Calendar Spread, rollover and other comparisons/backtests must be **expiry-aware and expiry-to-expiry by default**, with explicit lifecycle handling at contract boundaries.
+- Comparison/backtest results must expose **graph-ready series** for price, basis/spread, trades, P&L, drawdown and overlays, with expiry/date/contract selection.
+- The same accumulated source dataset is reusable across scanners, comparisons and backtests; strategy modules must not download duplicate copies of the same market history.
+
 ## Backtesting Priority — Locked
 - **Priority #1: Index derivatives**, especially Index Futures and Index Options.
 - **Primary historical resolution: 1-second real market data** wherever reliably/legal available.
