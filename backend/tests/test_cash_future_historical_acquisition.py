@@ -22,6 +22,12 @@ class FakeHistoricalSource:
             timestamp += interval
 
 
+class StalledHistoricalSource(FakeHistoricalSource):
+    def fetch(self, request):
+        self.requests.append(request)
+        return iter(())
+
+
 def _contract_catalog():
     catalog = ContractMasterCatalog()
     catalog.upsert_snapshot(date(2026, 1, 1), [
@@ -36,10 +42,10 @@ def _window():
     return SessionWindow(start, start + 3 * 60 * 1_000_000_000)
 
 
-def _service(tmp_path):
+def _service(tmp_path, source=None):
     history = HistoricalCatalog(tmp_path / "history.db")
     ingestion = HistoricalIngestionService(history)
-    source = FakeHistoricalSource()
+    source = source or FakeHistoricalSource()
     service = CashFutureHistoricalAcquisitionService(
         ingestion, source, _contract_catalog(),
         interval_ns=60 * 1_000_000_000,
@@ -65,13 +71,30 @@ def test_acquisition_repairs_cash_and_current_next_future_without_retaining_resu
     assert result.execution.failed_request_index is None
     assert result.execution.results == ()
     assert result.execution.completed_chunks == result.execution.processed_chunks
-    assert result.plan.requests
-    assert {request.instrument for request in result.plan.requests} <= {
-        "NSE:3045:SBIN", "NFO:101:SBINJAN", "NFO:102:SBINFEB"
-    }
-    assert len(source.requests) == len(result.plan.requests)
+    assert result.plan.requests == ()
+    assert source.requests
     assert history.timestamps(source="angelone", instrument="NSE:3045:SBIN", timeframe="1m",
                               start_ns=session.start_ns, end_ns=session.end_ns)
+
+
+def test_bounded_repair_stops_when_source_makes_no_progress(tmp_path):
+    source = StalledHistoricalSource()
+    service, history, _ = _service(tmp_path, source)
+    session = _window()
+    result = service.acquire(
+        spot_instrument="NSE:3045:SBIN", exchange="NFO", underlying="SBIN",
+        start=datetime(2026, 1, 29, tzinfo=timezone.utc),
+        end=datetime(2026, 1, 29, 0, 3, tzinfo=timezone.utc),
+        spot_sessions=(session,),
+        future_sessions={"NFO:101:SBINJAN": (session,)},
+        timeframe="1m", mode="CURRENT", retry_attempts=1, max_repair_passes=2,
+    )
+    assert result.execution.results == ()
+    assert result.execution.failed_request_index is None
+    assert len(source.requests) == 2
+    assert result.coverage.incomplete_chunks
+    assert not history.timestamps(source="angelone", instrument="NSE:3045:SBIN", timeframe="1m",
+                                  start_ns=session.start_ns, end_ns=session.end_ns)
 
 
 def test_prepare_is_empty_after_all_expected_timestamps_are_stored(tmp_path):
@@ -136,19 +159,14 @@ def test_both_mode_keeps_current_and_near_rollover_legs_independent(tmp_path):
     ])
 
     queue = build_rollover_download_queue(
-        catalog=catalog,
-        spot_instrument="NSE:3045:SBIN",
-        exchange="NFO",
-        underlying="SBIN",
+        catalog=catalog, spot_instrument="NSE:3045:SBIN", exchange="NFO", underlying="SBIN",
         start=datetime(2026, 1, 29, 9, 15, tzinfo=timezone.utc),
         end=datetime(2026, 1, 30, 9, 15, tzinfo=timezone.utc),
-        timeframe="1m",
-        mode="BOTH",
+        timeframe="1m", mode="BOTH",
     )
 
     assert [item.request.instrument for item in queue.futures] == [
-        "NFO:101:SBINJAN", "NFO:102:SBINFEB",
-        "NFO:102:SBINFEB", "NFO:103:SBINMAR",
+        "NFO:101:SBINJAN", "NFO:102:SBINFEB", "NFO:102:SBINFEB", "NFO:103:SBINMAR",
     ]
     assert [item.segment.future.token for item in queue.futures] == ["101", "102", "102", "103"]
 
@@ -167,18 +185,12 @@ def test_gap_repair_crosses_expiry_with_exact_historical_tokens(tmp_path):
     end = datetime(2026, 1, 30, 3, 47, tzinfo=timezone.utc)
 
     for timestamp in range(jan_session.start_ns, jan_session.end_ns + 1, 60 * 1_000_000_000):
-        history.ingest([HistoricalRecord(
-            "angelone", "NFO:101:SBINJAN", "1m", timestamp, {"close": 100.0}
-        )])
+        history.ingest([HistoricalRecord("angelone", "NFO:101:SBINJAN", "1m", timestamp, {"close": 100.0})])
 
     result = service.acquire(
         spot_instrument="NSE:3045:SBIN", exchange="NFO", underlying="SBIN",
-        start=start, end=end,
-        spot_sessions=(jan_session, feb_session),
-        future_sessions={
-            "NFO:101:SBINJAN": (jan_session,),
-            "NFO:102:SBINFEB": (feb_session,),
-        },
+        start=start, end=end, spot_sessions=(jan_session, feb_session),
+        future_sessions={"NFO:101:SBINJAN": (jan_session,), "NFO:102:SBINFEB": (feb_session,)},
         timeframe="1m", mode="CURRENT", retry_attempts=1,
     )
 
