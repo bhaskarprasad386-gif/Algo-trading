@@ -2,13 +2,10 @@ import pytest
 
 from app.backtesting.event_engine import EventBacktestEngine
 from app.backtesting.events import EventType, MarketEvent
-from app.backtesting.execution import ExecutionSide, ExecutionSimulator, TimeInForce, SimFill, SimOrder
+from app.backtesting.execution import ExecutionSide, ExecutionSimulator, SimFill, SimOrder
+from app.backtesting.order_lifecycle import TimeInForce
 from app.backtesting.portfolio import Portfolio, RiskConfig
 from app.backtesting.strategy import StrategyDecision
-
-
-def fill(order_id, instrument, side, quantity, price):
-    return SimFill(order_id, instrument, side, quantity, price, 1, 0.0)
 
 
 def test_partial_fill_releases_only_filled_fraction_of_reserved_margin():
