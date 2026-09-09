@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .historical_ingest import HistoricalIngestionService, HistoricalSource, HistoricalSyncResult
+from .historical_job_store import HistoricalJobStore
 from .historical_sync import HistoricalSyncPlan
 
 
@@ -43,6 +44,16 @@ class ResumableHistoricalExecutor:
         self.service = service
         self.sleep = sleep
         self.collect_results = collect_results
+
+    @staticmethod
+    def _request_metadata(request: object) -> dict[str, object]:
+        return {
+            "source": getattr(request, "source"),
+            "instrument": getattr(request, "instrument"),
+            "timeframe": getattr(request, "timeframe"),
+            "start_ns": getattr(request, "start_ns"),
+            "end_ns": getattr(request, "end_ns"),
+        }
 
     def run(
         self,
@@ -108,3 +119,72 @@ class ResumableHistoricalExecutor:
         return DownloadExecutionResult(
             tuple(results), None, tuple(skipped), completed_count=completed_count
         )
+
+    def run_durable(
+        self,
+        source: HistoricalSource,
+        plan: HistoricalSyncPlan,
+        *,
+        job_store: HistoricalJobStore,
+        job_id: str,
+        run_id: str,
+        retry_attempts: int = 3,
+        retry_delay_seconds: float = 1.0,
+        batch_size: int = 1024,
+        on_batch: Callable[[int, int], None] | None = None,
+        on_chunk_start: Callable[[int, object, int], None] | None = None,
+        on_chunk_complete: Callable[[int, object, HistoricalSyncResult, int], None] | None = None,
+        on_chunk_failed: Callable[[int, object, Exception, int], None] | None = None,
+    ) -> DownloadExecutionResult:
+        """Run a plan against a durable job ledger and resume only unfinished chunks."""
+        metadata = tuple(self._request_metadata(request) for request in plan.requests)
+        fingerprint = job_store.fingerprint(metadata)
+        try:
+            job = job_store.get(job_id)
+            if job.run_id != run_id or job.plan_fingerprint != fingerprint or job.total_chunks != len(plan.requests):
+                raise ValueError("existing historical job does not match run or plan")
+        except KeyError:
+            job_store.create(
+                job_id=job_id,
+                run_id=run_id,
+                plan_fingerprint=fingerprint,
+                total_chunks=len(plan.requests),
+            )
+
+        pending = set(job_store.pending_indices(job_id))
+
+        def index_for(request: object) -> int:
+            return next(i for i, candidate in enumerate(plan.requests) if candidate is request)
+
+        def should_skip(request: object) -> bool:
+            return index_for(request) not in pending
+
+        def mark_start(index: int, request: object, attempt: int) -> None:
+            job_store.start_chunk(job_id, index)
+            if on_chunk_start is not None:
+                on_chunk_start(index, request, attempt)
+
+        def mark_complete(index: int, request: object, result: HistoricalSyncResult, attempt: int) -> None:
+            job_store.complete_chunk(job_id, index)
+            if on_chunk_complete is not None:
+                on_chunk_complete(index, request, result, attempt)
+
+        def mark_failed(index: int, request: object, error: Exception, attempts: int) -> None:
+            job_store.fail_chunk(job_id, index, str(error), recoverable=True)
+            if on_chunk_failed is not None:
+                on_chunk_failed(index, request, error, attempts)
+
+        result = self.run(
+            source,
+            plan,
+            retry_attempts=retry_attempts,
+            retry_delay_seconds=retry_delay_seconds,
+            batch_size=batch_size,
+            should_skip=should_skip,
+            on_batch=on_batch,
+            on_chunk_start=mark_start,
+            on_chunk_complete=mark_complete,
+            on_chunk_failed=mark_failed,
+        )
+        job_store.finish(job_id)
+        return result
