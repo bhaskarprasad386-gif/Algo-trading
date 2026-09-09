@@ -27,14 +27,14 @@ def test_unified_box_replay_persists_trade_and_graph_ready_payoff():
          "high": _option(1, 110, 2, 3, 2, 2)},
         {"timestamp_ns": 2, "data_resolution": "s", "low": _option(2, 100, 6, 7, 5, 6),
          "high": _option(2, 110, 2, 2, 1, 2)},
-        {"timestamp_ns": 3, "data_resolution": "s", "low": _option(3, 100, 7, 8, 6, 7),
-         "high": _option(3, 110, 1, 1, 1, 2)},
+        {"timestamp_ns": 3, "data_resolution": "s", "low": _option(3, 100, 15, 16, 14, 15),
+         "high": _option(3, 110, 3, 4, 3, 4)},
     ]
     result = run_historical_arbitrage(ledger, spec, events, payoff_prices=(90, 100, 110, 120))
     assert result.completed_trades == 1
     assert result.payoff is not None
     assert len(result.payoff.prices) == 4
-    assert ledger.trades("unified-box")[0]["net_pnl"] == 7.0
+    assert ledger.trades("unified-box")[0]["net_pnl"] == 9.0
     assert ledger.events("unified-box")[0]["event_type"] == "PAYOFF_SNAPSHOT"
     assert ledger.run("unified-box")["status"] == "COMPLETED"
     ledger.close()
