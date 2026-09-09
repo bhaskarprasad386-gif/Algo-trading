@@ -119,9 +119,9 @@ def test_gap_download_planner_is_bounded_and_handles_exact_future_tokens():
     )
 
     assert [(r.instrument, r.start_ns, r.end_ns) for r in plan.requests] == [
-        (future, 120, 120),
-        (future, 180, 180),
+        (future, 120, 180),
         (future, 300, 360),
+        ("NSE:1:NIFTY", 60, 60),
     ]
     assert all(r.end_ns - r.start_ns < 120 for r in plan.requests)
     catalog.close()
