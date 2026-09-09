@@ -8,6 +8,7 @@ from typing import Any, Callable, Iterable, Mapping
 from app.execution.payoff import PayoffLeg
 
 from .arbitrage_backtest_suite import build_strategy_adapter
+from .arbitrage_payoff import build_strategy_payoff
 from .backtest_result import BacktestRunWriter, PayoffSnapshot
 from .historical_arbitrage_runner import ExitExecution, HistoricalArbitrageRunner, OpenPosition
 
@@ -73,11 +74,24 @@ class HistoricalArbitrageBacktestService:
         payoff_timestamp_ns: int | None = None,
         equity_selector: Callable[[Mapping[str, Any], float], Any] | None = None,
     ) -> HistoricalArbitrageBacktestResult:
-        """Build a registered adapter and replay it without strategy fallback."""
+        """Build a registered adapter and replay it without strategy fallback.
+
+        When payoff prices are supplied but explicit legs are not, the first
+        executable entry event automatically supplies the strategy-specific
+        multi-leg payoff definition. No synthetic market prices are created.
+        """
         adapter = build_strategy_adapter(strategy_id, parameters)
-        return self.run(
+        captured: list[Mapping[str, Any]] = []
+
+        def entry(event: Mapping[str, Any]) -> Iterable[OpenPosition]:
+            positions = tuple(adapter.entry(event))
+            if positions and not captured:
+                captured.append(event)
+            return positions
+
+        result = self.run(
             events,
-            entry_selector=adapter.entry,
+            entry_selector=entry,
             exit_selector=adapter.exit,
             payoff_legs=payoff_legs,
             payoff_prices=payoff_prices,
@@ -85,6 +99,23 @@ class HistoricalArbitrageBacktestService:
             payoff_timestamp_ns=payoff_timestamp_ns,
             equity_selector=equity_selector,
         )
+        if not payoff_legs and payoff_prices and captured:
+            strategy_payoff = build_strategy_payoff(
+                strategy_id,
+                captured[0],
+                direction=(parameters or {}).get("direction"),
+            )
+            sequence = self.writer.ledger.events(self.writer.spec.run_id)[-1]["sequence"] + 1
+            timestamp_ns = self.writer.spec.end_ns if payoff_timestamp_ns is None else payoff_timestamp_ns
+            payoff = self.writer.record_payoff(sequence, timestamp_ns, strategy_payoff.legs, payoff_prices)
+            return HistoricalArbitrageBacktestResult(
+                run_id=result.run_id,
+                completed_trades=result.completed_trades,
+                unresolved_trades=result.unresolved_trades,
+                realized_pnl=result.realized_pnl,
+                payoff=payoff,
+            )
+        return result
 
 
 __all__ = ["HistoricalArbitrageBacktestResult", "HistoricalArbitrageBacktestService"]
