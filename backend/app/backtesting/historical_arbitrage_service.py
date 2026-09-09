@@ -19,7 +19,6 @@ ExitSelector = Callable[[OpenPosition, Mapping[str, Any]], ExitExecution | None]
 @dataclass(frozen=True)
 class HistoricalArbitrageBacktestResult:
     """Small immutable result handle; detailed trades remain in the ledger."""
-
     run_id: str
     completed_trades: int
     unresolved_trades: int
@@ -28,11 +27,7 @@ class HistoricalArbitrageBacktestResult:
 
 
 class HistoricalArbitrageBacktestService:
-    """Run a registered arbitrage strategy through one audited lifecycle.
-
-    Each invocation owns its runner. Historical data is consumed as supplied;
-    no timestamps, rolls, interpolated prices, or exits are fabricated.
-    """
+    """Run a registered arbitrage strategy through one audited lifecycle."""
 
     def __init__(self, writer: BacktestRunWriter) -> None:
         self.writer = writer
@@ -50,24 +45,19 @@ class HistoricalArbitrageBacktestService:
         equity_selector: Callable[[Mapping[str, Any], float], Any] | None = None,
     ) -> HistoricalArbitrageBacktestResult:
         runner = HistoricalArbitrageRunner(self.writer)
-        runner.replay(
-            events,
-            entry_selector,
-            exit_selector,
-            equity_selector=equity_selector,
-        )
+        runner.replay(events, entry_selector, exit_selector, equity_selector=equity_selector)
         payoff: PayoffSnapshot | None = None
         if payoff_legs:
             if not payoff_prices:
                 raise ValueError("payoff_prices are required when payoff_legs are supplied")
-            sequence = runner._audit_sequence + 1 if payoff_sequence is None else payoff_sequence
+            sequence = runner.audit_sequence + 1 if payoff_sequence is None else payoff_sequence
             timestamp_ns = self.writer.spec.end_ns if payoff_timestamp_ns is None else payoff_timestamp_ns
             payoff = self.writer.record_payoff(sequence, timestamp_ns, payoff_legs, payoff_prices)
         return HistoricalArbitrageBacktestResult(
             run_id=self.writer.spec.run_id,
             completed_trades=runner.completed,
             unresolved_trades=len(runner.open_positions),
-            realized_pnl=runner._realized_pnl,
+            realized_pnl=runner.realized_pnl,
             payoff=payoff,
         )
 
