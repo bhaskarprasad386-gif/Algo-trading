@@ -9,18 +9,16 @@ def test_long_box_uses_executable_bid_ask_and_expiry_width():
     low = option(strike=100, cb=12, ca=13, pb=8, pa=9)
     high = option(strike=110, cb=4, ca=5, pb=1, pa=2)
     opp = BoxSpreadBacktester.evaluate(low, high, direction="LONG")
-    assert opp is not None
-    # debit=13+9-4-1=17; width=10 => negative, so no trade
     assert opp is None
 
 
 def test_long_box_profit_when_executable_debit_is_below_width():
     low = option(strike=100, cb=12, ca=13, pb=8, pa=8.2)
-    high = option(strike=110, cb=4.9, ca=5, pb=1.9, pa=2)
+    high = option(strike=110, cb=7.1, ca=7.2, pb=4.9, pa=5)
     opp = BoxSpreadBacktester.evaluate(low, high)
     assert opp is not None
-    assert round(opp.executable_edge, 6) == 0.6
-    assert round(opp.edge_per_lot, 6) == 6.0
+    assert round(opp.executable_edge, 6) == 0.8
+    assert round(opp.edge_per_lot, 6) == 8.0
 
 
 def test_box_rejects_mismatched_expiry():
@@ -37,11 +35,8 @@ def test_box_rejects_mismatched_expiry():
 def test_synthetic_cash_carry_uses_executable_quotes():
     opt = option(strike=100, cb=8, ca=9, pb=6, pa=7)
     fut = FutureQuote(1, "ABC", 20261231, 104, 105, 10)
-    opp = SyntheticCashCarryBacktester.evaluate(
-        opt, fut, rate=0.0, time_to_expiry_years=0.5
-    )
+    opp = SyntheticCashCarryBacktester.evaluate(opt, fut, rate=0.0, time_to_expiry_years=0.5)
     assert opp is not None
-    # synthetic buy = 100 + (9-6) = 103; future bid=104 => edge=1
     assert opp.executable_edge == 1
     assert opp.gross_pnl == 10
 
@@ -49,9 +44,7 @@ def test_synthetic_cash_carry_uses_executable_quotes():
 def test_synthetic_cash_carry_no_edge_returns_none():
     opt = option(strike=100, cb=8, ca=9, pb=6, pa=7)
     fut = FutureQuote(1, "ABC", 20261231, 102, 103, 10)
-    assert SyntheticCashCarryBacktester.evaluate(
-        opt, fut, rate=0.0, time_to_expiry_years=0.5
-    ) is None
+    assert SyntheticCashCarryBacktester.evaluate(opt, fut, rate=0.0, time_to_expiry_years=0.5) is None
 
 
 def test_liquidity_policy_filters_illiquid_quotes():
