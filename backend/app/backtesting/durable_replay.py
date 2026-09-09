@@ -9,6 +9,8 @@ from app.backtesting.event_engine import EventBacktestEngine, ReplayStats
 from app.backtesting.events import MarketEvent
 from app.backtesting.ledger import BacktestLedger, Checkpoint, LedgerRecord, LEDGER_SCHEMA_VERSION
 from app.backtesting.order_lifecycle import OrderLifecycle
+from app.backtesting.execution import ExecutionSide
+from app.backtesting.portfolio import Portfolio, TradeRecord
 from app.backtesting.strategy import StrategyDecision, restore_strategy_state, strategy_state
 
 
@@ -96,12 +98,64 @@ class DurableEventBacktestEngine:
             lifecycle = OrderLifecycle.restore_state(raw)
             self.engine._order_lifecycles[lifecycle.state.order.order_id] = lifecycle
 
+    @staticmethod
+    def _trade_state(portfolio: Portfolio) -> list[Mapping[str, object]]:
+        return [
+            {
+                "order_id": trade.order_id,
+                "instrument": trade.instrument,
+                "side": trade.side.value,
+                "quantity": trade.quantity,
+                "price": trade.price,
+                "gross_value": trade.gross_value,
+                "fee": trade.fee,
+                "realized_pnl_delta": trade.realized_pnl_delta,
+                "cash_after": trade.cash_after,
+                "equity_after": trade.equity_after,
+                "timestamp_ns": trade.timestamp_ns,
+            }
+            for trade in portfolio.trades
+        ]
+
+    @staticmethod
+    def _restore_trade_state(portfolio: Portfolio, raw_state: object) -> None:
+        if raw_state is None:
+            return
+        if not isinstance(raw_state, (list, tuple)):
+            raise ValueError("invalid portfolio trade checkpoint")
+        trades: list[TradeRecord] = []
+        try:
+            for raw in raw_state:
+                if not isinstance(raw, Mapping):
+                    raise ValueError("invalid portfolio trade checkpoint entry")
+                trades.append(TradeRecord(
+                    order_id=str(raw["order_id"]),
+                    instrument=str(raw["instrument"]),
+                    side=ExecutionSide(str(raw["side"])),
+                    quantity=int(raw["quantity"]),
+                    price=float(raw["price"]),
+                    gross_value=float(raw["gross_value"]),
+                    fee=float(raw["fee"]),
+                    realized_pnl_delta=float(raw["realized_pnl_delta"]),
+                    cash_after=float(raw["cash_after"]),
+                    equity_after=float(raw["equity_after"]),
+                    timestamp_ns=int(raw["timestamp_ns"]),
+                ))
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("invalid portfolio trade checkpoint") from exc
+        portfolio._trades = trades
+
     def _save_checkpoint(self, source_cursor: int, dispatched: int, extra: Mapping[str, object], strategy: object) -> None:
         state = dict(extra)
         state["source_cursor"] = source_cursor
         state["events_dispatched"] = dispatched
         state["strategy_state"] = dict(strategy_state(strategy))
-        state["portfolio_state"] = dict(self.engine.portfolio.export_state()) if self.engine.portfolio is not None else None
+        if self.engine.portfolio is not None:
+            state["portfolio_state"] = dict(self.engine.portfolio.export_state())
+            state["portfolio_trades"] = self._trade_state(self.engine.portfolio)
+        else:
+            state["portfolio_state"] = None
+            state["portfolio_trades"] = None
         state["order_lifecycle_state"] = self._lifecycle_state()
         self.ledger.checkpoint(Checkpoint(self.run_id, source_cursor, int(extra.get("timestamp_ns", 0)), state))
 
@@ -124,6 +178,7 @@ class DurableEventBacktestEngine:
             saved_portfolio = saved.get("portfolio_state")
             if saved_portfolio is not None and self.engine.portfolio is not None:
                 self.engine.portfolio.restore_state(saved_portfolio)
+                self._restore_trade_state(self.engine.portfolio, saved.get("portfolio_trades"))
             restore_strategy_state(strategy, dict(saved.get("strategy_state", {})))
             saved_context = saved.get("context_state")
             if isinstance(saved_context, Mapping): context_state = dict(saved_context)
@@ -150,6 +205,7 @@ class DurableEventBacktestEngine:
             "orders_submitted": result.orders_submitted, "fills": result.fills, "risk_blocks": result.risk_blocks,
             "context_state": context_state, "strategy_state": dict(strategy_state(strategy)),
             "portfolio_state": dict(self.engine.portfolio.export_state()) if self.engine.portfolio is not None else None,
+            "portfolio_trades": self._trade_state(self.engine.portfolio) if self.engine.portfolio is not None else None,
             "market_state": self.engine.market_state(),
             "order_lifecycle_state": self._lifecycle_state(),
             "final_snapshot": asdict(result.final_snapshot) if result.final_snapshot is not None else None,
