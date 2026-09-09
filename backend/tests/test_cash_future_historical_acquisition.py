@@ -77,6 +77,25 @@ def test_acquisition_repairs_cash_and_current_next_future_without_retaining_resu
                               start_ns=session.start_ns, end_ns=session.end_ns)
 
 
+def test_acquisition_exposes_only_coverage_snapshots_not_raw_download_results(tmp_path):
+    service, _, _ = _service(tmp_path)
+    session = _window()
+    result = service.acquire(
+        spot_instrument="NSE:3045:SBIN", exchange="NFO", underlying="SBIN",
+        start=datetime(2026, 1, 29, tzinfo=timezone.utc),
+        end=datetime(2026, 1, 29, 0, 3, tzinfo=timezone.utc),
+        spot_sessions=(session,),
+        future_sessions={"NFO:101:SBINJAN": (session,), "NFO:102:SBINFEB": (session,)},
+        timeframe="1m", mode="BOTH", retry_attempts=1,
+    )
+
+    assert len(result.progress) >= 2
+    assert not result.progress[0].complete
+    assert result.progress[-1].complete
+    assert all(not hasattr(snapshot, "results") for snapshot in result.progress)
+    assert result.execution.results == ()
+
+
 def test_bounded_repair_stops_when_source_makes_no_progress(tmp_path):
     source = StalledHistoricalSource()
     service, history, _ = _service(tmp_path, source)
@@ -91,7 +110,6 @@ def test_bounded_repair_stops_when_source_makes_no_progress(tmp_path):
     )
     assert result.execution.results == ()
     assert result.execution.failed_request_index is None
-    # One missing 4-minute session is split into two <=2-minute chunks per repair pass.
     assert len(source.requests) == 4
     assert [request.instrument for request in source.requests].count("NFO:101:SBINJAN") == 2
     assert [request.instrument for request in source.requests].count("NSE:3045:SBIN") == 2
