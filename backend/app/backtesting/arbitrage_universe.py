@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Literal
 
-Exchange = Literal["NSE", "BSE"]
+Exchange = Literal["NSE", "BSE", "MCX"]
 AssetClass = Literal["EQUITY_FNO", "INDEX_FNO", "COMMODITY"]
 
 
@@ -64,9 +64,11 @@ class ArbitrageUniversePolicy:
 
     @staticmethod
     def calendar(contracts: Iterable[ArbitrageContract]) -> tuple[ArbitrageContract, ...]:
-        """All supported NSE/BSE equity/index F&O and supported commodities."""
-        return tuple(c for c in contracts if c.supported and c.exchange in {"NSE", "BSE"}
-                     and c.asset_class in {"EQUITY_FNO", "INDEX_FNO", "COMMODITY"})
+        """All supported NSE/BSE F&O plus supported commodity derivatives."""
+        return tuple(c for c in contracts if c.supported and (
+            (c.exchange in {"NSE", "BSE"} and c.asset_class in {"EQUITY_FNO", "INDEX_FNO"})
+            or c.asset_class == "COMMODITY"
+        ))
 
     @staticmethod
     def box_stock_strikes(contracts: Iterable[ArbitrageContract], *, atm: float) -> tuple[float, ...]:
@@ -89,17 +91,18 @@ class ArbitrageUniversePolicy:
 
     @staticmethod
     def synthetic_stock_strikes(contracts: Iterable[ArbitrageContract], *, atm: float) -> tuple[float, ...]:
-        """Liquid-stock candidates up to five actual positions on each side."""
+        """Stock candidates up to five actual positions on each side."""
         return _positions(contracts, atm=atm, lo=1, hi=5)
 
     @staticmethod
     def synthetic_index_strikes(contracts: Iterable[ArbitrageContract], *, atm: float) -> tuple[float, ...]:
-        """Liquid-index candidates up to fifteen actual positions on each side."""
+        """Index candidates up to fifteen actual positions on each side."""
         return _positions(contracts, atm=atm, lo=1, hi=15)
 
     @staticmethod
     def liquid(contracts: Iterable[ArbitrageContract], *, min_volume: int = 0,
                min_oi: int = 0, max_spread_pct: float = 100.0) -> tuple[ArbitrageContract, ...]:
+        """Filter using genuine catalog liquidity fields; no estimates are created."""
         if min_volume < 0 or min_oi < 0 or max_spread_pct < 0:
             raise ValueError("invalid liquidity policy")
         result = []
