@@ -1,5 +1,12 @@
 # Universal Advanced Backtesting Roadmap
 
+## Final Strategy Scope (Locked)
+- **Calendar Spread:** all supported F&O contracts across **NSE + BSE + supported commodity derivatives**, covering eligible stocks and indexes. Use actual near/far historical expiries and contract identity; CE/PE and futures calendars only where structurally valid and genuine historical data exists.
+- **Box Spread:** NIFTY 50 stocks use **5 actual strike positions on each side of ATM (5 CE/PE positions below + 5 above)**. Index Box uses **3 through 15 actual strike positions from ATM**, for both **genuine weekly and monthly expiries** where historically available.
+- **Synthetic Future / Synthetic Cash-Carry:** only **liquid supported stocks and indexes**. Stocks use both sides up to **5 actual strike positions**; indexes use both sides up to **15 actual strike positions**. Use Call + Put + Future legs where structurally applicable.
+- Strike counts always mean **ordered positions in the point-in-time option chain**, never rupee-distance.
+- All strategies use actual historical contracts, expiry, bid/ask/depth, liquidity, lot size, fees, slippage and executable fills. Missing genuine data is reported as a coverage gap and never fabricated.
+
 ## 1. Final Scope
 - Universal, strategy-agnostic, event-driven engine; `EventStrategy` is the stable extension boundary.
 - Exchanges: **NSE + BSE + supported commodity exchanges/contracts** where genuine historical data exists.
@@ -71,30 +78,31 @@ Every run gets an independent Run ID and immutable metadata:
 - Executable bid/ask, carry/funding/fees/slippage and real reverse exit.
 
 ### Synthetic Cash-Carry
-- Stock + index variants.
+- **Liquid supported stocks and indexes only.**
+- Stock: both sides up to **5 actual option-chain positions from ATM**.
+- Index: both sides up to **15 actual option-chain positions from ATM**.
 - Actual Call + Put + Future legs where applicable.
 - Historical strike/expiry/contract identity; independent fills and real reverse exit.
 - Complete three-leg payoff/P&L; no fabricated exit.
 
 ### Calendar Spread
-- **NSE + BSE + supported commodity derivatives**, including supported stock and index contracts.
+- **All supported F&O stocks and indexes across NSE + BSE + supported commodity derivatives.**
 - Near/far actual historical expiries; CE/PE where applicable and futures calendar where structurally valid.
 - Never mix expiry identity; preserve exchange/symbol/expiry/strike/contract/lot metadata.
 - Independent bid/ask/depth execution and real reverse exit only.
-- Generic index support, including NIFTY/BANKNIFTY and other historically supported index contracts; not hard-coded to two names.
+- Generic index support; not hard-coded to specific index names.
 
 ### Box Spread
-- Actual option-chain position count, **not ₹ gap**.
-- Stock: ATM ±3, ±4 or ±5 chain positions.
-- Index: ATM ±3 through ±15 chain positions.
+- **NIFTY 50 stocks:** exactly **5 actual strike positions below ATM + 5 actual strike positions above ATM**.
+- **Indexes:** **3 through 15 actual strike positions from ATM**, for **weekly and monthly** expiries where genuine historical weekly/monthly contracts exist.
 - Actual CE/PE bid/ask/depth and four-leg execution.
 - Expiry/strike/contract identity preserved; payoff/P&L only from executable legs.
 
-## 9. Strike Rules
-- Stock Box: 3/4/5 positions from ATM.
-- Stock Synthetic: both sides up to ±5 positions.
-- Index Box: 3–15 positions from ATM.
-- Index Synthetic: both sides up to ±15 positions.
+## 9. Strike Rules (Locked)
+- Stock Box: NIFTY 50 stocks, **5 positions each side of ATM**.
+- Stock Synthetic: liquid supported stocks, **up to 5 positions each side of ATM**.
+- Index Box: **3–15 positions from ATM**, separately for genuine weekly and monthly expiries.
+- Index Synthetic: liquid supported indexes, **up to 15 positions each side of ATM**.
 - Position = ordered strike position in the point-in-time chain, never a rupee-distance approximation.
 - Missing strike/leg/chain data is a recorded coverage gap, never silently filled.
 
@@ -171,6 +179,9 @@ A query such as “opportunity कब आई थी?” must return the exact so
 - [ ] Incremental sync + targeted gap repair at production scale.
 - [ ] Historical options/futures/rollover coverage across supported exchanges.
 - [ ] Explicit genuine-data NSE/BSE/index/commodity Calendar validation.
+- [ ] Explicit NIFTY 50 stock Box 5+5 validation.
+- [ ] Explicit index Box weekly/monthly 3–15 validation.
+- [ ] Explicit liquid-stock Synthetic ±5 and index Synthetic ±15 validation.
 - [ ] Corporate actions/survivorship controls.
 - [ ] Durable full-F&O job/recovery pipeline.
 - [ ] Microstructure/liquidity analytics.
@@ -186,12 +197,13 @@ A query such as “opportunity कब आई थी?” must return the exact so
 3. Durable order/job/result ledger + checkpoint/resume hardening.
 4. Historical catalog production ingestion + dedup/gap repair.
 5. Options/futures/rollover + NSE/BSE/index/commodity arbitrage coverage.
-6. Session/calendar/corporate-action/survivorship controls.
-7. Microstructure + latency + market impact.
-8. Full-F&O async pipeline + resource governor.
-9. Reports/exports + robustness/OOS validation.
-10. Real-data E2E: **Code → Compile → Tests → Fresh CI → PASS → Next**.
-11. Android/mobile integration + production validation.
+6. Explicit Calendar/Box/Synthetic universe and strike-rule validation against genuine historical chains.
+7. Session/calendar/corporate-action/survivorship controls.
+8. Microstructure + latency + market impact.
+9. Full-F&O async pipeline + resource governor.
+10. Reports/exports + robustness/OOS validation.
+11. Real-data E2E: **Code → Compile → Tests → Fresh CI → PASS → Next**.
+12. Android/mobile integration + production validation.
 
 ## 19. Non-Negotiable Rules
 1. No fabricated market data.
@@ -200,7 +212,10 @@ A query such as “opportunity कब आई थी?” must return the exact so
 4. No survivorship leakage.
 5. No future/look-ahead leakage.
 6. Strike rules use actual chain position counts, never ₹ gap.
-7. Yearly/F&O ledger is incremental, never RAM-only.
-8. New strategies do not require new schemas.
-9. Never report CI PASS without actual evidence.
-10. Continue milestone execution without waiting for user confirmation.
+7. Box Stock = NIFTY 50, 5 strikes each side; Index = 3–15, weekly + monthly where genuine.
+8. Synthetic Stock = liquid stocks ±5; Index = ±15.
+9. Calendar covers all supported F&O stocks/indexes across NSE/BSE and supported commodities.
+10. Yearly/F&O ledger is incremental, never RAM-only.
+11. New strategies do not require new schemas.
+12. Never report CI PASS without actual evidence.
+13. Continue milestone execution without waiting for user confirmation.
