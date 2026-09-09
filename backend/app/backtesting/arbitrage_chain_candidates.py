@@ -66,19 +66,32 @@ class HistoricalArbitrageChainCandidates:
             result.append(c)
         return tuple(result)
 
+    @staticmethod
+    def _require_liquid_selected(selected: Sequence[ChainContract], *, min_volume: float,
+                                 min_oi: float, max_spread_pct: float) -> tuple[ChainContract, ...]:
+        """Validate the exact structural selection; never replace an illiquid leg."""
+        if not selected:
+            raise ValueError("historical chain is incomplete: no executable positions selected")
+        liquid = HistoricalArbitrageChainCandidates._liquid(
+            selected, min_volume=min_volume, min_oi=min_oi, max_spread_pct=max_spread_pct
+        )
+        if len(liquid) != len(selected):
+            raise ValueError("historical chain is incomplete: selected positions are not executable")
+        return tuple(selected)
+
     @classmethod
     def box_stock(cls, snapshot: HistoricalChainSnapshot, *, min_volume: float = 0,
                   min_oi: float = 0, max_spread_pct: float = 100.0) -> tuple[ChainContract, ...]:
-        liquid = cls._liquid(snapshot.contracts, min_volume=min_volume, min_oi=min_oi,
-                             max_spread_pct=max_spread_pct)
-        return select_box_stock(liquid, atm=snapshot.atm)
+        selected = select_box_stock(snapshot.contracts, atm=snapshot.atm)
+        return cls._require_liquid_selected(selected, min_volume=min_volume, min_oi=min_oi,
+                                            max_spread_pct=max_spread_pct)
 
     @classmethod
     def box_index(cls, snapshot: HistoricalChainSnapshot, *, min_volume: float = 0,
                   min_oi: float = 0, max_spread_pct: float = 100.0) -> tuple[ChainContract, ...]:
-        liquid = cls._liquid(snapshot.contracts, min_volume=min_volume, min_oi=min_oi,
-                             max_spread_pct=max_spread_pct)
-        return select_box_index(liquid, atm=snapshot.atm)
+        selected = select_box_index(snapshot.contracts, atm=snapshot.atm)
+        return cls._require_liquid_selected(selected, min_volume=min_volume, min_oi=min_oi,
+                                            max_spread_pct=max_spread_pct)
 
     @classmethod
     def synthetic_stock(cls, snapshot: HistoricalChainSnapshot, *, min_volume: float = 0,
