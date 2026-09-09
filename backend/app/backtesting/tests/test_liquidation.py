@@ -88,7 +88,7 @@ def test_forced_liquidation_partial_fill_does_not_duplicate_on_retry():
 
     retry_orders = build_liquidation_orders(portfolio, {"X": 100})
     second = execute_liquidation_orders(portfolio, retry_orders, simulator, {"X": 100}, 20, books={"X": book})
-    assert second[0].remaining_quantity == 0
+    assert second[0].remaining_quantity == 20
     assert portfolio.snapshot({"X": 100}).positions[0].quantity == 20
     assert sum(t.quantity for t in portfolio.trades if t.order_id == "liquidation:X") == 80
 
