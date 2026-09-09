@@ -29,14 +29,14 @@ def chain(instrument_class="STOCK", count=41):
     ]
 
 
-def test_stock_box_uses_five_actual_positions_each_side():
+def test_stock_box_uses_exactly_five_actual_positions_each_side():
     selected = select_box_stock(chain(), atm=20)
-    assert [c.strike for c in selected] == list(range(15, 26))
+    assert [c.strike for c in selected] == [15, 16, 17, 18, 19, 21, 22, 23, 24, 25]
 
 
 def test_synthetic_stock_uses_five_actual_positions_each_side():
     selected = select_synthetic_stock(chain(), atm=20)
-    assert [c.strike for c in selected] == list(range(15, 26))
+    assert [c.strike for c in selected] == [15, 16, 17, 18, 19, 21, 22, 23, 24, 25]
 
 
 def test_index_box_uses_positions_three_through_fifteen():
@@ -46,7 +46,7 @@ def test_index_box_uses_positions_three_through_fifteen():
 
 def test_synthetic_index_uses_fifteen_actual_positions_each_side():
     selected = select_synthetic_index(chain("INDEX"), atm=20)
-    assert [c.strike for c in selected] == list(range(5, 36))
+    assert [c.strike for c in selected] == [*range(5, 20), *range(21, 36)]
 
 
 def test_missing_strikes_are_not_fabricated():
