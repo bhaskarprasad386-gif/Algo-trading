@@ -124,7 +124,7 @@ class HistoricalJobStore:
         recovered = tuple(int(row[0]) for row in rows)
         if recovered:
             self._db.execute(
-                "UPDATE historical_job_chunks SET state='recoverable' WHERE job_id=? AND state='running'",
+                "UPDATE historical_job_chunks SET state='recoverable', error=COALESCE(error, 'recovered after interrupted run') WHERE job_id=? AND state='running'",
                 (job_id,),
             )
             self._db.execute(
