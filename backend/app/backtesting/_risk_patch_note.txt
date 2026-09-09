@@ -1,0 +1,1 @@
+Risk integration patch staging note: risk-reducing close orders must be executable during a market-risk breach without requiring incremental initial-margin reservation. Existing orders must be risk-checked after each mark-to-market update.
