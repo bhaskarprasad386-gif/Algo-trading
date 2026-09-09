@@ -82,9 +82,16 @@ def _select_side_positions(contracts: Sequence[ChainContract], *, atm: float,
 
 
 def _require_complete_positions(selected: Sequence[ChainContract], *, expected: int, message: str) -> None:
-    # A chain position is a strike, not an individual CE/PE record. Both
-    # option types may legitimately exist at each selected strike.
     if len({c.strike for c in selected}) != expected:
+        raise ValueError(message)
+
+
+def _require_exact_side_positions(contracts: Sequence[ChainContract], *, atm: float,
+                                  below: tuple[int, ...], above: tuple[int, ...], message: str) -> None:
+    strikes = sorted({c.strike for c in contracts})
+    ai = _atm_index(strikes, atm)
+    required = {ai + offset for offset in below} | {ai + offset for offset in above}
+    if any(index < 0 or index >= len(strikes) for index in required):
         raise ValueError(message)
 
 
@@ -92,6 +99,10 @@ def select_box_stock(contracts: Sequence[ChainContract], *, atm: float) -> tuple
     """NIFTY-50 stock Box universe: exactly five positions below and five above ATM."""
     if not contracts or contracts[0].instrument_class != "STOCK":
         raise ValueError("Box stock selection requires stock option contracts")
+    _require_exact_side_positions(
+        contracts, atm=atm, below=(-1, -2, -3, -4, -5), above=(1, 2, 3, 4, 5),
+        message="historical Box stock chain is incomplete: five positions are required on each side",
+    )
     selected = _select_side_positions(contracts, atm=atm, positions_below=5, positions_above=5)
     _require_complete_positions(selected, expected=10,
                                 message="historical Box stock chain is incomplete: five positions are required on each side")
@@ -102,6 +113,11 @@ def select_box_index(contracts: Sequence[ChainContract], *, atm: float) -> tuple
     """Index Box universe: positions 3 through 15 on each side of ATM."""
     if not contracts or contracts[0].instrument_class != "INDEX":
         raise ValueError("Box index selection requires index option contracts")
+    below = tuple(range(-15, -2)); above = tuple(range(3, 16))
+    _require_exact_side_positions(
+        contracts, atm=atm, below=below, above=above,
+        message="historical Box index chain is incomplete: positions 3 through 15 are required on both sides",
+    )
     selected = _select_side_positions(contracts, atm=atm, positions_below=15, positions_above=15, exclude_between=2)
     _require_complete_positions(selected, expected=26,
                                 message="historical Box index chain is incomplete: positions 3 through 15 are required on both sides")
