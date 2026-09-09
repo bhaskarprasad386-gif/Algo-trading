@@ -1,176 +1,206 @@
 # Universal Advanced Backtesting Roadmap
 
-## 1. Scope & Architecture
-- Strategy-agnostic event-driven backtesting engine; Cash–Future is one adapter, not the engine boundary.
-- Any strategy implementing the stable event-strategy contract must be backtestable.
-- Targets: Cash–Future, futures, options, multi-leg options, calendar spreads, rollover, lead/lag, cross-instrument arbitrage and custom event strategies.
-- Android/mobile-first UI; heavy backtests run in background workers and never block UI/API requests.
-- Default paper-backtest capital: ₹1,00,00,000 (₹1 crore).
-- GitHub remains the source of truth; every engine/data/model change is versioned and reproducible.
+## 1. Final Scope
+- Universal, strategy-agnostic, event-driven engine; `EventStrategy` is the stable extension boundary.
+- Exchanges: **NSE + BSE + supported commodity exchanges/contracts** where genuine historical data exists.
+- Instruments: cash/equity, stock futures, index futures, stock options, index options, commodity futures/options where supported, and future instrument types without a new engine/schema.
+- Strategies: Cash–Future, Synthetic Cash-Carry, Calendar Spread, Box Spread, rollover, lead/lag, cross-instrument arbitrage and arbitrary event/tick/news strategies.
+- Android/mobile-first UI; heavy jobs run asynchronously in bounded background workers.
+- Default paper capital: ₹1,00,00,000.
+- GitHub is the source of truth; every change is versioned and reproducible.
 
-## 2. Universal Event & Time Engine
-- Canonical timestamp: integer Unix epoch nanoseconds (`timestamp_ns`).
-- Support tick, trade, quote, depth, millisecond, microsecond, second, minute, daily and other provider-native resolutions when actually available.
-- Replay controls: 1us, 10us, 100us, 1ms, 10ms, 100ms, 1s, 5s, 15s, 1m, 5m, 15m, 1h, 1d and custom steps where valid.
-- Preserve original source timestamps; never fabricate microsecond/tick observations from minute data.
-- Deterministic same-timestamp ordering using sequence/source/event ordering.
-- No-look-ahead: strategy history contains only observations already available before the decision; execution uses point-in-time market state.
-- Higher-timeframe views are deterministic resamples of immutable source observations.
+## 2. Independent Backtest Run
+Every run gets an independent Run ID and immutable metadata:
+- strategy ID/version + parameter/configuration hash
+- requested/effective date range
+- exchange, underlying, contract ID, expiry, strike, CE/PE, lot size
+- source/provider, dataset version/checksum, resolution and coverage/watermark
+- calendar/session version
+- fees, funding, slippage, latency, execution model and random seed
+- engine/build version and provenance
 
-## 3. Historical Data Platform
-- Persistent canonical historical store for raw and normalized observations.
-- Coverage catalog by instrument, contract, date range, source/provider, version and checksum.
-- Incremental ingestion: download only missing ranges/contracts.
-- Daily append with timestamp + instrument/contract deduplication.
-- Gap detection and targeted gap repair.
-- Version-aware reconciliation when a provider revises historical data.
-- Dataset lineage and immutable manifests for reproducibility.
-- Data-quality scoring: completeness, duplicates, timestamp integrity, stale quotes, crossed/locked books, impossible prices and missing depth.
-- Historical derivatives identity by underlying, expiry, strike, call/put, contract ID and lot size.
-- Point-in-time option-chain membership and historically eligible F&O universe to prevent survivorship bias.
-- Corporate actions, dividends, symbol changes, delistings and contract changes handled with historical effective dates.
+## 3. Universal Time/Data Resolution
+- Canonical `timestamp_ns`.
+- Genuine tick/trade/quote/depth, microsecond, millisecond, second, minute, hour, daily and provider-native resolutions when available.
+- Each run selects the **finest genuine complete verified dataset** applicable to the requested range/instrument.
+- If finer data is incomplete, fall back to the finest complete valid source and record that decision.
+- Never manufacture microsecond/second/ms observations from minute candles.
+- Preserve source timestamps and deterministic same-timestamp sequence/source ordering.
+- No look-ahead; historical decisions use only information available at that time.
 
-## 4. Market Microstructure & Depth
-- Quotes: bid/ask and sizes, spread and executable prices.
-- Trades: last trade, size, volume and OI where available.
-- Order-book depth: multiple bid/ask levels and displayed liquidity.
-- Microstructure analytics: spread, quoted depth, executed volume, imbalance, microprice, VWAP/TWAP, trade intensity and liquidity scores.
-- Circuit/price-band and session constraints where source data supports them.
-- Missing/stale/crossed data is rejected or flagged, never silently invented.
+## 4. Historical Data Platform
+- Persistent canonical raw/normalized store + coverage catalog.
+- Coverage tracked by exchange/instrument/contract/date/source/resolution/version/checksum.
+- Incremental download/append of only missing ranges/contracts.
+- Timestamp + contract + sequence-aware deduplication.
+- Targeted gap detection and gap repair only for missing portions.
+- Provider-revision reconciliation, immutable manifests and lineage.
+- Data-quality checks: completeness, duplicates, timestamps, stale/crossed books, impossible prices and missing depth.
+- Point-in-time derivative identity and F&O universe/option-chain membership; no survivorship leakage.
+- Corporate actions, dividends, symbol changes, delistings and contract changes with effective dates.
 
-## 5. Order & Execution Engine
-### Completed foundation
-- Point-in-time independent multi-leg execution.
-- BUY uses executable ask and SELL uses executable bid when available.
-- Depth execution consumes actual displayed levels and supports partial fills.
-- No-liquidity conditions do not create synthetic fills.
-- Order lifecycle foundation: submitted/accepted/partial/filled/cancelled/rejected/expired/replaced.
-- Time-in-force foundation: DAY/GTC/IOC/FOK.
-- Cancel/replace semantics and deterministic lifecycle tests.
+## 5. Market Microstructure & Execution
+- Historical bid/ask + sizes, OI, volume, spread and executable prices where available.
+- Multi-level depth where available.
+- Independent point-in-time execution for every leg.
+- BUY uses ask; SELL uses bid; depth consumes actual displayed liquidity.
+- Partial fills and residual/unhedged exposure are real ledger states.
+- No-liquidity conditions never create synthetic fills.
+- Fees, taxes/brokerage, funding/carry and slippage are separate and traceable.
+- Future milestones: queue position, dynamic depth depletion, latency, STOP/bracket/OCO/trailing orders and market-impact stress.
 
-### Next milestones
-- Queue position and queue-delay model when sequence/depth evidence exists.
-- Dynamic order-book depletion and cancel/reinsert behavior.
-- STOP trigger lifecycle from observed market events.
-- Bracket/OCO orders and trailing stops.
-- Conditional orders and linked multi-leg order groups.
-- Signal-to-submit, network, acknowledgement and fill latency model.
-- Seed-controlled randomized latency stress.
-- Market-impact models: participation/volume-share, temporary/permanent impact stress, separated from observed prices.
-- Conservative execution model with explicit unsupported-data warnings.
+## 6. Portfolio / Margin / Risk
+- Correct cash, market value, equity, realized/unrealized and cumulative P&L.
+- ₹1 crore default capital, configurable per run.
+- Margin, leverage, notional and capital locking; prevent double allocation.
+- Futures/options/commodity margin and collateral where historical inputs support it.
+- Margin calls, blocked/released collateral and forced liquidation.
+- Funding, borrow, dividends and futures carry.
+- Max loss, drawdown, turnover, concentration and liquidity controls.
 
-## 6. Portfolio, Capital & Risk Engine
-- Correct cash, market value, equity and realized/unrealized P&L accounting.
-- ₹1 crore initial capital and configurable account constraints.
-- Margin, leverage, notional and capital-locking enforcement.
-- Prevent double allocation of the same capital/margin.
-- Position concentration, sector/instrument exposure and correlated exposure controls.
-- Max loss, drawdown, turnover and liquidity risk limits.
-- Futures/options margin and collateral simulation.
-- Portfolio margin / SPAN-like configurable model where historical inputs are available.
-- Margin calls, blocked/released collateral and liquidation rules.
-- Funding, financing, borrow costs, dividends and futures carry.
+## 7. Universal Strategy Layer
+- Stable lifecycle: `start → event replay → end`.
+- Strategy context: point-in-time history/events, contract metadata, portfolio, orders, capital, risk, fees, slippage and execution model.
+- Explicit order outputs: side, quantity, price, TIF and constraints.
+- New strategies use the same engine/result schema; **no new database/schema per strategy**.
 
-## 7. Strategy Layer
-- Stable `EventStrategy` contract with version and strategy identity.
-- Strategy parameters and configuration hash stored with every run.
-- Strategy context includes point-in-time event/history, contract metadata, portfolio, open orders, capital, risk, fees, slippage and execution model.
-- Strategy decisions emit explicit order type, quantity, price, TIF and execution constraints.
-- Universal event-strategy lifecycle: start → event replay → end.
-- Adapters to validate: Cash–Future, options multi-leg, futures, rollover, calendar spread, advanced arbitrage and at least two materially different strategies.
+## 8. Four Core Arbitrage Adapters
+### Cash–Future
+- Actual cash/spot + historical future contract identity.
+- Point-in-time current/near/further contract selection.
+- Executable bid/ask, carry/funding/fees/slippage and real reverse exit.
 
-## 8. Options & Derivatives
-- Point-in-time option-chain membership.
-- Expiry/strike/call-put/contract identity and lot-size history.
-- Multi-leg independent fills and residual/unhedged exposure.
-- Greeks and volatility-surface inputs when source data supports them.
-- Exercise/assignment/settlement rules where applicable.
-- Futures rollover based on actual historical contract transitions, liquidity and execution—not today's contract map.
-- Calendar/term-structure spread handling.
+### Synthetic Cash-Carry
+- Stock + index variants.
+- Actual Call + Put + Future legs where applicable.
+- Historical strike/expiry/contract identity; independent fills and real reverse exit.
+- Complete three-leg payoff/P&L; no fabricated exit.
 
-## 9. Session & Contract Calendar
-- Historical trading calendar, holidays and special sessions.
-- Pre-open, regular session, auctions, halts and instrument-specific sessions.
-- Historical expiry/settlement timestamps.
-- No `date.today()` for historical replay decisions.
-- Cash/F&O contract transitions use replay-date availability only.
+### Calendar Spread
+- **NSE + BSE + supported commodity derivatives**, including supported stock and index contracts.
+- Near/far actual historical expiries; CE/PE where applicable and futures calendar where structurally valid.
+- Never mix expiry identity; preserve exchange/symbol/expiry/strike/contract/lot metadata.
+- Independent bid/ask/depth execution and real reverse exit only.
+- Generic index support, including NIFTY/BANKNIFTY and other historically supported index contracts; not hard-coded to two names.
 
-## 10. Durable Backtest Jobs & Performance
-- Large jobs submitted asynchronously with immediate job ID.
-- Durable states: queued, running, progress, completed, failed, cancelled and recoverable.
-- Chunked/partitioned replay by date/symbol/contract with bounded memory.
-- Incremental result persistence; completed results survive UI navigation/restart.
-- Cancellation must not corrupt validated source data or completed results.
-- Resource governor and bounded worker concurrency.
-- Heavy workers isolated from login, scanner, paper trading, health and dashboard requests.
-- Checkpoint/resume for long-running jobs.
-- Safe parallel replay only where mathematically independent.
-- Result caching for identical reproducible runs.
+### Box Spread
+- Actual option-chain position count, **not ₹ gap**.
+- Stock: ATM ±3, ±4 or ±5 chain positions.
+- Index: ATM ±3 through ±15 chain positions.
+- Actual CE/PE bid/ask/depth and four-leg execution.
+- Expiry/strike/contract identity preserved; payoff/P&L only from executable legs.
 
-## 11. Audit, Explainability & Reproducibility
-- Immutable run metadata: strategy ID/version/hash, engine version, dataset/version/checksum, parameters, calendar, cost/slippage/latency models and random seed.
-- Audit trail for signals, orders, lifecycle transitions, fills, cancellations, rejections, risk blocks and exits.
-- Per-leg timestamps, executable edge, hedge ratio, slippage and residual exposure for arbitrage.
-- Every reported P&L value traceable to source observations and execution events.
+## 9. Strike Rules
+- Stock Box: 3/4/5 positions from ATM.
+- Stock Synthetic: both sides up to ±5 positions.
+- Index Box: 3–15 positions from ATM.
+- Index Synthetic: both sides up to ±15 positions.
+- Position = ordered strike position in the point-in-time chain, never a rupee-distance approximation.
+- Missing strike/leg/chain data is a recorded coverage gap, never silently filled.
 
-## 12. Robustness & Validation
-- Walk-forward optimization with untouched out-of-sample windows.
-- Parameter sensitivity and stability regions.
-- Regime-separated analysis: trend, volatility, low-volatility, gaps and stressed periods where identifiable.
-- Cross-sectional analysis by symbol, sector, contract and liquidity bucket.
-- Monte Carlo trade-order reshuffling and execution uncertainty.
-- Bootstrap confidence ranges where statistically appropriate.
-- Slippage, latency, fee and funding stress scenarios.
-- Scenario engine and sensitivity analysis.
-- Trade-count/statistical sufficiency warnings.
+## 10. Expiry / Session / Contract Lifecycle
+- Historical holidays, sessions, pre-open/auction/halts where supported.
+- Historical expiry and settlement timestamps.
+- Monthly expiry and genuine historical weekly index expiry where source contains it.
+- Expiry-to-expiry lifecycle and rollover from actual historical contract transitions/liquidity/execution.
+- No `date.today()` or today's contract map in historical replay.
+
+## 11. Payoff / Analytics
+For every completed applicable run:
+- payoff curve + graph-ready data
+- break-even, max profit, max loss, expiry payoff
+- equity/P&L curve and drawdown
+- trade-by-trade and per-leg execution
+- residual exposure, net P&L after fees/slippage/funding
+- existing generic payoff engine remains the common layer
+
+## 12. Query / Explainability
+Every result is traceable:
+**date → exact timestamp → exchange → underlying → contract/expiry → strikes → legs → prices → resolution → orders/fills → costs → P&L**.
+
+A query such as “opportunity कब आई थी?” must return the exact source observations and execution events supporting it.
+
+## 13. Incremental Result Ledger
+- Full-year/full-F&O result must never require the whole ledger in RAM.
+- SQLite/WAL durable incremental persistence for trades, events, orders/fills, equity and metadata.
+- Cursor/chunk reads for UI/reports.
+- Completed results survive restart/navigation.
+- Checkpoint/resume and cancellation-safe writes.
+
+## 14. Durable Jobs / Performance
+- Immediate Job ID + Run ID.
+- States: queued/running/progress/completed/failed/cancelled/recoverable.
+- Chunked replay by date/symbol/contract with bounded memory.
+- Resource governor and bounded concurrency.
+- Heavy workers isolated from login/scanner/paper-trading/dashboard.
+- Idempotent retry/resume and reproducible-result caching where safe.
+
+## 15. Audit / Reproducibility
+- Immutable run/dataset manifests.
+- Audit trail for signals, orders, fills, cancels, rejects, risk blocks and exits.
+- Per-leg timestamps, executable edge, hedge ratio, slippage and residual exposure.
+- Every P&L value traceable to source observations and execution events.
+
+## 16. Robustness / Reports
+- Walk-forward + untouched OOS.
+- Parameter sensitivity/stability, regime and cross-sectional analysis.
+- Monte Carlo/bootstrapping where statistically appropriate.
+- Fee/slippage/funding/latency stress.
 - Backtest vs forward-paper reconciliation.
-- Robustness score is diagnostic, never a probability of future profit.
+- Reports: P&L, ROI, drawdown, win rate, profit factor, turnover, trade count, margin/capital usage, per-symbol/contract/expiry results, full fill ledger, data-quality/coverage and stress reports.
 
-## 13. Reports & Exports
-- Net P&L, ROI, drawdown, win rate, profit factor, turnover and trade count.
-- Equity curve and monthly/yearly performance.
-- Position, margin, capital utilization and liquidity usage.
-- Per-symbol/sector/contract/expiry/regime performance.
-- Full order lifecycle and fill ledger.
-- Per-leg multi-leg execution report.
-- Data coverage and data-quality report.
-- Slippage/cost/latency stress report.
-- Walk-forward/OOS/parameter/Monte Carlo reports.
-- Downloadable durable backtest result datasets.
-
-## 14. Validation Gates
-- [x] Generic event model and nanosecond timestamp foundation.
-- [x] Stable strategy contract and lifecycle foundation.
+## 17. Validation Status
+### Completed foundation
+- [x] Generic event model + nanosecond timestamp.
+- [x] Stable strategy contract/lifecycle.
 - [x] Point-in-time independent multi-leg execution.
-- [x] Depth-aware multi-level execution foundation.
-- [x] Partial-fill and no-liquidity behavior.
-- [x] Order lifecycle foundation and deterministic tests.
-- [x] DAY/GTC/IOC/FOK foundation and cancel/replace foundation.
-- [ ] Queue-aware execution and dynamic depth.
-- [ ] STOP/bracket/OCO/trailing lifecycle.
-- [ ] Correct portfolio market-value/equity and cumulative P&L.
-- [ ] Margin/capital/risk enforcement.
-- [ ] Historical options/futures/rollover adapters.
-- [ ] Persistent data catalog + incremental sync + gap repair.
-- [ ] Point-in-time corporate actions and survivorship controls.
-- [ ] Full-F&O background job pipeline and durable recovery.
-- [ ] Microstructure analytics and liquidity scoring.
-- [ ] Latency/impact stress models.
+- [x] Depth-aware execution foundation.
+- [x] Partial-fill/no-liquidity behavior.
+- [x] Order lifecycle + DAY/GTC/IOC/FOK + cancel/replace foundation.
+- [x] Persistent historical catalog foundation.
+- [x] Exact-timestamp catalog replay with completeness filtering.
+- [x] Four arbitrage adapters registered and catalog-backed tests.
+- [x] Catalog→ledger E2E tests for Cash–Future, Synthetic, Calendar and Box.
+- [x] Missing-exit safety: no fabricated trade/P&L.
+
+### Remaining gates
+- [ ] Queue-aware execution + dynamic depth.
+- [ ] Portfolio/equity/cumulative P&L correction.
+- [ ] Margin/risk/capital locking + liquidation validation.
+- [ ] Production-scale real historical acquisition for supported NSE/BSE/commodity instruments.
+- [ ] Incremental sync + targeted gap repair at production scale.
+- [ ] Historical options/futures/rollover coverage across supported exchanges.
+- [ ] Explicit genuine-data NSE/BSE/index/commodity Calendar validation.
+- [ ] Corporate actions/survivorship controls.
+- [ ] Durable full-F&O job/recovery pipeline.
+- [ ] Microstructure/liquidity analytics.
+- [ ] Latency/market-impact stress.
 - [ ] Walk-forward/OOS/Monte Carlo/sensitivity validation.
 - [ ] Full report/export pipeline.
-- [ ] End-to-end validation with real historical datasets.
+- [ ] Real-data end-to-end P&L reconciliation.
+- [ ] Android/mobile production integration.
 
-## 15. Execution Order From Here
+## 18. Execution Order From Current State
 1. Queue-aware execution + dynamic depth.
-2. Portfolio/equity/P&L correction + margin/risk/capital locking.
-3. Durable order/job/result ledger + checkpoint/resume.
-4. Persistent historical catalog + incremental ingestion/dedup/gap repair.
-5. Options/futures/rollover and advanced-arbitrage adapters.
+2. Portfolio/equity/P&L + margin/risk/capital locking.
+3. Durable order/job/result ledger + checkpoint/resume hardening.
+4. Historical catalog production ingestion + dedup/gap repair.
+5. Options/futures/rollover + NSE/BSE/index/commodity arbitrage coverage.
 6. Session/calendar/corporate-action/survivorship controls.
-7. Microstructure, latency and market-impact models.
-8. Full-F&O asynchronous pipeline and resource governor.
-9. Reports, exports, robustness and OOS validation.
-10. End-to-end real-data verification and Android/mobile integration.
+7. Microstructure + latency + market impact.
+8. Full-F&O async pipeline + resource governor.
+9. Reports/exports + robustness/OOS validation.
+10. Real-data E2E: **Code → Compile → Tests → Fresh CI → PASS → Next**.
+11. Android/mobile integration + production validation.
 
-## Non-Negotiable Data Rule
-Architecture may support arbitrary timestamp precision, including microseconds, but a microsecond backtest is valid only when the verified source dataset actually contains microsecond-or-finer observations. Minute data must never be expanded into fake microsecond observations.
+## 19. Non-Negotiable Rules
+1. No fabricated market data.
+2. No fabricated execution or exits.
+3. No expiry/contract mixing.
+4. No survivorship leakage.
+5. No future/look-ahead leakage.
+6. Strike rules use actual chain position counts, never ₹ gap.
+7. Yearly/F&O ledger is incremental, never RAM-only.
+8. New strategies do not require new schemas.
+9. Never report CI PASS without actual evidence.
+10. Continue milestone execution without waiting for user confirmation.
