@@ -24,14 +24,15 @@ def test_box_adapter_closes_only_on_later_reverse_edge():
     high = option(1, 110, 2, 3, 2, 2)
     entries = tuple(adapter.entry({"low": low, "high": high, "data_resolution": "1s"}))
     assert len(entries) == 1
-    assert entries[0].entry_price == 5.0
+    assert entries[0].entry_price == 3.0
     assert adapter.exit(entries[0], {"low": low, "high": high}) is None
 
-    low2 = option(3, 100, 7, 8, 6, 7)
-    high2 = option(3, 110, 1, 1, 1, 2)
+    # Later quotes create a genuine positive reverse executable edge.
+    low2 = option(3, 100, 15, 16, 14, 15)
+    high2 = option(3, 110, 3, 4, 3, 4)
     close = adapter.exit(entries[0], {"low": low2, "high": high2})
     assert close is not None
-    assert close.gross_pnl == 9.0
+    assert close.gross_pnl == 11.0
     assert close.fees == 2.0
 
 
