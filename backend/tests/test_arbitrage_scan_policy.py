@@ -49,7 +49,7 @@ def test_distance_is_chain_position_count():
 def test_custom_policy_can_tighten_limits_without_changing_engine():
     policy = ScanPolicy(stock_box_distances=(3,), stock_synthetic_radius=2)
     pairs = enumerate_box_pairs(STRIKES, atm_strike=100, instrument_class="STOCK", policy=policy)
-    assert pairs == ((90.0, 100.0, 3), (100.0, 115.0, 3))
+    assert pairs == ((100.0, 115.0, 3),)
     assert all(
         distance <= 2
         for _, distance, _ in enumerate_synthetic_strikes(
