@@ -4,10 +4,39 @@
 Fast, modular, mobile-first advanced F&O algo-trading platform. GitHub is the source of truth. Build small verified checkpoints; no large untested dumps.
 
 ## Current Product Focus — Locked
-1. **Universal Advanced Backtesting** — one event-driven engine for any strategy, from daily/1-minute strategies through tick, high-resolution and order-book strategies. Use the highest real source resolution required by the strategy; never fabricate millisecond events from candles. Historical window is up to 1 year, or the maximum reliable/legally available period when less is available.
+1. **Universal Advanced Backtesting** — one event-driven engine for any strategy, with **Index 1-second data as the primary backtesting focus**. Support daily/1-minute strategies through 1-second, tick, high-resolution and order-book strategies. Use the highest real source resolution required by the strategy; never fabricate higher-frequency events from candles. Historical window is up to 1 year, or the maximum reliable/legally available period when less is available.
 2. **Live Scanner** — real market data during market hours, with strategy-specific data requirements and durable results.
 3. **Live Paper Trading** — real-market-data simulation for any supported strategy/instrument/order type. Real broker order routing is OFF.
-4. **High-resolution data accumulation** — when live high-resolution/tick/order-book data is available and required, persist it incrementally for future backtesting; do not collect millisecond data for strategies that do not need it.
+4. **High-resolution data accumulation** — when live 1-second/tick/order-book data is available and required, persist it incrementally for future backtesting; do not collect high-resolution data for strategies that do not need it.
+
+## Backtesting Priority — Locked
+- **Priority #1: Index derivatives**, especially Index Futures and Index Options.
+- **Primary historical resolution: 1-second real market data** wherever reliably/legal available.
+- Index contracts are identified by exact exchange/segment/token/expiry identity; Near/Next/Far lifecycle and rollover are preserved.
+- NIFTY, BANKNIFTY and other currently eligible index contracts are discovered dynamically from instrument metadata rather than hardcoded symbols.
+- Tick/order-book/event data is supported when genuinely available; **1-second data is never reverse-engineered into fake tick/microsecond data**.
+- Calendar Spread, Cash–Future Arbitrage, Synthetic Future, Options multi-leg and event-driven strategies share the same 1-second-capable engine.
+- Existing 1-year Cash + Near Future + Next Future datasets are common reusable base data; strategy modules must not create duplicate downloads.
+- After the Index 1-second foundation is stable, extend the same engine to stocks, BSE and commodities.
+
+## Advanced Backtesting — Locked Enhancements
+- Realistic execution simulator: market/limit/stop orders, bid/ask, spread, slippage, latency, partial fills, rejection, cancellation, queue assumptions and multi-leg execution.
+- Market-impact/liquidity model using available quantity and depth when source data exists; theoretical fills are never presented as executable fills.
+- Strategy-specific data requirements and subscriptions so only required instruments/resolution are downloaded.
+- Multi-resolution replay: 1-second primary for index backtests, plus tick/order-book/event replay when available.
+- Contract lifecycle engine: expiry, rollover, lot-size/tick-size changes, contract replacement and exact historical contract identity.
+- Maximum-gap/opportunity engine: timestamp, duration, spread, executable spread, MFE/MAE, entry/exit, charges, slippage and missed opportunity analysis.
+- Portfolio-level backtesting with capital allocation, dynamic position sizing, margin competition, exposure limits and correlation-aware risk.
+- Regime-aware analysis: trending/sideways/high-volatility/low-volatility/crash conditions and strategy performance by regime.
+- Walk-forward validation: train → validation → out-of-sample cycles.
+- Parameter robustness: sensitivity maps, stable parameter regions and overfitting/fragility detection.
+- Monte-Carlo and execution stress testing across trade order, slippage, latency, liquidity, partial fills and missing-data scenarios.
+- Survivorship-bias protection using the historical instrument universe valid at each timestamp.
+- Look-ahead protection for prices, quotes, depth, expiry metadata, corporate data and all strategy inputs.
+- Data-quality score attached to each backtest: coverage, missing events, stale quotes, source provenance and timestamp quality.
+- Full audit replay: reproduce exactly what data/events were visible to the strategy before each decision and trade.
+- Reproducible backtest identity: dataset/version + engine version + strategy version + parameters + execution assumptions.
+- Separate gross, theoretical/executable and net P&L; charges and execution effects remain auditable.
 
 ## Non-negotiable product principles
 - UI must be advanced, attractive and colourful but simple to operate.
@@ -32,7 +61,7 @@ Fast, modular, mobile-first advanced F&O algo-trading platform. GitHub is the so
 - Separate source adapters from normalized market/event models, signal engine, API and UI.
 - Broker abstraction/registry supports multiple simultaneous connections.
 - Bounded caches, request coalescing, pagination and incremental persistence for large workloads.
-- No full-year/full-F&O minute ledger held in RAM.
+- No full-year/full-F&O minute or 1-second ledger held in RAM.
 - Event-driven replay must preserve source timestamps/sequence and must not invent higher-frequency observations.
 - Target low software processing latency based on measured benchmarks; never promise exchange execution latency.
 
@@ -44,9 +73,24 @@ Fast, modular, mobile-first advanced F&O algo-trading platform. GitHub is the so
 - [x] Connect event replay to generic strategy → signal → risk → execution interfaces.
 - [ ] Add realistic execution simulator: market/limit/stop, slippage, latency, partial fills, rejection, cancellation, multi-leg execution and charges.
 - [ ] Support strategy-specific data requirements so only required resolution/instruments are downloaded.
+- [ ] **Build and verify Index 1-second replay/backtesting path first.**
 - [ ] Support candle/tick/high-resolution/order-book backtests through the same engine.
 - [ ] Support up to 1 year historical data, or the maximum reliable/legally available period when less is available.
-- [ ] Validate Cash–Future, Synthetic Future and Order Book strategies against appropriate source-resolution datasets.
+- [ ] Validate Cash–Future, Calendar Spread, Synthetic Future, Options and Order Book strategies against appropriate source-resolution datasets.
+- [ ] Add maximum-gap/opportunity detection and executable-vs-theoretical opportunity reports.
+- [ ] Add walk-forward, parameter robustness, Monte-Carlo and stress-test modes.
+- [ ] Add historical-universe/survivorship-bias protection and complete audit replay.
+
+## Index-First Backtesting Phases
+- [ ] Phase 1 — Index instrument master: dynamic exchange/segment/token/expiry/lot/tick metadata.
+- [ ] Phase 2 — Index 1-second historical acquisition, coverage audit, gap planning and resumable durable download.
+- [ ] Phase 3 — SQLite incremental merge with duplicate/conflict protection and bounded memory.
+- [ ] Phase 4 — 1-second event replay + strategy → signal → risk → execution integration.
+- [ ] Phase 5 — realistic execution, latency, slippage, partial-fill and multi-leg simulation.
+- [ ] Phase 6 — Calendar Spread, Cash–Future Arbitrage, Synthetic Future and Options strategies.
+- [ ] Phase 7 — maximum-gap/opportunity engine, audit replay and advanced analytics.
+- [ ] Phase 8 — walk-forward, robustness, Monte-Carlo and stress testing.
+- [ ] Phase 9 — expand the same verified engine to BSE, stocks and commodities without duplicating the core.
 
 ## Live Paper Trading
 - [ ] Replace the current fixed-demo paper order stub with a persistent production-grade paper broker.
