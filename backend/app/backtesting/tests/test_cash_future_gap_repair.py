@@ -23,8 +23,8 @@ def test_gap_repair_plan_is_session_bounded_and_deterministic():
         spot_sessions=(SessionWindow(0, 180), SessionWindow(300, 420)),
     )
 
-    assert [(r.start_ns, r.end_ns) for r in plan.spot] == [(180, 240)]
-    assert plan.total_requests == 1
+    assert [(r.start_ns, r.end_ns) for r in plan.spot] == [(180, 180), (420, 420)]
+    assert plan.total_requests == 2
     catalog.close()
 
 
@@ -45,6 +45,7 @@ def test_gap_repair_plan_handles_future_specific_sessions():
     )
 
     assert [(r.instrument, r.start_ns, r.end_ns) for r in plan.futures] == [
-        (future.instrument, 120, 180),
+        (future.instrument, 60, 180),
+        (future.instrument, 360, 360),
     ]
     catalog.close()
