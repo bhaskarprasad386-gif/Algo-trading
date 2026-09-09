@@ -70,15 +70,19 @@ def _atm_index(strikes: Sequence[float], atm: float | None) -> int:
     return min(range(len(strikes)), key=lambda i: (abs(strikes[i] - atm), strikes[i]))
 
 
-def _select_positions(contracts: Sequence[ChainContract], *, atm: float,
-                      positions_below: int, positions_above: int) -> tuple[ChainContract, ...]:
-    if positions_below < 0 or positions_above < 0:
+def _select_side_positions(contracts: Sequence[ChainContract], *, atm: float,
+                           positions_below: int, positions_above: int,
+                           exclude_between: int = 0) -> tuple[ChainContract, ...]:
+    if positions_below < 0 or positions_above < 0 or exclude_between < 0:
         raise ValueError("position counts must be non-negative")
     if not contracts:
         return ()
     strikes = sorted({c.strike for c in contracts})
     ai = _atm_index(strikes, atm)
-    wanted = set(range(max(0, ai - positions_below), min(len(strikes), ai + positions_above + 1)))
+    lower = range(max(0, ai - positions_below), max(0, ai - exclude_between))
+    upper = range(min(len(strikes), ai + exclude_between + 1),
+                  min(len(strikes), ai + positions_above + 1))
+    wanted = set(lower) | set(upper)
     return tuple(sorted((c for c in contracts if strikes.index(c.strike) in wanted),
                         key=lambda c: (c.strike, c.option_type)))
 
@@ -87,32 +91,30 @@ def select_box_stock(contracts: Sequence[ChainContract], *, atm: float) -> tuple
     """NIFTY-50 stock Box universe: exactly five positions below and five above ATM."""
     if not contracts or contracts[0].instrument_class != "STOCK":
         raise ValueError("Box stock selection requires stock option contracts")
-    return _select_positions(contracts, atm=atm, positions_below=5, positions_above=5)
+    return _select_side_positions(contracts, atm=atm, positions_below=5, positions_above=5)
 
 
 def select_box_index(contracts: Sequence[ChainContract], *, atm: float) -> tuple[ChainContract, ...]:
     """Index Box universe: positions 3 through 15 on each side of ATM."""
     if not contracts or contracts[0].instrument_class != "INDEX":
         raise ValueError("Box index selection requires index option contracts")
-    strikes = sorted({c.strike for c in contracts})
-    ai = _atm_index(strikes, atm)
-    wanted = set(range(max(0, ai - 15), ai - 2)) | set(range(ai + 3, min(len(strikes), ai + 16)))
-    return tuple(sorted((c for c in contracts if strikes.index(c.strike) in wanted),
-                        key=lambda c: (c.strike, c.option_type)))
+    return _select_side_positions(
+        contracts, atm=atm, positions_below=15, positions_above=15, exclude_between=2
+    )
 
 
 def select_synthetic_stock(contracts: Sequence[ChainContract], *, atm: float) -> tuple[ChainContract, ...]:
     """Liquid stock Synthetic universe: five actual chain positions either side of ATM."""
     if not contracts or contracts[0].instrument_class != "STOCK":
         raise ValueError("Synthetic stock selection requires stock option contracts")
-    return _select_positions(contracts, atm=atm, positions_below=5, positions_above=5)
+    return _select_side_positions(contracts, atm=atm, positions_below=5, positions_above=5)
 
 
 def select_synthetic_index(contracts: Sequence[ChainContract], *, atm: float) -> tuple[ChainContract, ...]:
     """Liquid index Synthetic universe: fifteen actual chain positions either side of ATM."""
     if not contracts or contracts[0].instrument_class != "INDEX":
         raise ValueError("Synthetic index selection requires index option contracts")
-    return _select_positions(contracts, atm=atm, positions_below=15, positions_above=15)
+    return _select_side_positions(contracts, atm=atm, positions_below=15, positions_above=15)
 
 
 def select_calendar_expiries(contracts: Sequence[ChainContract]) -> tuple[tuple[int, int], ...]:
