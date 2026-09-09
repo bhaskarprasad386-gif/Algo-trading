@@ -31,7 +31,7 @@ class Gap:
 
 
 class HistoricalCatalog:
-    """SQLite catalog that merges source batches without silently overwriting data."""
+    """SQLite catalog that appends new market data and repairs gaps without replacing prior data."""
 
     def __init__(self, path: str = ":memory:") -> None:
         self.path = path
@@ -63,7 +63,7 @@ class HistoricalCatalog:
         return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
 
     def ingest(self, records: Iterable[HistoricalRecord], *, ingested_at_ns: int = 0) -> int:
-        """Merge a batch. Exact duplicates are ignored; conflicting identities fail atomically."""
+        """Append a batch. New future records, late gap repairs and exact duplicates are all safe."""
         if ingested_at_ns < 0:
             raise ValueError("ingested_at_ns cannot be negative")
         rows = []
@@ -109,6 +109,10 @@ class HistoricalCatalog:
             raise
         return inserted
 
+    def append(self, records: Iterable[HistoricalRecord], *, ingested_at_ns: int = 0) -> int:
+        """Explicit append/upcoming-data API; preserves all earlier data and repairs gaps."""
+        return self.ingest(records, ingested_at_ns=ingested_at_ns)
+
     def records(self, *, source: str, instrument: str, timeframe: str) -> tuple[HistoricalRecord, ...]:
         rows = self._db.execute(
             "SELECT source,instrument,timeframe,timestamp_ns,payload_json,sequence FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? ORDER BY timestamp_ns, sequence",
@@ -116,9 +120,7 @@ class HistoricalCatalog:
         ).fetchall()
         return tuple(HistoricalRecord(r[0], r[1], r[2], r[3], json.loads(r[4]), r[5]) for r in rows)
 
-    def timestamps(
-        self, *, source: str, instrument: str, timeframe: str, start_ns: int, end_ns: int
-    ) -> tuple[int, ...]:
+    def timestamps(self, *, source: str, instrument: str, timeframe: str, start_ns: int, end_ns: int) -> tuple[int, ...]:
         """Return distinct stored timestamps in an inclusive range."""
         if start_ns < 0 or end_ns < start_ns:
             raise ValueError("invalid timestamp range")
