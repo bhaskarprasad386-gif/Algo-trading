@@ -24,12 +24,7 @@ class PayoffSnapshot:
 
 
 class BacktestRunWriter:
-    """Single entry point for independent, incremental backtest result writes.
-
-    The writer creates exactly one ledger partition per ``BacktestRunSpec`` and
-    stores payoff/equity/events incrementally. Strategy-specific runners can
-    reuse it without duplicating persistence or payoff mathematics.
-    """
+    """Single entry point for independent, incremental backtest result writes."""
 
     def __init__(self, ledger: BacktestResultLedger, spec: BacktestRunSpec, *, created_at_ns: int = 0) -> None:
         self.ledger = ledger
@@ -81,5 +76,7 @@ class BacktestRunWriter:
     def fail(self, reason: str) -> None:
         if not reason.strip():
             raise ValueError("failure reason is required")
+        # Reserve a negative sequence for terminal failure so it cannot collide
+        # with normal positive replay/audit event sequences.
+        self.record_event(-1, self.spec.start_ns, "RUN_FAILED", {"reason": reason})
         self.ledger.set_status(self.spec.run_id, "FAILED")
-        self.record_event(0, self.spec.start_ns, "RUN_FAILED", {"reason": reason})
