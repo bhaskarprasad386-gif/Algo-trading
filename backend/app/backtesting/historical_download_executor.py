@@ -51,8 +51,10 @@ class ResumableHistoricalExecutor:
         *,
         retry_attempts: int = 3,
         retry_delay_seconds: float = 1.0,
+        batch_size: int = 1024,
         should_skip: Callable[[object], bool] | None = None,
         should_accept: Callable[[object, HistoricalSyncResult], bool] | None = None,
+        on_batch: Callable[[int, int], None] | None = None,
         on_chunk_start: Callable[[int, object, int], None] | None = None,
         on_chunk_skip: Callable[[int, object], None] | None = None,
         on_chunk_complete: Callable[[int, object, HistoricalSyncResult, int], None] | None = None,
@@ -62,6 +64,8 @@ class ResumableHistoricalExecutor:
             raise ValueError("retry_attempts must be positive")
         if retry_delay_seconds < 0:
             raise ValueError("retry_delay_seconds cannot be negative")
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
         results: list[HistoricalSyncResult] = []
         skipped: list[int] = []
         completed_count = 0
@@ -76,7 +80,12 @@ class ResumableHistoricalExecutor:
                 if on_chunk_start is not None:
                     on_chunk_start(index, request, attempt)
                 try:
-                    result = self.service.sync(source, request)
+                    result = self.service.sync_streaming(
+                        source,
+                        request,
+                        batch_size=batch_size,
+                        on_batch=on_batch,
+                    )
                     if should_accept is not None and not should_accept(request, result):
                         raise ValueError("historical chunk failed completeness validation")
                     completed_count += 1
