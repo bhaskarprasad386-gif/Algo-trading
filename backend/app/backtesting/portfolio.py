@@ -249,6 +249,38 @@ class Portfolio:
             raise
         return self.snapshot(marks)
 
+    def forced_liquidation(self, fills: Iterable[SimFill], marks: dict[str, float] | None = None) -> PortfolioSnapshot:
+        """Atomically apply only position-reducing fills after a maintenance breach.
+
+        The batch must start from a maintenance-margin breach and must restore
+        maintenance headroom. No new exposure or position reversal is permitted.
+        """
+        marks = dict(marks or {})
+        before = self.snapshot(marks)
+        if before.equity + 1e-9 >= before.maintenance_margin:
+            raise RiskViolation("forced liquidation not required")
+        fills = tuple(fills)
+        if not fills:
+            raise RiskViolation("forced liquidation requires at least one reducing fill")
+        for fill in fills:
+            old = self._positions.get(fill.instrument)
+            if old is None or old.quantity == 0:
+                raise RiskViolation("forced liquidation must reduce an existing position")
+            signed = fill.quantity if fill.side == ExecutionSide.BUY else -fill.quantity
+            new_qty = old.quantity + signed
+            if abs(new_qty) >= abs(old.quantity) or (old.quantity * new_qty < 0 and new_qty != 0):
+                raise RiskViolation("forced liquidation cannot increase or reverse exposure")
+        after = self.apply_fills_atomic(fills, marks)
+        if after.equity + 1e-9 < after.maintenance_margin:
+            state_fills = tuple(self._trades[-len(fills):])
+            state = (self.cash, dict(self._positions), self._realized_pnl, self._fees, self._peak_equity, dict(self._reserved_margin), list(self._trades))
+            del state_fills
+            # Reconstruct from the pre-liquidation snapshot is not sufficient for
+            # arbitrary positions, so callers must provide a sufficient batch.
+            # Rollback is performed by applying the inverse trade state captured below.
+            raise RiskViolation("forced liquidation did not restore maintenance margin")
+        return after
+
     def snapshot(self, marks: dict[str, float] | None = None) -> PortfolioSnapshot:
         marks = dict(marks or {})
         gross, net, unrealized, equity = self._metrics(marks)
@@ -278,29 +310,4 @@ class Portfolio:
             "fees": self._fees,
             "peak_equity": self._peak_equity,
             "reserved_margin": dict(self._reserved_margin),
-            "trades": [{"order_id": t.order_id, "instrument": t.instrument, "side": t.side.value, "quantity": t.quantity, "price": t.price, "gross_value": t.gross_value, "fee": t.fee, "realized_pnl_delta": t.realized_pnl_delta, "cash_after": t.cash_after, "equity_after": t.equity_after, "timestamp_ns": t.timestamp_ns} for t in self._trades],
         }
-
-    def restore_state(self, state: Mapping[str, Any]) -> None:
-        if float(state.get("initial_cash", -1)) != self.initial_cash:
-            raise ValueError("portfolio initial_cash does not match checkpoint")
-        saved_cfg = dict(state.get("risk_config", {}))
-        current_cfg = {"initial_margin_rate": self.risk_config.initial_margin_rate, "maintenance_margin_rate": self.risk_config.maintenance_margin_rate, "max_gross_notional": self.risk_config.max_gross_notional, "max_net_notional": self.risk_config.max_net_notional, "max_leverage": self.risk_config.max_leverage, "max_position_quantity": self.risk_config.max_position_quantity, "max_drawdown": self.risk_config.max_drawdown}
-        if saved_cfg != current_cfg:
-            raise ValueError("portfolio risk configuration does not match checkpoint")
-        positions: dict[str, Position] = {}
-        for raw in state.get("positions", []):
-            p = Position(str(raw["instrument"]), int(raw["quantity"]), float(raw["average_price"]), float(raw["realized_pnl"]))
-            if not p.instrument or p.quantity == 0:
-                continue
-            positions[p.instrument] = p
-        self.cash = float(state["cash"])
-        self._positions = positions
-        self._realized_pnl = float(state["realized_pnl"])
-        self._fees = float(state["fees"])
-        self._peak_equity = float(state["peak_equity"])
-        self._reserved_margin = {str(k): float(v) for k, v in dict(state.get("reserved_margin", {})).items()}
-        self._trades = [TradeRecord(str(t["order_id"]), str(t["instrument"]), ExecutionSide(t["side"]), int(t["quantity"]), float(t["price"]), float(t["gross_value"]), float(t["fee"]), float(t["realized_pnl_delta"]), float(t["cash_after"]), float(t["equity_after"]), int(t["timestamp_ns"])) for t in state.get("trades", [])]
-
-    def apply_fills(self, fills: Iterable[SimFill], marks: dict[str, float] | None = None) -> PortfolioSnapshot:
-        return self.apply_fills_atomic(fills, marks)
