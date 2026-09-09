@@ -20,18 +20,18 @@ def calendar(ts, expiry, bid, ask):
 
 def test_box_adapter_closes_only_on_later_reverse_edge():
     adapter = BoxSpreadStrategyAdapter(fees_per_unit=1.0)
-    low = option(1, 100, 9, 10, 8, 9)
-    high = option(1, 110, 2, 3, 1, 2)
+    low = option(1, 100, 6, 4, 5, 3)
+    high = option(1, 110, 2, 3, 2, 2)
     entries = tuple(adapter.entry({"low": low, "high": high, "data_resolution": "1s"}))
     assert len(entries) == 1
-    assert entries[0].entry_price == 2.0
+    assert entries[0].entry_price == 5.0
     assert adapter.exit(entries[0], {"low": low, "high": high}) is None
 
-    low2 = option(3, 100, 10, 11, 9, 10)
-    high2 = option(3, 110, 3, 4, 2, 3)
+    low2 = option(3, 100, 7, 8, 6, 7)
+    high2 = option(3, 110, 1, 1, 1, 2)
     close = adapter.exit(entries[0], {"low": low2, "high": high2})
     assert close is not None
-    assert close.gross_pnl == 4.0
+    assert close.gross_pnl == 9.0
     assert close.fees == 2.0
 
 
@@ -58,10 +58,10 @@ def test_cash_future_adapter_supports_both_directions_without_fabrication():
     assert entries[0].entry_price == 3
     assert adapter.exit(entries[0], event) is None
     later = {"cash_future": {**event["cash_future"], "timestamp_ns": 2,
-        "spot_bid": 103, "spot_ask": 104, "future_bid": 102, "future_ask": 103}}
+        "spot_bid": 106, "spot_ask": 107, "future_bid": 102, "future_ask": 103}}
     close = adapter.exit(entries[0], later)
     assert close is not None
-    assert close.gross_pnl == 4
+    assert close.gross_pnl == 6
 
 
 def test_calendar_adapter_keeps_near_and_far_expiries_explicit():
