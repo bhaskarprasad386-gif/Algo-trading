@@ -1,10 +1,19 @@
 """Mark-to-market portfolio risk checks used by the event-driven backtest engine."""
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Mapping
 
 from app.backtesting.execution import ExecutionSide, SimOrder
 from app.backtesting.portfolio import Portfolio, RiskViolation
+
+
+class MarginCallState(str, Enum):
+    """Deterministic lifecycle for maintenance-margin status."""
+
+    NORMAL = "normal"
+    MARGIN_CALL = "margin_call"
+    RECOVERED = "recovered"
 
 
 @dataclass(frozen=True)
@@ -41,6 +50,24 @@ def evaluate_market_risk(portfolio: Portfolio, marks: Mapping[str, float] | None
             and snapshot.drawdown > portfolio.risk_config.max_drawdown + 1e-9
         ),
     )
+
+
+def transition_margin_call_state(
+    previous: MarginCallState,
+    state: MarketRiskState,
+) -> MarginCallState:
+    """Advance margin-call state from a previous state and current MTM risk.
+
+    A breach enters ``MARGIN_CALL``. Once a previously breached portfolio is back
+    at or above maintenance margin it transitions to ``RECOVERED``. A healthy
+    portfolio starts in ``NORMAL``. ``RECOVERED`` remains a terminal acknowledgement
+    for that observation; the next healthy evaluation can explicitly start NORMAL.
+    """
+    if state.margin_call:
+        return MarginCallState.MARGIN_CALL
+    if previous == MarginCallState.MARGIN_CALL:
+        return MarginCallState.RECOVERED
+    return previous if previous == MarginCallState.RECOVERED else MarginCallState.NORMAL
 
 
 def enforce_market_risk(portfolio: Portfolio, marks: Mapping[str, float] | None = None) -> MarketRiskState:
