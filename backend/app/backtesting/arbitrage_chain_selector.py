@@ -9,17 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
-
-# NSE/BSE are equity/index venues; MCX is the supported commodity exchange.
-# COMMODITY is retained as a normalized venue alias for existing datasets.
 SUPPORTED_VENUES = frozenset({"NSE", "BSE", "MCX", "COMMODITY"})
 SUPPORTED_INSTRUMENT_CLASSES = frozenset({"STOCK", "INDEX", "COMMODITY"})
 
 
 @dataclass(frozen=True)
 class ChainContract:
-    """One real historical option-chain contract at one observation time."""
-
     timestamp_ns: int
     venue: str
     underlying: str
@@ -56,12 +51,9 @@ class SelectedPair:
 
 def _ordered_strikes(contracts: Iterable[ChainContract], *, timestamp_ns: int,
                      underlying: str, expiry: int, option_type: str) -> list[float]:
-    strikes = {
-        c.strike for c in contracts
-        if c.timestamp_ns == timestamp_ns and c.underlying == underlying
-        and c.expiry == expiry and c.option_type == option_type
-    }
-    return sorted(strikes)
+    return sorted({c.strike for c in contracts if c.timestamp_ns == timestamp_ns
+                   and c.underlying == underlying and c.expiry == expiry
+                   and c.option_type == option_type})
 
 
 def _atm_index(strikes: Sequence[float], atm: float | None) -> int:
@@ -89,13 +81,20 @@ def _select_side_positions(contracts: Sequence[ChainContract], *, atm: float,
                         key=lambda c: (c.strike, c.option_type)))
 
 
+def _require_complete_positions(selected: Sequence[ChainContract], *, expected: int, message: str) -> None:
+    # A chain position is a strike, not an individual CE/PE record. Both
+    # option types may legitimately exist at each selected strike.
+    if len({c.strike for c in selected}) != expected:
+        raise ValueError(message)
+
+
 def select_box_stock(contracts: Sequence[ChainContract], *, atm: float) -> tuple[ChainContract, ...]:
     """NIFTY-50 stock Box universe: exactly five positions below and five above ATM."""
     if not contracts or contracts[0].instrument_class != "STOCK":
         raise ValueError("Box stock selection requires stock option contracts")
     selected = _select_side_positions(contracts, atm=atm, positions_below=5, positions_above=5)
-    if len(selected) != 10:
-        raise ValueError("historical Box stock chain is incomplete: five positions are required on each side")
+    _require_complete_positions(selected, expected=10,
+                                message="historical Box stock chain is incomplete: five positions are required on each side")
     return selected
 
 
@@ -103,11 +102,9 @@ def select_box_index(contracts: Sequence[ChainContract], *, atm: float) -> tuple
     """Index Box universe: positions 3 through 15 on each side of ATM."""
     if not contracts or contracts[0].instrument_class != "INDEX":
         raise ValueError("Box index selection requires index option contracts")
-    selected = _select_side_positions(
-        contracts, atm=atm, positions_below=15, positions_above=15, exclude_between=2
-    )
-    if len(selected) != 26:
-        raise ValueError("historical Box index chain is incomplete: positions 3 through 15 are required on both sides")
+    selected = _select_side_positions(contracts, atm=atm, positions_below=15, positions_above=15, exclude_between=2)
+    _require_complete_positions(selected, expected=26,
+                                message="historical Box index chain is incomplete: positions 3 through 15 are required on both sides")
     return selected
 
 
@@ -138,13 +135,10 @@ def pair_by_strike(contracts: Sequence[ChainContract], *, expiry: int,
     by_strike = {c.strike: c for c in filtered}
     strikes = sorted(by_strike)
     return tuple(SelectedPair(by_strike[lo], by_strike[hi], i, j)
-                 for i, lo in enumerate(strikes) for j, hi in enumerate(strikes)
-                 if i < j)
+                 for i, lo in enumerate(strikes) for j, hi in enumerate(strikes) if i < j)
 
 
-__all__ = [
-    "SUPPORTED_VENUES", "SUPPORTED_INSTRUMENT_CLASSES", "ChainContract",
-    "SelectedPair", "select_box_stock", "select_box_index",
-    "select_synthetic_stock", "select_synthetic_index",
-    "select_calendar_expiries", "pair_by_strike",
-]
+__all__ = ["SUPPORTED_VENUES", "SUPPORTED_INSTRUMENT_CLASSES", "ChainContract",
+           "SelectedPair", "select_box_stock", "select_box_index",
+           "select_synthetic_stock", "select_synthetic_index",
+           "select_calendar_expiries", "pair_by_strike"]
