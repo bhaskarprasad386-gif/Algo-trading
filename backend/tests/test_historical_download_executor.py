@@ -161,28 +161,36 @@ def test_durable_executor_resumes_only_recoverable_chunks(tmp_path):
     assert store.get("job-1").state == "completed"
 
 
-def test_durable_executor_rejects_plan_or_run_mismatch(tmp_path):
-    requests = (HistoricalFetchRequest("x", "i", "1m", 0, 0),)
+def test_durable_executor_recovers_chunk_left_running_after_crash(tmp_path):
+    requests = tuple(HistoricalFetchRequest("x", "i", "1m", n, n) for n in range(2))
+    plan = HistoricalSyncPlan(requests)
     store = HistoricalJobStore(str(tmp_path / "jobs.db"))
-    executor = ResumableHistoricalExecutor(FakeService(), sleep=lambda _: None)
-    executor.run_durable(object(), HistoricalSyncPlan(requests), job_store=store, job_id="job-1", run_id="run-1")
+    fingerprint = store.fingerprint(tuple(
+        {
+            "source": request.source,
+            "instrument": request.instrument,
+            "timeframe": request.timeframe,
+            "start_ns": request.start_ns,
+            "end_ns": request.end_ns,
+        }
+        for request in requests
+    ))
+    store.create(job_id="job-1", run_id="run-1", plan_fingerprint=fingerprint, total_chunks=2)
+    store.start_chunk("job-1", 0)
+    store.close()
 
-    try:
-        executor.run_durable(
-            object(),
-            HistoricalSyncPlan((HistoricalFetchRequest("x", "i", "1m", 1, 1),)),
-            job_store=store,
-            job_id="job-1",
-            run_id="run-1",
-        )
-    except ValueError as exc:
-        assert "does not match" in str(exc)
-    else:
-        raise AssertionError("expected plan mismatch")
+    resumed_store = HistoricalJobStore(str(tmp_path / "jobs.db"))
+    service = FakeService()
+    result = ResumableHistoricalExecutor(
+        service, sleep=lambda _: None, collect_results=False
+    ).run_durable(
+        object(), plan, job_store=resumed_store, job_id="job-1", run_id="run-1", retry_attempts=1
+    )
 
-    try:
-        executor.run_durable(object(), HistoricalSyncPlan(requests), job_store=store, job_id="job-1", run_id="run-2")
-    except ValueError as exc:
-        assert "does not match" in str(exc)
-    else:
-        raise AssertionError("expected run mismatch")
+    assert result.failed_request_index is None
+    assert result.completed_chunks == 2
+    assert service.calls == 2
+    assert resumed_store.pending_indices("job-1") == ()
+    assert resumed_store.get("job-1").state == "completed"
+    assert resumed_store.chunk_state("job-1", 0)[0] == "completed"
+    assert resumed_store.chunk_state("job-1", 0)[1] == 2
