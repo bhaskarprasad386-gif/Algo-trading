@@ -98,3 +98,56 @@ def test_prepare_is_empty_after_all_expected_timestamps_are_stored(tmp_path):
         mode="BOTH",
     )
     assert plan.requests == ()
+
+
+def test_queue_uses_exact_current_contract_before_and_after_expiry(tmp_path):
+    catalog = ContractMasterCatalog(tmp_path / "contracts.db")
+    catalog.upsert_snapshot(date(2026, 1, 1), [
+        ContractRecord("NFO", "SBINJAN", "101", date(2026, 1, 29), "STOCK_FUTURE", "SBIN", 750),
+        ContractRecord("NFO", "SBINFEB", "102", date(2026, 2, 26), "STOCK_FUTURE", "SBIN", 750),
+        ContractRecord("NFO", "SBINMAR", "103", date(2026, 3, 26), "STOCK_FUTURE", "SBIN", 750),
+    ])
+
+    queue = build_rollover_download_queue(
+        catalog=catalog,
+        spot_instrument="NSE:3045:SBIN",
+        exchange="NFO",
+        underlying="SBIN",
+        start=datetime(2026, 1, 29, 9, 15, tzinfo=timezone.utc),
+        end=datetime(2026, 1, 30, 9, 15, tzinfo=timezone.utc),
+        timeframe="1m",
+        mode="CURRENT",
+    )
+
+    assert [item.request.instrument for item in queue.futures] == [
+        "NFO:101:SBINJAN", "NFO:102:SBINFEB"
+    ]
+    assert queue.futures[0].segment.end == date(2026, 1, 29)
+    assert queue.futures[1].segment.start == date(2026, 1, 30)
+    assert queue.futures[0].request.end_ns < queue.futures[1].request.start_ns
+
+
+def test_both_mode_keeps_current_and_near_rollover_legs_independent(tmp_path):
+    catalog = ContractMasterCatalog(tmp_path / "contracts.db")
+    catalog.upsert_snapshot(date(2026, 1, 1), [
+        ContractRecord("NFO", "SBINJAN", "101", date(2026, 1, 29), "STOCK_FUTURE", "SBIN", 750),
+        ContractRecord("NFO", "SBINFEB", "102", date(2026, 2, 26), "STOCK_FUTURE", "SBIN", 750),
+        ContractRecord("NFO", "SBINMAR", "103", date(2026, 3, 26), "STOCK_FUTURE", "SBIN", 750),
+    ])
+
+    queue = build_rollover_download_queue(
+        catalog=catalog,
+        spot_instrument="NSE:3045:SBIN",
+        exchange="NFO",
+        underlying="SBIN",
+        start=datetime(2026, 1, 29, 9, 15, tzinfo=timezone.utc),
+        end=datetime(2026, 1, 30, 9, 15, tzinfo=timezone.utc),
+        timeframe="1m",
+        mode="BOTH",
+    )
+
+    assert [item.request.instrument for item in queue.futures] == [
+        "NFO:101:SBINJAN", "NFO:102:SBINFEB",
+        "NFO:102:SBINFEB", "NFO:103:SBINMAR",
+    ]
+    assert [item.segment.future.token for item in queue.futures] == ["101", "102", "102", "103"]
