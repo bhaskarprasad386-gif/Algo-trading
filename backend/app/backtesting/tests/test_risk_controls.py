@@ -1,8 +1,8 @@
 import pytest
 
-from app.backtesting.execution import ExecutionSide, SimFill
+from app.backtesting.execution import ExecutionSide, SimFill, SimOrder
 from app.backtesting.portfolio import Portfolio, RiskConfig, RiskViolation
-from app.backtesting.risk_controls import enforce_market_risk, evaluate_market_risk
+from app.backtesting.risk_controls import enforce_market_risk, evaluate_market_risk, order_reduces_position_risk
 
 
 def fill(order_id, instrument, side, quantity, price, fee=0.0):
@@ -46,3 +46,24 @@ def test_market_risk_uses_current_marks_for_leverage_and_notional():
     assert state.leverage == pytest.approx(1.0)
     with pytest.raises(RiskViolation, match="max gross notional"):
         enforce_market_risk(p, {"X": 250.01})
+
+
+def test_risk_reducing_order_is_allowed_to_unwind_long_position():
+    p = Portfolio(100_000)
+    p.apply_fill(fill("open", "X", ExecutionSide.BUY, 10, 100))
+    assert order_reduces_position_risk(p, SimOrder("close", "X", ExecutionSide.SELL, 5)) is True
+    assert order_reduces_position_risk(p, SimOrder("add", "X", ExecutionSide.BUY, 5)) is False
+
+
+def test_risk_reducing_order_is_allowed_to_unwind_short_position():
+    p = Portfolio(100_000)
+    p.apply_fill(fill("open", "X", ExecutionSide.SELL, 10, 100))
+    assert order_reduces_position_risk(p, SimOrder("close", "X", ExecutionSide.BUY, 5)) is True
+    assert order_reduces_position_risk(p, SimOrder("add", "X", ExecutionSide.SELL, 5)) is False
+
+
+def test_order_that_reverses_position_is_not_classified_as_reducing():
+    p = Portfolio(100_000)
+    p.apply_fill(fill("open", "X", ExecutionSide.BUY, 10, 100))
+    assert order_reduces_position_risk(p, SimOrder("reverse", "X", ExecutionSide.SELL, 11)) is False
+    assert order_reduces_position_risk(p, SimOrder("flat", "X", ExecutionSide.SELL, 10)) is True
