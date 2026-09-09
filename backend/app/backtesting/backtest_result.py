@@ -21,6 +21,9 @@ class PayoffSnapshot:
     max_profit: float | None
     max_loss: float | None
     break_even_points: tuple[float, ...]
+    # Keep the actual legs with the snapshot so callers can audit which
+    # contracts produced the graph; this does not duplicate the full ledger.
+    legs: tuple[PayoffLeg, ...] = ()
 
 
 class BacktestRunWriter:
@@ -60,6 +63,7 @@ class BacktestRunWriter:
             max_profit=summary["max_profit"],
             max_loss=summary["max_loss"],
             break_even_points=tuple(summary["break_even_points"]),
+            legs=tuple(legs),
         )
         self.record_event(
             sequence,
@@ -71,6 +75,12 @@ class BacktestRunWriter:
                 "max_profit": snapshot.max_profit,
                 "max_loss": snapshot.max_loss,
                 "break_even_points": list(snapshot.break_even_points),
+                "legs": [
+                    {"kind": leg.kind, "side": leg.side, "strike": leg.strike,
+                     "entry_price": leg.entry_price, "quantity": leg.quantity,
+                     "multiplier": leg.multiplier}
+                    for leg in snapshot.legs
+                ],
             },
         )
         return snapshot
