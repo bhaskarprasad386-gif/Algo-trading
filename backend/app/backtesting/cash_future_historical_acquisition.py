@@ -136,9 +136,9 @@ class CashFutureHistoricalAcquisitionService:
         """Download missing chunks and re-plan bounded gaps until coverage stabilizes.
 
         ``progress`` contains a coverage snapshot before acquisition and after every
-        completed repair pass. ``on_progress`` emits the same RAM-safe information
-        synchronously, allowing Android/server UIs to render progress during long jobs
-        without retaining raw bars or executor results.
+        completed repair pass. ``on_progress`` emits RAM-safe information synchronously,
+        allowing Android/server UIs to render progress during long jobs without retaining
+        raw bars or executor results.
         """
         if max_repair_passes < 1:
             raise ValueError("max_repair_passes must be positive")
@@ -194,15 +194,15 @@ class CashFutureHistoricalAcquisitionService:
                     future_sessions=future_sessions,
                 )
             )
-            if on_progress is not None:
-                on_progress(CashFutureAcquisitionProgress(
-                    pass_index,
-                    total_completed,
-                    len(total_skipped),
-                    len(plan.requests),
-                    progress[-1],
-                ))
             if execution.failed_request_index is not None:
+                if on_progress is not None:
+                    on_progress(CashFutureAcquisitionProgress(
+                        pass_index,
+                        total_completed,
+                        len(total_skipped),
+                        len(plan.requests),
+                        progress[-1],
+                    ))
                 break
             _, next_plan = self.prepare(
                 spot_instrument=spot_instrument,
@@ -216,7 +216,16 @@ class CashFutureHistoricalAcquisitionService:
                 mode=mode,
                 source=source,
             )
-            if len(next_plan.requests) >= len(plan.requests):
+            pending_chunks = len(next_plan.requests)
+            if on_progress is not None:
+                on_progress(CashFutureAcquisitionProgress(
+                    pass_index,
+                    total_completed,
+                    len(total_skipped),
+                    pending_chunks,
+                    progress[-1],
+                ))
+            if pending_chunks >= len(plan.requests):
                 plan = next_plan
                 break
             plan = next_plan
