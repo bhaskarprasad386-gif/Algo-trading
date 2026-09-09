@@ -96,6 +96,28 @@ def test_acquisition_exposes_only_coverage_snapshots_not_raw_download_results(tm
     assert result.execution.results == ()
 
 
+def test_progress_callback_emits_initial_and_repair_snapshots_without_raw_rows(tmp_path):
+    service, _, _ = _service(tmp_path)
+    session = _window()
+    events = []
+    result = service.acquire(
+        spot_instrument="NSE:3045:SBIN", exchange="NFO", underlying="SBIN",
+        start=datetime(2026, 1, 29, tzinfo=timezone.utc),
+        end=datetime(2026, 1, 29, 0, 3, tzinfo=timezone.utc),
+        spot_sessions=(session,),
+        future_sessions={"NFO:101:SBINJAN": (session,), "NFO:102:SBINFEB": (session,)},
+        timeframe="1m", mode="BOTH", retry_attempts=1,
+        on_progress=events.append,
+    )
+
+    assert len(events) == len(result.progress)
+    assert events[0].pass_index == 0
+    assert events[0].completed_chunks == 0
+    assert events[-1].coverage.complete
+    assert events[-1].pending_chunks == 1 or events[-1].pending_chunks == 0
+    assert not hasattr(events[-1], "results")
+
+
 def test_bounded_repair_stops_when_source_makes_no_progress(tmp_path):
     source = StalledHistoricalSource()
     service, history, _ = _service(tmp_path, source)
