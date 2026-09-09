@@ -30,16 +30,7 @@ def test_catalog_replay_joins_only_exact_complete_timestamps():
         HistoricalRecord("test", "NFO:FUT", "1m", 1, {"bid": 109, "ask": 110}),
         HistoricalRecord("test", "NFO:FUT", "1m", 3, {"bid": 111, "ask": 112}),
     ])
-
-    events = list(HistoricalCatalogEventReplay(catalog).events(
-        (
-            CatalogReplayLeg("cash_future", "test", "NSE:ABC", "1m"),
-            CatalogReplayLeg("future", "test", "NFO:FUT", "1m"),
-        ),
-        start_ns=1,
-        end_ns=3,
-    ))
-
+    events = list(HistoricalCatalogEventReplay(catalog).events((CatalogReplayLeg("cash_future", "test", "NSE:ABC", "1m"), CatalogReplayLeg("future", "test", "NFO:FUT", "1m")), start_ns=1, end_ns=3))
     assert [event["timestamp_ns"] for event in events] == [1]
     assert events[0]["cash_future"]["ask"] == 100
     assert events[0]["future"]["bid"] == 109
@@ -47,38 +38,17 @@ def test_catalog_replay_joins_only_exact_complete_timestamps():
 
 def test_catalog_replay_never_fabricates_missing_leg():
     catalog = HistoricalCatalog()
-    catalog.ingest([
-        HistoricalRecord("test", "A", "ms", 10, {"price": 10}),
-        HistoricalRecord("test", "A", "ms", 20, {"price": 20}),
-        HistoricalRecord("test", "B", "ms", 10, {"price": 30}),
-    ])
-
-    events = list(HistoricalCatalogEventReplay(catalog).events(
-        (
-            CatalogReplayLeg("a", "test", "A", "ms"),
-            CatalogReplayLeg("b", "test", "B", "ms"),
-        ),
-        start_ns=10,
-        end_ns=20,
-    ))
-
+    catalog.ingest([HistoricalRecord("test", "A", "ms", 10, {"price": 10}), HistoricalRecord("test", "A", "ms", 20, {"price": 20}), HistoricalRecord("test", "B", "ms", 10, {"price": 30})])
+    events = list(HistoricalCatalogEventReplay(catalog).events((CatalogReplayLeg("a", "test", "A", "ms"), CatalogReplayLeg("b", "test", "B", "ms")), start_ns=10, end_ns=20))
     assert [event["timestamp_ns"] for event in events] == [10]
     assert all(event["timestamp_ns"] != 20 for event in events)
 
 
 def test_catalog_replay_rejects_duplicate_timestamp_per_leg():
     catalog = HistoricalCatalog()
-    catalog.ingest([
-        HistoricalRecord("test", "A", "ms", 10, {"price": 10}, sequence=1),
-        HistoricalRecord("test", "A", "ms", 10, {"price": 11}, sequence=2),
-    ])
-
+    catalog.ingest([HistoricalRecord("test", "A", "ms", 10, {"price": 10}, sequence=1), HistoricalRecord("test", "A", "ms", 10, {"price": 11}, sequence=2)])
     try:
-        list(HistoricalCatalogEventReplay(catalog).events(
-            (CatalogReplayLeg("a", "test", "A", "ms"),),
-            start_ns=10,
-            end_ns=10,
-        ))
+        list(HistoricalCatalogEventReplay(catalog).events((CatalogReplayLeg("a", "test", "A", "ms"),), start_ns=10, end_ns=10))
     except ValueError as exc:
         assert "multiple catalog records" in str(exc)
     else:
@@ -88,21 +58,11 @@ def test_catalog_replay_rejects_duplicate_timestamp_per_leg():
 def test_catalog_to_ledger_e2e_cash_future(tmp_path):
     catalog = HistoricalCatalog()
     catalog.ingest([
-        HistoricalRecord("angel", "ABC-SPOT", "1m", 1, {
-            "timestamp_ns": 1, "underlying": "ABC", "spot_bid": 99, "spot_ask": 100,
-            "future_bid": 110, "future_ask": 111, "expiry": 20260924,
-        }),
-        HistoricalRecord("angel", "ABC-SPOT", "1m", 2, {
-            "timestamp_ns": 2, "underlying": "ABC", "spot_bid": 120, "spot_ask": 121,
-            "future_bid": 90, "future_ask": 91, "expiry": 20260924,
-        }),
+        HistoricalRecord("angel", "ABC-SPOT", "1m", 1, {"timestamp_ns": 1, "underlying": "ABC", "spot_bid": 99, "spot_ask": 100, "future_bid": 110, "future_ask": 111, "expiry": 20260924}),
+        HistoricalRecord("angel", "ABC-SPOT", "1m", 2, {"timestamp_ns": 2, "underlying": "ABC", "spot_bid": 120, "spot_ask": 121, "future_bid": 90, "future_ask": 91, "expiry": 20260924}),
     ])
     ledger, writer = _writer(tmp_path, "catalog-cash-future", "cash-future")
-    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy(
-        "cash-future", catalog,
-        (CatalogReplayLeg("cash_future", "angel", "ABC-SPOT", "1m"),),
-        payoff_prices=(90, 100, 120),
-    )
+    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy("cash-future", catalog, (CatalogReplayLeg("cash_future", "angel", "ABC-SPOT", "1m"),), payoff_prices=(90, 100, 120))
     assert result.completed_trades == 1
     assert result.unresolved_trades == 0
     assert result.payoff is not None and len(result.payoff.legs) == 2
@@ -115,27 +75,13 @@ def test_catalog_to_ledger_e2e_cash_future(tmp_path):
 
 def test_catalog_to_ledger_e2e_synthetic_cash_future(tmp_path):
     catalog = HistoricalCatalog()
-    option_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "strike": 100,
-                "call_bid": 14, "call_ask": 15, "put_bid": 5, "put_ask": 6, "lot_size": 1}
-    future_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924,
-                "bid": 120, "ask": 121, "lot_size": 1}
+    option_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "strike": 100, "call_bid": 14, "call_ask": 15, "put_bid": 5, "put_ask": 6, "lot_size": 1}
+    future_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "bid": 120, "ask": 121, "lot_size": 1}
     option_2 = {**option_1, "timestamp_ns": 2, "call_bid": 25, "call_ask": 26, "put_bid": 2, "put_ask": 3}
     future_2 = {**future_1, "timestamp_ns": 2, "bid": 90, "ask": 91}
-    catalog.ingest([
-        HistoricalRecord("angel", "ABC-OPT", "1m", 1, option_1),
-        HistoricalRecord("angel", "ABC-OPT", "1m", 2, option_2),
-        HistoricalRecord("angel", "ABC-FUT", "1m", 1, future_1),
-        HistoricalRecord("angel", "ABC-FUT", "1m", 2, future_2),
-    ])
+    catalog.ingest([HistoricalRecord("angel", "ABC-OPT", "1m", 1, option_1), HistoricalRecord("angel", "ABC-OPT", "1m", 2, option_2), HistoricalRecord("angel", "ABC-FUT", "1m", 1, future_1), HistoricalRecord("angel", "ABC-FUT", "1m", 2, future_2)])
     ledger, writer = _writer(tmp_path, "catalog-synthetic", "synthetic-cash-carry")
-    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy(
-        "synthetic-cash-carry", catalog,
-        (
-            CatalogReplayLeg("option", "angel", "ABC-OPT", "1m"),
-            CatalogReplayLeg("future", "angel", "ABC-FUT", "1m"),
-        ),
-        payoff_prices=(90, 100, 110),
-    )
+    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy("synthetic-cash-carry", catalog, (CatalogReplayLeg("option", "angel", "ABC-OPT", "1m"), CatalogReplayLeg("future", "angel", "ABC-FUT", "1m")), payoff_prices=(90, 100, 110))
     assert result.completed_trades == 1
     assert result.unresolved_trades == 0
     assert result.payoff is not None
@@ -146,33 +92,19 @@ def test_catalog_to_ledger_e2e_synthetic_cash_future(tmp_path):
 
 def test_catalog_to_ledger_e2e_calendar_preserves_expiries(tmp_path):
     catalog = HistoricalCatalog()
-    near_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924,
-              "bid": 100, "ask": 100, "lot_size": 1, "strike": 25000, "option_type": "CALL"}
-    far_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20261029,
-             "bid": 120, "ask": 121, "lot_size": 1, "strike": 25000, "option_type": "CALL"}
+    near_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "bid": 100, "ask": 100, "lot_size": 1, "strike": 25000, "option_type": "CALL"}
+    far_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20261029, "bid": 120, "ask": 121, "lot_size": 1, "strike": 25000, "option_type": "CALL"}
     near_2 = {**near_1, "timestamp_ns": 2, "bid": 130, "ask": 131}
     far_2 = {**far_1, "timestamp_ns": 2, "bid": 80, "ask": 90}
-    catalog.ingest([
-        HistoricalRecord("angel", "ABC-NEAR", "1m", 1, near_1),
-        HistoricalRecord("angel", "ABC-NEAR", "1m", 2, near_2),
-        HistoricalRecord("angel", "ABC-FAR", "1m", 1, far_1),
-        HistoricalRecord("angel", "ABC-FAR", "1m", 2, far_2),
-    ])
+    catalog.ingest([HistoricalRecord("angel", "ABC-NEAR", "1m", 1, near_1), HistoricalRecord("angel", "ABC-NEAR", "1m", 2, near_2), HistoricalRecord("angel", "ABC-FAR", "1m", 1, far_1), HistoricalRecord("angel", "ABC-FAR", "1m", 2, far_2)])
     ledger, writer = _writer(tmp_path, "catalog-calendar", "calendar-spread")
-    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy(
-        "calendar-spread", catalog,
-        (
-            CatalogReplayLeg("near", "angel", "ABC-NEAR", "1m"),
-            CatalogReplayLeg("far", "angel", "ABC-FAR", "1m"),
-        ),
-        payoff_prices=(24900, 25000, 25100),
-    )
+    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy("calendar-spread", catalog, (CatalogReplayLeg("near", "angel", "ABC-NEAR", "1m"), CatalogReplayLeg("far", "angel", "ABC-FAR", "1m")), payoff_prices=(24900, 25000, 25100))
     assert result.completed_trades == 1
     assert result.unresolved_trades == 0
     assert result.payoff is not None and len(result.payoff.legs) == 2
     trades = ledger.trades("catalog-calendar")
     assert len(trades) == 1
-    metadata = trades[0].get("metadata") or {}
+    metadata = trades[0]["metadata"] or {}
     assert metadata.get("near_expiry") == 20260924
     assert metadata.get("far_expiry") == 20261029
     assert ledger.run("catalog-calendar")["status"] == "COMPLETED"
@@ -180,27 +112,13 @@ def test_catalog_to_ledger_e2e_calendar_preserves_expiries(tmp_path):
 
 def test_catalog_to_ledger_e2e_box_spread(tmp_path):
     catalog = HistoricalCatalog()
-    low_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "strike": 25000,
-             "call_bid": 20, "call_ask": 30, "put_bid": 20, "put_ask": 30, "lot_size": 1}
-    high_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "strike": 25100,
-              "call_bid": 10, "call_ask": 20, "put_bid": 10, "put_ask": 20, "lot_size": 1}
+    low_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "strike": 25000, "call_bid": 20, "call_ask": 30, "put_bid": 20, "put_ask": 30, "lot_size": 1}
+    high_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "strike": 25100, "call_bid": 10, "call_ask": 20, "put_bid": 10, "put_ask": 20, "lot_size": 1}
     low_2 = {**low_1, "timestamp_ns": 2, "call_bid": 80, "call_ask": 90, "put_bid": 70, "put_ask": 80}
     high_2 = {**high_1, "timestamp_ns": 2, "call_bid": 5, "call_ask": 20, "put_bid": 5, "put_ask": 20}
-    catalog.ingest([
-        HistoricalRecord("angel", "ABC-LOW", "1m", 1, low_1),
-        HistoricalRecord("angel", "ABC-LOW", "1m", 2, low_2),
-        HistoricalRecord("angel", "ABC-HIGH", "1m", 1, high_1),
-        HistoricalRecord("angel", "ABC-HIGH", "1m", 2, high_2),
-    ])
+    catalog.ingest([HistoricalRecord("angel", "ABC-LOW", "1m", 1, low_1), HistoricalRecord("angel", "ABC-LOW", "1m", 2, low_2), HistoricalRecord("angel", "ABC-HIGH", "1m", 1, high_1), HistoricalRecord("angel", "ABC-HIGH", "1m", 2, high_2)])
     ledger, writer = _writer(tmp_path, "catalog-box", "box-spread")
-    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy(
-        "box-spread", catalog,
-        (
-            CatalogReplayLeg("low", "angel", "ABC-LOW", "1m"),
-            CatalogReplayLeg("high", "angel", "ABC-HIGH", "1m"),
-        ),
-        payoff_prices=(24900, 25000, 25100),
-    )
+    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy("box-spread", catalog, (CatalogReplayLeg("low", "angel", "ABC-LOW", "1m"), CatalogReplayLeg("high", "angel", "ABC-HIGH", "1m")), payoff_prices=(24900, 25000, 25100))
     assert result.completed_trades == 1
     assert result.unresolved_trades == 0
     assert result.payoff is not None and len(result.payoff.legs) == 4
@@ -210,18 +128,9 @@ def test_catalog_to_ledger_e2e_box_spread(tmp_path):
 
 def test_catalog_e2e_missing_exit_never_creates_trade_or_pnl(tmp_path):
     catalog = HistoricalCatalog()
-    catalog.ingest([
-        HistoricalRecord("angel", "ABC-SPOT", "1m", 1, {
-            "timestamp_ns": 1, "underlying": "ABC", "spot_bid": 99, "spot_ask": 100,
-            "future_bid": 110, "future_ask": 111, "expiry": 20260924,
-        }),
-    ])
+    catalog.ingest([HistoricalRecord("angel", "ABC-SPOT", "1m", 1, {"timestamp_ns": 1, "underlying": "ABC", "spot_bid": 99, "spot_ask": 100, "future_bid": 110, "future_ask": 111, "expiry": 20260924})])
     ledger, writer = _writer(tmp_path, "catalog-unresolved", "cash-future")
-    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy(
-        "cash-future", catalog,
-        (CatalogReplayLeg("cash_future", "angel", "ABC-SPOT", "1m"),),
-        payoff_prices=(90, 100, 120),
-    )
+    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy("cash-future", catalog, (CatalogReplayLeg("cash_future", "angel", "ABC-SPOT", "1m"),), payoff_prices=(90, 100, 120))
     assert result.completed_trades == 0
     assert result.unresolved_trades == 1
     assert result.realized_pnl == 0
