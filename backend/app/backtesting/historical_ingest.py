@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Protocol
+from typing import Callable, Iterable, Protocol
 
 from .historical_catalog import Gap, HistoricalCatalog, HistoricalRecord
 
@@ -72,6 +72,17 @@ class HistoricalIngestionService:
             raise ValueError("start_ns cannot be negative")
         return HistoricalFetchRequest(source, instrument, timeframe, start_ns, end_ns)
 
+    @staticmethod
+    def _validate_record(record: HistoricalRecord, request: HistoricalFetchRequest) -> None:
+        if (
+            record.source != request.source
+            or record.instrument != request.instrument
+            or record.timeframe != request.timeframe
+        ):
+            raise ValueError("source adapter returned a record outside the requested identity")
+        if not request.start_ns <= record.timestamp_ns <= request.end_ns:
+            raise ValueError("source adapter returned a record outside the requested range")
+
     def sync(
         self,
         source_adapter: HistoricalSource,
@@ -79,17 +90,57 @@ class HistoricalIngestionService:
         *,
         ingested_at_ns: int = 0,
     ) -> HistoricalSyncResult:
-        records = tuple(source_adapter.fetch(request))
-        for record in records:
-            if record.source != request.source or record.instrument != request.instrument or record.timeframe != request.timeframe:
-                raise ValueError("source adapter returned a record outside the requested identity")
-            if not request.start_ns <= record.timestamp_ns <= request.end_ns:
-                raise ValueError("source adapter returned a record outside the requested range")
-        inserted = self.catalog.ingest(records, ingested_at_ns=ingested_at_ns)
+        return self.sync_streaming(
+            source_adapter,
+            request,
+            ingested_at_ns=ingested_at_ns,
+            batch_size=1024,
+        )
+
+    def sync_streaming(
+        self,
+        source_adapter: HistoricalSource,
+        request: HistoricalFetchRequest,
+        *,
+        ingested_at_ns: int = 0,
+        batch_size: int = 1024,
+        on_batch: Callable[[int, int], None] | None = None,
+    ) -> HistoricalSyncResult:
+        """Consume provider records in bounded batches without retaining the full range.
+
+        ``on_batch(inserted_total, fetched_total)`` is optional and receives only
+        scalar progress, never raw records. Each accepted batch is durably
+        committed by ``HistoricalCatalog.ingest`` before the next batch is read.
+        """
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        if ingested_at_ns < 0:
+            raise ValueError("ingested_at_ns cannot be negative")
+
+        inserted_total = 0
+        fetched_total = 0
+        batch: list[HistoricalRecord] = []
+        for record in source_adapter.fetch(request):
+            self._validate_record(record, request)
+            batch.append(record)
+            if len(batch) < batch_size:
+                continue
+            inserted_total += self.catalog.ingest(batch, ingested_at_ns=ingested_at_ns)
+            fetched_total += len(batch)
+            if on_batch is not None:
+                on_batch(inserted_total, fetched_total)
+            batch.clear()
+
+        if batch:
+            inserted_total += self.catalog.ingest(batch, ingested_at_ns=ingested_at_ns)
+            fetched_total += len(batch)
+            if on_batch is not None:
+                on_batch(inserted_total, fetched_total)
+
         return HistoricalSyncResult(
             requested=request,
-            inserted=inserted,
-            fetched=len(records),
+            inserted=inserted_total,
+            fetched=fetched_total,
             final_watermark_ns=self.catalog.watermark(
                 source=request.source,
                 instrument=request.instrument,
