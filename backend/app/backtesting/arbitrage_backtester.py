@@ -1,9 +1,4 @@
-"""Executable multi-leg arbitrage primitives for liquid F&O backtests.
-
-The module is intentionally data-source agnostic.  It consumes executable bid/ask
-quotes and never invents missing ticks.  It supports stock and index F&O through
-instrument metadata rather than a hard-coded symbol list.
-"""
+"""Executable multi-leg arbitrage primitives for liquid F&O backtests."""
 
 from __future__ import annotations
 
@@ -37,6 +32,8 @@ class FutureQuote:
     ask: float
     lot_size: int = 1
     instrument_class: Literal["STOCK", "INDEX"] = "STOCK"
+    volume: int = 0
+    oi: int = 0
 
 
 @dataclass(frozen=True)
@@ -47,14 +44,30 @@ class LiquidityPolicy:
     min_future_volume: int = 0
     min_future_oi: int = 0
 
-    def accepts(self, *, volume: int, oi: int, bid: float, ask: float) -> bool:
-        if volume < self.min_option_volume or oi < self.min_option_oi:
+    @staticmethod
+    def _accepts_quote(*, volume: int, oi: int, bid: float, ask: float,
+                       min_volume: int, min_oi: int, max_spread_pct: float) -> bool:
+        if volume < min_volume or oi < min_oi:
             return False
         if bid < 0 or ask < bid:
             return False
         if bid == 0:
             return ask == 0
-        return ((ask - bid) / bid) * 100.0 <= self.max_spread_pct
+        return ((ask - bid) / bid) * 100.0 <= max_spread_pct
+
+    def accepts(self, *, volume: int, oi: int, bid: float, ask: float) -> bool:
+        return self._accepts_quote(
+            volume=volume, oi=oi, bid=bid, ask=ask,
+            min_volume=self.min_option_volume, min_oi=self.min_option_oi,
+            max_spread_pct=self.max_spread_pct,
+        )
+
+    def accepts_future(self, future: FutureQuote) -> bool:
+        return self._accepts_quote(
+            volume=future.volume, oi=future.oi, bid=future.bid, ask=future.ask,
+            min_volume=self.min_future_volume, min_oi=self.min_future_oi,
+            max_spread_pct=self.max_spread_pct,
+        )
 
 
 @dataclass(frozen=True)
@@ -73,21 +86,12 @@ class ArbitrageOpportunity:
 
 
 class BoxSpreadBacktester:
-    """Evaluate executable long/reverse boxes at one timestamp.
-
-    A long box buys the low-strike call and put and sells the high-strike call
-    and put.  Its expiry payoff is exactly K_high-K_low.  The reverse box has
-    the opposite cash flows.  Bid/ask direction is used for every leg.
-    """
+    """Evaluate executable long/reverse boxes at one timestamp."""
 
     @staticmethod
-    def evaluate(
-        low: OptionQuote,
-        high: OptionQuote,
-        *,
-        direction: Literal["LONG", "SHORT"] = "LONG",
-        fees_per_unit: float = 0.0,
-    ) -> ArbitrageOpportunity | None:
+    def evaluate(low: OptionQuote, high: OptionQuote, *,
+                 direction: Literal["LONG", "SHORT"] = "LONG",
+                 fees_per_unit: float = 0.0) -> ArbitrageOpportunity | None:
         if low.underlying != high.underlying or low.expiry != high.expiry:
             raise ValueError("box legs must share underlying and expiry")
         if not low.strike < high.strike:
@@ -96,7 +100,8 @@ class BoxSpreadBacktester:
             raise ValueError("box legs must share timestamp")
         if low.lot_size != high.lot_size:
             raise ValueError("box legs must share lot size")
-
+        if fees_per_unit < 0:
+            raise ValueError("fees_per_unit must be non-negative")
         width = high.strike - low.strike
         if direction == "LONG":
             debit = low.call_ask + low.put_ask - high.call_bid - high.put_bid
@@ -107,31 +112,18 @@ class BoxSpreadBacktester:
         if edge <= 0:
             return None
         pnl = edge * low.lot_size
-        return ArbitrageOpportunity(
-            "BOX", direction, low.timestamp_ns, low.underlying, low.expiry,
-            low.strike, high.strike, edge, pnl, pnl, width,
-        )
+        return ArbitrageOpportunity("BOX", direction, low.timestamp_ns, low.underlying,
+                                    low.expiry, low.strike, high.strike, edge, pnl, pnl, width)
 
 
 class SyntheticCashCarryBacktester:
-    """Compare executable futures with option-implied synthetic forwards.
-
-    For continuously compounded rate r and time-to-expiry T,
-    F = K + (C-P) * exp(r*T).  Buy-synthetic uses call ask/put bid;
-    sell-synthetic uses call bid/put ask.  This preserves executable spread
-    costs and avoids treating mid prices as fills.
-    """
+    """Compare executable futures with option-implied synthetic forwards."""
 
     @staticmethod
-    def evaluate(
-        option: OptionQuote,
-        future: FutureQuote,
-        *,
-        rate: float = 0.0,
-        time_to_expiry_years: float,
-        fees_per_unit: float = 0.0,
-        direction: Literal["LONG", "SHORT"] = "LONG",
-    ) -> ArbitrageOpportunity | None:
+    def evaluate(option: OptionQuote, future: FutureQuote, *, rate: float = 0.0,
+                 time_to_expiry_years: float, fees_per_unit: float = 0.0,
+                 direction: Literal["LONG", "SHORT"] = "LONG",
+                 liquidity: LiquidityPolicy | None = None) -> ArbitrageOpportunity | None:
         if option.underlying != future.underlying or option.expiry != future.expiry:
             raise ValueError("synthetic legs must share underlying and expiry")
         if option.timestamp_ns != future.timestamp_ns:
@@ -140,6 +132,10 @@ class SyntheticCashCarryBacktester:
             raise ValueError("synthetic legs must share lot size")
         if time_to_expiry_years < 0:
             raise ValueError("time_to_expiry_years must be non-negative")
+        if fees_per_unit < 0:
+            raise ValueError("fees_per_unit must be non-negative")
+        if liquidity is not None and not liquidity.accepts_future(future):
+            return None
 
         carry = exp(rate * time_to_expiry_years)
         synthetic_buy = option.strike + (option.call_ask - option.put_bid) * carry
@@ -151,14 +147,10 @@ class SyntheticCashCarryBacktester:
         if edge <= 0:
             return None
         pnl = edge * future.lot_size
-        return ArbitrageOpportunity(
-            "SYNTHETIC_CASH_CARRY", direction, future.timestamp_ns,
-            future.underlying, future.expiry, None, None, edge, pnl, pnl,
-            future.bid if direction == "LONG" else future.ask,
-        )
+        return ArbitrageOpportunity("SYNTHETIC_CASH_CARRY", direction, future.timestamp_ns,
+                                    future.underlying, future.expiry, None, None, edge, pnl, pnl,
+                                    future.bid if direction == "LONG" else future.ask)
 
 
-__all__ = [
-    "ArbitrageOpportunity", "BoxSpreadBacktester", "FutureQuote",
-    "LiquidityPolicy", "OptionQuote", "SyntheticCashCarryBacktester",
-]
+__all__ = ["ArbitrageOpportunity", "BoxSpreadBacktester", "FutureQuote", "LiquidityPolicy",
+           "OptionQuote", "SyntheticCashCarryBacktester"]
