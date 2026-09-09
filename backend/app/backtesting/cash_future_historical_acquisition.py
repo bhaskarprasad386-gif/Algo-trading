@@ -9,6 +9,7 @@ from typing import Callable
 from .cash_future_data_coverage import CashFutureDataCoverageAudit, CashFutureDataCoverageReport
 from .cash_future_download_queue import CashFutureDownloadQueue, build_rollover_download_queue
 from .cash_future_gap_download import CashFutureGapDownloadPlanner
+from .contract_master import ContractMasterCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_ingest import HistoricalIngestionService, HistoricalSource
 from .historical_sync import HistoricalSyncPlan
@@ -32,6 +33,7 @@ class CashFutureHistoricalAcquisitionService:
         self,
         ingestion: HistoricalIngestionService,
         source: HistoricalSource,
+        contract_master: ContractMasterCatalog,
         *,
         interval_ns: int,
         max_request_ns: int,
@@ -39,6 +41,7 @@ class CashFutureHistoricalAcquisitionService:
     ) -> None:
         self.ingestion = ingestion
         self.source = source
+        self.contract_master = contract_master
         self.planner = CashFutureGapDownloadPlanner(
             interval_ns=interval_ns,
             max_request_ns=max_request_ns,
@@ -66,7 +69,7 @@ class CashFutureHistoricalAcquisitionService:
         source: str = "angelone",
     ) -> tuple[CashFutureDownloadQueue, HistoricalSyncPlan]:
         queue = build_rollover_download_queue(
-            catalog=self.ingestion.catalog,
+            catalog=self.contract_master,
             spot_instrument=spot_instrument,
             exchange=exchange,
             underlying=underlying,
