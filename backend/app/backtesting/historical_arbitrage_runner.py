@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping
 
 from .backtest_result import BacktestRunWriter
-from .result_ledger import BacktestEvent, BacktestTrade, EquityPoint
+from .result_ledger import BacktestTrade, EquityPoint
 
 
 @dataclass(frozen=True)
@@ -69,13 +69,17 @@ class HistoricalArbitrageRunner:
         self.writer = writer
         self._open: dict[str, OpenPosition] = {}
         self._sequence = 0
+        self._audit_sequence = 0
         self._realized_pnl = 0.0
-        self._peak_equity = 0.0
         self.completed = 0
 
     @property
     def open_positions(self) -> tuple[OpenPosition, ...]:
         return tuple(self._open.values())
+
+    def _audit(self, timestamp_ns: int, event_type: str, payload: Mapping[str, Any]) -> None:
+        self._audit_sequence += 1
+        self.writer.record_event(self._audit_sequence, timestamp_ns, event_type, payload)
 
     def replay(
         self,
@@ -130,13 +134,17 @@ class HistoricalArbitrageRunner:
                     self._realized_pnl += net_pnl
                     self.completed += 1
                     del self._open[trade_id]
+                    self._audit(
+                        execution.timestamp_ns,
+                        "POSITION_CLOSED",
+                        {"trade_id": trade_id, "net_pnl": net_pnl},
+                    )
 
                 for position in entry_selector(event):
                     if position.trade_id in self._open:
                         raise ValueError(f"duplicate open trade: {position.trade_id}")
                     self._open[position.trade_id] = position
-                    self.writer.record_event(
-                        self._sequence,
+                    self._audit(
                         position.timestamp_ns,
                         "POSITION_OPENED",
                         {
@@ -155,9 +163,8 @@ class HistoricalArbitrageRunner:
                     if point is not None:
                         self.writer.record_equity(point)
 
-            for position in self._open.values():
-                self.writer.record_event(
-                    self._sequence + 1,
+            for position in tuple(self._open.values()):
+                self._audit(
                     position.timestamp_ns,
                     "UNRESOLVED_POSITION",
                     {
