@@ -166,7 +166,12 @@ class Portfolio:
         projected_margin = projected_gross * cfg.initial_margin_rate
         own_reservation = self._reserved_margin.get(fill.order_id, 0.0)
         other_reservations = max(0.0, self.reserved_margin - own_reservation)
-        if projected_margin > equity - other_reservations + 1e-9:
+        reduces_position_risk = (
+            old.quantity != 0
+            and abs(new_qty) < abs(old.quantity)
+            and (old.quantity * new_qty >= 0 or new_qty == 0)
+        )
+        if not reduces_position_risk and projected_margin > equity - other_reservations + 1e-9:
             raise RiskViolation("insufficient available margin")
         if cfg.max_leverage is not None and equity > 0 and projected_gross / equity > cfg.max_leverage:
             raise RiskViolation("max leverage exceeded")
