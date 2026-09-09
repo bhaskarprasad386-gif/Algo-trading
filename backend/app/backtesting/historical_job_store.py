@@ -33,6 +33,7 @@ class HistoricalJobStore:
         self.path = path
         self._db = sqlite3.connect(path)
         self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA foreign_keys=ON")
         self._db.execute("""CREATE TABLE IF NOT EXISTS historical_jobs (
             job_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, plan_fingerprint TEXT NOT NULL,
             state TEXT NOT NULL, total_chunks INTEGER NOT NULL, completed_chunks INTEGER NOT NULL DEFAULT 0,
@@ -81,7 +82,27 @@ class HistoricalJobStore:
             raise KeyError(job_id)
         return HistoricalJob(*row)
 
+    def _require_chunk(self, job_id: str, chunk_index: int) -> None:
+        if chunk_index < 0:
+            raise ValueError("chunk_index cannot be negative")
+        exists = self._db.execute(
+            "SELECT 1 FROM historical_job_chunks WHERE job_id=? AND chunk_index=?",
+            (job_id, chunk_index),
+        ).fetchone()
+        if exists is None:
+            raise KeyError(f"unknown chunk {chunk_index} for job {job_id}")
+
+    def chunk_state(self, job_id: str, chunk_index: int) -> tuple[str, int, str | None]:
+        self._require_chunk(job_id, chunk_index)
+        row = self._db.execute(
+            "SELECT state, attempts, error FROM historical_job_chunks WHERE job_id=? AND chunk_index=?",
+            (job_id, chunk_index),
+        ).fetchone()
+        assert row is not None
+        return str(row[0]), int(row[1]), row[2]
+
     def pending_indices(self, job_id: str) -> tuple[int, ...]:
+        self.get(job_id)
         rows = self._db.execute(
             "SELECT chunk_index FROM historical_job_chunks WHERE job_id=? AND state IN ('pending','recoverable') ORDER BY chunk_index",
             (job_id,),
@@ -89,6 +110,11 @@ class HistoricalJobStore:
         return tuple(int(row[0]) for row in rows)
 
     def start_chunk(self, job_id: str, chunk_index: int) -> None:
+        self.get(job_id)
+        self._require_chunk(job_id, chunk_index)
+        state, _, _ = self.chunk_state(job_id, chunk_index)
+        if state not in {"pending", "recoverable"}:
+            raise ValueError(f"chunk {chunk_index} cannot start from state {state}")
         self._db.execute(
             "UPDATE historical_job_chunks SET state='running', attempts=attempts+1, error=NULL WHERE job_id=? AND chunk_index=?",
             (job_id, chunk_index),
@@ -97,29 +123,51 @@ class HistoricalJobStore:
         self._db.commit()
 
     def complete_chunk(self, job_id: str, chunk_index: int, *, skipped: bool = False) -> None:
-        state = "skipped" if skipped else "completed"
+        self.get(job_id)
+        self._require_chunk(job_id, chunk_index)
+        state, _, _ = self.chunk_state(job_id, chunk_index)
+        if state not in {"running", "pending", "recoverable"}:
+            raise ValueError(f"chunk {chunk_index} cannot complete from state {state}")
+        next_state = "skipped" if skipped else "completed"
         self._db.execute(
             "UPDATE historical_job_chunks SET state=?, error=NULL WHERE job_id=? AND chunk_index=?",
-            (state, job_id, chunk_index),
+            (next_state, job_id, chunk_index),
         )
         self._refresh_counts(job_id)
 
     def fail_chunk(self, job_id: str, chunk_index: int, error: str, *, recoverable: bool = True) -> None:
-        state = "recoverable" if recoverable else "failed"
+        self.get(job_id)
+        self._require_chunk(job_id, chunk_index)
+        if not str(error).strip():
+            raise ValueError("error is required")
+        state, _, _ = self.chunk_state(job_id, chunk_index)
+        if state not in {"running", "pending", "recoverable"}:
+            raise ValueError(f"chunk {chunk_index} cannot fail from state {state}")
+        next_state = "recoverable" if recoverable else "failed"
         self._db.execute(
             "UPDATE historical_job_chunks SET state=?, error=? WHERE job_id=? AND chunk_index=?",
-            (state, error, job_id, chunk_index),
+            (next_state, error, job_id, chunk_index),
         )
         self._db.execute(
             "UPDATE historical_jobs SET state=?, failed_chunk=?, error=? WHERE job_id=?",
-            (state, chunk_index, error, job_id),
+            (next_state, chunk_index, error, job_id),
         )
         self._db.commit()
 
     def finish(self, job_id: str) -> HistoricalJob:
+        self.get(job_id)
         self._refresh_counts(job_id)
         pending = self.pending_indices(job_id)
-        state = "completed" if not pending else "progress"
+        terminal_failures = self._db.execute(
+            "SELECT 1 FROM historical_job_chunks WHERE job_id=? AND state IN ('failed','running') LIMIT 1",
+            (job_id,),
+        ).fetchone()
+        if terminal_failures is not None:
+            state = "failed"
+        elif pending:
+            state = "progress"
+        else:
+            state = "completed"
         self._db.execute("UPDATE historical_jobs SET state=? WHERE job_id=?", (state, job_id))
         self._db.commit()
         return self.get(job_id)
