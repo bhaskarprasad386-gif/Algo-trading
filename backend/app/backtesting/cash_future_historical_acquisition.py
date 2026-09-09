@@ -31,12 +31,14 @@ class CashFutureHistoricalAcquisitionService:
     def __init__(
         self,
         ingestion: HistoricalIngestionService,
+        source: HistoricalSource,
         *,
         interval_ns: int,
         max_request_ns: int,
         sleep: Callable[[float], None] | None = None,
     ) -> None:
         self.ingestion = ingestion
+        self.source = source
         self.planner = CashFutureGapDownloadPlanner(
             interval_ns=interval_ns,
             max_request_ns=max_request_ns,
@@ -111,7 +113,7 @@ class CashFutureHistoricalAcquisitionService:
             source=source,
         )
         execution = self.executor.run(
-            _SourceAdapter(self.ingestion),
+            self.source,
             plan,
             retry_attempts=retry_attempts,
             retry_delay_seconds=retry_delay_seconds,
@@ -124,16 +126,6 @@ class CashFutureHistoricalAcquisitionService:
             future_sessions=future_sessions,
         )
         return CashFutureAcquisitionResult(queue, plan, execution, coverage)
-
-
-class _SourceAdapter:
-    """Bridge the ingestion service to the executor's HistoricalSource contract."""
-
-    def __init__(self, ingestion: HistoricalIngestionService) -> None:
-        self.ingestion = ingestion
-
-    def fetch(self, request):
-        raise RuntimeError("provider adapter must be supplied to acquire_from_source")
 
 
 __all__ = ["CashFutureAcquisitionResult", "CashFutureHistoricalAcquisitionService"]
