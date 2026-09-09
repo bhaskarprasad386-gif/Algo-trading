@@ -102,7 +102,12 @@ class CashFutureHistoricalAcquisitionService:
         source: str = "angelone",
         retry_attempts: int = 3,
         retry_delay_seconds: float = 1.0,
+        max_repair_passes: int = 3,
     ) -> CashFutureAcquisitionResult:
+        """Download missing chunks and re-plan bounded gaps until coverage stabilizes."""
+        if max_repair_passes < 1:
+            raise ValueError("max_repair_passes must be positive")
+
         queue, plan = self.prepare(
             spot_instrument=spot_instrument,
             exchange=exchange,
@@ -115,12 +120,46 @@ class CashFutureHistoricalAcquisitionService:
             mode=mode,
             source=source,
         )
-        execution = self.executor.run(
-            self.source,
-            plan,
-            retry_attempts=retry_attempts,
-            retry_delay_seconds=retry_delay_seconds,
-        )
+        total_completed = 0
+        total_skipped: list[int] = []
+        final_execution = DownloadExecutionResult(())
+
+        for _ in range(max_repair_passes):
+            if not plan.requests:
+                break
+            execution = self.executor.run(
+                self.source,
+                plan,
+                retry_attempts=retry_attempts,
+                retry_delay_seconds=retry_delay_seconds,
+            )
+            total_completed += execution.completed_chunks
+            total_skipped.extend(execution.skipped_request_indices)
+            final_execution = DownloadExecutionResult(
+                (),
+                execution.failed_request_index,
+                tuple(total_skipped),
+                completed_count=total_completed,
+            )
+            if execution.failed_request_index is not None:
+                break
+            _, next_plan = self.prepare(
+                spot_instrument=spot_instrument,
+                exchange=exchange,
+                underlying=underlying,
+                start=start,
+                end=end,
+                spot_sessions=spot_sessions,
+                future_sessions=future_sessions,
+                timeframe=timeframe,
+                mode=mode,
+                source=source,
+            )
+            if len(next_plan.requests) >= len(plan.requests):
+                plan = next_plan
+                break
+            plan = next_plan
+
         coverage = self.coverage.audit(
             queue=queue,
             mode=mode,
@@ -128,7 +167,7 @@ class CashFutureHistoricalAcquisitionService:
             spot_sessions=spot_sessions,
             future_sessions=future_sessions,
         )
-        return CashFutureAcquisitionResult(queue, plan, execution, coverage)
+        return CashFutureAcquisitionResult(queue, plan, final_execution, coverage)
 
 
 __all__ = ["CashFutureAcquisitionResult", "CashFutureHistoricalAcquisitionService"]
