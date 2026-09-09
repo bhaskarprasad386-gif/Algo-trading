@@ -46,3 +46,27 @@ def test_service_persists_trade_and_payoff_without_fabricating_exit(tmp_path):
     assert len(ledger.trades("unified-1")) == 1
     assert len(ledger.events("unified-1")) == 3
     assert ledger.run("unified-1")["status"] == "COMPLETED"
+
+
+def test_run_strategy_routes_through_registered_adapter(tmp_path):
+    ledger, writer = _writer(tmp_path)
+    service = HistoricalArbitrageBacktestService(writer)
+
+    result = service.run_strategy("box-spread", ())
+
+    assert result.run_id == "unified-1"
+    assert result.completed_trades == 0
+    assert result.unresolved_trades == 0
+    assert ledger.run("unified-1")["status"] == "COMPLETED"
+
+
+def test_run_strategy_rejects_unknown_strategy(tmp_path):
+    _, writer = _writer(tmp_path)
+    service = HistoricalArbitrageBacktestService(writer)
+
+    try:
+        service.run_strategy("not-a-strategy", ())
+    except ValueError as exc:
+        assert "unsupported arbitrage strategy" in str(exc)
+    else:
+        raise AssertionError("unknown strategy must be rejected")
