@@ -17,6 +17,17 @@ from .session_gap_planner import SessionWindow
 
 
 @dataclass(frozen=True)
+class CashFutureAcquisitionProgress:
+    """RAM-safe progress event; contains coverage only, never raw historical rows."""
+
+    pass_index: int
+    completed_chunks: int
+    skipped_chunks: int
+    pending_chunks: int
+    coverage: CashFutureDataCoverageReport
+
+
+@dataclass(frozen=True)
 class CashFutureAcquisitionResult:
     """Durable acquisition outcome; raw historical records are never retained here."""
 
@@ -120,12 +131,14 @@ class CashFutureHistoricalAcquisitionService:
         retry_attempts: int = 3,
         retry_delay_seconds: float = 1.0,
         max_repair_passes: int = 3,
+        on_progress: Callable[[CashFutureAcquisitionProgress], None] | None = None,
     ) -> CashFutureAcquisitionResult:
         """Download missing chunks and re-plan bounded gaps until coverage stabilizes.
 
         ``progress`` contains a coverage snapshot before acquisition and after every
-        completed repair pass, so callers can render durable progress without keeping
-        raw bars or executor results in memory.
+        completed repair pass. ``on_progress`` emits the same RAM-safe information
+        synchronously, allowing Android/server UIs to render progress during long jobs
+        without retaining raw bars or executor results.
         """
         if max_repair_passes < 1:
             raise ValueError("max_repair_passes must be positive")
@@ -150,11 +163,13 @@ class CashFutureHistoricalAcquisitionService:
                 future_sessions=future_sessions,
             )
         ]
+        if on_progress is not None:
+            on_progress(CashFutureAcquisitionProgress(0, 0, 0, len(plan.requests), progress[-1]))
         total_completed = 0
         total_skipped: list[int] = []
         final_execution = DownloadExecutionResult(())
 
-        for _ in range(max_repair_passes):
+        for pass_index in range(1, max_repair_passes + 1):
             if not plan.requests:
                 break
             execution = self.executor.run(
@@ -179,6 +194,14 @@ class CashFutureHistoricalAcquisitionService:
                     future_sessions=future_sessions,
                 )
             )
+            if on_progress is not None:
+                on_progress(CashFutureAcquisitionProgress(
+                    pass_index,
+                    total_completed,
+                    len(total_skipped),
+                    len(plan.requests),
+                    progress[-1],
+                ))
             if execution.failed_request_index is not None:
                 break
             _, next_plan = self.prepare(
@@ -204,4 +227,8 @@ class CashFutureHistoricalAcquisitionService:
         )
 
 
-__all__ = ["CashFutureAcquisitionResult", "CashFutureHistoricalAcquisitionService"]
+__all__ = [
+    "CashFutureAcquisitionProgress",
+    "CashFutureAcquisitionResult",
+    "CashFutureHistoricalAcquisitionService",
+]
