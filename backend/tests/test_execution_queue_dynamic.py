@@ -8,12 +8,12 @@ from backend.app.backtesting.execution import (
 )
 
 
-def _buy_order(**kwargs):
+def _buy_order(quantity=10, **kwargs):
     return SimOrder(
         order_id="Q1",
         instrument="NSE:TEST",
         side=ExecutionSide.BUY,
-        quantity=10,
+        quantity=quantity,
         submitted_at_ns=100,
         **kwargs,
     )
