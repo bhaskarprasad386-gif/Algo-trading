@@ -55,14 +55,29 @@ class ContractMasterCatalog:
     def close(self) -> None:
         self._db.close()
 
+    @staticmethod
+    def _rows(snapshot_date: date, records: Iterable[ContractRecord]) -> list[tuple[object, ...]]:
+        return [(snapshot_date.isoformat(), r.exchange, r.symbol, r.token, r.expiry.isoformat(), r.instrument_type, r.underlying, r.lot_size, r.tick_size) for r in records]
+
     def upsert_snapshot(self, snapshot_date: date, records: Iterable[ContractRecord], *, payload_sha256: str | None = None, fetched_at: datetime | None = None) -> int:
-        rows = [(snapshot_date.isoformat(), r.exchange, r.symbol, r.token, r.expiry.isoformat(), r.instrument_type, r.underlying, r.lot_size, r.tick_size) for r in records]
+        rows = self._rows(snapshot_date, records)
         now = (fetched_at or datetime.utcnow()).isoformat(timespec="seconds")
         with self._db:
             self._db.execute("INSERT INTO contract_master_snapshots(snapshot_date,fetched_at,payload_sha256) VALUES(?,?,?) ON CONFLICT(snapshot_date) DO UPDATE SET fetched_at=excluded.fetched_at,payload_sha256=excluded.payload_sha256", (snapshot_date.isoformat(), now, payload_sha256))
             self._db.execute("DELETE FROM derivative_contracts WHERE snapshot_date=?", (snapshot_date.isoformat(),))
             if rows:
                 self._db.executemany("INSERT INTO derivative_contracts(snapshot_date,exchange,symbol,token,expiry,instrument_type,underlying,lot_size,tick_size) VALUES(?,?,?,?,?,?,?,?,?)", rows)
+        return len(rows)
+
+    def merge_snapshot(self, snapshot_date: date, records: Iterable[ContractRecord], *, payload_sha256: str | None = None, fetched_at: datetime | None = None) -> int:
+        """Merge one exchange/instrument segment without deleting other segments in the snapshot."""
+        rows = self._rows(snapshot_date, records)
+        now = (fetched_at or datetime.utcnow()).isoformat(timespec="seconds")
+        with self._db:
+            self._db.execute("INSERT INTO contract_master_snapshots(snapshot_date,fetched_at,payload_sha256) VALUES(?,?,?) ON CONFLICT(snapshot_date) DO UPDATE SET fetched_at=excluded.fetched_at,payload_sha256=excluded.payload_sha256", (snapshot_date.isoformat(), now, payload_sha256))
+            if rows:
+                self._db.executemany("""INSERT INTO derivative_contracts(snapshot_date,exchange,symbol,token,expiry,instrument_type,underlying,lot_size,tick_size)
+                    VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(snapshot_date,exchange,token) DO UPDATE SET symbol=excluded.symbol,expiry=excluded.expiry,instrument_type=excluded.instrument_type,underlying=excluded.underlying,lot_size=excluded.lot_size,tick_size=excluded.tick_size""", rows)
         return len(rows)
 
     def upsert(self, records: Iterable[ContractRecord]) -> int:
