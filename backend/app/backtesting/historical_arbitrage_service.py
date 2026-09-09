@@ -7,6 +7,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 from app.execution.payoff import PayoffLeg
 
+from .arbitrage_backtest_suite import build_strategy_adapter
 from .backtest_result import BacktestRunWriter, PayoffSnapshot
 from .historical_arbitrage_runner import ExitExecution, HistoricalArbitrageRunner, OpenPosition
 
@@ -27,11 +28,10 @@ class HistoricalArbitrageBacktestResult:
 
 
 class HistoricalArbitrageBacktestService:
-    """Run any compatible arbitrage adapter through one audited lifecycle.
+    """Run a registered arbitrage strategy through one audited lifecycle.
 
-    Each invocation owns its ``BacktestRunWriter`` and runner. Historical data
-    is consumed as supplied; this service does not interpolate, roll contracts,
-    fabricate timestamps, or fabricate exits.
+    Each invocation owns its runner. Historical data is consumed as supplied;
+    no timestamps, rolls, interpolated prices, or exits are fabricated.
     """
 
     def __init__(self, writer: BacktestRunWriter) -> None:
@@ -69,6 +69,31 @@ class HistoricalArbitrageBacktestService:
             unresolved_trades=len(runner.open_positions),
             realized_pnl=runner._realized_pnl,
             payoff=payoff,
+        )
+
+    def run_strategy(
+        self,
+        strategy_id: str,
+        events: Iterable[Mapping[str, Any]],
+        *,
+        parameters: Mapping[str, Any] | None = None,
+        payoff_legs: tuple[PayoffLeg, ...] = (),
+        payoff_prices: tuple[float, ...] = (),
+        payoff_sequence: int | None = None,
+        payoff_timestamp_ns: int | None = None,
+        equity_selector: Callable[[Mapping[str, Any], float], Any] | None = None,
+    ) -> HistoricalArbitrageBacktestResult:
+        """Build a registered adapter and replay it without strategy fallback."""
+        adapter = build_strategy_adapter(strategy_id, parameters)
+        return self.run(
+            events,
+            entry_selector=adapter.entry,
+            exit_selector=adapter.exit,
+            payoff_legs=payoff_legs,
+            payoff_prices=payoff_prices,
+            payoff_sequence=payoff_sequence,
+            payoff_timestamp_ns=payoff_timestamp_ns,
+            equity_selector=equity_selector,
         )
 
 
