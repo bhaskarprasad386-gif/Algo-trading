@@ -9,12 +9,19 @@ from app.backtesting.historical_ingest import HistoricalFetchRequest, Historical
 class FakeService:
     calls: int = 0
     failures: int = 0
+    batch_callbacks: int = 0
 
-    def sync(self, source, request):
+    def sync_streaming(self, source, request, *, batch_size=1024, on_batch=None):
         self.calls += 1
         if self.calls <= self.failures:
             raise RuntimeError("temporary provider failure")
+        if on_batch is not None:
+            self.batch_callbacks += 1
+            on_batch(1, 1)
         return HistoricalSyncResult(request, inserted=1, fetched=1, final_watermark_ns=request.end_ns)
+
+    def sync(self, source, request):
+        return self.sync_streaming(source, request)
 
 
 @dataclass
@@ -22,11 +29,14 @@ class FailOnCallService:
     calls: int = 0
     fail_on_call: int = 0
 
-    def sync(self, source, request):
+    def sync_streaming(self, source, request, *, batch_size=1024, on_batch=None):
         self.calls += 1
         if self.calls == self.fail_on_call:
             raise RuntimeError("permanent provider failure")
         return HistoricalSyncResult(request, inserted=1, fetched=1, final_watermark_ns=request.end_ns)
+
+    def sync(self, source, request):
+        return self.sync_streaming(source, request)
 
 
 def test_retries_failed_chunk_then_continues():
@@ -104,3 +114,22 @@ def test_bounded_mode_preserves_completed_count_when_later_chunk_fails():
     assert result.failed_request_index == 2
     assert result.completed_chunks == 2
     assert result.results == ()
+
+
+def test_executor_forwards_bounded_batch_progress_without_raw_rows():
+    request = HistoricalFetchRequest("x", "i", "1m", 0, 0)
+    service = FakeService()
+    progress = []
+    result = ResumableHistoricalExecutor(
+        service, sleep=lambda _: None, collect_results=False
+    ).run(
+        object(),
+        HistoricalSyncPlan((request,)),
+        retry_attempts=1,
+        batch_size=7,
+        on_batch=lambda inserted, fetched: progress.append((inserted, fetched)),
+    )
+    assert result.results == ()
+    assert result.completed_chunks == 1
+    assert service.batch_callbacks == 1
+    assert progress == [(1, 1)]
