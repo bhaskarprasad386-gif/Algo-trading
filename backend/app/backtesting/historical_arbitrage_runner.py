@@ -1,10 +1,4 @@
-"""Generic historical entry-to-exit execution for multi-leg arbitrage strategies.
-
-The runner deliberately separates opportunity detection from execution lifecycle:
-entries are opened only from real historical events, exits are accepted only when
-a later event supplies an executable exit, and unresolved positions are audited
-instead of being force-closed with fabricated prices.
-"""
+"""Generic historical entry-to-exit execution for multi-leg arbitrage strategies."""
 
 from __future__ import annotations
 
@@ -40,7 +34,7 @@ class OpenPosition:
 
 @dataclass(frozen=True)
 class ExitExecution:
-    """Actual later quote/fill used to close an open position."""
+    """Later executable strategy result; prices are strategy metrics, not fake fills."""
     timestamp_ns: int
     exit_price: float
     gross_pnl: float
@@ -49,14 +43,14 @@ class ExitExecution:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.timestamp_ns < 0 or self.exit_price < 0:
+        if self.timestamp_ns < 0 or self.exit_price < 0 or self.gross_pnl < 0:
             raise ValueError("invalid historical exit")
         if self.fees < 0 or self.slippage < 0:
             raise ValueError("fees/slippage cannot be negative")
 
 
 class HistoricalArbitrageRunner:
-    """Replay a strategy while persisting each completed trade immediately."""
+    """Replay historical events and persist completed executions incrementally."""
 
     def __init__(self, writer: BacktestRunWriter) -> None:
         self.writer = writer
@@ -69,6 +63,10 @@ class HistoricalArbitrageRunner:
     @property
     def open_positions(self) -> tuple[OpenPosition, ...]:
         return tuple(self._open.values())
+
+    @property
+    def open_positions_count(self) -> int:
+        return len(self._open)
 
     @property
     def realized_pnl(self) -> float:
@@ -105,22 +103,24 @@ class HistoricalArbitrageRunner:
                     net_pnl = execution.gross_pnl - execution.fees - execution.slippage
                     metadata = dict(position.metadata)
                     metadata.update(dict(execution.metadata))
-                    metadata["entry_timestamp_ns"] = position.timestamp_ns
-                    metadata["exit_timestamp_ns"] = execution.timestamp_ns
-                    self.writer.ledger.append_trades(
-                        self.writer.spec.run_id,
-                        [BacktestTrade(
-                            trade_id=position.trade_id, sequence=self._sequence,
-                            timestamp_ns=execution.timestamp_ns, instrument=position.instrument,
-                            side=position.side, quantity=position.quantity,
-                            entry_price=position.entry_price, exit_price=execution.exit_price,
-                            gross_pnl=execution.gross_pnl, fees=execution.fees,
-                            slippage=execution.slippage, net_pnl=net_pnl,
-                            contract=position.contract, expiry=position.expiry,
-                            strike=position.strike, leg=position.leg,
-                            data_resolution=position.data_resolution, metadata=metadata,
-                        )],
-                    )
+                    metadata.update({
+                        "entry_timestamp_ns": position.timestamp_ns,
+                        "exit_timestamp_ns": execution.timestamp_ns,
+                        "pricing_model": "EXECUTABLE_EDGE",
+                        "entry_edge": position.entry_price,
+                        "exit_edge": execution.exit_price,
+                    })
+                    self.writer.ledger.append_trades(self.writer.spec.run_id, [BacktestTrade(
+                        trade_id=position.trade_id, sequence=self._sequence,
+                        timestamp_ns=execution.timestamp_ns, instrument=position.instrument,
+                        side=position.side, quantity=position.quantity,
+                        entry_price=position.entry_price, exit_price=execution.exit_price,
+                        gross_pnl=execution.gross_pnl, fees=execution.fees,
+                        slippage=execution.slippage, net_pnl=net_pnl,
+                        contract=position.contract, expiry=position.expiry,
+                        strike=position.strike, leg=position.leg,
+                        data_resolution=position.data_resolution, metadata=metadata,
+                    )])
                     self._realized_pnl += net_pnl
                     self.completed += 1
                     del self._open[trade_id]
@@ -136,7 +136,6 @@ class HistoricalArbitrageRunner:
                         "entry_price": position.entry_price, "contract": position.contract,
                         "expiry": position.expiry, "strike": position.strike, "leg": position.leg,
                     })
-
                 if equity_selector is not None:
                     point = equity_selector(event, self._realized_pnl)
                     if point is not None:
