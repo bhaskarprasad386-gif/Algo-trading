@@ -24,6 +24,7 @@ class CashFutureAcquisitionResult:
     plan: HistoricalSyncPlan
     execution: DownloadExecutionResult
     coverage: CashFutureDataCoverageReport
+    progress: tuple[CashFutureDataCoverageReport, ...] = ()
 
 
 class CashFutureHistoricalAcquisitionService:
@@ -87,6 +88,22 @@ class CashFutureHistoricalAcquisitionService:
         )
         return queue, plan
 
+    def _audit(
+        self,
+        *,
+        queue: CashFutureDownloadQueue,
+        mode: str,
+        spot_sessions: tuple[SessionWindow, ...],
+        future_sessions: dict[str, tuple[SessionWindow, ...]] | None,
+    ) -> CashFutureDataCoverageReport:
+        return self.coverage.audit(
+            queue=queue,
+            mode=mode,
+            interval_ns=self.interval_ns,
+            spot_sessions=spot_sessions,
+            future_sessions=future_sessions,
+        )
+
     def acquire(
         self,
         *,
@@ -104,7 +121,12 @@ class CashFutureHistoricalAcquisitionService:
         retry_delay_seconds: float = 1.0,
         max_repair_passes: int = 3,
     ) -> CashFutureAcquisitionResult:
-        """Download missing chunks and re-plan bounded gaps until coverage stabilizes."""
+        """Download missing chunks and re-plan bounded gaps until coverage stabilizes.
+
+        ``progress`` contains a coverage snapshot before acquisition and after every
+        completed repair pass, so callers can render durable progress without keeping
+        raw bars or executor results in memory.
+        """
         if max_repair_passes < 1:
             raise ValueError("max_repair_passes must be positive")
 
@@ -120,6 +142,14 @@ class CashFutureHistoricalAcquisitionService:
             mode=mode,
             source=source,
         )
+        progress: list[CashFutureDataCoverageReport] = [
+            self._audit(
+                queue=queue,
+                mode=mode,
+                spot_sessions=spot_sessions,
+                future_sessions=future_sessions,
+            )
+        ]
         total_completed = 0
         total_skipped: list[int] = []
         final_execution = DownloadExecutionResult(())
@@ -141,6 +171,14 @@ class CashFutureHistoricalAcquisitionService:
                 tuple(total_skipped),
                 completed_count=total_completed,
             )
+            progress.append(
+                self._audit(
+                    queue=queue,
+                    mode=mode,
+                    spot_sessions=spot_sessions,
+                    future_sessions=future_sessions,
+                )
+            )
             if execution.failed_request_index is not None:
                 break
             _, next_plan = self.prepare(
@@ -160,14 +198,10 @@ class CashFutureHistoricalAcquisitionService:
                 break
             plan = next_plan
 
-        coverage = self.coverage.audit(
-            queue=queue,
-            mode=mode,
-            interval_ns=self.interval_ns,
-            spot_sessions=spot_sessions,
-            future_sessions=future_sessions,
+        coverage = progress[-1]
+        return CashFutureAcquisitionResult(
+            queue, plan, final_execution, coverage, tuple(progress)
         )
-        return CashFutureAcquisitionResult(queue, plan, final_execution, coverage)
 
 
 __all__ = ["CashFutureAcquisitionResult", "CashFutureHistoricalAcquisitionService"]
