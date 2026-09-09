@@ -18,7 +18,7 @@ def build_liquidation_orders(
     The planner is deterministic and non-mutating. It only emits orders when the
     marked portfolio is in a maintenance-margin call. Positions without a valid
     positive mark are omitted because they cannot be safely priced/executed at the
-    current event. Each generated order strictly reduces the corresponding position.
+    current event.
     """
     state = evaluate_market_risk(portfolio, dict(marks or {}))
     if not state.margin_call:
@@ -53,12 +53,12 @@ def execute_liquidation_orders(
     *,
     books: Mapping[str, object] | None = None,
 ) -> tuple[ExecutionResult, ...]:
-    """Execute forced orders and apply fills atomically, with repeat protection.
+    """Execute forced orders with retry protection and failure isolation.
 
-    Only orders that still reduce the live position are executed. Already-completed
-    liquidation order IDs are ignored, while a partially filled ID is reduced to its
-    outstanding quantity. Portfolio accounting is committed only after execution
-    succeeds; applying multiple fills uses the portfolio's atomic rollback path.
+    Execution and portfolio application are both fail-closed: an execution or
+    accounting exception becomes a rejected result for that order and does not
+    mutate the portfolio. A later order can still be attempted. Partial fills are
+    committed atomically, and a retry is reduced to the still-outstanding quantity.
     """
     observed_marks = dict(marks)
     prior_filled: dict[str, int] = {}
@@ -75,6 +75,7 @@ def execute_liquidation_orders(
         if outstanding == 0:
             results.append(ExecutionResult((), 0, False, "already fully liquidated"))
             continue
+
         effective = SimOrder(
             order_id=order.order_id,
             instrument=order.instrument,
@@ -87,12 +88,28 @@ def execute_liquidation_orders(
             queue_ahead_quantity=order.queue_ahead_quantity,
             time_in_force=order.time_in_force,
         )
-        if books is not None and order.instrument in books:
-            result = simulator.execute_depth(effective, books[order.instrument], timestamp_ns)  # type: ignore[arg-type]
-        else:
-            result = ExecutionResult((simulator.execute(effective, observed_marks[order.instrument], timestamp_ns),), 0, False, None)
+
+        try:
+            if books is not None and order.instrument in books:
+                result = simulator.execute_depth(effective, books[order.instrument], timestamp_ns)  # type: ignore[arg-type]
+            else:
+                mark = observed_marks.get(order.instrument)
+                if not isinstance(mark, (int, float)) or mark <= 0:
+                    results.append(ExecutionResult((), outstanding, True, "missing or invalid liquidation mark"))
+                    continue
+                result = ExecutionResult((simulator.execute(effective, mark, timestamp_ns),), 0, False, None)
+        except Exception as exc:
+            results.append(ExecutionResult((), outstanding, True, f"liquidation execution failed: {exc}"))
+            continue
+
         if result.fills:
-            portfolio.apply_fills_atomic(result.fills, observed_marks)
-            prior_filled[order.order_id] = prior_filled.get(order.order_id, 0) + sum(f.quantity for f in result.fills)
+            try:
+                portfolio.apply_fills_atomic(result.fills, observed_marks)
+            except Exception as exc:
+                results.append(ExecutionResult((), outstanding, True, f"liquidation accounting failed: {exc}"))
+                continue
+            prior_filled[order.order_id] = prior_filled.get(order.order_id, 0) + sum(
+                fill.quantity for fill in result.fills
+            )
         results.append(result)
     return tuple(results)
