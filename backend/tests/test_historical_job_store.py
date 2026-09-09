@@ -79,7 +79,24 @@ def test_recover_running_chunks_after_worker_crash(tmp_path):
     resumed = HistoricalJobStore(path)
     assert resumed.recover_running_chunks("job-1") == (0, 1)
     assert resumed.pending_indices("job-1") == (0, 1, 2)
-    assert resumed.chunk_state("job-1", 0) == ("recoverable", 1, None)
-    assert resumed.chunk_state("job-1", 1) == ("recoverable", 1, None)
+    assert resumed.chunk_state("job-1", 0) == (
+        "recoverable", 1, "recovered after interrupted run"
+    )
+    assert resumed.chunk_state("job-1", 1) == (
+        "recoverable", 1, "recovered after interrupted run"
+    )
     assert resumed.get("job-1").state == "recoverable"
     assert resumed.recover_running_chunks("job-1") == ()
+
+
+def test_recover_running_chunks_never_reopens_completed(tmp_path):
+    store = HistoricalJobStore(str(tmp_path / "jobs.db"))
+    store.create(job_id="job-1", run_id="run-1", plan_fingerprint="fp", total_chunks=2)
+    store.start_chunk("job-1", 0)
+    store.complete_chunk("job-1", 0)
+    store.start_chunk("job-1", 1)
+
+    assert store.recover_running_chunks("job-1") == (1,)
+    assert store.chunk_state("job-1", 0)[0] == "completed"
+    assert store.chunk_state("job-1", 1)[0] == "recoverable"
+    assert store.chunk_state("job-1", 1)[1] == 1
