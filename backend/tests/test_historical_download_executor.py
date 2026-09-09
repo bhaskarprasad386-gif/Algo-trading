@@ -4,6 +4,7 @@ from app.backtesting.historical_download_executor import ResumableHistoricalExec
 from app.backtesting.historical_sync import HistoricalSyncPlan
 from app.backtesting.historical_ingest import HistoricalFetchRequest, HistoricalSyncResult
 from app.backtesting.historical_job_store import HistoricalJobStore
+from app.backtesting.provider_retry import ProviderRetryPolicy
 
 
 @dataclass
@@ -23,6 +24,17 @@ class FakeService:
 
     def sync(self, source, request):
         return self.sync_streaming(source, request)
+
+
+@dataclass
+class TransientService:
+    calls: int = 0
+
+    def sync_streaming(self, source, request, *, batch_size=1024, on_batch=None):
+        self.calls += 1
+        if self.calls == 1:
+            raise TimeoutError("provider timeout")
+        return HistoricalSyncResult(request, inserted=1, fetched=1, final_watermark_ns=request.end_ns)
 
 
 @dataclass
@@ -49,6 +61,35 @@ def test_retries_failed_chunk_then_continues():
     assert result.failed_request_index is None
     assert result.completed_chunks == 3
     assert service.calls == 4
+
+
+def test_policy_retries_transient_failure_without_restarting_chunk_state(tmp_path):
+    request = HistoricalFetchRequest("x", "i", "1m", 0, 0)
+    plan = HistoricalSyncPlan((request,))
+    store = HistoricalJobStore(str(tmp_path / "jobs.db"))
+    service = TransientService()
+    sleeps = []
+    policy = ProviderRetryPolicy(
+        base_delay_seconds=0.25,
+        max_delay_seconds=1.0,
+        jitter_ratio=0,
+        sleeper=lambda seconds: sleeps.append(seconds),
+    )
+
+    result = ResumableHistoricalExecutor(
+        service, sleep=lambda _: None, collect_results=False
+    ).run_durable(
+        object(), plan, job_store=store, job_id="job-1", run_id="run-1",
+        retry_attempts=2, retry_policy=policy,
+    )
+
+    assert result.failed_request_index is None
+    assert result.completed_chunks == 1
+    assert service.calls == 2
+    assert sleeps == [0.25]
+    assert store.chunk_state("job-1", 0)[:2] == ("completed", 2)
+    assert store.pending_indices("job-1") == ()
+    assert store.get("job-1").state == "completed"
 
 
 def test_failure_reports_exact_chunk_and_stops_without_fake_data():
