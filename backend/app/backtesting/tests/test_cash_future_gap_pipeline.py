@@ -2,7 +2,8 @@ import pytest
 
 from app.backtesting.cash_future_data_coverage import CashFutureDataCoverageAudit
 from app.backtesting.cash_future_download_queue import CashFutureDownloadQueue
-from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalFetchRequest, HistoricalRecord
+from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
+from app.backtesting.historical_ingest import HistoricalFetchRequest
 from app.backtesting.session_gap_planner import SessionAwareGapPlanner, SessionWindow
 
 
