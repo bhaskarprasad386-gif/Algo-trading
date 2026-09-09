@@ -29,13 +29,18 @@ class BacktestRunWriter:
     def __init__(self, ledger: BacktestResultLedger, spec: BacktestRunSpec, *, created_at_ns: int = 0) -> None:
         self.ledger = ledger
         self.spec = spec
+        self._last_event_sequence = -1
         self.ledger.create_run(spec.run_id, spec.provenance, created_at_ns=created_at_ns)
 
     def record_event(self, sequence: int, timestamp_ns: int, event_type: str, payload: Mapping[str, Any]) -> int:
-        return self.ledger.append_events(
+        if sequence < 0:
+            raise ValueError("event sequence must be non-negative")
+        result = self.ledger.append_events(
             self.spec.run_id,
             [BacktestEvent(sequence, timestamp_ns, event_type, payload)],
         )
+        self._last_event_sequence = max(self._last_event_sequence, sequence)
+        return result
 
     def record_equity(self, point: EquityPoint) -> int:
         return self.ledger.append_equity(self.spec.run_id, [point])
@@ -76,7 +81,6 @@ class BacktestRunWriter:
     def fail(self, reason: str) -> None:
         if not reason.strip():
             raise ValueError("failure reason is required")
-        # Reserve a negative sequence for terminal failure so it cannot collide
-        # with normal positive replay/audit event sequences.
-        self.record_event(-1, self.spec.start_ns, "RUN_FAILED", {"reason": reason})
+        sequence = self._last_event_sequence + 1
+        self.record_event(sequence, self.spec.start_ns, "RUN_FAILED", {"reason": reason})
         self.ledger.set_status(self.spec.run_id, "FAILED")
