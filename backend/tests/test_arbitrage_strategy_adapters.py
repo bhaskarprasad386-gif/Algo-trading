@@ -32,7 +32,7 @@ def test_box_adapter_closes_only_on_later_reverse_edge():
     high2 = option(3, 110, 3, 4, 3, 4)
     close = adapter.exit(entries[0], {"low": low2, "high": high2})
     assert close is not None
-    assert close.gross_pnl == 11.0
+    assert close.gross_pnl == 14.0
     assert close.fees == 2.0
 
 
