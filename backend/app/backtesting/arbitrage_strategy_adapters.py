@@ -65,8 +65,12 @@ class BoxSpreadStrategyAdapter:
         opportunity = BoxSpreadBacktester.evaluate(low, high, direction=self.direction, fees_per_unit=0.0)
         if opportunity is None: return ()
         trade_id = str(event.get("trade_id", f"BOX:{low.underlying}:{low.expiry}:{low.timestamp_ns}:{low.strike}:{high.strike}"))
+        if self.direction == "LONG":
+            entry_price = low.call_ask + low.put_ask - high.call_bid - high.put_bid
+        else:
+            entry_price = high.call_ask + high.put_ask - low.call_bid - low.put_bid
         return (OpenPosition(trade_id, low.timestamp_ns, f"{low.underlying}:BOX", self.direction, low.lot_size,
-            opportunity.executable_edge, contract=f"BOX:{low.strike}:{high.strike}", expiry=str(low.expiry),
+            entry_price, contract=f"BOX:{low.strike}:{high.strike}", expiry=str(low.expiry),
             strike=low.strike, leg="BOX", data_resolution=str(event.get("data_resolution", "")),
             metadata={"strategy": "BOX", "high_strike": high.strike}),)
 
@@ -177,7 +181,3 @@ class CalendarSpreadStrategyAdapter:
             fees=2.0 * self.fees_per_unit * position.quantity,
             metadata={"strategy": "CALENDAR", "close_direction": reverse,
                       "near_expiry": near.expiry, "far_expiry": far.expiry})
-
-
-__all__ = ["BoxSpreadStrategyAdapter", "CalendarSpreadStrategyAdapter", "CashFutureQuote",
-           "CashFutureStrategyAdapter", "SyntheticCashCarryStrategyAdapter"]
