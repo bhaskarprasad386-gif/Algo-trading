@@ -109,6 +109,31 @@ class HistoricalJobStore:
         ).fetchall()
         return tuple(int(row[0]) for row in rows)
 
+    def recover_running_chunks(self, job_id: str) -> tuple[int, ...]:
+        """Recover chunks left running by a crashed worker before a new run starts.
+
+        This is an explicit recovery boundary: callers invoke it only when the
+        previous worker is known to have stopped, preventing concurrent duplicate
+        execution of an actively running chunk.
+        """
+        self.get(job_id)
+        rows = self._db.execute(
+            "SELECT chunk_index FROM historical_job_chunks WHERE job_id=? AND state='running' ORDER BY chunk_index",
+            (job_id,),
+        ).fetchall()
+        recovered = tuple(int(row[0]) for row in rows)
+        if recovered:
+            self._db.execute(
+                "UPDATE historical_job_chunks SET state='recoverable' WHERE job_id=? AND state='running'",
+                (job_id,),
+            )
+            self._db.execute(
+                "UPDATE historical_jobs SET state='recoverable' WHERE job_id=?",
+                (job_id,),
+            )
+            self._db.commit()
+        return recovered
+
     def start_chunk(self, job_id: str, chunk_index: int) -> None:
         self.get(job_id)
         self._require_chunk(job_id, chunk_index)
