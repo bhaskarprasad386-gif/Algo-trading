@@ -2,9 +2,10 @@ import pytest
 
 from app.backtesting.event_engine import EventBacktestEngine
 from app.backtesting.events import EventType, MarketEvent
-from app.backtesting.execution import ExecutionSide, ExecutionSimulator, SimFill, SimOrder
+from app.backtesting.execution import ExecutionSide, ExecutionSimulator, SimFill, SimOrder, OrderType
 from app.backtesting.order_lifecycle import OrderStatus
 from app.backtesting.portfolio import Portfolio, RiskConfig
+from app.backtesting.risk_controls import evaluate_market_risk
 from app.backtesting.strategy import StrategyDecision
 
 
@@ -29,7 +30,7 @@ def test_event_engine_blocks_new_risk_after_mark_to_market_margin_breach():
     assert result.fills == 0
     assert result.risk_blocks == 1
     assert engine.order_states["add"].status == OrderStatus.REJECTED
-    assert portfolio.snapshot({"X": 100}).margin_call is True
+    assert evaluate_market_risk(portfolio, {"X": 100}).margin_call is True
 
 
 def test_event_engine_allows_risk_reducing_order_during_margin_breach():
@@ -62,7 +63,7 @@ def test_existing_order_is_rejected_when_new_mark_causes_margin_breach():
 
         def on_event(self, event, context):
             if event.timestamp_ns == 1_000:
-                return StrategyDecision(action="BUY", orders=(SimOrder("resting", "Y", ExecutionSide.BUY, 1),))
+                return StrategyDecision(action="BUY", orders=(SimOrder("resting", "X", ExecutionSide.BUY, 1, order_type=OrderType.LIMIT, limit_price=400),))
             return None
 
     engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
