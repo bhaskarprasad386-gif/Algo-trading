@@ -1,8 +1,8 @@
-from backend.app.backtesting.arbitrage_chain_candidates import (
+from app.backtesting.arbitrage_chain_candidates import (
     HistoricalArbitrageChainCandidates,
     HistoricalChainSnapshot,
 )
-from backend.app.backtesting.arbitrage_chain_selector import ChainContract
+from app.backtesting.arbitrage_chain_selector import ChainContract
 
 
 def make_chain():
