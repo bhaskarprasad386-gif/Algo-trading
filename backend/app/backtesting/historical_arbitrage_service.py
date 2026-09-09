@@ -44,21 +44,33 @@ class HistoricalArbitrageBacktestService:
         equity_selector: Callable[[Mapping[str, Any], float], Any] | None = None,
     ) -> HistoricalArbitrageBacktestResult:
         runner = HistoricalArbitrageRunner(self.writer)
-        runner.replay(events, entry_selector, exit_selector, equity_selector=equity_selector)
-        payoff: PayoffSnapshot | None = None
-        if payoff_legs:
-            if not payoff_prices:
-                raise ValueError("payoff_prices are required when payoff_legs are supplied")
-            sequence = runner.audit_sequence + 1 if payoff_sequence is None else payoff_sequence
-            timestamp_ns = self.writer.spec.end_ns if payoff_timestamp_ns is None else payoff_timestamp_ns
-            payoff = self.writer.record_payoff(sequence, timestamp_ns, payoff_legs, payoff_prices)
-        return HistoricalArbitrageBacktestResult(
-            run_id=self.writer.spec.run_id,
-            completed_trades=runner.completed,
-            unresolved_trades=runner.open_positions_count,
-            realized_pnl=runner.realized_pnl,
-            payoff=payoff,
-        )
+        try:
+            runner.replay(
+                events,
+                entry_selector,
+                exit_selector,
+                equity_selector=equity_selector,
+                finalize=False,
+            )
+            payoff: PayoffSnapshot | None = None
+            if payoff_legs:
+                if not payoff_prices:
+                    raise ValueError("payoff_prices are required when payoff_legs are supplied")
+                sequence = runner.audit_sequence + 1 if payoff_sequence is None else payoff_sequence
+                timestamp_ns = self.writer.spec.end_ns if payoff_timestamp_ns is None else payoff_timestamp_ns
+                payoff = self.writer.record_payoff(sequence, timestamp_ns, payoff_legs, payoff_prices)
+            runner.finalize()
+            return HistoricalArbitrageBacktestResult(
+                run_id=self.writer.spec.run_id,
+                completed_trades=runner.completed,
+                unresolved_trades=runner.open_positions_count,
+                realized_pnl=runner.realized_pnl,
+                payoff=payoff,
+            )
+        except Exception as exc:
+            if self.writer.ledger.run(self.writer.spec.run_id)["status"] != "FAILED":
+                self.writer.fail(str(exc))
+            raise
 
     def run_strategy(
         self,
@@ -72,7 +84,7 @@ class HistoricalArbitrageBacktestService:
         payoff_timestamp_ns: int | None = None,
         equity_selector: Callable[[Mapping[str, Any], float], Any] | None = None,
     ) -> HistoricalArbitrageBacktestResult:
-        """Replay a registered strategy and optionally derive payoff from its entry quote."""
+        """Replay a registered strategy and derive strategy payoff before completion."""
         adapter = build_strategy_adapter(strategy_id, parameters)
         captured: list[Mapping[str, Any]] = []
 
@@ -82,34 +94,43 @@ class HistoricalArbitrageBacktestService:
                 captured.append(event)
             return positions
 
-        result = self.run(
-            events,
-            entry_selector=entry,
-            exit_selector=adapter.exit,
-            payoff_legs=payoff_legs,
-            payoff_prices=payoff_prices,
-            payoff_sequence=payoff_sequence,
-            payoff_timestamp_ns=payoff_timestamp_ns,
-            equity_selector=equity_selector,
-        )
-        if not payoff_legs and payoff_prices and captured:
-            strategy_payoff = build_strategy_payoff(
-                strategy_id,
-                captured[0],
-                direction=(parameters or {}).get("direction"),
+        runner = HistoricalArbitrageRunner(self.writer)
+        try:
+            runner.replay(
+                events,
+                entry,
+                adapter.exit,
+                equity_selector=equity_selector,
+                finalize=False,
             )
-            existing_events = self.writer.ledger.events(self.writer.spec.run_id)
-            sequence = (existing_events[-1]["sequence"] + 1) if existing_events else 0
-            timestamp_ns = self.writer.spec.end_ns if payoff_timestamp_ns is None else payoff_timestamp_ns
-            payoff = self.writer.record_payoff(sequence, timestamp_ns, strategy_payoff.legs, payoff_prices)
+            payoff: PayoffSnapshot | None = None
+            if payoff_legs:
+                if not payoff_prices:
+                    raise ValueError("payoff_prices are required when payoff_legs are supplied")
+                sequence = runner.audit_sequence + 1 if payoff_sequence is None else payoff_sequence
+                timestamp_ns = self.writer.spec.end_ns if payoff_timestamp_ns is None else payoff_timestamp_ns
+                payoff = self.writer.record_payoff(sequence, timestamp_ns, payoff_legs, payoff_prices)
+            elif payoff_prices and captured:
+                strategy_payoff = build_strategy_payoff(
+                    strategy_id,
+                    captured[0],
+                    direction=(parameters or {}).get("direction"),
+                )
+                sequence = runner.audit_sequence + 1 if payoff_sequence is None else payoff_sequence
+                timestamp_ns = self.writer.spec.end_ns if payoff_timestamp_ns is None else payoff_timestamp_ns
+                payoff = self.writer.record_payoff(sequence, timestamp_ns, strategy_payoff.legs, payoff_prices)
+            runner.finalize()
             return HistoricalArbitrageBacktestResult(
-                run_id=result.run_id,
-                completed_trades=result.completed_trades,
-                unresolved_trades=result.unresolved_trades,
-                realized_pnl=result.realized_pnl,
+                run_id=self.writer.spec.run_id,
+                completed_trades=runner.completed,
+                unresolved_trades=runner.open_positions_count,
+                realized_pnl=runner.realized_pnl,
                 payoff=payoff,
             )
-        return result
+        except Exception as exc:
+            if self.writer.ledger.run(self.writer.spec.run_id)["status"] != "FAILED":
+                self.writer.fail(str(exc))
+            raise
 
 
 __all__ = ["HistoricalArbitrageBacktestResult", "HistoricalArbitrageBacktestService"]
