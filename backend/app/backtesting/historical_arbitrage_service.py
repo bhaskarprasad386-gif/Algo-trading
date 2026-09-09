@@ -11,6 +11,8 @@ from .arbitrage_backtest_suite import build_strategy_adapter
 from .arbitrage_payoff import build_strategy_payoff
 from .backtest_result import BacktestRunWriter, PayoffSnapshot
 from .historical_arbitrage_runner import ExitExecution, HistoricalArbitrageRunner, OpenPosition
+from .historical_catalog import HistoricalCatalog
+from .historical_catalog_replay import CatalogReplayLeg, HistoricalCatalogEventReplay
 
 EntrySelector = Callable[[Mapping[str, Any]], Iterable[OpenPosition]]
 ExitSelector = Callable[[OpenPosition, Mapping[str, Any]], ExitExecution | None]
@@ -131,6 +133,43 @@ class HistoricalArbitrageBacktestService:
             if self.writer.ledger.run(self.writer.spec.run_id)["status"] != "FAILED":
                 self.writer.fail(str(exc))
             raise
+
+    def run_catalog_strategy(
+        self,
+        strategy_id: str,
+        catalog: HistoricalCatalog,
+        legs: tuple[CatalogReplayLeg, ...],
+        *,
+        start_ns: int | None = None,
+        end_ns: int | None = None,
+        parameters: Mapping[str, Any] | None = None,
+        payoff_legs: tuple[PayoffLeg, ...] = (),
+        payoff_prices: tuple[float, ...] = (),
+        payoff_sequence: int | None = None,
+        payoff_timestamp_ns: int | None = None,
+        equity_selector: Callable[[Mapping[str, Any], float], Any] | None = None,
+    ) -> HistoricalArbitrageBacktestResult:
+        """Run a strategy directly from persistent catalog records.
+
+        The replay bridge uses the run window by default and only emits exact,
+        complete timestamps. Missing legs are therefore skipped conservatively;
+        no quote is carried forward or fabricated.
+        """
+        replay_start = self.writer.spec.start_ns if start_ns is None else start_ns
+        replay_end = self.writer.spec.end_ns if end_ns is None else end_ns
+        events = HistoricalCatalogEventReplay(catalog).events(
+            legs, start_ns=replay_start, end_ns=replay_end, require_complete=True
+        )
+        return self.run_strategy(
+            strategy_id,
+            events,
+            parameters=parameters,
+            payoff_legs=payoff_legs,
+            payoff_prices=payoff_prices,
+            payoff_sequence=payoff_sequence,
+            payoff_timestamp_ns=payoff_timestamp_ns,
+            equity_selector=equity_selector,
+        )
 
 
 __all__ = ["HistoricalArbitrageBacktestResult", "HistoricalArbitrageBacktestService"]
