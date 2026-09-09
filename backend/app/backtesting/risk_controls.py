@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Mapping
 
+from app.backtesting.execution import ExecutionSide, SimOrder
 from app.backtesting.portfolio import Portfolio, RiskViolation
 
 
@@ -56,3 +57,19 @@ def enforce_market_risk(portfolio: Portfolio, marks: Mapping[str, float] | None 
     if portfolio.risk_config.max_leverage is not None and state.equity > 0 and state.leverage > portfolio.risk_config.max_leverage + 1e-9:
         raise RiskViolation("max leverage exceeded")
     return state
+
+
+def order_reduces_position_risk(portfolio: Portfolio, order: SimOrder) -> bool:
+    """Return whether an order strictly reduces the signed position exposure.
+
+    A risk-reducing close is allowed to proceed during a margin call so a caller can
+    unwind exposure instead of being trapped by a fail-closed new-risk gate.
+    Orders that open, add to, or reverse a position are not considered reducing.
+    """
+    position = next((p for p in portfolio.snapshot().positions if p.instrument == order.instrument), None)
+    current = position.quantity if position is not None else 0
+    if current == 0:
+        return False
+    signed = order.quantity if order.side == ExecutionSide.BUY else -order.quantity
+    projected = current + signed
+    return abs(projected) < abs(current) and (current * projected >= 0 or projected == 0)
