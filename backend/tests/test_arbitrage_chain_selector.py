@@ -1,3 +1,5 @@
+import pytest
+
 from backend.app.backtesting.arbitrage_chain_selector import (
     ChainContract,
     pair_by_strike,
@@ -49,10 +51,15 @@ def test_synthetic_index_uses_fifteen_actual_positions_each_side():
     assert [c.strike for c in selected] == [*range(5, 20), *range(21, 36)]
 
 
-def test_missing_strikes_are_not_fabricated():
-    contracts = chain()
-    contracts = [c for c in contracts if c.strike not in {15, 19, 25}]
-    selected = select_box_stock(contracts, atm=20)
+def test_missing_box_strikes_are_reported_as_incomplete_not_fabricated():
+    contracts = [c for c in chain() if c.strike not in {15, 19, 25}]
+    with pytest.raises(ValueError, match="incomplete"):
+        select_box_stock(contracts, atm=20)
+
+
+def test_synthetic_missing_strikes_are_not_fabricated():
+    contracts = [c for c in chain() if c.strike not in {15, 19, 25}]
+    selected = select_synthetic_stock(contracts, atm=20)
     assert 15 not in [c.strike for c in selected]
     assert 19 not in [c.strike for c in selected]
     assert 25 not in [c.strike for c in selected]
@@ -74,3 +81,8 @@ def test_box_pairs_preserve_actual_strike_identity():
     assert pairs[0].high.strike == 1
     assert pairs[0].low_position == 0
     assert pairs[0].high_position == 1
+
+
+def test_mcx_is_supported_for_commodity_contracts():
+    contract = ChainContract(1, "MCX", "GOLD", "COMMODITY", 20261001, 100, "CE")
+    assert contract.venue == "MCX"
