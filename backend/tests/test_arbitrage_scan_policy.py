@@ -13,12 +13,12 @@ def test_stock_box_uses_atm_position_not_rupee_gap():
     pairs = enumerate_box_pairs(STRIKES, atm_strike=100, instrument_class="STOCK")
     distances = {distance for _, _, distance in pairs}
     assert distances == {3, 4, 5}
-    assert (90.0, 100.0, 3) in pairs
     assert (100.0, 115.0, 3) in pairs
+    assert (100.0, 120.0, 4) in pairs
 
 
-def test_index_box_supports_three_through_fifteen_positions():
-    strikes = tuple(range(100, 201, 5))
+def test_index_box_supports_three_through_fifteen_positions_when_chain_has_them():
+    strikes = tuple(range(75, 226, 5))
     pairs = enumerate_box_pairs(strikes, atm_strike=150, instrument_class="INDEX")
     distances = {distance for _, _, distance in pairs}
     assert distances == set(range(3, 16))
