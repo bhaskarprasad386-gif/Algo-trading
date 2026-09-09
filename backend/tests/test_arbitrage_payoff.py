@@ -4,6 +4,7 @@ from app.backtesting.arbitrage_payoff import (
     build_cash_future_payoff,
     build_synthetic_cash_carry_payoff,
 )
+from app.execution.payoff import payoff_at_price
 
 
 def option(ts, strike, cb, ca, pb, pa, expiry=20261231):
@@ -11,7 +12,7 @@ def option(ts, strike, cb, ca, pb, pa, expiry=20261231):
             "call_bid": cb, "call_ask": ca, "put_bid": pb, "put_ask": pa, "lot_size": 1}
 
 
-def test_box_payoff_contains_four_real_entry_legs():
+def test_box_payoff_contains_four_real_entry_legs_and_fixed_expiry_payoff():
     result = build_box_payoff({
         "low": option(1, 100, 6, 4, 5, 3),
         "high": option(1, 110, 2, 3, 2, 2),
@@ -20,9 +21,12 @@ def test_box_payoff_contains_four_real_entry_legs():
     assert [(leg.kind, leg.side, leg.strike, leg.entry_price) for leg in result.legs] == [
         ("CALL", "BUY", 100.0, 4.0),
         ("CALL", "SELL", 110.0, 2.0),
-        ("PUT", "BUY", 100.0, 3.0),
-        ("PUT", "SELL", 110.0, 2.0),
+        ("PUT", "BUY", 110.0, 2.0),
+        ("PUT", "SELL", 100.0, 5.0),
     ]
+    assert payoff_at_price(result.legs, 90.0) == 7.0
+    assert payoff_at_price(result.legs, 105.0) == 7.0
+    assert payoff_at_price(result.legs, 120.0) == 7.0
     assert result.metadata["quote_timestamp_ns"] == 1
 
 
