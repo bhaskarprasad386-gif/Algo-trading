@@ -270,16 +270,61 @@ class Portfolio:
             new_qty = old.quantity + signed
             if abs(new_qty) >= abs(old.quantity) or (old.quantity * new_qty < 0 and new_qty != 0):
                 raise RiskViolation("forced liquidation cannot increase or reverse exposure")
-        after = self.apply_fills_atomic(fills, marks)
-        if after.equity + 1e-9 < after.maintenance_margin:
-            state_fills = tuple(self._trades[-len(fills):])
-            state = (self.cash, dict(self._positions), self._realized_pnl, self._fees, self._peak_equity, dict(self._reserved_margin), list(self._trades))
-            del state_fills
-            # Reconstruct from the pre-liquidation snapshot is not sufficient for
-            # arbitrary positions, so callers must provide a sufficient batch.
-            # Rollback is performed by applying the inverse trade state captured below.
-            raise RiskViolation("forced liquidation did not restore maintenance margin")
+        state = (self.cash, dict(self._positions), self._realized_pnl, self._fees, self._peak_equity, dict(self._reserved_margin), list(self._trades))
+        try:
+            after = self.apply_fills_atomic(fills, marks)
+            if after.equity + 1e-9 < after.maintenance_margin:
+                raise RiskViolation("forced liquidation did not restore maintenance margin")
+        except Exception:
+            self.cash, positions, self._realized_pnl, self._fees, self._peak_equity, reserved, trades = state
+            self._positions = positions
+            self._reserved_margin = reserved
+            self._trades = trades
+            raise
         return after
+
+    def restore_state(self, state: Mapping[str, Any]) -> None:
+        """Restore a durable checkpoint produced by :meth:`export_state`.
+
+        The checkpoint is validated before replacing live state so a malformed
+        resume payload cannot partially mutate the portfolio.
+        """
+        if not isinstance(state, Mapping):
+            raise ValueError("invalid portfolio checkpoint")
+        try:
+            cash = float(state["cash"])
+            realized_pnl = float(state["realized_pnl"])
+            fees = float(state["fees"])
+            peak_equity = float(state["peak_equity"])
+            raw_positions = state.get("positions", [])
+            raw_reserved = state.get("reserved_margin", {})
+            if not isinstance(raw_positions, (list, tuple)) or not isinstance(raw_reserved, Mapping):
+                raise ValueError("invalid portfolio checkpoint collections")
+            positions: dict[str, Position] = {}
+            for raw in raw_positions:
+                if not isinstance(raw, Mapping):
+                    raise ValueError("invalid portfolio position checkpoint")
+                instrument = str(raw["instrument"])
+                quantity = int(raw["quantity"])
+                average_price = float(raw["average_price"])
+                position_realized = float(raw["realized_pnl"])
+                if not instrument or quantity == 0 or average_price <= 0:
+                    raise ValueError("invalid portfolio position checkpoint values")
+                positions[instrument] = Position(instrument, quantity, average_price, position_realized)
+            reserved = {str(order_id): float(amount) for order_id, amount in raw_reserved.items()}
+            if any(not order_id or amount < 0 for order_id, amount in reserved.items()):
+                raise ValueError("invalid reserved margin checkpoint")
+            if cash < 0 or fees < 0 or peak_equity < 0:
+                raise ValueError("invalid portfolio checkpoint values")
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("invalid portfolio checkpoint") from exc
+        self.cash = cash
+        self._positions = positions
+        self._realized_pnl = realized_pnl
+        self._fees = fees
+        self._peak_equity = peak_equity
+        self._reserved_margin = reserved
+        self._trades = []
 
     def snapshot(self, marks: dict[str, float] | None = None) -> PortfolioSnapshot:
         marks = dict(marks or {})
