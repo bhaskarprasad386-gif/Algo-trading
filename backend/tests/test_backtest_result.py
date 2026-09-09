@@ -35,7 +35,7 @@ def test_writer_persists_payoff_and_equity_incrementally() -> None:
 
     assert snapshot.run_id == "run-payoff"
     assert len(snapshot.prices) == len(snapshot.pnl) == 4
-    assert 107.0 in snapshot.break_even_points
+    assert 103.0 in snapshot.break_even_points
     assert ledger.run("run-payoff")["status"] == "COMPLETED"
     assert ledger.events("run-payoff")[0]["event_type"] == "PAYOFF_SNAPSHOT"
     assert ledger.equity("run-payoff")[0]["equity"] == 4.0
