@@ -20,6 +20,7 @@ def test_maintenance_margin_breach_requires_liquidation_when_positions_exist():
     p._positions["X"] = Position("X", 100, 1_000)
     state = evaluate_margin(p.snapshot({"X": 100}))
     assert state.equity == pytest.approx(-50_000)
+    assert state.margin_buffer == pytest.approx(-50_050)
     assert state.margin_call is True
     assert state.liquidation_required is True
 
