@@ -96,7 +96,7 @@ def test_acquisition_exposes_only_coverage_snapshots_not_raw_download_results(tm
     assert result.execution.results == ()
 
 
-def test_progress_callback_emits_initial_and_repair_snapshots_without_raw_rows(tmp_path):
+def test_progress_callback_reports_replanned_pending_chunks_without_raw_rows(tmp_path):
     service, _, _ = _service(tmp_path)
     session = _window()
     events = []
@@ -114,7 +114,8 @@ def test_progress_callback_emits_initial_and_repair_snapshots_without_raw_rows(t
     assert events[0].pass_index == 0
     assert events[0].completed_chunks == 0
     assert events[-1].coverage.complete
-    assert events[-1].pending_chunks == 1 or events[-1].pending_chunks == 0
+    assert events[-1].pending_chunks == len(result.plan.requests)
+    assert events[-1].pending_chunks == 0
     assert not hasattr(events[-1], "results")
 
 
