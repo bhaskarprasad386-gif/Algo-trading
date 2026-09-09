@@ -5,6 +5,7 @@ from app.backtesting.historical_arbitrage_service import HistoricalArbitrageBack
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 from app.backtesting.historical_catalog_replay import CatalogReplayLeg, HistoricalCatalogEventReplay
 from app.backtesting.result_ledger import BacktestResultLedger
+import json
 
 
 def _writer(tmp_path, run_id, strategy_id):
@@ -104,7 +105,7 @@ def test_catalog_to_ledger_e2e_calendar_preserves_expiries(tmp_path):
     assert result.payoff is not None and len(result.payoff.legs) == 2
     trades = ledger.trades("catalog-calendar")
     assert len(trades) == 1
-    metadata = trades[0]["metadata"] or {}
+    metadata = json.loads(trades[0]["metadata_json"] or "{}")
     assert metadata.get("near_expiry") == 20260924
     assert metadata.get("far_expiry") == 20261029
     assert ledger.run("catalog-calendar")["status"] == "COMPLETED"
