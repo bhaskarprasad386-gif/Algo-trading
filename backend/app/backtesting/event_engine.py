@@ -8,6 +8,7 @@ from app.backtesting.execution import ExecutionSimulator, SimFill, SimOrder, Ord
 from app.backtesting.order_lifecycle import OrderLifecycle, OrderStatus, TimeInForce, stop_triggered, tif_after_execution
 from app.backtesting.portfolio import Portfolio, PortfolioSnapshot, RiskViolation
 from app.backtesting.queue_lifecycle import QueueLifecycleState
+from app.backtesting.risk_controls import enforce_market_risk, order_reduces_position_risk
 from app.backtesting.strategy import StrategyContext, StrategyDecision, validate_decision
 
 LegacyEventStrategy = Callable[[MarketEvent, Mapping[str, object]], object]
@@ -122,6 +123,23 @@ class EventBacktestEngine:
                 self._latest_books[event.instrument] = (event.timestamp_ns, book)
             self._apply_queue_evidence(event)
 
+    def _current_marks(self) -> dict[str, float]:
+        return {
+            instrument: price
+            for instrument, event in self._latest_events.items()
+            if (price := self._event_price(event, None)) is not None and price > 0
+        }
+
+    def _market_risk_allows_order(self, order: SimOrder) -> bool:
+        """Allow risk-reducing orders to unwind exposure even while hard limits are breached."""
+        if self.portfolio is None:
+            return True
+        try:
+            enforce_market_risk(self.portfolio, self._current_marks())
+            return True
+        except RiskViolation:
+            return order_reduces_position_risk(self.portfolio, order)
+
     def _order_reference_price(self, order: SimOrder, observed: MarketEvent) -> float | None:
         book_state = self._latest_books.get(order.instrument)
         if book_state is not None and book_state[0] == observed.timestamp_ns:
@@ -208,6 +226,15 @@ class EventBacktestEngine:
             lifecycle = self._order_lifecycles.get(order.order_id)
             if lifecycle is None or lifecycle.state.terminal:
                 continue
+            if not self._market_risk_allows_order(order):
+                self._risk_blocks += 1
+                lifecycle.reject("market risk violation", event.timestamp_ns)
+                self.portfolio.release_margin(order.order_id)
+                self._reserved_margin.pop(order.order_id, None)
+                self._open_orders.pop(order.order_id, None)
+                self._dynamic_queue_ahead.pop(order.order_id, None)
+                self._queue_lifecycles.pop(order.order_id, None)
+                continue
             observed = self._latest_events.get(order.instrument)
             if observed is None or observed.timestamp_ns > event.timestamp_ns:
                 continue
@@ -254,8 +281,7 @@ class EventBacktestEngine:
                         results[order.order_id] = type("ExecutionResult", (), {"remaining_quantity": order.quantity, "rejected": False, "reason": reason})()
         try:
             if fills:
-                marks = {i: self._event_price(e, None) for i, e in self._latest_events.items()}
-                self.portfolio.apply_fills_atomic(fills, {k: v for k, v in marks.items() if v is not None and v > 0})
+                self.portfolio.apply_fills_atomic(fills, self._current_marks())
         except RiskViolation:
             self._risk_blocks += 1
             for order, _, _ in candidates:
@@ -300,6 +326,10 @@ class EventBacktestEngine:
                 if not isinstance(raw_order, SimOrder): raise TypeError("strategy orders must be SimOrder instances")
                 order = self._submit_effective_order(raw_order, event); lifecycle = self._lifecycle(order, order.submitted_at_ns)
                 if lifecycle.state.terminal: continue
+                if not self._market_risk_allows_order(order):
+                    self._risk_blocks += 1
+                    lifecycle.reject("market risk violation", event.timestamp_ns)
+                    continue
                 if order.order_id not in self._reserved_margin:
                     observed = self._latest_events.get(order.instrument); reference = self._order_reference_price(order, observed) if observed is not None else None
                     if reference is None: continue
