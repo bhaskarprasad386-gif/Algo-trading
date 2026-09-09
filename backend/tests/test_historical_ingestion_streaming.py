@@ -13,7 +13,7 @@ class Source:
 
 
 def test_sync_streaming_commits_bounded_batches_and_reports_scalar_progress(tmp_path):
-    catalog = HistoricalCatalog(tmp_path / "history.db")
+    catalog = HistoricalCatalog(str(tmp_path / "history.db"))
     service = HistoricalIngestionService(catalog)
     request = HistoricalFetchRequest("src", "SBIN", "1m", 0, 4)
     source = Source(
@@ -35,11 +35,11 @@ def test_sync_streaming_commits_bounded_batches_and_reports_scalar_progress(tmp_
     assert result.fetched == 5
     assert progress == [(2, 2), (4, 4), (5, 5)]
     assert result.final_watermark_ns == 4
-    assert catalog.count(source="src", instrument="SBIN", timeframe="1m") == 5
+    assert catalog.count(source="src", instrument="SBIN") == 5
 
 
 def test_sync_streaming_deduplicates_on_replay_without_growing_catalog(tmp_path):
-    catalog = HistoricalCatalog(tmp_path / "history.db")
+    catalog = HistoricalCatalog(str(tmp_path / "history.db"))
     service = HistoricalIngestionService(catalog)
     request = HistoricalFetchRequest("src", "SBIN", "1m", 0, 2)
     source = Source(
@@ -55,4 +55,4 @@ def test_sync_streaming_deduplicates_on_replay_without_growing_catalog(tmp_path)
     assert first.inserted == 3
     assert second.inserted == 0
     assert second.fetched == 3
-    assert catalog.count(source="src", instrument="SBIN", timeframe="1m") == 3
+    assert catalog.count(source="src", instrument="SBIN") == 3
