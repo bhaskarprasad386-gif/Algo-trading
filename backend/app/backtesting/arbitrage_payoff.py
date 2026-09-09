@@ -21,14 +21,6 @@ class StrategyPayoff:
     metadata: Mapping[str, Any]
 
 
-def _side_price(bid: float, ask: float, side: str) -> float:
-    if side == "BUY":
-        return float(ask)
-    if side == "SELL":
-        return float(bid)
-    raise ValueError("side must be BUY or SELL")
-
-
 def _validate_quote_prices(*values: float) -> None:
     if any(value < 0 for value in values):
         raise ValueError("quote prices cannot be negative")
@@ -44,25 +36,27 @@ def build_box_payoff(event: Mapping[str, Any], *, direction: str = "LONG") -> St
     _validate_quote_prices(low["call_bid"], low["call_ask"], low["put_bid"], low["put_ask"],
                            high["call_bid"], high["call_ask"], high["put_bid"], high["put_ask"])
     qty = float(low.get("lot_size", 1))
+    low_strike = float(low["strike"])
+    high_strike = float(high["strike"])
     if direction == "LONG":
         legs = (
-            PayoffLeg("CALL", "BUY", float(low["strike"]), float(low["call_ask"]), qty),
-            PayoffLeg("CALL", "SELL", float(high["strike"]), float(high["call_bid"]), qty),
-            PayoffLeg("PUT", "BUY", float(low["strike"]), float(low["put_ask"]), qty),
-            PayoffLeg("PUT", "SELL", float(high["strike"]), float(high["put_bid"]), qty),
+            PayoffLeg("CALL", "BUY", low_strike, float(low["call_ask"]), qty),
+            PayoffLeg("CALL", "SELL", high_strike, float(high["call_bid"]), qty),
+            PayoffLeg("PUT", "BUY", high_strike, float(high["put_ask"]), qty),
+            PayoffLeg("PUT", "SELL", low_strike, float(low["put_bid"]), qty),
         )
     elif direction == "SHORT":
         legs = (
-            PayoffLeg("CALL", "SELL", float(low["strike"]), float(low["call_bid"]), qty),
-            PayoffLeg("CALL", "BUY", float(high["strike"]), float(high["call_ask"]), qty),
-            PayoffLeg("PUT", "SELL", float(low["strike"]), float(low["put_bid"]), qty),
-            PayoffLeg("PUT", "BUY", float(high["strike"]), float(high["put_ask"]), qty),
+            PayoffLeg("CALL", "SELL", low_strike, float(low["call_bid"]), qty),
+            PayoffLeg("CALL", "BUY", high_strike, float(high["call_ask"]), qty),
+            PayoffLeg("PUT", "SELL", high_strike, float(high["put_bid"]), qty),
+            PayoffLeg("PUT", "BUY", low_strike, float(low["put_ask"]), qty),
         )
     else:
         raise ValueError("direction must be LONG or SHORT")
     return StrategyPayoff("box-spread", legs, {
         "underlying": low["underlying"], "expiry": low["expiry"],
-        "low_strike": float(low["strike"]), "high_strike": float(high["strike"]),
+        "low_strike": low_strike, "high_strike": high_strike,
         "quote_timestamp_ns": low["timestamp_ns"], "direction": direction,
     })
 
