@@ -51,9 +51,7 @@ def test_service_persists_trade_and_payoff_without_fabricating_exit(tmp_path):
 def test_run_strategy_routes_through_registered_adapter(tmp_path):
     ledger, writer = _writer(tmp_path)
     service = HistoricalArbitrageBacktestService(writer)
-
     result = service.run_strategy("box-spread", ())
-
     assert result.run_id == "unified-1"
     assert result.completed_trades == 0
     assert result.unresolved_trades == 0
@@ -63,7 +61,6 @@ def test_run_strategy_routes_through_registered_adapter(tmp_path):
 def test_run_strategy_rejects_unknown_strategy(tmp_path):
     _, writer = _writer(tmp_path)
     service = HistoricalArbitrageBacktestService(writer)
-
     try:
         service.run_strategy("not-a-strategy", ())
     except ValueError as exc:
@@ -84,8 +81,8 @@ def test_run_strategy_builds_box_payoff_before_completion(tmp_path):
     }
     exit_event = {
         "timestamp_ns": 2,
-        "low": {**entry["low"], "call_bid": 80, "call_ask": 90, "put_bid": 70, "put_ask": 80},
-        "high": {**entry["high"], "call_bid": 5, "call_ask": 20, "put_bid": 5, "put_ask": 20},
+        "low": {**entry["low"], "timestamp_ns": 2, "call_bid": 80, "call_ask": 90, "put_bid": 70, "put_ask": 80},
+        "high": {**entry["high"], "timestamp_ns": 2, "call_bid": 5, "call_ask": 20, "put_bid": 5, "put_ask": 20},
     }
     result = service.run_strategy("box-spread", [entry, exit_event], payoff_prices=(24900, 25000, 25100))
     assert result.completed_trades == 1
