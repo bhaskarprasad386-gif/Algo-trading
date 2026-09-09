@@ -15,6 +15,7 @@ class InstrumentMaster:
 
     def __init__(self):
         self.instruments: List[Dict[str, Any]] = []
+        self._loaded = False
 
     def download(self) -> List[Dict[str, Any]]:
         """Download the latest Angel One instrument master."""
@@ -29,6 +30,7 @@ class InstrumentMaster:
                     502,
                 )
             self.instruments = data
+            self._loaded = True
             app_logger.info(
                 f"Loaded {len(self.instruments)} instruments from Angel One instrument master"
             )
@@ -46,7 +48,9 @@ class InstrumentMaster:
         symboltoken: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Search instruments by symbol, exchange, or token."""
-        if not self.instruments:
+        # An explicitly supplied empty snapshot is a valid test/offline state and
+        # must not trigger an unexpected network request.
+        if not self._loaded and not self.instruments:
             self.download()
         results = self.instruments
         if tradingsymbol:
@@ -96,8 +100,6 @@ class InstrumentMaster:
             if str(item.get("instrumenttype", "")).upper() in {"CASH", "EQ", "EQUITY", ""}
             and str(item.get("exch_seg", "")).upper() == exch
         ]
-        # Some Angel One master snapshots represent equity instrumenttype as an
-        # empty string, so the exchange plus exact symbol remain mandatory filters.
         if len(results) != 1:
             raise LookupError(
                 f"expected exactly one cash instrument for {exch}:{symbol}, found {len(results)}"
