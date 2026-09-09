@@ -1,6 +1,7 @@
 from datetime import date, datetime, timezone
 
 from app.backtesting.cash_future_historical_acquisition import CashFutureHistoricalAcquisitionService
+from app.backtesting.cash_future_download_queue import build_rollover_download_queue
 from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 from app.backtesting.historical_ingest import HistoricalIngestionService
@@ -14,15 +15,11 @@ class FakeHistoricalSource:
     def fetch(self, request):
         self.requests.append(request)
         timestamp = request.start_ns
+        interval = 60 * 1_000_000_000
         while timestamp <= request.end_ns:
-            yield HistoricalRecord(
-                request.source,
-                request.instrument,
-                request.timeframe,
-                timestamp,
-                {"close": 100.0},
-            )
-            timestamp += 60 * 1_000_000_000
+            yield HistoricalRecord(request.source, request.instrument, request.timeframe,
+                                   timestamp, {"close": 100.0})
+            timestamp += interval
 
 
 def _contract_catalog():
@@ -34,39 +31,35 @@ def _contract_catalog():
     return catalog
 
 
-def test_acquisition_repairs_cash_and_current_next_future_without_retaining_results(tmp_path):
-    catalog = HistoricalCatalog(tmp_path / "history.db")
-    ingestion = HistoricalIngestionService(catalog)
+def _window():
+    start = int(datetime(2026, 1, 29, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+    return SessionWindow(start, start + 3 * 60 * 1_000_000_000)
+
+
+def _service(tmp_path):
+    history = HistoricalCatalog(tmp_path / "history.db")
+    ingestion = HistoricalIngestionService(history)
     source = FakeHistoricalSource()
     service = CashFutureHistoricalAcquisitionService(
-        ingestion,
-        source,
+        ingestion, source, _contract_catalog(),
         interval_ns=60 * 1_000_000_000,
         max_request_ns=2 * 60 * 1_000_000_000,
         sleep=lambda _: None,
     )
+    return service, history, source
 
-    contract_catalog = _contract_catalog()
-    # The acquisition service resolves contracts from the ingestion catalog, so seed the
-    # same dated contract snapshot there before planning the queue.
-    ingestion.catalog = contract_catalog  # type: ignore[assignment]
-    spot_sessions = (SessionWindow(1_000_000_000, 181_000_000_000),)
-    future_sessions = {
-        "NFO:101:SBINJAN": spot_sessions,
-        "NFO:102:SBINFEB": spot_sessions,
-    }
+
+def test_acquisition_repairs_cash_and_current_next_future_without_retaining_results(tmp_path):
+    service, history, source = _service(tmp_path)
+    session = _window()
+    future_sessions = {"NFO:101:SBINJAN": (session,), "NFO:102:SBINFEB": (session,)}
 
     result = service.acquire(
-        spot_instrument="NSE:3045:SBIN",
-        exchange="NFO",
-        underlying="SBIN",
+        spot_instrument="NSE:3045:SBIN", exchange="NFO", underlying="SBIN",
         start=datetime(2026, 1, 29, tzinfo=timezone.utc),
         end=datetime(2026, 1, 29, 0, 3, tzinfo=timezone.utc),
-        spot_sessions=spot_sessions,
-        future_sessions=future_sessions,
-        timeframe="1m",
-        mode="BOTH",
-        retry_attempts=1,
+        spot_sessions=(session,), future_sessions=future_sessions,
+        timeframe="1m", mode="BOTH", retry_attempts=1,
     )
 
     assert result.execution.failed_request_index is None
@@ -77,37 +70,31 @@ def test_acquisition_repairs_cash_and_current_next_future_without_retaining_resu
         "NSE:3045:SBIN", "NFO:101:SBINJAN", "NFO:102:SBINFEB"
     }
     assert len(source.requests) == len(result.plan.requests)
+    assert history.timestamps(source="angelone", instrument="NSE:3045:SBIN", timeframe="1m",
+                              start_ns=session.start_ns, end_ns=session.end_ns)
 
 
-def test_prepare_is_idempotent_when_catalog_already_covers_expected_timestamps(tmp_path):
-    catalog = HistoricalCatalog(tmp_path / "history.db")
-    ingestion = HistoricalIngestionService(catalog)
-    source = FakeHistoricalSource()
-    contract_catalog = _contract_catalog()
-    ingestion.catalog = contract_catalog  # type: ignore[assignment]
-    service = CashFutureHistoricalAcquisitionService(
-        ingestion,
-        source,
-        interval_ns=60 * 1_000_000_000,
-        max_request_ns=10 * 60 * 1_000_000_000,
-    )
+def test_prepare_is_empty_after_all_expected_timestamps_are_stored(tmp_path):
+    service, history, _ = _service(tmp_path)
+    session = _window()
     start = datetime(2026, 1, 29, tzinfo=timezone.utc)
     end = datetime(2026, 1, 29, 0, 3, tzinfo=timezone.utc)
-    session = SessionWindow(1_000_000_000, 181_000_000_000)
+    queue = build_rollover_download_queue(
+        catalog=service.contract_master, spot_instrument="NSE:3045:SBIN",
+        exchange="NFO", underlying="SBIN", start=start, end=end,
+        timeframe="1m", mode="BOTH",
+    )
+    for request in queue.all_requests:
+        timestamp = session.start_ns
+        while timestamp <= session.end_ns:
+            history.ingest([HistoricalRecord(request.source, request.instrument,
+                                              request.timeframe, timestamp, {"close": 100.0})])
+            timestamp += 60 * 1_000_000_000
 
-    queue, plan = service.prepare(
-        spot_instrument="NSE:3045:SBIN",
-        exchange="NFO",
-        underlying="SBIN",
-        start=start,
-        end=end,
-        spot_sessions=(session,),
-        future_sessions={
-            "NFO:101:SBINJAN": (session,),
-            "NFO:102:SBINFEB": (session,),
-        },
+    _, plan = service.prepare(
+        spot_instrument="NSE:3045:SBIN", exchange="NFO", underlying="SBIN",
+        start=start, end=end, spot_sessions=(session,),
+        future_sessions={"NFO:101:SBINJAN": (session,), "NFO:102:SBINFEB": (session,)},
         mode="BOTH",
     )
-
-    assert queue.spot.instrument == "NSE:3045:SBIN"
-    assert plan.requests
+    assert plan.requests == ()
