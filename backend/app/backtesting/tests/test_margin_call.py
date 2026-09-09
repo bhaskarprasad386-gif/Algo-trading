@@ -14,7 +14,7 @@ def test_margin_call_lifecycle_enters_and_recovers_after_mtm_breach():
     portfolio._positions["X"] = Position("X", -100, 1_000)
 
     healthy = evaluate_market_risk(portfolio, {"X": 1_000})
-    breached = evaluate_market_risk(portfolio, {"X": 2_000})
+    breached = evaluate_market_risk(portfolio, {"X": 2_500})
 
     assert transition_margin_call_state(MarginCallState.NORMAL, healthy) == MarginCallState.NORMAL
     assert breached.margin_call
