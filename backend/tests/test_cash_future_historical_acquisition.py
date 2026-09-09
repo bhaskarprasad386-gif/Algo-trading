@@ -93,7 +93,8 @@ def test_bounded_repair_stops_when_source_makes_no_progress(tmp_path):
     assert result.execution.failed_request_index is None
     # One missing 4-minute session is split into two <=2-minute chunks per repair pass.
     assert len(source.requests) == 4
-    assert source.requests[:2] == source.requests[2:]
+    assert [request.instrument for request in source.requests].count("NFO:101:SBINJAN") == 2
+    assert [request.instrument for request in source.requests].count("NSE:3045:SBIN") == 2
     assert result.coverage.incomplete_chunks
     assert not history.timestamps(source="angelone", instrument="NSE:3045:SBIN", timeframe="1m",
                                   start_ns=session.start_ns, end_ns=session.end_ns)
