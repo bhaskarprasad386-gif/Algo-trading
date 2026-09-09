@@ -86,9 +86,9 @@ class AngelOneContractMasterSource:
         return catalog.upsert_snapshot(snapshot, self.normalize_futures(rows), payload_sha256=digest, fetched_at=datetime.now(MARKET_TIMEZONE).replace(tzinfo=None))
 
     def sync_index_futures(self, catalog: ContractMasterCatalog, *, snapshot_date: date | None = None) -> int:
-        """Persist the dynamically discovered index-futures universe for a snapshot."""
+        """Merge the dynamically discovered index-futures universe into a snapshot."""
         rows = self.fetch()
         snapshot = snapshot_date or self.market_date()
         canonical = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         digest = hashlib.sha256(canonical).hexdigest()
-        return catalog.upsert_snapshot(snapshot, self.normalize_index_futures(rows), payload_sha256=digest, fetched_at=datetime.now(MARKET_TIMEZONE).replace(tzinfo=None))
+        return catalog.merge_snapshot(snapshot, self.normalize_index_futures(rows), payload_sha256=digest, fetched_at=datetime.now(MARKET_TIMEZONE).replace(tzinfo=None))
