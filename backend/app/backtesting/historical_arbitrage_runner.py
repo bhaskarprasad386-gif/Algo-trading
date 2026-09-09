@@ -18,7 +18,6 @@ from .result_ledger import BacktestTrade, EquityPoint
 @dataclass(frozen=True)
 class OpenPosition:
     """A real historical entry waiting for a later executable exit."""
-
     trade_id: str
     timestamp_ns: int
     instrument: str
@@ -42,7 +41,6 @@ class OpenPosition:
 @dataclass(frozen=True)
 class ExitExecution:
     """Actual later quote/fill used to close an open position."""
-
     timestamp_ns: int
     exit_price: float
     gross_pnl: float
@@ -58,12 +56,7 @@ class ExitExecution:
 
 
 class HistoricalArbitrageRunner:
-    """Replay a strategy while persisting each completed trade immediately.
-
-    ``entry_selector`` may return zero or more positions for an event.
-    ``exit_selector`` is called for every open position on every subsequent
-    event and may close it when the event contains an executable quote.
-    """
+    """Replay a strategy while persisting each completed trade immediately."""
 
     def __init__(self, writer: BacktestRunWriter) -> None:
         self.writer = writer
@@ -76,6 +69,14 @@ class HistoricalArbitrageRunner:
     @property
     def open_positions(self) -> tuple[OpenPosition, ...]:
         return tuple(self._open.values())
+
+    @property
+    def realized_pnl(self) -> float:
+        return self._realized_pnl
+
+    @property
+    def audit_sequence(self) -> int:
+        return self._audit_sequence
 
     def _audit(self, timestamp_ns: int, event_type: str, payload: Mapping[str, Any]) -> None:
         self._audit_sequence += 1
@@ -93,8 +94,6 @@ class HistoricalArbitrageRunner:
             for event in events:
                 self._sequence += 1
                 timestamp_ns = int(event["timestamp_ns"])
-
-                # Never allow an exit on the same timestamp as its entry.
                 for trade_id, position in tuple(self._open.items()):
                     if timestamp_ns <= position.timestamp_ns:
                         continue
@@ -111,52 +110,32 @@ class HistoricalArbitrageRunner:
                     self.writer.ledger.append_trades(
                         self.writer.spec.run_id,
                         [BacktestTrade(
-                            trade_id=position.trade_id,
-                            sequence=self._sequence,
-                            timestamp_ns=execution.timestamp_ns,
-                            instrument=position.instrument,
-                            side=position.side,
-                            quantity=position.quantity,
-                            entry_price=position.entry_price,
-                            exit_price=execution.exit_price,
-                            gross_pnl=execution.gross_pnl,
-                            fees=execution.fees,
-                            slippage=execution.slippage,
-                            net_pnl=net_pnl,
-                            contract=position.contract,
-                            expiry=position.expiry,
-                            strike=position.strike,
-                            leg=position.leg,
-                            data_resolution=position.data_resolution,
-                            metadata=metadata,
+                            trade_id=position.trade_id, sequence=self._sequence,
+                            timestamp_ns=execution.timestamp_ns, instrument=position.instrument,
+                            side=position.side, quantity=position.quantity,
+                            entry_price=position.entry_price, exit_price=execution.exit_price,
+                            gross_pnl=execution.gross_pnl, fees=execution.fees,
+                            slippage=execution.slippage, net_pnl=net_pnl,
+                            contract=position.contract, expiry=position.expiry,
+                            strike=position.strike, leg=position.leg,
+                            data_resolution=position.data_resolution, metadata=metadata,
                         )],
                     )
                     self._realized_pnl += net_pnl
                     self.completed += 1
                     del self._open[trade_id]
-                    self._audit(
-                        execution.timestamp_ns,
-                        "POSITION_CLOSED",
-                        {"trade_id": trade_id, "net_pnl": net_pnl},
-                    )
+                    self._audit(execution.timestamp_ns, "POSITION_CLOSED",
+                                {"trade_id": trade_id, "net_pnl": net_pnl})
 
                 for position in entry_selector(event):
                     if position.trade_id in self._open:
                         raise ValueError(f"duplicate open trade: {position.trade_id}")
                     self._open[position.trade_id] = position
-                    self._audit(
-                        position.timestamp_ns,
-                        "POSITION_OPENED",
-                        {
-                            "trade_id": position.trade_id,
-                            "instrument": position.instrument,
-                            "entry_price": position.entry_price,
-                            "contract": position.contract,
-                            "expiry": position.expiry,
-                            "strike": position.strike,
-                            "leg": position.leg,
-                        },
-                    )
+                    self._audit(position.timestamp_ns, "POSITION_OPENED", {
+                        "trade_id": position.trade_id, "instrument": position.instrument,
+                        "entry_price": position.entry_price, "contract": position.contract,
+                        "expiry": position.expiry, "strike": position.strike, "leg": position.leg,
+                    })
 
                 if equity_selector is not None:
                     point = equity_selector(event, self._realized_pnl)
@@ -164,15 +143,11 @@ class HistoricalArbitrageRunner:
                         self.writer.record_equity(point)
 
             for position in tuple(self._open.values()):
-                self._audit(
-                    position.timestamp_ns,
-                    "UNRESOLVED_POSITION",
-                    {
-                        "trade_id": position.trade_id,
-                        "reason": "no later executable exit in supplied historical data",
-                        "entry_timestamp_ns": position.timestamp_ns,
-                    },
-                )
+                self._audit(position.timestamp_ns, "UNRESOLVED_POSITION", {
+                    "trade_id": position.trade_id,
+                    "reason": "no later executable exit in supplied historical data",
+                    "entry_timestamp_ns": position.timestamp_ns,
+                })
             self.writer.complete()
             return self.completed
         except Exception as exc:
