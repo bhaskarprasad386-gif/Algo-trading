@@ -22,6 +22,8 @@ class CashFutureGapDownloadPlanner:
             raise ValueError("interval_ns must be positive")
         if self.max_request_ns <= 0:
             raise ValueError("max_request_ns must be positive")
+        if self.max_request_ns < self.interval_ns:
+            raise ValueError("max_request_ns must be >= interval_ns")
 
     @staticmethod
     def _expected(
