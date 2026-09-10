@@ -89,3 +89,5 @@ def test_multi_contract_backtest_rolls_through_expiries_without_price_mixing():
     assert result["net_profit"] == 1200.0
     assert [trade["entry_gap"] for trade in result["trades"]] == [10.0, 9.0]
     assert len(result["per_contract"]) == 2
+    assert [point["equity"] for point in result["equity_curve"]] == [0.0, 600.0, 1200.0]
+    assert result["max_drawdown"] == 0.0
