@@ -37,8 +37,8 @@ class FailOnRequestSource(FakeHistoricalSource):
         self.fail_on_call = fail_on_call
 
     def fetch(self, request: HistoricalFetchRequest):
-        self.requests.append(request)
-        if len(self.requests) == self.fail_on_call:
+        if len(self.requests) + 1 == self.fail_on_call:
+            self.requests.append(request)
             raise RuntimeError("temporary provider failure")
         yield from super().fetch(request)
 
@@ -55,12 +55,8 @@ def test_plan_never_crosses_rollover_windows_or_closed_days():
     )
 
     plan = build_continuous_futures_acquisition_plan(
-        windows,
-        source="fake",
-        timeframe="1m",
-        interval_ns=INTERVAL_NS,
-        calendar=calendar,
-        max_request_ns=10 * INTERVAL_NS,
+        windows, source="fake", timeframe="1m", interval_ns=INTERVAL_NS,
+        calendar=calendar, max_request_ns=10 * INTERVAL_NS,
     )
 
     assert [(r.instrument, r.start_ns, r.end_ns) for r in plan.requests] == [
