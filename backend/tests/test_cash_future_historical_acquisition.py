@@ -198,7 +198,7 @@ def test_acquisition_forwards_retry_policy_to_provider_status_errors(tmp_path, s
     )
 
     assert result.execution.failed_request_index is None
-    assert source.calls == 2
+    assert source.calls == 5
     assert sleeps == [0.25]
     assert result.plan.requests == ()
     assert history.timestamps(source="angelone", instrument="NSE:3045:SBIN", timeframe="1m",
