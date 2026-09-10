@@ -19,7 +19,19 @@ class RecordingSource:
 
     def fetch(self, request):
         self.calls.append(request)
-        yield from self.records_by_request[request]
+        for original, records in self.records_by_request.items():
+            if (
+                original.source == request.source
+                and original.instrument == request.instrument
+                and original.timeframe == request.timeframe
+            ):
+                yield from (
+                    record
+                    for record in records
+                    if request.start_ns <= record.timestamp_ns <= request.end_ns
+                )
+                return
+        raise KeyError(request)
 
 
 def test_multiple_terminal_chunks_across_rollover_repair_only_corrupt_ranges(tmp_path):
@@ -76,8 +88,8 @@ def test_multiple_terminal_chunks_across_rollover_repair_only_corrupt_ranges(tmp
         plan_metadata=metadata,
     )
 
-    # Chunk 0 is fully intact. Chunks 1 and 2 are terminal in the ledger but each
-    # has a different internal catalog gap that must be repaired independently.
+    # Chunk 0 is fully intact. Chunk 1 is terminal in the ledger but has an
+    # internal catalog gap that must be repaired independently.
     for chunk_index, request in enumerate(plan.requests):
         missing = {5, 6} if chunk_index == 0 else {100, 101}
         for index, record in enumerate(records_by_request[request]):
@@ -119,7 +131,10 @@ def test_multiple_terminal_chunks_across_rollover_repair_only_corrupt_ranges(tmp
 
     assert resumed.completed
     assert len(source.calls) == 1
-    assert source.calls[0] == plan.requests[1]
+    assert (source.calls[0].start_ns, source.calls[0].end_ns) == (
+        records_by_request[plan.requests[1]][100].timestamp_ns,
+        records_by_request[plan.requests[1]][101].timestamp_ns,
+    )
     assert job_store.pending_indices("multi-session-repair") == ()
     assert all(
         job_store.chunk_state("multi-session-repair", index)[0] == "completed"
