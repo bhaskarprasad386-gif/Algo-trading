@@ -13,17 +13,16 @@ from app.backtesting.trading_calendar import TradingCalendar
 
 
 class RestartableSource:
-    def __init__(self, records_by_request, *, fail: bool):
+    def __init__(self, records_by_request, *, fail_instrument=None):
         self.records_by_request = records_by_request
-        self.fail = fail
+        self.fail_instrument = fail_instrument
         self.calls = []
 
     def fetch(self, request):
         self.calls.append(request)
-        records = self.records_by_request[request]
-        if self.fail:
+        if request.instrument == self.fail_instrument:
             raise RuntimeError("simulated process interruption")
-        yield from records
+        yield from self.records_by_request[request]
 
 
 def _records(plan, *, interval_ns):
@@ -42,7 +41,7 @@ def _records(plan, *, interval_ns):
     }
 
 
-def test_persistent_rollover_resume_survives_new_process_and_skips_completed_chunks():
+def test_persistent_rollover_resume_survives_new_process_and_skips_completed_chunks(tmp_path):
     calendar = TradingCalendar()
     windows = (
         FNORolloverWindow("AAA", "STOCK_FUTURE", "101", date(2026, 1, 29), date(2026, 1, 29)),
@@ -50,9 +49,11 @@ def test_persistent_rollover_resume_survives_new_process_and_skips_completed_chu
     )
     interval_ns = 60_000_000_000
     max_request_ns = 86_400_000_000_000
+    catalog_path = str(tmp_path / "catalog.sqlite")
+    job_store_path = str(tmp_path / "jobs.sqlite")
 
-    catalog = HistoricalCatalog()
-    job_store = HistoricalJobStore()
+    catalog = HistoricalCatalog(catalog_path)
+    job_store = HistoricalJobStore(job_store_path)
     plan = build_continuous_futures_acquisition_plan(
         windows,
         source="angelone",
@@ -68,7 +69,7 @@ def test_persistent_rollover_resume_survives_new_process_and_skips_completed_chu
         collect_results=False,
         sleep=lambda _: None,
     )
-    first_source = RestartableSource(records, fail=False)
+    first_source = RestartableSource(records, fail_instrument="NFO:202")
 
     first = acquire_continuous_futures_history(
         catalog,
@@ -85,22 +86,29 @@ def test_persistent_rollover_resume_survives_new_process_and_skips_completed_chu
         run_id="process-1",
     )
 
-    assert first.completed
-    assert job_store.pending_indices("restart-rollover-job") == ()
-    assert len(first_source.calls) == 2
+    assert not first.completed
+    assert job_store.pending_indices("restart-rollover-job") == (1,)
+    assert [request.instrument for request in first_source.calls] == [
+        "NFO:101",
+        "NFO:202",
+        "NFO:202",
+        "NFO:202",
+    ]
+    old_count = catalog.count(source="angelone", instrument="NFO:101", timeframe="1m")
+    assert old_count == len(records[plan.requests[0]])
 
-    # Simulate a completely new process: new catalog/job-store handles and executor.
+    # Simulate a completely new process by closing both durable SQLite handles.
     catalog.close()
     job_store.close()
 
-    catalog = HistoricalCatalog()
-    job_store = HistoricalJobStore()
+    catalog = HistoricalCatalog(catalog_path)
+    job_store = HistoricalJobStore(job_store_path)
     second_executor = ResumableHistoricalExecutor(
         HistoricalIngestionService(catalog),
         collect_results=False,
         sleep=lambda _: None,
     )
-    second_source = RestartableSource(records, fail=False)
+    second_source = RestartableSource(records)
 
     resumed = acquire_continuous_futures_history(
         catalog,
@@ -118,9 +126,10 @@ def test_persistent_rollover_resume_survives_new_process_and_skips_completed_chu
     )
 
     assert resumed.completed
-    assert second_source.calls == []
+    assert [request.instrument for request in second_source.calls] == ["NFO:202"]
     assert job_store.pending_indices("restart-rollover-job") == ()
     assert job_store.get("restart-rollover-job").state == "completed"
+    assert catalog.count(source="angelone", instrument="NFO:101", timeframe="1m") == old_count
     assert catalog.count(source="angelone", timeframe="1m") == sum(
         len(items) for items in records.values()
     )
