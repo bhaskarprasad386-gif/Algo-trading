@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable
 
+from .cash_future_coverage_manifest import CoverageManifest, manifest_from_catalog, build_coverage_manifest
+from .cash_future_coverage_manifest_store import CashFutureCoverageManifestStore
 from .cash_future_data_coverage import CashFutureDataCoverageAudit, CashFutureDataCoverageReport
 from .cash_future_download_queue import CashFutureDownloadQueue, build_rollover_download_queue
 from .cash_future_gap_download import CashFutureGapDownloadPlanner
@@ -117,6 +119,63 @@ class CashFutureHistoricalAcquisitionService:
             future_sessions=future_sessions,
         )
 
+    def _build_manifest(
+        self,
+        *,
+        queue: CashFutureDownloadQueue,
+        source: str,
+        spot_sessions: tuple[SessionWindow, ...],
+        future_sessions: dict[str, tuple[SessionWindow, ...]] | None,
+        generated_at: datetime | None = None,
+    ) -> CoverageManifest:
+        """Build session-scoped coverage so non-trading gaps are never counted."""
+        ranges = []
+        instruments = {request.instrument for request in queue.all_requests}
+        sessions_by_instrument: dict[str, tuple[SessionWindow, ...]] = {
+            queue.spot.request.instrument: spot_sessions,
+        }
+        if future_sessions:
+            sessions_by_instrument.update(future_sessions)
+        for instrument in sorted(instruments):
+            for session in sessions_by_instrument.get(instrument, ()):
+                session_manifest = manifest_from_catalog(
+                    source=source,
+                    instrument=instrument,
+                    start_ns=session.start_ns,
+                    end_ns=session.end_ns,
+                    interval_ns=self.interval_ns,
+                    observed_timestamps=self.ingestion.catalog.timestamps(
+                        source=source,
+                        instrument=instrument,
+                        timeframe=queue.spot.request.timeframe,
+                        start_ns=session.start_ns,
+                        end_ns=session.end_ns,
+                    ),
+                    generated_at=generated_at,
+                )
+                ranges.extend(session_manifest.ranges)
+        return build_coverage_manifest(source=source, ranges=ranges, generated_at=generated_at)
+
+    def _persist_manifest(
+        self,
+        *,
+        coverage_store: CashFutureCoverageManifestStore | None,
+        queue: CashFutureDownloadQueue,
+        source: str,
+        spot_sessions: tuple[SessionWindow, ...],
+        future_sessions: dict[str, tuple[SessionWindow, ...]] | None,
+    ) -> None:
+        if coverage_store is None:
+            return
+        coverage_store.upsert(
+            self._build_manifest(
+                queue=queue,
+                source=source,
+                spot_sessions=spot_sessions,
+                future_sessions=future_sessions,
+            )
+        )
+
     @staticmethod
     def _durable_job_id(job_store: HistoricalJobStore, base_job_id: str, plan: HistoricalSyncPlan) -> str:
         """Scope durable state to the exact plan so repaired plans get fresh identities."""
@@ -148,6 +207,7 @@ class CashFutureHistoricalAcquisitionService:
         job_store: HistoricalJobStore | None = None,
         job_id: str | None = None,
         run_id: str | None = None,
+        coverage_store: CashFutureCoverageManifestStore | None = None,
     ) -> CashFutureAcquisitionResult:
         """Download missing chunks and re-plan bounded gaps until coverage stabilizes.
 
@@ -156,6 +216,10 @@ class CashFutureHistoricalAcquisitionService:
         in the internal job identity, so a changed repair plan never conflicts with the
         completed state of an earlier plan. Re-running after a worker crash resumes the
         unfinished chunks of the same plan and skips chunks already marked complete.
+
+        When ``coverage_store`` is supplied, a session-scoped manifest is persisted before
+        the first pass and after every repair/audit pass. The manifest is incremental and
+        restart-safe; overnight and other non-session intervals are never classified as gaps.
         """
         durable_args = (job_store is not None, job_id is not None, run_id is not None)
         if any(durable_args) and not all(durable_args):
@@ -183,6 +247,13 @@ class CashFutureHistoricalAcquisitionService:
                 future_sessions=future_sessions,
             )
         ]
+        self._persist_manifest(
+            coverage_store=coverage_store,
+            queue=queue,
+            source=source,
+            spot_sessions=spot_sessions,
+            future_sessions=future_sessions,
+        )
         if on_progress is not None:
             on_progress(CashFutureAcquisitionProgress(0, 0, 0, len(plan.requests), progress[-1]))
         total_completed = 0
@@ -232,6 +303,13 @@ class CashFutureHistoricalAcquisitionService:
                     spot_sessions=spot_sessions,
                     future_sessions=future_sessions,
                 )
+            )
+            self._persist_manifest(
+                coverage_store=coverage_store,
+                queue=queue,
+                source=source,
+                spot_sessions=spot_sessions,
+                future_sessions=future_sessions,
             )
             if execution.failed_request_index is not None:
                 if on_progress is not None:
