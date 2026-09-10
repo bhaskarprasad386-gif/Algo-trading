@@ -43,7 +43,8 @@ def test_multi_chunk_acquisition_enforces_provider_minimum_interval(tmp_path):
         mode="CURRENT", retry_attempts=1, retry_policy=policy, max_repair_passes=1,
     )
 
+    # Three expected minute timestamps are planned for each leg: spot + future.
     assert result.execution.failed_request_index is None
-    assert result.execution.completed_chunks == 2
-    assert source.calls == 2
-    assert sleeps == [0.5]
+    assert result.execution.completed_chunks == 6
+    assert source.calls == 6
+    assert sleeps == [0.5] * 5
