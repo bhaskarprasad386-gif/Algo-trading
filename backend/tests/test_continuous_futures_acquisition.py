@@ -7,6 +7,7 @@ import pytest
 from app.backtesting.continuous_futures_acquisition import (
     acquire_continuous_futures_history,
     build_continuous_futures_acquisition_plan,
+    repair_continuous_futures_history_gaps,
 )
 from app.backtesting.fno_rollover import FNORolloverWindow
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
@@ -133,3 +134,40 @@ def test_durable_arguments_must_be_complete():
             interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=INTERVAL_NS,
             job_store=HistoricalJobStore(), job_id="job-only",
         )
+
+
+def test_durable_gap_repair_persists_and_resumes(tmp_path):
+    catalog = HistoricalCatalog(tmp_path / "catalog.sqlite")
+    store = HistoricalJobStore(tmp_path / "jobs.sqlite")
+    calendar = TradingCalendar(session_open=time(9, 15), session_close=time(9, 18))
+    window = FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 2), date(2026, 1, 2))
+    session = calendar.sessions_between(window.start_date, window.end_date)[0]
+
+    timestamps = [session.start_ns, session.start_ns + 2 * INTERVAL_NS, session.end_ns]
+    catalog.ingest(
+        HistoricalRecord("fake", "NFO:JAN", "1m", timestamp, {"close": 100.0})
+        for timestamp in timestamps
+    )
+
+    source = FakeHistoricalSource()
+    first = repair_continuous_futures_history_gaps(
+        catalog, source, [window], source_name="fake", timeframe="1m",
+        interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=10 * INTERVAL_NS,
+        job_store=store, job_id="gap-repair-job", run_id="run-1",
+    )
+
+    assert first.completed
+    assert len(source.requests) == 1
+    assert source.requests[0].start_ns == session.start_ns + INTERVAL_NS
+    assert source.requests[0].end_ns == session.start_ns + INTERVAL_NS
+    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 4
+
+    second = repair_continuous_futures_history_gaps(
+        catalog, source, [window], source_name="fake", timeframe="1m",
+        interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=10 * INTERVAL_NS,
+        job_store=store, job_id="gap-repair-job", run_id="run-1",
+    )
+    assert second.completed
+    assert second.execution.completed_chunks == 0
+    assert second.execution.skipped_chunks == 0
+    assert len(source.requests) == 1
