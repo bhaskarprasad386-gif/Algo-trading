@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Mapping
 
 from .contract_master import ContractMasterCatalog, ContractRecord
 from .continuous_futures import ContinuousFuturesRecord, build_continuous_futures_series
 from .fno_rollover import build_futures_rollover_chain
-from .historical_catalog import HistoricalCatalog, HistoricalRecord
+from .historical_catalog import HistoricalCatalog
 
 
 def build_continuous_futures_from_catalog(
@@ -20,18 +19,16 @@ def build_continuous_futures_from_catalog(
     end_date: date,
     exchange: str = "NFO",
     instrument_type: str = "STOCK_FUTURE",
+    source: str = "angelone",
+    timeframe: str = "1m",
 ) -> tuple[ContinuousFuturesRecord, ...]:
-    """Resolve real contracts from the master and project catalog history.
-
-    Contract-master snapshots are treated as the source of contract identity;
-    historical bars are treated as the source of market data. Only tokens that
-    exist in the master are requested, and missing historical records remain
-    missing rather than being synthesized.
-    """
+    """Resolve real contracts and project only their durable raw history."""
     if end_date < start_date:
         raise ValueError("end_date must be on or after start_date")
     if not underlying.strip():
         raise ValueError("underlying is required")
+    if not source.strip() or not timeframe.strip():
+        raise ValueError("source and timeframe are required")
 
     contracts_by_token: dict[str, ContractRecord] = {}
     for snapshot_date in contract_catalog.snapshot_dates():
@@ -57,15 +54,12 @@ def build_continuous_futures_from_catalog(
         start_date=start_date,
         end_date=end_date,
     )
-
-    records_by_token: Mapping[str, tuple[HistoricalRecord, ...]] = {
-        contract.token: historical_catalog.records(
-            source=exchange,
-            instrument=f"NFO:{contract.token}",
-            timeframe="1m",
-        )
-        for contract in contracts
-    }
+    records_by_token = historical_catalog.records_by_contract_tokens(
+        source=source,
+        contract_tokens=(contract.token for contract in contracts),
+        timeframe=timeframe,
+        instrument_prefix=f"{exchange}:",
+    )
     return build_continuous_futures_series(windows, records_by_token)
 
 
