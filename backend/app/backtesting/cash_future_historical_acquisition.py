@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 from .cash_future_coverage_manifest import CoverageManifest, manifest_from_catalog, build_coverage_manifest
 from .cash_future_coverage_manifest_store import CashFutureCoverageManifestStore
@@ -18,6 +19,8 @@ from .historical_job_store import HistoricalJobStore
 from .historical_sync import HistoricalSyncPlan
 from .provider_retry import ProviderRetryPolicy, build_provider_retry_policy
 from .session_gap_planner import SessionWindow
+
+MARKET_TZ = ZoneInfo("Asia/Kolkata")
 
 
 @dataclass(frozen=True)
@@ -70,6 +73,15 @@ class CashFutureHistoricalAcquisitionService:
         )
         self.coverage = CashFutureDataCoverageAudit(ingestion.catalog)
 
+    @staticmethod
+    def _session_days(sessions: tuple[SessionWindow, ...]) -> tuple:
+        """Convert session windows into deterministic India-local calendar dates."""
+        return tuple(sorted({
+            datetime.fromtimestamp(session.start_ns / 1_000_000_000, tz=timezone.utc)
+            .astimezone(MARKET_TZ).date()
+            for session in sessions
+        }))
+
     def prepare(
         self,
         *,
@@ -94,6 +106,7 @@ class CashFutureHistoricalAcquisitionService:
             timeframe=timeframe,
             mode=mode,
             source=source,
+            session_days=self._session_days(spot_sessions),
         )
         plan = self.planner.plan(
             queue=queue,
@@ -133,7 +146,7 @@ class CashFutureHistoricalAcquisitionService:
         ranges = []
         instruments = {request.instrument for request in queue.all_requests}
         sessions_by_instrument: dict[str, tuple[SessionWindow, ...]] = {
-            queue.spot.request.instrument: spot_sessions,
+            queue.spot.instrument: spot_sessions,
         }
         if future_sessions:
             sessions_by_instrument.update(future_sessions)
