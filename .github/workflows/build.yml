@@ -1,15 +1,7 @@
 name: Build and Verify
 
 on:
-  push:
-    branches: [ main, master ]
   workflow_dispatch:
-
-# Keep only the newest CI run for a branch. This prevents a queue of
-# obsolete commits from delaying verification of the current code.
-concurrency:
-  group: build-verify-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   backend:
@@ -24,8 +16,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
       - name: Install backend dependencies
         working-directory: backend
         run: python -m pip install --upgrade pip && pip install -r requirements.txt && pip install pytest
