@@ -6,7 +6,7 @@ from app.backtesting.historical_catalog import HistoricalCatalog
 from app.backtesting.historical_ingest import HistoricalIngestionService
 from app.backtesting.provider_retry import ProviderRetryPolicy
 from app.backtesting.session_gap_planner import SessionWindow
-from test_cash_future_historical_acquisition import FakeHistoricalSource, _contract_catalog
+from tests.test_cash_future_historical_acquisition import FakeHistoricalSource, _contract_catalog
 
 
 def test_cash_future_acquisition_auto_builds_known_provider_retry_policy(tmp_path, monkeypatch):
