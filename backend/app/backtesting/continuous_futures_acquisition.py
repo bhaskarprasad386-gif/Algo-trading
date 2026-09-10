@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .continuous_futures import build_continuous_futures_series_from_catalog
-from .fno_rollover import FNORolloverWindow
+from .fno_rollover import FNORolloverWindow, validate_futures_rollover_chain
 from .historical_catalog import HistoricalCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_ingest import HistoricalFetchRequest, HistoricalIngestionService, HistoricalSource
@@ -36,6 +36,17 @@ def _validate_inputs(*, source: str, timeframe: str, interval_ns: int, max_reque
         raise ValueError("max_request_ns must be positive")
 
 
+def _validate_rollover_windows(windows: tuple[FNORolloverWindow, ...]) -> None:
+    if not windows:
+        return
+    first = windows[0]
+    validate_futures_rollover_chain(
+        windows,
+        underlying=first.underlying,
+        instrument_type=first.instrument_type,
+    )
+
+
 def _window_sessions(window: FNORolloverWindow, calendar: TradingCalendar) -> tuple[tuple[int, int], ...]:
     return tuple((session.start_ns, session.end_ns) for session in calendar.sessions_between(window.start_date, window.end_date))
 
@@ -46,6 +57,8 @@ def build_continuous_futures_acquisition_plan(
 ) -> HistoricalSyncPlan:
     """Build stable provider requests only inside active-contract trading sessions."""
     _validate_inputs(source=source, timeframe=timeframe, interval_ns=interval_ns, max_request_ns=max_request_ns)
+    windows = tuple(windows)
+    _validate_rollover_windows(windows)
     requests: list[HistoricalFetchRequest] = []
     for window in windows:
         for session_start, session_end in _window_sessions(window, calendar):
@@ -86,6 +99,8 @@ def build_continuous_futures_gap_plan(
 ) -> HistoricalSyncPlan:
     """Build repair requests for every missing cadence point inside active sessions."""
     _validate_inputs(source=source, timeframe=timeframe, interval_ns=interval_ns, max_request_ns=max_request_ns)
+    windows = tuple(windows)
+    _validate_rollover_windows(windows)
     requests: list[HistoricalFetchRequest] = []
     for window in windows:
         instrument = f"NFO:{window.contract_token}"
@@ -103,41 +118,20 @@ def _complete(catalog: HistoricalCatalog, request: HistoricalFetchRequest, inter
 
 def _plan_from_metadata(metadata: tuple[dict[str, object], ...]) -> HistoricalSyncPlan:
     return HistoricalSyncPlan(tuple(HistoricalFetchRequest(
-        source=str(item["source"]),
-        instrument=str(item["instrument"]),
-        timeframe=str(item["timeframe"]),
-        start_ns=int(item["start_ns"]),
-        end_ns=int(item["end_ns"]),
+        source=str(item["source"]), instrument=str(item["instrument"]), timeframe=str(item["timeframe"]),
+        start_ns=int(item["start_ns"]), end_ns=int(item["end_ns"]),
     ) for item in metadata))
 
 
 class _MissingRangeSource:
     """Translate a retry of a Cash-Future chunk into only its currently missing ranges."""
-
     def __init__(self, catalog: HistoricalCatalog, source: HistoricalSource, interval_ns: int) -> None:
-        self.catalog = catalog
-        self.source = source
-        self.interval_ns = interval_ns
+        self.catalog, self.source, self.interval_ns = catalog, source, interval_ns
 
     def fetch(self, request: HistoricalFetchRequest):
-        ranges = _missing_ranges(
-            self.catalog,
-            source=request.source,
-            instrument=request.instrument,
-            timeframe=request.timeframe,
-            session_start_ns=request.start_ns,
-            session_end_ns=request.end_ns,
-            interval_ns=self.interval_ns,
-        )
+        ranges = _missing_ranges(self.catalog, source=request.source, instrument=request.instrument, timeframe=request.timeframe, session_start_ns=request.start_ns, session_end_ns=request.end_ns, interval_ns=self.interval_ns)
         for start_ns, end_ns in ranges:
-            subrequest = HistoricalFetchRequest(
-                source=request.source,
-                instrument=request.instrument,
-                timeframe=request.timeframe,
-                start_ns=start_ns,
-                end_ns=end_ns,
-            )
-            yield from self.source.fetch(subrequest)
+            yield from self.source.fetch(HistoricalFetchRequest(source=request.source, instrument=request.instrument, timeframe=request.timeframe, start_ns=start_ns, end_ns=end_ns))
 
 
 def _runner(catalog: HistoricalCatalog, source: HistoricalSource, interval_ns: int, executor: ResumableHistoricalExecutor | None) -> ResumableHistoricalExecutor:
@@ -185,14 +179,11 @@ def repair_continuous_futures_history_gaps(
             if existing.run_id != run_id:
                 raise ValueError("existing historical job does not match run or plan")
             persisted = job_store.plan_metadata(job_id)
-            plan = _plan_from_metadata(persisted) if persisted is not None else build_continuous_futures_gap_plan(
-                catalog, windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns, calendar=calendar, max_request_ns=max_request_ns
-            )
+            plan = _plan_from_metadata(persisted) if persisted is not None else build_continuous_futures_gap_plan(catalog, windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns, calendar=calendar, max_request_ns=max_request_ns)
         else:
             plan = build_continuous_futures_gap_plan(catalog, windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns, calendar=calendar, max_request_ns=max_request_ns)
     else:
         plan = build_continuous_futures_gap_plan(catalog, windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns, calendar=calendar, max_request_ns=max_request_ns)
-
     runner = _runner(catalog, source, interval_ns, executor)
     gap_aware_source = _MissingRangeSource(catalog, source, interval_ns)
     should_skip = lambda request: _complete(catalog, request, interval_ns)
@@ -209,10 +200,7 @@ def repair_continuous_futures_history_gaps(
 
 
 __all__ = [
-    "ContinuousFuturesAcquisitionReport",
-    "build_continuous_futures_acquisition_plan",
-    "build_continuous_futures_gap_plan",
-    "acquire_continuous_futures_history",
-    "repair_continuous_futures_history_gaps",
-    "build_continuous_futures_series_from_catalog",
+    "ContinuousFuturesAcquisitionReport", "build_continuous_futures_acquisition_plan",
+    "build_continuous_futures_gap_plan", "acquire_continuous_futures_history",
+    "repair_continuous_futures_history_gaps", "build_continuous_futures_series_from_catalog",
 ]
