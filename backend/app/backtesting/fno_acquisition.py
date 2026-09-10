@@ -130,8 +130,8 @@ def build_fno_coverage_plan(
     The expected grid is derived only from the declared fixed interval and the
     trading calendar. Existing timestamps are excluded, while leading, interior,
     and trailing missing bars are all repaired. Session boundaries are never
-    crossed. This planner is intentionally for fixed-cadence bars, not tick,
-    depth, or event streams.
+    crossed. Contracts are scheduled only through their expiry date. This planner
+    is intentionally for fixed-cadence bars, not tick, depth, or event streams.
     """
     if not timeframe.strip() or not source.strip():
         raise ValueError("timeframe and source are required")
@@ -146,6 +146,8 @@ def build_fno_coverage_plan(
     contracts = universe.stock_contracts + universe.index_contracts
     for contract in contracts:
         for session in calendar.sessions_between(start_date, end_date):
+            if session.trading_date > contract.expiry:
+                continue
             observed = catalog.timestamps(
                 source=source,
                 instrument=contract.token,
