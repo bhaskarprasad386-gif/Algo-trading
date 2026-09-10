@@ -1,4 +1,4 @@
-"""Build Cash-Future coverage directly from persisted history in bounded pages."""
+"""Persisted Cash-Future history streaming helpers."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.cash_future_history import CashFutureHistory
+from app.scanner.cash_future_backtest import BacktestConfig, run_multi_contract_backtest_streaming
 from app.scanner.cash_future_coverage import CashFutureCoverageReport, build_cash_future_coverage_report
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
@@ -92,4 +93,31 @@ def build_persisted_cash_future_coverage(
     )
 
 
-__all__ = ["iter_persisted_cash_future_points", "build_persisted_cash_future_coverage"]
+def run_persisted_cash_future_backtest(
+    db: Session,
+    config: BacktestConfig,
+    *,
+    symbol: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    page_size: int = 1000,
+) -> dict:
+    """Run Cash-Future backtest directly from persisted history in bounded pages."""
+    return run_multi_contract_backtest_streaming(
+        iter_persisted_cash_future_points(
+            db,
+            symbol=symbol,
+            contract_month=config.contract_month,
+            start=start,
+            end=end,
+            page_size=page_size,
+        ),
+        config,
+    )
+
+
+__all__ = [
+    "iter_persisted_cash_future_points",
+    "build_persisted_cash_future_coverage",
+    "run_persisted_cash_future_backtest",
+]
