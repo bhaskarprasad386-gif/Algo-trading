@@ -60,7 +60,12 @@ def test_service_resumes_same_plan_after_worker_crash(tmp_path):
     )
     durable_id = service._durable_job_id(jobs, kwargs["job_id"], plan)
     metadata = tuple(ResumableHistoricalExecutor._request_metadata(request) for request in plan.requests)
-    jobs.create(durable_id, kwargs["run_id"], jobs.fingerprint(metadata), len(plan.requests))
+    jobs.create(
+        job_id=durable_id,
+        run_id=kwargs["run_id"],
+        plan_fingerprint=jobs.fingerprint(metadata),
+        total_chunks=len(plan.requests),
+    )
     jobs.start_chunk(durable_id, 0)
     assert jobs.chunk_state(durable_id, 0)[0] == "running"
     jobs.close()
