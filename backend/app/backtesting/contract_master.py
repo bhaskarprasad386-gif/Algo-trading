@@ -118,3 +118,27 @@ class ContractMasterCatalog:
         if not contracts:
             raise LookupError(f"no historical stock futures contract for {underlying} on {as_of.isoformat()}")
         return contracts[0] if mode == "CURRENT" else (contracts[1] if len(contracts) > 1 else contracts[0])
+
+    def resolve_contract_month(self, *, exchange: str, underlying: str, contract_month: str, as_of: date, instrument_type: str = "STOCK_FUTURE") -> ContractRecord:
+        """Resolve the exact historical futures contract for a YYYY-MM expiry month."""
+        try:
+            year_text, month_text = contract_month.strip().split("-", 1)
+            year, month = int(year_text), int(month_text)
+            target = date(year, month, 1)
+            next_month = date(year + (1 if month == 12 else 0), 1 if month == 12 else month + 1, 1)
+        except (AttributeError, TypeError, ValueError):
+            raise ValueError("contract_month must be YYYY-MM") from None
+
+        row = self._db.execute("SELECT snapshot_date FROM contract_master_snapshots WHERE snapshot_date<=? ORDER BY snapshot_date DESC LIMIT 1", (as_of.isoformat(),)).fetchone()
+        if row is None:
+            raise LookupError(f"no historical contract-master snapshot for {as_of.isoformat()}")
+        snapshot = row[0]
+        rows = self._db.execute("""SELECT exchange,symbol,token,expiry,instrument_type,underlying,lot_size,tick_size
+            FROM derivative_contracts WHERE snapshot_date=? AND exchange=? AND underlying=?
+            AND instrument_type=? AND expiry>=? AND expiry<? ORDER BY expiry""", (
+                snapshot, exchange, underlying, instrument_type, target.isoformat(), next_month.isoformat()
+            )).fetchall()
+        if not rows:
+            raise LookupError(f"no historical {instrument_type} contract for {underlying} in {year:04d}-{month:02d}")
+        r = rows[0]
+        return ContractRecord(r[0], r[1], r[2], date.fromisoformat(r[3]), r[4], r[5], int(r[6]), date.fromisoformat(snapshot), None if r[7] is None else float(r[7]))
