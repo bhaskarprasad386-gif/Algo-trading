@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from .historical_catalog import Gap
 from .historical_sync import HistoricalSyncPlan, build_chunked_plan
 
 
@@ -70,3 +71,31 @@ def build_one_year_plan(
         end_ns=end_ns,
         chunk_ns=chunk_ns,
     )
+
+
+def build_gap_plan(
+    *,
+    source: str,
+    gaps: tuple[Gap, ...] | list[Gap],
+    chunk: timedelta | None = None,
+) -> HistoricalSyncPlan:
+    """Build a bounded targeted-repair plan from catalog gaps only."""
+    if chunk is not None and chunk.total_seconds() <= 0:
+        raise ValueError("chunk must be positive")
+    chunk_ns = None if chunk is None else int(chunk.total_seconds() * 1_000_000_000)
+    requests = []
+    for gap in gaps:
+        if gap.start_ns < 0 or gap.end_ns < gap.start_ns:
+            raise ValueError("invalid gap range")
+        effective_chunk_ns = chunk_ns or (gap.end_ns - gap.start_ns + 1)
+        requests.extend(
+            build_chunked_plan(
+                source=source,
+                instrument=gap.instrument,
+                timeframe=gap.timeframe,
+                start_ns=gap.start_ns,
+                end_ns=gap.end_ns,
+                chunk_ns=max(1, effective_chunk_ns),
+            ).requests
+        )
+    return HistoricalSyncPlan(tuple(requests))
