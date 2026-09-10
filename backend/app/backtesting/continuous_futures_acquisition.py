@@ -137,6 +137,7 @@ def acquire_continuous_futures_history(
             job_store=job_store,
             job_id=job_id,
             run_id=run_id,
+            should_skip=complete,
         )
     return ContinuousFuturesAcquisitionReport(windows, plan, execution)
 
