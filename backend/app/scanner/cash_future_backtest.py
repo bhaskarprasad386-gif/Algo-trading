@@ -114,15 +114,21 @@ def run_multi_contract_backtest(
         group[0].cash_price * group[0].lot_size + group[0].margin_required
         for group in grouped.values() if group
     )
-    equity_curve = sorted(
-        [point for result in results for point in result["equity_curve"]],
-        key=lambda point: point["timestamp"],
-    )
+
+    # A multi-contract equity curve must represent one sequential portfolio,
+    # not concatenated independent per-contract curves that each restart at 0.
+    equity_curve = [{"timestamp": None, "equity": 0.0}]
+    cumulative_equity = 0.0
     running_peak = 0.0
     max_drawdown = 0.0
-    for point in equity_curve:
-        running_peak = max(running_peak, point["equity"])
-        max_drawdown = max(max_drawdown, running_peak - point["equity"])
+    for trade in trades:
+        cumulative_equity += trade["net_profit"]
+        running_peak = max(running_peak, cumulative_equity)
+        max_drawdown = max(max_drawdown, running_peak - cumulative_equity)
+        equity_curve.append({
+            "timestamp": trade["exit_time"],
+            "equity": cumulative_equity,
+        })
 
     return {
         "contract_count": len(results),
