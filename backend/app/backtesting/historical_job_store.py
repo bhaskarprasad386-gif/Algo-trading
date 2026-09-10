@@ -36,10 +36,13 @@ class HistoricalJobStore:
         self._db.execute("PRAGMA foreign_keys=ON")
         self._db.execute("""CREATE TABLE IF NOT EXISTS historical_jobs (
             job_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, plan_fingerprint TEXT NOT NULL,
-            state TEXT NOT NULL, total_chunks INTEGER NOT NULL, completed_chunks INTEGER NOT NULL DEFAULT 0,
+            plan_metadata TEXT, state TEXT NOT NULL, total_chunks INTEGER NOT NULL, completed_chunks INTEGER NOT NULL DEFAULT 0,
             skipped_chunks INTEGER NOT NULL DEFAULT 0, failed_chunk INTEGER, error TEXT,
             CHECK(state IN ('queued','running','progress','completed','failed','cancelled','recoverable'))
         )""")
+        columns = {row[1] for row in self._db.execute("PRAGMA table_info(historical_jobs)").fetchall()}
+        if "plan_metadata" not in columns:
+            self._db.execute("ALTER TABLE historical_jobs ADD COLUMN plan_metadata TEXT")
         self._db.execute("""CREATE TABLE IF NOT EXISTS historical_job_chunks (
             job_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, state TEXT NOT NULL,
             attempts INTEGER NOT NULL DEFAULT 0, error TEXT,
@@ -57,14 +60,15 @@ class HistoricalJobStore:
         canonical = json.dumps([dict(r) for r in requests], sort_keys=True, separators=(",", ":"), default=str)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-    def create(self, *, job_id: str, run_id: str, plan_fingerprint: str, total_chunks: int) -> HistoricalJob:
+    def create(self, *, job_id: str, run_id: str, plan_fingerprint: str, total_chunks: int, plan_metadata: tuple[Mapping[str, Any], ...] | None = None) -> HistoricalJob:
         if not job_id.strip() or not run_id.strip() or not plan_fingerprint.strip():
             raise ValueError("job_id, run_id and plan_fingerprint are required")
         if total_chunks < 0:
             raise ValueError("total_chunks cannot be negative")
+        metadata_json = None if plan_metadata is None else json.dumps([dict(item) for item in plan_metadata], sort_keys=True, separators=(",", ":"), default=str)
         self._db.execute(
-            "INSERT INTO historical_jobs(job_id,run_id,plan_fingerprint,state,total_chunks) VALUES(?,?,?,?,?)",
-            (job_id, run_id, plan_fingerprint, "queued", total_chunks),
+            "INSERT INTO historical_jobs(job_id,run_id,plan_fingerprint,plan_metadata,state,total_chunks) VALUES(?,?,?,?,?,?)",
+            (job_id, run_id, plan_fingerprint, metadata_json, "queued", total_chunks),
         )
         self._db.executemany(
             "INSERT INTO historical_job_chunks(job_id,chunk_index,state) VALUES(?,?,?)",
@@ -81,6 +85,18 @@ class HistoricalJobStore:
         if row is None:
             raise KeyError(job_id)
         return HistoricalJob(*row)
+
+    def plan_metadata(self, job_id: str) -> tuple[dict[str, Any], ...] | None:
+        """Return the exact persisted request metadata for a durable job, if available."""
+        self.get(job_id)
+        row = self._db.execute("SELECT plan_metadata FROM historical_jobs WHERE job_id=?", (job_id,)).fetchone()
+        assert row is not None
+        if row[0] is None:
+            return None
+        payload = json.loads(str(row[0]))
+        if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
+            raise ValueError(f"invalid persisted plan metadata for job {job_id}")
+        return tuple(dict(item) for item in payload)
 
     def _require_chunk(self, job_id: str, chunk_index: int) -> None:
         if chunk_index < 0:
