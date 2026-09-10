@@ -175,3 +175,44 @@ class HistoricalIngestionService:
             timeframe=timeframe,
             interval_ns=interval_ns,
         )
+
+    def repair_expected_events(
+        self,
+        source_adapter: HistoricalSource,
+        *,
+        source: str,
+        instrument: str,
+        timeframe: str,
+        expected_timestamps: Iterable[int],
+        max_request_ns: int,
+        ingested_at_ns: int = 0,
+        batch_size: int = 1024,
+        on_batch: Callable[[int, int], None] | None = None,
+    ) -> tuple[HistoricalSyncResult, ...]:
+        """Repair only explicitly expected non-cadenced events.
+
+        The expected timestamp set must come from an authoritative source such
+        as an exchange/provider event manifest. No fixed event cadence is
+        inferred here. Candle/session acquisition should continue to use
+        ``repair_ranges`` or its dedicated session-aware planner instead.
+        """
+        from .historical_expected_events import build_expected_event_repair_plan
+
+        requests = build_expected_event_repair_plan(
+            self.catalog,
+            source=source,
+            instrument=instrument,
+            timeframe=timeframe,
+            expected_timestamps=expected_timestamps,
+            max_request_ns=max_request_ns,
+        )
+        return tuple(
+            self.sync_streaming(
+                source_adapter,
+                request,
+                ingested_at_ns=ingested_at_ns,
+                batch_size=batch_size,
+                on_batch=on_batch,
+            )
+            for request in requests
+        )
