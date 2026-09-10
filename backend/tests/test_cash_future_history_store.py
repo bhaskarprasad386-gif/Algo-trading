@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.database import Base
 from app.models.cash_future_history import CashFutureHistory
 from app.scanner.cash_future_history import CashFutureHistoryPoint
-from app.scanner.cash_future_history_store import read_history, save_history_point
+from app.scanner.cash_future_history_store import read_history, save_history_point, save_history_points
 
 
 @pytest.fixture
@@ -86,3 +86,26 @@ def test_history_upsert_keeps_one_row_for_same_identity(db_session):
     assert rows[0].future_price == 109.0
     assert rows[0].gap == 9.0
     assert db_session.query(CashFutureHistory).count() == 1
+
+
+def test_history_batch_upsert_is_bounded_and_idempotent(db_session):
+    first = CashFutureHistoryPoint(
+        timestamp=datetime(2026, 9, 2, 10, 0),
+        symbol="ABC",
+        contract_month="CURRENT",
+        cash_price=100.0,
+        future_price=108.0,
+        gap=8.0,
+        gap_pct=8.0,
+        lot_size=100,
+        margin_required=25000.0,
+    )
+    second = replace(first, timestamp=datetime(2026, 9, 2, 10, 1), future_price=109.0, gap=9.0)
+
+    assert save_history_points(db_session, [first, second]) == 2
+    assert save_history_points(db_session, [first, replace(second, future_price=110.0, gap=10.0)]) == 2
+
+    rows = read_history(db_session, "ABC", "CURRENT")
+    assert len(rows) == 2
+    assert [row.future_price for row in rows] == [108.0, 110.0]
+    assert db_session.query(CashFutureHistory).count() == 2
