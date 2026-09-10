@@ -13,7 +13,7 @@ from .contract_master import ContractMasterCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_ingest import HistoricalIngestionService, HistoricalSource
 from .historical_sync import HistoricalSyncPlan
-from .provider_retry import ProviderRetryPolicy
+from .provider_retry import ProviderRetryPolicy, build_provider_retry_policy
 from .session_gap_planner import SessionWindow
 
 
@@ -170,6 +170,11 @@ class CashFutureHistoricalAcquisitionService:
         total_completed = 0
         total_skipped: list[int] = []
         final_execution = DownloadExecutionResult(())
+        effective_retry_policy = retry_policy
+        if effective_retry_policy is None:
+            provider_name = source.strip().lower()
+            if provider_name == "angelone":
+                effective_retry_policy = build_provider_retry_policy(source)
 
         for pass_index in range(1, max_repair_passes + 1):
             if not plan.requests:
@@ -179,7 +184,7 @@ class CashFutureHistoricalAcquisitionService:
                 plan,
                 retry_attempts=retry_attempts,
                 retry_delay_seconds=retry_delay_seconds,
-                retry_policy=retry_policy,
+                retry_policy=effective_retry_policy,
             )
             total_completed += execution.completed_chunks
             total_skipped.extend(execution.skipped_request_indices)
