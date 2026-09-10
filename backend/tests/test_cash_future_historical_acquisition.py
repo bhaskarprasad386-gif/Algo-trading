@@ -1,10 +1,13 @@
 from datetime import date, datetime, timezone
 
+import pytest
+
 from app.backtesting.cash_future_historical_acquisition import CashFutureHistoricalAcquisitionService
 from app.backtesting.cash_future_download_queue import build_rollover_download_queue
 from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 from app.backtesting.historical_ingest import HistoricalIngestionService
+from app.backtesting.provider_retry import ProviderRetryPolicy
 from app.backtesting.session_gap_planner import SessionWindow
 
 
@@ -26,6 +29,39 @@ class StalledHistoricalSource(FakeHistoricalSource):
     def fetch(self, request):
         self.requests.append(request)
         return iter(())
+
+
+class StatusError(Exception):
+    def __init__(self, status_code):
+        super().__init__(f"provider HTTP {status_code}")
+        self.status_code = status_code
+
+
+class RetryStatusHistoricalSource(FakeHistoricalSource):
+    def __init__(self, status_code, fail_once):
+        super().__init__()
+        self.status_code = status_code
+        self.fail_once = fail_once
+        self.calls = 0
+
+    def fetch(self, request):
+        self.calls += 1
+        self.requests.append(request)
+        if self.calls == 1 and self.fail_once:
+            raise StatusError(self.status_code)
+        return super().fetch(request)
+
+
+class PermanentStatusHistoricalSource(FakeHistoricalSource):
+    def __init__(self, status_code):
+        super().__init__()
+        self.status_code = status_code
+        self.calls = 0
+
+    def fetch(self, request):
+        self.calls += 1
+        self.requests.append(request)
+        raise StatusError(self.status_code)
 
 
 def _contract_catalog():
@@ -139,6 +175,59 @@ def test_bounded_repair_stops_when_source_makes_no_progress(tmp_path):
     assert result.coverage.incomplete_chunks
     assert not history.timestamps(source="angelone", instrument="NSE:3045:SBIN", timeframe="1m",
                                   start_ns=session.start_ns, end_ns=session.end_ns)
+
+
+@pytest.mark.parametrize("status_code", [429, 500, 503])
+def test_acquisition_forwards_retry_policy_to_provider_status_errors(tmp_path, status_code):
+    source = RetryStatusHistoricalSource(status_code, fail_once=True)
+    service, history, _ = _service(tmp_path, source)
+    session = _window()
+    sleeps = []
+    policy = ProviderRetryPolicy(
+        base_delay_seconds=0.25, max_delay_seconds=1.0, jitter_ratio=0,
+        sleeper=lambda seconds: sleeps.append(seconds),
+    )
+
+    result = service.acquire(
+        spot_instrument="NSE:3045:SBIN", exchange="NFO", underlying="SBIN",
+        start=datetime(2026, 1, 29, tzinfo=timezone.utc),
+        end=datetime(2026, 1, 29, 0, 3, tzinfo=timezone.utc),
+        spot_sessions=(session,), future_sessions={"NFO:101:SBINJAN": (session,)},
+        timeframe="1m", mode="CURRENT", retry_attempts=2, retry_policy=policy,
+        max_repair_passes=1,
+    )
+
+    assert result.execution.failed_request_index is None
+    assert source.calls == 2
+    assert sleeps == [0.25]
+    assert result.plan.requests == ()
+    assert history.timestamps(source="angelone", instrument="NSE:3045:SBIN", timeframe="1m",
+                              start_ns=session.start_ns, end_ns=session.end_ns)
+
+
+def test_acquisition_does_not_retry_permanent_http_status(tmp_path):
+    source = PermanentStatusHistoricalSource(400)
+    service, _, _ = _service(tmp_path, source)
+    session = _window()
+    sleeps = []
+    policy = ProviderRetryPolicy(
+        base_delay_seconds=0.25, jitter_ratio=0,
+        sleeper=lambda seconds: sleeps.append(seconds),
+    )
+
+    result = service.acquire(
+        spot_instrument="NSE:3045:SBIN", exchange="NFO", underlying="SBIN",
+        start=datetime(2026, 1, 29, tzinfo=timezone.utc),
+        end=datetime(2026, 1, 29, 0, 3, tzinfo=timezone.utc),
+        spot_sessions=(session,), future_sessions={"NFO:101:SBINJAN": (session,)},
+        timeframe="1m", mode="CURRENT", retry_attempts=3, retry_policy=policy,
+        max_repair_passes=1,
+    )
+
+    assert result.execution.failed_request_index == 0
+    assert source.calls == 1
+    assert sleeps == []
+    assert result.plan.requests
 
 
 def test_prepare_is_empty_after_all_expected_timestamps_are_stored(tmp_path):
