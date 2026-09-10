@@ -101,7 +101,7 @@ class ResumableHistoricalExecutor:
             if job.run_id != run_id or job.plan_fingerprint != fingerprint or job.total_chunks != len(plan.requests):
                 raise ValueError("existing historical job does not match run or plan")
         except KeyError:
-            job_store.create(job_id=job_id, run_id=run_id, plan_fingerprint=fingerprint, total_chunks=len(plan.requests))
+            job_store.create(job_id=job_id, run_id=run_id, plan_fingerprint=fingerprint, total_chunks=len(plan.requests), plan_metadata=metadata)
         job_store.recover_running_chunks(job_id)
 
         if should_skip is not None:
@@ -114,9 +114,10 @@ class ResumableHistoricalExecutor:
                     job_store.reopen_chunk(job_id, index)
 
         pending = set(job_store.pending_indices(job_id))
+        index_by_identity = {id(request): index for index, request in enumerate(plan.requests)}
 
         def index_for(request: object) -> int:
-            return next(i for i, candidate in enumerate(plan.requests) if candidate is request)
+            return index_by_identity[id(request)]
         def durable_skip(request: object) -> bool:
             return index_for(request) not in pending
         def mark_start(index: int, request: object, attempt: int) -> None:
