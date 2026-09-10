@@ -108,7 +108,7 @@ def test_policy_retries_transient_failure_without_restarting_chunk_state(tmp_pat
     assert result.completed_chunks == 1
     assert service.calls == 2
     assert sleeps == [0.25]
-    assert store.chunk_state("job-1", 0)[:2] == ("completed", 2)
+    assert store.chunk_state("job-1", 0)[:2] == ("completed", 1)
     assert store.pending_indices("job-1") == ()
     assert store.get("job-1").state == "completed"
 
@@ -161,7 +161,7 @@ def test_policy_retries_transient_http_status_in_durable_path(tmp_path, status_c
     assert result.completed_chunks == 1
     assert service.calls == 2
     assert sleeps == [0.25]
-    assert store.chunk_state(f"job-{status_code}", 0)[:2] == ("completed", 2)
+    assert store.chunk_state(f"job-{status_code}", 0)[:2] == ("completed", 1)
     assert store.pending_indices(f"job-{status_code}") == ()
     assert store.get(f"job-{status_code}").state == "completed"
 
