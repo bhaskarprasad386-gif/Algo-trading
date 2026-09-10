@@ -1,14 +1,9 @@
-"""Deterministic Cash-Future historical coverage manifest helpers.
-
-The manifest is intentionally provider-agnostic: it describes what coverage is
-expected for a resolved contract/session and what the canonical catalog contains.
-No synthetic timestamps are created outside declared sessions.
-"""
+"""Deterministic Cash-Future historical coverage manifest helpers."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Iterable, Mapping
 
 
@@ -55,7 +50,6 @@ def _as_ns(value: int | datetime) -> int:
 
 
 def expected_timestamp_count(start_ns: int, end_ns: int, interval_ns: int) -> int:
-    """Count inclusive canonical timestamps in a bounded range."""
     if interval_ns <= 0:
         raise ValueError("interval_ns must be positive")
     if end_ns < start_ns:
@@ -63,13 +57,7 @@ def expected_timestamp_count(start_ns: int, end_ns: int, interval_ns: int) -> in
     return ((end_ns - start_ns) // interval_ns) + 1
 
 
-def build_coverage_manifest(
-    *,
-    source: str,
-    ranges: Iterable[CoverageRange],
-    generated_at: int | datetime | None = None,
-) -> CoverageManifest:
-    """Build a stable manifest sorted by instrument and time bounds."""
+def build_coverage_manifest(*, source: str, ranges: Iterable[CoverageRange], generated_at: int | datetime | None = None) -> CoverageManifest:
     if not source:
         raise ValueError("source must not be empty")
     ordered = tuple(sorted(ranges, key=lambda item: (item.instrument, item.start_ns, item.end_ns)))
@@ -86,39 +74,19 @@ def build_coverage_manifest(
     return CoverageManifest(source=source, generated_at_ns=stamp, ranges=ordered)
 
 
-def manifest_from_catalog(
-    *,
-    source: str,
-    instrument: str,
-    start_ns: int,
-    end_ns: int,
-    interval_ns: int,
-    observed_timestamps: Iterable[int],
-    generated_at: int | datetime | None = None,
-) -> CoverageManifest:
-    """Create a manifest entry from canonical observed timestamps.
-
-    Timestamps are restricted to the requested bounded range. Missing points are
-    therefore explicit and can be handed directly to the gap planner.
-    """
+def manifest_from_catalog(*, source: str, instrument: str, start_ns: int, end_ns: int, interval_ns: int, observed_timestamps: Iterable[int], generated_at: int | datetime | None = None) -> CoverageManifest:
     expected = expected_timestamp_count(start_ns, end_ns, interval_ns)
     observed = {int(ts) for ts in observed_timestamps if start_ns <= int(ts) <= end_ns}
     observed_count = len(observed)
     missing = expected - observed_count
-    entry = CoverageRange(
-        instrument=instrument,
-        start_ns=start_ns,
-        end_ns=end_ns,
-        expected_points=expected,
-        observed_points=observed_count,
-        missing_points=missing,
-        complete=missing == 0,
+    return build_coverage_manifest(
+        source=source,
+        ranges=(CoverageRange(instrument, start_ns, end_ns, expected, observed_count, missing, missing == 0),),
+        generated_at=generated_at,
     )
-    return build_coverage_manifest(source=source, ranges=(entry,), generated_at=generated_at)
 
 
 def manifest_summary(manifest: CoverageManifest) -> Mapping[str, object]:
-    """Return a serialization-friendly deterministic summary."""
     return {
         "source": manifest.source,
         "generated_at_ns": manifest.generated_at_ns,
@@ -130,11 +98,4 @@ def manifest_summary(manifest: CoverageManifest) -> Mapping[str, object]:
     }
 
 
-__all__ = [
-    "CoverageRange",
-    "CoverageManifest",
-    "expected_timestamp_count",
-    "build_coverage_manifest",
-    "manifest_from_catalog",
-    "manifest_summary",
-]
+__all__ = ["CoverageRange", "CoverageManifest", "expected_timestamp_count", "build_coverage_manifest", "manifest_from_catalog", "manifest_summary"]
