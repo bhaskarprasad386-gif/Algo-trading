@@ -56,7 +56,11 @@ def test_multi_contract_multi_session_rollover_boundary_recovers_durably(tmp_pat
     calendar = _calendar()
     windows = _windows()
 
-    assert validate_futures_rollover_chain(windows)
+    validate_futures_rollover_chain(
+        windows,
+        underlying="ABC",
+        instrument_type="STOCK_FUTURE",
+    )
     _seed_session_gaps(catalog, "NFO:JAN", (date(2026, 1, 8), date(2026, 1, 9)))
     _seed_session_gaps(catalog, "NFO:FEB", (date(2026, 1, 12), date(2026, 1, 13)))
 
