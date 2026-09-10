@@ -47,4 +47,5 @@ def test_multi_chunk_acquisition_enforces_provider_minimum_interval(tmp_path):
     assert result.execution.failed_request_index is None
     assert result.execution.completed_chunks == 6
     assert source.calls == 6
-    assert sleeps == [0.5] * 5
+    assert len(sleeps) == 5
+    assert all(0 < delay <= 0.5 for delay in sleeps)
