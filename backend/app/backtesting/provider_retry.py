@@ -58,3 +58,12 @@ class ProviderRetryPolicy:
             return True
         name = type(error).__name__.lower()
         return name in {"ratelimiterror", "temporarilyunavailable"}
+
+
+def build_provider_retry_policy(provider: str) -> ProviderRetryPolicy:
+    """Return a conservative default policy for a supported historical provider."""
+    name = provider.strip().lower()
+    if name == "angelone":
+        # Angel One historical requests are limited to 3 requests/second.
+        return ProviderRetryPolicy(min_interval_seconds=1 / 3)
+    raise ValueError(f"unsupported historical provider: {provider}")
