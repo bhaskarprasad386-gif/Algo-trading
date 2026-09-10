@@ -24,6 +24,7 @@ class RecordingSource:
                 original.source == request.source
                 and original.instrument == request.instrument
                 and original.timeframe == request.timeframe
+                and original.start_ns <= request.start_ns <= original.end_ns
             ):
                 yield from (
                     record
@@ -88,9 +89,7 @@ def test_mixed_terminal_states_reconcile_only_corrupt_chunks(tmp_path):
         plan_metadata=metadata,
     )
 
-    # Seed four chunks with different durable states:
-    # 0 = genuinely complete, 1 = corrupt completed, 2 = corrupt skipped,
-    # 3 = interrupted/running and missing a different range.
+    # 0 = complete, 1 = corrupt completed, 2 = corrupt skipped, 3 = interrupted/running.
     missing_by_chunk = {1: {100, 101}, 2: {200, 201}, 3: {300, 301}}
     for chunk_index, request in enumerate(plan.requests):
         missing = missing_by_chunk.get(chunk_index, set())
@@ -98,15 +97,11 @@ def test_mixed_terminal_states_reconcile_only_corrupt_chunks(tmp_path):
             if index not in missing:
                 catalog.ingest(record)
         job_store.start_chunk("mixed-terminal-recovery", chunk_index)
-        if chunk_index == 0:
-            job_store.complete_chunk("mixed-terminal-recovery", chunk_index)
-        elif chunk_index == 1:
+        if chunk_index in (0, 1):
             job_store.complete_chunk("mixed-terminal-recovery", chunk_index)
         elif chunk_index == 2:
             job_store.complete_chunk("mixed-terminal-recovery", chunk_index, skipped=True)
-        else:
-            # Leave chunk 3 running to model a process interruption.
-            pass
+        # chunk 3 remains running to model process interruption.
 
     catalog.close()
     job_store.close()
@@ -137,27 +132,24 @@ def test_mixed_terminal_states_reconcile_only_corrupt_chunks(tmp_path):
 
     assert resumed.completed
     assert len(source.calls) == 3
-    repaired = {
-        request.instrument: (request.start_ns, request.end_ns)
-        for request in source.calls
-    }
-    assert repaired["NFO:101"] == (
-        records_by_request[plan.requests[1]][100].timestamp_ns,
-        records_by_request[plan.requests[1]][101].timestamp_ns,
-    )
-    assert repaired["NFO:202"] == (
-        records_by_request[plan.requests[2]][200].timestamp_ns,
-        records_by_request[plan.requests[2]][201].timestamp_ns,
-    )
-    assert repaired["NFO:202"] != (
-        records_by_request[plan.requests[3]][300].timestamp_ns,
-        records_by_request[plan.requests[3]][301].timestamp_ns,
-    )
+    calls_by_instrument = {}
+    for request in source.calls:
+        calls_by_instrument.setdefault(request.instrument, []).append(
+            (request.start_ns, request.end_ns)
+        )
+    assert calls_by_instrument["NFO:101"] == [
+        (records_by_request[plan.requests[1]][100].timestamp_ns,
+         records_by_request[plan.requests[1]][101].timestamp_ns)
+    ]
+    assert calls_by_instrument["NFO:202"] == [
+        (records_by_request[plan.requests[2]][200].timestamp_ns,
+         records_by_request[plan.requests[2]][201].timestamp_ns),
+        (records_by_request[plan.requests[3]][300].timestamp_ns,
+         records_by_request[plan.requests[3]][301].timestamp_ns),
+    ]
     assert job_store.pending_indices("mixed-terminal-recovery") == ()
-    assert job_store.chunk_state("mixed-terminal-recovery", 0)[0] == "completed"
-    assert job_store.chunk_state("mixed-terminal-recovery", 1)[0] == "completed"
-    assert job_store.chunk_state("mixed-terminal-recovery", 2)[0] == "completed"
-    assert job_store.chunk_state("mixed-terminal-recovery", 3)[0] == "completed"
+    for chunk_index in range(len(plan.requests)):
+        assert job_store.chunk_state("mixed-terminal-recovery", chunk_index)[0] == "completed"
     for request in plan.requests:
         assert catalog.count(
             source="angelone", instrument=request.instrument, timeframe="1m"
