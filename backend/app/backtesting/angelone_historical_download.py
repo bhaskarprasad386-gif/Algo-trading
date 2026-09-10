@@ -117,5 +117,9 @@ class AngelOneHistoricalDownloadService:
             start=start,
             end=end,
             execution=execution,
-            catalog_count=self.catalog.count(source=source, instrument=instrument),
+            catalog_count=self.catalog.count(
+                source=source,
+                instrument=instrument,
+                timeframe=timeframe,
+            ),
         )
