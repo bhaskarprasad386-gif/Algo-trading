@@ -16,7 +16,7 @@ def _ns(day: date, at: time) -> int:
     return int(datetime.combine(day, at, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
 
 
-class PartialThenCompleteSource:
+class PartialSource:
     source_name = "fake"
 
     def __init__(self) -> None:
@@ -26,9 +26,17 @@ class PartialThenCompleteSource:
     def fetch(self, request: HistoricalFetchRequest):
         self.calls += 1
         self.requests.append(request)
-        if self.calls == 1:
-            yield HistoricalRecord(request.source, request.instrument, request.timeframe, request.start_ns, {"close": 100.0})
-            return
+        yield HistoricalRecord(request.source, request.instrument, request.timeframe, request.start_ns, {"close": 100.0})
+
+
+class CompleteSource:
+    source_name = "fake"
+
+    def __init__(self) -> None:
+        self.requests: list[HistoricalFetchRequest] = []
+
+    def fetch(self, request: HistoricalFetchRequest):
+        self.requests.append(request)
         for timestamp in range(request.start_ns, request.end_ns + 1, INTERVAL_NS):
             yield HistoricalRecord(request.source, request.instrument, request.timeframe, timestamp, {"close": 100.0})
 
@@ -38,21 +46,12 @@ def test_partial_provider_response_is_recoverable_and_resume_completes(tmp_path)
     store = HistoricalJobStore(tmp_path / "jobs.sqlite")
     calendar = TradingCalendar(session_open=time(9, 15), session_close=time(9, 18))
     window = FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 2), date(2026, 1, 2))
-    source = PartialThenCompleteSource()
+    source = PartialSource()
 
     first = acquire_continuous_futures_history(
-        catalog,
-        source,
-        [window],
-        source_name="fake",
-        timeframe="1m",
-        interval_ns=INTERVAL_NS,
-        calendar=calendar,
-        max_request_ns=10 * INTERVAL_NS,
-        executor=None,
-        job_store=store,
-        job_id="partial-response-job",
-        run_id="run-1",
+        catalog, source, [window], source_name="fake", timeframe="1m",
+        interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=10 * INTERVAL_NS,
+        job_store=store, job_id="partial-response-job", run_id="run-1",
     )
 
     assert not first.completed
@@ -60,21 +59,13 @@ def test_partial_provider_response_is_recoverable_and_resume_completes(tmp_path)
     assert store.chunk_state("partial-response-job", 0)[0] == "recoverable"
     fingerprint = store.get("partial-response-job").plan_fingerprint
     assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 1
-    assert source.calls == 3  # one initial partial response plus two retries
+    assert source.calls == 3
 
-    resumed_source = PartialThenCompleteSource()
+    resumed_source = CompleteSource()
     second = acquire_continuous_futures_history(
-        catalog,
-        resumed_source,
-        [window],
-        source_name="fake",
-        timeframe="1m",
-        interval_ns=INTERVAL_NS,
-        calendar=calendar,
-        max_request_ns=10 * INTERVAL_NS,
-        job_store=store,
-        job_id="partial-response-job",
-        run_id="run-1",
+        catalog, resumed_source, [window], source_name="fake", timeframe="1m",
+        interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=10 * INTERVAL_NS,
+        job_store=store, job_id="partial-response-job", run_id="run-1",
     )
 
     assert second.completed
