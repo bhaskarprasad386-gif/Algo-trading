@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from app.backtesting.cash_future_historical_acquisition import CashFutureHistoricalAcquisitionService
-from app.backtesting.cash_future_rollover_plan import build_mode_segments
 from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
 from app.backtesting.historical_catalog import HistoricalCatalog
 from app.backtesting.historical_ingest import HistoricalIngestionService
@@ -39,19 +39,23 @@ def test_prepare_derives_india_local_session_days_from_spot_sessions(tmp_path, m
         max_request_ns=120 * 1_000_000_000,
     )
 
+    # 03:45 UTC is 09:15 IST: the resolver must use the India-local trading date.
     session = SessionWindow(
-        int(datetime(2026, 9, 7, 3, 45, tzinfo=timezone.utc).timestamp() * 1_000_000_000),
+        int(datetime(2026, 9, 6, 23, 45, tzinfo=timezone.utc).timestamp() * 1_000_000_000),
         int(datetime(2026, 9, 7, 10, 0, tzinfo=timezone.utc).timestamp() * 1_000_000_000),
     )
     service.prepare(
         spot_instrument="NSE:3045:SBIN",
         exchange="NFO",
         underlying="SBIN",
-        start=datetime(2026, 9, 7, tzinfo=timezone.utc),
+        start=datetime(2026, 9, 6, 23, 45, tzinfo=timezone.utc),
         end=datetime(2026, 9, 7, 10, 0, tzinfo=timezone.utc),
         spot_sessions=(session,),
         future_sessions={},
         mode="CURRENT",
     )
 
-    assert captured["session_days"] == (datetime(2026, 9, 7, tzinfo=timezone.utc).astimezone(timezone.utc).date(),)
+    india = ZoneInfo("Asia/Kolkata")
+    expected_day = datetime(2026, 9, 7, 3, 45, tzinfo=timezone.utc).astimezone(india).date()
+    assert expected_day == datetime(2026, 9, 7).date()
+    assert captured["session_days"] == (expected_day,)
