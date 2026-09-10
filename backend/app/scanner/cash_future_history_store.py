@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time
+from typing import Iterable
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -35,6 +36,15 @@ def save_history_point(db: Session, point: CashFutureHistoryPoint, expiry_date: 
         existing = CashFutureHistory(symbol=point.symbol.upper(), contract_month=point.contract_month, timestamp=timestamp)
         db.add(existing)
 
+    _apply_point(existing, point, expiry_date)
+    db.commit()
+    db.refresh(existing)
+    return existing
+
+
+def _apply_point(existing: CashFutureHistory, point: CashFutureHistoryPoint, expiry_date: date | None = None) -> None:
+    existing.symbol = point.symbol.upper()
+    existing.contract_month = point.contract_month
     existing.cash_price = point.cash_price
     existing.future_price = point.future_price
     existing.gap = point.gap
@@ -51,11 +61,45 @@ def save_history_point(db: Session, point: CashFutureHistoryPoint, expiry_date: 
     existing.funding_cost = point.funding_cost
     existing.net_profit = point.net_profit
     existing.roi_pct = point.roi_pct
-    if expiry_date is not None:
+    if point.expiry_date is not None:
+        existing.expiry_date = point.expiry_date
+    elif expiry_date is not None:
         existing.expiry_date = expiry_date
-    db.commit()
-    db.refresh(existing)
-    return existing
+
+
+def save_history_points(db: Session, points: Iterable[CashFutureHistoryPoint]) -> int:
+    """Persist a bounded batch atomically and return the number of observations processed.
+
+    The caller controls batch size, so historical acquisition can stream large
+    datasets without retaining a full period in memory. Existing identities are
+    updated in-place, making retries idempotent.
+    """
+    batch = tuple(points)
+    if not batch:
+        return 0
+    try:
+        for point in batch:
+            timestamp = _naive_ist(point.timestamp)
+            existing = db.scalar(
+                select(CashFutureHistory).where(
+                    CashFutureHistory.symbol == point.symbol.upper(),
+                    CashFutureHistory.contract_month == point.contract_month,
+                    CashFutureHistory.timestamp == timestamp,
+                )
+            )
+            if existing is None:
+                existing = CashFutureHistory(
+                    symbol=point.symbol.upper(),
+                    contract_month=point.contract_month,
+                    timestamp=timestamp,
+                )
+                db.add(existing)
+            _apply_point(existing, point)
+        db.commit()
+        return len(batch)
+    except Exception:
+        db.rollback()
+        raise
 
 
 def read_history(db: Session, symbol: str, contract_month: str, start: datetime | None = None, end: datetime | None = None) -> list[CashFutureHistoryPoint]:
