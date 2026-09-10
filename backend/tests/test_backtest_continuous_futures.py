@@ -2,10 +2,13 @@ from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
 from app.algo.strategy import Strategy, StrategyRule
-from app.backtesting.continuous_futures import build_continuous_futures_series
+from app.backtesting.continuous_futures import (
+    build_continuous_futures_series,
+    build_continuous_futures_series_from_catalog,
+)
 from app.backtesting.engine import BacktestEngine
 from app.backtesting.fno_rollover import FNORolloverWindow
-from app.backtesting.historical_catalog import HistoricalRecord
+from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -100,3 +103,27 @@ def test_continuous_futures_keeps_contract_identity_available_to_derived_candles
     series = build_continuous_futures_series(windows, {"FEB": (record,)})
     assert series[0].contract_token == "FEB"
     assert series[0].payload["close"] == 105.0
+
+
+def test_catalog_records_feed_continuous_series_without_modifying_raw_data():
+    catalog = HistoricalCatalog()
+    jan = _record("JAN", date(2026, 1, 29), 100.0)
+    feb = _record("FEB", date(2026, 1, 30), 110.0)
+    assert catalog.ingest((jan, feb)) == 2
+
+    windows = (
+        FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 29), date(2026, 1, 29)),
+        FNORolloverWindow("ABC", "STOCK_FUTURE", "FEB", date(2026, 1, 30), date(2026, 1, 30)),
+    )
+    series = build_continuous_futures_series_from_catalog(
+        catalog,
+        windows,
+        source="test",
+        timeframe="1m",
+    )
+
+    assert [item.contract_token for item in series] == ["JAN", "FEB"]
+    assert [item.payload["close"] for item in series] == [100.0, 110.0]
+    assert catalog.records(source="test", instrument="NFO:JAN", timeframe="1m") == (jan,)
+    assert catalog.records(source="test", instrument="NFO:FEB", timeframe="1m") == (feb,)
+    catalog.close()
