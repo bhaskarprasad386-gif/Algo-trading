@@ -15,7 +15,9 @@ class CrashSource:
     def fetch(self, request):
         self.calls += 1
         if self.calls == 1:
-            raise RuntimeError("simulated worker crash")
+            # The executor catches ordinary Exception values. A process/worker crash
+            # must interrupt execution before the durable finish step can run.
+            raise KeyboardInterrupt("simulated worker crash")
         yield HistoricalRecord(request.source, request.instrument, request.timeframe, request.start_ns, {"close": 100.0})
         if request.end_ns != request.start_ns:
             yield HistoricalRecord(request.source, request.instrument, request.timeframe, request.end_ns, {"close": 101.0})
@@ -52,7 +54,7 @@ def test_service_resumes_same_plan_after_worker_crash(tmp_path):
     )
     try:
         _service(history, CrashSource()).acquire(**kwargs, job_store=jobs)
-    except RuntimeError as exc:
+    except KeyboardInterrupt as exc:
         assert str(exc) == "simulated worker crash"
     else:
         raise AssertionError("expected worker crash")
