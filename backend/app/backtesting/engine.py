@@ -6,6 +6,9 @@ from math import sqrt
 from typing import Callable, Iterable, Mapping, Sequence
 
 from app.algo.strategy import Strategy
+from app.backtesting.continuous_futures import ContinuousFuturesRecord, build_continuous_futures_series
+from app.backtesting.fno_rollover import FNORolloverWindow
+from app.backtesting.historical_catalog import HistoricalRecord
 
 
 @dataclass(frozen=True)
@@ -52,7 +55,7 @@ class BacktestResult:
 
 
 class BacktestEngine:
-    """Run a deterministic close-to-close long-only strategy backtest."""
+    """Run deterministic close-to-close strategy backtests."""
 
     def __init__(self, config: BacktestConfig | None = None) -> None:
         self.config = config or BacktestConfig()
@@ -92,6 +95,22 @@ class BacktestEngine:
 
         return _build_result(self.config.initial_capital, capital, trades, max_drawdown)
 
+    def run_continuous_futures(
+        self,
+        windows: Iterable[FNORolloverWindow],
+        records_by_token: Mapping[str, Iterable[HistoricalRecord]],
+        entry_strategy: Strategy,
+        exit_strategy: Strategy,
+    ) -> BacktestResult:
+        """Backtest an expiry-driven continuous futures view over raw history.
+
+        The continuous view is derived from real contract records; the engine
+        does not create a candle at rollover and does not alter raw prices.
+        """
+        series = build_continuous_futures_series(windows, records_by_token)
+        candles = (_continuous_record_to_candle(item) for item in series)
+        return self.run(candles, entry_strategy, exit_strategy)
+
     def run_incremental(
         self,
         candles: Iterable[Mapping[str, object]],
@@ -101,12 +120,7 @@ class BacktestEngine:
         persist_chunk: Callable[[Sequence[BacktestTrade], int], object],
         chunk_size: int = 500,
     ) -> BacktestResult:
-        """Run without retaining the complete trade ledger in memory.
-
-        ``candles`` is consumed as an iterator and completed trades are handed to
-        ``persist_chunk`` in bounded batches. The returned summary intentionally has
-        an empty ``trades`` tuple; the durable ledger is the chunk store.
-        """
+        """Run without retaining the complete trade ledger in memory."""
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive")
 
@@ -142,7 +156,6 @@ class BacktestEngine:
                 capital += trade.net_pnl
                 peak_capital = max(peak_capital, capital)
                 max_drawdown = max(max_drawdown, (peak_capital - capital) / peak_capital)
-
                 trade_count += 1
                 wins += int(trade.net_pnl > 0)
                 net_pnl_sum += trade.net_pnl
@@ -186,6 +199,13 @@ class BacktestEngine:
         )
 
 
+def _continuous_record_to_candle(item: ContinuousFuturesRecord) -> dict[str, object]:
+    candle = dict(item.payload)
+    candle["timestamp"] = item.timestamp_ns
+    candle["contract_token"] = item.contract_token
+    return candle
+
+
 def _build_trade(
     config: BacktestConfig,
     entry_timestamp: object,
@@ -196,24 +216,10 @@ def _build_trade(
     gross_pnl = (exit_price - entry_price) * config.quantity
     traded_value = (entry_price + exit_price) * config.quantity
     costs = traded_value * config.transaction_cost_rate
-    return BacktestTrade(
-        entry_timestamp=entry_timestamp,
-        exit_timestamp=exit_timestamp,
-        entry_price=entry_price,
-        exit_price=exit_price,
-        quantity=config.quantity,
-        gross_pnl=gross_pnl,
-        costs=costs,
-        net_pnl=gross_pnl - costs,
-    )
+    return BacktestTrade(entry_timestamp, exit_timestamp, entry_price, exit_price, config.quantity, gross_pnl, costs, gross_pnl - costs)
 
 
-def _build_result(
-    initial_capital: float,
-    final_capital: float,
-    trades: list[BacktestTrade],
-    max_drawdown: float,
-) -> BacktestResult:
+def _build_result(initial_capital: float, final_capital: float, trades: list[BacktestTrade], max_drawdown: float) -> BacktestResult:
     wins = sum(1 for trade in trades if trade.net_pnl > 0)
     net_pnl = final_capital - initial_capital
     return BacktestResult(
@@ -239,9 +245,7 @@ def _ratio_from_moments(return_sum: float, return_square_sum: float, count: int)
     return mean_return / sqrt(variance) if variance > 0 else 0.0
 
 
-def _calculate_cagr_from_timestamps(
-    start: object | None, end: object | None, initial_capital: float, final_capital: float
-) -> float:
+def _calculate_cagr_from_timestamps(start: object | None, end: object | None, initial_capital: float, final_capital: float) -> float:
     if start is None or end is None or final_capital <= 0:
         return 0.0
     if not isinstance(start, (datetime, date)) or not isinstance(end, (datetime, date)):
@@ -258,27 +262,19 @@ def _trade_sharpe_ratio(trades: list[BacktestTrade], initial_capital: float) -> 
     returns = [trade.net_pnl / initial_capital for trade in trades]
     mean_return = sum(returns) / len(returns)
     variance = sum((value - mean_return) ** 2 for value in returns) / len(returns)
-    if variance == 0.0:
-        return 0.0
-    return mean_return / sqrt(variance)
+    return mean_return / sqrt(variance) if variance else 0.0
 
 
 def _trade_sortino_ratio(trades: list[BacktestTrade], initial_capital: float) -> float:
-    """Return trade-level Sortino ratio using zero minimum acceptable return."""
     if len(trades) < 2:
         return 0.0
     returns = [trade.net_pnl / initial_capital for trade in trades]
     mean_return = sum(returns) / len(returns)
     downside_deviation = sqrt(sum(min(value, 0.0) ** 2 for value in returns) / len(returns))
-    if downside_deviation == 0.0:
-        return 0.0
-    return mean_return / downside_deviation
+    return mean_return / downside_deviation if downside_deviation else 0.0
 
 
-def _calculate_cagr(
-    trades: list[BacktestTrade], initial_capital: float, final_capital: float
-) -> float:
-    """Calculate CAGR when completed-trade timestamps provide a real duration."""
+def _calculate_cagr(trades: list[BacktestTrade], initial_capital: float, final_capital: float) -> float:
     if not trades or final_capital <= 0:
         return 0.0
     return _calculate_cagr_from_timestamps(trades[0].entry_timestamp, trades[-1].exit_timestamp, initial_capital, final_capital)
