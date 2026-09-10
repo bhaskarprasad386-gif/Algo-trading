@@ -1,0 +1,95 @@
+"""Build Cash-Future coverage directly from persisted history in bounded pages."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Iterator
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models.cash_future_history import CashFutureHistory
+from app.scanner.cash_future_coverage import CashFutureCoverageReport, build_cash_future_coverage_report
+from app.scanner.cash_future_history import CashFutureHistoryPoint
+
+
+def iter_persisted_cash_future_points(
+    db: Session,
+    *,
+    symbol: str | None = None,
+    contract_month: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    page_size: int = 1000,
+) -> Iterator[CashFutureHistoryPoint]:
+    """Stream persisted observations without loading the whole dataset."""
+    if page_size <= 0:
+        raise ValueError("page_size must be positive")
+
+    stmt = select(CashFutureHistory)
+    if symbol is not None:
+        stmt = stmt.where(CashFutureHistory.symbol == symbol.strip().upper())
+    if contract_month is not None:
+        stmt = stmt.where(CashFutureHistory.contract_month == contract_month.strip())
+    if start is not None:
+        stmt = stmt.where(CashFutureHistory.timestamp >= start)
+    if end is not None:
+        stmt = stmt.where(CashFutureHistory.timestamp <= end)
+
+    result = db.scalars(
+        stmt.order_by(
+            CashFutureHistory.symbol,
+            CashFutureHistory.contract_month,
+            CashFutureHistory.timestamp,
+        ).yield_per(page_size)
+    )
+    for row in result:
+        yield CashFutureHistoryPoint(
+            timestamp=row.timestamp,
+            symbol=row.symbol,
+            contract_month=row.contract_month,
+            cash_price=row.cash_price,
+            future_price=row.future_price,
+            gap=row.gap,
+            gap_pct=row.gap_pct,
+            lot_size=row.lot_size,
+            margin_required=row.margin_required,
+            volume=row.volume,
+            oi=row.oi,
+            cash_bid=row.cash_bid,
+            cash_ask=row.cash_ask,
+            future_bid=row.future_bid,
+            future_ask=row.future_ask,
+            charges=row.charges,
+            funding_cost=row.funding_cost,
+            net_profit=row.net_profit,
+            roi_pct=row.roi_pct,
+            expiry_date=row.expiry_date,
+        )
+
+
+def build_persisted_cash_future_coverage(
+    db: Session,
+    *,
+    symbol: str | None = None,
+    contract_month: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    expected_timestamps: tuple[datetime, ...] | None = None,
+    page_size: int = 1000,
+) -> CashFutureCoverageReport:
+    """Validate persisted Cash-Future history against authoritative expectations."""
+    return build_cash_future_coverage_report(
+        iter_persisted_cash_future_points(
+            db,
+            symbol=symbol,
+            contract_month=contract_month,
+            start=start,
+            end=end,
+            page_size=page_size,
+        ),
+        expected_timestamps=expected_timestamps,
+    )
+
+
+__all__ = ["iter_persisted_cash_future_points", "build_persisted_cash_future_coverage"]
