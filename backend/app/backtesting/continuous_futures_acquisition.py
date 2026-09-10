@@ -105,17 +105,27 @@ def acquire_continuous_futures_history(
     )
 
     def complete(request: HistoricalFetchRequest) -> bool:
+        """Check a whole chunk with one catalog range query.
+
+        The previous implementation issued one SQLite query per expected
+        timestamp. Large historical plans can contain millions of expected
+        points, so batch the lookup into a single range query and compare the
+        returned timestamp set locally. This preserves exact completeness
+        semantics while avoiding an N-query-per-chunk database bottleneck.
+        """
         expected = range(request.start_ns, request.end_ns + 1, interval_ns)
-        return all(
-            bool(catalog.timestamps(
+        if not expected:
+            return True
+        present = set(
+            catalog.timestamps(
                 source=request.source,
                 instrument=request.instrument,
                 timeframe=request.timeframe,
-                start_ns=timestamp,
-                end_ns=timestamp,
-            ))
-            for timestamp in expected
+                start_ns=request.start_ns,
+                end_ns=request.end_ns,
+            )
         )
+        return all(timestamp in present for timestamp in expected)
 
     execution = runner.run(source, plan, should_skip=complete)
     return ContinuousFuturesAcquisitionReport(windows, plan, execution)
