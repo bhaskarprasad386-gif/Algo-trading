@@ -1,9 +1,4 @@
-"""Derived continuous futures records built from real contract history.
-
-The continuous series is a view over raw contract records. It never creates,
-interpolates, forward-fills, or modifies market-data records. Rollover boundaries
-come only from the expiry-driven windows produced by ``fno_rollover``.
-"""
+"""Derived continuous futures records built from real contract history."""
 
 from __future__ import annotations
 
@@ -13,7 +8,7 @@ from typing import Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 from .fno_rollover import FNORolloverWindow
-from .historical_catalog import HistoricalRecord
+from .historical_catalog import HistoricalCatalog, HistoricalRecord
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -89,4 +84,28 @@ def build_continuous_futures_series(
     return tuple(output)
 
 
-__all__ = ["ContinuousFuturesRecord", "build_continuous_futures_series"]
+def build_continuous_futures_series_from_catalog(
+    catalog: HistoricalCatalog,
+    windows: Iterable[FNORolloverWindow],
+    *,
+    source: str,
+    timeframe: str,
+    instrument_prefix: str = "NFO:",
+) -> tuple[ContinuousFuturesRecord, ...]:
+    """Build a continuous series directly from durable historical catalog data."""
+    windows = tuple(windows)
+    tokens = tuple(dict.fromkeys(window.contract_token for window in windows))
+    records_by_token = catalog.records_by_contract_tokens(
+        source=source,
+        contract_tokens=tokens,
+        timeframe=timeframe,
+        instrument_prefix=instrument_prefix,
+    )
+    return build_continuous_futures_series(windows, records_by_token)
+
+
+__all__ = [
+    "ContinuousFuturesRecord",
+    "build_continuous_futures_series",
+    "build_continuous_futures_series_from_catalog",
+]
