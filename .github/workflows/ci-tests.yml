@@ -7,6 +7,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Only the newest commit on a branch needs verification.
+# This prevents obsolete queued runs from delaying the current commit.
+concurrency:
+  group: backend-tests-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
