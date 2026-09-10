@@ -8,6 +8,24 @@ from .contract_master import ContractMasterCatalog, ContractRecord
 from .fno_rollover import FNORolloverWindow, build_futures_rollover_chain
 
 
+def _snapshot_contracts(
+    catalog: ContractMasterCatalog,
+    *,
+    snapshot: date,
+    exchange: str,
+    underlying: str,
+    instrument_type: str,
+    start_date: date,
+) -> tuple[ContractRecord, ...]:
+    return tuple(
+        c for c in catalog.all_contracts(snapshot_date=snapshot)
+        if c.exchange == exchange
+        and c.underlying == underlying
+        and c.instrument_type == instrument_type
+        and c.expiry >= start_date
+    )
+
+
 def build_catalog_futures_rollover_windows(
     catalog: ContractMasterCatalog,
     *,
@@ -18,7 +36,7 @@ def build_catalog_futures_rollover_windows(
     exchange: str = "NFO",
     snapshot_date: date | None = None,
 ) -> tuple[FNORolloverWindow, ...]:
-    """Resolve eligible real futures from the best available master snapshot."""
+    """Resolve eligible real futures from one exact contract-master snapshot."""
     if start_date > end_date:
         raise ValueError("start_date cannot exceed end_date")
     if not underlying.strip():
@@ -26,17 +44,18 @@ def build_catalog_futures_rollover_windows(
     snapshot = snapshot_date or catalog.latest_snapshot_date()
     if snapshot is None:
         return ()
-    contracts: tuple[ContractRecord, ...] = catalog.contracts(
+    normalized = underlying.strip().upper()
+    contracts = _snapshot_contracts(
+        catalog,
+        snapshot=snapshot,
         exchange=exchange,
-        underlying=underlying.strip().upper(),
-        as_of=start_date,
+        underlying=normalized,
         instrument_type=instrument_type,
+        start_date=start_date,
     )
-    if snapshot < start_date:
-        contracts = tuple(c for c in catalog.all_contracts(snapshot_date=snapshot) if c.exchange == exchange and c.underlying == underlying.strip().upper() and c.instrument_type == instrument_type and c.expiry >= start_date)
     return build_futures_rollover_chain(
         contracts,
-        underlying=underlying.strip().upper(),
+        underlying=normalized,
         instrument_type=instrument_type,
         start_date=start_date,
         end_date=end_date,
@@ -53,11 +72,14 @@ def build_catalog_futures_rollover_windows_for_universe(
     snapshot_date: date | None = None,
 ) -> tuple[FNORolloverWindow, ...]:
     """Build deterministic rollover windows for every eligible underlying."""
+    if start_date > end_date:
+        raise ValueError("start_date cannot exceed end_date")
     snapshot = snapshot_date or catalog.latest_snapshot_date()
     if snapshot is None:
         return ()
+    records = catalog.all_contracts(snapshot_date=snapshot)
     underlyings = sorted({
-        c.underlying for c in catalog.all_contracts(snapshot_date=snapshot)
+        c.underlying for c in records
         if c.exchange == exchange and c.instrument_type == instrument_type and c.expiry >= start_date
     })
     windows: list[FNORolloverWindow] = []
