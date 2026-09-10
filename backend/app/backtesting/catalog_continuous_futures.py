@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Mapping
 
 from .contract_master import ContractMasterCatalog, ContractRecord
 from .continuous_futures import ContinuousFuturesRecord, build_continuous_futures_series_from_catalog
 from .fno_rollover import build_futures_rollover_chain
-from .historical_catalog import HistoricalCatalog, HistoricalRecord
+from .historical_catalog import HistoricalCatalog
 
 
 def build_continuous_futures_from_catalog(
@@ -60,13 +59,6 @@ def build_continuous_futures_from_catalog(
         instrument_type=instrument_type,
         start_date=start_date,
         end_date=end_date,
-    )
-    tokens = tuple(dict.fromkeys(window.contract_token for window in windows))
-    records_by_token: Mapping[str, tuple[HistoricalRecord, ...]] = historical_catalog.records_by_contract_tokens(
-        source=source,
-        contract_tokens=tokens,
-        timeframe=timeframe,
-        instrument_prefix=instrument_prefix or f"{exchange}:",
     )
     return build_continuous_futures_series_from_catalog(
         historical_catalog,
