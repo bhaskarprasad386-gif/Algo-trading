@@ -94,6 +94,12 @@ class ContractMasterCatalog:
         row = self._db.execute("SELECT snapshot_date FROM contract_master_snapshots ORDER BY snapshot_date DESC LIMIT 1").fetchone()
         return None if row is None else date.fromisoformat(row[0])
 
+    def all_contracts(self, *, snapshot_date: date) -> tuple[ContractRecord, ...]:
+        """Enumerate every contract stored in one exact provider snapshot."""
+        rows = self._db.execute("""SELECT exchange,symbol,token,expiry,instrument_type,underlying,lot_size,tick_size
+            FROM derivative_contracts WHERE snapshot_date=? ORDER BY instrument_type,underlying,expiry,token""", (snapshot_date.isoformat(),)).fetchall()
+        return tuple(ContractRecord(r[0], r[1], r[2], date.fromisoformat(r[3]), r[4], r[5], int(r[6]), snapshot_date, None if r[7] is None else float(r[7])) for r in rows)
+
     def contracts(self, *, exchange: str, underlying: str, as_of: date, instrument_type: str = "STOCK_FUTURE") -> tuple[ContractRecord, ...]:
         row = self._db.execute("SELECT snapshot_date FROM contract_master_snapshots WHERE snapshot_date<=? ORDER BY snapshot_date DESC LIMIT 1", (as_of.isoformat(),)).fetchone()
         if row is None:
