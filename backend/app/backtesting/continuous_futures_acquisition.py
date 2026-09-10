@@ -9,7 +9,7 @@ skipped; partial chunks are safely re-fetched and deduplicated by the catalog.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, time, timezone
 
 from .continuous_futures import build_continuous_futures_series_from_catalog
 from .fno_rollover import FNORolloverWindow
@@ -36,11 +36,8 @@ def _window_sessions(
     calendar: TradingCalendar,
 ) -> tuple[tuple[int, int], ...]:
     return tuple(
-        (max(session.start_ns, _day_start_ns(window.start_date)),
-         min(session.end_ns, _day_end_ns(window.end_date)))
+        (session.start_ns, session.end_ns)
         for session in calendar.sessions_between(window.start_date, window.end_date)
-        if session.start_ns <= _day_end_ns(window.end_date)
-        and session.end_ns >= _day_start_ns(window.start_date)
     )
 
 
@@ -54,6 +51,10 @@ def build_continuous_futures_acquisition_plan(
     max_request_ns: int,
 ) -> HistoricalSyncPlan:
     """Build provider requests only inside active-contract trading sessions."""
+    if not source.strip():
+        raise ValueError("source is required")
+    if not timeframe.strip():
+        raise ValueError("timeframe is required")
     if interval_ns <= 0:
         raise ValueError("interval_ns must be positive")
     if max_request_ns <= 0:
@@ -81,6 +82,7 @@ def acquire_continuous_futures_history(
     source: HistoricalSource,
     windows: tuple[FNORolloverWindow, ...] | list[FNORolloverWindow],
     *,
+    source_name: str,
     timeframe: str,
     interval_ns: int,
     calendar: TradingCalendar,
@@ -91,7 +93,7 @@ def acquire_continuous_futures_history(
     windows = tuple(windows)
     plan = build_continuous_futures_acquisition_plan(
         windows,
-        source=source.source_name,
+        source=source_name,
         timeframe=timeframe,
         interval_ns=interval_ns,
         calendar=calendar,
@@ -105,13 +107,13 @@ def acquire_continuous_futures_history(
     def complete(request: HistoricalFetchRequest) -> bool:
         expected = range(request.start_ns, request.end_ns + 1, interval_ns)
         return all(
-            catalog.timestamps(
+            bool(catalog.timestamps(
                 source=request.source,
                 instrument=request.instrument,
                 timeframe=request.timeframe,
                 start_ns=timestamp,
                 end_ns=timestamp,
-            )
+            ))
             for timestamp in expected
         )
 
@@ -120,12 +122,10 @@ def acquire_continuous_futures_history(
 
 
 def _day_start_ns(value: date) -> int:
-    from datetime import datetime, time, timezone
     return int(datetime.combine(value, time.min, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
 
 
 def _day_end_ns(value: date) -> int:
-    from datetime import datetime, time, timezone
     return int(datetime.combine(value, time.max, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
 
 
