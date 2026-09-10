@@ -152,11 +152,22 @@ class HistoricalCatalog:
                 gaps.append(Gap(instrument, timeframe, previous + interval_ns, current - interval_ns))
         return tuple(gaps)
 
-    def count(self, *, source: str | None = None, instrument: str | None = None) -> int:
+    def count(
+        self,
+        *,
+        source: str | None = None,
+        instrument: str | None = None,
+        timeframe: str | None = None,
+    ) -> int:
         clauses, params = [], []
         if source is not None:
-            clauses.append("source=?"); params.append(source)
+            clauses.append("source=?")
+            params.append(source)
         if instrument is not None:
-            clauses.append("instrument=?"); params.append(instrument)
+            clauses.append("instrument=?")
+            params.append(instrument)
+        if timeframe is not None:
+            clauses.append("timeframe=?")
+            params.append(timeframe)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         return int(self._db.execute("SELECT COUNT(*) FROM data_catalog" + where, params).fetchone()[0])
