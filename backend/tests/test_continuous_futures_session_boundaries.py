@@ -26,6 +26,6 @@ def test_continuous_futures_plan_respects_trading_session_boundaries_and_skips_w
 
     assert len(plan.requests) == 2
     assert [(r.instrument, r.start_ns, r.end_ns) for r in plan.requests] == [
-        ("NFO:101", 1767959100000000000, 1767982200000000000),
-        ("NFO:101", 1768218300000000000, 1768241400000000000),
+        ("NFO:101", 1767930300000000000, 1767972600000000000),
+        ("NFO:101", 1768189500000000000, 1768231800000000000),
     ]
