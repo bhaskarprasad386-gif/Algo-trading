@@ -41,7 +41,7 @@ def _records(plan, *, interval_ns):
     }
 
 
-def test_persistent_rollover_resume_survives_new_process_and_skips_completed_chunks(tmp_path):
+def test_persistent_rollover_resume_recovers_running_chunk_after_process_crash(tmp_path):
     calendar = TradingCalendar()
     windows = (
         FNORolloverWindow("AAA", "STOCK_FUTURE", "101", date(2026, 1, 29), date(2026, 1, 29)),
@@ -97,12 +97,17 @@ def test_persistent_rollover_resume_survives_new_process_and_skips_completed_chu
     old_count = catalog.count(source="angelone", instrument="NFO:101", timeframe="1m")
     assert old_count == len(records[plan.requests[0]])
 
-    # Simulate a completely new process by closing both durable SQLite handles.
+    # Simulate a worker dying after marking the pending chunk as running.
+    job_store.start_chunk("restart-rollover-job", 1)
+    assert job_store.chunk_state("restart-rollover-job", 1)[0] == "running"
     catalog.close()
     job_store.close()
 
+    # A fresh process must recover the durable running state before resuming.
     catalog = HistoricalCatalog(catalog_path)
     job_store = HistoricalJobStore(job_store_path)
+    assert job_store.chunk_state("restart-rollover-job", 1)[0] == "running"
+
     second_executor = ResumableHistoricalExecutor(
         HistoricalIngestionService(catalog),
         collect_results=False,
