@@ -2,7 +2,7 @@ from datetime import date
 
 from app.backtesting.continuous_futures_acquisition import build_continuous_futures_gap_plan
 from app.backtesting.fno_rollover import FNORolloverWindow
-from app.backtesting.historical_catalog import HistoricalCatalog
+from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 from app.backtesting.trading_calendar import TradingCalendar
 
 
@@ -47,11 +47,15 @@ def test_cash_future_gap_plan_returns_no_requests_when_catalog_is_complete(tmp_p
     sessions = calendar.sessions_between(window.start_date, window.end_date)
     session = sessions[0]
     timestamps = range(session.start_ns, session.end_ns + 1, 60_000_000_000)
-    catalog.upsert_many(
-        source="test",
-        instrument="NFO:123",
-        timeframe="1m",
-        records=[{"timestamp_ns": timestamp} for timestamp in timestamps],
+    catalog.ingest(
+        HistoricalRecord(
+            source="test",
+            instrument="NFO:123",
+            timeframe="1m",
+            timestamp_ns=timestamp,
+            payload={"close": 1.0},
+        )
+        for timestamp in timestamps
     )
 
     plan = build_continuous_futures_gap_plan(
