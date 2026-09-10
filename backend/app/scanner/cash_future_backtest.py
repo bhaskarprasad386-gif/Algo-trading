@@ -7,6 +7,8 @@ combines their realized results without mixing expiry series.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import groupby
+from operator import attrgetter
 from typing import Iterable
 
 from app.scanner.cash_future_history import CashFutureHistoryPoint
@@ -88,36 +90,21 @@ def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfi
         "win_rate_pct": wins / len(trades) * 100.0 if trades else 0.0,
         "net_profit": equity,
         "roi_pct": equity / total_capital * 100.0 if total_capital else 0.0,
+        "invested_capital": total_capital,
         "max_drawdown": max_drawdown,
         "equity_curve": equity_curve,
         "trades": trades,
     }
 
 
-def run_multi_contract_backtest(
-    points: Iterable[CashFutureHistoryPoint],
-    config: BacktestConfig,
-) -> dict:
-    """Backtest all contracts independently and aggregate realized results."""
-    grouped: dict[str, list[CashFutureHistoryPoint]] = {}
-    for point in points:
-        if config.contract_month is not None and point.contract_month != config.contract_month:
-            continue
-        grouped.setdefault(point.contract_month, []).append(point)
-
-    results = [run_backtest(grouped[contract], config) for contract in sorted(grouped)]
+def _aggregate_contract_results(results: list[dict]) -> dict:
+    """Combine independent contract results without mixing observations."""
     trades = [trade for result in results for trade in result["trades"]]
     trades.sort(key=lambda trade: trade["entry_time"])
     wins = sum(1 for trade in trades if trade["net_profit"] > 0)
     net_profit = sum(trade["net_profit"] for trade in trades)
-    invested_capital = sum(
-        group[0].cash_price * group[0].lot_size + group[0].margin_required
-        for group in grouped.values() if group
-    )
+    invested_capital = sum(result["invested_capital"] for result in results)
 
-    # Build portfolio equity from realized trades only. Individual contract
-    # curves each start at zero and cannot be safely merged into one portfolio
-    # curve because their observation windows may overlap.
     equity = 0.0
     running_peak = 0.0
     max_drawdown = 0.0
@@ -136,8 +123,53 @@ def run_multi_contract_backtest(
         "win_rate_pct": wins / len(trades) * 100.0 if trades else 0.0,
         "net_profit": net_profit,
         "roi_pct": net_profit / invested_capital * 100.0 if invested_capital else 0.0,
+        "invested_capital": invested_capital,
         "max_drawdown": max_drawdown,
         "equity_curve": equity_curve,
         "trades": trades,
         "per_contract": results,
     }
+
+
+def run_multi_contract_backtest(
+    points: Iterable[CashFutureHistoryPoint],
+    config: BacktestConfig,
+) -> dict:
+    """Backtest all contracts independently and aggregate realized results."""
+    grouped: dict[str, list[CashFutureHistoryPoint]] = {}
+    for point in points:
+        if config.contract_month is not None and point.contract_month != config.contract_month:
+            continue
+        grouped.setdefault(point.contract_month, []).append(point)
+
+    results = [run_backtest(grouped[contract], config) for contract in sorted(grouped)]
+    return _aggregate_contract_results(results)
+
+
+def run_multi_contract_backtest_streaming(
+    points: Iterable[CashFutureHistoryPoint],
+    config: BacktestConfig,
+) -> dict:
+    """Backtest ordered contract streams without materializing the history period.
+
+    The input must be ordered by ``contract_month`` and then timestamp, as the
+    persisted Cash-Future coverage store provides. Only one contract's points
+    are consumed by ``run_backtest`` at a time.
+    """
+    filtered = (
+        point
+        for point in points
+        if config.contract_month is None or point.contract_month == config.contract_month
+    )
+    results: list[dict] = []
+    for _, contract_points in groupby(filtered, key=attrgetter("contract_month")):
+        results.append(run_backtest(contract_points, config))
+    return _aggregate_contract_results(results)
+
+
+__all__ = [
+    "BacktestConfig",
+    "run_backtest",
+    "run_multi_contract_backtest",
+    "run_multi_contract_backtest_streaming",
+]
