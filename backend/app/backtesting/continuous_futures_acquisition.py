@@ -16,6 +16,7 @@ from .fno_rollover import FNORolloverWindow
 from .historical_catalog import HistoricalCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_ingest import HistoricalFetchRequest, HistoricalIngestionService, HistoricalSource
+from .historical_job_store import HistoricalJobStore
 from .historical_sync import HistoricalSyncPlan, build_chunked_plan
 from .trading_calendar import TradingCalendar
 
@@ -88,8 +89,11 @@ def acquire_continuous_futures_history(
     calendar: TradingCalendar,
     max_request_ns: int,
     executor: ResumableHistoricalExecutor | None = None,
+    job_store: HistoricalJobStore | None = None,
+    job_id: str | None = None,
+    run_id: str | None = None,
 ) -> ContinuousFuturesAcquisitionReport:
-    """Fill only missing chain/session cadence chunks and persist them immediately."""
+    """Fill missing chain/session chunks with optional durable restart state."""
     windows = tuple(windows)
     plan = build_continuous_futures_acquisition_plan(
         windows,
@@ -105,14 +109,7 @@ def acquire_continuous_futures_history(
     )
 
     def complete(request: HistoricalFetchRequest) -> bool:
-        """Check a whole chunk with one catalog range query.
-
-        The previous implementation issued one SQLite query per expected
-        timestamp. Large historical plans can contain millions of expected
-        points, so batch the lookup into a single range query and compare the
-        returned timestamp set locally. This preserves exact completeness
-        semantics while avoiding an N-query-per-chunk database bottleneck.
-        """
+        """Check a whole chunk with one catalog range query."""
         expected = range(request.start_ns, request.end_ns + 1, interval_ns)
         if not expected:
             return True
@@ -127,7 +124,20 @@ def acquire_continuous_futures_history(
         )
         return all(timestamp in present for timestamp in expected)
 
-    execution = runner.run(source, plan, should_skip=complete)
+    if job_store is None:
+        if job_id is not None or run_id is not None:
+            raise ValueError("job_id and run_id require job_store")
+        execution = runner.run(source, plan, should_skip=complete)
+    else:
+        if not job_id or not run_id:
+            raise ValueError("job_store requires both job_id and run_id")
+        execution = runner.run_durable(
+            source,
+            plan,
+            job_store=job_store,
+            job_id=job_id,
+            run_id=run_id,
+        )
     return ContinuousFuturesAcquisitionReport(windows, plan, execution)
 
 
