@@ -75,6 +75,12 @@ class CashFutureGapDownloadPlanner:
             cursor = part_end + interval_ns
         return tuple(parts)
 
+    @staticmethod
+    def _require_future_sessions(queue: CashFutureDownloadQueue, future_sessions: dict[str, tuple[SessionWindow, ...]]) -> None:
+        missing = tuple(sorted({item.request.instrument for item in queue.futures} - set(future_sessions)))
+        if missing:
+            raise ValueError(f"missing future session mapping for: {', '.join(missing)}")
+
     def _requests_for(self, request: HistoricalFetchRequest, sessions: tuple[SessionWindow, ...], catalog) -> tuple[HistoricalFetchRequest, ...]:
         expected = self._expected(sessions, request, self.interval_ns)
         actual = set(catalog.timestamps(source=request.source, instrument=request.instrument, timeframe=request.timeframe, start_ns=request.start_ns, end_ns=request.end_ns))
@@ -93,15 +99,17 @@ class CashFutureGapDownloadPlanner:
     def coverage_manifest(self, *, queue: CashFutureDownloadQueue, catalog, spot_sessions: tuple[SessionWindow, ...], future_sessions: dict[str, tuple[SessionWindow, ...]] | None = None):
         """Build a session-aware coverage manifest for spot and every exact future leg."""
         future_sessions = future_sessions or {}
+        self._require_future_sessions(queue, future_sessions)
         ranges = list(self._coverage_for(queue.spot, spot_sessions, catalog))
         for item in queue.futures:
-            ranges.extend(self._coverage_for(item.request, future_sessions.get(item.request.instrument, ()), catalog))
+            ranges.extend(self._coverage_for(item.request, future_sessions[item.request.instrument], catalog))
         return build_coverage_manifest(source=queue.spot.source, ranges=ranges)
 
     def plan(self, *, queue: CashFutureDownloadQueue, catalog, spot_sessions: tuple[SessionWindow, ...], future_sessions: dict[str, tuple[SessionWindow, ...]] | None = None) -> HistoricalSyncPlan:
         """Return deterministic, session-only repair requests for spot and exact future tokens."""
         future_sessions = future_sessions or {}
+        self._require_future_sessions(queue, future_sessions)
         requests = list(self._requests_for(queue.spot, spot_sessions, catalog))
         for item in queue.futures:
-            requests.extend(self._requests_for(item.request, future_sessions.get(item.request.instrument, ()), catalog))
+            requests.extend(self._requests_for(item.request, future_sessions[item.request.instrument], catalog))
         return HistoricalSyncPlan(tuple(sorted(requests, key=lambda item: (item.instrument, item.start_ns, item.end_ns))))
