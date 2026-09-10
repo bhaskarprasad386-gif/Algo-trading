@@ -1,13 +1,14 @@
-"""Build continuous futures directly from durable catalog data."""
+"""Build continuous futures from contract-master history and durable market data."""
 
 from __future__ import annotations
 
 from datetime import date
+from typing import Mapping
 
 from .contract_master import ContractMasterCatalog, ContractRecord
-from .continuous_futures import ContinuousFuturesRecord, build_continuous_futures_series
+from .continuous_futures import ContinuousFuturesRecord, build_continuous_futures_series_from_catalog
 from .fno_rollover import build_futures_rollover_chain
-from .historical_catalog import HistoricalCatalog
+from .historical_catalog import HistoricalCatalog, HistoricalRecord
 
 
 def build_continuous_futures_from_catalog(
@@ -17,18 +18,24 @@ def build_continuous_futures_from_catalog(
     underlying: str,
     start_date: date,
     end_date: date,
-    exchange: str = "NFO",
-    instrument_type: str = "STOCK_FUTURE",
     source: str = "angelone",
     timeframe: str = "1m",
+    exchange: str = "NFO",
+    instrument_type: str = "STOCK_FUTURE",
+    instrument_prefix: str | None = None,
 ) -> tuple[ContinuousFuturesRecord, ...]:
-    """Resolve real contracts and project only their durable raw history."""
+    """Resolve a real historical contract chain and project its stored bars.
+
+    Contract-master snapshots provide contract identity and expiry. The
+    HistoricalCatalog provides raw bars. No synthetic bars are generated and
+    the underlying catalog records are never modified.
+    """
     if end_date < start_date:
         raise ValueError("end_date must be on or after start_date")
     if not underlying.strip():
         raise ValueError("underlying is required")
-    if not source.strip() or not timeframe.strip():
-        raise ValueError("source and timeframe are required")
+    if not source.strip() or not timeframe.strip() or not exchange.strip() or not instrument_type.strip():
+        raise ValueError("source, timeframe, exchange and instrument_type are required")
 
     contracts_by_token: dict[str, ContractRecord] = {}
     for snapshot_date in contract_catalog.snapshot_dates():
@@ -54,13 +61,20 @@ def build_continuous_futures_from_catalog(
         start_date=start_date,
         end_date=end_date,
     )
-    records_by_token = historical_catalog.records_by_contract_tokens(
+    tokens = tuple(dict.fromkeys(window.contract_token for window in windows))
+    records_by_token: Mapping[str, tuple[HistoricalRecord, ...]] = historical_catalog.records_by_contract_tokens(
         source=source,
-        contract_tokens=(contract.token for contract in contracts),
+        contract_tokens=tokens,
         timeframe=timeframe,
-        instrument_prefix=f"{exchange}:",
+        instrument_prefix=instrument_prefix or f"{exchange}:",
     )
-    return build_continuous_futures_series(windows, records_by_token)
+    return build_continuous_futures_series_from_catalog(
+        historical_catalog,
+        windows,
+        source=source,
+        timeframe=timeframe,
+        instrument_prefix=instrument_prefix or f"{exchange}:",
+    )
 
 
 __all__ = ["build_continuous_futures_from_catalog"]
