@@ -38,6 +38,14 @@ class HistoricalSyncResult:
     final_watermark_ns: int | None
 
 
+@dataclass(frozen=True)
+class HistoricalExpectedEventRepairResult:
+    """Durable repair outcome, including timestamps still unresolved after a pass."""
+
+    results: tuple[HistoricalSyncResult, ...]
+    remaining_missing_timestamps: tuple[int, ...]
+
+
 class HistoricalIngestionService:
     """Incrementally fetches and merges data through the durable catalog.
 
@@ -189,24 +197,50 @@ class HistoricalIngestionService:
         batch_size: int = 1024,
         on_batch: Callable[[int, int], None] | None = None,
     ) -> tuple[HistoricalSyncResult, ...]:
-        """Repair only explicitly expected non-cadenced events.
-
-        The expected timestamp set must come from an authoritative source such
-        as an exchange/provider event manifest. No fixed event cadence is
-        inferred here. Candle/session acquisition should continue to use
-        ``repair_ranges`` or its dedicated session-aware planner instead.
-        """
-        from .historical_expected_events import build_expected_event_repair_plan
-
-        requests = build_expected_event_repair_plan(
-            self.catalog,
+        """Repair only explicitly expected non-cadenced events."""
+        return self.repair_expected_events_with_status(
+            source_adapter,
             source=source,
             instrument=instrument,
             timeframe=timeframe,
             expected_timestamps=expected_timestamps,
             max_request_ns=max_request_ns,
+            ingested_at_ns=ingested_at_ns,
+            batch_size=batch_size,
+            on_batch=on_batch,
+        ).results
+
+    def repair_expected_events_with_status(
+        self,
+        source_adapter: HistoricalSource,
+        *,
+        source: str,
+        instrument: str,
+        timeframe: str,
+        expected_timestamps: Iterable[int],
+        max_request_ns: int,
+        ingested_at_ns: int = 0,
+        batch_size: int = 1024,
+        on_batch: Callable[[int, int], None] | None = None,
+    ) -> HistoricalExpectedEventRepairResult:
+        """Repair explicit events and report any timestamps the provider did not return.
+
+        Re-running with the same authoritative expected set is resumable because
+        the durable catalog is consulted again and already-ingested timestamps are
+        excluded from the next repair plan.
+        """
+        from .historical_expected_events import build_expected_event_repair_plan, missing_expected_timestamps
+
+        expected = tuple(expected_timestamps)
+        requests = build_expected_event_repair_plan(
+            self.catalog,
+            source=source,
+            instrument=instrument,
+            timeframe=timeframe,
+            expected_timestamps=expected,
+            max_request_ns=max_request_ns,
         )
-        return tuple(
+        results = tuple(
             self.sync_streaming(
                 source_adapter,
                 request,
@@ -216,3 +250,11 @@ class HistoricalIngestionService:
             )
             for request in requests
         )
+        remaining = missing_expected_timestamps(
+            self.catalog,
+            source=source,
+            instrument=instrument,
+            timeframe=timeframe,
+            expected_timestamps=expected,
+        )
+        return HistoricalExpectedEventRepairResult(results, remaining)
