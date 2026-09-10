@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
+from collections.abc import Iterable
 
 from .contract_master import ContractMasterCatalog, ContractRecord
 
@@ -23,11 +24,13 @@ def build_rollover_segments(
     start: date,
     end: date,
     mode: str,
+    session_days: Iterable[date] | None = None,
 ) -> tuple[CashFutureSegment, ...]:
-    """Resolve a future independently for each historical date and coalesce identity runs.
+    """Resolve a future only on requested historical session days.
 
     This deliberately fails closed when a historical snapshot is unavailable. It never
-    invents an expired token or silently substitutes today's contract.
+    invents an expired token or silently substitutes today's contract. When session_days
+    is supplied, weekends/holidays outside those sessions are not treated as data days.
     """
     if end < start:
         raise ValueError("end must not precede start")
@@ -35,16 +38,20 @@ def build_rollover_segments(
     if mode not in {"CURRENT", "NEAR"}:
         raise ValueError("mode must be CURRENT or NEAR")
 
+    days = tuple(sorted({day for day in (session_days or ()) if start <= day <= end}))
+    if session_days is None:
+        days = tuple(start + timedelta(days=i) for i in range((end - start).days + 1))
+    if not days:
+        return ()
+
     segments: list[CashFutureSegment] = []
-    cursor = start
-    while cursor <= end:
-        contract = catalog.resolve(exchange=exchange, underlying=underlying, as_of=cursor, mode=mode)
-        if segments and segments[-1].future.token == contract.token:
+    for current_day in days:
+        contract = catalog.resolve(exchange=exchange, underlying=underlying, as_of=current_day, mode=mode)
+        if segments and segments[-1].future.token == contract.token and segments[-1].end + timedelta(days=1) == current_day:
             previous = segments[-1]
-            segments[-1] = CashFutureSegment(previous.start, cursor, previous.future)
+            segments[-1] = CashFutureSegment(previous.start, current_day, previous.future)
         else:
-            segments.append(CashFutureSegment(cursor, cursor, contract))
-        cursor += timedelta(days=1)
+            segments.append(CashFutureSegment(current_day, current_day, contract))
     return tuple(segments)
 
 
@@ -56,6 +63,7 @@ def build_mode_segments(
     start: date,
     end: date,
     mode: str,
+    session_days: Iterable[date] | None = None,
 ) -> tuple[tuple[CashFutureSegment, ...], ...]:
     """Return CURRENT/NEAR segments; BOTH returns both independent legs."""
     normalized = mode.upper()
@@ -66,7 +74,14 @@ def build_mode_segments(
     else:
         raise ValueError("mode must be CURRENT, NEAR or BOTH")
     return tuple(
-        build_rollover_segments(catalog, exchange=exchange, underlying=underlying,
-                                start=start, end=end, mode=leg)
+        build_rollover_segments(
+            catalog,
+            exchange=exchange,
+            underlying=underlying,
+            start=start,
+            end=end,
+            mode=leg,
+            session_days=session_days,
+        )
         for leg in modes
     )
