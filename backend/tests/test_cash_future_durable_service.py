@@ -8,7 +8,7 @@ from app.backtesting.historical_ingest import HistoricalIngestionService
 from app.backtesting.historical_job_store import HistoricalJobStore
 from app.backtesting.historical_sync import HistoricalSyncPlan
 from app.backtesting.session_gap_planner import SessionWindow
-from test_cash_future_historical_acquisition import FakeHistoricalSource, _contract_catalog
+from tests.test_cash_future_historical_acquisition import FakeHistoricalSource, _contract_catalog
 
 
 def _service(tmp_path):
