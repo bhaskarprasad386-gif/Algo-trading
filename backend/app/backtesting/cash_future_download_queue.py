@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, time, timezone
+from datetime import date, datetime, time, timezone
+from typing import Iterable
 from zoneinfo import ZoneInfo
 
 from .cash_future_rollover_plan import CashFutureSegment, build_mode_segments
@@ -36,7 +37,7 @@ def _ns(value: datetime) -> int:
     return int(value.astimezone(timezone.utc).timestamp() * 1_000_000_000)
 
 
-def _market_day_bounds(day) -> tuple[datetime, datetime]:
+def _market_day_bounds(day: date) -> tuple[datetime, datetime]:
     return (
         datetime.combine(day, time.min, tzinfo=MARKET_TZ),
         datetime.combine(day, time.max, tzinfo=MARKET_TZ),
@@ -54,27 +55,39 @@ def build_rollover_download_queue(
     timeframe: str = "1m",
     mode: str = "BOTH",
     source: str = DEFAULT_SOURCE,
+    session_days: Iterable[date] | None = None,
 ) -> CashFutureDownloadQueue:
-    """Create exact-token future requests using Indian market-local day boundaries."""
+    """Create exact-token future requests using Indian market-local session days."""
     source = str(source).strip()
     if not source:
         raise ValueError("historical download source cannot be empty")
     if end < start:
         raise ValueError("end must not precede start")
+
+    local_start = start.astimezone(MARKET_TZ) if start.tzinfo else start.replace(tzinfo=MARKET_TZ)
+    local_end = end.astimezone(MARKET_TZ) if end.tzinfo else end.replace(tzinfo=MARKET_TZ)
+    resolved_days = None if session_days is None else tuple(sorted(set(session_days)))
     segments_by_leg = build_mode_segments(
-        catalog, exchange=exchange, underlying=underlying,
-        start=start.astimezone(MARKET_TZ).date() if start.tzinfo else start.date(),
-        end=end.astimezone(MARKET_TZ).date() if end.tzinfo else end.date(),
+        catalog,
+        exchange=exchange,
+        underlying=underlying,
+        start=local_start.date(),
+        end=local_end.date(),
         mode=mode,
+        session_days=resolved_days,
     )
+
     start_ns, end_ns = _ns(start), _ns(end)
     spot = HistoricalFetchRequest(source, spot_instrument, timeframe, start_ns, end_ns)
     items: list[CashFutureSegmentDownload] = []
     for segments in segments_by_leg:
         for segment in segments:
-            day_start, day_end = _market_day_bounds(segment.start)[0], _market_day_bounds(segment.end)[1]
-            seg_start = max(start, day_start) if start.tzinfo else max(start.replace(tzinfo=MARKET_TZ), day_start)
-            seg_end = min(end, day_end) if end.tzinfo else min(end.replace(tzinfo=MARKET_TZ), day_end)
+            day_start = _market_day_bounds(segment.start)[0]
+            day_end = _market_day_bounds(segment.end)[1]
+            seg_start = max(local_start, day_start)
+            seg_end = min(local_end, day_end)
+            if seg_end < seg_start:
+                continue
             items.append(CashFutureSegmentDownload(
                 segment,
                 HistoricalFetchRequest(
