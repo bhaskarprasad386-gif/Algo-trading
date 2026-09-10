@@ -66,7 +66,7 @@ def build_futures_rollover_chain(
             break
         window_end = min(end_date, active.expiry)
         if windows and windows[-1].contract_token == active.token and windows[-1].end_date >= cursor:
-            cursor = window_end + (date.resolution)
+            cursor = window_end + date.resolution
             continue
         windows.append(
             FNORolloverWindow(
@@ -82,4 +82,34 @@ def build_futures_rollover_chain(
     return tuple(windows)
 
 
-__all__ = ["FNORolloverWindow", "build_futures_rollover_chain"]
+def validate_futures_rollover_chain(
+    windows: tuple[FNORolloverWindow, ...] | list[FNORolloverWindow],
+    *,
+    underlying: str,
+    instrument_type: str,
+) -> None:
+    """Validate that a built chain has ordered, non-overlapping windows.
+
+    A missing tail after the final available expiry is valid. A gap or overlap
+    between emitted windows is not, because it would make the continuous series
+    ambiguous inside the requested contract-covered range.
+    """
+    windows = tuple(windows)
+    if not underlying.strip() or not instrument_type.strip():
+        raise ValueError("underlying and instrument_type are required")
+
+    for index, window in enumerate(windows):
+        if window.underlying != underlying or window.instrument_type != instrument_type:
+            raise ValueError("rollover window does not match requested contract identity")
+        if window.start_date > window.end_date:
+            raise ValueError("rollover window start_date cannot exceed end_date")
+        if index == 0:
+            continue
+        previous = windows[index - 1]
+        if window.start_date != previous.end_date + date.resolution:
+            raise ValueError("rollover chain contains a gap or overlap")
+        if window.start_date <= previous.end_date:
+            raise ValueError("rollover chain windows overlap")
+
+
+__all__ = ["FNORolloverWindow", "build_futures_rollover_chain", "validate_futures_rollover_chain"]
