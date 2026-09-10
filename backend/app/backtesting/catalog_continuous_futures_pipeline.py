@@ -69,6 +69,7 @@ def run_continuous_futures_history_pipeline(
         historical_catalog,
         source,
         windows,
+        source_name=source.source_name,
         timeframe=timeframe,
         interval_ns=interval_ns,
         calendar=calendar,
