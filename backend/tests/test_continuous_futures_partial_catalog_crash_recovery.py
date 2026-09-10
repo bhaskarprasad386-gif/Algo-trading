@@ -119,7 +119,7 @@ def test_running_chunk_crash_with_partial_catalog_data_resumes_only_missing_tail
         executor=second_executor,
         job_store=job_store,
         job_id="partial-crash-job",
-        run_id="process-2",
+        run_id="process-1",
     )
 
     assert resumed.completed
