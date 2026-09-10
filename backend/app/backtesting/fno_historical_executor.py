@@ -5,12 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from .fno_acquisition import (
-    FNOAcquisitionPlan,
-    build_fno_coverage_plan,
-    to_fetch_requests,
-)
-from .fno_universe import FNOUniverse
+from .contract_master import ContractMasterCatalog
+from .fno_acquisition import FNOAcquisitionPlan, build_fno_coverage_plan, to_fetch_requests
+from .fno_universe import FNOUniverse, load_fno_universe
 from .historical_catalog import HistoricalCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_ingest import HistoricalSource
@@ -119,9 +116,50 @@ class FNOHistoricalAcquisitionService:
             batch_size=batch_size,
         )
 
+    def run_master_coverage(
+        self,
+        source: HistoricalSource,
+        contract_master: ContractMasterCatalog,
+        *,
+        as_of: date,
+        timeframe: str,
+        start_ns: int,
+        end_ns: int,
+        max_request_ns: int,
+        catalog: HistoricalCatalog,
+        source_name: str,
+        interval_ns: int,
+        calendar: TradingCalendar,
+        start_date: date,
+        end_date: date,
+        job_store: HistoricalJobStore,
+        job_id: str,
+        run_id: str,
+        retry_attempts: int = 3,
+        batch_size: int = 1024,
+    ) -> FNOHistoricalExecutionReport:
+        """Build one dynamic stock+index F&O universe and run all missing sessions durably."""
+        universe = load_fno_universe(contract_master, as_of=as_of)
+        return self.run_coverage(
+            source,
+            universe,
+            as_of=as_of,
+            timeframe=timeframe,
+            start_ns=start_ns,
+            end_ns=end_ns,
+            max_request_ns=max_request_ns,
+            catalog=catalog,
+            source_name=source_name,
+            interval_ns=interval_ns,
+            calendar=calendar,
+            start_date=start_date,
+            end_date=end_date,
+            job_store=job_store,
+            job_id=job_id,
+            run_id=run_id,
+            retry_attempts=retry_attempts,
+            batch_size=batch_size,
+        )
 
-__all__ = [
-    "FNOHistoricalExecutionReport",
-    "FNOHistoricalAcquisitionService",
-    "to_historical_sync_plan",
-]
+
+__all__ = ["FNOHistoricalExecutionReport", "FNOHistoricalAcquisitionService", "to_historical_sync_plan"]
