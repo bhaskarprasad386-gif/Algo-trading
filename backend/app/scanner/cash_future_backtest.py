@@ -115,20 +115,18 @@ def run_multi_contract_backtest(
         for group in grouped.values() if group
     )
 
-    # A multi-contract equity curve must represent one sequential portfolio,
-    # not concatenated independent per-contract curves that each restart at 0.
-    equity_curve = [{"timestamp": None, "equity": 0.0}]
-    cumulative_equity = 0.0
+    # Build portfolio equity from realized trades only. Individual contract
+    # curves each start at zero and cannot be safely merged into one portfolio
+    # curve because their observation windows may overlap.
+    equity = 0.0
     running_peak = 0.0
     max_drawdown = 0.0
+    equity_curve = []
     for trade in trades:
-        cumulative_equity += trade["net_profit"]
-        running_peak = max(running_peak, cumulative_equity)
-        max_drawdown = max(max_drawdown, running_peak - cumulative_equity)
-        equity_curve.append({
-            "timestamp": trade["exit_time"],
-            "equity": cumulative_equity,
-        })
+        equity += trade["net_profit"]
+        running_peak = max(running_peak, equity)
+        max_drawdown = max(max_drawdown, running_peak - equity)
+        equity_curve.append({"timestamp": trade["exit_time"], "equity": equity})
 
     return {
         "contract_count": len(results),
