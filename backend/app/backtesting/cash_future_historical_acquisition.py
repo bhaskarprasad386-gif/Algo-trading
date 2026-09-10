@@ -12,6 +12,7 @@ from .cash_future_gap_download import CashFutureGapDownloadPlanner
 from .contract_master import ContractMasterCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_ingest import HistoricalIngestionService, HistoricalSource
+from .historical_job_store import HistoricalJobStore
 from .historical_sync import HistoricalSyncPlan
 from .provider_retry import ProviderRetryPolicy, build_provider_retry_policy
 from .session_gap_planner import SessionWindow
@@ -116,6 +117,16 @@ class CashFutureHistoricalAcquisitionService:
             future_sessions=future_sessions,
         )
 
+    @staticmethod
+    def _durable_job_id(job_store: HistoricalJobStore, base_job_id: str, plan: HistoricalSyncPlan) -> str:
+        """Scope durable state to the exact plan so repaired plans get fresh identities."""
+        metadata = tuple(
+            ResumableHistoricalExecutor._request_metadata(request)
+            for request in plan.requests
+        )
+        fingerprint = job_store.fingerprint(metadata)
+        return f"{base_job_id}:plan:{fingerprint}"
+
     def acquire(
         self,
         *,
@@ -134,14 +145,21 @@ class CashFutureHistoricalAcquisitionService:
         retry_policy: ProviderRetryPolicy | None = None,
         max_repair_passes: int = 3,
         on_progress: Callable[[CashFutureAcquisitionProgress], None] | None = None,
+        job_store: HistoricalJobStore | None = None,
+        job_id: str | None = None,
+        run_id: str | None = None,
     ) -> CashFutureAcquisitionResult:
         """Download missing chunks and re-plan bounded gaps until coverage stabilizes.
 
-        ``progress`` contains a coverage snapshot before acquisition and after every
-        completed repair pass. ``on_progress`` emits RAM-safe information synchronously,
-        allowing Android/server UIs to render progress during long jobs without retaining
-        raw bars or executor results.
+        When ``job_store``, ``job_id`` and ``run_id`` are supplied, every exact repair
+        plan is executed through the durable chunk ledger. Plan fingerprints are included
+        in the internal job identity, so a changed repair plan never conflicts with the
+        completed state of an earlier plan. Re-running after a worker crash resumes the
+        unfinished chunks of the same plan and skips chunks already marked complete.
         """
+        durable_args = (job_store is not None, job_id is not None, run_id is not None)
+        if any(durable_args) and not all(durable_args):
+            raise ValueError("job_store, job_id and run_id must be supplied together")
         if max_repair_passes < 1:
             raise ValueError("max_repair_passes must be positive")
 
@@ -179,13 +197,26 @@ class CashFutureHistoricalAcquisitionService:
         for pass_index in range(1, max_repair_passes + 1):
             if not plan.requests:
                 break
-            execution = self.executor.run(
-                self.source,
-                plan,
-                retry_attempts=retry_attempts,
-                retry_delay_seconds=retry_delay_seconds,
-                retry_policy=effective_retry_policy,
-            )
+            if job_store is not None:
+                durable_plan_job_id = self._durable_job_id(job_store, job_id, plan)
+                execution = self.executor.run_durable(
+                    self.source,
+                    plan,
+                    job_store=job_store,
+                    job_id=durable_plan_job_id,
+                    run_id=run_id,
+                    retry_attempts=retry_attempts,
+                    retry_delay_seconds=retry_delay_seconds,
+                    retry_policy=effective_retry_policy,
+                )
+            else:
+                execution = self.executor.run(
+                    self.source,
+                    plan,
+                    retry_attempts=retry_attempts,
+                    retry_delay_seconds=retry_delay_seconds,
+                    retry_policy=effective_retry_policy,
+                )
             total_completed += execution.completed_chunks
             total_skipped.extend(execution.skipped_request_indices)
             final_execution = DownloadExecutionResult(
