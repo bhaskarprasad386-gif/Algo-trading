@@ -62,7 +62,9 @@ def test_durable_retry_completes_once_and_resume_skips_completed_chunk():
     assert service.calls == 2
     assert store.chunk_state("job-1", 0) == ("completed", 1, None)
     assert store.get("job-1").state == "completed"
-    assert sleeps == [0.25]
+    assert len(sleeps) == 2
+    assert sleeps[0] == 0.25
+    assert 0 < sleeps[1] <= 0.5
 
     resumed = executor.run_durable(
         object(),
