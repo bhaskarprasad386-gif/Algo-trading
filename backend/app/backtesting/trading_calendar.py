@@ -55,4 +55,4 @@ class TradingCalendar:
 
 
 def _to_ns(value: datetime) -> int:
-    return value.astimezone(timezone.utc).timestamp_ns()
+    return int(value.timestamp() * 1_000_000_000)
