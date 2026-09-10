@@ -5,6 +5,7 @@ from app.backtesting.historical_expected_events import (
     build_expected_event_repair_plan,
     missing_expected_timestamps,
 )
+from app.backtesting.historical_sync import build_expected_event_plan
 
 
 def _record(timestamp_ns: int) -> HistoricalRecord:
@@ -75,6 +76,27 @@ def test_explicit_event_repair_plan_is_bounded_without_fixed_cadence():
             max_request_ns=100,
         )
         assert [(item.start_ns, item.end_ns) for item in plan] == [
+            (1_050, 1_100),
+            (1_250, 1_250),
+            (2_000, 2_000),
+        ]
+    finally:
+        catalog.close()
+
+
+def test_historical_sync_wraps_explicit_event_repair_plan():
+    catalog = HistoricalCatalog()
+    try:
+        catalog.ingest((_record(1_000),))
+        plan = build_expected_event_plan(
+            catalog,
+            source="tick-provider",
+            instrument="NSE:1:TEST",
+            timeframe="tick",
+            expected_timestamps=(1_000, 1_050, 1_100, 1_250, 2_000),
+            max_request_ns=100,
+        )
+        assert [(item.start_ns, item.end_ns) for item in plan.requests] == [
             (1_050, 1_100),
             (1_250, 1_250),
             (2_000, 2_000),
