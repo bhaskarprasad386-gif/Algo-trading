@@ -20,3 +20,15 @@ def test_provider_capabilities_are_deduplicated_and_sorted_for_errors():
     assert caps.timeframes == frozenset({"1m", "5m"})
     with pytest.raises(ValueError, match="1m, 5m"):
         caps.require("1d")
+
+
+def test_provider_can_declare_genuine_high_resolution_data():
+    caps = capabilities("high_resolution_provider", ("1ms", "1us", "tick"))
+
+    assert caps.supports("1ms")
+    assert caps.supports("1us")
+    assert caps.supports("tick")
+
+    caps.require("1ms")
+    caps.require("1us")
+    caps.require("tick")
