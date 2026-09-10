@@ -65,17 +65,9 @@ def test_multi_contract_multi_session_rollover_boundary_recovers_durably(tmp_pat
     _seed_session_gaps(catalog, "NFO:FEB", (date(2026, 1, 12), date(2026, 1, 13)))
 
     first = repair_continuous_futures_history_gaps(
-        catalog,
-        source,
-        windows,
-        source_name="fake",
-        timeframe="1m",
-        interval_ns=INTERVAL_NS,
-        calendar=calendar,
-        max_request_ns=10 * INTERVAL_NS,
-        job_store=store,
-        job_id="multi-session-rollover-repair",
-        run_id="run-1",
+        catalog, source, windows, source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS,
+        calendar=calendar, max_request_ns=10 * INTERVAL_NS, job_store=store,
+        job_id="multi-session-rollover-repair", run_id="run-1",
     )
 
     assert not first.completed
@@ -86,70 +78,56 @@ def test_multi_contract_multi_session_rollover_boundary_recovers_durably(tmp_pat
         ("NFO:FEB", _ns(date(2026, 1, 12), time(9, 16))),
         ("NFO:FEB", _ns(date(2026, 1, 13), time(9, 16))),
     ]
-    assert source.requests == [source.requests[0]] * len(source.requests) or len(source.requests) == 3
-    assert source.requests[:3] == [source.requests[0], source.requests[0], source.requests[0]]
-    assert store.chunk_state("multi-session-rollover-repair", 0)[0] == "recoverable"
+    assert [request.instrument for request in source.requests] == ["NFO:JAN"] * 3
+    fingerprint = store.get("multi-session-rollover-repair").plan_fingerprint
+    assert store.get("multi-session-rollover-repair").state == "progress"
 
-    _seed_session_gaps(catalog, "NFO:JAN", (date(2026, 1, 8), date(2026, 1, 9)))
+    for day in (date(2026, 1, 8), date(2026, 1, 9)):
+        catalog.upsert(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(day, time(9, 16)), {"close": 100.0}))
     source.allow_failed_instrument = True
-    source.requests.clear()
+    before_resume = len(source.requests)
 
     second = repair_continuous_futures_history_gaps(
-        catalog,
-        source,
-        windows,
-        source_name="fake",
-        timeframe="1m",
-        interval_ns=INTERVAL_NS,
-        calendar=calendar,
-        max_request_ns=10 * INTERVAL_NS,
-        job_store=store,
-        job_id="multi-session-rollover-repair",
-        run_id="run-1",
+        catalog, source, windows, source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS,
+        calendar=calendar, max_request_ns=10 * INTERVAL_NS, job_store=store,
+        job_id="multi-session-rollover-repair", run_id="run-1",
     )
 
     assert second.completed
-    assert [request.instrument for request in source.requests] == ["NFO:FEB", "NFO:FEB"]
-    assert all(date(2026, 1, 10) not in (datetime.fromtimestamp(request.start_ns / 1e9, tz=timezone.utc).date(), datetime.fromtimestamp(request.end_ns / 1e9, tz=timezone.utc).date()) for request in source.requests)
-    assert store.get("multi-session-rollover-repair").state == "completed"
+    job = store.get("multi-session-rollover-repair")
+    assert job.state == "completed"
+    assert job.plan_fingerprint == fingerprint
+    assert source.requests[:3] and all(request.instrument == "NFO:JAN" for request in source.requests[:3])
+    assert [request.instrument for request in source.requests[before_resume:]] == ["NFO:FEB", "NFO:FEB"]
+    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 6
+    assert catalog.count(source="fake", instrument="NFO:FEB", timeframe="1m") == 6
+    assert not any(
+        request.instrument == "NFO:JAN" and request.start_ns >= _ns(date(2026, 1, 10), time(0, 0))
+        for request in first.plan.requests
+    )
 
 
-def test_multi_session_rollover_recovery_rejects_changed_run_id(tmp_path):
+def test_multi_session_rollover_recovery_rejects_run_change(tmp_path):
     catalog = HistoricalCatalog(tmp_path / "catalog.sqlite")
     store = HistoricalJobStore(tmp_path / "jobs.sqlite")
-    calendar = _calendar()
-    windows = _windows()
     source = MultiSessionSource()
+    windows = _windows()
+    _seed_session_gaps(catalog, "NFO:JAN", (date(2026, 1, 8), date(2026, 1, 9)))
+    _seed_session_gaps(catalog, "NFO:FEB", (date(2026, 1, 12), date(2026, 1, 13)))
+
+    repair_continuous_futures_history_gaps(
+        catalog, source, windows, source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS,
+        calendar=_calendar(), max_request_ns=10 * INTERVAL_NS, job_store=store,
+        job_id="multi-session-rollover-run-id", run_id="run-1",
+    )
 
     try:
         repair_continuous_futures_history_gaps(
-            catalog,
-            source,
-            windows,
-            source_name="fake",
-            timeframe="1m",
-            interval_ns=INTERVAL_NS,
-            calendar=calendar,
-            max_request_ns=10 * INTERVAL_NS,
-            job_store=store,
-            job_id="run-id-repair",
-            run_id="run-1",
+            catalog, source, windows, source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS,
+            calendar=_calendar(), max_request_ns=10 * INTERVAL_NS, job_store=store,
+            job_id="multi-session-rollover-run-id", run_id="run-2",
         )
-    except Exception:
-        pass
-
-    import pytest
-    with pytest.raises(ValueError, match="does not match run or plan"):
-        repair_continuous_futures_history_gaps(
-            catalog,
-            MultiSessionSource(),
-            windows,
-            source_name="fake",
-            timeframe="1m",
-            interval_ns=INTERVAL_NS,
-            calendar=calendar,
-            max_request_ns=10 * INTERVAL_NS,
-            job_store=store,
-            job_id="run-id-repair",
-            run_id="run-2",
-        )
+    except ValueError as exc:
+        assert "does not match run or plan" in str(exc)
+    else:
+        raise AssertionError("run-id change must be rejected")
