@@ -84,7 +84,8 @@ class ResumableHistoricalExecutor:
                     if attempts >= retry_attempts or (retry_policy is not None and not retry_policy.is_transient(exc)):
                         break
                     delay = retry_policy.delay(attempts) if retry_policy is not None else retry_delay_seconds * (2 ** (attempts - 1))
-                    self.sleep(delay)
+                    if delay > 0:
+                        (retry_policy.sleeper if retry_policy is not None else self.sleep)(delay)
             if last_error is not None:
                 if on_chunk_failed is not None:
                     on_chunk_failed(index, request, last_error, attempts)
