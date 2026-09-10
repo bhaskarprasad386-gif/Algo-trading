@@ -1,5 +1,5 @@
 from app.backtesting.engine import BacktestConfig, BacktestEngine, EventContext, EventSignal
-from app.backtesting.historical_catalog import HistoricalRecord
+from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 
 
 def _event(timestamp_ns, sequence, payload):
@@ -62,3 +62,54 @@ def test_event_runner_uses_payload_price_when_signal_has_no_price():
     result = BacktestEngine().run_events(events, lambda event: next(actions))
 
     assert result.net_pnl == 2.0
+
+
+def test_catalog_event_adapter_streams_ordered_events_and_preserves_payload():
+    catalog = HistoricalCatalog()
+    catalog.ingest_events([
+        _event(1_000_001, 2, {"price": 100.2, "depth": {"bid_qty": 10}}),
+        _event(1_000_001, 3, {"price": 100.3, "depth": {"bid_qty": 20}}),
+    ])
+    seen = []
+
+    def strategy(event: EventContext):
+        seen.append((event.timestamp_ns, event.sequence, event.payload, event.record))
+        return None
+
+    result = BacktestEngine().run_catalog_events(
+        catalog,
+        source="test",
+        instrument="NFO:123",
+        strategy=strategy,
+    )
+
+    assert result.trades == ()
+    assert [item[:2] for item in seen] == [(1_000_001, 2), (1_000_001, 3)]
+    assert seen[0][2] == {"price": 100.2, "depth": {"bid_qty": 10}}
+    assert seen[0][3].sequence == 2
+    catalog.close()
+
+
+def test_catalog_event_adapter_applies_inclusive_range_and_buy_sell_pnl():
+    catalog = HistoricalCatalog()
+    catalog.ingest_events([
+        _event(1_000, 1, {"price": 90.0}),
+        _event(2_000, 2, {"price": 100.0}),
+        _event(3_000, 3, {"price": 110.0}),
+    ])
+    actions = iter(("BUY", "SELL"))
+
+    result = BacktestEngine(BacktestConfig(initial_capital=10_000.0)).run_catalog_events(
+        catalog,
+        source="test",
+        instrument="NFO:123",
+        start_ns=1_000,
+        end_ns=2_000,
+        strategy=lambda event: next(actions),
+    )
+
+    assert len(result.trades) == 1
+    assert result.trades[0].entry_timestamp == 1_000
+    assert result.trades[0].exit_timestamp == 2_000
+    assert result.net_pnl == 10.0
+    catalog.close()
