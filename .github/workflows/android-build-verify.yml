@@ -1,10 +1,9 @@
 name: Android Build Verify
 
+# Android verification is intentionally manual while backend/data-engine work
+# is the active milestone. This prevents Android jobs from competing for CI
+# capacity on every backend commit.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -36,11 +35,9 @@ jobs:
           gradle-version: '8.2'
 
       - name: Run Android unit tests
-        # Includes regression coverage for production backend URL configuration.
         run: gradle testDebugUnitTest --no-daemon -PbackendBaseUrl="$BACKEND_BASE_URL" -PbackendWsUrl="$BACKEND_WS_URL"
 
       - name: Compile Android debug build
-        # Build against the live Render backend, not the emulator-only 10.0.2.2 host.
         run: gradle assembleDebug --no-daemon -PbackendBaseUrl="$BACKEND_BASE_URL" -PbackendWsUrl="$BACKEND_WS_URL"
 
       - name: Upload debug APK
