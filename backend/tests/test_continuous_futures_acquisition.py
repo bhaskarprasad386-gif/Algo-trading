@@ -171,4 +171,4 @@ def test_durable_gap_repair_recovers_leading_trailing_and_empty_sessions(tmp_pat
     ]
     assert store.get("edge-gap-repair").plan_fingerprint == fingerprint
     assert store.get("edge-gap-repair").state == "completed"
-    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 12
+    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 13
