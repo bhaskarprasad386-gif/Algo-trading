@@ -42,6 +42,43 @@ def _split_jobs(*, instrument: str, timeframe: str, kind: str, start_ns: int, en
     return jobs
 
 
+def _missing_session_timestamps(
+    *,
+    observed: tuple[int, ...],
+    session_start_ns: int,
+    session_end_ns: int,
+    start_ns: int,
+    end_ns: int,
+    interval_ns: int,
+) -> tuple[tuple[int, int], ...]:
+    """Return contiguous missing fixed-cadence timestamp ranges in one session."""
+    lower = max(session_start_ns, start_ns)
+    upper = min(session_end_ns, end_ns)
+    if lower > upper or interval_ns <= 0:
+        return ()
+
+    first = session_start_ns + max(0, (lower - session_start_ns + interval_ns - 1) // interval_ns) * interval_ns
+    last = session_start_ns + ((upper - session_start_ns) // interval_ns) * interval_ns
+    if first > last or first >= session_end_ns:
+        return ()
+    last = min(last, session_end_ns - interval_ns)
+
+    observed_set = set(observed)
+    ranges: list[tuple[int, int]] = []
+    cursor: int | None = None
+    for timestamp in range(first, last + 1, interval_ns):
+        if timestamp in observed_set:
+            if cursor is not None:
+                ranges.append((cursor, timestamp - interval_ns))
+                cursor = None
+            continue
+        if cursor is None:
+            cursor = timestamp
+    if cursor is not None:
+        ranges.append((cursor, last))
+    return tuple(ranges)
+
+
 def build_fno_acquisition_plan(
     universe: FNOUniverse,
     *,
@@ -51,11 +88,7 @@ def build_fno_acquisition_plan(
     end_ns: int,
     max_request_ns: int,
 ) -> FNOAcquisitionPlan:
-    """Create bounded jobs for every provider-backed stock/index future contract.
-
-    Range splitting is transport-only; use ``build_fno_coverage_plan`` when a
-    durable catalog is available and only missing coverage should be requested.
-    """
+    """Create bounded jobs for every provider-backed stock/index future contract."""
     if not timeframe.strip():
         raise ValueError("timeframe is required")
     if start_ns < 0 or end_ns < start_ns:
@@ -92,12 +125,13 @@ def build_fno_coverage_plan(
     start_date: date,
     end_date: date,
 ) -> FNOAcquisitionPlan:
-    """Plan only missing fixed-cadence F&O coverage from the durable catalog.
+    """Plan only missing fixed-cadence F&O bars inside requested trading sessions.
 
-    Existing timestamps are never downloaded again. Gaps are evaluated inside
-    trading sessions, so overnight/weekend/closed-day boundaries are not treated
-    as missing bars. A contract with no stored timestamps in the requested range
-    receives the normal bounded full-range acquisition jobs.
+    The expected grid is derived only from the declared fixed interval and the
+    trading calendar. Existing timestamps are excluded, while leading, interior,
+    and trailing missing bars are all repaired. Session boundaries are never
+    crossed. This planner is intentionally for fixed-cadence bars, not tick,
+    depth, or event streams.
     """
     if not timeframe.strip() or not source.strip():
         raise ValueError("timeframe and source are required")
@@ -109,44 +143,30 @@ def build_fno_coverage_plan(
         raise ValueError("end_date cannot precede start_date")
 
     jobs: list[FNOAcquisitionJob] = []
-    for contract in universe.stock_contracts + universe.index_contracts:
-        observed = catalog.timestamps(
-            source=source,
-            instrument=contract.token,
-            timeframe=timeframe,
-            start_ns=start_ns,
-            end_ns=end_ns,
-        )
-        if not observed:
-            jobs.extend(_split_jobs(
+    contracts = universe.stock_contracts + universe.index_contracts
+    for contract in contracts:
+        for session in calendar.sessions_between(start_date, end_date):
+            observed = catalog.timestamps(
+                source=source,
                 instrument=contract.token,
                 timeframe=timeframe,
-                kind=contract.instrument_type,
+                start_ns=session.start_ns,
+                end_ns=session.end_ns,
+            )
+            for missing_start, missing_end in _missing_session_timestamps(
+                observed=observed,
+                session_start_ns=session.start_ns,
+                session_end_ns=session.end_ns,
                 start_ns=start_ns,
                 end_ns=end_ns,
-                max_request_ns=max_request_ns,
-            ))
-            continue
-
-        gaps = catalog.session_gaps(
-            source=source,
-            instrument=contract.token,
-            timeframe=timeframe,
-            interval_ns=interval_ns,
-            calendar=calendar,
-            start_date=start_date,
-            end_date=end_date,
-        )
-        for gap in gaps:
-            gap_start = max(start_ns, gap.start_ns)
-            gap_end = min(end_ns, gap.end_ns)
-            if gap_start <= gap_end:
+                interval_ns=interval_ns,
+            ):
                 jobs.extend(_split_jobs(
                     instrument=contract.token,
                     timeframe=timeframe,
                     kind=contract.instrument_type,
-                    start_ns=gap_start,
-                    end_ns=gap_end,
+                    start_ns=missing_start,
+                    end_ns=missing_end,
                     max_request_ns=max_request_ns,
                 ))
 
