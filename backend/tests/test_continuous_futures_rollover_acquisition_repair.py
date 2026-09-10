@@ -90,20 +90,17 @@ def test_rollover_acquisition_does_not_create_weekend_repair_requests() -> None:
     monday = date(2026, 2, 2)
     friday_times = _session_timestamps(friday)
     monday_times = _session_timestamps(monday)
-    windows = (
-        FNORolloverWindow("ABC", "STOCK_FUTURE", "101", friday, friday),
-        FNORolloverWindow("ABC", "STOCK_FUTURE", "202", monday, monday),
-    )
+    window = FNORolloverWindow("ABC", "STOCK_FUTURE", "101", friday, monday)
     catalog.ingest(
         [HistoricalRecord(SOURCE_NAME, "NFO:101", TIMEFRAME, timestamp, {}) for timestamp in friday_times[:-1]]
-        + [HistoricalRecord(SOURCE_NAME, "NFO:202", TIMEFRAME, timestamp, {}) for timestamp in monday_times[:-1]]
+        + [HistoricalRecord(SOURCE_NAME, "NFO:101", TIMEFRAME, timestamp, {}) for timestamp in monday_times[:-1]]
     )
 
     source = _RecordingSource()
     report = acquire_continuous_futures_history(
         catalog,
         source,
-        windows,
+        (window,),
         source_name=SOURCE_NAME,
         timeframe=TIMEFRAME,
         interval_ns=INTERVAL_NS,
@@ -112,6 +109,8 @@ def test_rollover_acquisition_does_not_create_weekend_repair_requests() -> None:
     )
 
     assert report.completed
-    assert [request.instrument for request in source.requests] == ["NFO:101", "NFO:202"]
-    assert all(request.start_ns != request.end_ns or request.start_ns in {friday_times[-1], monday_times[-1]} for request in source.requests)
+    assert [(request.instrument, request.start_ns, request.end_ns) for request in source.requests] == [
+        ("NFO:101", friday_times[-1], friday_times[-1]),
+        ("NFO:101", monday_times[-1], monday_times[-1]),
+    ]
     assert catalog.count(source=SOURCE_NAME, timeframe=TIMEFRAME) == 8
