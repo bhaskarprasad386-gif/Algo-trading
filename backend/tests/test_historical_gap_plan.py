@@ -19,13 +19,13 @@ def test_build_gap_plan_creates_only_missing_range():
 def test_build_gap_plan_splits_large_gap_into_bounded_chunks():
     plan = build_gap_plan(
         source="angelone",
-        gaps=(Gap("SBIN", "ONE_MINUTE", 0, 299),),
+        gaps=(Gap("SBIN", "ONE_MINUTE", 0, 299_999_999_999),),
         chunk=timedelta(seconds=100),
     )
     assert [(r.start_ns, r.end_ns) for r in plan.requests] == [
         (0, 99_999_999_999),
         (100_000_000_000, 199_999_999_999),
-        (200_000_000_000, 299),
+        (200_000_000_000, 299_999_999_999),
     ]
 
 
