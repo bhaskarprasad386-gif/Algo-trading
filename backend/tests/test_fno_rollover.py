@@ -1,7 +1,13 @@
 from datetime import date
 
+import pytest
+
 from app.backtesting.contract_master import ContractRecord
-from app.backtesting.fno_rollover import build_futures_rollover_chain
+from app.backtesting.fno_rollover import (
+    FNORolloverWindow,
+    build_futures_rollover_chain,
+    validate_futures_rollover_chain,
+)
 
 
 def _contract(token: str, expiry: date) -> ContractRecord:
@@ -78,3 +84,44 @@ def test_rollover_ignores_other_underlyings_and_instrument_types():
 
     assert len(chain) == 1
     assert chain[0].contract_token == "JAN"
+
+
+def test_rollover_validation_accepts_contiguous_chain():
+    windows = (
+        FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 26), date(2026, 1, 29)),
+        FNORolloverWindow("ABC", "STOCK_FUTURE", "FEB", date(2026, 1, 30), date(2026, 2, 26)),
+    )
+
+    validate_futures_rollover_chain(
+        windows,
+        underlying="ABC",
+        instrument_type="STOCK_FUTURE",
+    )
+
+
+def test_rollover_validation_rejects_gap():
+    windows = (
+        FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 26), date(2026, 1, 29)),
+        FNORolloverWindow("ABC", "STOCK_FUTURE", "FEB", date(2026, 2, 2), date(2026, 2, 26)),
+    )
+
+    with pytest.raises(ValueError, match="gap or overlap"):
+        validate_futures_rollover_chain(
+            windows,
+            underlying="ABC",
+            instrument_type="STOCK_FUTURE",
+        )
+
+
+def test_rollover_validation_rejects_overlap():
+    windows = (
+        FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 26), date(2026, 1, 29)),
+        FNORolloverWindow("ABC", "STOCK_FUTURE", "FEB", date(2026, 1, 29), date(2026, 2, 26)),
+    )
+
+    with pytest.raises(ValueError, match="gap or overlap"):
+        validate_futures_rollover_chain(
+            windows,
+            underlying="ABC",
+            instrument_type="STOCK_FUTURE",
+        )
