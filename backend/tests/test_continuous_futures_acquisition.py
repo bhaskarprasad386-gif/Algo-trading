@@ -27,6 +27,12 @@ class FakeHistoricalSource:
         if request.end_ns != request.start_ns:
             yield HistoricalRecord(request.source, request.instrument, request.timeframe, request.end_ns, {"close": 101.0})
 
+class CompleteRangeSource(FakeHistoricalSource):
+    def fetch(self, request: HistoricalFetchRequest):
+        self.requests.append(request)
+        for timestamp in range(request.start_ns, request.end_ns + 1, INTERVAL_NS):
+            yield HistoricalRecord(request.source, request.instrument, request.timeframe, timestamp, {"close": 100.0})
+
 class FailOnRequestSource(FakeHistoricalSource):
     def __init__(self, fail_on_call: int) -> None:
         super().__init__()
@@ -121,38 +127,16 @@ def test_gap_repair_handles_multiple_contracts_and_multiple_internal_gaps(tmp_pa
     calendar = TradingCalendar(session_open=time(9, 15), session_close=time(9, 19))
     jan = FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 2), date(2026, 1, 2))
     feb = FNORolloverWindow("ABC", "STOCK_FUTURE", "FEB", date(2026, 1, 5), date(2026, 1, 5))
-    sessions = {
-        "NFO:JAN": calendar.sessions_between(jan.start_date, jan.end_date)[0],
-        "NFO:FEB": calendar.sessions_between(feb.start_date, feb.end_date)[0],
-    }
-    catalog.ingest(
-        HistoricalRecord("fake", instrument, "1m", timestamp, {"close": 100.0})
-        for instrument, session in sessions.items()
-        for timestamp in (
-            session.start_ns,
-            session.start_ns + 2 * INTERVAL_NS,
-            session.start_ns + 4 * INTERVAL_NS,
-            session.end_ns,
-        )
-    )
+    sessions = {"NFO:JAN": calendar.sessions_between(jan.start_date, jan.end_date)[0], "NFO:FEB": calendar.sessions_between(feb.start_date, feb.end_date)[0]}
+    catalog.ingest(HistoricalRecord("fake", instrument, "1m", timestamp, {"close": 100.0}) for instrument, session in sessions.items() for timestamp in (session.start_ns, session.start_ns + 2 * INTERVAL_NS, session.start_ns + 4 * INTERVAL_NS, session.end_ns))
     failing_source = FailOnRequestSource(fail_on_call=2)
-    first = repair_continuous_futures_history_gaps(
-        catalog, failing_source, [jan, feb], source_name="fake", timeframe="1m",
-        interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=10 * INTERVAL_NS,
-        job_store=store, job_id="multi-gap-repair", run_id="run-1",
-    )
+    first = repair_continuous_futures_history_gaps(catalog, failing_source, [jan, feb], source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=10 * INTERVAL_NS, job_store=store, job_id="multi-gap-repair", run_id="run-1")
     assert not first.completed and first.execution.failed_request_index == 1
     assert len(first.plan.requests) == 4
-    assert store.chunk_state("multi-gap-repair", 0)[0] == "completed"
-    assert store.chunk_state("multi-gap-repair", 1)[0] == "recoverable"
+    assert store.chunk_state("multi-gap-repair", 0)[0] == "completed" and store.chunk_state("multi-gap-repair", 1)[0] == "recoverable"
     fingerprint = store.get("multi-gap-repair").plan_fingerprint
-
     resumed_source = FakeHistoricalSource()
-    second = repair_continuous_futures_history_gaps(
-        catalog, resumed_source, [jan, feb], source_name="fake", timeframe="1m",
-        interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=10 * INTERVAL_NS,
-        job_store=store, job_id="multi-gap-repair", run_id="run-1",
-    )
+    second = repair_continuous_futures_history_gaps(catalog, resumed_source, [jan, feb], source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=10 * INTERVAL_NS, job_store=store, job_id="multi-gap-repair", run_id="run-1")
     assert second.completed and second.execution.failed_request_index is None
     assert len(resumed_source.requests) == 3
     assert [request.instrument for request in resumed_source.requests] == ["NFO:JAN", "NFO:FEB", "NFO:FEB"]
@@ -160,3 +144,31 @@ def test_gap_repair_handles_multiple_contracts_and_multiple_internal_gaps(tmp_pa
     assert store.get("multi-gap-repair").state == "completed"
     assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 6
     assert catalog.count(source="fake", instrument="NFO:FEB", timeframe="1m") == 6
+
+def test_durable_gap_repair_recovers_leading_trailing_and_empty_sessions(tmp_path):
+    catalog = HistoricalCatalog(tmp_path / "catalog.sqlite"); store = HistoricalJobStore(tmp_path / "jobs.sqlite")
+    calendar = TradingCalendar(session_open=time(9, 15), session_close=time(9, 18))
+    window = FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 2), date(2026, 1, 6))
+    friday = calendar.sessions_between(date(2026, 1, 2), date(2026, 1, 2))[0]
+    tuesday = calendar.sessions_between(date(2026, 1, 6), date(2026, 1, 6))[0]
+    catalog.ingest(HistoricalRecord("fake", "NFO:JAN", "1m", timestamp, {"close": 100.0}) for timestamp in (friday.start_ns + INTERVAL_NS, friday.start_ns + 2 * INTERVAL_NS, tuesday.start_ns, tuesday.start_ns + INTERVAL_NS, tuesday.start_ns + 2 * INTERVAL_NS, tuesday.end_ns))
+
+    failing_source = FailOnRequestSource(fail_on_call=2)
+    first = repair_continuous_futures_history_gaps(catalog, failing_source, [window], source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=10 * INTERVAL_NS, job_store=store, job_id="edge-gap-repair", run_id="run-1")
+    assert not first.completed and first.execution.failed_request_index == 1
+    assert len(first.plan.requests) == 3
+    assert store.chunk_state("edge-gap-repair", 0)[0] == "completed"
+    assert store.chunk_state("edge-gap-repair", 1)[0] == "recoverable"
+    fingerprint = store.get("edge-gap-repair").plan_fingerprint
+
+    resumed_source = CompleteRangeSource()
+    second = repair_continuous_futures_history_gaps(catalog, resumed_source, [window], source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=10 * INTERVAL_NS, job_store=store, job_id="edge-gap-repair", run_id="run-1")
+    assert second.completed and second.execution.failed_request_index is None
+    assert len(resumed_source.requests) == 2
+    assert [(request.start_ns, request.end_ns) for request in resumed_source.requests] == [
+        (friday.end_ns, friday.end_ns),
+        (tuesday.start_ns, tuesday.end_ns),
+    ]
+    assert store.get("edge-gap-repair").plan_fingerprint == fingerprint
+    assert store.get("edge-gap-repair").state == "completed"
+    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 12
