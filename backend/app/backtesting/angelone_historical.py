@@ -15,6 +15,7 @@ from app.algo.auth import AngelOneAuth
 
 from .historical_catalog import HistoricalRecord
 from .historical_ingest import HistoricalFetchRequest
+from .historical_provider_capabilities import capabilities
 from .historical_rate_limiter import HistoricalRateLimiter
 
 
@@ -28,6 +29,7 @@ INTERVAL_MAP = {
     "1h": "ONE_HOUR",
     "1d": "ONE_DAY",
 }
+ANGEL_ONE_HISTORICAL_CAPABILITIES = capabilities("angelone", INTERVAL_MAP)
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -62,15 +64,15 @@ class AngelOneHistoricalSource:
     """Real Angel One candle source implementing HistoricalSource."""
 
     source_name = "angelone"
+    capabilities = ANGEL_ONE_HISTORICAL_CAPABILITIES
 
     def __init__(self, auth: AngelOneAuth | None = None, *, limiter: HistoricalRateLimiter | None = None) -> None:
         self.auth = auth or AngelOneAuth()
         self.limiter = limiter or HistoricalRateLimiter()
 
     def fetch(self, request: HistoricalFetchRequest) -> Iterable[HistoricalRecord]:
-        interval = INTERVAL_MAP.get(request.timeframe)
-        if interval is None:
-            raise ValueError(f"unsupported Angel One timeframe: {request.timeframe}")
+        self.capabilities.require(request.timeframe)
+        interval = INTERVAL_MAP[request.timeframe]
         if request.start_ns > request.end_ns:
             raise ValueError("invalid historical range")
 
