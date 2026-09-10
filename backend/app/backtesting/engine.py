@@ -1,4 +1,4 @@
-"""Small deterministic backtesting engine foundation."""
+"""Deterministic backtesting engine for bars and high-resolution events."""
 
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -54,8 +54,37 @@ class BacktestResult:
     cagr: float
 
 
+@dataclass(frozen=True)
+class EventContext:
+    """Immutable context delivered to a high-resolution event strategy."""
+
+    timestamp_ns: int
+    sequence: int | None
+    source: str
+    instrument: str
+    payload: Mapping[str, object]
+    record: HistoricalRecord
+
+
+@dataclass(frozen=True)
+class EventSignal:
+    """Minimal event strategy decision; price is optional when supplied by the event."""
+
+    action: str
+    price: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.action.upper() not in {"BUY", "SELL", "HOLD", "NONE"}:
+            raise ValueError("action must be BUY, SELL, HOLD, or NONE")
+        if self.price is not None and self.price <= 0:
+            raise ValueError("signal price must be positive")
+
+
+EventStrategy = Callable[[EventContext], EventSignal | str | None]
+
+
 class BacktestEngine:
-    """Run deterministic close-to-close strategy backtests."""
+    """Run deterministic bar, continuous-futures, or event backtests."""
 
     def __init__(self, config: BacktestConfig | None = None) -> None:
         self.config = config or BacktestConfig()
@@ -90,6 +119,75 @@ class BacktestEngine:
                 peak_capital = max(peak_capital, capital)
                 drawdown = (peak_capital - capital) / peak_capital
                 max_drawdown = max(max_drawdown, drawdown)
+                trades.append(trade)
+                open_trade = None
+
+        return _build_result(self.config.initial_capital, capital, trades, max_drawdown)
+
+    def run_events(
+        self,
+        events: Iterable[HistoricalRecord],
+        strategy: EventStrategy,
+        *,
+        price_field: str = "price",
+    ) -> BacktestResult:
+        """Run an arbitrary strategy directly on non-cadenced historical events.
+
+        Event order is preserved by ``(timestamp_ns, sequence)``. The complete
+        raw payload, source, instrument, timestamp and sequence are delivered
+        unchanged to the strategy. No bar construction, interpolation, or
+        cadence-gap assumptions are made.
+        """
+        if not price_field.strip():
+            raise ValueError("price_field is required")
+
+        capital = self.config.initial_capital
+        peak_capital = capital
+        max_drawdown = 0.0
+        open_trade: tuple[object, float] | None = None
+        trades: list[BacktestTrade] = []
+        previous_key: tuple[int, int] | None = None
+
+        for record in events:
+            if record.timestamp_ns < 0:
+                raise ValueError("event timestamp_ns cannot be negative")
+            sequence_key = record.sequence if record.sequence is not None else -1
+            key = (record.timestamp_ns, sequence_key)
+            if previous_key is not None and key < previous_key:
+                raise ValueError("events must be ordered by timestamp_ns and sequence")
+            previous_key = key
+
+            context = EventContext(
+                timestamp_ns=record.timestamp_ns,
+                sequence=record.sequence,
+                source=record.source,
+                instrument=record.instrument,
+                payload=record.payload,
+                record=record,
+            )
+            decision = strategy(context)
+            signal = _normalize_event_signal(decision)
+            if signal.action in {"HOLD", "NONE"}:
+                continue
+
+            price = signal.price
+            if price is None:
+                raw_price = record.payload.get(price_field)
+                if not _is_number(raw_price):
+                    raise ValueError(f"event payload must contain numeric {price_field!r} or signal price")
+                price = float(raw_price)
+            if price <= 0:
+                raise ValueError("event execution price must be positive")
+
+            if open_trade is None and signal.action == "BUY":
+                open_trade = (record.timestamp_ns, price * (1.0 + self.config.slippage_rate))
+            elif open_trade is not None and signal.action == "SELL":
+                entry_timestamp, entry_price = open_trade
+                exit_price = price * (1.0 - self.config.slippage_rate)
+                trade = _build_trade(self.config, entry_timestamp, entry_price, record.timestamp_ns, exit_price)
+                capital += trade.net_pnl
+                peak_capital = max(peak_capital, capital)
+                max_drawdown = max(max_drawdown, (peak_capital - capital) / peak_capital)
                 trades.append(trade)
                 open_trade = None
 
@@ -204,6 +302,16 @@ def _continuous_record_to_candle(item: ContinuousFuturesRecord) -> dict[str, obj
     candle["timestamp"] = item.timestamp_ns
     candle["contract_token"] = item.contract_token
     return candle
+
+
+def _normalize_event_signal(decision: EventSignal | str | None) -> EventSignal:
+    if decision is None:
+        return EventSignal("NONE")
+    if isinstance(decision, EventSignal):
+        return EventSignal(decision.action.upper(), decision.price)
+    if isinstance(decision, str):
+        return EventSignal(decision.upper())
+    raise TypeError("event strategy must return EventSignal, action string, or None")
 
 
 def _build_trade(
