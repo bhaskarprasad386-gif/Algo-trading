@@ -83,6 +83,16 @@ class HistoricalIngestionService:
         if not request.start_ns <= record.timestamp_ns <= request.end_ns:
             raise ValueError("source adapter returned a record outside the requested range")
 
+    @staticmethod
+    def _validate_capabilities(source_adapter: HistoricalSource, request: HistoricalFetchRequest) -> None:
+        """Honor optional provider capability declarations without breaking legacy adapters."""
+        provider_capabilities = getattr(source_adapter, "capabilities", None)
+        if provider_capabilities is not None:
+            require = getattr(provider_capabilities, "require", None)
+            if require is None or not callable(require):
+                raise TypeError("source adapter capabilities must provide require(timeframe)")
+            require(request.timeframe)
+
     def sync(
         self,
         source_adapter: HistoricalSource,
@@ -116,6 +126,8 @@ class HistoricalIngestionService:
             raise ValueError("batch_size must be positive")
         if ingested_at_ns < 0:
             raise ValueError("ingested_at_ns cannot be negative")
+
+        self._validate_capabilities(source_adapter, request)
 
         inserted_total = 0
         fetched_total = 0
