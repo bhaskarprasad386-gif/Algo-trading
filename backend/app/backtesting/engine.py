@@ -8,7 +8,7 @@ from typing import Callable, Iterable, Mapping, Sequence
 from app.algo.strategy import Strategy
 from app.backtesting.continuous_futures import ContinuousFuturesRecord, build_continuous_futures_series
 from app.backtesting.fno_rollover import FNORolloverWindow
-from app.backtesting.historical_catalog import HistoricalRecord
+from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 
 
 @dataclass(frozen=True)
@@ -131,13 +131,7 @@ class BacktestEngine:
         *,
         price_field: str = "price",
     ) -> BacktestResult:
-        """Run an arbitrary strategy directly on non-cadenced historical events.
-
-        Event order is preserved by ``(timestamp_ns, sequence)``. The complete
-        raw payload, source, instrument, timestamp and sequence are delivered
-        unchanged to the strategy. No bar construction, interpolation, or
-        cadence-gap assumptions are made.
-        """
+        """Run an arbitrary strategy directly on non-cadenced historical events."""
         if not price_field.strip():
             raise ValueError("price_field is required")
 
@@ -193,6 +187,28 @@ class BacktestEngine:
 
         return _build_result(self.config.initial_capital, capital, trades, max_drawdown)
 
+    def run_catalog_events(
+        self,
+        catalog: HistoricalCatalog,
+        *,
+        source: str,
+        instrument: str,
+        strategy: EventStrategy,
+        timeframe: str = "tick",
+        start_ns: int | None = None,
+        end_ns: int | None = None,
+        price_field: str = "price",
+    ) -> BacktestResult:
+        """Backtest cataloged events without materializing or transforming bars."""
+        events = catalog.events(
+            source=source,
+            instrument=instrument,
+            timeframe=timeframe,
+            start_ns=start_ns,
+            end_ns=end_ns,
+        )
+        return self.run_events(events, strategy, price_field=price_field)
+
     def run_continuous_futures(
         self,
         windows: Iterable[FNORolloverWindow],
@@ -200,11 +216,7 @@ class BacktestEngine:
         entry_strategy: Strategy,
         exit_strategy: Strategy,
     ) -> BacktestResult:
-        """Backtest an expiry-driven continuous futures view over raw history.
-
-        The continuous view is derived from real contract records; the engine
-        does not create a candle at rollover and does not alter raw prices.
-        """
+        """Backtest an expiry-driven continuous futures view over raw history."""
         series = build_continuous_futures_series(windows, records_by_token)
         candles = (_continuous_record_to_candle(item) for item in series)
         return self.run(candles, entry_strategy, exit_strategy)
@@ -276,11 +288,7 @@ class BacktestEngine:
         win_rate = wins / trade_count if trade_count else 0.0
         expectancy = net_pnl_sum / trade_count if trade_count else 0.0
         sharpe_ratio = _ratio_from_moments(return_sum, return_square_sum, trade_count)
-        sortino_ratio = (
-            (return_sum / trade_count) / sqrt(downside_square_sum / trade_count)
-            if trade_count and downside_square_sum > 0
-            else 0.0
-        )
+        sortino_ratio = ((return_sum / trade_count) / sqrt(downside_square_sum / trade_count) if trade_count and downside_square_sum > 0 else 0.0)
         cagr = _calculate_cagr_from_timestamps(first_entry, last_exit, self.config.initial_capital, capital)
         return BacktestResult(
             initial_capital=self.config.initial_capital,
@@ -314,13 +322,7 @@ def _normalize_event_signal(decision: EventSignal | str | None) -> EventSignal:
     raise TypeError("event strategy must return EventSignal, action string, or None")
 
 
-def _build_trade(
-    config: BacktestConfig,
-    entry_timestamp: object,
-    entry_price: float,
-    exit_timestamp: object,
-    exit_price: float,
-) -> BacktestTrade:
+def _build_trade(config: BacktestConfig, entry_timestamp: object, entry_price: float, exit_timestamp: object, exit_price: float) -> BacktestTrade:
     gross_pnl = (exit_price - entry_price) * config.quantity
     traded_value = (entry_price + exit_price) * config.quantity
     costs = traded_value * config.transaction_cost_rate
@@ -330,19 +332,7 @@ def _build_trade(
 def _build_result(initial_capital: float, final_capital: float, trades: list[BacktestTrade], max_drawdown: float) -> BacktestResult:
     wins = sum(1 for trade in trades if trade.net_pnl > 0)
     net_pnl = final_capital - initial_capital
-    return BacktestResult(
-        initial_capital=initial_capital,
-        final_capital=final_capital,
-        net_pnl=net_pnl,
-        total_return=net_pnl / initial_capital,
-        trades=tuple(trades),
-        win_rate=wins / len(trades) if trades else 0.0,
-        expectancy=net_pnl / len(trades) if trades else 0.0,
-        sharpe_ratio=_trade_sharpe_ratio(trades, initial_capital),
-        sortino_ratio=_trade_sortino_ratio(trades, initial_capital),
-        max_drawdown=max_drawdown,
-        cagr=_calculate_cagr(trades, initial_capital, final_capital),
-    )
+    return BacktestResult(initial_capital, final_capital, net_pnl, net_pnl / initial_capital, tuple(trades), wins / len(trades) if trades else 0.0, net_pnl / len(trades) if trades else 0.0, _trade_sharpe_ratio(trades, initial_capital), _trade_sortino_ratio(trades, initial_capital), max_drawdown, _calculate_cagr(trades, initial_capital, final_capital))
 
 
 def _ratio_from_moments(return_sum: float, return_square_sum: float, count: int) -> float:
