@@ -12,7 +12,11 @@ from .continuous_futures_acquisition import (
     ContinuousFuturesAcquisitionReport,
     acquire_continuous_futures_history,
 )
-from .fno_rollover import FNORolloverWindow, build_futures_rollover_chain
+from .fno_rollover import (
+    FNORolloverWindow,
+    build_futures_rollover_chain,
+    validate_futures_rollover_chain,
+)
 from .historical_catalog import HistoricalCatalog
 from .historical_ingest import HistoricalSource
 
@@ -64,6 +68,11 @@ def run_continuous_futures_history_pipeline(
         instrument_type=instrument_type,
         start_date=start_date,
         end_date=end_date,
+    )
+    validate_futures_rollover_chain(
+        windows,
+        underlying=underlying.upper(),
+        instrument_type=instrument_type,
     )
     acquisition = acquire_continuous_futures_history(
         historical_catalog,
