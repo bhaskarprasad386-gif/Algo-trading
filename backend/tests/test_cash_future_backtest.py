@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from app.scanner.cash_future_backtest import BacktestConfig, run_backtest
+from app.scanner.cash_future_backtest import BacktestConfig, run_backtest, run_multi_contract_backtest
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
 
@@ -70,3 +70,22 @@ def test_backtest_can_filter_an_explicit_contract():
     assert result["trade_count"] == 1
     assert result["trades"][0]["entry_gap"] == 9.0
     assert result["trades"][0]["exit_gap"] == 2.0
+
+
+def test_multi_contract_backtest_rolls_through_expiries_without_price_mixing():
+    now = datetime(2026, 9, 2, 10, 0)
+    points = [
+        point(now, 10.0, expiry=date(2026, 9, 30), month="SEP"),
+        point(now + timedelta(hours=1), 4.0, expiry=date(2026, 9, 30), month="SEP"),
+        point(datetime(2026, 10, 1, 10, 0), 9.0, expiry=date(2026, 10, 29), month="OCT"),
+        point(datetime(2026, 10, 1, 11, 0), 3.0, expiry=date(2026, 10, 29), month="OCT"),
+    ]
+    result = run_multi_contract_backtest(
+        points,
+        BacktestConfig(min_entry_gap=8.0, exit_gap=5.0),
+    )
+    assert result["contract_count"] == 2
+    assert result["trade_count"] == 2
+    assert result["net_profit"] == 1200.0
+    assert [trade["entry_gap"] for trade in result["trades"]] == [10.0, 9.0]
+    assert len(result["per_contract"]) == 2
