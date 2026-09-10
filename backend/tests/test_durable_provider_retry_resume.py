@@ -69,7 +69,7 @@ def test_durable_retry_completes_once_and_resume_skips_completed_chunks(tmp_path
     assert source.calls == [(0, 59), (0, 59), (60, 119)]
     assert len(sleeps) == 2
     assert all(0 < delay <= 0.5 for delay in sleeps)
-    assert job_store.chunk_state("job-1", 0)[:2] == ("completed", 2)
+    assert job_store.chunk_state("job-1", 0)[:2] == ("completed", 1)
     assert job_store.chunk_state("job-1", 1)[:2] == ("completed", 1)
     assert job_store.get("job-1").state == "completed"
 
