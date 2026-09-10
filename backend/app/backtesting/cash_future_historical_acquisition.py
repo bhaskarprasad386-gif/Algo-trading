@@ -176,7 +176,8 @@ class CashFutureHistoricalAcquisitionService:
                 timeframe=timeframe,
                 spot_sessions=spot_sessions,
                 future_sessions=future_sessions,
-            )
+            ),
+            timeframe=timeframe,
         )
 
     @staticmethod
@@ -212,18 +213,7 @@ class CashFutureHistoricalAcquisitionService:
         run_id: str | None = None,
         coverage_store: CashFutureCoverageManifestStore | None = None,
     ) -> CashFutureAcquisitionResult:
-        """Download missing chunks and re-plan bounded gaps until coverage stabilizes.
-
-        When ``job_store``, ``job_id`` and ``run_id`` are supplied, every exact repair
-        plan is executed through the durable chunk ledger. Plan fingerprints are included
-        in the internal job identity, so a changed repair plan never conflicts with the
-        completed state of an earlier plan. Re-running after a worker crash resumes the
-        unfinished chunks of the same plan and skips chunks already marked complete.
-
-        When ``coverage_store`` is supplied, a session-scoped manifest is persisted before
-        the first pass and after every repair/audit pass. The manifest is incremental and
-        restart-safe; overnight and other non-session intervals are never classified as gaps.
-        """
+        """Download missing chunks and re-plan bounded gaps until coverage stabilizes."""
         durable_args = (job_store is not None, job_id is not None, run_id is not None)
         if any(durable_args) and not all(durable_args):
             raise ValueError("job_store, job_id and run_id must be supplied together")
@@ -264,10 +254,8 @@ class CashFutureHistoricalAcquisitionService:
         total_skipped: list[int] = []
         final_execution = DownloadExecutionResult(())
         effective_retry_policy = retry_policy
-        if effective_retry_policy is None:
-            provider_name = source.strip().lower()
-            if provider_name == "angelone":
-                effective_retry_policy = build_provider_retry_policy(source)
+        if effective_retry_policy is None and source.strip().lower() == "angelone":
+            effective_retry_policy = build_provider_retry_policy(source)
 
         for pass_index in range(1, max_repair_passes + 1):
             if not plan.requests:
@@ -319,11 +307,7 @@ class CashFutureHistoricalAcquisitionService:
             if execution.failed_request_index is not None:
                 if on_progress is not None:
                     on_progress(CashFutureAcquisitionProgress(
-                        pass_index,
-                        total_completed,
-                        len(total_skipped),
-                        len(plan.requests),
-                        progress[-1],
+                        pass_index, total_completed, len(total_skipped), len(plan.requests), progress[-1]
                     ))
                 break
             _, next_plan = self.prepare(
@@ -341,11 +325,7 @@ class CashFutureHistoricalAcquisitionService:
             pending_chunks = len(next_plan.requests)
             if on_progress is not None:
                 on_progress(CashFutureAcquisitionProgress(
-                    pass_index,
-                    total_completed,
-                    len(total_skipped),
-                    pending_chunks,
-                    progress[-1],
+                    pass_index, total_completed, len(total_skipped), pending_chunks, progress[-1]
                 ))
             if pending_chunks >= len(plan.requests):
                 plan = next_plan
@@ -353,9 +333,7 @@ class CashFutureHistoricalAcquisitionService:
             plan = next_plan
 
         coverage = progress[-1]
-        return CashFutureAcquisitionResult(
-            queue, plan, final_execution, coverage, tuple(progress)
-        )
+        return CashFutureAcquisitionResult(queue, plan, final_execution, coverage, tuple(progress))
 
 
 __all__ = [
