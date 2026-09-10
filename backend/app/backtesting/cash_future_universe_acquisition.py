@@ -27,7 +27,11 @@ class CashFutureUniverseAcquisitionResult:
 
     @property
     def pending_chunks(self) -> int:
-        return sum(len(r.plan.requests) for r in self.results)
+        """Return chunks that were neither completed nor skipped by execution."""
+        return sum(
+            max(0, len(r.plan.requests) - r.execution.processed_chunks)
+            for r in self.results
+        )
 
     @property
     def incomplete(self) -> tuple[CashFutureAcquisitionResult, ...]:
