@@ -40,6 +40,53 @@ def build_chunked_plan(*, source: str, instrument: str, timeframe: str, start_ns
     return HistoricalSyncPlan(tuple(requests))
 
 
+def build_session_gap_plan(
+    catalog,
+    calendar,
+    *,
+    source: str,
+    instrument: str,
+    timeframe: str,
+    interval_ns: int,
+    start_date,
+    end_date,
+    max_request_ns: int,
+) -> HistoricalSyncPlan:
+    """Build bounded repair requests for cadence gaps inside trading sessions only.
+
+    This planner is for fixed-cadence bars. Session boundaries, weekends and
+    configured closed dates are never bridged. Non-cadenced tick/quote/depth/event
+    streams must use ``build_expected_event_plan`` instead.
+    """
+    if interval_ns <= 0:
+        raise ValueError("interval_ns must be positive")
+    if max_request_ns <= 0:
+        raise ValueError("max_request_ns must be positive")
+
+    gaps = catalog.session_gaps(
+        source=source,
+        instrument=instrument,
+        timeframe=timeframe,
+        interval_ns=interval_ns,
+        calendar=calendar,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    requests: list[HistoricalFetchRequest] = []
+    for gap in gaps:
+        requests.extend(
+            build_chunked_plan(
+                source=source,
+                instrument=instrument,
+                timeframe=timeframe,
+                start_ns=gap.start_ns,
+                end_ns=gap.end_ns,
+                chunk_ns=max_request_ns,
+            ).requests
+        )
+    return HistoricalSyncPlan(tuple(requests))
+
+
 def build_expected_event_plan(
     catalog,
     *,
