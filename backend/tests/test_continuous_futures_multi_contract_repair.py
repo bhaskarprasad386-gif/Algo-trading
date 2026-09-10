@@ -22,12 +22,11 @@ class MultiContractSource:
     def __init__(self) -> None:
         self.requests: list[HistoricalFetchRequest] = []
         self.fail_instrument = "NFO:JAN"
-        self.failed = False
+        self.allow_failed_instrument = False
 
     def fetch(self, request: HistoricalFetchRequest):
         self.requests.append(request)
-        if request.instrument == self.fail_instrument and not self.failed:
-            self.failed = True
+        if request.instrument == self.fail_instrument and not self.allow_failed_instrument:
             raise RuntimeError("JAN gap temporarily unavailable")
         for timestamp in range(request.start_ns, request.end_ns + 1, INTERVAL_NS):
             yield HistoricalRecord(request.source, request.instrument, request.timeframe, timestamp, {"close": 100.0})
@@ -64,13 +63,14 @@ def test_multi_contract_repair_recovers_failed_gap_independently(tmp_path):
 
     assert not first.completed
     assert len(first.plan.requests) == 2
-    assert [request.instrument for request in source.requests] == ["NFO:JAN"]
+    assert [request.instrument for request in source.requests] == ["NFO:JAN"] * 3
     fingerprint = store.get("multi-contract-repair").plan_fingerprint
     assert store.get("multi-contract-repair").state == "progress"
 
-    # JAN is repaired externally while the durable job is paused. FEB must still
+    # JAN becomes available only after the durable job is paused. FEB must still
     # be executed from the original two-request plan, without rebuilding it.
     catalog.upsert(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), time(9, 16)), {"close": 100.0}))
+    source.allow_failed_instrument = True
     before_resume = len(source.requests)
 
     second = repair_continuous_futures_history_gaps(
