@@ -8,6 +8,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
+from .high_resolution import is_event_timeframe
 from .trading_calendar import TradingCalendar
 
 
@@ -65,7 +66,7 @@ class HistoricalCatalog:
         return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
 
     def ingest(self, records: Iterable[HistoricalRecord], *, ingested_at_ns: int = 0) -> int:
-        """Append a batch. New future records, late gap repairs and exact duplicates are all safe."""
+        """Append a batch. New records, late gap repairs and exact duplicates are all safe."""
         if ingested_at_ns < 0:
             raise ValueError("ingested_at_ns cannot be negative")
         rows = []
@@ -82,48 +83,61 @@ class HistoricalCatalog:
         try:
             for row in rows:
                 if row[4] is None:
-                    existing = self._db.execute(
-                        "SELECT payload_hash FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? AND timestamp_ns=? AND sequence IS NULL",
-                        row[:4],
-                    ).fetchone()
+                    existing = self._db.execute("SELECT payload_hash FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? AND timestamp_ns=? AND sequence IS NULL", row[:4]).fetchone()
                 else:
-                    existing = self._db.execute(
-                        "SELECT payload_hash FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? AND timestamp_ns=? AND sequence=?",
-                        row[:5],
-                    ).fetchone()
+                    existing = self._db.execute("SELECT payload_hash FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? AND timestamp_ns=? AND sequence=?", row[:5]).fetchone()
                 if existing is not None:
                     if existing[0] != row[6]:
                         raise ValueError(f"conflicting historical record identity: {row[:5]}")
                     continue
-                self._db.execute(
-                    "INSERT INTO data_catalog(source,instrument,timeframe,timestamp_ns,sequence,payload_json,payload_hash,ingested_at_ns) VALUES(?,?,?,?,?,?,?,?)",
-                    row,
-                )
+                self._db.execute("INSERT INTO data_catalog(source,instrument,timeframe,timestamp_ns,sequence,payload_json,payload_hash,ingested_at_ns) VALUES(?,?,?,?,?,?,?,?)", row)
                 inserted += 1
-                self._db.execute(
-                    "INSERT INTO source_watermarks(source,instrument,timeframe,max_timestamp_ns) VALUES(?,?,?,?) "
-                    "ON CONFLICT(source,instrument,timeframe) DO UPDATE SET max_timestamp_ns=MAX(source_watermarks.max_timestamp_ns, excluded.max_timestamp_ns)",
-                    (row[0], row[1], row[2], row[3]),
-                )
+                self._db.execute("INSERT INTO source_watermarks(source,instrument,timeframe,max_timestamp_ns) VALUES(?,?,?,?) ON CONFLICT(source,instrument,timeframe) DO UPDATE SET max_timestamp_ns=MAX(source_watermarks.max_timestamp_ns, excluded.max_timestamp_ns)", (row[0], row[1], row[2], row[3]))
             self._db.commit()
         except Exception:
             self._db.rollback()
             raise
         return inserted
 
+    def ingest_events(self, records: Iterable[HistoricalRecord], *, ingested_at_ns: int = 0) -> int:
+        """Ingest non-cadenced tick/event/order-book records without cadence assumptions."""
+        records = tuple(records)
+        if any(not is_event_timeframe(record.timeframe) for record in records):
+            raise ValueError("ingest_events requires an event timeframe")
+        return self.ingest(records, ingested_at_ns=ingested_at_ns)
+
     def append(self, records: Iterable[HistoricalRecord], *, ingested_at_ns: int = 0) -> int:
-        """Explicit append/upcoming-data API; preserves all earlier data and repairs gaps."""
         return self.ingest(records, ingested_at_ns=ingested_at_ns)
 
     def records(self, *, source: str, instrument: str, timeframe: str) -> tuple[HistoricalRecord, ...]:
-        rows = self._db.execute(
-            "SELECT source,instrument,timeframe,timestamp_ns,payload_json,sequence FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? ORDER BY timestamp_ns, sequence",
-            (source, instrument, timeframe),
-        ).fetchall()
+        rows = self._db.execute("SELECT source,instrument,timeframe,timestamp_ns,payload_json,sequence FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? ORDER BY timestamp_ns, sequence", (source, instrument, timeframe)).fetchall()
         return tuple(HistoricalRecord(r[0], r[1], r[2], r[3], json.loads(r[4]), r[5]) for r in rows)
 
+    def events(self, *, source: str, instrument: str, timeframe: str = "tick", start_ns: int | None = None, end_ns: int | None = None) -> tuple[HistoricalRecord, ...]:
+        """Retrieve raw events ordered by timestamp and sequence, optionally by inclusive range."""
+        if not is_event_timeframe(timeframe):
+            raise ValueError("events requires an event timeframe")
+        if start_ns is not None and start_ns < 0:
+            raise ValueError("start_ns cannot be negative")
+        if end_ns is not None and (end_ns < 0 or (start_ns is not None and end_ns < start_ns)):
+            raise ValueError("invalid event timestamp range")
+        clauses = ["source=?", "instrument=?", "timeframe=?"]
+        params: list[Any] = [source, instrument, timeframe]
+        if start_ns is not None:
+            clauses.append("timestamp_ns>=?")
+            params.append(start_ns)
+        if end_ns is not None:
+            clauses.append("timestamp_ns<=?")
+            params.append(end_ns)
+        rows = self._db.execute("SELECT source,instrument,timeframe,timestamp_ns,payload_json,sequence FROM data_catalog WHERE " + " AND ".join(clauses) + " ORDER BY timestamp_ns, sequence", params).fetchall()
+        return tuple(HistoricalRecord(r[0], r[1], r[2], r[3], json.loads(r[4]), r[5]) for r in rows)
+
+    def event_count(self, *, source: str, instrument: str, timeframe: str = "tick") -> int:
+        if not is_event_timeframe(timeframe):
+            raise ValueError("event_count requires an event timeframe")
+        return self.count(source=source, instrument=instrument, timeframe=timeframe)
+
     def records_by_instruments(self, *, source: str, instruments: Iterable[str], timeframe: str) -> dict[str, tuple[HistoricalRecord, ...]]:
-        """Load durable raw records grouped by instrument for multi-contract backtests."""
         instruments = tuple(dict.fromkeys(instruments))
         if any(not instrument.strip() for instrument in instruments):
             raise ValueError("instruments cannot contain blank values")
@@ -131,17 +145,12 @@ class HistoricalCatalog:
         if not grouped:
             return {}
         placeholders = ",".join("?" for _ in instruments)
-        rows = self._db.execute(
-            f"SELECT source,instrument,timeframe,timestamp_ns,payload_json,sequence FROM data_catalog "
-            f"WHERE source=? AND timeframe=? AND instrument IN ({placeholders}) ORDER BY timestamp_ns, sequence",
-            (source, timeframe, *instruments),
-        ).fetchall()
+        rows = self._db.execute(f"SELECT source,instrument,timeframe,timestamp_ns,payload_json,sequence FROM data_catalog WHERE source=? AND timeframe=? AND instrument IN ({placeholders}) ORDER BY timestamp_ns, sequence", (source, timeframe, *instruments)).fetchall()
         for row in rows:
             grouped[row[1]].append(HistoricalRecord(row[0], row[1], row[2], row[3], json.loads(row[4]), row[5]))
         return {instrument: tuple(records) for instrument, records in grouped.items()}
 
     def records_by_contract_tokens(self, *, source: str, contract_tokens: Iterable[str], timeframe: str, instrument_prefix: str = "NFO:") -> dict[str, tuple[HistoricalRecord, ...]]:
-        """Load raw F&O records keyed by provider contract token without changing them."""
         tokens = tuple(dict.fromkeys(contract_tokens))
         if any(not token.strip() for token in tokens):
             raise ValueError("contract_tokens cannot contain blank values")
@@ -152,13 +161,9 @@ class HistoricalCatalog:
         return {token: by_instrument[instrument] for token, instrument in zip(tokens, instruments)}
 
     def timestamps(self, *, source: str, instrument: str, timeframe: str, start_ns: int, end_ns: int) -> tuple[int, ...]:
-        """Return distinct stored timestamps in an inclusive range."""
         if start_ns < 0 or end_ns < start_ns:
             raise ValueError("invalid timestamp range")
-        rows = self._db.execute(
-            "SELECT DISTINCT timestamp_ns FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? AND timestamp_ns BETWEEN ? AND ? ORDER BY timestamp_ns",
-            (source, instrument, timeframe, start_ns, end_ns),
-        ).fetchall()
+        rows = self._db.execute("SELECT DISTINCT timestamp_ns FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? AND timestamp_ns BETWEEN ? AND ? ORDER BY timestamp_ns", (source, instrument, timeframe, start_ns, end_ns)).fetchall()
         return tuple(int(row[0]) for row in rows)
 
     def watermark(self, *, source: str, instrument: str, timeframe: str) -> int | None:
@@ -166,11 +171,13 @@ class HistoricalCatalog:
         return None if row is None else int(row[0])
 
     def gaps(self, *, source: str, instrument: str, timeframe: str, interval_ns: int) -> tuple[Gap, ...]:
-        """Return missing cadence ranges between observed timestamps for targeted repair."""
+        if is_event_timeframe(timeframe):
+            raise ValueError("cadence gap detection is not valid for event timeframes")
         return self._gaps_between_timestamps(source=source, instrument=instrument, timeframe=timeframe, interval_ns=interval_ns)
 
     def session_gaps(self, *, source: str, instrument: str, timeframe: str, interval_ns: int, calendar: TradingCalendar, start_date, end_date) -> tuple[Gap, ...]:
-        """Return cadence gaps only inside known trading sessions."""
+        if is_event_timeframe(timeframe):
+            raise ValueError("cadence session-gap detection is not valid for event timeframes")
         if interval_ns <= 0:
             raise ValueError("interval_ns must be positive")
         gaps: list[Gap] = []
