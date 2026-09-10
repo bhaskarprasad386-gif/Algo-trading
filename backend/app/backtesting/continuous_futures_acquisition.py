@@ -101,6 +101,16 @@ def _complete(catalog: HistoricalCatalog, request: HistoricalFetchRequest, inter
     return all(timestamp in present for timestamp in expected)
 
 
+def _plan_from_metadata(metadata: tuple[dict[str, object], ...]) -> HistoricalSyncPlan:
+    return HistoricalSyncPlan(tuple(HistoricalFetchRequest(
+        source=str(item["source"]),
+        instrument=str(item["instrument"]),
+        timeframe=str(item["timeframe"]),
+        start_ns=int(item["start_ns"]),
+        end_ns=int(item["end_ns"]),
+    ) for item in metadata))
+
+
 class _MissingRangeSource:
     """Translate a retry of a Cash-Future chunk into only its currently missing ranges."""
 
@@ -164,9 +174,25 @@ def repair_continuous_futures_history_gaps(
     executor: ResumableHistoricalExecutor | None = None, job_store: HistoricalJobStore | None = None,
     job_id: str | None = None, run_id: str | None = None,
 ) -> ContinuousFuturesAcquisitionReport:
-    """Run a separately fingerprinted, catalog-driven repair job for missing session points."""
+    """Run a durable repair plan that remains stable across catalog changes and restarts."""
     windows = tuple(windows)
-    plan = build_continuous_futures_gap_plan(catalog, windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns, calendar=calendar, max_request_ns=max_request_ns)
+    if job_store is not None and job_id and run_id:
+        try:
+            existing = job_store.get(job_id)
+        except KeyError:
+            existing = None
+        if existing is not None:
+            if existing.run_id != run_id:
+                raise ValueError("existing historical job does not match run or plan")
+            persisted = job_store.plan_metadata(job_id)
+            plan = _plan_from_metadata(persisted) if persisted is not None else build_continuous_futures_gap_plan(
+                catalog, windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns, calendar=calendar, max_request_ns=max_request_ns
+            )
+        else:
+            plan = build_continuous_futures_gap_plan(catalog, windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns, calendar=calendar, max_request_ns=max_request_ns)
+    else:
+        plan = build_continuous_futures_gap_plan(catalog, windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns, calendar=calendar, max_request_ns=max_request_ns)
+
     runner = _runner(catalog, source, interval_ns, executor)
     gap_aware_source = _MissingRangeSource(catalog, source, interval_ns)
     should_skip = lambda request: _complete(catalog, request, interval_ns)
