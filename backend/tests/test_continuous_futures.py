@@ -39,7 +39,7 @@ def test_continuous_series_does_not_create_rollover_candle_for_missing_data():
 
 def test_continuous_series_excludes_records_outside_contract_window():
     window = FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 29), date(2026, 1, 29))
-    before = _record(1769500000 and "JAN", 1769500000 * 1_000_000_000, 99.0)
+    before = _record("JAN", 1769500000 * 1_000_000_000, 99.0)
     inside = _record("JAN", 1769671800 * 1_000_000_000, 100.0)
     after = _record("JAN", 1769760000 * 1_000_000_000, 101.0)
 
