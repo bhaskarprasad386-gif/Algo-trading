@@ -84,11 +84,7 @@ def build_continuous_futures_gap_plan(
     windows: tuple[FNORolloverWindow, ...] | list[FNORolloverWindow],
     *, source: str, timeframe: str, interval_ns: int, calendar: TradingCalendar, max_request_ns: int,
 ) -> HistoricalSyncPlan:
-    """Build repair requests for every missing cadence point inside active sessions.
-
-    Repairs leading, internal, trailing and completely empty sessions without
-    crossing session, closed-day or rollover-contract boundaries.
-    """
+    """Build repair requests for every missing cadence point inside active sessions."""
     _validate_inputs(source=source, timeframe=timeframe, interval_ns=interval_ns, max_request_ns=max_request_ns)
     requests: list[HistoricalFetchRequest] = []
     for window in windows:
@@ -105,26 +101,60 @@ def _complete(catalog: HistoricalCatalog, request: HistoricalFetchRequest, inter
     return all(timestamp in present for timestamp in expected)
 
 
+class _MissingRangeSource:
+    """Translate a retry of a Cash-Future chunk into only its currently missing ranges."""
+
+    def __init__(self, catalog: HistoricalCatalog, source: HistoricalSource, interval_ns: int) -> None:
+        self.catalog = catalog
+        self.source = source
+        self.interval_ns = interval_ns
+
+    def fetch(self, request: HistoricalFetchRequest):
+        ranges = _missing_ranges(
+            self.catalog,
+            source=request.source,
+            instrument=request.instrument,
+            timeframe=request.timeframe,
+            session_start_ns=request.start_ns,
+            session_end_ns=request.end_ns,
+            interval_ns=self.interval_ns,
+        )
+        for start_ns, end_ns in ranges:
+            subrequest = HistoricalFetchRequest(
+                source=request.source,
+                instrument=request.instrument,
+                timeframe=request.timeframe,
+                start_ns=start_ns,
+                end_ns=end_ns,
+            )
+            yield from self.source.fetch(subrequest)
+
+
+def _runner(catalog: HistoricalCatalog, source: HistoricalSource, interval_ns: int, executor: ResumableHistoricalExecutor | None) -> ResumableHistoricalExecutor:
+    return executor or ResumableHistoricalExecutor(HistoricalIngestionService(catalog), collect_results=False)
+
+
 def acquire_continuous_futures_history(
     catalog: HistoricalCatalog, source: HistoricalSource, windows: tuple[FNORolloverWindow, ...] | list[FNORolloverWindow],
     *, source_name: str, timeframe: str, interval_ns: int, calendar: TradingCalendar, max_request_ns: int,
     executor: ResumableHistoricalExecutor | None = None, job_store: HistoricalJobStore | None = None,
     job_id: str | None = None, run_id: str | None = None,
 ) -> ContinuousFuturesAcquisitionReport:
-    """Acquire the stable full chain plan with optional durable restart state."""
+    """Acquire the stable full chain plan with partial-response gap-aware retries."""
     windows = tuple(windows)
     plan = build_continuous_futures_acquisition_plan(windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns, calendar=calendar, max_request_ns=max_request_ns)
-    runner = executor or ResumableHistoricalExecutor(HistoricalIngestionService(catalog), collect_results=False)
+    runner = _runner(catalog, source, interval_ns, executor)
+    gap_aware_source = _MissingRangeSource(catalog, source, interval_ns)
     should_skip = lambda request: _complete(catalog, request, interval_ns)
     should_accept = lambda request, result: _complete(catalog, request, interval_ns)
     if job_store is None:
         if job_id is not None or run_id is not None:
             raise ValueError("job_id and run_id require job_store")
-        execution = runner.run(source, plan, should_skip=should_skip, should_accept=should_accept)
+        execution = runner.run(gap_aware_source, plan, should_skip=should_skip, should_accept=should_accept)
     else:
         if not job_id or not run_id:
             raise ValueError("job_store requires both job_id and run_id")
-        execution = runner.run_durable(source, plan, job_store=job_store, job_id=job_id, run_id=run_id, should_skip=should_skip, should_accept=should_accept)
+        execution = runner.run_durable(gap_aware_source, plan, job_store=job_store, job_id=job_id, run_id=run_id, should_skip=should_skip, should_accept=should_accept)
     return ContinuousFuturesAcquisitionReport(windows, plan, execution)
 
 
@@ -134,24 +164,21 @@ def repair_continuous_futures_history_gaps(
     executor: ResumableHistoricalExecutor | None = None, job_store: HistoricalJobStore | None = None,
     job_id: str | None = None, run_id: str | None = None,
 ) -> ContinuousFuturesAcquisitionReport:
-    """Run a separately fingerprinted, catalog-driven repair job for missing session points.
-
-    The repair plan is frozen when the job starts, so it can be resumed without
-    changing the fingerprint of the primary acquisition job.
-    """
+    """Run a separately fingerprinted, catalog-driven repair job for missing session points."""
     windows = tuple(windows)
     plan = build_continuous_futures_gap_plan(catalog, windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns, calendar=calendar, max_request_ns=max_request_ns)
-    runner = executor or ResumableHistoricalExecutor(HistoricalIngestionService(catalog), collect_results=False)
+    runner = _runner(catalog, source, interval_ns, executor)
+    gap_aware_source = _MissingRangeSource(catalog, source, interval_ns)
     should_skip = lambda request: _complete(catalog, request, interval_ns)
     should_accept = lambda request, result: _complete(catalog, request, interval_ns)
     if job_store is None:
         if job_id is not None or run_id is not None:
             raise ValueError("job_id and run_id require job_store")
-        execution = runner.run(source, plan, should_skip=should_skip, should_accept=should_accept)
+        execution = runner.run(gap_aware_source, plan, should_skip=should_skip, should_accept=should_accept)
     else:
         if not job_id or not run_id:
-            raise ValueError("job_id and run_id require job_store")
-        execution = runner.run_durable(source, plan, job_store=job_store, job_id=job_id, run_id=run_id, should_skip=should_skip, should_accept=should_accept)
+            raise ValueError("job_id and run_id require both job_id and run_id")
+        execution = runner.run_durable(gap_aware_source, plan, job_store=job_store, job_id=job_id, run_id=run_id, should_skip=should_skip, should_accept=should_accept)
     return ContinuousFuturesAcquisitionReport(windows, plan, execution)
 
 
