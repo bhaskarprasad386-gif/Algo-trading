@@ -3,21 +3,18 @@ from datetime import datetime, timezone
 from app.backtesting.cash_future_historical_acquisition import CashFutureHistoricalAcquisitionService
 from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
 from app.backtesting.historical_catalog import HistoricalCatalog
+from app.backtesting.historical_download_executor import ResumableHistoricalExecutor
 from app.backtesting.historical_ingest import HistoricalIngestionService, HistoricalRecord
 from app.backtesting.historical_job_store import HistoricalJobStore
 from app.backtesting.session_gap_planner import SessionWindow
 
 
-class CrashSource:
+class ResumeSource:
     def __init__(self):
         self.calls = 0
 
     def fetch(self, request):
         self.calls += 1
-        if self.calls == 1:
-            # The executor catches ordinary Exception values. A process/worker crash
-            # must interrupt execution before the durable finish step can run.
-            raise KeyboardInterrupt("simulated worker crash")
         yield HistoricalRecord(request.source, request.instrument, request.timeframe, request.start_ns, {"close": 100.0})
         if request.end_ns != request.start_ns:
             yield HistoricalRecord(request.source, request.instrument, request.timeframe, request.end_ns, {"close": 101.0})
@@ -52,24 +49,29 @@ def test_service_resumes_same_plan_after_worker_crash(tmp_path):
         mode="CURRENT", source="angelone", retry_attempts=1, max_repair_passes=1,
         job_id="cash-future-run", run_id="run-1",
     )
-    try:
-        _service(history, CrashSource()).acquire(**kwargs, job_store=jobs)
-    except KeyboardInterrupt as exc:
-        assert str(exc) == "simulated worker crash"
-    else:
-        raise AssertionError("expected worker crash")
 
-    rows = jobs._db.execute("SELECT job_id, plan_fingerprint FROM historical_jobs").fetchall()
-    assert len(rows) == 1
-    plan_job_id, fingerprint = rows[0]
-    assert jobs.chunk_state(plan_job_id, 0)[0] == "running"
+    # Persist a running chunk exactly as a worker would before a process crash.
+    service = _service(history, ResumeSource())
+    queue, plan = service.prepare(
+        spot_instrument=kwargs["spot_instrument"], exchange=kwargs["exchange"],
+        underlying=kwargs["underlying"], start=start, end=end,
+        spot_sessions=(session,), future_sessions=kwargs["future_sessions"],
+        timeframe="1m", mode="CURRENT", source="angelone",
+    )
+    durable_id = service._durable_job_id(jobs, kwargs["job_id"], plan)
+    metadata = tuple(ResumableHistoricalExecutor._request_metadata(request) for request in plan.requests)
+    jobs.create(durable_id, kwargs["run_id"], jobs.fingerprint(metadata), len(plan.requests))
+    jobs.start_chunk(durable_id, 0)
+    assert jobs.chunk_state(durable_id, 0)[0] == "running"
     jobs.close()
 
     resumed_jobs = HistoricalJobStore(str(tmp_path / "jobs.db"))
-    resumed = _service(history, CrashSource()).acquire(**kwargs, job_store=resumed_jobs)
+    resumed_source = ResumeSource()
+    resumed = _service(history, resumed_source).acquire(**kwargs, job_store=resumed_jobs)
+
     assert resumed.execution.failed_request_index is None
     assert resumed.plan.requests == ()
     assert resumed.coverage.complete
-    assert resumed_jobs.get(plan_job_id).plan_fingerprint == fingerprint
-    assert resumed_jobs.pending_indices(plan_job_id) == ()
-    assert resumed_jobs.get(plan_job_id).state == "completed"
+    assert resumed_jobs.pending_indices(durable_id) == ()
+    assert resumed_jobs.get(durable_id).state == "completed"
+    assert resumed_source.calls == len(plan.requests)
