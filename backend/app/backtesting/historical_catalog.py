@@ -8,6 +8,8 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
+from .trading_calendar import TradingCalendar
+
 
 @dataclass(frozen=True)
 class HistoricalRecord:
@@ -139,18 +141,58 @@ class HistoricalCatalog:
 
     def gaps(self, *, source: str, instrument: str, timeframe: str, interval_ns: int) -> tuple[Gap, ...]:
         """Return missing cadence ranges between observed timestamps for targeted repair."""
+        return self._gaps_between_timestamps(
+            source=source, instrument=instrument, timeframe=timeframe, interval_ns=interval_ns
+        )
+
+    def session_gaps(
+        self,
+        *,
+        source: str,
+        instrument: str,
+        timeframe: str,
+        interval_ns: int,
+        calendar: TradingCalendar,
+        start_date,
+        end_date,
+    ) -> tuple[Gap, ...]:
+        """Return cadence gaps only inside known trading sessions.
+
+        Closed days and overnight/session boundaries are excluded, so they cannot
+        become false historical-data gaps.
+        """
         if interval_ns <= 0:
             raise ValueError("interval_ns must be positive")
+        gaps: list[Gap] = []
+        for session in calendar.sessions_between(start_date, end_date):
+            timestamps = self.timestamps(
+                source=source,
+                instrument=instrument,
+                timeframe=timeframe,
+                start_ns=session.start_ns,
+                end_ns=session.end_ns,
+            )
+            gaps.extend(
+                _gaps_from_timestamps(
+                    instrument=instrument,
+                    timeframe=timeframe,
+                    timestamps=timestamps,
+                    interval_ns=interval_ns,
+                )
+            )
+        return tuple(gaps)
+
+    def _gaps_between_timestamps(self, *, source: str, instrument: str, timeframe: str, interval_ns: int) -> tuple[Gap, ...]:
         rows = self._db.execute(
             "SELECT DISTINCT timestamp_ns FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? ORDER BY timestamp_ns",
             (source, instrument, timeframe),
         ).fetchall()
-        timestamps = [int(r[0]) for r in rows]
-        gaps: list[Gap] = []
-        for previous, current in zip(timestamps, timestamps[1:]):
-            if current - previous > interval_ns:
-                gaps.append(Gap(instrument, timeframe, previous + interval_ns, current - interval_ns))
-        return tuple(gaps)
+        return _gaps_from_timestamps(
+            instrument=instrument,
+            timeframe=timeframe,
+            timestamps=tuple(int(r[0]) for r in rows),
+            interval_ns=interval_ns,
+        )
 
     def count(
         self,
@@ -171,3 +213,11 @@ class HistoricalCatalog:
             params.append(timeframe)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         return int(self._db.execute("SELECT COUNT(*) FROM data_catalog" + where, params).fetchone()[0])
+
+
+def _gaps_from_timestamps(*, instrument: str, timeframe: str, timestamps: tuple[int, ...], interval_ns: int) -> tuple[Gap, ...]:
+    gaps: list[Gap] = []
+    for previous, current in zip(timestamps, timestamps[1:]):
+        if current - previous > interval_ns:
+            gaps.append(Gap(instrument, timeframe, previous + interval_ns, current - interval_ns))
+    return tuple(gaps)
