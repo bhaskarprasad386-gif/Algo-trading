@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date, time, datetime, timezone
 
+import pytest
+
 from app.backtesting.continuous_futures_acquisition import (
     acquire_continuous_futures_history,
     build_continuous_futures_acquisition_plan,
@@ -9,6 +11,7 @@ from app.backtesting.continuous_futures_acquisition import (
 from app.backtesting.fno_rollover import FNORolloverWindow
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 from app.backtesting.historical_ingest import HistoricalFetchRequest
+from app.backtesting.historical_job_store import HistoricalJobStore
 from app.backtesting.trading_calendar import TradingCalendar
 
 
@@ -26,6 +29,18 @@ class FakeHistoricalSource:
         yield HistoricalRecord(request.source, request.instrument, request.timeframe, request.start_ns, {"close": 100.0})
         if request.end_ns != request.start_ns:
             yield HistoricalRecord(request.source, request.instrument, request.timeframe, request.end_ns, {"close": 101.0})
+
+
+class FailOnRequestSource(FakeHistoricalSource):
+    def __init__(self, fail_on_call: int) -> None:
+        super().__init__()
+        self.fail_on_call = fail_on_call
+
+    def fetch(self, request: HistoricalFetchRequest):
+        self.requests.append(request)
+        if len(self.requests) == self.fail_on_call:
+            raise RuntimeError("temporary provider failure")
+        yield from super().fetch(request)
 
 
 def _ns(day: date, at: time) -> int:
@@ -61,14 +76,8 @@ def test_acquisition_persists_and_second_run_skips_complete_chunks():
     windows = (FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 2), date(2026, 1, 2)),)
 
     first = acquire_continuous_futures_history(
-        catalog,
-        source,
-        windows,
-        source_name="fake",
-        timeframe="1m",
-        interval_ns=INTERVAL_NS,
-        calendar=calendar,
-        max_request_ns=10 * INTERVAL_NS,
+        catalog, source, windows, source_name="fake", timeframe="1m",
+        interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=10 * INTERVAL_NS,
     )
     assert first.completed
     assert first.execution.completed_chunks == 1
@@ -77,17 +86,54 @@ def test_acquisition_persists_and_second_run_skips_complete_chunks():
     assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 2
 
     second = acquire_continuous_futures_history(
-        catalog,
-        source,
-        windows,
-        source_name="fake",
-        timeframe="1m",
-        interval_ns=INTERVAL_NS,
-        calendar=calendar,
-        max_request_ns=10 * INTERVAL_NS,
+        catalog, source, windows, source_name="fake", timeframe="1m",
+        interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=10 * INTERVAL_NS,
     )
     assert second.completed
     assert second.execution.completed_chunks == 0
     assert second.execution.skipped_chunks == 1
     assert len(source.requests) == 1
     assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 2
+
+
+def test_durable_acquisition_resumes_only_unfinished_chunks():
+    catalog = HistoricalCatalog()
+    store = HistoricalJobStore()
+    calendar = TradingCalendar(session_open=time(9, 15), session_close=time(9, 17))
+    windows = (FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 2), date(2026, 1, 2)),)
+    source = FailOnRequestSource(fail_on_call=2)
+
+    first = acquire_continuous_futures_history(
+        catalog, source, windows, source_name="fake", timeframe="1m",
+        interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=INTERVAL_NS,
+        job_store=store, job_id="cash-future-job", run_id="run-1",
+    )
+    assert not first.completed
+    assert first.execution.failed_request_index == 1
+    assert store.chunk_state("cash-future-job", 0)[0] == "completed"
+    assert store.chunk_state("cash-future-job", 1)[0] == "recoverable"
+
+    resumed_source = FakeHistoricalSource()
+    second = acquire_continuous_futures_history(
+        catalog, resumed_source, windows, source_name="fake", timeframe="1m",
+        interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=INTERVAL_NS,
+        job_store=store, job_id="cash-future-job", run_id="run-1",
+    )
+    assert second.completed
+    assert second.execution.failed_request_index is None
+    assert len(resumed_source.requests) == 1
+    assert store.get("cash-future-job").state == "completed"
+
+
+def test_durable_arguments_must_be_complete():
+    catalog = HistoricalCatalog()
+    source = FakeHistoricalSource()
+    calendar = TradingCalendar(session_open=time(9, 15), session_close=time(9, 16))
+    windows = (FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 2), date(2026, 1, 2)),)
+
+    with pytest.raises(ValueError, match="job_store requires both job_id and run_id"):
+        acquire_continuous_futures_history(
+            catalog, source, windows, source_name="fake", timeframe="1m",
+            interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=INTERVAL_NS,
+            job_store=HistoricalJobStore(), job_id="job-only",
+        )
