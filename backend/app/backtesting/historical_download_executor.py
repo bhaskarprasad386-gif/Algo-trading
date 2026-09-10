@@ -92,8 +92,8 @@ class ResumableHistoricalExecutor:
                 return DownloadExecutionResult(tuple(results), index, tuple(skipped), completed_count=completed_count)
         return DownloadExecutionResult(tuple(results), None, tuple(skipped), completed_count=completed_count)
 
-    def run_durable(self, source: HistoricalSource, plan: HistoricalSyncPlan, *, job_store: HistoricalJobStore, job_id: str, run_id: str, retry_attempts: int = 3, retry_delay_seconds: float = 1.0, batch_size: int = 1024, on_batch: Callable[[int, int], None] | None = None, on_chunk_start: Callable[[int, object, int], None] | None = None, on_chunk_complete: Callable[[int, object, HistoricalSyncResult, int], None] | None = None, on_chunk_failed: Callable[[int, object, Exception, int], None] | None = None, retry_policy: ProviderRetryPolicy | None = None) -> DownloadExecutionResult:
-        """Run a plan against a durable job ledger and resume only unfinished chunks."""
+    def run_durable(self, source: HistoricalSource, plan: HistoricalSyncPlan, *, job_store: HistoricalJobStore, job_id: str, run_id: str, retry_attempts: int = 3, retry_delay_seconds: float = 1.0, batch_size: int = 1024, should_skip: Callable[[object], bool] | None = None, on_batch: Callable[[int, int], None] | None = None, on_chunk_start: Callable[[int, object, int], None] | None = None, on_chunk_complete: Callable[[int, object, HistoricalSyncResult, int], None] | None = None, on_chunk_failed: Callable[[int, object, Exception, int], None] | None = None, retry_policy: ProviderRetryPolicy | None = None) -> DownloadExecutionResult:
+        """Run a durable plan, reconciling terminal chunks with external completeness state first."""
         metadata = tuple(self._request_metadata(request) for request in plan.requests)
         fingerprint = job_store.fingerprint(metadata)
         try:
@@ -103,11 +103,21 @@ class ResumableHistoricalExecutor:
         except KeyError:
             job_store.create(job_id=job_id, run_id=run_id, plan_fingerprint=fingerprint, total_chunks=len(plan.requests))
         job_store.recover_running_chunks(job_id)
+
+        if should_skip is not None:
+            for index, request in enumerate(plan.requests):
+                complete = should_skip(request)
+                state = job_store.chunk_state(job_id, index)[0]
+                if complete and state in {"pending", "recoverable"}:
+                    job_store.complete_chunk(job_id, index, skipped=True)
+                elif not complete and state in {"completed", "skipped"}:
+                    job_store.reopen_chunk(job_id, index)
+
         pending = set(job_store.pending_indices(job_id))
 
         def index_for(request: object) -> int:
             return next(i for i, candidate in enumerate(plan.requests) if candidate is request)
-        def should_skip(request: object) -> bool:
+        def durable_skip(request: object) -> bool:
             return index_for(request) not in pending
         def mark_start(index: int, request: object, attempt: int) -> None:
             if attempt == 1:
@@ -123,6 +133,6 @@ class ResumableHistoricalExecutor:
             if on_chunk_failed is not None:
                 on_chunk_failed(index, request, error, attempts)
 
-        result = self.run(source, plan, retry_attempts=retry_attempts, retry_delay_seconds=retry_delay_seconds, batch_size=batch_size, should_skip=should_skip, on_batch=on_batch, on_chunk_start=mark_start, on_chunk_complete=mark_complete, on_chunk_failed=mark_failed, retry_policy=retry_policy)
+        result = self.run(source, plan, retry_attempts=retry_attempts, retry_delay_seconds=retry_delay_seconds, batch_size=batch_size, should_skip=durable_skip, on_batch=on_batch, on_chunk_start=mark_start, on_chunk_complete=mark_complete, on_chunk_failed=mark_failed, retry_policy=retry_policy)
         job_store.finish(job_id)
         return result
