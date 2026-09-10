@@ -13,6 +13,7 @@ from .contract_master import ContractMasterCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_ingest import HistoricalIngestionService, HistoricalSource
 from .historical_sync import HistoricalSyncPlan
+from .provider_retry import ProviderRetryPolicy
 from .session_gap_planner import SessionWindow
 
 
@@ -130,6 +131,7 @@ class CashFutureHistoricalAcquisitionService:
         source: str = "angelone",
         retry_attempts: int = 3,
         retry_delay_seconds: float = 1.0,
+        retry_policy: ProviderRetryPolicy | None = None,
         max_repair_passes: int = 3,
         on_progress: Callable[[CashFutureAcquisitionProgress], None] | None = None,
     ) -> CashFutureAcquisitionResult:
@@ -177,6 +179,7 @@ class CashFutureHistoricalAcquisitionService:
                 plan,
                 retry_attempts=retry_attempts,
                 retry_delay_seconds=retry_delay_seconds,
+                retry_policy=retry_policy,
             )
             total_completed += execution.completed_chunks
             total_skipped.extend(execution.skipped_request_indices)
