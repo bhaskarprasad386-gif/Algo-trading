@@ -116,14 +116,15 @@ def acquire_continuous_futures_history(
     plan = build_continuous_futures_acquisition_plan(windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns, calendar=calendar, max_request_ns=max_request_ns)
     runner = executor or ResumableHistoricalExecutor(HistoricalIngestionService(catalog), collect_results=False)
     should_skip = lambda request: _complete(catalog, request, interval_ns)
+    should_accept = lambda request, result: _complete(catalog, request, interval_ns)
     if job_store is None:
         if job_id is not None or run_id is not None:
             raise ValueError("job_id and run_id require job_store")
-        execution = runner.run(source, plan, should_skip=should_skip)
+        execution = runner.run(source, plan, should_skip=should_skip, should_accept=should_accept)
     else:
         if not job_id or not run_id:
             raise ValueError("job_store requires both job_id and run_id")
-        execution = runner.run_durable(source, plan, job_store=job_store, job_id=job_id, run_id=run_id, should_skip=should_skip)
+        execution = runner.run_durable(source, plan, job_store=job_store, job_id=job_id, run_id=run_id, should_skip=should_skip, should_accept=should_accept)
     return ContinuousFuturesAcquisitionReport(windows, plan, execution)
 
 
@@ -142,14 +143,15 @@ def repair_continuous_futures_history_gaps(
     plan = build_continuous_futures_gap_plan(catalog, windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns, calendar=calendar, max_request_ns=max_request_ns)
     runner = executor or ResumableHistoricalExecutor(HistoricalIngestionService(catalog), collect_results=False)
     should_skip = lambda request: _complete(catalog, request, interval_ns)
+    should_accept = lambda request, result: _complete(catalog, request, interval_ns)
     if job_store is None:
         if job_id is not None or run_id is not None:
             raise ValueError("job_id and run_id require job_store")
-        execution = runner.run(source, plan, should_skip=should_skip)
+        execution = runner.run(source, plan, should_skip=should_skip, should_accept=should_accept)
     else:
         if not job_id or not run_id:
             raise ValueError("job_id and run_id require job_store")
-        execution = runner.run_durable(source, plan, job_store=job_store, job_id=job_id, run_id=run_id, should_skip=should_skip)
+        execution = runner.run_durable(source, plan, job_store=job_store, job_id=job_id, run_id=run_id, should_skip=should_skip, should_accept=should_accept)
     return ContinuousFuturesAcquisitionReport(windows, plan, execution)
 
 
