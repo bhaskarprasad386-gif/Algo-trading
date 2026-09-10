@@ -1,6 +1,7 @@
 """Deterministic Cash-Future convergence backtest.
 
-Current and near contracts are intentionally processed independently.
+Each futures contract is backtested independently; the multi-contract runner
+combines their realized results without mixing expiry series.
 """
 
 from __future__ import annotations
@@ -22,13 +23,7 @@ class BacktestConfig:
 
 
 def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfig) -> dict:
-    """Process an already time-ordered iterable without materializing it.
-
-    Database callers should provide rows ordered by timestamp. When
-    ``contract_month`` is supplied, only that contract is processed. When it
-    is omitted, mixed contract input is rejected as soon as a different
-    contract is encountered rather than silently combining expiry series.
-    """
+    """Backtest one contract without materializing the input iterable."""
     trades = []
     equity = 0.0
     peak = 0.0
@@ -41,10 +36,9 @@ def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfi
     for point in points:
         if config.contract_month is not None and point.contract_month != config.contract_month:
             continue
-
         if seen_contract is None:
             seen_contract = point.contract_month
-        elif config.contract_month is None and point.contract_month != seen_contract:
+        elif point.contract_month != seen_contract:
             raise ValueError("backtest input contains multiple contract months; run each contract separately")
 
         if entry is None:
@@ -97,4 +91,49 @@ def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfi
         "max_drawdown": max_drawdown,
         "equity_curve": equity_curve,
         "trades": trades,
+    }
+
+
+def run_multi_contract_backtest(
+    points: Iterable[CashFutureHistoryPoint],
+    config: BacktestConfig,
+) -> dict:
+    """Backtest all contracts independently and aggregate realized results."""
+    grouped: dict[str, list[CashFutureHistoryPoint]] = {}
+    for point in points:
+        if config.contract_month is not None and point.contract_month != config.contract_month:
+            continue
+        grouped.setdefault(point.contract_month, []).append(point)
+
+    results = [run_backtest(grouped[contract], config) for contract in sorted(grouped)]
+    trades = [trade for result in results for trade in result["trades"]]
+    trades.sort(key=lambda trade: trade["entry_time"])
+    wins = sum(1 for trade in trades if trade["net_profit"] > 0)
+    net_profit = sum(trade["net_profit"] for trade in trades)
+    invested_capital = sum(
+        group[0].cash_price * group[0].lot_size + group[0].margin_required
+        for group in grouped.values() if group
+    )
+    equity_curve = sorted(
+        [point for result in results for point in result["equity_curve"]],
+        key=lambda point: point["timestamp"],
+    )
+    running_peak = 0.0
+    max_drawdown = 0.0
+    for point in equity_curve:
+        running_peak = max(running_peak, point["equity"])
+        max_drawdown = max(max_drawdown, running_peak - point["equity"])
+
+    return {
+        "contract_count": len(results),
+        "trade_count": len(trades),
+        "wins": wins,
+        "losses": len(trades) - wins,
+        "win_rate_pct": wins / len(trades) * 100.0 if trades else 0.0,
+        "net_profit": net_profit,
+        "roi_pct": net_profit / invested_capital * 100.0 if invested_capital else 0.0,
+        "max_drawdown": max_drawdown,
+        "equity_curve": equity_curve,
+        "trades": trades,
+        "per_contract": results,
     }
