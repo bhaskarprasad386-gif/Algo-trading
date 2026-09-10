@@ -10,7 +10,7 @@ from .historical_catalog import HistoricalCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_ingest import HistoricalFetchRequest, HistoricalIngestionService, HistoricalSource
 from .historical_job_store import HistoricalJobStore
-from .historical_sync import HistoricalSyncPlan, build_chunked_plan, build_session_gap_plan
+from .historical_sync import HistoricalSyncPlan, build_chunked_plan
 from .trading_calendar import TradingCalendar
 
 
@@ -49,17 +49,34 @@ def build_continuous_futures_acquisition_plan(
     requests: list[HistoricalFetchRequest] = []
     for window in windows:
         for session_start, session_end in _window_sessions(window, calendar):
-            requests.extend(
-                build_chunked_plan(
-                    source=source,
-                    instrument=f"NFO:{window.contract_token}",
-                    timeframe=timeframe,
-                    start_ns=session_start,
-                    end_ns=session_end,
-                    chunk_ns=max_request_ns,
-                ).requests
-            )
+            requests.extend(build_chunked_plan(source=source, instrument=f"NFO:{window.contract_token}", timeframe=timeframe, start_ns=session_start, end_ns=session_end, chunk_ns=max_request_ns).requests)
     return HistoricalSyncPlan(tuple(requests))
+
+
+def _missing_ranges(
+    catalog: HistoricalCatalog,
+    *, source: str, instrument: str, timeframe: str,
+    session_start_ns: int, session_end_ns: int, interval_ns: int,
+) -> tuple[tuple[int, int], ...]:
+    """Return contiguous missing cadence ranges, including leading/trailing/empty sessions."""
+    expected = range(session_start_ns, session_end_ns + 1, interval_ns)
+    present = set(catalog.timestamps(source=source, instrument=instrument, timeframe=timeframe, start_ns=session_start_ns, end_ns=session_end_ns))
+    ranges: list[tuple[int, int]] = []
+    range_start: int | None = None
+    previous_missing: int | None = None
+    for timestamp in expected:
+        if timestamp not in present:
+            if range_start is None:
+                range_start = timestamp
+            previous_missing = timestamp
+            continue
+        if range_start is not None:
+            ranges.append((range_start, previous_missing))
+            range_start = None
+            previous_missing = None
+    if range_start is not None:
+        ranges.append((range_start, previous_missing))
+    return tuple(ranges)
 
 
 def build_continuous_futures_gap_plan(
@@ -67,22 +84,18 @@ def build_continuous_futures_gap_plan(
     windows: tuple[FNORolloverWindow, ...] | list[FNORolloverWindow],
     *, source: str, timeframe: str, interval_ns: int, calendar: TradingCalendar, max_request_ns: int,
 ) -> HistoricalSyncPlan:
-    """Build repair-only requests from catalog session gaps for active contracts."""
+    """Build repair requests for every missing cadence point inside active sessions.
+
+    Repairs leading, internal, trailing and completely empty sessions without
+    crossing session, closed-day or rollover-contract boundaries.
+    """
     _validate_inputs(source=source, timeframe=timeframe, interval_ns=interval_ns, max_request_ns=max_request_ns)
     requests: list[HistoricalFetchRequest] = []
     for window in windows:
-        requests.extend(
-            build_session_gap_plan(
-                catalog, calendar,
-                source=source,
-                instrument=f"NFO:{window.contract_token}",
-                timeframe=timeframe,
-                interval_ns=interval_ns,
-                start_date=window.start_date,
-                end_date=window.end_date,
-                max_request_ns=max_request_ns,
-            ).requests
-        )
+        instrument = f"NFO:{window.contract_token}"
+        for session_start, session_end in _window_sessions(window, calendar):
+            for gap_start, gap_end in _missing_ranges(catalog, source=source, instrument=instrument, timeframe=timeframe, session_start_ns=session_start, session_end_ns=session_end, interval_ns=interval_ns):
+                requests.extend(build_chunked_plan(source=source, instrument=instrument, timeframe=timeframe, start_ns=gap_start, end_ns=gap_end, chunk_ns=max_request_ns).requests)
     return HistoricalSyncPlan(tuple(requests))
 
 
@@ -120,20 +133,13 @@ def repair_continuous_futures_history_gaps(
     executor: ResumableHistoricalExecutor | None = None, job_store: HistoricalJobStore | None = None,
     job_id: str | None = None, run_id: str | None = None,
 ) -> ContinuousFuturesAcquisitionReport:
-    """Run a separately fingerprinted, catalog-driven repair job for internal gaps.
+    """Run a separately fingerprinted, catalog-driven repair job for missing session points.
 
     The repair plan is frozen when the job starts, so it can be resumed without
     changing the fingerprint of the primary acquisition job.
     """
     windows = tuple(windows)
-    plan = build_continuous_futures_gap_plan(
-        catalog, windows,
-        source=source_name,
-        timeframe=timeframe,
-        interval_ns=interval_ns,
-        calendar=calendar,
-        max_request_ns=max_request_ns,
-    )
+    plan = build_continuous_futures_gap_plan(catalog, windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns, calendar=calendar, max_request_ns=max_request_ns)
     runner = executor or ResumableHistoricalExecutor(HistoricalIngestionService(catalog), collect_results=False)
     should_skip = lambda request: _complete(catalog, request, interval_ns)
     if job_store is None:
