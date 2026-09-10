@@ -127,7 +127,7 @@ def test_persistent_rollover_resume_recovers_running_chunk_after_process_crash(t
         executor=second_executor,
         job_store=job_store,
         job_id="restart-rollover-job",
-        run_id="process-2",
+        run_id="process-1",
     )
 
     assert resumed.completed
