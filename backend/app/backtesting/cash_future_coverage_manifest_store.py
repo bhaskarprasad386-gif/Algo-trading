@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Iterable
 
 from .cash_future_coverage_manifest import CoverageManifest, CoverageRange
 
 
 class CashFutureCoverageManifestStore:
     """Persist coverage ranges incrementally and idempotently in SQLite."""
+
+    _TABLE = "cash_future_coverage_manifest"
 
     def __init__(self, db_path: str | Path):
         self.db_path = str(db_path)
@@ -22,32 +23,64 @@ class CashFutureCoverageManifestStore:
         conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
+    @classmethod
+    def _create_table(cls, conn: sqlite3.Connection, table: str | None = None) -> None:
+        table = table or cls._TABLE
+        conn.execute(
+            f"""CREATE TABLE IF NOT EXISTS {table} (
+                source TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                instrument TEXT NOT NULL,
+                start_ns INTEGER NOT NULL,
+                end_ns INTEGER NOT NULL,
+                expected_points INTEGER NOT NULL,
+                observed_points INTEGER NOT NULL,
+                missing_points INTEGER NOT NULL,
+                complete INTEGER NOT NULL,
+                generated_at_ns INTEGER NOT NULL,
+                PRIMARY KEY (source, timeframe, instrument, start_ns, end_ns)
+            )"""
+        )
+
     def _init_db(self) -> None:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
-            conn.execute(
-                """CREATE TABLE IF NOT EXISTS cash_future_coverage_manifest (
-                    source TEXT NOT NULL,
-                    instrument TEXT NOT NULL,
-                    start_ns INTEGER NOT NULL,
-                    end_ns INTEGER NOT NULL,
-                    expected_points INTEGER NOT NULL,
-                    observed_points INTEGER NOT NULL,
-                    missing_points INTEGER NOT NULL,
-                    complete INTEGER NOT NULL,
-                    generated_at_ns INTEGER NOT NULL,
-                    PRIMARY KEY (source, instrument, start_ns, end_ns)
-                )"""
-            )
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (self._TABLE,),
+            ).fetchone()
+            if not exists:
+                self._create_table(conn)
+                return
 
-    def upsert(self, manifest: CoverageManifest) -> None:
+            columns = {
+                row[1]
+                for row in conn.execute(f"PRAGMA table_info({self._TABLE})").fetchall()
+            }
+            if "timeframe" not in columns:
+                legacy = f"{self._TABLE}_legacy"
+                conn.execute(f"ALTER TABLE {self._TABLE} RENAME TO {legacy}")
+                self._create_table(conn)
+                conn.execute(
+                    f"""INSERT INTO {self._TABLE}
+                    (source,timeframe,instrument,start_ns,end_ns,expected_points,
+                     observed_points,missing_points,complete,generated_at_ns)
+                    SELECT source,'1m',instrument,start_ns,end_ns,expected_points,
+                           observed_points,missing_points,complete,generated_at_ns
+                    FROM {legacy}"""
+                )
+                conn.execute(f"DROP TABLE {legacy}")
+
+    def upsert(self, manifest: CoverageManifest, *, timeframe: str = "1m") -> None:
+        if not timeframe:
+            raise ValueError("timeframe must not be empty")
         with self._connect() as conn:
             conn.executemany(
-                """INSERT INTO cash_future_coverage_manifest
-                (source,instrument,start_ns,end_ns,expected_points,observed_points,
+                f"""INSERT INTO {self._TABLE}
+                (source,timeframe,instrument,start_ns,end_ns,expected_points,observed_points,
                  missing_points,complete,generated_at_ns)
-                VALUES (?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(source,instrument,start_ns,end_ns) DO UPDATE SET
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(source,timeframe,instrument,start_ns,end_ns) DO UPDATE SET
                     expected_points=excluded.expected_points,
                     observed_points=excluded.observed_points,
                     missing_points=excluded.missing_points,
@@ -56,6 +89,7 @@ class CashFutureCoverageManifestStore:
                 [
                     (
                         manifest.source,
+                        timeframe,
                         item.instrument,
                         item.start_ns,
                         item.end_ns,
@@ -69,9 +103,18 @@ class CashFutureCoverageManifestStore:
                 ],
             )
 
-    def ranges(self, *, source: str, instrument: str | None = None) -> tuple[CoverageRange, ...]:
-        query = "SELECT instrument,start_ns,end_ns,expected_points,observed_points,missing_points,complete FROM cash_future_coverage_manifest WHERE source=?"
-        args: list[object] = [source]
+    def ranges(
+        self,
+        *,
+        source: str,
+        timeframe: str = "1m",
+        instrument: str | None = None,
+    ) -> tuple[CoverageRange, ...]:
+        query = (
+            f"SELECT instrument,start_ns,end_ns,expected_points,observed_points,"
+            f"missing_points,complete FROM {self._TABLE} WHERE source=? AND timeframe=?"
+        )
+        args: list[object] = [source, timeframe]
         if instrument is not None:
             query += " AND instrument=?"
             args.append(instrument)
@@ -80,8 +123,8 @@ class CashFutureCoverageManifestStore:
             rows = conn.execute(query, args).fetchall()
         return tuple(CoverageRange(*row) for row in rows)
 
-    def missing(self, *, source: str) -> tuple[CoverageRange, ...]:
-        return tuple(item for item in self.ranges(source=source) if item.missing_points)
+    def missing(self, *, source: str, timeframe: str = "1m") -> tuple[CoverageRange, ...]:
+        return tuple(item for item in self.ranges(source=source, timeframe=timeframe) if item.missing_points)
 
 
 __all__ = ["CashFutureCoverageManifestStore"]
