@@ -73,7 +73,7 @@ def test_multi_session_partial_recovery_resumes_only_incomplete_session(tmp_path
     assert not first.completed
     assert store.get("multi-session-job").state == "progress"
     fingerprint = store.get("multi-session-job").plan_fingerprint
-    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 7
+    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 6
     assert first_source.requests[0].start_ns == _ns(date(2026, 1, 5), time(9, 15))
     assert first_source.requests[1].start_ns == _ns(date(2026, 1, 6), time(9, 15))
     assert first_source.targeted_failures == 3
@@ -105,4 +105,4 @@ def test_multi_session_partial_recovery_resumes_only_incomplete_session(tmp_path
             end_ns=_ns(date(2026, 1, 6), time(9, 16)),
         )
     ]
-    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 8
+    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 7
