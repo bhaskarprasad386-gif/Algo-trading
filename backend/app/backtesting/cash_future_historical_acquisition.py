@@ -109,7 +109,7 @@ class CashFutureHistoricalAcquisitionService:
         queue: CashFutureDownloadQueue,
         mode: str,
         spot_sessions: tuple[SessionWindow, ...],
-        future_sessions: dict[str, tuple[SessionWindow, ...]] | None,
+        future_sessions: dict[str, tuple[SessionWindow, ...]],
     ) -> CashFutureDataCoverageReport:
         return self.coverage.audit(
             queue=queue,
@@ -124,6 +124,7 @@ class CashFutureHistoricalAcquisitionService:
         *,
         queue: CashFutureDownloadQueue,
         source: str,
+        timeframe: str,
         spot_sessions: tuple[SessionWindow, ...],
         future_sessions: dict[str, tuple[SessionWindow, ...]] | None,
         generated_at: datetime | None = None,
@@ -147,7 +148,7 @@ class CashFutureHistoricalAcquisitionService:
                     observed_timestamps=self.ingestion.catalog.timestamps(
                         source=source,
                         instrument=instrument,
-                        timeframe=queue.spot.request.timeframe,
+                        timeframe=timeframe,
                         start_ns=session.start_ns,
                         end_ns=session.end_ns,
                     ),
@@ -162,6 +163,7 @@ class CashFutureHistoricalAcquisitionService:
         coverage_store: CashFutureCoverageManifestStore | None,
         queue: CashFutureDownloadQueue,
         source: str,
+        timeframe: str,
         spot_sessions: tuple[SessionWindow, ...],
         future_sessions: dict[str, tuple[SessionWindow, ...]] | None,
     ) -> None:
@@ -171,6 +173,7 @@ class CashFutureHistoricalAcquisitionService:
             self._build_manifest(
                 queue=queue,
                 source=source,
+                timeframe=timeframe,
                 spot_sessions=spot_sessions,
                 future_sessions=future_sessions,
             )
@@ -244,13 +247,14 @@ class CashFutureHistoricalAcquisitionService:
                 queue=queue,
                 mode=mode,
                 spot_sessions=spot_sessions,
-                future_sessions=future_sessions,
+                future_sessions=future_sessions or {},
             )
         ]
         self._persist_manifest(
             coverage_store=coverage_store,
             queue=queue,
             source=source,
+            timeframe=timeframe,
             spot_sessions=spot_sessions,
             future_sessions=future_sessions,
         )
@@ -301,13 +305,14 @@ class CashFutureHistoricalAcquisitionService:
                     queue=queue,
                     mode=mode,
                     spot_sessions=spot_sessions,
-                    future_sessions=future_sessions,
+                    future_sessions=future_sessions or {},
                 )
             )
             self._persist_manifest(
                 coverage_store=coverage_store,
                 queue=queue,
                 source=source,
+                timeframe=timeframe,
                 spot_sessions=spot_sessions,
                 future_sessions=future_sessions,
             )
