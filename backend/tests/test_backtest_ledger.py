@@ -69,3 +69,29 @@ def test_backtest_trade_ledger_lists_run_ids(tmp_path):
         ledger.save_run("run-b", result)
         ledger.save_run("run-a", result)
         assert ledger.run_ids() == ("run-a", "run-b")
+
+
+def test_backtest_trade_ledger_persists_and_reopens_checkpoint(tmp_path):
+    path = tmp_path / "checkpoint.sqlite"
+    with BacktestTradeLedger(path) as ledger:
+        assert ledger.checkpoint("run-1") is None
+        ledger.save_checkpoint("run-1", "event:500", 12)
+        assert ledger.checkpoint("run-1") == {"cursor": "event:500", "trade_count": 12}
+
+    with BacktestTradeLedger(path) as reopened:
+        assert reopened.checkpoint("run-1") == {"cursor": "event:500", "trade_count": 12}
+        reopened.save_checkpoint("run-1", "event:1000", 24)
+        assert reopened.checkpoint("run-1") == {"cursor": "event:1000", "trade_count": 24}
+        reopened.clear_checkpoint("run-1")
+        assert reopened.checkpoint("run-1") is None
+
+
+def test_backtest_trade_ledger_rejects_invalid_checkpoint(tmp_path):
+    with BacktestTradeLedger(tmp_path / "checkpoint.sqlite") as ledger:
+        for args in (("", "event:1", 1), ("run-1", "", 1), ("run-1", "event:1", -1)):
+            try:
+                ledger.save_checkpoint(*args)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("invalid checkpoint should raise ValueError")
