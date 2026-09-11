@@ -134,7 +134,7 @@ class HistoricalCatalog:
             params,
         )
         for row in cursor:
-            yield HistoricalRecord(r[0], r[1], r[2], r[3], json.loads(r[4]), r[5])
+            yield HistoricalRecord(row[0], row[1], row[2], row[3], json.loads(row[4]), row[5])
 
     def events(self, *, source: str, instrument: str, timeframe: str = "tick", start_ns: int | None = None, end_ns: int | None = None) -> tuple[HistoricalRecord, ...]:
         """Retrieve raw events ordered by timestamp and sequence, optionally by inclusive range."""
@@ -176,7 +176,7 @@ class HistoricalCatalog:
     def records_by_contract_tokens(self, *, source: str, contract_tokens: Iterable[str], timeframe: str, instrument_prefix: str = "NFO:") -> dict[str, tuple[HistoricalRecord, ...]]:
         tokens = tuple(dict.fromkeys(contract_tokens))
         if any(not token.strip() for token in tokens):
-            raise ValueError("contract_tokens cannot be empty")
+            raise ValueError("contract_tokens cannot contain blank values")
         if not instrument_prefix.strip():
             raise ValueError("instrument_prefix is required")
         instruments = tuple(f"{instrument_prefix}{token}" for token in tokens)
