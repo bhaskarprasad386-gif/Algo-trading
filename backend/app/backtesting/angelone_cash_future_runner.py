@@ -1,19 +1,19 @@
-"""Production-safe entry point for bounded Angel One Cash-Future history runs."""
+"""Production-safe entry points for bounded Angel One Cash-Future history runs."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Callable, Iterable, Mapping
 
 from app.algo.auth import AngelOneAuth
 
 from .angelone_cash_future_acquisition import build_angelone_cash_future_acquisition_service
+from .cash_future_universe import CashFutureFnoUniverse
 from .cash_future_universe_pipeline import (
     CashFutureUniversePipelineResult,
     acquire_and_materialize_cash_future_universe,
 )
-from .cash_future_universe import CashFutureFnoUniverse
 from .historical_catalog import HistoricalCatalog
 from .historical_ingest import HistoricalIngestionService
 from .historical_job_store import HistoricalJobStore
@@ -34,6 +34,7 @@ class AngelOneCashFutureRunConfig:
     retry_attempts: int = 3
     retry_delay_seconds: float = 1.0
     max_repair_passes: int = 3
+    max_stock_underlyings: int | None = None
 
     def __post_init__(self) -> None:
         if self.interval_ns <= 0:
@@ -50,6 +51,23 @@ class AngelOneCashFutureRunConfig:
             raise ValueError("retry_delay_seconds must not be negative")
         if self.max_repair_passes < 1:
             raise ValueError("max_repair_passes must be positive")
+        if self.max_stock_underlyings is not None and self.max_stock_underlyings < 1:
+            raise ValueError("max_stock_underlyings must be positive when supplied")
+
+
+def bound_cash_future_universe(
+    universe: CashFutureFnoUniverse,
+    *,
+    max_stock_underlyings: int | None,
+) -> CashFutureFnoUniverse:
+    """Return a deterministic first batch without changing contract identity."""
+    if max_stock_underlyings is None:
+        return universe
+    allowed = set(sorted(universe.stock_underlyings)[:max_stock_underlyings])
+    return CashFutureFnoUniverse(
+        stocks=tuple(item for item in universe.stocks if item.underlying in allowed),
+        indices=universe.indices,
+    )
 
 
 def run_angelone_cash_future_history(
@@ -78,6 +96,10 @@ def run_angelone_cash_future_history(
     """Acquire bounded Angel One history and materialize it for backtesting."""
     auth = auth or AngelOneAuth()
     auth.get_client()
+    universe = bound_cash_future_universe(
+        universe,
+        max_stock_underlyings=config.max_stock_underlyings,
+    )
 
     service = build_angelone_cash_future_acquisition_service(
         ingestion,
@@ -114,4 +136,8 @@ def run_angelone_cash_future_history(
     )
 
 
-__all__ = ["AngelOneCashFutureRunConfig", "run_angelone_cash_future_history"]
+__all__ = [
+    "AngelOneCashFutureRunConfig",
+    "bound_cash_future_universe",
+    "run_angelone_cash_future_history",
+]
