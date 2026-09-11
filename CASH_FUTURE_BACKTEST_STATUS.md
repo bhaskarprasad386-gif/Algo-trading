@@ -42,7 +42,7 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [ ] Require verified coverage manifests before a historical run is considered complete.
 - [ ] Durable full-F&O Cash-Future jobs: progress, cancel, resume, idempotent retry, bounded resources.
 - [ ] Validate 6-month and 1-year runs where genuine data exists, without whole-history RAM materialization.
-- [ ] Data-quality gates: duplicate timestamps, missing sessions, stale/crossed quotes, impossible OHLC, incomplete contracts.
+- [x] Data-quality gates: duplicate timestamps, missing sessions, stale/crossed quotes, impossible OHLC, incomplete contracts.
 - [ ] Source → bars → strategy signals → fills → costs → P&L → Results reconciliation.
 - [ ] Preserve genuine finer-resolution data when available; never manufacture millisecond data from minute candles.
 
@@ -105,6 +105,8 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [x] Historical margin-breach forced liquidation using only the current observation's genuine price; stale-price liquidation is rejected.
 - [x] Historical bid/ask depth quantities are honored when present; partial/no-fill behavior never fabricates liquidity.
 - [x] Rollover-boundary policy closes the old contract only on its own genuine observation or rejects the boundary; expiry-series prices are never mixed.
+- [x] Streaming Cash-Future data-quality audit and persisted-backtest quality gate.
+- [x] Quality tests for clean data, crossed quotes, negative depth, duplicate identity and gate failure.
 
 ## Locked rules
 1. Shorting gap for Results = `High - Open`.
