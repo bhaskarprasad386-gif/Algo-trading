@@ -17,6 +17,9 @@ from .provider_retry import ProviderRetryPolicy
 from .session_gap_planner import SessionWindow
 
 
+_ONE_DAY_NS = 86_400_000_000_000
+
+
 @dataclass(frozen=True)
 class AngelOneCashFutureRunConfig:
     interval_ns: int
@@ -27,6 +30,22 @@ class AngelOneCashFutureRunConfig:
     retry_attempts: int = 3
     retry_delay_seconds: float = 1.0
     max_repair_passes: int = 3
+
+    def __post_init__(self) -> None:
+        if self.interval_ns <= 0:
+            raise ValueError("interval_ns must be positive")
+        if self.max_request_ns <= 0:
+            raise ValueError("max_request_ns must be positive")
+        if self.max_request_ns > _ONE_DAY_NS:
+            raise ValueError("max_request_ns must not exceed one day")
+        if self.chunk_days < 1:
+            raise ValueError("chunk_days must be positive")
+        if self.retry_attempts < 1:
+            raise ValueError("retry_attempts must be positive")
+        if self.retry_delay_seconds < 0:
+            raise ValueError("retry_delay_seconds must not be negative")
+        if self.max_repair_passes < 1:
+            raise ValueError("max_repair_passes must be positive")
 
 
 def run_angelone_cash_future_history(
