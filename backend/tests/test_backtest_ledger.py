@@ -24,3 +24,18 @@ def test_backtest_trade_ledger_is_idempotent_for_replayed_chunk(tmp_path):
     assert ledger.count("run-1") == 1
     assert ledger.net_pnl("run-1") == 5.0
     ledger.close()
+
+
+def test_backtest_ledger_persists_run_summary(tmp_path):
+    from types import SimpleNamespace
+
+    result = SimpleNamespace(
+        initial_capital=1000000.0, final_capital=1012500.0, net_pnl=12500.0,
+        total_return=0.0125, win_rate=0.6, expectancy=250.0,
+        sharpe_ratio=1.4, sortino_ratio=1.8, max_drawdown=-0.03, cagr=0.15,
+    )
+    with BacktestTradeLedger(tmp_path / "summary.sqlite") as ledger:
+        ledger.save_run("cash-future-1", result)
+        summary = ledger.run_summary("cash-future-1")
+        assert summary["net_pnl"] == 12500.0
+        assert summary["max_drawdown"] == -0.03
