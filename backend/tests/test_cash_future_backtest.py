@@ -6,7 +6,7 @@ from app.scanner.cash_future_backtest import BacktestConfig, run_backtest, run_m
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
 
-def point(ts, gap, expiry=date(2026, 9, 30), month="CURRENT"):
+def point(ts, gap, expiry=date(2026, 9, 30), month="CURRENT", **quotes):
     return CashFutureHistoryPoint(
         timestamp=ts,
         symbol="ABC",
@@ -18,6 +18,7 @@ def point(ts, gap, expiry=date(2026, 9, 30), month="CURRENT"):
         lot_size=100,
         margin_required=10000.0,
         expiry_date=expiry,
+        **quotes,
     )
 
 
@@ -32,6 +33,41 @@ def test_backtest_enters_on_gap_and_exits_on_convergence():
     assert result["net_profit"] == 570.0
     assert result["trades"][0]["exit_reason"] == "convergence"
     assert result["equity_curve"][-1]["equity"] == 570.0
+    assert result["open_position"] is None
+
+
+def test_bid_ask_execution_uses_entry_and_reverse_exit_prices():
+    now = datetime(2026, 9, 2, 10, 0)
+    entry = point(now, 10.0, cash_ask=101.0, future_bid=111.0)
+    exit_point = point(now + timedelta(hours=1), 4.0, cash_bid=105.0, future_ask=109.0)
+    result = run_backtest(
+        [entry, exit_point],
+        BacktestConfig(min_entry_gap=8.0, exit_gap=5.0, execution_model="bid_ask"),
+    )
+    # ((105-101) + (111-109)) * 100 = 600
+    assert result["net_profit"] == 600.0
+    assert result["trades"][0]["gross_profit"] == 600.0
+    assert result["trades"][0]["execution_model"] == "bid_ask"
+
+
+def test_bid_ask_execution_rejects_missing_executable_prices():
+    now = datetime(2026, 9, 2, 10, 0)
+    with pytest.raises(ValueError, match="bid_ask execution requires"):
+        run_backtest(
+            [point(now, 10.0), point(now + timedelta(hours=1), 4.0, cash_bid=105.0, future_ask=109.0)],
+            BacktestConfig(min_entry_gap=8.0, exit_gap=5.0, execution_model="bid_ask"),
+        )
+
+
+def test_backtest_reports_open_position_without_fabricating_exit():
+    now = datetime(2026, 9, 2, 10, 0)
+    result = run_backtest(
+        [point(now, 10.0), point(now + timedelta(hours=1), 8.0)],
+        BacktestConfig(min_entry_gap=8.0, exit_gap=5.0),
+    )
+    assert result["trade_count"] == 0
+    assert result["open_position"]["symbol"] == "ABC"
+    assert result["open_position"]["entry_gap"] == 10.0
 
 
 def test_backtest_exits_on_expiry_without_mixing_contracts():
