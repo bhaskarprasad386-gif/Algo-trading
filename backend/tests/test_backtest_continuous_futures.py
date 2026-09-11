@@ -6,7 +6,7 @@ from app.backtesting.continuous_futures import (
     build_continuous_futures_series,
     build_continuous_futures_series_from_catalog,
 )
-from app.backtesting.engine import BacktestEngine
+from app.backtesting.engine import BacktestEngine, EventSignal
 from app.backtesting.fno_rollover import FNORolloverWindow
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 
@@ -58,6 +58,40 @@ def test_engine_runs_one_stream_across_multiple_expiry_contracts():
     assert trade.exit_timestamp == _ns(date(2026, 2, 2))
     assert trade.entry_price == 100.0
     assert trade.exit_price == 105.0
+
+
+def test_continuous_futures_event_strategy_preserves_contract_identity_and_pnl():
+    windows = (
+        FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 29), date(2026, 1, 29)),
+        FNORolloverWindow("ABC", "STOCK_FUTURE", "FEB", date(2026, 1, 30), date(2026, 1, 30)),
+        FNORolloverWindow("ABC", "STOCK_FUTURE", "MAR", date(2026, 2, 2), date(2026, 2, 2)),
+    )
+    records = {
+        "JAN": (_record("JAN", date(2026, 1, 29), 100.0),),
+        "FEB": (_record("FEB", date(2026, 1, 30), 103.0),),
+        "MAR": (_record("MAR", date(2026, 2, 2), 110.0),),
+    }
+    seen: list[tuple[str, str, int]] = []
+
+    def strategy(context):
+        seen.append((str(context.payload["contract_token"]), context.instrument, context.timestamp_ns))
+        if context.payload["contract_token"] == "JAN":
+            return EventSignal("BUY")
+        if context.payload["contract_token"] == "MAR":
+            return EventSignal("SELL")
+        return EventSignal("HOLD")
+
+    result = BacktestEngine().run_continuous_futures_events(windows, records, strategy)
+
+    assert seen == [
+        ("JAN", "NFO:JAN", _ns(date(2026, 1, 29))),
+        ("FEB", "NFO:FEB", _ns(date(2026, 1, 30))),
+        ("MAR", "NFO:MAR", _ns(date(2026, 2, 2))),
+    ]
+    assert len(result.trades) == 1
+    assert result.trades[0].entry_price == 100.0
+    assert result.trades[0].exit_price == 110.0
+    assert result.net_pnl == 10.0
 
 
 def test_rollover_boundary_has_no_artificial_candle_and_preserves_raw_payload():
