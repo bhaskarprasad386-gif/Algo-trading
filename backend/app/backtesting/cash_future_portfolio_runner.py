@@ -40,7 +40,13 @@ def run_cash_future_portfolio_strategy(
     charges_per_trade: float = 0.0,
     funding_cost_per_trade: float = 0.0,
 ) -> CashFuturePortfolioStrategyRun:
-    """Run one strategy chronologically with shared capital and portfolio MTM."""
+    """Run one strategy chronologically with shared capital and portfolio MTM.
+
+    A historical margin breach is triggered when marked equity falls below the
+    currently reserved margin. All affected open positions are liquidated at
+    the observed historical point using the configured executable-price model.
+    No synthetic price or exit is created.
+    """
     if initial_capital <= 0:
         raise ValueError("initial_capital must be positive")
     if execution_model not in {"gap", "bid_ask"}:
@@ -106,11 +112,35 @@ def run_cash_future_portfolio_strategy(
             })
             entries.pop(key, None)
 
-        unrealized = sum(
-            _unrealized_profit(open_entry, latest[open_key], execution_model)
+        unrealized_by_key = {
+            open_key: _unrealized_profit(open_entry, latest[open_key], execution_model)
             for open_key, open_entry in entries.items()
             if open_key in latest
-        )
+        }
+        unrealized = sum(unrealized_by_key.values())
+        marked_equity = float(account.realized_capital) + unrealized
+
+        if entries and marked_equity < account.reserved_margin:
+            signal_record["margin_breach"] = True
+            signal_record["margin_breach_equity"] = marked_equity
+            signal_record["margin_breach_reserved_margin"] = account.reserved_margin
+            for liquidation_key, liquidation_entry in tuple(entries.items()):
+                gross = _unrealized_profit(liquidation_entry, point if liquidation_key == key else latest[liquidation_key], execution_model)
+                net = gross - charges_per_trade - funding_cost_per_trade
+                account.apply_realized_pnl(net)
+                reserved_margin = account.release(liquidation_key)
+                liquidation_point = point if liquidation_key == key else latest[liquidation_key]
+                trades.append({
+                    "entry_time": liquidation_entry.timestamp.isoformat(), "exit_time": liquidation_point.timestamp.isoformat(),
+                    "symbol": liquidation_entry.symbol, "contract_month": liquidation_entry.contract_month,
+                    "lot_size": liquidation_entry.lot_size, "gross_profit": gross,
+                    "charges": charges_per_trade, "funding_cost": funding_cost_per_trade,
+                    "net_profit": net, "execution_model": execution_model,
+                    "exit_reason": "margin_breach", "reserved_margin": reserved_margin,
+                })
+                entries.pop(liquidation_key, None)
+            unrealized = 0.0
+
         equity.append({
             "timestamp": point.timestamp.isoformat(),
             "equity": float(account.realized_capital) + unrealized,
