@@ -106,3 +106,80 @@ def test_portfolio_forces_historical_exit_when_marked_equity_breaches_margin():
     assert result.final_capital == 6000.0
     assert result.equity_curve[-1]["unrealized_pnl"] == 0.0
     assert result.equity_curve[-1]["equity"] == 6000.0
+
+
+def test_bid_ask_partial_entry_uses_only_genuine_depth_quantities():
+    start = datetime(2026, 9, 2, 10, 0)
+    entry = point(
+        start, "AAA", 10, margin=10000,
+        cash_ask=101.0, future_bid=109.0,
+        cash_ask_qty=40.0, future_bid_qty=25.0,
+    )
+    hold = point(
+        start + timedelta(minutes=1), "AAA", 8, margin=10000,
+        cash_bid=108.0, future_ask=108.0,
+        cash_ask=108.0, future_bid=108.0,
+    )
+    result = run_cash_future_portfolio_strategy(
+        [entry, hold], lambda current, history: "BUY" if current is entry else "HOLD",
+        initial_capital=100000, execution_model="bid_ask",
+    )
+    signal = result.signals[0]
+    assert signal["execution_status"] == "partial_fill"
+    assert signal["filled_quantity"] == 25.0
+    assert signal["unfilled_quantity"] == 75.0
+    assert signal["liquidity_source"] == "historical_depth"
+    assert result.open_position_count == 1
+    assert result.final_reserved_margin == 2500.0
+
+
+def test_bid_ask_partial_exit_releases_proportional_margin_and_pnl_uses_filled_quantity():
+    start = datetime(2026, 9, 2, 10, 0)
+    entry = point(
+        start, "AAA", 10, margin=10000,
+        cash_ask=101.0, future_bid=109.0,
+        cash_ask_qty=100.0, future_bid_qty=100.0,
+    )
+    exit_point = point(
+        start + timedelta(minutes=1), "AAA", 8, margin=10000,
+        cash_bid=108.0, future_ask=108.0,
+        cash_bid_qty=30.0, future_ask_qty=30.0,
+    )
+    result = run_cash_future_portfolio_strategy(
+        [entry, exit_point], lambda current, history: "BUY" if current is entry else "SELL",
+        initial_capital=100000, execution_model="bid_ask",
+    )
+    trade = result.trades[0]
+    assert trade["filled_quantity"] == 30.0
+    assert trade["unfilled_quantity"] == 70.0
+    assert trade["fill_status"] == "partial_fill"
+    assert trade["gross_profit"] == 180.0
+    assert result.open_position_count == 1
+    assert result.final_reserved_margin == 7000.0
+
+
+def test_missing_depth_does_not_invent_liquidity_and_keeps_strict_bid_ask_fill():
+    start = datetime(2026, 9, 2, 10, 0)
+    entry = point(start, "AAA", 10, cash_ask=101.0, future_bid=109.0)
+    hold = point(start + timedelta(minutes=1), "AAA", 8, cash_bid=108.0, future_ask=108.0)
+    result = run_cash_future_portfolio_strategy(
+        [entry, hold], lambda current, history: "BUY" if current is entry else "HOLD",
+        initial_capital=100000, execution_model="bid_ask",
+    )
+    assert result.signals[0]["execution_status"] == "executed"
+    assert result.signals[0]["filled_quantity"] == 100.0
+    assert result.signals[0]["liquidity_source"] == "strict_bid_ask_no_depth"
+
+
+def test_zero_historical_depth_produces_no_fill():
+    start = datetime(2026, 9, 2, 10, 0)
+    entry = point(
+        start, "AAA", 10, cash_ask=101.0, future_bid=109.0,
+        cash_ask_qty=0.0, future_bid_qty=0.0,
+    )
+    result = run_cash_future_portfolio_strategy(
+        [entry], lambda current, history: "BUY", initial_capital=100000, execution_model="bid_ask",
+    )
+    assert result.signals[0]["execution_status"] == "no_fill"
+    assert result.signals[0]["filled_quantity"] == 0.0
+    assert result.open_position_count == 0
