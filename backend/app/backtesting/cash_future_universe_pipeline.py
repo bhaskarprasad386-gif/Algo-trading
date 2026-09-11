@@ -25,6 +25,22 @@ class CashFutureUniversePipelineResult:
     acquisition: CashFutureUniverseAcquisitionResult
     materialized_rows: int
 
+    @property
+    def backtest_ready(self) -> bool:
+        """Return whether acquisition coverage and materialization are both ready."""
+        return bool(
+            self.materialized_rows > 0
+            and self.acquisition.results
+            and all(result.coverage.complete for result in self.acquisition.results)
+        )
+
+    def require_backtest_ready(self) -> None:
+        """Block backtesting until every acquired underlying is complete."""
+        if not self.backtest_ready:
+            raise LookupError(
+                "Cash-Future historical acquisition/materialization is incomplete; backtest blocked"
+            )
+
 
 def acquire_and_materialize_cash_future_universe(
     *,
