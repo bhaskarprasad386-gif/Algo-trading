@@ -34,8 +34,8 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [x] Mark-to-market unrealized P&L for open positions.
 - [x] Cumulative realized + unrealized equity curve.
 - [x] Margin checks and historical forced liquidation/exit validation.
-- [ ] Realistic depth/liquidity limits and partial fills only where genuine historical bid/ask/depth exists.
-- [ ] Explicit rollover-boundary position policy: close/reopen or carry; never mix expiry-series prices.
+- [x] Realistic depth/liquidity limits and partial fills only where genuine historical bid/ask/depth exists.
+- [x] Explicit rollover-boundary position policy: close/reopen or carry; never mix expiry-series prices.
 
 ### P2 — Production historical data pipeline
 - [ ] Connect production Cash-Future historical downloader end-to-end to the backtest runner.
@@ -103,6 +103,8 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [x] Portfolio runner integration for simultaneous positions and independent capital reservations.
 - [x] Portfolio MTM unrealized P&L and cumulative realized + unrealized equity.
 - [x] Historical margin-breach forced liquidation using only the current observation's genuine price; stale-price liquidation is rejected.
+- [x] Historical bid/ask depth quantities are honored when present; partial/no-fill behavior never fabricates liquidity.
+- [x] Rollover-boundary policy closes the old contract only on its own genuine observation or rejects the boundary; expiry-series prices are never mixed.
 
 ## Locked rules
 1. Shorting gap for Results = `High - Open`.
@@ -124,9 +126,9 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 17. Historical forced liquidation may only use a genuine price observation at the liquidation timestamp; never liquidate another position using its stale last price.
 
 ## Current checkpoint
-**Next implementation = P1: realistic historical depth/liquidity limits and partial fills, only where genuine historical bid/ask/depth data exists.**
+**Next implementation = P2: production Cash-Future historical data pipeline — connect the durable downloader/catalog/coverage system end-to-end to historical Cash-Future backtest execution, with verified coverage manifests, bounded/resumable jobs, and no whole-history RAM materialization.**
 
-The next layer must preserve the ₹1 crore portfolio ledger, MTM/equity behavior, independent `(symbol, contract_month)` positions, no-look-ahead evaluation, and no fabricated fills. If historical depth is unavailable, do not invent it; document the limitation and keep strict bid/ask behavior.
+The next layer must preserve all P0/P1 execution behavior, point-in-time lot/contract identity, genuine liquidity rules, rollover safety, ₹1 crore portfolio accounting, and no-look-ahead evaluation.
 
 ## Completion gate
 Cash-Future is complete only when every applicable P0–P5 item is implemented and tested, or explicitly documented as unavailable because genuine historical data does not exist.
