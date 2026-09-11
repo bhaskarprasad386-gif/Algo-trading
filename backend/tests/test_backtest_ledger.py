@@ -55,3 +55,17 @@ def test_backtest_trade_ledger_append_next_allocates_global_run_sequence(tmp_pat
     assert ledger.count("run-1") == 2
     assert ledger.net_pnl("run-1") == 20.0
     ledger.close()
+
+
+def test_backtest_trade_ledger_lists_run_ids(tmp_path):
+    from types import SimpleNamespace
+
+    result = SimpleNamespace(
+        initial_capital=1000.0, final_capital=1020.0, net_pnl=20.0,
+        total_return=0.02, win_rate=1.0, expectancy=20.0,
+        sharpe_ratio=0.0, sortino_ratio=0.0, max_drawdown=0.0, cagr=0.0,
+    )
+    with BacktestTradeLedger(tmp_path / "runs.sqlite") as ledger:
+        ledger.save_run("run-b", result)
+        ledger.save_run("run-a", result)
+        assert ledger.run_ids() == ("run-a", "run-b")
