@@ -234,7 +234,7 @@ class BacktestEngine:
         events = (_continuous_record_to_event(item) for item in series)
         return self.run_events(events, strategy, price_field=price_field)
 
-    def run_incremental(
+    def run_incremental_to_ledger(\n        self,\n        candles: Iterable[Mapping[str, object]],\n        entry_strategy: Strategy,\n        exit_strategy: Strategy,\n        *,\n        ledger,\n        run_id: str,\n        chunk_size: int = 500,\n    ) -> BacktestResult:\n        """Persist incremental trades directly to a durable BacktestTradeLedger."""\n        if not run_id.strip():\n            raise ValueError("run_id is required")\n        return self.run_incremental(\n            candles,\n            entry_strategy,\n            exit_strategy,\n            persist_chunk=lambda trades, sequence: ledger.append(run_id, sequence * chunk_size, trades),\n            chunk_size=chunk_size,\n        )\n\n    def run_incremental(
         self,
         candles: Iterable[Mapping[str, object]],
         entry_strategy: Strategy,
