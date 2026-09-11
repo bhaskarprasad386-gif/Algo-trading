@@ -146,3 +146,66 @@ def test_changed_batch_plan_is_rejected(monkeypatch):
             **{**kwargs, "universe": changed}
         )
     store.close()
+
+
+def test_changed_download_config_is_rejected_after_restart(monkeypatch):
+    monkeypatch.setattr(batch_runner, "run_angelone_cash_future_history", lambda **kwargs: FakePipelineResult())
+    store = HistoricalJobStore()
+    base = batch_runner.AngelOneCashFutureRunConfig(
+        interval_ns=60_000_000_000,
+        max_request_ns=86_400_000_000_000,
+        timeframe="1m",
+    )
+    kwargs = dict(
+        ingestion=object(),
+        contract_master=object(),
+        universe=_universe(),
+        master_rows=(),
+        start=datetime(2026, 10, 1),
+        end=datetime(2026, 10, 3),
+        spot_sessions_by_underlying={},
+        db=object(),
+        catalog=object(),
+        config=base,
+        batch_size=2,
+        job_store=store,
+        run_id="run-config",
+    )
+    batch_runner.run_angelone_cash_future_history_in_batches(**kwargs)
+
+    changed = batch_runner.AngelOneCashFutureRunConfig(
+        interval_ns=60_000_000_000,
+        max_request_ns=86_400_000_000_000,
+        timeframe="5m",
+    )
+    with pytest.raises(ValueError, match="batch plan changed"):
+        batch_runner.run_angelone_cash_future_history_in_batches(
+            **{**kwargs, "config": changed}
+        )
+    store.close()
+
+
+def test_invalid_multi_day_window_is_rejected(monkeypatch):
+    monkeypatch.setattr(batch_runner, "run_angelone_cash_future_history", lambda **kwargs: FakePipelineResult())
+    store = HistoricalJobStore()
+    config = batch_runner.AngelOneCashFutureRunConfig(
+        interval_ns=60_000_000_000,
+        max_request_ns=86_400_000_000_000,
+    )
+    with pytest.raises(ValueError, match="start must be before end"):
+        batch_runner.run_angelone_cash_future_history_in_batches(
+            ingestion=object(),
+            contract_master=object(),
+            universe=_universe(),
+            master_rows=(),
+            start=datetime(2026, 10, 3),
+            end=datetime(2026, 10, 3),
+            spot_sessions_by_underlying={},
+            db=object(),
+            catalog=object(),
+            config=config,
+            batch_size=2,
+            job_store=store,
+            run_id="run-invalid-window",
+        )
+    store.close()
