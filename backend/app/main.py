@@ -33,6 +33,7 @@ from app.backtesting.cash_future_download_routes import CashFutureDownloadManage
 from app.backtesting.historical_download_status import HistoricalDownloadStatusStore
 from app.backtesting.contract_master import ContractMasterCatalog
 from app.backtesting.contract_master_sync import DailyContractMasterSync
+from app.backtesting.monthly_results_routes import router as monthly_results_router
 
 run_schema_migrations()
 Base.metadata.create_all(bind=engine)
@@ -50,6 +51,7 @@ app.include_router(market_data_router)
 app.include_router(scanner_router)
 app.include_router(auto_scanner_router)
 app.include_router(paper_execution_router)
+app.include_router(monthly_results_router)
 
 # Durable backtesting-download status is kept in its own SQLite file so API
 # requests never depend on an in-memory status object. The path can be
