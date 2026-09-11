@@ -1,7 +1,12 @@
 """Deterministic Cash-Future convergence backtest.
 
 Each futures contract is backtested independently; the multi-contract runner
-combines their realized results without mixing expiry series.
+combines realized results without mixing expiry series.
+
+The legacy ``gap`` execution model remains available for analytical datasets
+that contain only LTP/gap values.  ``bid_ask`` is the realistic executable mode:
+entry buys cash at ask and sells futures at bid; exit sells cash at bid and buys
+futures at ask. Missing executable prices are rejected rather than fabricated.
 """
 
 from __future__ import annotations
@@ -22,6 +27,27 @@ class BacktestConfig:
     funding_cost_per_trade: float = 0.0
     max_holding_days: int = 30
     contract_month: str | None = None
+    execution_model: str = "gap"
+
+    def __post_init__(self) -> None:
+        if self.execution_model not in {"gap", "bid_ask"}:
+            raise ValueError("execution_model must be 'gap' or 'bid_ask'")
+        if self.max_holding_days <= 0:
+            raise ValueError("max_holding_days must be positive")
+
+
+def _executable_spread_profit(entry: CashFutureHistoryPoint, exit_point: CashFutureHistoryPoint) -> float:
+    prices = (entry.cash_ask, entry.future_bid, exit_point.cash_bid, exit_point.future_ask)
+    if any(price is None or float(price) <= 0 for price in prices):
+        raise ValueError("bid_ask execution requires entry cash_ask/future_bid and exit cash_bid/future_ask")
+    return (
+        (float(exit_point.cash_bid) - float(entry.cash_ask))
+        + (float(entry.future_bid) - float(exit_point.future_ask))
+    ) * entry.lot_size
+
+
+def _legacy_gap_profit(entry: CashFutureHistoryPoint, exit_point: CashFutureHistoryPoint) -> float:
+    return (entry.gap - exit_point.gap) * entry.lot_size
 
 
 def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfig) -> dict:
@@ -57,7 +83,11 @@ def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfi
             equity_curve.append({"timestamp": point.timestamp.isoformat(), "equity": equity})
             continue
 
-        gross = (entry.gap - point.gap) * entry.lot_size
+        gross = (
+            _legacy_gap_profit(entry, point)
+            if config.execution_model == "gap"
+            else _executable_spread_profit(entry, point)
+        )
         net = gross - config.charges_per_trade - config.funding_cost_per_trade
         capital = entry.cash_price * entry.lot_size + entry.margin_required
         roi = net / capital * 100.0 if capital else 0.0
@@ -74,6 +104,7 @@ def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfi
             "net_profit": net,
             "roi_pct": roi,
             "exit_reason": reason,
+            "execution_model": config.execution_model,
         })
         equity += net
         total_capital += capital
@@ -94,6 +125,13 @@ def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfi
         "max_drawdown": max_drawdown,
         "equity_curve": equity_curve,
         "trades": trades,
+        "open_position": {
+            "entry_time": entry.timestamp.isoformat(),
+            "symbol": entry.symbol,
+            "contract_month": entry.contract_month,
+            "entry_gap": entry.gap,
+            "lot_size": entry.lot_size,
+        } if entry is not None else None,
     }
 
 
@@ -115,6 +153,7 @@ def _aggregate_contract_results(results: list[dict]) -> dict:
         max_drawdown = max(max_drawdown, running_peak - equity)
         equity_curve.append({"timestamp": trade["exit_time"], "equity": equity})
 
+    open_positions = [result["open_position"] for result in results if result.get("open_position") is not None]
     return {
         "contract_count": len(results),
         "trade_count": len(trades),
@@ -127,6 +166,7 @@ def _aggregate_contract_results(results: list[dict]) -> dict:
         "max_drawdown": max_drawdown,
         "equity_curve": equity_curve,
         "trades": trades,
+        "open_positions": open_positions,
         "per_contract": results,
     }
 
