@@ -11,13 +11,7 @@ class CashFutureHistory(Base):
 
     __tablename__ = "cash_future_history"
     __table_args__ = (
-        Index(
-            "uq_cash_future_history_identity",
-            "symbol",
-            "contract_month",
-            "timestamp",
-            unique=True,
-        ),
+        Index("uq_cash_future_history_identity", "symbol", "contract_month", "timestamp", unique=True),
         Index("ix_cash_future_history_lookup", "symbol", "contract_month", "timestamp"),
     )
 
@@ -38,6 +32,10 @@ class CashFutureHistory(Base):
     cash_ask: Mapped[float | None] = mapped_column(Float, nullable=True)
     future_bid: Mapped[float | None] = mapped_column(Float, nullable=True)
     future_ask: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cash_bid_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cash_ask_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
+    future_bid_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
+    future_ask_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
     charges: Mapped[float] = mapped_column(Float, default=0.0)
     funding_cost: Mapped[float] = mapped_column(Float, default=0.0)
     net_profit: Mapped[float] = mapped_column(Float, default=0.0)
