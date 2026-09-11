@@ -57,9 +57,10 @@ def run_cash_future_strategy(
 ) -> CashFutureStrategyRun:
     """Apply a Cash-Future strategy strictly point-in-time.
 
-    The strategy receives the current point plus an immutable history containing
-    only observations at or before that point. BUY opens the Cash-Future spread
-    (buy cash / sell future); SELL closes it. Contract months cannot be mixed.
+    Strategy history may include observations before the selected start date for
+    indicator warm-up, but signals, executions, ledger records and equity output
+    are produced only inside the requested backtest date range. No observation
+    after the current point is ever exposed to the strategy.
     """
     if not strategy_id.strip():
         raise ValueError("strategy_id is required")
@@ -73,15 +74,22 @@ def run_cash_future_strategy(
     ):
         raise ValueError("Cash-Future strategy input must be ordered by timestamp")
 
-    filtered = tuple(
+    contract_points = tuple(
         point for point in ordered
-        if (config.start_date is None or _point_date(point) >= config.start_date)
-        and (config.end_date is None or _point_date(point) <= config.end_date)
-        and (config.contract_month is None or point.contract_month == config.contract_month)
+        if config.contract_month is None or point.contract_month == config.contract_month
     )
-    contracts = {point.contract_month for point in filtered}
+    contracts = {point.contract_month for point in contract_points}
     if len(contracts) > 1:
         raise ValueError("Cash-Future strategy input contains multiple contract months")
+
+    visible_points = tuple(
+        point for point in contract_points
+        if config.end_date is None or _point_date(point) <= config.end_date
+    )
+    execution_points = tuple(
+        point for point in visible_points
+        if config.start_date is None or _point_date(point) >= config.start_date
+    )
 
     if ledger is not None:
         if not run_id or not run_id.strip():
@@ -107,10 +115,16 @@ def run_cash_future_strategy(
     equity_curve: list[Mapping[str, Any]] = []
     entry: CashFutureHistoryPoint | None = None
     capital = config.initial_capital
+    start_date = config.start_date
 
-    for point in filtered:
+    for point in visible_points:
         visible_history = tuple(history + [point])
         raw_signal = strategy(point, visible_history)
+        history.append(point)
+
+        if start_date is not None and _point_date(point) < start_date:
+            continue
+
         action = "NONE" if raw_signal is None else str(raw_signal).upper()
         if action not in {"BUY", "SELL", "HOLD", "NONE"}:
             raise ValueError("Cash-Future strategy must return BUY, SELL, HOLD, or NONE")
@@ -157,7 +171,6 @@ def run_cash_future_strategy(
             entry = None
 
         equity_curve.append({"timestamp": point.timestamp.isoformat(), "equity": capital})
-        history.append(point)
 
     return CashFutureStrategyRun(
         strategy_id,
