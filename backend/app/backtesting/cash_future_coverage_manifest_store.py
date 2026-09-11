@@ -159,5 +159,31 @@ class CashFutureCoverageManifestStore:
             )
         )
 
+    def is_complete_for_instruments(
+        self,
+        *,
+        source: str,
+        timeframe: str = "1m",
+        instruments: tuple[str, ...] | list[str] | set[str],
+    ) -> bool:
+        """Return true only when every requested instrument has complete ranges.
+
+        An absent instrument is deliberately incomplete. This makes the
+        manifest an authoritative gate rather than allowing a partial manifest
+        to masquerade as a complete universe.
+        """
+        requested = {instrument for instrument in instruments if instrument}
+        if not requested:
+            return False
+        rows = self.ranges(source=source, timeframe=timeframe)
+        by_instrument: dict[str, list[CoverageRange]] = {instrument: [] for instrument in requested}
+        for item in rows:
+            if item.instrument in by_instrument:
+                by_instrument[item.instrument].append(item)
+        return all(
+            ranges and all(item.complete and item.missing_points == 0 for item in ranges)
+            for ranges in by_instrument.values()
+        )
+
 
 __all__ = ["CashFutureCoverageManifestStore"]
