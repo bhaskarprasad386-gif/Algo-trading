@@ -100,3 +100,35 @@ def test_recover_running_chunks_never_reopens_completed(tmp_path):
     assert store.chunk_state("job-1", 0)[0] == "completed"
     assert store.chunk_state("job-1", 1)[0] == "recoverable"
     assert store.chunk_state("job-1", 1)[1] == 1
+
+
+def test_cancel_preserves_resumable_work(tmp_path):
+    store = HistoricalJobStore(str(tmp_path / "jobs.db"))
+    store.create(job_id="job-1", run_id="run-1", plan_fingerprint="fp", total_chunks=3)
+    store.start_chunk("job-1", 0)
+    store.complete_chunk("job-1", 0)
+    store.start_chunk("job-1", 1)
+
+    cancelled = store.cancel("job-1", reason="operator stop")
+    assert cancelled.state == "cancelled"
+    assert cancelled.completed_chunks == 1
+    assert cancelled.error == "operator stop"
+    assert store.pending_indices("job-1") == (2,)
+    assert store.chunk_state("job-1", 1)[0] == "running"
+
+    resumed = store.reopen_cancelled("job-1")
+    assert resumed.state == "progress"
+    assert resumed.completed_chunks == 1
+    assert resumed.pending_indices("job-1") == (2,)
+
+
+def test_cancel_rejects_terminal_jobs(tmp_path):
+    store = HistoricalJobStore(str(tmp_path / "jobs.db"))
+    store.create(job_id="job-1", run_id="run-1", plan_fingerprint="fp", total_chunks=0)
+    store.finish("job-1")
+    try:
+        store.cancel("job-1")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected completed job cancellation rejection")
