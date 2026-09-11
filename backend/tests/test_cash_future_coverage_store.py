@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 from app.backtesting.cash_future_backtest_result_ledger import RECORD_TYPE, CashFutureBacktestResultLedger
 from app.backtesting.ledger import BacktestLedger
 from app.scanner.cash_future_backtest import BacktestConfig, run_multi_contract_backtest
@@ -53,6 +55,29 @@ def test_persisted_coverage_detects_authoritative_missing_timestamp(db_session):
     assert report.contracts[0].missing_timestamps == (datetime.fromtimestamp(2),)
 
 
+def test_persisted_backtest_requires_coverage_report(db_session):
+    save_history_points(db_session, [make_point(1, gap=10.0), make_point(2, gap=4.0)])
+    config = BacktestConfig(min_entry_gap=8.0, exit_gap=5.0)
+
+    with pytest.raises(ValueError, match="coverage_report is required"):
+        run_persisted_cash_future_backtest(db_session, config, symbol="ABC")
+
+
+def test_persisted_backtest_blocks_incomplete_coverage(db_session):
+    save_history_points(db_session, [make_point(1, gap=10.0), make_point(3, gap=4.0)])
+    expected = (datetime.fromtimestamp(1), datetime.fromtimestamp(2), datetime.fromtimestamp(3))
+    coverage = build_persisted_cash_future_coverage(db_session, expected_timestamps=expected)
+    config = BacktestConfig(min_entry_gap=8.0, exit_gap=5.0)
+
+    with pytest.raises(ValueError, match="coverage is incomplete"):
+        run_persisted_cash_future_backtest(
+            db_session,
+            config,
+            symbol="ABC",
+            coverage_report=coverage,
+        )
+
+
 def test_persisted_backtest_matches_direct_stream_result(db_session):
     points = [
         make_point(1, "2026-09", 10.0),
@@ -62,8 +87,15 @@ def test_persisted_backtest_matches_direct_stream_result(db_session):
     ]
     save_history_points(db_session, points)
     config = BacktestConfig(min_entry_gap=8.0, exit_gap=5.0)
+    coverage = build_persisted_cash_future_coverage(db_session)
 
-    persisted = run_persisted_cash_future_backtest(db_session, config, symbol="ABC", page_size=1)
+    persisted = run_persisted_cash_future_backtest(
+        db_session,
+        config,
+        symbol="ABC",
+        page_size=1,
+        coverage_report=coverage,
+    )
     direct = run_multi_contract_backtest(points, config)
 
     assert persisted["contract_count"] == 2
@@ -80,6 +112,7 @@ def test_persisted_backtest_can_write_results_to_durable_ledger(db_session):
     ]
     save_history_points(db_session, points)
     config = BacktestConfig(min_entry_gap=8.0, exit_gap=5.0)
+    coverage = build_persisted_cash_future_coverage(db_session)
 
     ledger = BacktestLedger()
     ledger.start_run("cf-persisted", "cash-future", "1", 100_000)
@@ -90,6 +123,7 @@ def test_persisted_backtest_can_write_results_to_durable_ledger(db_session):
         config,
         symbol="ABC",
         page_size=1,
+        coverage_report=coverage,
         result_ledger=writer,
     )
 
