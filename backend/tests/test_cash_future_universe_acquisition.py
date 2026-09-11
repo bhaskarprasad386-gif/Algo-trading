@@ -3,10 +3,15 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.backtesting.cash_future_historical_acquisition import CashFutureHistoricalAcquisitionService
 from app.backtesting.cash_future_universe_acquisition import (
     CashFutureUniverseAcquisitionResult,
     acquire_cash_future_universe,
 )
+from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
+from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
+from app.backtesting.historical_ingest import HistoricalIngestionService
+from app.backtesting.historical_job_store import HistoricalJobStore
 from app.scanner.cash_future_universe import CashFutureFnoUniverse, CashFutureUniverseItem
 from app.scanner.session_gap_planner import SessionWindow
 
@@ -122,3 +127,130 @@ def test_orchestrates_each_stock_with_master_cash_and_exact_future_sessions():
     assert result.completed_chunks == 2
     assert result.pending_chunks == 0
     assert result.incomplete == ()
+
+
+class _MultiStockHistoricalSource:
+    def __init__(self):
+        self.requests = []
+
+    def fetch(self, request):
+        self.requests.append(request)
+        timestamp = request.start_ns
+        while timestamp <= request.end_ns:
+            yield HistoricalRecord(
+                request.source,
+                request.instrument,
+                request.timeframe,
+                timestamp,
+                {"close": 100.0},
+            )
+            timestamp += 60 * 1_000_000_000
+
+
+def test_multi_stock_multi_contract_acquisition_is_durable_and_idempotent(tmp_path):
+    start = datetime(2026, 9, 10, 9, 15, tzinfo=timezone.utc)
+    end = datetime(2026, 9, 10, 9, 17, tzinfo=timezone.utc)
+    session = SessionWindow(
+        int(start.timestamp() * 1_000_000_000),
+        int(end.timestamp() * 1_000_000_000),
+    )
+
+    contract_master = ContractMasterCatalog(tmp_path / "contracts.db")
+    contract_master.upsert_snapshot(
+        date(2026, 9, 1),
+        [
+            ContractRecord("NFO", "ABC26OCT", "999", date(2026, 10, 29), "STOCK_FUTURE", "ABC", 125),
+            ContractRecord("NFO", "ABC26NOV", "998", date(2026, 11, 26), "STOCK_FUTURE", "ABC", 125),
+            ContractRecord("NFO", "XYZ26OCT", "997", date(2026, 10, 29), "STOCK_FUTURE", "XYZ", 75),
+        ],
+    )
+    universe = CashFutureFnoUniverse(
+        stocks=(
+            CashFutureUniverseItem("ABC", "2026-10", "999", "ABC26OCT", date(2026, 10, 29), 125),
+            CashFutureUniverseItem("ABC", "2026-11", "998", "ABC26NOV", date(2026, 11, 26), 125),
+            CashFutureUniverseItem("XYZ", "2026-10", "997", "XYZ26OCT", date(2026, 10, 29), 75),
+        ),
+        indices=(),
+    )
+    master_rows = (
+        {"exch_seg": "NSE", "symbol": "ABC-EQ", "name": "ABC", "token": "123", "instrumenttype": ""},
+        {"exch_seg": "NSE", "symbol": "XYZ-EQ", "name": "XYZ", "token": "456", "instrumenttype": ""},
+    )
+    source = _MultiStockHistoricalSource()
+    history = HistoricalCatalog(tmp_path / "history.db")
+    ingestion = HistoricalIngestionService(history)
+    service = CashFutureHistoricalAcquisitionService(
+        ingestion,
+        source,
+        contract_master,
+        interval_ns=60 * 1_000_000_000,
+        max_request_ns=2 * 60 * 1_000_000_000,
+        sleep=lambda _: None,
+    )
+    job_store = HistoricalJobStore(str(tmp_path / "jobs.db"))
+    sessions = {"ABC": (session,), "XYZ": (session,)}
+    future_sessions = {
+        "NFO:999:ABC26OCT": (session,),
+        "NFO:998:ABC26NOV": (session,),
+        "NFO:997:XYZ26OCT": (session,),
+    }
+
+    first = acquire_cash_future_universe(
+        service=service,
+        universe=universe,
+        master_rows=master_rows,
+        start=start,
+        end=end,
+        spot_sessions_by_underlying=sessions,
+        future_sessions_by_instrument=future_sessions,
+        mode="CURRENT",
+        retry_attempts=1,
+        job_store=job_store,
+        run_id="run-1",
+        job_id_prefix="cash-future-test",
+    )
+
+    first_request_count = len(source.requests)
+    assert first.incomplete == ()
+    assert first.pending_chunks == 0
+    assert first.completed_chunks > 0
+    assert {request.instrument for request in source.requests} == {
+        "NSE:123:ABC-EQ",
+        "NFO:999:ABC26OCT",
+        "NFO:998:ABC26NOV",
+        "NSE:456:XYZ-EQ",
+        "NFO:997:XYZ26OCT",
+    }
+    assert history.timestamps(
+        source="angelone",
+        instrument="NSE:123:ABC-EQ",
+        timeframe="1m",
+        start_ns=session.start_ns,
+        end_ns=session.end_ns,
+    )
+    assert history.timestamps(
+        source="angelone",
+        instrument="NSE:456:XYZ-EQ",
+        timeframe="1m",
+        start_ns=session.start_ns,
+        end_ns=session.end_ns,
+    )
+
+    second = acquire_cash_future_universe(
+        service=service,
+        universe=universe,
+        master_rows=master_rows,
+        start=start,
+        end=end,
+        spot_sessions_by_underlying=sessions,
+        future_sessions_by_instrument=future_sessions,
+        mode="CURRENT",
+        retry_attempts=1,
+        job_store=job_store,
+        run_id="run-1",
+        job_id_prefix="cash-future-test",
+    )
+
+    assert second.incomplete == ()
+    assert second.pending_chunks == 0
+    assert len(source.requests) == first_request_count
