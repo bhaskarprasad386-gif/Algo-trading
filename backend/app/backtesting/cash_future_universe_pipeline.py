@@ -29,18 +29,24 @@ from app.scanner.cash_future_coverage_store import (
 class CashFutureUniversePipelineResult:
     acquisition: CashFutureUniverseAcquisitionResult
     materialized_rows: int
+    materialized_underlyings: tuple[str, ...] = ()
 
     @property
     def backtest_ready(self) -> bool:
-        """Return whether acquisition coverage and materialization are both ready."""
+        """Return whether every acquired underlying is completely materialized."""
+        acquired_underlyings = tuple(
+            sorted(_underlying_from_cash_instrument(result.queue.spot.instrument)
+                   for result in self.acquisition.results)
+        )
         return bool(
             self.materialized_rows > 0
-            and self.acquisition.results
+            and acquired_underlyings
             and all(result.coverage.complete for result in self.acquisition.results)
+            and tuple(sorted(set(self.materialized_underlyings))) == tuple(sorted(set(acquired_underlyings)))
         )
 
     def require_backtest_ready(self) -> None:
-        """Block backtesting until every acquired underlying is complete."""
+        """Block backtesting until every acquired underlying is complete and materialized."""
         if not self.backtest_ready:
             raise LookupError(
                 "Cash-Future historical acquisition/materialization is incomplete; backtest blocked"
@@ -79,6 +85,13 @@ class CashFutureUniversePipelineResult:
         )
 
 
+def _underlying_from_cash_instrument(instrument: str) -> str:
+    parts = instrument.split(":", 2)
+    if len(parts) != 3:
+        raise ValueError(f"invalid cash instrument: {instrument}")
+    return parts[2].rsplit("-", 1)[0].upper()
+
+
 def acquire_and_materialize_cash_future_universe(
     *,
     service: CashFutureHistoricalAcquisitionService,
@@ -105,13 +118,7 @@ def acquire_and_materialize_cash_future_universe(
     margin_required: float = 0.0,
     batch_size: int = 1000,
 ) -> CashFutureUniversePipelineResult:
-    """Acquire the planned universe durably, then materialize downloaded bars.
-
-    Materialization uses each acquisition result's exact queue, so repaired or
-    rollover-specific requests remain the single source of instrument identity.
-    Only persisted catalog rows are read; raw historical data is never accumulated
-    in the pipeline result.
-    """
+    """Acquire the planned universe durably, then materialize downloaded bars."""
     acquisition = acquire_cash_future_universe(
         service=service,
         universe=universe,
@@ -135,11 +142,9 @@ def acquire_and_materialize_cash_future_universe(
     )
 
     materialized_rows = 0
+    materialized_underlyings: list[str] = []
     for result in acquisition.results:
-        spot_parts = result.queue.spot.instrument.split(":", 2)
-        if len(spot_parts) != 3:
-            raise ValueError(f"invalid cash instrument: {result.queue.spot.instrument}")
-        underlying = spot_parts[2].rsplit("-", 1)[0].upper()
+        underlying = _underlying_from_cash_instrument(result.queue.spot.instrument)
         job = CashFutureUniverseDownloadJob(
             underlying=underlying,
             spot=result.queue.spot,
@@ -149,7 +154,7 @@ def acquire_and_materialize_cash_future_universe(
             jobs=(job,),
             plan=HistoricalSyncPlan(job.all_requests),
         )
-        materialized_rows += materialize_cash_future_universe_history(
+        rows = materialize_cash_future_universe_history(
             db,
             catalog,
             download_plan=plan,
@@ -159,8 +164,15 @@ def acquire_and_materialize_cash_future_universe(
             margin_required=margin_required,
             batch_size=batch_size,
         )
+        materialized_rows += rows
+        if rows > 0:
+            materialized_underlyings.append(underlying)
 
-    return CashFutureUniversePipelineResult(acquisition, materialized_rows)
+    return CashFutureUniversePipelineResult(
+        acquisition,
+        materialized_rows,
+        tuple(sorted(set(materialized_underlyings))),
+    )
 
 
 __all__ = ["CashFutureUniversePipelineResult", "acquire_and_materialize_cash_future_universe"]
