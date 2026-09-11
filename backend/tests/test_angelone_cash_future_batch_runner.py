@@ -232,3 +232,52 @@ def test_real_angelone_multi_stock_multi_day_runner_materializes_sqlite(tmp_path
     assert len(reopened.records(source="angelone", instrument="NSE:3001:AAA-EQ", timeframe="1m")) == 4
     assert len(reopened.records(source="angelone", instrument="NFO:4002:ZZZ26OCTFUT", timeframe="1m")) == 4
     reopened.close()
+
+
+def test_failed_batch_is_recoverable_without_replaying_completed_batches(tmp_path, monkeypatch):
+    calls = []
+    failures_left = {1: 1}
+
+    def fake_run(**kwargs):
+        offset = kwargs["config"].stock_batch_offset
+        calls.append(offset)
+        if failures_left.get(offset, 0):
+            failures_left[offset] -= 1
+            raise RuntimeError("temporary provider failure")
+        return FakePipelineResult()
+
+    monkeypatch.setattr(batch_runner, "run_angelone_cash_future_history", fake_run)
+    store_path = str(tmp_path / "jobs.db")
+    store = HistoricalJobStore(store_path)
+    kwargs = dict(
+        ingestion=object(),
+        contract_master=object(),
+        universe=_universe(),
+        master_rows=(),
+        start=datetime(2026, 10, 1),
+        end=datetime(2026, 10, 3),
+        spot_sessions_by_underlying={},
+        db=object(),
+        catalog=object(),
+        config=_config(),
+        batch_size=1,
+        job_store=store,
+        run_id="run-recover",
+    )
+
+    with pytest.raises(RuntimeError, match="temporary provider failure"):
+        batch_runner.run_angelone_cash_future_history_in_batches(**kwargs)
+
+    assert calls == [0, 1]
+    assert store.get("run-recover:cash-future-stock-batch:0").state == "completed"
+    assert store.get("run-recover:cash-future-stock-batch:1").state == "recoverable"
+    store.close()
+
+    restarted = HistoricalJobStore(store_path)
+    output = batch_runner.run_angelone_cash_future_history_in_batches(**kwargs)
+
+    assert calls == [0, 1, 1]
+    assert tuple(item.skipped for item in output) == (True, False)
+    assert restarted.get("run-recover:cash-future-stock-batch:0").state == "completed"
+    assert restarted.get("run-recover:cash-future-stock-batch:1").state == "completed"
+    restarted.close()
