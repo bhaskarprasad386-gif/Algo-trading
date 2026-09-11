@@ -82,6 +82,34 @@ class CashFutureHistoricalAcquisitionService:
             for session in sessions
         }))
 
+    def _manifest_repair_instruments(
+        self,
+        *,
+        coverage_store: CashFutureCoverageManifestStore | None,
+        source: str,
+        timeframe: str,
+        requested_instruments: set[str],
+    ) -> set[str]:
+        """Use an existing manifest as the durable gate for targeted repair.
+
+        A complete manifest range is skipped entirely. An incomplete range keeps
+        its instrument eligible, after which the normal catalog gap planner finds
+        the exact missing chunks/timestamps. Instruments with no manifest entry
+        are treated as new acquisition work.
+        """
+        if coverage_store is None:
+            return requested_instruments
+        ranges = coverage_store.ranges(source=source, timeframe=timeframe)
+        if not ranges:
+            return requested_instruments
+        known = {item.instrument for item in ranges}
+        incomplete = {
+            item.instrument
+            for item in ranges
+            if item.missing_points > 0 or not item.complete
+        }
+        return (requested_instruments - known) | incomplete
+
     def prepare(
         self,
         *,
@@ -96,6 +124,7 @@ class CashFutureHistoricalAcquisitionService:
         mode: str = "BOTH",
         source: str = "angelone",
         queue: CashFutureDownloadQueue | None = None,
+        coverage_store: CashFutureCoverageManifestStore | None = None,
     ) -> tuple[CashFutureDownloadQueue, HistoricalSyncPlan]:
         if queue is None:
             queue = build_rollover_download_queue(
@@ -109,6 +138,19 @@ class CashFutureHistoricalAcquisitionService:
                 mode=mode,
                 source=source,
                 session_days=self._session_days(spot_sessions),
+            )
+        requested = {request.instrument for request in queue.all_requests}
+        repair_instruments = self._manifest_repair_instruments(
+            coverage_store=coverage_store,
+            source=source,
+            timeframe=timeframe,
+            requested_instruments=requested,
+        )
+        if repair_instruments != requested:
+            allowed = repair_instruments
+            queue = CashFutureDownloadQueue(
+                spot=queue.spot if queue.spot.instrument in allowed else queue.spot,
+                futures=tuple(item for item in queue.futures if item.request.instrument in allowed),
             )
         plan = self.planner.plan(
             queue=queue,
@@ -248,6 +290,7 @@ class CashFutureHistoricalAcquisitionService:
             mode=mode,
             source=source,
             queue=queue,
+            coverage_store=coverage_store,
         )
         progress: list[CashFutureDataCoverageReport] = [
             self._audit(
@@ -339,6 +382,7 @@ class CashFutureHistoricalAcquisitionService:
                 mode=mode,
                 source=source,
                 queue=queue,
+                coverage_store=coverage_store,
             )
             pending_chunks = len(next_plan.requests)
             if on_progress is not None:
