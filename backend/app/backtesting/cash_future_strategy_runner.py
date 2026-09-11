@@ -164,7 +164,7 @@ def run_cash_future_strategy(
         if action not in {"BUY", "SELL", "HOLD", "NONE"}:
             raise ValueError("Cash-Future strategy must return BUY, SELL, HOLD, or NONE")
 
-        signal_record = {
+        signal_record: dict[str, Any] = {
             "timestamp": point.timestamp.isoformat(),
             "symbol": point.symbol,
             "contract_month": point.contract_month,
@@ -174,29 +174,28 @@ def run_cash_future_strategy(
             "gap": point.gap,
             "lot_size": point.lot_size,
         }
-        signals.append(signal_record)
-        if ledger is not None:
-            ledger.append_batch((ledger_record(run_id, "signal", point.timestamp, signal_record),))
 
-        exit_reason: str | None = None
         if action == "BUY" and entry is None:
             if capital_ledger.reserve(point.margin_required):
                 entry = point
             else:
-                blocked_record = {
-                    **signal_record,
-                    "execution_status": "blocked",
-                    "blocked_reason": "insufficient_available_capital",
-                    "required_margin": max(float(point.margin_required), 0.0),
-                    "available_capital": capital_ledger.available_capital,
-                }
-                signals[-1] = blocked_record
-                if ledger is not None:
-                    ledger.append_batch((ledger_record(run_id, "signal", point.timestamp, blocked_record),))
-        elif action == "SELL" and entry is not None:
+                signal_record.update(
+                    {
+                        "execution_status": "blocked",
+                        "blocked_reason": "insufficient_available_capital",
+                        "required_margin": max(float(point.margin_required), 0.0),
+                        "available_capital": capital_ledger.available_capital,
+                    }
+                )
+        exit_reason: str | None = None
+        if action == "SELL" and entry is not None:
             exit_reason = "strategy"
         elif entry is not None and point.expiry_date is not None and _point_date(point) >= point.expiry_date:
             exit_reason = "expiry"
+
+        signals.append(signal_record)
+        if ledger is not None:
+            ledger.append_batch((ledger_record(run_id, "signal", point.timestamp, signal_record),))
 
         if exit_reason is not None and entry is not None:
             gross = (
