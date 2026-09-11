@@ -79,7 +79,13 @@ def run_angelone_cash_future_history_in_batches(
     margin_required: float = 0.0,
     materialize_batch_size: int = 1000,
 ) -> tuple[AngelOneCashFutureBatchResult, ...]:
-    """Run stock batches in order and resume completed batches after restart."""
+    """Run stock batches in order and resume completed batches after restart.
+
+    Cancellation is cooperative: an in-flight provider request is allowed to
+    finish, but no cancelled batch is committed as completed and no later
+    batch is started. ``reopen_cancelled`` on the same job store resumes the
+    unfinished work on a later invocation.
+    """
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
     if not run_id.strip():
@@ -130,6 +136,11 @@ def run_angelone_cash_future_history_in_batches(
         if job.plan_fingerprint != fingerprint:
             raise ValueError(f"batch plan changed for durable job {job_id}")
 
+        if job.state == "cancelled":
+            # Stop before starting this or any later batch. Pending work is
+            # retained by the job store and can be resumed explicitly.
+            break
+
         if job.state == "completed":
             results.append(
                 AngelOneCashFutureBatchResult(
@@ -142,6 +153,8 @@ def run_angelone_cash_future_history_in_batches(
             continue
 
         job_store.recover_running_chunks(job_id)
+        if job_store.get(job_id).state == "cancelled":
+            break
         job_store.start_chunk(job_id, 0)
         try:
             batch_config = replace(
@@ -172,6 +185,12 @@ def run_angelone_cash_future_history_in_batches(
                 batch_size=materialize_batch_size,
             )
             result.require_backtest_ready()
+            if job_store.get(job_id).state == "cancelled":
+                # A concurrent cancellation wins over successful provider
+                # completion; leave the chunk recoverable rather than losing
+                # the operator's cancellation request.
+                job_store.recover_running_chunks(job_id)
+                break
             job_store.complete_chunk(job_id, 0)
             job_store.finish(job_id)
             results.append(
@@ -183,6 +202,9 @@ def run_angelone_cash_future_history_in_batches(
                 )
             )
         except Exception as exc:
+            if job_store.get(job_id).state == "cancelled":
+                job_store.recover_running_chunks(job_id)
+                break
             job_store.fail_chunk(job_id, 0, str(exc), recoverable=True)
             job_store.finish(job_id)
             raise
