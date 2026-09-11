@@ -7,10 +7,10 @@ from app.backtesting.ledger import BacktestLedger
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
 
-def point(ts, gap, month="SEP", expiry=date(2026, 9, 30), **quotes):
+def point(ts, gap, month="SEP", expiry=date(2026, 9, 30), margin=10000.0, **quotes):
     return CashFutureHistoryPoint(timestamp=ts, symbol="ABC", contract_month=month,
         cash_price=100.0, future_price=100.0 + gap, gap=gap, gap_pct=gap,
-        lot_size=100, margin_required=10000.0, expiry_date=expiry, **quotes)
+        lot_size=100, margin_required=margin, expiry_date=expiry, **quotes)
 
 
 def test_strategy_applies_only_selected_date_range_and_normalizes_buy_sell():
@@ -63,6 +63,8 @@ def test_strategy_persists_metadata_signals_trades_and_equity():
         config=CashFutureStrategyConfig(charges_per_trade=20, funding_cost_per_trade=10),
         ledger=ledger, run_id="cash-future-p0-1", strategy_hash="abc123")
     assert result.final_capital == 10000570.0
+    assert result.final_available_capital == 10000570.0
+    assert result.final_reserved_margin == 0.0
     metadata = ledger.run_metadata("cash-future-p0-1")
     assert metadata["strategy_id"] == "persisted-gap"
     assert metadata["strategy_version"] == "2"
@@ -70,8 +72,46 @@ def test_strategy_persists_metadata_signals_trades_and_equity():
     assert len(ledger.records("cash-future-p0-1", "trade")) == 1
     equity = ledger.records("cash-future-p0-1", "equity")
     assert len(equity) == 2
+    assert equity[0].payload["reserved_margin"] == 10000.0
+    assert equity[0].payload["available_capital"] == 99990000.0
     assert equity[-1].payload["equity"] == 10000570.0
+    assert equity[-1].payload["available_capital"] == 10000570.0
     ledger.close()
+
+
+def test_strategy_blocks_entry_when_margin_exceeds_available_capital():
+    now = datetime(2026, 9, 2, 10, 0)
+    result = run_cash_future_strategy(
+        [point(now, 10, margin=10000.0)],
+        lambda current, history: "BUY",
+        strategy_id="margin-block",
+        config=CashFutureStrategyConfig(initial_capital=5000.0),
+    )
+    assert result.trades == ()
+    assert result.final_capital == 5000.0
+    assert result.final_available_capital == 5000.0
+    assert result.final_reserved_margin == 0.0
+    assert result.blocked_entry_count == 1
+    assert result.signals[0]["execution_status"] == "blocked"
+    assert result.signals[0]["blocked_reason"] == "insufficient_available_capital"
+    assert result.signals[0]["required_margin"] == 10000.0
+
+
+def test_strategy_releases_reserved_margin_after_exit_and_updates_realized_capital():
+    now = datetime(2026, 9, 2, 10, 0)
+    result = run_cash_future_strategy(
+        [point(now, 10, margin=7000.0), point(now + timedelta(hours=1), 4, margin=9000.0)],
+        lambda current, history: "BUY" if current.timestamp == now else "SELL",
+        strategy_id="margin-release",
+        config=CashFutureStrategyConfig(initial_capital=10000.0),
+    )
+    assert len(result.trades) == 1
+    assert result.trades[0]["reserved_margin"] == 7000.0
+    assert result.final_reserved_margin == 0.0
+    assert result.final_available_capital == 10600.0
+    assert result.final_capital == 10600.0
+    assert result.equity_curve[0]["available_capital"] == 3000.0
+    assert result.equity_curve[-1]["available_capital"] == 10600.0
 
 
 def test_strategy_uses_executable_bid_ask_sides_and_costs():
