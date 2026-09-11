@@ -50,6 +50,26 @@ data class FullFnoResultChunk(val sequence: Int, val symbol: String, val result:
 data class FullFnoResultsPage(val status: String, val job_id: String, val total: Int = 0, val offset: Int = 0, val limit: Int = 0, val after_sequence: Int? = null, val next_after_sequence: Int? = null, val data: List<FullFnoResultChunk> = emptyList())
 data class FullFnoJobControlResponse(val status: String, val job_id: String, val job_status: String)
 data class FullFnoPurgeResponse(val status: String, val job_id: String, val job_status: String, val deleted_chunks: Int)
+data class DailyGapCalendarItem(
+    val trading_date: String = "",
+    val symbol: String = "",
+    val direction: String = "FLAT",
+    val gap: Double = 0.0,
+    val gap_percent: Double = 0.0,
+    val weighted_gap: Double = 0.0,
+    val previous_close: Double = 0.0,
+    val open: Double = 0.0,
+    val high: Double = 0.0,
+    val low: Double = 0.0,
+    val close: Double = 0.0,
+    val lot_size: Double = 0.0,
+)
+data class DailyGapCalendarResponse(
+    val status: String = "",
+    val trading_date: String = "",
+    val top: DailyGapCalendarItem? = null,
+    val data: List<DailyGapCalendarItem> = emptyList(),
+)
 
 interface ApiInterface {
     @GET("/") suspend fun getRootStatus(): MarketStatus
@@ -72,6 +92,7 @@ interface ApiInterface {
     @GET("/api/v1/execution/paper/orders") suspend fun paperOrders(): PaperOrdersResponse
     @GET("/api/v1/market-data/ltp-by-symbol") suspend fun ltpBySymbol(@Query("tradingsymbol") tradingSymbol: String, @Query("exchange") exchange: String = "NSE"): MarketLtpResponse
     @GET("/api/v1/scanner/cash-future/live/auto") suspend fun cashFutureScan(): CashFutureScanResponse
+    @GET("/api/v1/scanner/cash-future/calendar/{trading_date}/top-gap") suspend fun dailyGapCalendar(@Path("trading_date") tradingDate: String, @Query("limit") limit: Int = 10): DailyGapCalendarResponse
     @POST("/api/v1/scanner/cash-future/backtest/full/jobs") suspend fun startFullFnoJob(@Query("days") days: Int = 365, @Query("min_entry_gap") minEntryGap: Double = 0.0, @Query("exit_gap") exitGap: Double = 0.0, @Query("charges_per_trade") chargesPerTrade: Double = 0.0, @Query("funding_cost_per_trade") fundingCostPerTrade: Double = 0.0, @Query("max_holding_days") maxHoldingDays: Int = 30, @Query("future_selection") futureSelection: String = "BOTH"): FullFnoJobAcceptedResponse
     @GET("/api/v1/scanner/cash-future/backtest/jobs/{job_id}") suspend fun fullFnoJob(@Path("job_id") jobId: String): FullFnoJobStatusResponse
     @GET("/api/v1/scanner/cash-future/backtest/jobs/{job_id}/results") suspend fun fullFnoResults(@Path("job_id") jobId: String, @Query("limit") limit: Int = 50, @Query("after_sequence") afterSequence: Int? = null): FullFnoResultsPage
