@@ -53,16 +53,23 @@ class CashFutureDataQualityReport:
 
 def _audit_payload_stream(
     records: Iterable[tuple[tuple[object, ...], Mapping[str, object]]],
+    *,
+    ordered_identities: bool = False,
 ) -> CashFutureDataQualityReport:
     checked = invalid_ohlc = crossed_quotes = negative_depth = invalid_prices = duplicate_timestamps = 0
-    seen: set[tuple[object, ...]] = set()
+    seen: set[tuple[object, ...]] | None = None if ordered_identities else set()
+    previous_identity: tuple[object, ...] | None = None
 
     for identity, payload in records:
         checked += 1
-        if identity in seen:
+        if ordered_identities:
+            if identity == previous_identity:
+                duplicate_timestamps += 1
+            previous_identity = identity
+        elif identity in seen:  # type: ignore[operator]
             duplicate_timestamps += 1
         else:
-            seen.add(identity)
+            seen.add(identity)  # type: ignore[union-attr]
 
         prices = [payload.get(name) for name in ("open", "high", "low", "close")]
         numeric_prices = [float(value) for value in prices if isinstance(value, (int, float))]
@@ -118,7 +125,7 @@ def audit_cash_future_records(records: Iterable[HistoricalRecord]) -> CashFuture
 
 
 def audit_cash_future_points(records: Iterable[object]) -> CashFutureDataQualityReport:
-    """Audit persisted CashFutureHistoryPoint-like records as a stream."""
+    """Audit persisted CashFutureHistoryPoint-like records as an ordered stream."""
     def stream():
         for point in records:
             identity = (
@@ -140,7 +147,7 @@ def audit_cash_future_points(records: Iterable[object]) -> CashFutureDataQuality
             }
             yield identity, payload
 
-    return _audit_payload_stream(stream())
+    return _audit_payload_stream(stream(), ordered_identities=True)
 
 
 __all__ = [
