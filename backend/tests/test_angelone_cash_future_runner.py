@@ -29,6 +29,30 @@ def test_runner_config_rejects_request_window_over_one_day():
         )
 
 
+def test_runner_config_rejects_invalid_stock_batch_size():
+    with pytest.raises(ValueError, match="max_stock_underlyings"):
+        runner.AngelOneCashFutureRunConfig(
+            interval_ns=60_000_000_000,
+            max_request_ns=86_400_000_000_000,
+            max_stock_underlyings=0,
+        )
+
+
+def test_bound_cash_future_universe_selects_sorted_stock_underlyings():
+    def item(symbol, token):
+        return CashFutureUniverseItem(symbol, "2026-10", token, f"{symbol}26OCT", date(2026, 10, 29), 100)
+
+    universe = CashFutureFnoUniverse(
+        stocks=(item("ZZZ", "3"), item("BBB", "2"), item("AAA", "1"), item("BBB", "4")),
+        indices=(),
+    )
+
+    bounded = runner.bound_cash_future_universe(universe, max_stock_underlyings=2)
+
+    assert bounded.stock_underlyings == ("AAA", "BBB")
+    assert tuple(item.future_token for item in bounded.stocks) == ("2", "1", "4")
+
+
 def test_runner_authenticates_before_starting_acquisition(monkeypatch):
     auth = FakeAuth()
     service_marker = object()
