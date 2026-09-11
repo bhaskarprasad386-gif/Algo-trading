@@ -32,6 +32,15 @@ def _universe():
     )
 
 
+def _config(**overrides):
+    values = {
+        "interval_ns": 60_000_000_000,
+        "max_request_ns": 86_400_000_000_000,
+    }
+    values.update(overrides)
+    return batch_runner.AngelOneCashFutureRunConfig(**values)
+
+
 def test_batches_run_in_order_and_persist_completion(monkeypatch):
     calls = []
     results = {}
@@ -55,10 +64,7 @@ def test_batches_run_in_order_and_persist_completion(monkeypatch):
         spot_sessions_by_underlying={},
         db=object(),
         catalog=object(),
-        config=batch_runner.AngelOneCashFutureRunConfig(
-            interval_ns=60_000_000_000,
-            max_request_ns=86_400_000_000_000,
-        ),
+        config=_config(),
         batch_size=2,
         job_store=store,
         run_id="run-1",
@@ -82,10 +88,6 @@ def test_completed_batches_are_skipped_after_restart(monkeypatch):
 
     monkeypatch.setattr(batch_runner, "run_angelone_cash_future_history", fake_run)
     store = HistoricalJobStore()
-    config = batch_runner.AngelOneCashFutureRunConfig(
-        interval_ns=60_000_000_000,
-        max_request_ns=86_400_000_000_000,
-    )
     kwargs = dict(
         ingestion=object(),
         contract_master=object(),
@@ -96,7 +98,7 @@ def test_completed_batches_are_skipped_after_restart(monkeypatch):
         spot_sessions_by_underlying={},
         db=object(),
         catalog=object(),
-        config=config,
+        config=_config(),
         batch_size=2,
         job_store=store,
         run_id="run-2",
@@ -115,10 +117,6 @@ def test_completed_batches_are_skipped_after_restart(monkeypatch):
 def test_changed_batch_plan_is_rejected(monkeypatch):
     monkeypatch.setattr(batch_runner, "run_angelone_cash_future_history", lambda **kwargs: FakePipelineResult())
     store = HistoricalJobStore()
-    config = batch_runner.AngelOneCashFutureRunConfig(
-        interval_ns=60_000_000_000,
-        max_request_ns=86_400_000_000_000,
-    )
     kwargs = dict(
         ingestion=object(),
         contract_master=object(),
@@ -129,7 +127,7 @@ def test_changed_batch_plan_is_rejected(monkeypatch):
         spot_sessions_by_underlying={},
         db=object(),
         catalog=object(),
-        config=config,
+        config=_config(),
         batch_size=2,
         job_store=store,
         run_id="run-3",
@@ -138,7 +136,9 @@ def test_changed_batch_plan_is_rejected(monkeypatch):
 
     changed = _universe()
     changed = CashFutureFnoUniverse(
-        stocks=changed.stocks + (CashFutureUniverseItem("CCC", "2026-10", "4", "CCC26OCT", date(2026, 10, 29), 100),),
+        stocks=changed.stocks + (
+            CashFutureUniverseItem("CCC", "2026-10", "4", "CCC26OCT", date(2026, 10, 29), 100),
+        ),
         indices=changed.indices,
     )
     with pytest.raises(ValueError, match="batch plan changed"):
@@ -151,11 +151,6 @@ def test_changed_batch_plan_is_rejected(monkeypatch):
 def test_changed_download_config_is_rejected_after_restart(monkeypatch):
     monkeypatch.setattr(batch_runner, "run_angelone_cash_future_history", lambda **kwargs: FakePipelineResult())
     store = HistoricalJobStore()
-    base = batch_runner.AngelOneCashFutureRunConfig(
-        interval_ns=60_000_000_000,
-        max_request_ns=86_400_000_000_000,
-        timeframe="1m",
-    )
     kwargs = dict(
         ingestion=object(),
         contract_master=object(),
@@ -166,18 +161,14 @@ def test_changed_download_config_is_rejected_after_restart(monkeypatch):
         spot_sessions_by_underlying={},
         db=object(),
         catalog=object(),
-        config=base,
+        config=_config(timeframe="1m"),
         batch_size=2,
         job_store=store,
         run_id="run-config",
     )
     batch_runner.run_angelone_cash_future_history_in_batches(**kwargs)
 
-    changed = batch_runner.AngelOneCashFutureRunConfig(
-        interval_ns=60_000_000_000,
-        max_request_ns=86_400_000_000_000,
-        timeframe="5m",
-    )
+    changed = _config(timeframe="5m")
     with pytest.raises(ValueError, match="batch plan changed"):
         batch_runner.run_angelone_cash_future_history_in_batches(
             **{**kwargs, "config": changed}
@@ -188,10 +179,6 @@ def test_changed_download_config_is_rejected_after_restart(monkeypatch):
 def test_invalid_multi_day_window_is_rejected(monkeypatch):
     monkeypatch.setattr(batch_runner, "run_angelone_cash_future_history", lambda **kwargs: FakePipelineResult())
     store = HistoricalJobStore()
-    config = batch_runner.AngelOneCashFutureRunConfig(
-        interval_ns=60_000_000_000,
-        max_request_ns=86_400_000_000_000,
-    )
     with pytest.raises(ValueError, match="start must be before end"):
         batch_runner.run_angelone_cash_future_history_in_batches(
             ingestion=object(),
@@ -203,9 +190,52 @@ def test_invalid_multi_day_window_is_rejected(monkeypatch):
             spot_sessions_by_underlying={},
             db=object(),
             catalog=object(),
-            config=config,
+            config=_config(),
             batch_size=2,
             job_store=store,
             run_id="run-invalid-window",
         )
+    store.close()
+
+
+def test_multi_stock_multi_day_execution_preserves_generator_and_window(monkeypatch):
+    calls = []
+    master_rows = (row for row in ({"symbol": "AAA"}, {"symbol": "BBB"}, {"symbol": "ZZZ"}))
+
+    def fake_run(**kwargs):
+        calls.append(
+            (
+                kwargs["config"].stock_batch_offset,
+                kwargs["start"],
+                kwargs["end"],
+                tuple(kwargs["master_rows"]),
+            )
+        )
+        return FakePipelineResult()
+
+    monkeypatch.setattr(batch_runner, "run_angelone_cash_future_history", fake_run)
+    store = HistoricalJobStore()
+    start = datetime(2026, 10, 1, 9, 15)
+    end = datetime(2026, 10, 3, 15, 30)
+
+    output = batch_runner.run_angelone_cash_future_history_in_batches(
+        ingestion=object(),
+        contract_master=object(),
+        universe=_universe(),
+        master_rows=master_rows,
+        start=start,
+        end=end,
+        spot_sessions_by_underlying={},
+        db=object(),
+        catalog=object(),
+        config=_config(),
+        batch_size=2,
+        job_store=store,
+        run_id="run-multi-day",
+    )
+
+    assert [call[0] for call in calls] == [0, 2]
+    assert all(call[1] == start and call[2] == end for call in calls)
+    assert all(call[3] == (("symbol", "AAA"), ("symbol", "BBB"), ("symbol", "ZZZ")) for call in calls)
+    assert tuple(item.skipped for item in output) == (False, False)
     store.close()
