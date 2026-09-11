@@ -1,6 +1,7 @@
 package com.algotrading.app
 
 import android.app.AlertDialog
+import android.app.DatePickerDialog
 import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
@@ -10,14 +11,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Calendar
 
 class FullFnoBacktestActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
     private lateinit var tvResults: TextView
+    private lateinit var tvGapCalendar: TextView
     private lateinit var btnStart: Button
     private lateinit var btnCancel: Button
     private lateinit var btnLoadMore: Button
     private lateinit var btnPurge: Button
+    private lateinit var btnGapCalendar: Button
     private var jobId: String? = null
     private var nextSequence: Int? = null
     private var loading = false
@@ -31,10 +35,12 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         setContentView(R.layout.activity_full_fno_backtest)
         tvStatus = findViewById(R.id.tvFullFnoStatus)
         tvResults = findViewById(R.id.tvFullFnoResults)
+        tvGapCalendar = findViewById(R.id.tvGapCalendar)
         btnStart = findViewById(R.id.btnFullFnoStart)
         btnCancel = findViewById(R.id.btnFullFnoCancel)
         btnLoadMore = findViewById(R.id.btnFullFnoLoadMore)
         btnPurge = findViewById(R.id.btnFullFnoPurge)
+        btnGapCalendar = findViewById(R.id.btnGapCalendar)
         btnLoadMore.isEnabled = false
         btnCancel.isEnabled = false
         btnPurge.isEnabled = false
@@ -42,6 +48,7 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         btnCancel.setOnClickListener { cancelBacktest() }
         btnLoadMore.setOnClickListener { loadNextPage() }
         btnPurge.setOnClickListener { confirmPurge() }
+        btnGapCalendar.setOnClickListener { openGapCalendar() }
     }
 
     private fun startBacktest() = lifecycleScope.launch(Dispatchers.IO) {
@@ -130,6 +137,51 @@ class FullFnoBacktestActivity : AppCompatActivity() {
             nextSequence = page.next_after_sequence
             btnLoadMore.isEnabled = page.next_after_sequence != null && page.data.isNotEmpty()
             tvStatus.text = "Full-F&O: loaded ${page.data.size} results • total ${page.total} • next ${page.next_after_sequence ?: "END"}"
+        }
+    }
+
+    private fun openGapCalendar() {
+        val today = Calendar.getInstance()
+        DatePickerDialog(
+            this,
+            { _, year, month, day -> loadGapForDate(year, month + 1, day) },
+            today.get(Calendar.YEAR),
+            today.get(Calendar.MONTH),
+            today.get(Calendar.DAY_OF_MONTH),
+        ).show()
+    }
+
+    private fun loadGapForDate(year: Int, month: Int, day: Int) = lifecycleScope.launch(Dispatchers.IO) {
+        val tradingDate = "%04d-%02d-%02d".format(year, month, day)
+        withContext(Dispatchers.Main) {
+            tvGapCalendar.text = "$tradingDate • loading top opening gap…"
+        }
+        try {
+            val response = ApiService.retrofitService.dailyGapCalendar(tradingDate, limit = 10)
+            val top = response.top
+            val text = if (top == null) {
+                "$tradingDate\nNo historical Cash-Future OHLC data found for this date."
+            } else {
+                buildString {
+                    append("$tradingDate • TOP OPENING GAP\n")
+                    append("${top.symbol} • ${top.direction}\n")
+                    append("Gap: ₹${"%.2f".format(top.gap)} (${"%.2f".format(top.gap_percent)}%)\n")
+                    append("Gap × Lot: ₹${"%.2f".format(top.weighted_gap)}\n")
+                    append("Prev Close: ₹${"%.2f".format(top.previous_close)}\n")
+                    append("Open: ₹${"%.2f".format(top.open)}\n")
+                    append("High: ₹${"%.2f".format(top.high)}\n")
+                    append("Low: ₹${"%.2f".format(top.low)}\n")
+                    append("Close: ₹${"%.2f".format(top.close)}\n")
+                    append("Lot Size: ${"%.0f".format(top.lot_size)}\n\n")
+                    append("Top ${response.data.size} stocks:\n")
+                    response.data.forEachIndexed { index, item ->
+                        append("${index + 1}. ${item.symbol} ${item.direction} • Gap ₹${"%.2f".format(item.gap)} × ${"%.0f".format(item.lot_size)} = ₹${"%.2f".format(item.weighted_gap)}\n")
+                    }
+                }
+            }
+            withContext(Dispatchers.Main) { tvGapCalendar.text = text }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) { tvGapCalendar.text = "$tradingDate • Gap calendar failed • ${e.message ?: "API error"}" }
         }
     }
 
