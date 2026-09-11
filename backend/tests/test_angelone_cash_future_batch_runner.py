@@ -6,9 +6,6 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.backtesting import angelone_cash_future_batch_runner as batch_runner
-from app.backtesting.angelone_cash_future_acquisition import (
-    build_angelone_cash_future_acquisition_service,
-)
 from app.backtesting.cash_future_universe import CashFutureFnoUniverse, CashFutureUniverseItem
 from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
 from app.backtesting.historical_catalog import HistoricalCatalog
@@ -62,7 +59,7 @@ def _config(**overrides):
 
 def _session(day: date) -> SessionWindow:
     start = datetime.combine(day, time(9, 15), tzinfo=MARKET_TZ)
-    end = datetime.combine(day, time(9, 17), tzinfo=MARKET_TZ)
+    end = datetime.combine(day, time(9, 16), tzinfo=MARKET_TZ)
     return SessionWindow(int(start.timestamp() * 1_000_000_000), int(end.timestamp() * 1_000_000_000))
 
 
@@ -186,12 +183,14 @@ def test_changed_batch_plan_is_rejected(monkeypatch):
         start=datetime(2026, 10, 1),
         end=datetime(2026, 10, 2),
         spot_sessions_by_underlying={},
-        db=object(),
-        catalog=object(),
         config=_config(),
         batch_size=1,
         job_store=store,
         run_id="run-3",
+        ingestion=object(),
+        contract_master=object(),
+        db=object(),
+        catalog=object(),
     )
     batch_runner.run_angelone_cash_future_history_in_batches(**kwargs)
 
@@ -302,14 +301,13 @@ def test_multi_stock_multi_day_execution_preserves_generator_and_window(monkeypa
     store.close()
 
 
-def test_real_angelone_multi_stock_multi_day_runner_materializes_sqlite(monkeypatch):
+def test_real_angelone_multi_stock_multi_day_runner_materializes_sqlite():
     client = FakeClient()
     auth = FakeAuth(client)
     limiter = FakeLimiter()
     contracts = ContractMasterCatalog()
-    snapshot = date(2026, 10, 1)
     contracts.upsert_snapshot(
-        snapshot,
+        date(2026, 10, 1),
         [
             ContractRecord("NFO", "AAA26OCTFUT", "4001", date(2026, 10, 29), "STOCK_FUTURE", "AAA", 100),
             ContractRecord("NFO", "ZZZ26OCTFUT", "4002", date(2026, 10, 29), "STOCK_FUTURE", "ZZZ", 100),
@@ -332,6 +330,7 @@ def test_real_angelone_multi_stock_multi_day_runner_materializes_sqlite(monkeypa
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     store = HistoricalJobStore()
+    db = Session(engine)
 
     output = batch_runner.run_angelone_cash_future_history_in_batches(
         ingestion=ingestion,
@@ -339,10 +338,10 @@ def test_real_angelone_multi_stock_multi_day_runner_materializes_sqlite(monkeypa
         universe=_universe(),
         master_rows=master_rows,
         start=datetime(2026, 10, 1, 9, 15),
-        end=datetime(2026, 10, 2, 9, 17),
+        end=datetime(2026, 10, 2, 9, 16),
         spot_sessions_by_underlying=sessions,
         future_sessions_by_instrument=future_sessions,
-        db=Session(engine),
+        db=db,
         catalog=catalog,
         config=_config(),
         batch_size=1,
@@ -359,15 +358,14 @@ def test_real_angelone_multi_stock_multi_day_runner_materializes_sqlite(monkeypa
     assert limiter.calls >= 4
     assert len(client.requests) >= 4
 
-    with Session(engine) as db:
-        rows = db.scalars(select(CashFutureHistory)).all()
-
-    assert len(rows) == 4
+    rows = db.scalars(select(CashFutureHistory)).all()
+    assert len(rows) == 8
     assert {row.symbol for row in rows} == {"AAA", "ZZZ"}
     assert {row.contract_month for row in rows} == {"2026-10"}
     assert all(row.cash_price is not None and row.future_price is not None for row in rows)
     assert all(row.future_price > row.cash_price for row in rows)
 
+    db.close()
     store.close()
     contracts.close()
     catalog.close()
