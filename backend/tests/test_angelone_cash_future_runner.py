@@ -38,6 +38,15 @@ def test_runner_config_rejects_invalid_stock_batch_size():
         )
 
 
+def test_runner_config_rejects_negative_stock_batch_offset():
+    with pytest.raises(ValueError, match="stock_batch_offset"):
+        runner.AngelOneCashFutureRunConfig(
+            interval_ns=60_000_000_000,
+            max_request_ns=86_400_000_000_000,
+            stock_batch_offset=-1,
+        )
+
+
 def test_bound_cash_future_universe_selects_sorted_stock_underlyings():
     def item(symbol, token):
         return CashFutureUniverseItem(symbol, "2026-10", token, f"{symbol}26OCT", date(2026, 10, 29), 100)
@@ -51,6 +60,36 @@ def test_bound_cash_future_universe_selects_sorted_stock_underlyings():
 
     assert bounded.stock_underlyings == ("AAA", "BBB")
     assert tuple(item.future_token for item in bounded.stocks) == ("2", "1", "4")
+
+
+def test_bound_cash_future_universe_pages_without_reordering_contracts():
+    def item(symbol, token):
+        return CashFutureUniverseItem(symbol, "2026-10", token, f"{symbol}26OCT", date(2026, 10, 29), 100)
+
+    universe = CashFutureFnoUniverse(
+        stocks=(item("ZZZ", "3"), item("BBB", "2"), item("AAA", "1"), item("CCC", "5")),
+        indices=(item("NIFTY", "9"),),
+    )
+
+    second_batch = runner.bound_cash_future_universe(
+        universe,
+        max_stock_underlyings=2,
+        stock_batch_offset=2,
+    )
+
+    assert second_batch.stock_underlyings == ("CCC", "ZZZ")
+    assert tuple(item.future_token for item in second_batch.stocks) == ("3", "5")
+    assert second_batch.indices == universe.indices
+
+
+def test_bound_cash_future_universe_rejects_negative_offset():
+    universe = CashFutureFnoUniverse(stocks=(), indices=())
+    with pytest.raises(ValueError, match="stock_batch_offset"):
+        runner.bound_cash_future_universe(
+            universe,
+            max_stock_underlyings=2,
+            stock_batch_offset=-1,
+        )
 
 
 def test_runner_authenticates_before_starting_acquisition(monkeypatch):
