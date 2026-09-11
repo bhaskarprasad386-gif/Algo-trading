@@ -26,10 +26,11 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [ ] Add targeted tests: date filtering, BUY/SELL, no-look-ahead, deterministic replay and contract isolation.
 
 ### P1 — ₹1 crore portfolio capital + realistic risk/execution
-- [ ] Default historical/backtest portfolio capital = **₹1,00,00,000**.
-- [ ] Portfolio-level capital ledger across simultaneous symbols/contracts.
-- [ ] Lock required capital/margin on entry and release it on exit.
-- [ ] Prevent over-allocation and record blocked-entry reason/count.
+- [x] Default historical/backtest portfolio capital = **₹1,00,00,000**.
+- [x] Portfolio-level capital ledger primitive supports simultaneous symbol/contract reservations.
+- [x] Lock required capital/margin on entry and release the exact position reservation on exit.
+- [ ] Integrate portfolio ledger into the Cash-Future strategy runner for simultaneous positions.
+- [ ] Prevent over-allocation in the integrated runner and record blocked-entry reason/count.
 - [ ] Mark-to-market unrealized P&L for open positions.
 - [ ] Cumulative realized + unrealized equity curve.
 - [ ] Margin checks and historical forced liquidation/exit validation.
@@ -70,7 +71,7 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [ ] Android compile/tests for Results/replay and later Cash-Future strategy UI.
 - [ ] Full test suite.
 - [ ] Fresh GitHub Actions run verified PASS.
-- [ ] Only after all applicable items pass: Cash-Future milestone marked complete.
+- [ ] Only after all applicable P0–P5 items pass: Cash-Future milestone marked complete.
 
 ## Completed / implemented
 - [x] Historical Cash-Future acquisition foundation.
@@ -97,13 +98,15 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [x] Intraday 1-minute source replay with 15-minute chart / 1-minute stepping.
 - [x] Android Results wiring for selected-date gap ranking, prior larger gaps and replay.
 - [x] Session-aligned 15-minute replay buckets starting at 09:15.
+- [x] First ₹1 crore capital reservation/blocking layer in Cash-Future strategy runner.
+- [x] Reusable portfolio capital ledger for simultaneous symbol/contract reservations.
 
 ## Locked rules
 1. Shorting gap for Results = `High - Open`.
 2. Ranking = `(High - Open) × historical lot size`.
 3. Historical lot size is point-in-time; never use today's lot for an old date.
 4. No weekend/session-outside NSE requests.
-5. No expiry/contract mixing.
+5. No expiry/contract mixing within one position.
 6. No fabricated market data, fills or exits.
 7. Bid/ask mode uses executable sides: BUY at ASK, SELL at BID.
 8. No finer-resolution data may be manufactured from coarser candles.
@@ -117,9 +120,9 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 16. Do not mark work complete without implementation/test evidence.
 
 ## Current checkpoint
-**Next implementation = P0: Historical Cash-Future strategy application + execution core.**
+**Next implementation = P1: integrate the reusable portfolio capital ledger into the Cash-Future strategy runner so simultaneous symbol/contract positions can reserve and release capital independently.**
 
-The implementation must first inspect the current Cash-Future engine, historical data model, execution path, persistence layer and tests, then add the smallest verifiable chunk. Do not jump directly to UI or portfolio features before the P0 backend foundation is sound.
+The integration must preserve existing single-position behavior/tests, keep each position isolated by `(symbol, contract_month)`, prevent over-allocation, and persist blocked-entry information. Do not jump to UI or live broker execution.
 
 ## Completion gate
 Cash-Future is complete only when every applicable P0–P5 item is implemented and tested, or explicitly documented as unavailable because genuine historical data does not exist.
