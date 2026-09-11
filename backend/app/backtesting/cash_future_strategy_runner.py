@@ -1,0 +1,190 @@
+"""Historical Cash-Future strategy application and deterministic execution."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, datetime
+from typing import Callable, Iterable, Mapping, Any
+
+from app.scanner.cash_future_backtest import _executable_spread_profit, _legacy_gap_profit
+from app.scanner.cash_future_history import CashFutureHistoryPoint
+
+
+CashFutureStrategy = Callable[[CashFutureHistoryPoint, tuple[CashFutureHistoryPoint, ...]], str | None]
+
+
+@dataclass(frozen=True)
+class CashFutureStrategyConfig:
+    initial_capital: float = 10_000_000.0
+    execution_model: str = "gap"
+    charges_per_trade: float = 0.0
+    funding_cost_per_trade: float = 0.0
+    start_date: date | None = None
+    end_date: date | None = None
+    contract_month: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.initial_capital <= 0:
+            raise ValueError("initial_capital must be positive")
+        if self.execution_model not in {"gap", "bid_ask"}:
+            raise ValueError("execution_model must be 'gap' or 'bid_ask'")
+        if self.start_date is not None and self.end_date is not None and self.end_date < self.start_date:
+            raise ValueError("end_date cannot be before start_date")
+
+
+@dataclass(frozen=True)
+class CashFutureStrategyRun:
+    strategy_id: str
+    strategy_version: str
+    initial_capital: float
+    final_capital: float
+    net_profit: float
+    signals: tuple[Mapping[str, Any], ...]
+    trades: tuple[Mapping[str, Any], ...]
+    equity_curve: tuple[Mapping[str, Any], ...]
+
+
+def run_cash_future_strategy(
+    points: Iterable[CashFutureHistoryPoint],
+    strategy: CashFutureStrategy,
+    *,
+    strategy_id: str,
+    strategy_version: str = "1",
+    config: CashFutureStrategyConfig | None = None,
+    ledger=None,
+    run_id: str | None = None,
+    strategy_hash: str | None = None,
+) -> CashFutureStrategyRun:
+    """Apply a Cash-Future strategy strictly point-in-time.
+
+    The strategy receives the current point plus an immutable history containing
+    only observations at or before that point. BUY opens the Cash-Future spread
+    (buy cash / sell future); SELL closes it. Contract months cannot be mixed.
+    """
+    if not strategy_id.strip():
+        raise ValueError("strategy_id is required")
+    if not strategy_version.strip():
+        raise ValueError("strategy_version is required")
+    config = config or CashFutureStrategyConfig()
+    ordered = tuple(points)
+    if any(
+        current.timestamp < previous.timestamp
+        for previous, current in zip(ordered, ordered[1:])
+    ):
+        raise ValueError("Cash-Future strategy input must be ordered by timestamp")
+
+    filtered = tuple(
+        point for point in ordered
+        if (config.start_date is None or _point_date(point) >= config.start_date)
+        and (config.end_date is None or _point_date(point) <= config.end_date)
+        and (config.contract_month is None or point.contract_month == config.contract_month)
+    )
+    contracts = {point.contract_month for point in filtered}
+    if len(contracts) > 1:
+        raise ValueError("Cash-Future strategy input contains multiple contract months")
+
+    if ledger is not None:
+        if not run_id or not run_id.strip():
+            raise ValueError("run_id is required when ledger persistence is enabled")
+        ledger.start_run(
+            run_id,
+            strategy_id,
+            strategy_version,
+            config.initial_capital,
+            strategy_hash=strategy_hash,
+            metadata={
+                "domain": "cash_future",
+                "execution_model": config.execution_model,
+                "start_date": config.start_date.isoformat() if config.start_date else None,
+                "end_date": config.end_date.isoformat() if config.end_date else None,
+                "contract_month": config.contract_month,
+            },
+        )
+
+    history: list[CashFutureHistoryPoint] = []
+    signals: list[Mapping[str, Any]] = []
+    trades: list[Mapping[str, Any]] = []
+    equity_curve: list[Mapping[str, Any]] = []
+    entry: CashFutureHistoryPoint | None = None
+    capital = config.initial_capital
+
+    for point in filtered:
+        visible_history = tuple(history + [point])
+        raw_signal = strategy(point, visible_history)
+        action = "NONE" if raw_signal is None else str(raw_signal).upper()
+        if action not in {"BUY", "SELL", "HOLD", "NONE"}:
+            raise ValueError("Cash-Future strategy must return BUY, SELL, HOLD, or NONE")
+
+        signal_record = {
+            "timestamp": point.timestamp.isoformat(),
+            "symbol": point.symbol,
+            "contract_month": point.contract_month,
+            "action": action,
+            "cash_price": point.cash_price,
+            "future_price": point.future_price,
+            "gap": point.gap,
+            "lot_size": point.lot_size,
+        }
+        signals.append(signal_record)
+        if ledger is not None and action not in {"HOLD", "NONE"}:
+            ledger.append_batch((ledger_record(run_id, "signal", point.timestamp, signal_record),))
+
+        if action == "BUY" and entry is None:
+            entry = point
+        elif action == "SELL" and entry is not None:
+            gross = (
+                _legacy_gap_profit(entry, point)
+                if config.execution_model == "gap"
+                else _executable_spread_profit(entry, point)
+            )
+            net = gross - config.charges_per_trade - config.funding_cost_per_trade
+            capital += net
+            trade = {
+                "entry_time": entry.timestamp.isoformat(),
+                "exit_time": point.timestamp.isoformat(),
+                "symbol": entry.symbol,
+                "contract_month": entry.contract_month,
+                "lot_size": entry.lot_size,
+                "gross_profit": gross,
+                "charges": config.charges_per_trade,
+                "funding_cost": config.funding_cost_per_trade,
+                "net_profit": net,
+                "execution_model": config.execution_model,
+            }
+            trades.append(trade)
+            if ledger is not None:
+                ledger.append_batch((ledger_record(run_id, "trade", point.timestamp, trade),))
+            entry = None
+
+        equity_curve.append({"timestamp": point.timestamp.isoformat(), "equity": capital})
+        history.append(point)
+
+    return CashFutureStrategyRun(
+        strategy_id,
+        strategy_version,
+        config.initial_capital,
+        capital,
+        capital - config.initial_capital,
+        tuple(signals),
+        tuple(trades),
+        tuple(equity_curve),
+    )
+
+
+def ledger_record(run_id: str, record_type: str, timestamp: datetime, payload: Mapping[str, Any]):
+    from app.backtesting.ledger import LedgerRecord
+
+    timestamp_ns = int(timestamp.timestamp() * 1_000_000_000)
+    return LedgerRecord(run_id, record_type, timestamp_ns, payload)
+
+
+def _point_date(point: CashFutureHistoryPoint) -> date:
+    timestamp = point.timestamp
+    if isinstance(timestamp, datetime):
+        return timestamp.date()
+    if isinstance(timestamp, date):
+        return timestamp
+    raise ValueError("Cash-Future point timestamp must be a date or datetime")
+
+
+__all__ = ["CashFutureStrategy", "CashFutureStrategyConfig", "CashFutureStrategyRun", "run_cash_future_strategy"]
