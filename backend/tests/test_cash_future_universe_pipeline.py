@@ -15,6 +15,7 @@ from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalReco
 from app.backtesting.historical_ingest import HistoricalFetchRequest
 from app.core.database import Base
 from app.models.cash_future_history import CashFutureHistory
+from app.scanner.cash_future_backtest import BacktestConfig
 
 
 def test_acquisition_result_queue_is_materialized_without_rebuilding_instruments(monkeypatch):
@@ -88,3 +89,58 @@ def test_pipeline_readiness_requires_materialization_and_every_acquisition_compl
         blocked_incomplete.require_backtest_ready()
     with pytest.raises(LookupError, match="backtest blocked"):
         blocked_empty.require_backtest_ready()
+
+
+def test_pipeline_run_backtest_uses_persisted_rows_after_readiness_gate(monkeypatch):
+    complete = SimpleNamespace(complete=True)
+    pipeline = CashFutureUniversePipelineResult(
+        SimpleNamespace(results=(SimpleNamespace(coverage=complete),)),
+        materialized_rows=2,
+    )
+    coverage = object()
+    captured = {}
+
+    monkeypatch.setattr(
+        "app.backtesting.cash_future_universe_pipeline.build_persisted_cash_future_coverage",
+        lambda *args, **kwargs: coverage,
+    )
+
+    def fake_run(db, config, **kwargs):
+        captured.update(kwargs)
+        return {"trade_count": 1, "net_profit": 60.0}
+
+    monkeypatch.setattr(
+        "app.backtesting.cash_future_universe_pipeline.run_persisted_cash_future_backtest",
+        fake_run,
+    )
+
+    config = BacktestConfig(min_entry_gap=8.0, exit_gap=5.0)
+    result = pipeline.run_backtest(
+        object(),
+        config,
+        symbol="ABC",
+        page_size=25,
+    )
+
+    assert result["trade_count"] == 1
+    assert captured["symbol"] == "ABC"
+    assert captured["page_size"] == 25
+    assert captured["coverage_report"] is coverage
+
+
+def test_pipeline_run_backtest_blocks_before_persisted_history_access(monkeypatch):
+    incomplete = CashFutureUniversePipelineResult(
+        SimpleNamespace(results=(SimpleNamespace(coverage=SimpleNamespace(complete=False)),)),
+        materialized_rows=2,
+    )
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("persisted backtest must not run")
+
+    monkeypatch.setattr(
+        "app.backtesting.cash_future_universe_pipeline.run_persisted_cash_future_backtest",
+        fail_if_called,
+    )
+
+    with pytest.raises(LookupError, match="backtest blocked"):
+        incomplete.run_backtest(object(), BacktestConfig())
