@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from app.backtesting.cash_future_backtest_result_ledger import RECORD_TYPE, CashFutureBacktestResultLedger
+from app.backtesting.ledger import BacktestLedger
 from app.scanner.cash_future_backtest import BacktestConfig, run_multi_contract_backtest
 from app.scanner.cash_future_coverage_store import (
     build_persisted_cash_future_coverage,
@@ -69,3 +71,30 @@ def test_persisted_backtest_matches_direct_stream_result(db_session):
     assert persisted["net_profit"] == direct["net_profit"] == 120.0
     assert persisted["invested_capital"] == direct["invested_capital"]
     assert [trade["entry_gap"] for trade in persisted["trades"]] == [10.0, 9.0]
+
+
+def test_persisted_backtest_can_write_results_to_durable_ledger(db_session):
+    points = [
+        make_point(1, "2026-09", 10.0),
+        make_point(2, "2026-09", 4.0),
+    ]
+    save_history_points(db_session, points)
+    config = BacktestConfig(min_entry_gap=8.0, exit_gap=5.0)
+
+    ledger = BacktestLedger()
+    ledger.start_run("cf-persisted", "cash-future", "1", 100_000)
+    writer = CashFutureBacktestResultLedger(ledger, "cf-persisted")
+
+    result = run_persisted_cash_future_backtest(
+        db_session,
+        config,
+        symbol="ABC",
+        page_size=1,
+        result_ledger=writer,
+    )
+
+    records = ledger.records("cf-persisted", RECORD_TYPE)
+    assert result["trade_count"] == 1
+    assert len(records) == 1
+    assert records[0].payload["net_profit"] == 60.0
+    ledger.close()
