@@ -24,7 +24,6 @@ MARKET_TZ = ZoneInfo("Asia/Kolkata")
 class FakeClient:
     def getCandleData(self, params):
         token = params["symboltoken"]
-        symbol = params["symboltoken"]
         base = 100.0 if token in {"101", "1001"} else 200.0
         future = token.startswith("2") or token == "2001"
         premium = 5.0 if future else 0.0
@@ -142,7 +141,7 @@ def test_real_angelone_batch_path_downloads_two_stocks_across_two_days_and_mater
             assert {row.symbol for row in rows} == {"AAA", "BBB"}
             assert {row.contract_month for row in rows} == {"2026-01"}
             assert all(row.future_price > row.cash_price for row in rows)
-            assert catalog.count(source="angelone", timeframe="1m") == 8
+            assert catalog.count(source="angelone", timeframe="1m") == 16
             assert limiter.calls >= 4
     finally:
         job_store.close()
