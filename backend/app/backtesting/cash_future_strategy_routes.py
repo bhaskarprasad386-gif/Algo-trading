@@ -6,12 +6,19 @@ from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
+from app.backtesting.cash_future_historical_loader import (
+    CashFutureHistoricalLoader,
+    CashFutureHistorySelection,
+)
 from app.backtesting.cash_future_strategy_runner import (
     CashFutureStrategyConfig,
     run_cash_future_strategy,
 )
+from app.backtesting.contract_master import ContractMasterCatalog
+from app.backtesting.historical_catalog import HistoricalCatalog
+from app.core.config import settings
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
 router = APIRouter(prefix="/api/v1/backtesting/cash-future", tags=["Cash-Future Backtesting"])
@@ -48,7 +55,24 @@ class StrategyRunRequest(BaseModel):
     charges_per_trade: float = Field(default=0.0, ge=0)
     funding_cost_per_trade: float = Field(default=0.0, ge=0)
     initial_capital: float = Field(default=10_000_000.0, gt=0)
-    points: list[StrategyPointRequest] = Field(min_length=1)
+    points: list[StrategyPointRequest] | None = None
+    spot_instrument: str | None = None
+    exchange: str = "NFO"
+    underlying: str | None = None
+    timeframe: str = "1m"
+    mode: str = Field(default="CURRENT", pattern="^(CURRENT|NEAR)$")
+    source: str = "angelone"
+
+    @model_validator(mode="after")
+    def validate_input_mode(self):
+        if self.points is None:
+            if self.start_date is None or self.end_date is None:
+                raise ValueError("start_date and end_date are required when points are omitted")
+            if not self.spot_instrument or not self.underlying:
+                raise ValueError("spot_instrument and underlying are required when points are omitted")
+        elif not self.points:
+            raise ValueError("points cannot be empty")
+        return self
 
 
 # API-safe built-in strategy registry. The callable runner remains generic;
@@ -61,14 +85,41 @@ def _strategy_registry() -> dict[str, Any]:
     }
 
 
+def _load_points(request: StrategyRunRequest) -> tuple[CashFutureHistoryPoint, ...] | Any:
+    if request.points is not None:
+        return tuple(CashFutureHistoryPoint(**point.model_dump()) for point in request.points)
+
+    assert request.start_date is not None and request.end_date is not None
+    assert request.spot_instrument is not None and request.underlying is not None
+    catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
+    contracts = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
+    try:
+        selection = CashFutureHistorySelection(
+            spot_instrument=request.spot_instrument,
+            exchange=request.exchange,
+            underlying=request.underlying,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            timeframe=request.timeframe,
+            contract_month=request.contract_month,
+            mode=request.mode,
+            source=request.source,
+        )
+        return CashFutureHistoricalLoader(catalog, contracts).iter_points(selection)
+    except Exception:
+        catalog.close()
+        contracts.close()
+        raise
+
+
 @router.post("/strategy-run")
 def strategy_run(request: StrategyRunRequest):
     strategy = _strategy_registry().get(request.strategy_id)
     if strategy is None:
         raise HTTPException(status_code=404, detail=f"unknown Cash-Future strategy: {request.strategy_id}")
 
-    points = tuple(CashFutureHistoryPoint(**point.model_dump()) for point in request.points)
     try:
+        points = _load_points(request)
         result = run_cash_future_strategy(
             points,
             strategy,
@@ -84,8 +135,17 @@ def strategy_run(request: StrategyRunRequest):
                 contract_month=request.contract_month,
             ),
         )
-    except ValueError as exc:
+    except (ValueError, LookupError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        if request.points is None:
+            # The loader's generator is consumed synchronously by the runner.
+            # Close the per-request SQLite handles after execution.
+            try:
+                points.gi_frame.f_locals["self"].catalog.close()
+                points.gi_frame.f_locals["self"].contract_catalog.close()
+            except (AttributeError, KeyError, TypeError):
+                pass
 
     return {
         "status": "success",
