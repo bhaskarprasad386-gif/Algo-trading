@@ -24,6 +24,10 @@ class CashFutureHistoryPoint:
     cash_ask: float | None = None
     future_bid: float | None = None
     future_ask: float | None = None
+    cash_bid_qty: float | None = None
+    cash_ask_qty: float | None = None
+    future_bid_qty: float | None = None
+    future_ask_qty: float | None = None
     charges: float = 0.0
     funding_cost: float = 0.0
     net_profit: float = 0.0
