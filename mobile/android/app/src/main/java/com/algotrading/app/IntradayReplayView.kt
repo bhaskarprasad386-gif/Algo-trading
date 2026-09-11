@@ -48,6 +48,14 @@ class IntradayReplayView @JvmOverloads constructor(
 
     private fun timeOf(value: String?): String = if (value != null && value.length >= 16) value.substring(11, 16) else "--:--"
 
+    private fun sessionBucketMinutes(totalMinutes: Int): Int {
+        val sessionOpen = 9 * 60 + 15
+        val sessionClose = 15 * 60 + 30
+        if (totalMinutes < sessionOpen) return (totalMinutes / 15) * 15
+        if (totalMinutes >= sessionClose) return sessionClose - 15
+        return sessionOpen + ((totalMinutes - sessionOpen) / 15) * 15
+    }
+
     private fun candles(): List<ReplayCandle> {
         val visible = points.take(visibleMinutes)
         if (visible.isEmpty()) return emptyList()
@@ -56,7 +64,7 @@ class IntradayReplayView @JvmOverloads constructor(
             val time = timeOf(p.timestamp)
             val h = time.substringBefore(":").toIntOrNull() ?: 0
             val m = time.substringAfter(":").toIntOrNull() ?: 0
-            val bucket = h * 60 + (m / 15) * 15
+            val bucket = sessionBucketMinutes(h * 60 + m)
             groups.getOrPut(bucket) { mutableListOf() }.add(p)
         }
         return groups.map { (bucket, bars) ->
