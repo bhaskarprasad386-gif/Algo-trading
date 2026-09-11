@@ -38,7 +38,7 @@ class CashFutureUniversePipelineResult:
 
     @property
     def backtest_ready(self) -> bool:
-        """Return whether every acquired underlying is completely materialized and manifested."""
+        """Return whether every acquired request is completely materialized and manifested."""
         acquired_underlyings = tuple(
             sorted(_underlying_from_cash_instrument(result.queue.spot.instrument)
                    for result in self.acquisition.results)
@@ -52,19 +52,19 @@ class CashFutureUniversePipelineResult:
             return False
         if self.coverage_store is None:
             return True
-        requested_instruments = tuple(sorted({
-            request.instrument
+        requested_ranges = tuple(
+            (request.instrument, request.start_ns, request.end_ns)
             for result in self.acquisition.results
             for request in result.queue.all_requests
-        }))
-        return self.coverage_store.is_complete_for_instruments(
+        )
+        return self.coverage_store.is_complete_for_requests(
             source=self.coverage_source,
             timeframe=self.coverage_timeframe,
-            instruments=requested_instruments,
+            requests=requested_ranges,
         )
 
     def require_backtest_ready(self) -> None:
-        """Block backtesting until every acquired underlying is complete and materialized."""
+        """Block backtesting until every acquired request is complete and materialized."""
         if not self.backtest_ready:
             raise LookupError(
                 "Cash-Future historical acquisition/materialization is incomplete; backtest blocked"
