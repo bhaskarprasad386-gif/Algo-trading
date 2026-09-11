@@ -101,3 +101,24 @@ def test_snapshot_rollover_can_be_non_adjacent_in_calendar_but_contiguous_in_ses
         (date(2026, 1, 29), date(2026, 1, 29), "101"),
         (date(2026, 1, 30), date(2026, 2, 2), "102"),
     ]
+
+
+def test_same_contract_across_non_consecutive_sessions_is_one_continuous_segment():
+    sessions = (
+        date(2026, 1, 29),
+        date(2026, 2, 2),
+        date(2026, 2, 3),
+    )
+    segments = build_rollover_segments(
+        _catalog(),
+        exchange="NFO",
+        underlying="SBIN",
+        start=date(2026, 1, 29),
+        end=date(2026, 2, 3),
+        mode="CURRENT",
+        session_days=sessions,
+    )
+    assert len(segments) == 2
+    assert segments[0].future.token == "101"
+    assert segments[1].future.token == "102"
+    assert segments[0].end < segments[1].start
