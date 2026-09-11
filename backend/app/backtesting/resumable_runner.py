@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 
 from app.backtesting.engine import (
     BacktestEngine,
@@ -27,11 +27,12 @@ def run_resumable_events(
     price_field: str = "price",
     chunk_size: int = 500,
 ) -> BacktestResult:
-    """Run checkpointed event chunks while preserving execution state.
+    """Run checkpointed event chunks without materializing the full stream.
 
-    On restart, events before the persisted cursor are replayed into a fresh
-    execution state so an open position and deterministic strategy state are
-    reconstructed before processing the remaining suffix.
+    The input may be a generator or another one-pass iterable. On restart,
+    events through the persisted cursor are replayed into a fresh execution
+    state, then the remaining stream is processed in bounded chunks. Only the
+    current chunk and trades produced by that chunk are held in memory.
     """
     if not run_id.strip():
         raise ValueError("run_id is required")
@@ -40,47 +41,61 @@ def run_resumable_events(
     if not price_field.strip():
         raise ValueError("price_field is required")
 
-    materialized = tuple(events)
     checkpoint = ledger.checkpoint(run_id)
-    start_index = _checkpoint_start_index(materialized, checkpoint)
     state = EventExecutionState(
         capital=engine.config.initial_capital,
         peak_capital=engine.config.initial_capital,
     )
 
-    # Reconstruct the exact execution state that existed at the checkpoint.
-    if start_index:
-        for offset in range(0, start_index, chunk_size):
-            _run_chunk(
-                engine,
-                materialized[offset:offset + chunk_size],
-                strategy,
-                state,
-                price_field=price_field,
-            )
+    stream: Iterator[HistoricalRecord] = iter(events)
+    if checkpoint:
+        found = False
+        replay_chunk: list[HistoricalRecord] = []
+        cursor = checkpoint["cursor"]
+        for record in stream:
+            replay_chunk.append(record)
+            if _cursor(record) == cursor:
+                found = True
+                _run_chunk(engine, replay_chunk, strategy, state, price_field=price_field)
+                break
+            if len(replay_chunk) >= chunk_size:
+                _run_chunk(engine, replay_chunk, strategy, state, price_field=price_field)
+                replay_chunk.clear()
+        if not found:
+            raise ValueError("persisted checkpoint cursor was not found in event stream")
 
-    suffix = materialized[start_index:]
-    if not suffix:
-        return _empty_result(engine, ledger, run_id)
-
+    processed_any = False
     persisted_trades: list = []
-    for offset in range(0, len(suffix), chunk_size):
-        chunk = suffix[offset:offset + chunk_size]
-        trades = _run_chunk(
-            engine, chunk, strategy, state, price_field=price_field
-        )
+    chunk: list[HistoricalRecord] = []
+    for record in stream:
+        chunk.append(record)
+        if len(chunk) < chunk_size:
+            continue
+        trades = _run_chunk(engine, chunk, strategy, state, price_field=price_field)
         if trades:
             ledger.append_next(run_id, trades)
             persisted_trades.extend(trades)
         ledger.save_checkpoint(run_id, _cursor(chunk[-1]), ledger.count(run_id))
+        processed_any = True
+        chunk.clear()
 
-    result = _build_result(
+    if chunk:
+        trades = _run_chunk(engine, chunk, strategy, state, price_field=price_field)
+        if trades:
+            ledger.append_next(run_id, trades)
+            persisted_trades.extend(trades)
+        ledger.save_checkpoint(run_id, _cursor(chunk[-1]), ledger.count(run_id))
+        processed_any = True
+
+    if not processed_any:
+        return _empty_result(engine, ledger, run_id)
+
+    return _build_result(
         engine.config.initial_capital,
         state.capital,
         persisted_trades,
         state.max_drawdown,
     )
-    return result
 
 
 def _run_chunk(
@@ -145,16 +160,6 @@ def _run_chunk(
             trades.append(trade)
             state.open_trade = None
     return tuple(trades)
-
-
-def _checkpoint_start_index(events, checkpoint) -> int:
-    if not checkpoint:
-        return 0
-    cursor = checkpoint["cursor"]
-    for index, record in enumerate(events):
-        if _cursor(record) == cursor:
-            return index + 1
-    raise ValueError("persisted checkpoint cursor was not found in event stream")
 
 
 def _empty_result(engine, ledger, run_id):
