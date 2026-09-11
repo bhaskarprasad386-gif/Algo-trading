@@ -154,13 +154,7 @@ def acquire_and_materialize_cash_future_universe(
     materialized_rows = 0
     materialized_underlyings: list[str] = []
     for result in acquisition.results:
-        # Materialize exactly the requests produced by acquisition, not the
-        # original full universe queue. This prevents a completed manifest range
-        # from being re-materialized/redownloaded during a targeted repair pass.
         underlying = _underlying_from_cash_instrument(result.queue.spot.instrument)
-        acquired_requests = result.plan.requests
-        if not acquired_requests:
-            continue
         job = CashFutureUniverseDownloadJob(
             underlying=underlying,
             spot=result.queue.spot,
@@ -168,7 +162,7 @@ def acquire_and_materialize_cash_future_universe(
         )
         plan = CashFutureUniverseDownloadPlan(
             jobs=(job,),
-            plan=HistoricalSyncPlan(acquired_requests),
+            plan=HistoricalSyncPlan(job.all_requests),
         )
         rows = materialize_cash_future_universe_history(
             db,
