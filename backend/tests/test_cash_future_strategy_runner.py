@@ -7,10 +7,10 @@ from app.backtesting.ledger import BacktestLedger
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
 
-def point(ts, gap, month="SEP", **quotes):
+def point(ts, gap, month="SEP", expiry=date(2026, 9, 30), **quotes):
     return CashFutureHistoryPoint(timestamp=ts, symbol="ABC", contract_month=month,
         cash_price=100.0, future_price=100.0 + gap, gap=gap, gap_pct=gap,
-        lot_size=100, margin_required=10000.0, expiry_date=date(2026, 9, 30), **quotes)
+        lot_size=100, margin_required=10000.0, expiry_date=expiry, **quotes)
 
 
 def test_strategy_applies_only_selected_date_range_and_normalizes_buy_sell():
@@ -94,3 +94,22 @@ def test_strategy_rejects_missing_executable_price_without_fabricating_fill():
     with pytest.raises(ValueError, match="bid_ask execution requires"):
         run_cash_future_strategy([entry, exit_point], strategy, strategy_id="strict-bid-ask",
             config=CashFutureStrategyConfig(execution_model="bid_ask"))
+
+
+def test_strategy_closes_open_position_at_observed_historical_expiry():
+    start = datetime(2026, 9, 29, 10, 0)
+    expiry_point = datetime(2026, 9, 30, 15, 30)
+
+    def strategy(current, history):
+        return "BUY" if current.timestamp == start else "HOLD"
+
+    result = run_cash_future_strategy(
+        [point(start, 10), point(expiry_point, 4)],
+        strategy,
+        strategy_id="expiry-exit",
+    )
+
+    assert len(result.trades) == 1
+    assert result.trades[0]["exit_reason"] == "expiry"
+    assert result.trades[0]["exit_time"] == expiry_point.isoformat()
+    assert result.net_profit == 600.0
