@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 from app.backtesting import angelone_cash_future_runner as runner
 
 
@@ -10,6 +12,14 @@ class FakeAuth:
     def get_client(self):
         self.calls.append("get_client")
         return object()
+
+
+def test_runner_config_rejects_request_window_over_one_day():
+    with pytest.raises(ValueError, match="must not exceed one day"):
+        runner.AngelOneCashFutureRunConfig(
+            interval_ns=60_000_000_000,
+            max_request_ns=86_400_000_000_001,
+        )
 
 
 def test_runner_authenticates_before_starting_acquisition(monkeypatch):
