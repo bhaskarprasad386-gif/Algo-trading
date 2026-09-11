@@ -72,6 +72,13 @@ class BacktestTradeLedger:
         )
         self._db.commit()
 
+    def run_ids(self) -> tuple[str, ...]:
+        """Return durable run identifiers in stable order."""
+        rows = self._db.execute(
+            "SELECT run_id FROM backtest_runs ORDER BY run_id"
+        ).fetchall()
+        return tuple(row[0] for row in rows)
+
     def run_summary(self, run_id: str) -> dict[str, object] | None:
         row = self._db.execute(
             "SELECT * FROM backtest_runs WHERE run_id=?", (run_id,)
