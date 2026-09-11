@@ -83,6 +83,24 @@ def bound_cash_future_universe(
     )
 
 
+def iter_cash_future_stock_batches(
+    universe: CashFutureFnoUniverse,
+    *,
+    batch_size: int,
+) -> Iterable[CashFutureFnoUniverse]:
+    """Yield deterministic, non-overlapping stock batches in symbol order."""
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+
+    ordered = sorted(universe.stock_underlyings)
+    for offset in range(0, len(ordered), batch_size):
+        yield bound_cash_future_universe(
+            universe,
+            max_stock_underlyings=batch_size,
+            stock_batch_offset=offset,
+        )
+
+
 def run_angelone_cash_future_history(
     *,
     ingestion: HistoricalIngestionService,
@@ -153,5 +171,6 @@ def run_angelone_cash_future_history(
 __all__ = [
     "AngelOneCashFutureRunConfig",
     "bound_cash_future_universe",
+    "iter_cash_future_stock_batches",
     "run_angelone_cash_future_history",
 ]
