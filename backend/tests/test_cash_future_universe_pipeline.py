@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from app.backtesting.cash_future_data_quality import CashFutureDataQualityReport
 from app.backtesting.cash_future_download_queue import CashFutureDownloadQueue
 from app.backtesting.cash_future_universe import CashFutureFnoUniverse, CashFutureUniverseItem
 from app.backtesting.cash_future_universe_pipeline import (
@@ -107,7 +108,7 @@ def test_pipeline_readiness_requires_every_acquisition_complete_and_materialized
         blocked_partial.require_backtest_ready()
 
 
-def test_pipeline_run_backtest_uses_persisted_rows_after_readiness_gate(monkeypatch):
+def test_pipeline_run_backtest_passes_quality_report_to_persisted_runner(monkeypatch):
     complete = SimpleNamespace(complete=True)
     queue = SimpleNamespace(spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"))
     pipeline = CashFutureUniversePipelineResult(
@@ -116,11 +117,16 @@ def test_pipeline_run_backtest_uses_persisted_rows_after_readiness_gate(monkeypa
         materialized_underlyings=("ABC",),
     )
     coverage = object()
+    quality = CashFutureDataQualityReport(records_checked=2)
     captured = {}
 
     monkeypatch.setattr(
         "app.backtesting.cash_future_universe_pipeline.build_persisted_cash_future_coverage",
         lambda *args, **kwargs: coverage,
+    )
+    monkeypatch.setattr(
+        "app.backtesting.cash_future_universe_pipeline.audit_persisted_cash_future_data_quality",
+        lambda *args, **kwargs: quality,
     )
 
     def fake_run(db, config, **kwargs):
@@ -132,13 +138,13 @@ def test_pipeline_run_backtest_uses_persisted_rows_after_readiness_gate(monkeypa
         fake_run,
     )
 
-    config = BacktestConfig(min_entry_gap=8.0, exit_gap=5.0)
-    result = pipeline.run_backtest(object(), config, symbol="ABC", page_size=25)
+    result = pipeline.run_backtest(object(), BacktestConfig(min_entry_gap=8.0, exit_gap=5.0), symbol="ABC", page_size=25)
 
     assert result["trade_count"] == 1
     assert captured["symbol"] == "ABC"
     assert captured["page_size"] == 25
     assert captured["coverage_report"] is coverage
+    assert captured["quality_report"] is quality
 
 
 def test_pipeline_run_backtest_blocks_before_persisted_history_access(monkeypatch):
