@@ -123,8 +123,41 @@ class CashFutureCoverageManifestStore:
             rows = conn.execute(query, args).fetchall()
         return tuple(CoverageRange(*row) for row in rows)
 
-    def missing(self, *, source: str, timeframe: str = "1m") -> tuple[CoverageRange, ...]:
-        return tuple(item for item in self.ranges(source=source, timeframe=timeframe) if item.missing_points)
+    def missing(
+        self,
+        *,
+        source: str,
+        timeframe: str = "1m",
+        instrument: str | None = None,
+    ) -> tuple[CoverageRange, ...]:
+        """Return only incomplete persisted ranges for targeted repair."""
+        return tuple(
+            item
+            for item in self.ranges(source=source, timeframe=timeframe, instrument=instrument)
+            if item.missing_points > 0 or not item.complete
+        )
+
+    def repair_plan(
+        self,
+        *,
+        source: str,
+        timeframe: str = "1m",
+        instrument: str | None = None,
+    ) -> tuple[tuple[str, int, int], ...]:
+        """Return durable repair work as ``(instrument,start_ns,end_ns)`` tuples.
+
+        This is deliberately read-only. Acquisition consumes this bounded plan
+        and repairs only incomplete ranges; successful acquisition updates the
+        same rows through ``upsert``.
+        """
+        return tuple(
+            (item.instrument, item.start_ns, item.end_ns)
+            for item in self.missing(
+                source=source,
+                timeframe=timeframe,
+                instrument=instrument,
+            )
+        )
 
 
 __all__ = ["CashFutureCoverageManifestStore"]
