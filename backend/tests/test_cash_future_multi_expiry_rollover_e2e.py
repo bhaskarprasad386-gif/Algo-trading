@@ -1,5 +1,6 @@
 from datetime import date, time
 
+from app.backtesting.continuous_futures import build_continuous_futures_series_from_catalog
 from app.backtesting.continuous_futures_acquisition import acquire_continuous_futures_history
 from app.backtesting.fno_rollover import FNORolloverWindow
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
@@ -62,4 +63,21 @@ def test_multi_expiry_rollover_downloads_each_contract_and_persists_to_sqlite(tm
     reopened = HistoricalCatalog(catalog_path)
     for token in ("101", "102", "103"):
         assert reopened.count(source="fake", instrument=f"NFO:{token}", timeframe="1m") == 2
+
+    continuous = build_continuous_futures_series_from_catalog(
+        reopened,
+        windows,
+        source="fake",
+        timeframe="1m",
+    )
+    assert [item.contract_token for item in continuous] == ["101", "101", "102", "102", "103", "103"]
+    assert [item.record.instrument for item in continuous] == [
+        "NFO:101",
+        "NFO:101",
+        "NFO:102",
+        "NFO:102",
+        "NFO:103",
+        "NFO:103",
+    ]
+    assert len({item.timestamp_ns for item in continuous}) == len(continuous)
     reopened.close()
