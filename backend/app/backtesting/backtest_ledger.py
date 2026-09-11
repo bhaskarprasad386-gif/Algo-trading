@@ -82,6 +82,16 @@ class BacktestTradeLedger:
                 "win_rate", "expectancy", "sharpe_ratio", "sortino_ratio", "max_drawdown", "cagr")
         return dict(zip(keys, row))
 
+    def next_sequence(self, run_id: str) -> int:
+        """Return the next unused trade sequence for a run."""
+        if not run_id.strip():
+            raise ValueError("run_id is required")
+        row = self._db.execute(
+            "SELECT COALESCE(MAX(sequence) + 1, 0) FROM backtest_trades WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        return int(row[0])
+
     def append(self, run_id: str, sequence: int, trades: Iterable[BacktestTrade]) -> int:
         if not run_id.strip() or sequence < 0:
             raise ValueError("run_id is required and sequence cannot be negative")
