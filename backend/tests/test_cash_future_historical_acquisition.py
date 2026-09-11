@@ -7,6 +7,7 @@ from app.backtesting.cash_future_download_queue import build_rollover_download_q
 from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 from app.backtesting.historical_ingest import HistoricalIngestionService
+from app.backtesting.historical_job_store import HistoricalJobStore
 from app.backtesting.provider_retry import ProviderRetryPolicy
 from app.backtesting.session_gap_planner import SessionWindow
 
@@ -334,3 +335,29 @@ def test_gap_repair_crosses_expiry_with_exact_historical_tokens(tmp_path):
     assert {r.instrument for r in future_requests} == {"NFO:102:SBINFEB"}
     assert all(r.start_ns >= feb_session.start_ns for r in future_requests)
     assert all(r.end_ns <= feb_session.end_ns for r in future_requests)
+
+
+def test_durable_rollover_gap_repair_reuses_completed_plan_without_redownloading(tmp_path):
+    service, history, source = _service(tmp_path)
+    session = _window()
+    job_store = HistoricalJobStore(tmp_path / "jobs.db")
+    future_sessions = {"NFO:101:SBINJAN": (session,), "NFO:102:SBINFEB": (session,)}
+    kwargs = dict(
+        spot_instrument="NSE:3045:SBIN", exchange="NFO", underlying="SBIN",
+        start=datetime(2026, 1, 29, tzinfo=timezone.utc),
+        end=datetime(2026, 1, 29, 0, 3, tzinfo=timezone.utc),
+        spot_sessions=(session,), future_sessions=future_sessions,
+        timeframe="1m", mode="BOTH", retry_attempts=1,
+        job_store=job_store, job_id="rollover-gap", run_id="run-rollover-gap",
+    )
+    first = service.acquire(**kwargs)
+    first_request_count = len(source.requests)
+    assert first.plan.requests == ()
+    assert first.execution.completed_chunks > 0
+
+    restarted = HistoricalJobStore(tmp_path / "jobs.db")
+    second = service.acquire(**{**kwargs, "job_store": restarted})
+    assert second.plan.requests == ()
+    assert len(source.requests) == first_request_count
+    restarted.close()
+    job_store.close()
