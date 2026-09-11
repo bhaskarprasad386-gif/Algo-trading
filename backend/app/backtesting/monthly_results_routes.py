@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from calendar import monthrange
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
@@ -53,123 +53,105 @@ def _daily_rows(db: Session, start: date, end: date, symbol: str | None = None, 
     return [dict(row) for row in db.execute(sql, params).mappings().all()]
 
 
-@router.get("/monthly-gap")
-def monthly_gap_search(
-    year: int = Query(..., ge=2000, le=2100),
-    month: int = Query(..., ge=1, le=12),
-    mode: str = Query("opening", pattern="^(opening|shorting)$"),
+def _gap_payload(row: dict, mode: str) -> dict:
+    lot = float(row["lot_size"] or 0)
+    if mode == "shorting":
+        gap = float(row["high"]) - float(row["open"])
+        gap_percent = gap / float(row["open"]) * 100.0 if row["open"] else 0.0
+    else:
+        previous = row["previous_close"]
+        gap = float(row["open"]) - float(previous) if previous is not None else 0.0
+        gap_percent = gap / float(previous) * 100.0 if previous else 0.0
+    return {
+        "trading_date": row["trading_date"], "symbol": row["symbol"],
+        "direction": "UP" if gap > 0 else "DOWN" if gap < 0 else "FLAT",
+        "gap": gap, "gap_percent": gap_percent, "weighted_gap": gap * lot,
+        "previous_close": row["previous_close"] or 0.0, "open": row["open"], "high": row["high"],
+        "low": row["low"], "close": row["close"], "lot_size": row["lot_size"],
+        "contract_month": row["contract_month"], "instrument_key": row["instrument_key"],
+    }
+
+
+@router.get("/date-gap")
+def date_gap_ranking(
+    trading_date: date = Query(...),
+    mode: str = Query("shorting", pattern="^(opening|shorting)$"),
     instrument_type: str = Query("STOCK"),
     symbol: str | None = Query(None),
     contract_month: str | None = Query(None),
+    limit: int = Query(200, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
-    start = date(year, month, 1)
-    end = date(year, month, monthrange(year, month)[1])
+    rows = _daily_rows(db, trading_date, trading_date, symbol=symbol, instrument_type=instrument_type)
+    payload = [_gap_payload(row, mode) for row in rows if row["lot_size"] and (not contract_month or row["contract_month"] == contract_month)]
+    payload.sort(key=lambda item: (item["weighted_gap"], item["symbol"]), reverse=True)
+    payload = payload[:limit]
+    if not payload:
+        raise HTTPException(status_code=404, detail="no historical OHLC rows found for the requested date")
+    return {"status": "success", "trading_date": trading_date, "mode": mode, "instrument_type": instrument_type.upper(), "count": len(payload), "top": payload[0], "data": payload}
+
+
+@router.get("/monthly-gap")
+def monthly_gap_search(
+    year: int = Query(..., ge=2000, le=2100), month: int = Query(..., ge=1, le=12),
+    mode: str = Query("opening", pattern="^(opening|shorting)$"), instrument_type: str = Query("STOCK"),
+    symbol: str | None = Query(None), contract_month: str | None = Query(None), db: Session = Depends(get_db),
+):
+    start = date(year, month, 1); end = date(year, month, monthrange(year, month)[1])
     rows = _daily_rows(db, start, end, symbol=symbol, instrument_type=instrument_type)
     candidates = []
     for row in rows:
-        if contract_month and row["contract_month"] != contract_month:
-            continue
-        if not row["lot_size"]:
-            continue
+        if contract_month and row["contract_month"] != contract_month: continue
+        if not row["lot_size"]: continue
         if mode == "opening":
-            if row["previous_close"] is None:
-                continue
+            if row["previous_close"] is None: continue
             gap = float(row["open"]) - float(row["previous_close"])
             gap_value = abs(gap) * float(row["lot_size"])
         else:
             gap = float(row["high"]) - float(row["open"])
             gap_value = gap * float(row["lot_size"])
         candidates.append((gap_value, row["trading_date"], row["symbol"], gap, row))
-    if not candidates:
-        raise HTTPException(status_code=404, detail="no historical OHLC rows found for the requested month")
-    top = max(candidates, key=lambda x: (x[0], x[1], x[2]))
-    _, trading_date, symbol_name, gap, row = top
-    return {
-        "status": "success", "month": f"{year:04d}-{month:02d}", "mode": mode,
-        "instrument_type": instrument_type.upper(), "result": {
-            "trading_date": trading_date, "symbol": symbol_name, "gap": gap,
-            "gap_value": top[0], "open": row["open"], "high": row["high"], "low": row["low"],
-            "close": row["close"], "lot_size": row["lot_size"], "previous_close": row["previous_close"],
-            "contract_month": row["contract_month"],
-        },
-    }
+    if not candidates: raise HTTPException(status_code=404, detail="no historical OHLC rows found for the requested month")
+    top = max(candidates, key=lambda x: (x[0], x[1], x[2])); _, trading_date, symbol_name, gap, row = top
+    return {"status":"success","month":f"{year:04d}-{month:02d}","mode":mode,"instrument_type":instrument_type.upper(),"result":{"trading_date":trading_date,"symbol":symbol_name,"gap":gap,"gap_value":top[0],"open":row["open"],"high":row["high"],"low":row["low"],"close":row["close"],"lot_size":row["lot_size"],"previous_close":row["previous_close"],"contract_month":row["contract_month"]}}
 
 
 @router.get("/monthly-graph")
 def monthly_graph(
-    symbol: str = Query(...),
-    year: int = Query(..., ge=2000, le=2100),
-    month: int = Query(..., ge=1, le=12),
-    instrument_type: str = Query("STOCK"),
-    contract_month: str | None = Query(None),
-    db: Session = Depends(get_db),
+    symbol: str = Query(...), year: int = Query(..., ge=2000, le=2100), month: int = Query(..., ge=1, le=12),
+    instrument_type: str = Query("STOCK"), contract_month: str | None = Query(None), db: Session = Depends(get_db),
 ):
-    start = date(year, month, 1)
-    end = date(year, month, monthrange(year, month)[1])
+    start = date(year, month, 1); end = date(year, month, monthrange(year, month)[1])
     rows = _daily_rows(db, start, end, symbol=symbol, instrument_type=instrument_type)
     rows = [r for r in rows if contract_month is None or r["contract_month"] == contract_month]
-    if not rows:
-        raise HTTPException(status_code=404, detail="no historical OHLC rows found for the requested symbol/month")
-    return {
-        "status": "success", "symbol": symbol.strip().upper(), "month": f"{year:04d}-{month:02d}",
-        "instrument_type": instrument_type.upper(), "contract_month": contract_month,
-        "count": len(rows),
-        "series": [{"trading_date": r["trading_date"], "open": r["open"], "high": r["high"], "low": r["low"],
-                    "close": r["close"], "lot_size": r["lot_size"], "contract_month": r["contract_month"]} for r in rows],
-    }
+    if not rows: raise HTTPException(status_code=404, detail="no historical OHLC rows found for the requested symbol/month")
+    return {"status":"success","symbol":symbol.strip().upper(),"month":f"{year:04d}-{month:02d}","instrument_type":instrument_type.upper(),"contract_month":contract_month,"count":len(rows),"series":[{"trading_date":r["trading_date"],"open":r["open"],"high":r["high"],"low":r["low"],"close":r["close"],"lot_size":r["lot_size"],"contract_month":r["contract_month"]} for r in rows]}
 
 
 @router.get("/monthly-symbols")
-def monthly_symbols(
-    year: int = Query(..., ge=2000, le=2100), month: int = Query(..., ge=1, le=12),
-    instrument_type: str = Query("STOCK"), db: Session = Depends(get_db),
-):
-    start = date(year, month, 1)
-    end = date(year, month, monthrange(year, month)[1])
+def monthly_symbols(year: int = Query(..., ge=2000, le=2100), month: int = Query(..., ge=1, le=12), instrument_type: str = Query("STOCK"), db: Session = Depends(get_db)):
+    start = date(year, month, 1); end = date(year, month, monthrange(year, month)[1])
     rows = _daily_rows(db, start, end, instrument_type=instrument_type)
     symbols = sorted({r["symbol"] for r in rows})
-    return {"status": "success", "month": f"{year:04d}-{month:02d}", "instrument_type": instrument_type.upper(), "symbols": symbols, "count": len(symbols)}
+    return {"status":"success","month":f"{year:04d}-{month:02d}","instrument_type":instrument_type.upper(),"symbols":symbols,"count":len(symbols)}
 
 
 @router.get("/intraday-replay")
 def intraday_replay(
-    trading_date: date = Query(...),
-    symbol: str = Query(...),
-    instrument_type: str = Query("STOCK"),
-    contract_month: str | None = Query(None),
-    interval_minutes: int = Query(1, ge=1, le=60),
-    db: Session = Depends(get_db),
+    trading_date: date = Query(...), symbol: str = Query(...), instrument_type: str = Query("STOCK"),
+    contract_month: str | None = Query(None), interval_minutes: int = Query(1, ge=1, le=60), db: Session = Depends(get_db),
 ):
     """Return one-minute source bars for a date; Android replays them into 15m candles."""
-    params: dict[str, object] = {
-        "start": trading_date.isoformat(),
-        "end": (trading_date + timedelta(days=1)).isoformat(),
-        "symbol": symbol.strip().upper(),
-        "instrument_type": instrument_type.upper(),
-    }
+    params: dict[str, object] = {"start": trading_date.isoformat(), "end": (trading_date + timedelta(days=1)).isoformat(), "symbol": symbol.strip().upper(), "instrument_type": instrument_type.upper()}
     contract_filter = ""
     if contract_month:
-        contract_filter = " AND contract_month = :contract_month"
-        params["contract_month"] = contract_month
-    sql = text(
-        """
+        contract_filter = " AND contract_month = :contract_month"; params["contract_month"] = contract_month
+    sql = text("""
         SELECT timestamp, open, high, low, close, volume, oi, lot_size, contract_month, instrument_key
         FROM historical_market_bars
         WHERE timestamp >= :start AND timestamp < :end
-          AND upper(symbol) = :symbol
-          AND upper(instrument_type) = :instrument_type
-        """ + contract_filter + """
-        ORDER BY timestamp ASC, instrument_key ASC
-        """
-    )
+          AND upper(symbol) = :symbol AND upper(instrument_type) = :instrument_type
+    """ + contract_filter + " ORDER BY timestamp ASC, instrument_key ASC")
     rows = [dict(row) for row in db.execute(sql, params).mappings().all()]
-    if not rows:
-        raise HTTPException(status_code=404, detail="no intraday historical data found for the requested date/symbol")
-    return {
-        "status": "success", "trading_date": trading_date, "symbol": symbol.strip().upper(),
-        "instrument_type": instrument_type.upper(), "contract_month": contract_month,
-        "source_interval_minutes": interval_minutes, "chart_interval_minutes": 15,
-        "count": len(rows),
-        "series": rows,
-    }
+    if not rows: raise HTTPException(status_code=404, detail="no intraday historical data found for the requested date/symbol")
+    return {"status":"success","trading_date":trading_date,"symbol":symbol.strip().upper(),"instrument_type":instrument_type.upper(),"contract_month":contract_month,"source_interval_minutes":interval_minutes,"chart_interval_minutes":15,"count":len(rows),"series":rows}
