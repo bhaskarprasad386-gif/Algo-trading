@@ -25,17 +25,14 @@ def _naive_ist(value: datetime) -> datetime:
 def save_history_point(db: Session, point: CashFutureHistoryPoint, expiry_date: date | None = None) -> CashFutureHistory:
     """Insert or update one observation by symbol/contract/timestamp."""
     timestamp = _naive_ist(point.timestamp)
-    existing = db.scalar(
-        select(CashFutureHistory).where(
-            CashFutureHistory.symbol == point.symbol.upper(),
-            CashFutureHistory.contract_month == point.contract_month,
-            CashFutureHistory.timestamp == timestamp,
-        )
-    )
+    existing = db.scalar(select(CashFutureHistory).where(
+        CashFutureHistory.symbol == point.symbol.upper(),
+        CashFutureHistory.contract_month == point.contract_month,
+        CashFutureHistory.timestamp == timestamp,
+    ))
     if existing is None:
         existing = CashFutureHistory(symbol=point.symbol.upper(), contract_month=point.contract_month, timestamp=timestamp)
         db.add(existing)
-
     _apply_point(existing, point, expiry_date)
     db.commit()
     db.refresh(existing)
@@ -57,6 +54,10 @@ def _apply_point(existing: CashFutureHistory, point: CashFutureHistoryPoint, exp
     existing.cash_ask = point.cash_ask
     existing.future_bid = point.future_bid
     existing.future_ask = point.future_ask
+    existing.cash_bid_qty = point.cash_bid_qty
+    existing.cash_ask_qty = point.cash_ask_qty
+    existing.future_bid_qty = point.future_bid_qty
+    existing.future_ask_qty = point.future_ask_qty
     existing.charges = point.charges
     existing.funding_cost = point.funding_cost
     existing.net_profit = point.net_profit
@@ -68,31 +69,20 @@ def _apply_point(existing: CashFutureHistory, point: CashFutureHistoryPoint, exp
 
 
 def save_history_points(db: Session, points: Iterable[CashFutureHistoryPoint]) -> int:
-    """Persist a bounded batch atomically and return the number of observations processed.
-
-    The caller controls batch size, so historical acquisition can stream large
-    datasets without retaining a full period in memory. Existing identities are
-    updated in-place, making retries idempotent.
-    """
+    """Persist a bounded batch atomically and return the number of observations processed."""
     batch = tuple(points)
     if not batch:
         return 0
     try:
         for point in batch:
             timestamp = _naive_ist(point.timestamp)
-            existing = db.scalar(
-                select(CashFutureHistory).where(
-                    CashFutureHistory.symbol == point.symbol.upper(),
-                    CashFutureHistory.contract_month == point.contract_month,
-                    CashFutureHistory.timestamp == timestamp,
-                )
-            )
+            existing = db.scalar(select(CashFutureHistory).where(
+                CashFutureHistory.symbol == point.symbol.upper(),
+                CashFutureHistory.contract_month == point.contract_month,
+                CashFutureHistory.timestamp == timestamp,
+            ))
             if existing is None:
-                existing = CashFutureHistory(
-                    symbol=point.symbol.upper(),
-                    contract_month=point.contract_month,
-                    timestamp=timestamp,
-                )
+                existing = CashFutureHistory(symbol=point.symbol.upper(), contract_month=point.contract_month, timestamp=timestamp)
                 db.add(existing)
             _apply_point(existing, point)
         db.commit()
@@ -112,17 +102,16 @@ def read_history(db: Session, symbol: str, contract_month: str, start: datetime 
     if end is not None:
         stmt = stmt.where(CashFutureHistory.timestamp <= _naive_ist(end))
     rows = db.scalars(stmt.order_by(CashFutureHistory.timestamp)).all()
-    return [
-        CashFutureHistoryPoint(
-            timestamp=r.timestamp, symbol=r.symbol, contract_month=r.contract_month,
-            cash_price=r.cash_price, future_price=r.future_price, gap=r.gap, gap_pct=r.gap_pct,
-            lot_size=r.lot_size, margin_required=r.margin_required, volume=r.volume, oi=r.oi,
-            cash_bid=r.cash_bid, cash_ask=r.cash_ask, future_bid=r.future_bid, future_ask=r.future_ask,
-            charges=r.charges, funding_cost=r.funding_cost, net_profit=r.net_profit,
-            roi_pct=r.roi_pct, expiry_date=r.expiry_date,
-        )
-        for r in rows
-    ]
+    return [CashFutureHistoryPoint(
+        timestamp=r.timestamp, symbol=r.symbol, contract_month=r.contract_month,
+        cash_price=r.cash_price, future_price=r.future_price, gap=r.gap, gap_pct=r.gap_pct,
+        lot_size=r.lot_size, margin_required=r.margin_required, volume=r.volume, oi=r.oi,
+        cash_bid=r.cash_bid, cash_ask=r.cash_ask, future_bid=r.future_bid, future_ask=r.future_ask,
+        cash_bid_qty=r.cash_bid_qty, cash_ask_qty=r.cash_ask_qty,
+        future_bid_qty=r.future_bid_qty, future_ask_qty=r.future_ask_qty,
+        charges=r.charges, funding_cost=r.funding_cost, net_profit=r.net_profit,
+        roi_pct=r.roi_pct, expiry_date=r.expiry_date,
+    ) for r in rows]
 
 
 def find_expiry_close(db: Session, symbol: str, contract_month: str, expiry_date: date) -> dict | None:
