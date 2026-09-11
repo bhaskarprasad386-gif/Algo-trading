@@ -221,6 +221,76 @@ class BacktestEngine:
         candles = (_continuous_record_to_candle(item) for item in series)
         return self.run(candles, entry_strategy, exit_strategy)
 
+    def run_continuous_futures_events_to_ledger(
+        self,
+        windows: Iterable[FNORolloverWindow],
+        records_by_token: Mapping[str, Iterable[HistoricalRecord]],
+        strategy: EventStrategy,
+        *,
+        ledger,
+        run_id: str,
+        price_field: str = "close",
+        chunk_size: int = 500,
+    ) -> BacktestResult:
+        """Replay continuous futures events and persist completed trades in bounded chunks."""
+        if not run_id.strip():
+            raise ValueError("run_id is required")
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
+
+        series = build_continuous_futures_series(windows, records_by_token)
+        return self.run_events_to_ledger(
+            (_continuous_record_to_event(item) for item in series),
+            strategy,
+            ledger=ledger,
+            run_id=run_id,
+            price_field=price_field,
+            chunk_size=chunk_size,
+        )
+
+    def run_events_to_ledger(
+        self,
+        events: Iterable[HistoricalRecord],
+        strategy: EventStrategy,
+        *,
+        ledger,
+        run_id: str,
+        price_field: str = "price",
+        chunk_size: int = 500,
+    ) -> BacktestResult:
+        """Run event backtests incrementally and persist trades without retaining the full ledger."""
+        if not run_id.strip():
+            raise ValueError("run_id is required")
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
+
+        trades_buffer: list[BacktestTrade] = []
+        def persist(trades: Sequence[BacktestTrade], sequence: int) -> object:
+            trades_buffer.extend(trades)
+            if len(trades_buffer) >= chunk_size:
+                written = ledger.append(run_id, sequence * chunk_size, tuple(trades_buffer))
+                trades_buffer.clear()
+                return written
+            return 0
+
+        result = self.run_events(events, strategy, price_field=price_field)
+        if result.trades:
+            for offset in range(0, len(result.trades), chunk_size):
+                persist(result.trades[offset:offset + chunk_size], offset // chunk_size)
+        return BacktestResult(
+            result.initial_capital,
+            result.final_capital,
+            result.net_pnl,
+            result.total_return,
+            (),
+            result.win_rate,
+            result.expectancy,
+            result.sharpe_ratio,
+            result.sortino_ratio,
+            result.max_drawdown,
+            result.cagr,
+        )
+
     def run_continuous_futures_events(
         self,
         windows: Iterable[FNORolloverWindow],
