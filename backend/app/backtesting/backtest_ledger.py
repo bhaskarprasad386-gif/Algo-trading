@@ -114,6 +114,13 @@ class BacktestTradeLedger:
         self._db.commit()
         return len(rows)
 
+    def append_next(self, run_id: str, trades: Iterable[BacktestTrade]) -> int:
+        """Append trades at the next unused run-local sequence."""
+        rows = tuple(trades)
+        if not rows:
+            return 0
+        return self.append(run_id, self.next_sequence(run_id), rows)
+
     def count(self, run_id: str) -> int:
         return int(self._db.execute(
             "SELECT COUNT(*) FROM backtest_trades WHERE run_id=?", (run_id,)).fetchone()[0])
