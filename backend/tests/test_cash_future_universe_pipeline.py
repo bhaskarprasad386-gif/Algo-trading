@@ -1,12 +1,16 @@
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.backtesting.cash_future_download_queue import CashFutureDownloadQueue
 from app.backtesting.cash_future_universe import CashFutureFnoUniverse, CashFutureUniverseItem
-from app.backtesting.cash_future_universe_pipeline import acquire_and_materialize_cash_future_universe
+from app.backtesting.cash_future_universe_pipeline import (
+    CashFutureUniversePipelineResult,
+    acquire_and_materialize_cash_future_universe,
+)
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 from app.backtesting.historical_ingest import HistoricalFetchRequest
 from app.core.database import Base
@@ -57,3 +61,30 @@ def test_acquisition_result_queue_is_materialized_without_rebuilding_instruments
     assert rows[0].cash_price == 100.0
     assert rows[0].future_price == 105.0
     catalog.close()
+
+
+def test_pipeline_readiness_requires_materialization_and_every_acquisition_complete():
+    complete = SimpleNamespace(complete=True)
+    incomplete = SimpleNamespace(complete=False)
+
+    ready = CashFutureUniversePipelineResult(
+        SimpleNamespace(results=(SimpleNamespace(coverage=complete),)),
+        materialized_rows=2,
+    )
+    blocked_incomplete = CashFutureUniversePipelineResult(
+        SimpleNamespace(results=(SimpleNamespace(coverage=incomplete),)),
+        materialized_rows=2,
+    )
+    blocked_empty = CashFutureUniversePipelineResult(
+        SimpleNamespace(results=(SimpleNamespace(coverage=complete),)),
+        materialized_rows=0,
+    )
+
+    assert ready.backtest_ready is True
+    ready.require_backtest_ready()
+    assert blocked_incomplete.backtest_ready is False
+    assert blocked_empty.backtest_ready is False
+    with pytest.raises(LookupError, match="backtest blocked"):
+        blocked_incomplete.require_backtest_ready()
+    with pytest.raises(LookupError, match="backtest blocked"):
+        blocked_empty.require_backtest_ready()
