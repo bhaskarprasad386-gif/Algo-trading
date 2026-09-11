@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     BACKTEST_CONTRACT_MASTER_AUTO_SYNC: bool = True
     BACKTEST_CONTRACT_MASTER_SYNC_INTERVAL_SECONDS: int = 86400
 
+    # Durable historical strategy-run ledger
+    BACKTEST_LEDGER_DB: str = "./backtest_strategy_ledger.sqlite3"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
