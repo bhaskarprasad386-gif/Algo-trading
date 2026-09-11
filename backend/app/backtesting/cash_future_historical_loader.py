@@ -68,6 +68,15 @@ def _optional_price(payload: dict, key: str) -> float | None:
     return price if price > 0 else None
 
 
+def _optional_quantity(payload: dict, *keys: str) -> float | None:
+    for key in keys:
+        value = payload.get(key)
+        if value is not None:
+            quantity = float(value)
+            return quantity if quantity >= 0 else None
+    return None
+
+
 def _datetime_from_ns(timestamp_ns: int) -> datetime:
     return datetime.fromtimestamp(timestamp_ns / 1_000_000_000, tz=timezone.utc).astimezone(MARKET_TZ)
 
@@ -132,6 +141,10 @@ def _merge_pair(
             cash_ask=_optional_price(cash_payload, "ask"),
             future_bid=_optional_price(future_payload, "bid"),
             future_ask=_optional_price(future_payload, "ask"),
+            cash_bid_qty=_optional_quantity(cash_payload, "bid_qty", "bid_quantity", "buy_quantity"),
+            cash_ask_qty=_optional_quantity(cash_payload, "ask_qty", "ask_quantity", "sell_quantity"),
+            future_bid_qty=_optional_quantity(future_payload, "bid_qty", "bid_quantity", "buy_quantity"),
+            future_ask_qty=_optional_quantity(future_payload, "ask_qty", "ask_quantity", "sell_quantity"),
             charges=float(future_payload.get("charges", 0.0) or 0.0),
             funding_cost=float(future_payload.get("funding_cost", 0.0) or 0.0),
             expiry_date=contract.expiry,
