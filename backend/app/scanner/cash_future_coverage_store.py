@@ -12,6 +12,7 @@ from app.models.cash_future_history import CashFutureHistory
 from app.scanner.cash_future_backtest import BacktestConfig, run_multi_contract_backtest_streaming
 from app.scanner.cash_future_coverage import CashFutureCoverageReport, build_cash_future_coverage_report
 from app.scanner.cash_future_history import CashFutureHistoryPoint
+from app.backtesting.cash_future_backtest_result_ledger import CashFutureBacktestResultLedger
 
 
 def iter_persisted_cash_future_points(
@@ -101,9 +102,10 @@ def run_persisted_cash_future_backtest(
     start: datetime | None = None,
     end: datetime | None = None,
     page_size: int = 1000,
+    result_ledger: CashFutureBacktestResultLedger | None = None,
 ) -> dict:
-    """Run Cash-Future backtest directly from persisted history in bounded pages."""
-    return run_multi_contract_backtest_streaming(
+    """Run Cash-Future backtest from persisted history and optionally persist trades."""
+    result = run_multi_contract_backtest_streaming(
         iter_persisted_cash_future_points(
             db,
             symbol=symbol,
@@ -114,6 +116,9 @@ def run_persisted_cash_future_backtest(
         ),
         config,
     )
+    if result_ledger is not None:
+        result_ledger.append_many(result["trades"])
+    return result
 
 
 __all__ = [
