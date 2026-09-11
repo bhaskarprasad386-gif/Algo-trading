@@ -56,6 +56,7 @@ def test_acquisition_result_queue_is_materialized_without_rebuilding_instruments
         rows = db.scalars(select(CashFutureHistory)).all()
 
     assert result.materialized_rows == 1
+    assert result.materialized_underlyings == ("ABC",)
     assert len(rows) == 1
     assert rows[0].symbol == "ABC"
     assert rows[0].contract_month == "2026-10"
@@ -64,38 +65,55 @@ def test_acquisition_result_queue_is_materialized_without_rebuilding_instruments
     catalog.close()
 
 
-def test_pipeline_readiness_requires_materialization_and_every_acquisition_complete():
+def test_pipeline_readiness_requires_every_acquisition_complete_and_materialized():
     complete = SimpleNamespace(complete=True)
     incomplete = SimpleNamespace(complete=False)
+    queue = SimpleNamespace(spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"))
 
     ready = CashFutureUniversePipelineResult(
-        SimpleNamespace(results=(SimpleNamespace(coverage=complete),)),
+        SimpleNamespace(results=(SimpleNamespace(coverage=complete, queue=queue),)),
         materialized_rows=2,
+        materialized_underlyings=("ABC",),
     )
     blocked_incomplete = CashFutureUniversePipelineResult(
-        SimpleNamespace(results=(SimpleNamespace(coverage=incomplete),)),
+        SimpleNamespace(results=(SimpleNamespace(coverage=incomplete, queue=queue),)),
         materialized_rows=2,
+        materialized_underlyings=("ABC",),
     )
     blocked_empty = CashFutureUniversePipelineResult(
-        SimpleNamespace(results=(SimpleNamespace(coverage=complete),)),
+        SimpleNamespace(results=(SimpleNamespace(coverage=complete, queue=queue),)),
         materialized_rows=0,
+        materialized_underlyings=(),
+    )
+    blocked_partial = CashFutureUniversePipelineResult(
+        SimpleNamespace(results=(
+            SimpleNamespace(coverage=complete, queue=queue),
+            SimpleNamespace(coverage=complete, queue=SimpleNamespace(spot=SimpleNamespace(instrument="NSE:22:XYZ-EQ"))),
+        )),
+        materialized_rows=2,
+        materialized_underlyings=("ABC",),
     )
 
     assert ready.backtest_ready is True
     ready.require_backtest_ready()
     assert blocked_incomplete.backtest_ready is False
     assert blocked_empty.backtest_ready is False
+    assert blocked_partial.backtest_ready is False
     with pytest.raises(LookupError, match="backtest blocked"):
         blocked_incomplete.require_backtest_ready()
     with pytest.raises(LookupError, match="backtest blocked"):
         blocked_empty.require_backtest_ready()
+    with pytest.raises(LookupError, match="backtest blocked"):
+        blocked_partial.require_backtest_ready()
 
 
 def test_pipeline_run_backtest_uses_persisted_rows_after_readiness_gate(monkeypatch):
     complete = SimpleNamespace(complete=True)
+    queue = SimpleNamespace(spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"))
     pipeline = CashFutureUniversePipelineResult(
-        SimpleNamespace(results=(SimpleNamespace(coverage=complete),)),
+        SimpleNamespace(results=(SimpleNamespace(coverage=complete, queue=queue),)),
         materialized_rows=2,
+        materialized_underlyings=("ABC",),
     )
     coverage = object()
     captured = {}
@@ -115,12 +133,7 @@ def test_pipeline_run_backtest_uses_persisted_rows_after_readiness_gate(monkeypa
     )
 
     config = BacktestConfig(min_entry_gap=8.0, exit_gap=5.0)
-    result = pipeline.run_backtest(
-        object(),
-        config,
-        symbol="ABC",
-        page_size=25,
-    )
+    result = pipeline.run_backtest(object(), config, symbol="ABC", page_size=25)
 
     assert result["trade_count"] == 1
     assert captured["symbol"] == "ABC"
@@ -130,8 +143,9 @@ def test_pipeline_run_backtest_uses_persisted_rows_after_readiness_gate(monkeypa
 
 def test_pipeline_run_backtest_blocks_before_persisted_history_access(monkeypatch):
     incomplete = CashFutureUniversePipelineResult(
-        SimpleNamespace(results=(SimpleNamespace(coverage=SimpleNamespace(complete=False)),)),
+        SimpleNamespace(results=(SimpleNamespace(coverage=SimpleNamespace(complete=False), queue=SimpleNamespace(spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"))),)),
         materialized_rows=2,
+        materialized_underlyings=("ABC",),
     )
 
     def fail_if_called(*args, **kwargs):
