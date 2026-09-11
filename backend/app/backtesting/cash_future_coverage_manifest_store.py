@@ -185,5 +185,46 @@ class CashFutureCoverageManifestStore:
             for ranges in by_instrument.values()
         )
 
+    def is_complete_for_requests(
+        self,
+        *,
+        source: str,
+        timeframe: str = "1m",
+        requests: tuple[tuple[str, int, int], ...] | list[tuple[str, int, int]],
+    ) -> bool:
+        """Return true only when complete manifest ranges cover every request interval.
+
+        Instrument presence alone is insufficient: a complete range for the
+        wrong historical period must not make a requested backtest ready.
+        Coverage ranges may overlap or be split into adjacent chunks; together
+        they must fully cover each requested interval without a gap.
+        """
+        if not requests:
+            return False
+        requested = tuple(requests)
+        ranges_by_instrument: dict[str, list[tuple[int, int]]] = {}
+        for item in self.ranges(source=source, timeframe=timeframe):
+            if item.complete and item.missing_points == 0:
+                ranges_by_instrument.setdefault(item.instrument, []).append(
+                    (item.start_ns, item.end_ns)
+                )
+
+        for instrument, start_ns, end_ns in requested:
+            if not instrument or end_ns < start_ns:
+                return False
+            covered_until = start_ns
+            intervals = sorted(ranges_by_instrument.get(instrument, ()))
+            for range_start, range_end in intervals:
+                if range_end < covered_until:
+                    continue
+                if range_start > covered_until:
+                    break
+                covered_until = max(covered_until, range_end)
+                if covered_until >= end_ns:
+                    break
+            if covered_until < end_ns:
+                return False
+        return True
+
 
 __all__ = ["CashFutureCoverageManifestStore"]
