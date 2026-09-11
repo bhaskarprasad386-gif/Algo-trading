@@ -79,6 +79,17 @@ def test_strategy_run_route_executes_from_durable_historical_catalog(monkeypatch
     finally:
         ledger.close()
 
+    replay = TestClient(app).get(f"/api/v1/backtesting/cash-future/strategy-run/{run_id}")
+    assert replay.status_code == 200
+    replay_body = replay.json()
+    assert replay_body["run_id"] == run_id
+    assert replay_body["initial_capital"] == 100000000.0
+    assert replay_body["final_capital"] == 100000900.0
+    assert replay_body["net_profit"] == 900.0
+    assert replay_body["signal_count"] == 2
+    assert replay_body["trade_count"] == 1
+    assert len(replay_body["equity_curve"]) == 2
+
 
 def test_strategy_run_route_rejects_missing_historical_selection():
     app = FastAPI()
@@ -90,3 +101,12 @@ def test_strategy_run_route_rejects_missing_historical_selection():
 
     assert response.status_code == 422
     assert "start_date and end_date are required" in str(response.json())
+
+
+def test_strategy_run_route_returns_404_for_unknown_run(monkeypatch, tmp_path):
+    ledger_db = str(tmp_path / "ledger.db")
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", ledger_db)
+    app = FastAPI()
+    app.include_router(router)
+    response = TestClient(app).get("/api/v1/backtesting/cash-future/strategy-run/missing-run")
+    assert response.status_code == 404
