@@ -91,6 +91,35 @@ def date_gap_ranking(
     return {"status": "success", "trading_date": trading_date, "mode": mode, "instrument_type": instrument_type.upper(), "count": len(payload), "top": payload[0], "data": payload}
 
 
+@router.get("/prior-gap")
+def prior_gap_comparison(
+    trading_date: date = Query(...),
+    mode: str = Query("shorting", pattern="^(opening|shorting)$"),
+    instrument_type: str = Query("STOCK"),
+    symbol: str | None = Query(None),
+    contract_month: str | None = Query(None),
+    limit: int = Query(5, ge=1, le=20),
+    db: Session = Depends(get_db),
+):
+    """Compare selected date's top gap with all earlier available trading days."""
+    selected_rows = _daily_rows(db, trading_date, trading_date, symbol=symbol, instrument_type=instrument_type)
+    selected = [_gap_payload(row, mode) for row in selected_rows if row["lot_size"] and (not contract_month or row["contract_month"] == contract_month)]
+    selected.sort(key=lambda item: (item["weighted_gap"], item["symbol"]), reverse=True)
+    if not selected:
+        raise HTTPException(status_code=404, detail="no historical OHLC rows found for the selected date")
+
+    prior_rows = _daily_rows(db, date(2000, 1, 1), trading_date - timedelta(days=1), symbol=symbol, instrument_type=instrument_type)
+    prior = [_gap_payload(row, mode) for row in prior_rows if row["lot_size"] and (not contract_month or row["contract_month"] == contract_month)]
+    threshold = selected[0]["weighted_gap"]
+    larger = [item for item in prior if item["weighted_gap"] > threshold]
+    larger.sort(key=lambda item: (item["weighted_gap"], item["trading_date"], item["symbol"]), reverse=True)
+    return {
+        "status": "success", "trading_date": trading_date, "mode": mode,
+        "instrument_type": instrument_type.upper(), "selected": selected[0],
+        "has_larger_prior_gap": bool(larger), "prior_larger": larger[:limit],
+    }
+
+
 @router.get("/monthly-gap")
 def monthly_gap_search(
     year: int = Query(..., ge=2000, le=2100), month: int = Query(..., ge=1, le=12),
