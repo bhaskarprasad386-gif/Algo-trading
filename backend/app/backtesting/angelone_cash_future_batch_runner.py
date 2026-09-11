@@ -34,6 +34,7 @@ def _batch_fingerprint(
     start: datetime,
     end: datetime,
     batch_size: int,
+    config: AngelOneCashFutureRunConfig,
 ) -> str:
     return HistoricalJobStore.fingerprint((
         {
@@ -42,6 +43,14 @@ def _batch_fingerprint(
             "start": start.isoformat(),
             "end": end.isoformat(),
             "batch_size": batch_size,
+            "interval_ns": config.interval_ns,
+            "max_request_ns": config.max_request_ns,
+            "timeframe": config.timeframe,
+            "mode": config.mode,
+            "chunk_days": config.chunk_days,
+            "retry_attempts": config.retry_attempts,
+            "retry_delay_seconds": config.retry_delay_seconds,
+            "max_repair_passes": config.max_repair_passes,
         },
     ))
 
@@ -75,6 +84,8 @@ def run_angelone_cash_future_history_in_batches(
         raise ValueError("batch_size must be positive")
     if not run_id.strip():
         raise ValueError("run_id is required")
+    if start >= end:
+        raise ValueError("start must be before end")
 
     # Materialize once because master_rows may be a one-shot generator. Every
     # batch must receive the same contract-master universe for deterministic
@@ -92,6 +103,7 @@ def run_angelone_cash_future_history_in_batches(
             start=start,
             end=end,
             batch_size=batch_size,
+            config=config,
         )
 
         try:
