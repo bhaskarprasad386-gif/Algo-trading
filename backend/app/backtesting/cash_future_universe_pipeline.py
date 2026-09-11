@@ -20,6 +20,7 @@ from .provider_retry import ProviderRetryPolicy
 from .session_gap_planner import SessionWindow
 from app.scanner.cash_future_backtest import BacktestConfig
 from app.scanner.cash_future_coverage_store import (
+    audit_persisted_cash_future_data_quality,
     build_persisted_cash_future_coverage,
     run_persisted_cash_future_backtest,
 )
@@ -63,9 +64,17 @@ class CashFutureUniversePipelineResult:
         page_size: int = 1000,
         result_ledger=None,
     ) -> dict:
-        """Run a persisted Cash-Future backtest behind the acquisition readiness gate."""
+        """Run a persisted Cash-Future backtest behind coverage and quality gates."""
         self.require_backtest_ready()
         coverage = build_persisted_cash_future_coverage(
+            db,
+            symbol=symbol,
+            contract_month=config.contract_month,
+            start=start,
+            end=end,
+            page_size=page_size,
+        )
+        quality = audit_persisted_cash_future_data_quality(
             db,
             symbol=symbol,
             contract_month=config.contract_month,
@@ -81,6 +90,7 @@ class CashFutureUniversePipelineResult:
             end=end,
             page_size=page_size,
             coverage_report=coverage,
+            quality_report=quality,
             result_ledger=result_ledger,
         )
 
