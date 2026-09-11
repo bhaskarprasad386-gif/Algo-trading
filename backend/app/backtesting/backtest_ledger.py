@@ -10,7 +10,7 @@ from .engine import BacktestTrade
 
 
 class BacktestTradeLedger:
-    """Persist backtest trades and summary metrics durably."""
+    """Persist backtest trades, checkpoints, and summary metrics durably."""
 
     def __init__(self, path: str = ":memory:") -> None:
         self._db = sqlite3.connect(path)
@@ -42,6 +42,13 @@ class BacktestTradeLedger:
                 costs REAL NOT NULL,
                 net_pnl REAL NOT NULL,
                 PRIMARY KEY(run_id, sequence)
+            )
+        """)
+        self._db.execute("""
+            CREATE TABLE IF NOT EXISTS backtest_checkpoints (
+                run_id TEXT PRIMARY KEY,
+                cursor TEXT NOT NULL,
+                trade_count INTEGER NOT NULL
             )
         """)
         self._db.commit()
@@ -88,6 +95,41 @@ class BacktestTradeLedger:
         keys = ("run_id", "initial_capital", "final_capital", "net_pnl", "total_return",
                 "win_rate", "expectancy", "sharpe_ratio", "sortino_ratio", "max_drawdown", "cagr")
         return dict(zip(keys, row))
+
+    def save_checkpoint(self, run_id: str, cursor: str, trade_count: int) -> None:
+        """Persist the last completed source cursor for restart-safe execution."""
+        if not run_id.strip() or not cursor.strip():
+            raise ValueError("run_id and cursor are required")
+        if trade_count < 0:
+            raise ValueError("trade_count cannot be negative")
+        self._db.execute(
+            """INSERT INTO backtest_checkpoints(run_id,cursor,trade_count)
+               VALUES (?,?,?)
+               ON CONFLICT(run_id) DO UPDATE SET
+                 cursor=excluded.cursor,
+                 trade_count=excluded.trade_count""",
+            (run_id, cursor, trade_count),
+        )
+        self._db.commit()
+
+    def checkpoint(self, run_id: str) -> dict[str, object] | None:
+        """Return the persisted restart checkpoint for a run."""
+        if not run_id.strip():
+            raise ValueError("run_id is required")
+        row = self._db.execute(
+            "SELECT cursor,trade_count FROM backtest_checkpoints WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {"cursor": row[0], "trade_count": int(row[1])}
+
+    def clear_checkpoint(self, run_id: str) -> None:
+        """Remove a completed or cancelled run's restart checkpoint."""
+        if not run_id.strip():
+            raise ValueError("run_id is required")
+        self._db.execute("DELETE FROM backtest_checkpoints WHERE run_id=?", (run_id,))
+        self._db.commit()
 
     def next_sequence(self, run_id: str) -> int:
         """Return the next unused trade sequence for a run."""
