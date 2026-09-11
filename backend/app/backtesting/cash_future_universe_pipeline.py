@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import datetime
 from typing import Callable, Iterable, Mapping
 
 from sqlalchemy.orm import Session
@@ -15,6 +15,7 @@ from .cash_future_universe_download_plan import CashFutureUniverseDownloadJob, C
 from .cash_future_universe_materializer import materialize_cash_future_universe_history
 from .historical_catalog import HistoricalCatalog
 from .historical_job_store import HistoricalJobStore
+from .historical_sync import HistoricalSyncPlan
 from .provider_retry import ProviderRetryPolicy
 from .session_gap_planner import SessionWindow
 
@@ -80,31 +81,21 @@ def acquire_and_materialize_cash_future_universe(
         coverage_store=coverage_store,
     )
 
-    metadata = {
-        (item.underlying.upper(), item.future_token): item
-        for item in universe.stocks
-    }
     materialized_rows = 0
     for result in acquisition.results:
-        jobs = []
-        for request in result.queue.futures:
-            parts = request.instrument.split(":", 2)
-            if len(parts) != 3:
-                raise ValueError(f"invalid future instrument: {request.instrument}")
-            item = metadata.get((result.queue.spot.instrument.split(":", 2)[2].split("-", 1)[0].upper(), parts[1]))
-            if item is None:
-                for candidate in universe.stocks:
-                    if candidate.future_token == parts[1] and candidate.future_symbol == parts[2]:
-                        item = candidate
-                        break
-            if item is None:
-                raise ValueError(f"acquisition queue future has no universe metadata: {request.instrument}")
-        jobs.append(CashFutureUniverseDownloadJob(
-            result.queue.spot.instrument.split(":", 2)[2].split("-", 1)[0],
-            result.queue.spot,
-            result.queue.futures,
-        ))
-        plan = CashFutureUniverseDownloadPlan(tuple(jobs), __import__("app.backtesting.historical_sync", fromlist=["HistoricalSyncPlan"]).HistoricalSyncPlan(result.queue.all_requests))
+        spot_parts = result.queue.spot.instrument.split(":", 2)
+        if len(spot_parts) != 3:
+            raise ValueError(f"invalid cash instrument: {result.queue.spot.instrument}")
+        underlying = spot_parts[2].rsplit("-", 1)[0].upper()
+        job = CashFutureUniverseDownloadJob(
+            underlying=underlying,
+            spot=result.queue.spot,
+            futures=result.queue.futures,
+        )
+        plan = CashFutureUniverseDownloadPlan(
+            jobs=(job,),
+            plan=HistoricalSyncPlan(job.all_requests),
+        )
         materialized_rows += materialize_cash_future_universe_history(
             db,
             catalog,
