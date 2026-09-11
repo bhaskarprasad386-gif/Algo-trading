@@ -19,11 +19,25 @@ class CashFutureDataQualityReport:
 
     @property
     def clean(self) -> bool:
-        return not any((self.invalid_ohlc, self.crossed_quotes, self.negative_depth, self.invalid_prices, self.duplicate_timestamps))
+        return not any(
+            (
+                self.invalid_ohlc,
+                self.crossed_quotes,
+                self.negative_depth,
+                self.invalid_prices,
+                self.duplicate_timestamps,
+            )
+        )
 
     @property
     def issue_count(self) -> int:
-        return self.invalid_ohlc + self.crossed_quotes + self.negative_depth + self.invalid_prices + self.duplicate_timestamps
+        return (
+            self.invalid_ohlc
+            + self.crossed_quotes
+            + self.negative_depth
+            + self.invalid_prices
+            + self.duplicate_timestamps
+        )
 
     def require_clean(self) -> "CashFutureDataQualityReport":
         if not self.clean:
@@ -37,20 +51,19 @@ class CashFutureDataQualityReport:
         return self
 
 
-def audit_cash_future_records(records: Iterable[HistoricalRecord]) -> CashFutureDataQualityReport:
-    """Audit a stream without materializing the full historical range."""
+def _audit_payload_stream(
+    records: Iterable[tuple[tuple[object, ...], Mapping[str, object]]],
+) -> CashFutureDataQualityReport:
     checked = invalid_ohlc = crossed_quotes = negative_depth = invalid_prices = duplicate_timestamps = 0
-    seen: set[tuple[str, str, str, int, int | None]] = set()
+    seen: set[tuple[object, ...]] = set()
 
-    for record in records:
+    for identity, payload in records:
         checked += 1
-        identity = record.identity()
         if identity in seen:
             duplicate_timestamps += 1
         else:
             seen.add(identity)
 
-        payload: Mapping[str, object] = record.payload
         prices = [payload.get(name) for name in ("open", "high", "low", "close")]
         numeric_prices = [float(value) for value in prices if isinstance(value, (int, float))]
         if numeric_prices and any(value <= 0 for value in numeric_prices):
@@ -60,17 +73,34 @@ def audit_cash_future_records(records: Iterable[HistoricalRecord]) -> CashFuture
             if low > high or not (low <= opened <= high) or not (low <= close <= high):
                 invalid_ohlc += 1
 
-        bid, ask = payload.get("bid"), payload.get("ask")
-        if isinstance(bid, (int, float)) and isinstance(ask, (int, float)):
-            if float(bid) <= 0 or float(ask) <= 0:
-                invalid_prices += 1
-            elif float(bid) > float(ask):
-                crossed_quotes += 1
+        for bid_name, ask_name in (
+            ("bid", "ask"),
+            ("cash_bid", "cash_ask"),
+            ("future_bid", "future_ask"),
+        ):
+            bid, ask = payload.get(bid_name), payload.get(ask_name)
+            if isinstance(bid, (int, float)) and isinstance(ask, (int, float)):
+                if float(bid) <= 0 or float(ask) <= 0:
+                    invalid_prices += 1
+                elif float(bid) > float(ask):
+                    crossed_quotes += 1
 
-        for name in ("bid_qty", "ask_qty", "cash_bid_qty", "cash_ask_qty", "future_bid_qty", "future_ask_qty"):
+        for name in (
+            "bid_qty",
+            "ask_qty",
+            "cash_bid_qty",
+            "cash_ask_qty",
+            "future_bid_qty",
+            "future_ask_qty",
+        ):
             value = payload.get(name)
             if isinstance(value, (int, float)) and float(value) < 0:
                 negative_depth += 1
+
+        for name in ("cash_price", "future_price"):
+            value = payload.get(name)
+            if isinstance(value, (int, float)) and float(value) <= 0:
+                invalid_prices += 1
 
     return CashFutureDataQualityReport(
         records_checked=checked,
@@ -82,4 +112,39 @@ def audit_cash_future_records(records: Iterable[HistoricalRecord]) -> CashFuture
     )
 
 
-__all__ = ["CashFutureDataQualityReport", "audit_cash_future_records"]
+def audit_cash_future_records(records: Iterable[HistoricalRecord]) -> CashFutureDataQualityReport:
+    """Audit a HistoricalRecord stream without materializing the full history."""
+    return _audit_payload_stream((record.identity(), record.payload) for record in records)
+
+
+def audit_cash_future_points(records: Iterable[object]) -> CashFutureDataQualityReport:
+    """Audit persisted CashFutureHistoryPoint-like records as a stream."""
+    def stream():
+        for point in records:
+            identity = (
+                getattr(point, "symbol"),
+                getattr(point, "contract_month"),
+                getattr(point, "timestamp"),
+            )
+            payload = {
+                "cash_price": getattr(point, "cash_price"),
+                "future_price": getattr(point, "future_price"),
+                "cash_bid": getattr(point, "cash_bid"),
+                "cash_ask": getattr(point, "cash_ask"),
+                "future_bid": getattr(point, "future_bid"),
+                "future_ask": getattr(point, "future_ask"),
+                "cash_bid_qty": getattr(point, "cash_bid_qty"),
+                "cash_ask_qty": getattr(point, "cash_ask_qty"),
+                "future_bid_qty": getattr(point, "future_bid_qty"),
+                "future_ask_qty": getattr(point, "future_ask_qty"),
+            }
+            yield identity, payload
+
+    return _audit_payload_stream(stream())
+
+
+__all__ = [
+    "CashFutureDataQualityReport",
+    "audit_cash_future_records",
+    "audit_cash_future_points",
+]
