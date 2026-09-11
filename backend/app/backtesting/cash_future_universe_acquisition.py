@@ -15,6 +15,7 @@ from .cash_future_historical_acquisition import (
 from .cash_future_universe import CashFutureFnoUniverse
 from .cash_future_universe_download_plan import build_cash_future_universe_download_plan
 from .historical_job_store import HistoricalJobStore
+from .provider_retry import ProviderRetryPolicy
 from .session_gap_planner import SessionWindow
 
 
@@ -51,6 +52,9 @@ def acquire_cash_future_universe(
     timeframe: str = "1m",
     source: str = "angelone",
     mode: str = "BOTH",
+    retry_attempts: int = 3,
+    retry_delay_seconds: float = 1.0,
+    retry_policy: ProviderRetryPolicy | None = None,
     max_repair_passes: int = 3,
     job_store: HistoricalJobStore | None = None,
     run_id: str | None = None,
@@ -62,6 +66,10 @@ def acquire_cash_future_universe(
         raise ValueError("end must not precede start")
     if max_repair_passes < 1:
         raise ValueError("max_repair_passes must be positive")
+    if retry_attempts < 1:
+        raise ValueError("retry_attempts must be positive")
+    if retry_delay_seconds < 0:
+        raise ValueError("retry_delay_seconds must not be negative")
     if (job_store is None) != (run_id is None):
         raise ValueError("job_store and run_id must be supplied together")
 
@@ -103,6 +111,9 @@ def acquire_cash_future_universe(
             timeframe=timeframe,
             mode=mode,
             source=source,
+            retry_attempts=retry_attempts,
+            retry_delay_seconds=retry_delay_seconds,
+            retry_policy=retry_policy,
             max_repair_passes=max_repair_passes,
             coverage_store=coverage_store,
             on_progress=lambda event, underlying=job.underlying: (
