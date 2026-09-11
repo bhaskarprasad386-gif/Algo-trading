@@ -93,7 +93,7 @@ def test_strategy_is_deterministic_and_contract_isolated():
         )
 
 
-def test_strategy_persists_metadata_signals_and_trades():
+def test_strategy_persists_metadata_signals_trades_and_equity():
     now = datetime(2026, 9, 2, 10, 0)
     ledger = BacktestLedger()
 
@@ -117,3 +117,6 @@ def test_strategy_persists_metadata_signals_and_trades():
     assert metadata["strategy_version"] == "2"
     assert len(ledger.records("cash-future-p0-1", "signal")) == 2
     assert len(ledger.records("cash-future-p0-1", "trade")) == 1
+    equity = ledger.records("cash-future-p0-1", "equity")
+    assert len(equity) == 2
+    assert equity[-1].payload["equity"] == 10_000_570.0
