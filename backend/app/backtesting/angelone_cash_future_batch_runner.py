@@ -186,10 +186,8 @@ def run_angelone_cash_future_history_in_batches(
             )
             result.require_backtest_ready()
             if job_store.get(job_id).state == "cancelled":
-                # A concurrent cancellation wins over successful provider
-                # completion; leave the chunk recoverable rather than losing
-                # the operator's cancellation request.
-                job_store.recover_running_chunks(job_id)
+                # The operator's cancellation wins. Keep the chunk running so
+                # the next invocation's crash-recovery path requeues it.
                 break
             job_store.complete_chunk(job_id, 0)
             job_store.finish(job_id)
@@ -203,7 +201,6 @@ def run_angelone_cash_future_history_in_batches(
             )
         except Exception as exc:
             if job_store.get(job_id).state == "cancelled":
-                job_store.recover_running_chunks(job_id)
                 break
             job_store.fail_chunk(job_id, 0, str(exc), recoverable=True)
             job_store.finish(job_id)
