@@ -110,7 +110,7 @@ def test_pipeline_readiness_requires_every_acquisition_complete_and_materialized
         blocked_partial.require_backtest_ready()
 
 
-def test_pipeline_manifest_gate_blocks_missing_requested_instrument():
+def test_pipeline_manifest_gate_blocks_missing_requested_instrument(tmp_path):
     queue = SimpleNamespace(
         spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"),
         all_requests=(
@@ -119,7 +119,7 @@ def test_pipeline_manifest_gate_blocks_missing_requested_instrument():
         ),
     )
     acquisition = SimpleNamespace(results=(SimpleNamespace(coverage=SimpleNamespace(complete=True), queue=queue),))
-    store = CashFutureCoverageManifestStore(":memory:")
+    store = CashFutureCoverageManifestStore(tmp_path / "coverage.db")
     store.upsert(
         build_coverage_manifest(
             source="angelone",
