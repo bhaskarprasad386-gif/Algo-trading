@@ -221,6 +221,19 @@ class BacktestEngine:
         candles = (_continuous_record_to_candle(item) for item in series)
         return self.run(candles, entry_strategy, exit_strategy)
 
+    def run_continuous_futures_events(
+        self,
+        windows: Iterable[FNORolloverWindow],
+        records_by_token: Mapping[str, Iterable[HistoricalRecord]],
+        strategy: EventStrategy,
+        *,
+        price_field: str = "close",
+    ) -> BacktestResult:
+        """Replay continuous futures through the event strategy path, preserving contract identity."""
+        series = build_continuous_futures_series(windows, records_by_token)
+        events = (_continuous_record_to_event(item) for item in series)
+        return self.run_events(events, strategy, price_field=price_field)
+
     def run_incremental(
         self,
         candles: Iterable[Mapping[str, object]],
@@ -310,6 +323,21 @@ def _continuous_record_to_candle(item: ContinuousFuturesRecord) -> dict[str, obj
     candle["timestamp"] = item.timestamp_ns
     candle["contract_token"] = item.contract_token
     return candle
+
+
+def _continuous_record_to_event(item: ContinuousFuturesRecord) -> HistoricalRecord:
+    payload = dict(item.payload)
+    payload["contract_token"] = item.contract_token
+    payload["continuous_underlying"] = item.underlying
+    payload["instrument_type"] = item.instrument_type
+    return HistoricalRecord(
+        source=item.record.source,
+        instrument=item.record.instrument,
+        timeframe=item.record.timeframe,
+        timestamp_ns=item.timestamp_ns,
+        payload=payload,
+        sequence=item.record.sequence,
+    )
 
 
 def _normalize_event_signal(decision: EventSignal | str | None) -> EventSignal:
