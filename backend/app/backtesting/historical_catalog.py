@@ -113,6 +113,29 @@ class HistoricalCatalog:
         rows = self._db.execute("SELECT source,instrument,timeframe,timestamp_ns,payload_json,sequence FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? ORDER BY timestamp_ns, sequence", (source, instrument, timeframe)).fetchall()
         return tuple(HistoricalRecord(r[0], r[1], r[2], r[3], json.loads(r[4]), r[5]) for r in rows)
 
+    def iter_records(self, *, source: str, instrument: str, timeframe: str, start_ns: int | None = None, end_ns: int | None = None):
+        """Stream ordered records from SQLite without materializing the selected range."""
+        if start_ns is not None and start_ns < 0:
+            raise ValueError("start_ns cannot be negative")
+        if end_ns is not None and (end_ns < 0 or (start_ns is not None and end_ns < start_ns)):
+            raise ValueError("invalid timestamp range")
+        clauses = ["source=?", "instrument=?", "timeframe=?"]
+        params: list[Any] = [source, instrument, timeframe]
+        if start_ns is not None:
+            clauses.append("timestamp_ns>=?")
+            params.append(start_ns)
+        if end_ns is not None:
+            clauses.append("timestamp_ns<=?")
+            params.append(end_ns)
+        cursor = self._db.execute(
+            "SELECT source,instrument,timeframe,timestamp_ns,payload_json,sequence FROM data_catalog WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY timestamp_ns, sequence",
+            params,
+        )
+        for row in cursor:
+            yield HistoricalRecord(r[0], r[1], r[2], r[3], json.loads(r[4]), r[5])
+
     def events(self, *, source: str, instrument: str, timeframe: str = "tick", start_ns: int | None = None, end_ns: int | None = None) -> tuple[HistoricalRecord, ...]:
         """Retrieve raw events ordered by timestamp and sequence, optionally by inclusive range."""
         if not is_event_timeframe(timeframe):
@@ -153,7 +176,7 @@ class HistoricalCatalog:
     def records_by_contract_tokens(self, *, source: str, contract_tokens: Iterable[str], timeframe: str, instrument_prefix: str = "NFO:") -> dict[str, tuple[HistoricalRecord, ...]]:
         tokens = tuple(dict.fromkeys(contract_tokens))
         if any(not token.strip() for token in tokens):
-            raise ValueError("contract_tokens cannot contain blank values")
+            raise ValueError("contract_tokens cannot be empty")
         if not instrument_prefix.strip():
             raise ValueError("instrument_prefix is required")
         instruments = tuple(f"{instrument_prefix}{token}" for token in tokens)
