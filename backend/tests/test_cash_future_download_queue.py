@@ -40,3 +40,36 @@ def test_queue_propagates_custom_historical_provider_to_every_request():
     )
     assert queue.spot.source == "other-provider"
     assert [item.request.source for item in queue.futures] == ["other-provider", "other-provider"]
+
+
+def test_queue_clips_rollover_segments_to_exact_intraday_window():
+    queue = build_rollover_download_queue(
+        catalog=_catalog(), spot_instrument="NSE:3045:SBIN",
+        exchange="NFO", underlying="SBIN",
+        start=datetime(2026, 1, 29, 10, 0, tzinfo=timezone.utc),
+        end=datetime(2026, 1, 30, 11, 0, tzinfo=timezone.utc),
+        timeframe="1m", mode="CURRENT",
+    )
+    assert len(queue.futures) == 2
+    assert queue.futures[0].request.start_ns == int(
+        datetime(2026, 1, 29, 10, 0, tzinfo=timezone.utc).timestamp() * 1_000_000_000
+    )
+    assert queue.futures[1].request.end_ns == int(
+        datetime(2026, 1, 30, 11, 0, tzinfo=timezone.utc).timestamp() * 1_000_000_000
+    )
+    assert queue.futures[0].request.end_ns < queue.futures[1].request.start_ns
+
+
+def test_queue_preserves_requested_session_days_across_rollover():
+    sessions = (date(2026, 1, 29), date(2026, 1, 30), date(2026, 2, 2))
+    queue = build_rollover_download_queue(
+        catalog=_catalog(), spot_instrument="NSE:3045:SBIN",
+        exchange="NFO", underlying="SBIN",
+        start=datetime(2026, 1, 29, tzinfo=timezone.utc),
+        end=datetime(2026, 2, 2, 23, 59, tzinfo=timezone.utc),
+        timeframe="1m", mode="CURRENT", session_days=sessions,
+    )
+    assert [item.request.instrument for item in queue.futures] == [
+        "NFO:101:SBINJAN",
+        "NFO:102:SBINFEB",
+    ]
