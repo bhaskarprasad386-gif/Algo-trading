@@ -38,6 +38,24 @@ def test_resumable_runner_preserves_position_across_chunk_boundary(tmp_path):
     ledger.close()
 
 
+def test_resumable_runner_accepts_one_pass_generator(tmp_path):
+    ledger = BacktestTradeLedger(tmp_path / "generator.sqlite")
+
+    def events():
+        for ts, price, seq in ((1, 100, 1), (2, 110, 2)):
+            yield _event(ts, price, seq)
+
+    result = run_resumable_events(
+        BacktestEngine(), events(), _strategy,
+        ledger=ledger, run_id="generator-run", chunk_size=1,
+    )
+
+    assert ledger.count("generator-run") == 1
+    assert result.net_pnl == 10.0
+    assert ledger.checkpoint("generator-run")["cursor"] == "2:2"
+    ledger.close()
+
+
 def test_resumable_runner_reconstructs_open_position_after_restart(tmp_path):
     ledger = BacktestTradeLedger(tmp_path / "restart.sqlite")
     events = (_event(1, 100, 1), _event(2, 110, 2))
@@ -58,8 +76,7 @@ def test_resumable_runner_reconstructs_open_position_after_restart(tmp_path):
 
     # A completed run is restart-safe and must not duplicate the trade.
     rerun = run_resumable_events(
-        BacktestEngine(), events, _strategy,
-        ledger=ledger, run_id="run-2", chunk_size=1,
+        BacktestEngine(), events, _strategy, ledger=ledger, run_id="run-2", chunk_size=1,
     )
     assert ledger.count("run-2") == 1
     assert rerun.net_pnl == 10.0
