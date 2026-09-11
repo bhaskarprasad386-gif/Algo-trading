@@ -32,6 +32,43 @@ class CashFutureStrategyConfig:
             raise ValueError("end_date cannot be before start_date")
 
 
+@dataclass
+class CashFutureCapitalLedger:
+    """Track realized capital separately from margin reserved by open spreads."""
+
+    initial_capital: float
+    realized_capital: float | None = None
+    reserved_margin: float = 0.0
+    blocked_entries: int = 0
+
+    def __post_init__(self) -> None:
+        if self.initial_capital <= 0:
+            raise ValueError("initial_capital must be positive")
+        if self.realized_capital is None:
+            self.realized_capital = self.initial_capital
+
+    @property
+    def available_capital(self) -> float:
+        return float(self.realized_capital) - self.reserved_margin
+
+    def reserve(self, margin_required: float) -> bool:
+        margin = max(float(margin_required), 0.0)
+        if margin > self.available_capital:
+            self.blocked_entries += 1
+            return False
+        self.reserved_margin += margin
+        return True
+
+    def release(self, margin_required: float) -> None:
+        margin = max(float(margin_required), 0.0)
+        self.reserved_margin -= margin
+        if self.reserved_margin < 0:
+            raise ValueError("reserved margin cannot become negative")
+
+    def apply_realized_pnl(self, net_profit: float) -> None:
+        self.realized_capital = float(self.realized_capital) + float(net_profit)
+
+
 @dataclass(frozen=True)
 class CashFutureStrategyRun:
     strategy_id: str
@@ -42,6 +79,9 @@ class CashFutureStrategyRun:
     signals: tuple[Mapping[str, Any], ...]
     trades: tuple[Mapping[str, Any], ...]
     equity_curve: tuple[Mapping[str, Any], ...]
+    final_available_capital: float = 0.0
+    final_reserved_margin: float = 0.0
+    blocked_entry_count: int = 0
 
 
 def run_cash_future_strategy(
@@ -109,7 +149,7 @@ def run_cash_future_strategy(
     trades: list[Mapping[str, Any]] = []
     equity_curve: list[Mapping[str, Any]] = []
     entry: CashFutureHistoryPoint | None = None
-    capital = config.initial_capital
+    capital_ledger = CashFutureCapitalLedger(config.initial_capital)
     start_date = config.start_date
 
     for point in visible_points:
@@ -140,7 +180,19 @@ def run_cash_future_strategy(
 
         exit_reason: str | None = None
         if action == "BUY" and entry is None:
-            entry = point
+            if capital_ledger.reserve(point.margin_required):
+                entry = point
+            else:
+                blocked_record = {
+                    **signal_record,
+                    "execution_status": "blocked",
+                    "blocked_reason": "insufficient_available_capital",
+                    "required_margin": max(float(point.margin_required), 0.0),
+                    "available_capital": capital_ledger.available_capital,
+                }
+                signals[-1] = blocked_record
+                if ledger is not None:
+                    ledger.append_batch((ledger_record(run_id, "signal", point.timestamp, blocked_record),))
         elif action == "SELL" and entry is not None:
             exit_reason = "strategy"
         elif entry is not None and point.expiry_date is not None and _point_date(point) >= point.expiry_date:
@@ -153,7 +205,8 @@ def run_cash_future_strategy(
                 else _executable_spread_profit(entry, point)
             )
             net = gross - config.charges_per_trade - config.funding_cost_per_trade
-            capital += net
+            capital_ledger.apply_realized_pnl(net)
+            capital_ledger.release(entry.margin_required)
             trade = {
                 "entry_time": entry.timestamp.isoformat(),
                 "exit_time": point.timestamp.isoformat(),
@@ -166,13 +219,19 @@ def run_cash_future_strategy(
                 "net_profit": net,
                 "execution_model": config.execution_model,
                 "exit_reason": exit_reason,
+                "reserved_margin": entry.margin_required,
             }
             trades.append(trade)
             if ledger is not None:
                 ledger.append_batch((ledger_record(run_id, "trade", point.timestamp, trade),))
             entry = None
 
-        equity_record = {"timestamp": point.timestamp.isoformat(), "equity": capital}
+        equity_record = {
+            "timestamp": point.timestamp.isoformat(),
+            "equity": float(capital_ledger.realized_capital),
+            "available_capital": capital_ledger.available_capital,
+            "reserved_margin": capital_ledger.reserved_margin,
+        }
         equity_curve.append(equity_record)
         if ledger is not None:
             ledger.append_batch((ledger_record(run_id, "equity", point.timestamp, equity_record),))
@@ -181,11 +240,14 @@ def run_cash_future_strategy(
         strategy_id,
         strategy_version,
         config.initial_capital,
-        capital,
-        capital - config.initial_capital,
+        float(capital_ledger.realized_capital),
+        float(capital_ledger.realized_capital) - config.initial_capital,
         tuple(signals),
         tuple(trades),
         tuple(equity_curve),
+        capital_ledger.available_capital,
+        capital_ledger.reserved_margin,
+        capital_ledger.blocked_entries,
     )
 
 
@@ -204,4 +266,10 @@ def _point_date(point: CashFutureHistoryPoint) -> date:
     raise ValueError("Cash-Future point timestamp must be a date or datetime")
 
 
-__all__ = ["CashFutureStrategy", "CashFutureStrategyConfig", "CashFutureStrategyRun", "run_cash_future_strategy"]
+__all__ = [
+    "CashFutureCapitalLedger",
+    "CashFutureStrategy",
+    "CashFutureStrategyConfig",
+    "CashFutureStrategyRun",
+    "run_cash_future_strategy",
+]
