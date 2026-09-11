@@ -92,6 +92,29 @@ def test_bound_cash_future_universe_rejects_negative_offset():
         )
 
 
+def test_iter_cash_future_stock_batches_is_deterministic_and_non_overlapping():
+    def item(symbol, token):
+        return CashFutureUniverseItem(symbol, "2026-10", token, f"{symbol}26OCT", date(2026, 10, 29), 100)
+
+    universe = CashFutureFnoUniverse(
+        stocks=(item("ZZZ", "3"), item("BBB", "2"), item("AAA", "1"), item("CCC", "5")),
+        indices=(item("NIFTY", "9"),),
+    )
+
+    batches = tuple(runner.iter_cash_future_stock_batches(universe, batch_size=2))
+
+    assert tuple(batch.stock_underlyings for batch in batches) == (("AAA", "BBB"), ("CCC", "ZZZ"))
+    assert tuple(tuple(item.future_token for item in batch.stocks) for batch in batches) == (("2", "1"), ("3", "5"))
+    assert all(batch.indices == universe.indices for batch in batches)
+    assert set().union(*(set(batch.stock_underlyings) for batch in batches)) == set(universe.stock_underlyings)
+
+
+def test_iter_cash_future_stock_batches_rejects_non_positive_size():
+    universe = CashFutureFnoUniverse(stocks=(), indices=())
+    with pytest.raises(ValueError, match="batch_size"):
+        tuple(runner.iter_cash_future_stock_batches(universe, batch_size=0))
+
+
 def test_runner_authenticates_before_starting_acquisition(monkeypatch):
     auth = FakeAuth()
     service_marker = object()
