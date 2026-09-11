@@ -34,8 +34,12 @@ def _store_with_range(tmp_path, *, complete):
     store.upsert(
         build_coverage_manifest(
             source="angelone",
-            ranges=(CoverageRange("NSE:3045:SBIN", _session().start_ns, _session().end_ns, 3,
-                                  3 if complete else 2, 0 if complete else 1, complete),),
+            ranges=(
+                CoverageRange("NSE:3045:SBIN", _session().start_ns, _session().end_ns, 3,
+                              3 if complete else 2, 0 if complete else 1, complete),
+                CoverageRange("NFO:101:SBINJAN", _session().start_ns, _session().end_ns, 3,
+                              3, 0, True),
+            ),
         ),
         timeframe="1m",
     )
