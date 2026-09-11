@@ -35,6 +35,7 @@ class AngelOneCashFutureRunConfig:
     retry_delay_seconds: float = 1.0
     max_repair_passes: int = 3
     max_stock_underlyings: int | None = None
+    stock_batch_offset: int = 0
 
     def __post_init__(self) -> None:
         if self.interval_ns <= 0:
@@ -53,17 +54,29 @@ class AngelOneCashFutureRunConfig:
             raise ValueError("max_repair_passes must be positive")
         if self.max_stock_underlyings is not None and self.max_stock_underlyings < 1:
             raise ValueError("max_stock_underlyings must be positive when supplied")
+        if self.stock_batch_offset < 0:
+            raise ValueError("stock_batch_offset must not be negative")
 
 
 def bound_cash_future_universe(
     universe: CashFutureFnoUniverse,
     *,
     max_stock_underlyings: int | None,
+    stock_batch_offset: int = 0,
 ) -> CashFutureFnoUniverse:
-    """Return a deterministic first batch without changing contract identity."""
-    if max_stock_underlyings is None:
+    """Return a deterministic stock batch without changing contract identity."""
+    if stock_batch_offset < 0:
+        raise ValueError("stock_batch_offset must not be negative")
+    if max_stock_underlyings is None and stock_batch_offset == 0:
         return universe
-    allowed = set(sorted(universe.stock_underlyings)[:max_stock_underlyings])
+
+    ordered = sorted(universe.stock_underlyings)
+    if max_stock_underlyings is None:
+        allowed = set(ordered[stock_batch_offset:])
+    else:
+        stop = stock_batch_offset + max_stock_underlyings
+        allowed = set(ordered[stock_batch_offset:stop])
+
     return CashFutureFnoUniverse(
         stocks=tuple(item for item in universe.stocks if item.underlying in allowed),
         indices=universe.indices,
@@ -99,6 +112,7 @@ def run_angelone_cash_future_history(
     universe = bound_cash_future_universe(
         universe,
         max_stock_underlyings=config.max_stock_underlyings,
+        stock_batch_offset=config.stock_batch_offset,
     )
 
     service = build_angelone_cash_future_acquisition_service(
