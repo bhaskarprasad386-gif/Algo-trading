@@ -18,6 +18,8 @@ from .historical_job_store import HistoricalJobStore
 from .historical_sync import HistoricalSyncPlan
 from .provider_retry import ProviderRetryPolicy
 from .session_gap_planner import SessionWindow
+from app.scanner.cash_future_backtest import BacktestConfig
+from app.scanner.cash_future_coverage_store import run_persisted_cash_future_backtest
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,29 @@ class CashFutureUniversePipelineResult:
             raise LookupError(
                 "Cash-Future historical acquisition/materialization is incomplete; backtest blocked"
             )
+
+    def run_backtest(
+        self,
+        db: Session,
+        config: BacktestConfig,
+        *,
+        symbol: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        page_size: int = 1000,
+        result_ledger=None,
+    ) -> dict:
+        """Run a persisted Cash-Future backtest behind the acquisition readiness gate."""
+        self.require_backtest_ready()
+        return run_persisted_cash_future_backtest(
+            db,
+            config,
+            symbol=symbol,
+            start=start,
+            end=end,
+            page_size=page_size,
+            result_ledger=result_ledger,
+        )
 
 
 def acquire_and_materialize_cash_future_universe(
