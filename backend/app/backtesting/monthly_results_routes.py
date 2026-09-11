@@ -83,15 +83,15 @@ def monthly_gap_search(
         candidates.append((gap_value, row["trading_date"], row["symbol"], gap, row))
     if not candidates:
         raise HTTPException(status_code=404, detail="no historical OHLC rows found for the requested month")
-    _, trading_date, symbol_name, gap, top = max(candidates, key=lambda x: (x[0], x[1], x[2]))
-    gap_value = max(candidates, key=lambda x: (x[0], x[1], x[2]))[0]
+    top = max(candidates, key=lambda x: (x[0], x[1], x[2]))
+    _, trading_date, symbol_name, gap, row = top
     return {
         "status": "success", "month": f"{year:04d}-{month:02d}", "mode": mode,
         "instrument_type": instrument_type.upper(), "result": {
             "trading_date": trading_date, "symbol": symbol_name, "gap": gap,
-            "gap_value": gap_value, "open": top["open"], "high": top["high"], "low": top["low"],
-            "close": top["close"], "lot_size": top["lot_size"], "previous_close": top["previous_close"],
-            "contract_month": top["contract_month"],
+            "gap_value": top[0], "open": row["open"], "high": row["high"], "low": row["low"],
+            "close": row["close"], "lot_size": row["lot_size"], "previous_close": row["previous_close"],
+            "contract_month": row["contract_month"],
         },
     }
 
@@ -130,3 +130,46 @@ def monthly_symbols(
     rows = _daily_rows(db, start, end, instrument_type=instrument_type)
     symbols = sorted({r["symbol"] for r in rows})
     return {"status": "success", "month": f"{year:04d}-{month:02d}", "instrument_type": instrument_type.upper(), "symbols": symbols, "count": len(symbols)}
+
+
+@router.get("/intraday-replay")
+def intraday_replay(
+    trading_date: date = Query(...),
+    symbol: str = Query(...),
+    instrument_type: str = Query("STOCK"),
+    contract_month: str | None = Query(None),
+    interval_minutes: int = Query(1, ge=1, le=60),
+    db: Session = Depends(get_db),
+):
+    """Return one-minute source bars for a date; Android replays them into 15m candles."""
+    params: dict[str, object] = {
+        "start": trading_date.isoformat(),
+        "end": (trading_date + timedelta(days=1)).isoformat(),
+        "symbol": symbol.strip().upper(),
+        "instrument_type": instrument_type.upper(),
+    }
+    contract_filter = ""
+    if contract_month:
+        contract_filter = " AND contract_month = :contract_month"
+        params["contract_month"] = contract_month
+    sql = text(
+        """
+        SELECT timestamp, open, high, low, close, volume, oi, lot_size, contract_month, instrument_key
+        FROM historical_market_bars
+        WHERE timestamp >= :start AND timestamp < :end
+          AND upper(symbol) = :symbol
+          AND upper(instrument_type) = :instrument_type
+        """ + contract_filter + """
+        ORDER BY timestamp ASC, instrument_key ASC
+        """
+    )
+    rows = [dict(row) for row in db.execute(sql, params).mappings().all()]
+    if not rows:
+        raise HTTPException(status_code=404, detail="no intraday historical data found for the requested date/symbol")
+    return {
+        "status": "success", "trading_date": trading_date, "symbol": symbol.strip().upper(),
+        "instrument_type": instrument_type.upper(), "contract_month": contract_month,
+        "source_interval_minutes": interval_minutes, "chart_interval_minutes": 15,
+        "count": len(rows),
+        "series": rows,
+    }
