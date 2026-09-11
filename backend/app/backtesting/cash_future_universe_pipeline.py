@@ -13,6 +13,7 @@ from .cash_future_universe import CashFutureFnoUniverse
 from .cash_future_universe_acquisition import CashFutureUniverseAcquisitionResult, acquire_cash_future_universe
 from .cash_future_universe_download_plan import CashFutureUniverseDownloadJob, CashFutureUniverseDownloadPlan
 from .cash_future_universe_materializer import materialize_cash_future_universe_history
+from .cash_future_coverage_manifest_store import CashFutureCoverageManifestStore
 from .historical_catalog import HistoricalCatalog
 from .historical_job_store import HistoricalJobStore
 from .historical_sync import HistoricalSyncPlan
@@ -31,19 +32,35 @@ class CashFutureUniversePipelineResult:
     acquisition: CashFutureUniverseAcquisitionResult
     materialized_rows: int
     materialized_underlyings: tuple[str, ...] = ()
+    coverage_store: CashFutureCoverageManifestStore | None = None
+    coverage_source: str = "angelone"
+    coverage_timeframe: str = "1m"
 
     @property
     def backtest_ready(self) -> bool:
-        """Return whether every acquired underlying is completely materialized."""
+        """Return whether every acquired underlying is completely materialized and manifested."""
         acquired_underlyings = tuple(
             sorted(_underlying_from_cash_instrument(result.queue.spot.instrument)
                    for result in self.acquisition.results)
         )
-        return bool(
+        if not (
             self.materialized_rows > 0
             and acquired_underlyings
             and all(result.coverage.complete for result in self.acquisition.results)
             and tuple(sorted(set(self.materialized_underlyings))) == tuple(sorted(set(acquired_underlyings)))
+        ):
+            return False
+        if self.coverage_store is None:
+            return True
+        requested_instruments = tuple(sorted({
+            request.instrument
+            for result in self.acquisition.results
+            for request in result.queue.all_requests
+        }))
+        return self.coverage_store.is_complete_for_instruments(
+            source=self.coverage_source,
+            timeframe=self.coverage_timeframe,
+            instruments=requested_instruments,
         )
 
     def require_backtest_ready(self) -> None:
@@ -124,7 +141,7 @@ def acquire_and_materialize_cash_future_universe(
     run_id: str | None = None,
     job_id_prefix: str = "cash-future",
     on_progress: Callable[[str, CashFutureAcquisitionProgress], None] | None = None,
-    coverage_store=None,
+    coverage_store: CashFutureCoverageManifestStore | None = None,
     margin_required: float = 0.0,
     batch_size: int = 1000,
 ) -> CashFutureUniversePipelineResult:
@@ -182,6 +199,9 @@ def acquire_and_materialize_cash_future_universe(
         acquisition,
         materialized_rows,
         tuple(sorted(set(materialized_underlyings))),
+        coverage_store=coverage_store,
+        coverage_source=source,
+        coverage_timeframe=timeframe,
     )
 
 
