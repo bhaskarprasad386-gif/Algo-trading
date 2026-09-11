@@ -8,14 +8,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
-from app.backtesting.cash_future_historical_loader import (
-    CashFutureHistoricalLoader,
-    CashFutureHistorySelection,
-)
-from app.backtesting.cash_future_strategy_runner import (
-    CashFutureStrategyConfig,
-    run_cash_future_strategy,
-)
+from app.backtesting.cash_future_historical_loader import CashFutureHistoricalLoader, CashFutureHistorySelection
+from app.backtesting.cash_future_strategy_runner import CashFutureStrategyConfig, run_cash_future_strategy
 from app.backtesting.contract_master import ContractMasterCatalog
 from app.backtesting.historical_catalog import HistoricalCatalog
 from app.core.config import settings
@@ -75,8 +69,6 @@ class StrategyRunRequest(BaseModel):
         return self
 
 
-# API-safe built-in strategy registry. The callable runner remains generic;
-# additional strategy adapters can be registered without changing execution.
 def _strategy_registry() -> dict[str, Any]:
     return {
         "gap_threshold": lambda current, history: (
@@ -85,41 +77,36 @@ def _strategy_registry() -> dict[str, Any]:
     }
 
 
-def _load_points(request: StrategyRunRequest) -> tuple[CashFutureHistoryPoint, ...] | Any:
-    if request.points is not None:
-        return tuple(CashFutureHistoryPoint(**point.model_dump()) for point in request.points)
-
-    assert request.start_date is not None and request.end_date is not None
-    assert request.spot_instrument is not None and request.underlying is not None
-    catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
-    contracts = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
-    try:
-        selection = CashFutureHistorySelection(
-            spot_instrument=request.spot_instrument,
-            exchange=request.exchange,
-            underlying=request.underlying,
-            start_date=request.start_date,
-            end_date=request.end_date,
-            timeframe=request.timeframe,
-            contract_month=request.contract_month,
-            mode=request.mode,
-            source=request.source,
-        )
-        return CashFutureHistoricalLoader(catalog, contracts).iter_points(selection)
-    except Exception:
-        catalog.close()
-        contracts.close()
-        raise
-
-
 @router.post("/strategy-run")
 def strategy_run(request: StrategyRunRequest):
     strategy = _strategy_registry().get(request.strategy_id)
     if strategy is None:
         raise HTTPException(status_code=404, detail=f"unknown Cash-Future strategy: {request.strategy_id}")
 
+    catalog: HistoricalCatalog | None = None
+    contracts: ContractMasterCatalog | None = None
     try:
-        points = _load_points(request)
+        if request.points is not None:
+            points = tuple(CashFutureHistoryPoint(**point.model_dump()) for point in request.points)
+        else:
+            assert request.start_date is not None and request.end_date is not None
+            assert request.spot_instrument is not None and request.underlying is not None
+            catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
+            contracts = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
+            selection = CashFutureHistorySelection(
+                spot_instrument=request.spot_instrument,
+                exchange=request.exchange,
+                underlying=request.underlying,
+                start_date=request.start_date,
+                end_date=request.end_date,
+                timeframe=request.timeframe,
+                contract_month=request.contract_month,
+                mode=request.mode,
+                source=request.source,
+            )
+            # Keep this as a generator so SQLite history remains bounded in memory.
+            points = CashFutureHistoricalLoader(catalog, contracts).iter_points(selection)
+
         result = run_cash_future_strategy(
             points,
             strategy,
@@ -138,14 +125,10 @@ def strategy_run(request: StrategyRunRequest):
     except (ValueError, LookupError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
-        if request.points is None:
-            # The loader's generator is consumed synchronously by the runner.
-            # Close the per-request SQLite handles after execution.
-            try:
-                points.gi_frame.f_locals["self"].catalog.close()
-                points.gi_frame.f_locals["self"].contract_catalog.close()
-            except (AttributeError, KeyError, TypeError):
-                pass
+        if catalog is not None:
+            catalog.close()
+        if contracts is not None:
+            contracts.close()
 
     return {
         "status": "success",
