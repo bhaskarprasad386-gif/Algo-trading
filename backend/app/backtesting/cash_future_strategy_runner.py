@@ -15,7 +15,7 @@ CashFutureStrategy = Callable[[CashFutureHistoryPoint, tuple[CashFutureHistoryPo
 
 @dataclass(frozen=True)
 class CashFutureStrategyConfig:
-    initial_capital: float = 10_000_000.0
+    initial_capital: float = 100_000_000.0
     execution_model: str = "gap"
     charges_per_trade: float = 0.0
     funding_cost_per_trade: float = 0.0
