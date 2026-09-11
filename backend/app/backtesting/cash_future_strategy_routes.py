@@ -79,6 +79,31 @@ def _strategy_registry() -> dict[str, Any]:
     }
 
 
+def _serialise_run(ledger: BacktestLedger, run_id: str) -> dict[str, Any]:
+    metadata = ledger.run_metadata(run_id)
+    if metadata is None:
+        raise HTTPException(status_code=404, detail=f"unknown Cash-Future run: {run_id}")
+    signals = tuple(record.payload for record in ledger.records(run_id, "signal"))
+    trades = tuple(record.payload for record in ledger.records(run_id, "trade"))
+    equity = tuple(record.payload for record in ledger.records(run_id, "equity"))
+    initial_capital = float(metadata["initial_capital"])
+    final_capital = float(equity[-1]["equity"]) if equity else initial_capital
+    return {
+        "status": "success",
+        "run_id": run_id,
+        "strategy_id": metadata["strategy_id"],
+        "strategy_version": metadata["strategy_version"],
+        "initial_capital": initial_capital,
+        "final_capital": final_capital,
+        "net_profit": final_capital - initial_capital,
+        "signal_count": len(signals),
+        "trade_count": len(trades),
+        "signals": signals,
+        "trades": trades,
+        "equity_curve": equity,
+    }
+
+
 @router.post("/strategy-run")
 def strategy_run(request: StrategyRunRequest):
     strategy = _strategy_registry().get(request.strategy_id)
@@ -153,6 +178,15 @@ def strategy_run(request: StrategyRunRequest):
         "trades": result.trades,
         "equity_curve": result.equity_curve,
     }
+
+
+@router.get("/strategy-run/{run_id}")
+def strategy_run_result(run_id: str):
+    ledger = BacktestLedger(settings.BACKTEST_LEDGER_DB)
+    try:
+        return _serialise_run(ledger, run_id)
+    finally:
+        ledger.close()
 
 
 __all__ = ["router"]
