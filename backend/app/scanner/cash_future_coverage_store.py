@@ -38,13 +38,11 @@ def iter_persisted_cash_future_points(
     if end is not None:
         stmt = stmt.where(CashFutureHistory.timestamp <= end)
 
-    result = db.scalars(
-        stmt.order_by(
-            CashFutureHistory.symbol,
-            CashFutureHistory.contract_month,
-            CashFutureHistory.timestamp,
-        ).yield_per(page_size)
-    )
+    result = db.scalars(stmt.order_by(
+        CashFutureHistory.symbol,
+        CashFutureHistory.contract_month,
+        CashFutureHistory.timestamp,
+    ).yield_per(page_size))
     for row in result:
         yield CashFutureHistoryPoint(
             timestamp=row.timestamp,
@@ -62,6 +60,10 @@ def iter_persisted_cash_future_points(
             cash_ask=row.cash_ask,
             future_bid=row.future_bid,
             future_ask=row.future_ask,
+            cash_bid_qty=row.cash_bid_qty,
+            cash_ask_qty=row.cash_ask_qty,
+            future_bid_qty=row.future_bid_qty,
+            future_ask_qty=row.future_ask_qty,
             charges=row.charges,
             funding_cost=row.funding_cost,
             net_profit=row.net_profit,
@@ -108,8 +110,8 @@ def run_persisted_cash_future_backtest(
     """Run Cash-Future backtest only after an explicit coverage readiness gate.
 
     The caller must supply the coverage report built from the same persisted
-    history scope. This prevents a backtest from silently running on partial
-    historical data. The actual observations remain streamed from SQLite.
+    history scope. Observations remain streamed from SQLite, including genuine
+    historical bid/ask/depth quantities when the source provided them.
     """
     if coverage_report is None:
         raise ValueError("coverage_report is required before running a persisted Cash-Future backtest")
