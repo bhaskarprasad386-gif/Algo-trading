@@ -86,10 +86,6 @@ def run_cash_future_strategy(
         point for point in contract_points
         if config.end_date is None or _point_date(point) <= config.end_date
     )
-    execution_points = tuple(
-        point for point in visible_points
-        if config.start_date is None or _point_date(point) >= config.start_date
-    )
 
     if ledger is not None:
         if not run_id or not run_id.strip():
@@ -140,7 +136,7 @@ def run_cash_future_strategy(
             "lot_size": point.lot_size,
         }
         signals.append(signal_record)
-        if ledger is not None and action not in {"HOLD", "NONE"}:
+        if ledger is not None:
             ledger.append_batch((ledger_record(run_id, "signal", point.timestamp, signal_record),))
 
         if action == "BUY" and entry is None:
@@ -170,7 +166,10 @@ def run_cash_future_strategy(
                 ledger.append_batch((ledger_record(run_id, "trade", point.timestamp, trade),))
             entry = None
 
-        equity_curve.append({"timestamp": point.timestamp.isoformat(), "equity": capital})
+        equity_record = {"timestamp": point.timestamp.isoformat(), "equity": capital}
+        equity_curve.append(equity_record)
+        if ledger is not None:
+            ledger.append_batch((ledger_record(run_id, "equity", point.timestamp, equity_record),))
 
     return CashFutureStrategyRun(
         strategy_id,
