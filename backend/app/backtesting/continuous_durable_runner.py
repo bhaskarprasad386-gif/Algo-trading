@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable
-
 from app.backtesting.backtest_ledger import BacktestTradeLedger
-from app.backtesting.continuous_futures import ContinuousFuturesRecord
 from app.backtesting.engine import BacktestResult
 
 
