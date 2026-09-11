@@ -27,17 +27,8 @@ class CashFuturePortfolioStrategyRun:
     open_position_count: int
 
 
-def _unrealized_profit(
-    entry: CashFutureHistoryPoint,
-    current: CashFutureHistoryPoint,
-    execution_model: str,
-) -> float:
-    """Value an open spread at the current observable executable price."""
-    return (
-        _legacy_gap_profit(entry, current)
-        if execution_model == "gap"
-        else _executable_spread_profit(entry, current)
-    )
+def _unrealized_profit(entry: CashFutureHistoryPoint, current: CashFutureHistoryPoint, execution_model: str) -> float:
+    return _legacy_gap_profit(entry, current) if execution_model == "gap" else _executable_spread_profit(entry, current)
 
 
 def run_cash_future_portfolio_strategy(
@@ -49,14 +40,7 @@ def run_cash_future_portfolio_strategy(
     charges_per_trade: float = 0.0,
     funding_cost_per_trade: float = 0.0,
 ) -> CashFuturePortfolioStrategyRun:
-    """Run one strategy chronologically while allowing simultaneous positions.
-
-    Each ``(symbol, contract_month)`` gets an independent open-position slot and
-    capital reservation. Contract series can therefore coexist without expiry
-    prices being mixed between positions. Strategy history remains strictly
-    point-in-time and contains no future observations. Equity includes mark-to-
-    market unrealized P&L for every currently open position.
-    """
+    """Run one strategy chronologically with shared capital and portfolio MTM."""
     if initial_capital <= 0:
         raise ValueError("initial_capital must be positive")
     if execution_model not in {"gap", "bid_ask"}:
@@ -67,30 +51,28 @@ def run_cash_future_portfolio_strategy(
 
     account = CashFuturePortfolioLedger(initial_capital)
     history: list[CashFutureHistoryPoint] = []
+    latest: dict[PositionKey, CashFutureHistoryPoint] = {}
     entries: dict[PositionKey, CashFutureHistoryPoint] = {}
     signals: list[Mapping[str, Any]] = []
     trades: list[Mapping[str, Any]] = []
     equity: list[Mapping[str, Any]] = []
 
     for point in ordered:
+        key: PositionKey = (point.symbol, point.contract_month)
         visible_history = tuple(history + [point])
         raw_signal = strategy(point, visible_history)
         history.append(point)
+        latest[key] = point
         action = "NONE" if raw_signal is None else str(raw_signal).upper()
         if action not in {"BUY", "SELL", "HOLD", "NONE"}:
             raise ValueError("Cash-Future portfolio strategy must return BUY, SELL, HOLD, or NONE")
 
-        key: PositionKey = (point.symbol, point.contract_month)
         entry = entries.get(key)
         signal_record: dict[str, Any] = {
-            "timestamp": point.timestamp.isoformat(),
-            "symbol": point.symbol,
-            "contract_month": point.contract_month,
-            "action": action,
-            "lot_size": point.lot_size,
-            "margin_required": point.margin_required,
+            "timestamp": point.timestamp.isoformat(), "symbol": point.symbol,
+            "contract_month": point.contract_month, "action": action,
+            "lot_size": point.lot_size, "margin_required": point.margin_required,
         }
-
         if action == "BUY" and entry is None:
             if account.reserve(key, point.margin_required):
                 entries[key] = point
@@ -107,7 +89,6 @@ def run_cash_future_portfolio_strategy(
         exit_reason: str | None = "strategy" if action == "SELL" and entry is not None else None
         if entry is not None and point.expiry_date is not None and point.timestamp.date() >= point.expiry_date:
             exit_reason = "expiry"
-
         signals.append(signal_record)
 
         if exit_reason is not None and entry is not None:
@@ -116,25 +97,19 @@ def run_cash_future_portfolio_strategy(
             account.apply_realized_pnl(net)
             reserved_margin = account.release(key)
             trades.append({
-                "entry_time": entry.timestamp.isoformat(),
-                "exit_time": point.timestamp.isoformat(),
-                "symbol": entry.symbol,
-                "contract_month": entry.contract_month,
-                "lot_size": entry.lot_size,
-                "gross_profit": gross,
-                "charges": charges_per_trade,
-                "funding_cost": funding_cost_per_trade,
-                "net_profit": net,
-                "execution_model": execution_model,
-                "exit_reason": exit_reason,
-                "reserved_margin": reserved_margin,
+                "entry_time": entry.timestamp.isoformat(), "exit_time": point.timestamp.isoformat(),
+                "symbol": entry.symbol, "contract_month": entry.contract_month,
+                "lot_size": entry.lot_size, "gross_profit": gross,
+                "charges": charges_per_trade, "funding_cost": funding_cost_per_trade,
+                "net_profit": net, "execution_model": execution_model,
+                "exit_reason": exit_reason, "reserved_margin": reserved_margin,
             })
             entries.pop(key, None)
 
         unrealized = sum(
-            _unrealized_profit(open_entry, point, execution_model)
+            _unrealized_profit(open_entry, latest[open_key], execution_model)
             for open_key, open_entry in entries.items()
-            if open_key == key
+            if open_key in latest
         )
         equity.append({
             "timestamp": point.timestamp.isoformat(),
@@ -146,27 +121,16 @@ def run_cash_future_portfolio_strategy(
             "open_position_count": account.open_position_count,
         })
 
-    final_unrealized = 0.0
-    if ordered:
-        last_by_key: dict[PositionKey, CashFutureHistoryPoint] = {}
-        for point in ordered:
-            last_by_key[(point.symbol, point.contract_month)] = point
-        final_unrealized = sum(
-            _unrealized_profit(entry, last_by_key[key], execution_model)
-            for key, entry in entries.items()
-        )
-
+    final_unrealized = sum(
+        _unrealized_profit(entry, latest[key], execution_model)
+        for key, entry in entries.items()
+        if key in latest
+    )
+    final_equity = float(account.realized_capital) + final_unrealized
     return CashFuturePortfolioStrategyRun(
-        initial_capital,
-        float(account.realized_capital) + final_unrealized,
-        float(account.realized_capital) + final_unrealized - initial_capital,
-        tuple(signals),
-        tuple(trades),
-        tuple(equity),
-        account.available_capital,
-        account.reserved_margin,
-        account.blocked_entries,
-        account.open_position_count,
+        initial_capital, final_equity, final_equity - initial_capital,
+        tuple(signals), tuple(trades), tuple(equity), account.available_capital,
+        account.reserved_margin, account.blocked_entries, account.open_position_count,
     )
 
 
