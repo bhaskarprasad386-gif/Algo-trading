@@ -79,3 +79,25 @@ def test_both_builds_independent_current_and_near_legs():
     assert len(result) == 2
     assert result[0][0].future.token == "101"
     assert result[1][0].future.token == "102"
+
+
+def test_non_consecutive_session_days_extend_same_contract_without_calendar_gap():
+    sessions = (date(2026, 1, 29), date(2026, 2, 2), date(2026, 2, 3))
+    segments = build_rollover_segments(_catalog(), exchange="NFO", underlying="SBIN",
+                                       start=date(2026, 1, 29), end=date(2026, 2, 3),
+                                       mode="CURRENT", session_days=sessions)
+    assert [(s.start, s.end, s.future.token) for s in segments] == [
+        (date(2026, 1, 29), date(2026, 1, 29), "101"),
+        (date(2026, 2, 2), date(2026, 2, 3), "102"),
+    ]
+
+
+def test_snapshot_rollover_can_be_non_adjacent_in_calendar_but_contiguous_in_sessions():
+    sessions = (date(2026, 1, 29), date(2026, 1, 30), date(2026, 2, 2))
+    segments = build_rollover_segments(_catalog(), exchange="NFO", underlying="SBIN",
+                                       start=date(2026, 1, 29), end=date(2026, 2, 2),
+                                       mode="CURRENT", session_days=sessions)
+    assert [(s.start, s.end, s.future.token) for s in segments] == [
+        (date(2026, 1, 29), date(2026, 1, 29), "101"),
+        (date(2026, 1, 30), date(2026, 2, 2), "102"),
+    ]
