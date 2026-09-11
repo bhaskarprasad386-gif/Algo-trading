@@ -107,6 +107,10 @@ def acquire_cash_future_universe(
             on_progress=lambda event, underlying=job.underlying: (
                 on_progress(underlying, event) if on_progress else None
             ),
+            queue=__import__("app.backtesting.cash_future_download_queue", fromlist=["CashFutureDownloadQueue"]).CashFutureDownloadQueue(
+                job.spot,
+                job.futures,
+            ),
         )
         if job_store is not None:
             kwargs.update(
