@@ -50,26 +50,12 @@ data class FullFnoResultChunk(val sequence: Int, val symbol: String, val result:
 data class FullFnoResultsPage(val status: String, val job_id: String, val total: Int = 0, val offset: Int = 0, val limit: Int = 0, val after_sequence: Int? = null, val next_after_sequence: Int? = null, val data: List<FullFnoResultChunk> = emptyList())
 data class FullFnoJobControlResponse(val status: String, val job_id: String, val job_status: String)
 data class FullFnoPurgeResponse(val status: String, val job_id: String, val job_status: String, val deleted_chunks: Int)
-data class DailyGapCalendarItem(
-    val trading_date: String = "",
-    val symbol: String = "",
-    val direction: String = "FLAT",
-    val gap: Double = 0.0,
-    val gap_percent: Double = 0.0,
-    val weighted_gap: Double = 0.0,
-    val previous_close: Double = 0.0,
-    val open: Double = 0.0,
-    val high: Double = 0.0,
-    val low: Double = 0.0,
-    val close: Double = 0.0,
-    val lot_size: Double = 0.0,
-)
-data class DailyGapCalendarResponse(
-    val status: String = "",
-    val trading_date: String = "",
-    val top: DailyGapCalendarItem? = null,
-    val data: List<DailyGapCalendarItem> = emptyList(),
-)
+data class DailyGapCalendarItem(val trading_date: String = "", val symbol: String = "", val direction: String = "FLAT", val gap: Double = 0.0, val gap_percent: Double = 0.0, val weighted_gap: Double = 0.0, val previous_close: Double = 0.0, val open: Double = 0.0, val high: Double = 0.0, val low: Double = 0.0, val close: Double = 0.0, val lot_size: Double = 0.0)
+data class DailyGapCalendarResponse(val status: String = "", val trading_date: String = "", val top: DailyGapCalendarItem? = null, val data: List<DailyGapCalendarItem> = emptyList())
+data class MonthlyGapResult(val trading_date: String = "", val symbol: String = "", val gap: Double = 0.0, val gap_value: Double = 0.0, val open: Double = 0.0, val high: Double = 0.0, val low: Double = 0.0, val close: Double = 0.0, val lot_size: Double = 0.0, val previous_close: Double? = null, val contract_month: String? = null)
+data class MonthlyGapSearchResponse(val status: String = "", val month: String = "", val mode: String = "opening", val instrument_type: String = "STOCK", val result: MonthlyGapResult? = null)
+data class MonthlyGraphPoint(val trading_date: String = "", val open: Double = 0.0, val high: Double = 0.0, val low: Double = 0.0, val close: Double = 0.0, val lot_size: Double = 0.0, val contract_month: String? = null)
+data class MonthlyGraphResponse(val status: String = "", val symbol: String = "", val month: String = "", val instrument_type: String = "STOCK", val contract_month: String? = null, val count: Int = 0, val series: List<MonthlyGraphPoint> = emptyList())
 
 interface ApiInterface {
     @GET("/") suspend fun getRootStatus(): MarketStatus
@@ -93,6 +79,8 @@ interface ApiInterface {
     @GET("/api/v1/market-data/ltp-by-symbol") suspend fun ltpBySymbol(@Query("tradingsymbol") tradingSymbol: String, @Query("exchange") exchange: String = "NSE"): MarketLtpResponse
     @GET("/api/v1/scanner/cash-future/live/auto") suspend fun cashFutureScan(): CashFutureScanResponse
     @GET("/api/v1/scanner/cash-future/calendar/{trading_date}/top-gap") suspend fun dailyGapCalendar(@Path("trading_date") tradingDate: String, @Query("limit") limit: Int = 10): DailyGapCalendarResponse
+    @GET("/api/v1/backtesting/results/monthly-gap") suspend fun monthlyGapSearch(@Query("year") year: Int, @Query("month") month: Int, @Query("mode") mode: String = "opening", @Query("instrument_type") instrumentType: String = "STOCK", @Query("symbol") symbol: String? = null, @Query("contract_month") contractMonth: String? = null): MonthlyGapSearchResponse
+    @GET("/api/v1/backtesting/results/monthly-graph") suspend fun monthlyGraph(@Query("symbol") symbol: String, @Query("year") year: Int, @Query("month") month: Int, @Query("instrument_type") instrumentType: String = "STOCK", @Query("contract_month") contractMonth: String? = null): MonthlyGraphResponse
     @POST("/api/v1/scanner/cash-future/backtest/full/jobs") suspend fun startFullFnoJob(@Query("days") days: Int = 365, @Query("min_entry_gap") minEntryGap: Double = 0.0, @Query("exit_gap") exitGap: Double = 0.0, @Query("charges_per_trade") chargesPerTrade: Double = 0.0, @Query("funding_cost_per_trade") fundingCostPerTrade: Double = 0.0, @Query("max_holding_days") maxHoldingDays: Int = 30, @Query("future_selection") futureSelection: String = "BOTH"): FullFnoJobAcceptedResponse
     @GET("/api/v1/scanner/cash-future/backtest/jobs/{job_id}") suspend fun fullFnoJob(@Path("job_id") jobId: String): FullFnoJobStatusResponse
     @GET("/api/v1/scanner/cash-future/backtest/jobs/{job_id}/results") suspend fun fullFnoResults(@Path("job_id") jobId: String, @Query("limit") limit: Int = 50, @Query("after_sequence") afterSequence: Int? = null): FullFnoResultsPage
@@ -114,9 +102,7 @@ object ApiService {
             val token = AppContextHolder.context?.let { getToken(it) }
             val authenticated = if (publicAuthEndpoint || token.isNullOrBlank()) request else request.newBuilder().addHeader("Authorization", "Bearer $token").build()
             val response = chain.proceed(authenticated)
-            if (response.code == 401 && !publicAuthEndpoint) {
-                AppContextHolder.context?.let { clearToken(it) }
-            }
+            if (response.code == 401 && !publicAuthEndpoint) AppContextHolder.context?.let { clearToken(it) }
             response
         }).connectTimeout(10, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS).build()
     }
