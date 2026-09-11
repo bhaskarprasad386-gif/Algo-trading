@@ -76,6 +76,10 @@ def run_angelone_cash_future_history_in_batches(
     if not run_id.strip():
         raise ValueError("run_id is required")
 
+    # Materialize once because master_rows may be a one-shot generator. Every
+    # batch must receive the same contract-master universe for deterministic
+    # offsets and resume-safe execution.
+    master_rows = tuple(master_rows)
     batches = tuple(iter_cash_future_stock_batches(universe, batch_size=batch_size))
     results: list[AngelOneCashFutureBatchResult] = []
 
