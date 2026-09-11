@@ -90,12 +90,12 @@ class CashFutureHistoricalAcquisitionService:
         timeframe: str,
         requested_instruments: set[str],
     ) -> set[str]:
-        """Use an existing manifest as the durable gate for targeted repair.
+        """Return only instruments whose persisted manifest still needs repair.
 
-        A complete manifest range is skipped entirely. An incomplete range keeps
-        its instrument eligible, after which the normal catalog gap planner finds
-        the exact missing chunks/timestamps. Instruments with no manifest entry
-        are treated as new acquisition work.
+        A complete manifest range is skipped at the provider-request layer. An
+        incomplete range remains eligible, after which the catalog gap planner
+        narrows work to exact missing cadence chunks. Instruments absent from an
+        existing manifest are treated as new acquisition work.
         """
         if coverage_store is None:
             return requested_instruments
@@ -139,25 +139,23 @@ class CashFutureHistoricalAcquisitionService:
                 source=source,
                 session_days=self._session_days(spot_sessions),
             )
-        requested = {request.instrument for request in queue.all_requests}
-        repair_instruments = self._manifest_repair_instruments(
-            coverage_store=coverage_store,
-            source=source,
-            timeframe=timeframe,
-            requested_instruments=requested,
-        )
-        if repair_instruments != requested:
-            allowed = repair_instruments
-            queue = CashFutureDownloadQueue(
-                spot=queue.spot if queue.spot.instrument in allowed else queue.spot,
-                futures=tuple(item for item in queue.futures if item.request.instrument in allowed),
-            )
         plan = self.planner.plan(
             queue=queue,
             catalog=self.ingestion.catalog,
             spot_sessions=spot_sessions,
             future_sessions=future_sessions,
         )
+        repair_instruments = self._manifest_repair_instruments(
+            coverage_store=coverage_store,
+            source=source,
+            timeframe=timeframe,
+            requested_instruments={request.instrument for request in queue.all_requests},
+        )
+        if coverage_store is not None:
+            plan = HistoricalSyncPlan(tuple(
+                request for request in plan.requests
+                if request.instrument in repair_instruments
+            ))
         return queue, plan
 
     def _audit(
