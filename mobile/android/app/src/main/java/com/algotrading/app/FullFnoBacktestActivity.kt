@@ -40,9 +40,7 @@ class FullFnoBacktestActivity : AppCompatActivity() {
     private var loading = false
     private var replayJob: Job? = null
 
-    companion object {
-        private const val MAX_RESULT_TEXT_CHARS = 20000
-    }
+    companion object { private const val MAX_RESULT_TEXT_CHARS = 20000 }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,40 +79,20 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         if (loading) return@launch
         loading = true
         withContext(Dispatchers.Main) {
-            btnStart.isEnabled = false
-            btnCancel.isEnabled = true
-            btnLoadMore.isEnabled = false
-            btnPurge.isEnabled = false
-            nextSequence = null
-            tvResults.text = ""
-            tvStatus.text = "Starting Full-F&O backtest…"
+            btnStart.isEnabled = false; btnCancel.isEnabled = true; btnLoadMore.isEnabled = false; btnPurge.isEnabled = false
+            nextSequence = null; tvResults.text = ""; tvStatus.text = "Starting Full-F&O backtest…"
         }
-        try {
-            val accepted = ApiService.retrofitService.startFullFnoJob()
-            jobId = accepted.job
-            pollJob(accepted.job)
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                tvStatus.text = "Start failed • ${e.message ?: "API error"}"
-                btnStart.isEnabled = true
-                btnCancel.isEnabled = false
-            }
-        } finally { loading = false }
+        try { val accepted = ApiService.retrofitService.startFullFnoJob(); jobId = accepted.job; pollJob(accepted.job) }
+        catch (e: Exception) { withContext(Dispatchers.Main) { tvStatus.text = "Start failed • ${e.message ?: "API error"}"; btnStart.isEnabled = true; btnCancel.isEnabled = false } }
+        finally { loading = false }
     }
 
     private suspend fun pollJob(id: String) {
         while (true) {
             val job = ApiService.retrofitService.fullFnoJob(id)
-            withContext(Dispatchers.Main) {
-                tvStatus.text = "Full-F&O: ${job.job.status.uppercase()} • ${job.job.symbols_processed}/${job.job.symbols_total} • ${job.job.progress_pct}%"
-            }
+            withContext(Dispatchers.Main) { tvStatus.text = "Full-F&O: ${job.job.status.uppercase()} • ${job.job.symbols_processed}/${job.job.symbols_total} • ${job.job.progress_pct}%" }
             if (job.job.status == "completed" || job.job.status == "failed" || job.job.status == "cancelled") {
-                withContext(Dispatchers.Main) {
-                    btnCancel.isEnabled = false
-                    btnStart.isEnabled = true
-                    btnLoadMore.isEnabled = job.job.result_chunks > 0
-                    btnPurge.isEnabled = true
-                }
+                withContext(Dispatchers.Main) { btnCancel.isEnabled = false; btnStart.isEnabled = true; btnLoadMore.isEnabled = job.job.result_chunks > 0; btnPurge.isEnabled = true }
                 if (job.job.result_chunks > 0) loadNextPageInternal(id)
                 return
             }
@@ -126,12 +104,8 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         val id = jobId ?: return@launch
         if (!loading) return@launch
         withContext(Dispatchers.Main) { btnCancel.isEnabled = false; tvStatus.text = "Full-F&O: CANCELLING…" }
-        try {
-            val response = ApiService.retrofitService.cancelFullFnoJob(id)
-            withContext(Dispatchers.Main) { tvStatus.text = "Full-F&O: ${response.job_status.uppercase()}" }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) { btnCancel.isEnabled = true; tvStatus.text = "Cancel failed • ${e.message ?: "API error"}" }
-        }
+        try { val response = ApiService.retrofitService.cancelFullFnoJob(id); withContext(Dispatchers.Main) { tvStatus.text = "Full-F&O: ${response.job_status.uppercase()}" } }
+        catch (e: Exception) { withContext(Dispatchers.Main) { btnCancel.isEnabled = true; tvStatus.text = "Cancel failed • ${e.message ?: "API error"}" } }
     }
 
     private fun loadNextPage() = lifecycleScope.launch(Dispatchers.IO) {
@@ -142,19 +116,10 @@ class FullFnoBacktestActivity : AppCompatActivity() {
 
     private suspend fun loadNextPageInternal(id: String) {
         val page = ApiService.retrofitService.fullFnoResults(id, limit = 50, afterSequence = nextSequence)
-        if (page.data.isEmpty()) {
-            withContext(Dispatchers.Main) { btnLoadMore.isEnabled = false; tvStatus.text = "Full-F&O: no more results" }
-            return
-        }
-        val text = buildString {
-            page.data.forEach { chunk ->
-                append("#${chunk.sequence}  ${chunk.symbol}\n")
-                append(chunk.result.toString())
-                append("\n────────────────────\n")
-            }
-        }
+        if (page.data.isEmpty()) { withContext(Dispatchers.Main) { btnLoadMore.isEnabled = false; tvStatus.text = "Full-F&O: no more results" }; return }
+        val text = buildString { page.data.forEach { chunk -> append("#${chunk.sequence}  ${chunk.symbol}\n"); append(chunk.result.toString()); append("\n────────────────────\n") } }
         withContext(Dispatchers.Main) {
-            val combined = (tvResults.text.toString() + text)
+            val combined = tvResults.text.toString() + text
             tvResults.text = if (combined.length <= MAX_RESULT_TEXT_CHARS) combined else "[Older results trimmed from device display to keep Android memory bounded]\n\n" + combined.takeLast(MAX_RESULT_TEXT_CHARS)
             nextSequence = page.next_after_sequence
             btnLoadMore.isEnabled = page.next_after_sequence != null && page.data.isNotEmpty()
@@ -169,78 +134,45 @@ class FullFnoBacktestActivity : AppCompatActivity() {
 
     private fun loadGapForDate(year: Int, month: Int, day: Int) = lifecycleScope.launch(Dispatchers.IO) {
         val tradingDate = "%04d-%02d-%02d".format(year, month, day)
-        withContext(Dispatchers.Main) {
-            tvGapCalendar.text = "$tradingDate • loading high-based shorting gap ranking…"
-            gapCalendarRows.removeAllViews()
-        }
+        withContext(Dispatchers.Main) { tvGapCalendar.text = "$tradingDate • loading High−Open × historical lot ranking…"; gapCalendarRows.removeAllViews() }
         try {
-            val response = ApiService.retrofitService.dailyGapCalendar(tradingDate, limit = 10)
+            val response = ApiService.retrofitService.dateGapRanking(tradingDate, mode = "shorting", instrumentType = "STOCK", limit = 10)
+            val prior = runCatching { ApiService.retrofitService.priorGapComparison(tradingDate, mode = "shorting", instrumentType = "STOCK", limit = 5) }.getOrNull()
             val top = response.top
             withContext(Dispatchers.Main) {
-                tvGapCalendar.text = if (top == null) "$tradingDate\nNo historical Cash-Future OHLC data found for this date." else "$tradingDate • TOP GAP BY HIGH−OPEN × HISTORICAL LOT\n${top.symbol} • Gap ₹${"%.2f".format(top.gap)} • Gap×Lot ₹${"%.2f".format(top.weighted_gap)} • O ₹${"%.2f".format(top.open)} H ₹${"%.2f".format(top.high)} L ₹${"%.2f".format(top.low)} C ₹${"%.2f".format(top.close)} • Lot ${"%.0f".format(top.lot_size)}"
+                tvGapCalendar.text = buildString {
+                    append(if (top == null) "$tradingDate\nNo historical OHLC data found." else "$tradingDate • TOP GAP BY HIGH−OPEN × HISTORICAL LOT\n${top.symbol} • Gap ₹${"%.2f".format(top.gap)} • Gap×Lot ₹${"%.2f".format(top.weighted_gap)} • O ₹${"%.2f".format(top.open)} H ₹${"%.2f".format(top.high)} L ₹${"%.2f".format(top.low)} C ₹${"%.2f".format(top.close)} • Lot ${"%.0f".format(top.lot_size)}")
+                    append("\n\nPRIOR HIGHER GAPS")
+                    if (prior == null || !prior.has_larger_prior_gap) append("\nNone — this selected date is at/above all earlier available gaps.")
+                    else prior.prior_larger.forEach { p -> append("\n${p.trading_date} • ${p.symbol} • Gap ₹${"%.2f".format(p.gap)} • Gap×Lot ₹${"%.2f".format(p.weighted_gap)} • O ${"%.2f".format(p.open)} H ${"%.2f".format(p.high)}") }
+                }
                 response.data.forEach { item -> addCalendarRow(tradingDate, item) }
             }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) { tvGapCalendar.text = "$tradingDate • Gap calendar failed • ${e.message ?: "API error"}" }
-        }
+        } catch (e: Exception) { withContext(Dispatchers.Main) { tvGapCalendar.text = "$tradingDate • Gap calendar failed • ${e.message ?: "API error"}" } }
     }
 
     private fun addCalendarRow(tradingDate: String, item: DailyGapCalendarItem) {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(8, 6, 4, 6)
-        }
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(8, 6, 4, 6) }
         val details = TextView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            setTextColor(Color.WHITE)
-            textSize = 11f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f); setTextColor(Color.WHITE); textSize = 11f
             text = "${item.symbol}  Gap ₹${"%.2f".format(item.gap)} × Lot ${"%.0f".format(item.lot_size)} = ₹${"%.2f".format(item.weighted_gap)}\nO ${"%.2f".format(item.open)}  H ${"%.2f".format(item.high)}  L ${"%.2f".format(item.low)}  C ${"%.2f".format(item.close)}"
         }
-        val graph = Button(this).apply {
-            text = "GRAPH"
-            textSize = 10f
-            setOnClickListener { loadIntradayReplay(tradingDate, item.symbol) }
-        }
-        row.addView(details)
-        row.addView(graph, LinearLayout.LayoutParams(90, 44))
-        gapCalendarRows.addView(row)
+        val graph = Button(this).apply { text = "GRAPH"; textSize = 10f; setOnClickListener { loadIntradayReplay(tradingDate, item.symbol) } }
+        row.addView(details); row.addView(graph, LinearLayout.LayoutParams(90, 44)); gapCalendarRows.addView(row)
     }
 
     private fun loadIntradayReplay(tradingDate: String, symbol: String) = lifecycleScope.launch(Dispatchers.IO) {
         replayJob?.cancel()
-        withContext(Dispatchers.Main) {
-            replayStatus.text = "$tradingDate • $symbol • loading 1-minute data…"
-            btnReplayPlay.isEnabled = false
-            btnReplayReset.isEnabled = false
-        }
+        withContext(Dispatchers.Main) { replayStatus.text = "$tradingDate • $symbol • loading 1-minute data…"; btnReplayPlay.isEnabled = false; btnReplayReset.isEnabled = false }
         try {
             val response = ApiService.retrofitService.intradayReplay(tradingDate, symbol, intervalMinutes = 1)
-            withContext(Dispatchers.Main) {
-                replayView.setData(response.series)
-                replayStatus.text = "$tradingDate • $symbol • ${response.count} × 1m bars • chart 15m • step 1m"
-                btnReplayPlay.isEnabled = true
-                btnReplayReset.isEnabled = true
-                btnReplayPlay.text = "PLAY 1 MIN"
-                updateReplayStatus()
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) { replayStatus.text = "$tradingDate • $symbol • replay data failed • ${e.message ?: "API error"}" }
-        }
+            withContext(Dispatchers.Main) { replayView.setData(response.series); replayStatus.text = "$tradingDate • $symbol • ${response.count} × 1m bars • chart 15m • step 1m"; btnReplayPlay.isEnabled = true; btnReplayReset.isEnabled = true; btnReplayPlay.text = "PLAY 1 MIN"; updateReplayStatus() }
+        } catch (e: Exception) { withContext(Dispatchers.Main) { replayStatus.text = "$tradingDate • $symbol • replay data failed • ${e.message ?: "API error"}" } }
     }
 
     private fun toggleReplay() {
-        if (replayView.isComplete()) {
-            replayView.resetReplay()
-            btnReplayPlay.text = "PLAY 1 MIN"
-            updateReplayStatus()
-            return
-        }
-        if (replayJob?.isActive == true) {
-            replayJob?.cancel()
-            btnReplayPlay.text = "PLAY 1 MIN"
-            return
-        }
+        if (replayView.isComplete()) { replayView.resetReplay(); btnReplayPlay.text = "PLAY 1 MIN"; updateReplayStatus(); return }
+        if (replayJob?.isActive == true) { replayJob?.cancel(); btnReplayPlay.text = "PLAY 1 MIN"; return }
         btnReplayPlay.text = "PAUSE"
         replayJob = lifecycleScope.launch {
             while (true) {
@@ -253,48 +185,37 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateReplayStatus() {
-        replayStatus.text = replayStatus.text.toString().substringBefore(" • replay") + " • replay ${replayView.currentTime()}"
-    }
+    private fun updateReplayStatus() { replayStatus.text = replayStatus.text.toString().substringBefore(" • replay") + " • replay ${replayView.currentTime()}" }
 
     private fun searchGapResults() = lifecycleScope.launch(Dispatchers.IO) {
-        val query = etGapResultSearch.text.toString().trim()
-        val normalized = query.lowercase(Locale.ROOT)
-        val today = Calendar.getInstance()
-        val exactDate = Regex("^(\\d{4})-(\\d{2})-(\\d{2})$").matchEntire(query)
-        val monthQuery = Regex("^(\\d{4})-(\\d{2})$").matchEntire(query)
+        val query = etGapResultSearch.text.toString().trim(); val normalized = query.lowercase(Locale.ROOT); val today = Calendar.getInstance()
+        val exactDate = Regex("^(\\d{4})-(\\d{2})-(\\d{2})$").matchEntire(query); val monthQuery = Regex("^(\\d{4})-(\\d{2})$").matchEntire(query)
         val monthMode = query.isBlank() || normalized.contains("month") || normalized.contains("महीना") || normalized.contains("इस महीने") || monthQuery != null
-        withContext(Dispatchers.Main) { btnGapResultSearch.isEnabled = false; tvResults.text = "Searching top gap…" }
+        withContext(Dispatchers.Main) { btnGapResultSearch.isEnabled = false; tvResults.text = "Searching high-based gap…" }
         try {
             if (exactDate != null) loadGapSearchDate(exactDate.groupValues[1].toInt(), exactDate.groupValues[2].toInt(), exactDate.groupValues[3].toInt())
-            else if (monthMode) {
-                val year = monthQuery?.groupValues?.get(1)?.toInt() ?: today.get(Calendar.YEAR)
-                val month = monthQuery?.groupValues?.get(2)?.toInt()?.minus(1) ?: today.get(Calendar.MONTH)
-                loadGapSearchMonth(year, month)
-            } else withContext(Dispatchers.Main) { tvResults.text = "Use: this month, YYYY-MM, or YYYY-MM-DD" }
+            else if (monthMode) { val y = monthQuery?.groupValues?.get(1)?.toInt() ?: today.get(Calendar.YEAR); val m = monthQuery?.groupValues?.get(2)?.toInt()?.minus(1) ?: today.get(Calendar.MONTH); loadGapSearchMonth(y, m) }
+            else withContext(Dispatchers.Main) { tvResults.text = "Use: this month, YYYY-MM, or YYYY-MM-DD" }
         } finally { withContext(Dispatchers.Main) { btnGapResultSearch.isEnabled = true } }
     }
 
     private suspend fun loadGapSearchDate(year: Int, month: Int, day: Int) {
         val tradingDate = "%04d-%02d-%02d".format(year, month, day)
-        val response = ApiService.retrofitService.dailyGapCalendar(tradingDate, limit = 1)
+        val response = ApiService.retrofitService.dateGapRanking(tradingDate, mode = "shorting", instrumentType = "STOCK", limit = 1)
         val top = response.top
-        withContext(Dispatchers.Main) { tvResults.text = if (top == null) "$tradingDate\nNo historical Cash-Future OHLC data found." else formatGapResult("$tradingDate • TOP GAP", top.symbol, top.direction, top.gap, top.gap_percent, top.weighted_gap, top.previous_close, top.open, top.high, top.low, top.close, top.lot_size) }
+        val prior = runCatching { ApiService.retrofitService.priorGapComparison(tradingDate, mode = "shorting", instrumentType = "STOCK", limit = 5) }.getOrNull()
+        withContext(Dispatchers.Main) {
+            tvResults.text = buildString {
+                append(if (top == null) "$tradingDate\nNo historical OHLC data found." else formatGapResult("$tradingDate • TOP HIGH-BASED GAP", top.symbol, top.direction, top.gap, top.gap_percent, top.weighted_gap, top.previous_close, top.open, top.high, top.low, top.close, top.lot_size))
+                append("\n\nPRIOR HIGHER GAPS")
+                if (prior == null || !prior.has_larger_prior_gap) append("\nNone found.") else prior.prior_larger.forEach { p -> append("\n${p.trading_date} • ${p.symbol} • Gap ₹${"%.2f".format(p.gap)} • Gap×Lot ₹${"%.2f".format(p.weighted_gap)}") }
+            }
+        }
     }
 
     private suspend fun loadGapSearchMonth(year: Int, month: Int) {
-        val calendar = Calendar.getInstance().apply { set(Calendar.YEAR, year); set(Calendar.MONTH, month); set(Calendar.DAY_OF_MONTH, 1) }
-        val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
-        val today = Calendar.getInstance()
-        var best: DailyGapCalendarItem? = null
-        var daysChecked = 0
-        for (day in 1..daysInMonth) {
-            if (year == today.get(Calendar.YEAR) && month == today.get(Calendar.MONTH) && day > today.get(Calendar.DAY_OF_MONTH)) break
-            val tradingDate = "%04d-%02d-%02d".format(year, month + 1, day)
-            val response = ApiService.retrofitService.dailyGapCalendar(tradingDate, limit = 1)
-            response.top?.let { daysChecked++; if (best == null || it.weighted_gap > best!!.weighted_gap) best = it }
-        }
-        withContext(Dispatchers.Main) { tvResults.text = if (best == null) "%04d-%02d\nNo historical Cash-Future opening-gap data found.".format(year, month + 1) else formatGapResult("%04d-%02d • MONTH TOP GAP • %d trading days".format(year, month + 1, daysChecked), best!!.symbol, best!!.direction, best!!.gap, best!!.gap_percent, best!!.weighted_gap, best!!.previous_close, best!!.open, best!!.high, best!!.low, best!!.close, best!!.lot_size) }
+        val result = ApiService.retrofitService.monthlyGapSearch(year, month + 1, mode = "shorting", instrumentType = "STOCK"); val top = result.result
+        withContext(Dispatchers.Main) { tvResults.text = if (top == null) "%04d-%02d\nNo historical high-based gap data found.".format(year, month + 1) else formatGapResult("%04d-%02d • MONTH TOP HIGH-BASED GAP".format(year, month + 1), top.symbol, "UP", top.gap, if (top.open != 0.0) top.gap / top.open * 100.0 else 0.0, top.gap_value, top.previous_close ?: 0.0, top.open, top.high, top.low, top.close, top.lot_size) }
     }
 
     private fun formatGapResult(title: String, symbol: String, direction: String, gap: Double, gapPercent: Double, weightedGap: Double, previousClose: Double, open: Double, high: Double, low: Double, close: Double, lotSize: Double): String = buildString {
@@ -308,9 +229,7 @@ class FullFnoBacktestActivity : AppCompatActivity() {
 
     private fun purgeResults(id: String) = lifecycleScope.launch(Dispatchers.IO) {
         withContext(Dispatchers.Main) { btnPurge.isEnabled = false; tvStatus.text = "Full-F&O: PURGING RESULTS…" }
-        try {
-            val response = ApiService.retrofitService.purgeFullFnoResults(id)
-            withContext(Dispatchers.Main) { tvResults.text = ""; nextSequence = null; btnLoadMore.isEnabled = false; tvStatus.text = "Full-F&O: purged ${response.deleted_chunks} result chunks • summary retained" }
-        } catch (e: Exception) { withContext(Dispatchers.Main) { btnPurge.isEnabled = true; tvStatus.text = "Purge failed • ${e.message ?: "API error"}" } }
+        try { val response = ApiService.retrofitService.purgeFullFnoResults(id); withContext(Dispatchers.Main) { tvResults.text = ""; nextSequence = null; btnLoadMore.isEnabled = false; tvStatus.text = "Full-F&O: purged ${response.deleted_chunks} result chunks • summary retained" } }
+        catch (e: Exception) { withContext(Dispatchers.Main) { btnPurge.isEnabled = true; tvStatus.text = "Purge failed • ${e.message ?: "API error"}" } }
     }
 }
