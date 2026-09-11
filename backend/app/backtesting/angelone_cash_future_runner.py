@@ -9,8 +9,12 @@ from typing import Callable, Iterable, Mapping
 from app.algo.auth import AngelOneAuth
 
 from .angelone_cash_future_acquisition import build_angelone_cash_future_acquisition_service
-from .cash_future_universe_acquisition import CashFutureUniverseAcquisitionResult, acquire_cash_future_universe
+from .cash_future_universe_pipeline import (
+    CashFutureUniversePipelineResult,
+    acquire_and_materialize_cash_future_universe,
+)
 from .cash_future_universe import CashFutureFnoUniverse
+from .historical_catalog import HistoricalCatalog
 from .historical_ingest import HistoricalIngestionService
 from .historical_job_store import HistoricalJobStore
 from .provider_retry import ProviderRetryPolicy
@@ -57,6 +61,8 @@ def run_angelone_cash_future_history(
     start: datetime,
     end: datetime,
     spot_sessions_by_underlying: Mapping[str, tuple[SessionWindow, ...]],
+    db,
+    catalog: HistoricalCatalog,
     future_sessions_by_instrument: Mapping[str, tuple[SessionWindow, ...]] | None = None,
     job_store: HistoricalJobStore | None = None,
     run_id: str | None = None,
@@ -66,8 +72,10 @@ def run_angelone_cash_future_history(
     retry_policy: ProviderRetryPolicy | None = None,
     on_progress: Callable[[str, object], None] | None = None,
     coverage_store=None,
-) -> CashFutureUniverseAcquisitionResult:
-    """Run a bounded real Angel One history acquisition with durable resume support."""
+    margin_required: float = 0.0,
+    batch_size: int = 1000,
+) -> CashFutureUniversePipelineResult:
+    """Acquire bounded Angel One history and materialize it for backtesting."""
     auth = auth or AngelOneAuth()
     auth.get_client()
 
@@ -81,7 +89,7 @@ def run_angelone_cash_future_history(
         chunk_days=config.chunk_days,
     )
 
-    return acquire_cash_future_universe(
+    return acquire_and_materialize_cash_future_universe(
         service=service,
         universe=universe,
         master_rows=master_rows,
@@ -89,6 +97,8 @@ def run_angelone_cash_future_history(
         end=end,
         spot_sessions_by_underlying=spot_sessions_by_underlying,
         future_sessions_by_instrument=future_sessions_by_instrument,
+        db=db,
+        catalog=catalog,
         timeframe=config.timeframe,
         mode=config.mode,
         retry_attempts=config.retry_attempts,
@@ -99,6 +109,8 @@ def run_angelone_cash_future_history(
         run_id=run_id,
         on_progress=on_progress,
         coverage_store=coverage_store,
+        margin_required=margin_required,
+        batch_size=batch_size,
     )
 
 
