@@ -95,19 +95,21 @@ class CashFutureHistoricalAcquisitionService:
         timeframe: str = "1m",
         mode: str = "BOTH",
         source: str = "angelone",
+        queue: CashFutureDownloadQueue | None = None,
     ) -> tuple[CashFutureDownloadQueue, HistoricalSyncPlan]:
-        queue = build_rollover_download_queue(
-            catalog=self.contract_master,
-            spot_instrument=spot_instrument,
-            exchange=exchange,
-            underlying=underlying,
-            start=start,
-            end=end,
-            timeframe=timeframe,
-            mode=mode,
-            source=source,
-            session_days=self._session_days(spot_sessions),
-        )
+        if queue is None:
+            queue = build_rollover_download_queue(
+                catalog=self.contract_master,
+                spot_instrument=spot_instrument,
+                exchange=exchange,
+                underlying=underlying,
+                start=start,
+                end=end,
+                timeframe=timeframe,
+                mode=mode,
+                source=source,
+                session_days=self._session_days(spot_sessions),
+            )
         plan = self.planner.plan(
             queue=queue,
             catalog=self.ingestion.catalog,
@@ -225,6 +227,7 @@ class CashFutureHistoricalAcquisitionService:
         job_id: str | None = None,
         run_id: str | None = None,
         coverage_store: CashFutureCoverageManifestStore | None = None,
+        queue: CashFutureDownloadQueue | None = None,
     ) -> CashFutureAcquisitionResult:
         """Download missing chunks and re-plan bounded gaps until coverage stabilizes."""
         durable_args = (job_store is not None, job_id is not None, run_id is not None)
@@ -244,6 +247,7 @@ class CashFutureHistoricalAcquisitionService:
             timeframe=timeframe,
             mode=mode,
             source=source,
+            queue=queue,
         )
         progress: list[CashFutureDataCoverageReport] = [
             self._audit(
@@ -334,6 +338,7 @@ class CashFutureHistoricalAcquisitionService:
                 timeframe=timeframe,
                 mode=mode,
                 source=source,
+                queue=queue,
             )
             pending_chunks = len(next_plan.requests)
             if on_progress is not None:
