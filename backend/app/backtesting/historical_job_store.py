@@ -142,20 +142,31 @@ class HistoricalJobStore:
             self._db.commit()
         return recovered
 
-    def reopen_chunk(self, job_id: str, chunk_index: int, *, reason: str = "catalog completeness changed") -> None:
-        """Requeue a previously terminal chunk when its stored data is no longer complete."""
-        self.get(job_id)
-        self._require_chunk(job_id, chunk_index)
-        state, _, _ = self.chunk_state(job_id, chunk_index)
-        if state not in {"completed", "skipped"}:
-            raise ValueError(f"chunk {chunk_index} cannot reopen from state {state}")
+    def cancel(self, job_id: str, *, reason: str = "cancelled by user") -> HistoricalJob:
+        """Persist a cooperative cancellation request without deleting resumable chunks."""
+        job = self.get(job_id)
         if not str(reason).strip():
             raise ValueError("reason is required")
+        if job.state in {"completed", "failed", "cancelled"}:
+            raise ValueError(f"job {job_id} cannot be cancelled from state {job.state}")
         self._db.execute(
-            "UPDATE historical_job_chunks SET state='recoverable', error=? WHERE job_id=? AND chunk_index=?",
-            (reason, job_id, chunk_index),
+            "UPDATE historical_jobs SET state='cancelled', error=? WHERE job_id=?",
+            (reason, job_id),
         )
-        self._refresh_counts(job_id)
+        self._db.commit()
+        return self.get(job_id)
+
+    def reopen_cancelled(self, job_id: str) -> HistoricalJob:
+        """Resume a cancelled job while preserving completed chunks and pending work."""
+        job = self.get(job_id)
+        if job.state != "cancelled":
+            raise ValueError(f"job {job_id} is not cancelled")
+        self._db.execute(
+            "UPDATE historical_jobs SET state='progress', error=NULL WHERE job_id=?",
+            (job_id,),
+        )
+        self._db.commit()
+        return self.get(job_id)
 
     def start_chunk(self, job_id: str, chunk_index: int) -> None:
         self.get(job_id)
