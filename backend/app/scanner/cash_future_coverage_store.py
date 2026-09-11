@@ -13,6 +13,10 @@ from app.scanner.cash_future_backtest import BacktestConfig, run_multi_contract_
 from app.scanner.cash_future_coverage import CashFutureCoverageReport, build_cash_future_coverage_report
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 from app.backtesting.cash_future_backtest_result_ledger import CashFutureBacktestResultLedger
+from app.backtesting.cash_future_data_quality import (
+    CashFutureDataQualityReport,
+    audit_cash_future_points,
+)
 
 
 def iter_persisted_cash_future_points(
@@ -96,6 +100,28 @@ def build_persisted_cash_future_coverage(
     )
 
 
+def audit_persisted_cash_future_data_quality(
+    db: Session,
+    *,
+    symbol: str | None = None,
+    contract_month: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    page_size: int = 1000,
+) -> CashFutureDataQualityReport:
+    """Audit the exact persisted backtest scope using a streaming query."""
+    return audit_cash_future_points(
+        iter_persisted_cash_future_points(
+            db,
+            symbol=symbol,
+            contract_month=contract_month,
+            start=start,
+            end=end,
+            page_size=page_size,
+        )
+    )
+
+
 def run_persisted_cash_future_backtest(
     db: Session,
     config: BacktestConfig,
@@ -105,18 +131,22 @@ def run_persisted_cash_future_backtest(
     end: datetime | None = None,
     page_size: int = 1000,
     coverage_report: CashFutureCoverageReport | None = None,
+    quality_report: CashFutureDataQualityReport | None = None,
     result_ledger: CashFutureBacktestResultLedger | None = None,
 ) -> dict:
-    """Run Cash-Future backtest only after an explicit coverage readiness gate.
+    """Run Cash-Future backtest only after coverage and quality readiness gates.
 
-    The caller must supply the coverage report built from the same persisted
-    history scope. Observations remain streamed from SQLite, including genuine
-    historical bid/ask/depth quantities when the source provided them.
+    The caller must supply reports built from the same persisted history scope.
+    Observations remain streamed from SQLite, including genuine historical
+    bid/ask/depth quantities when the source provided them.
     """
     if coverage_report is None:
         raise ValueError("coverage_report is required before running a persisted Cash-Future backtest")
     if not coverage_report.complete:
         raise ValueError("Cash-Future historical coverage is incomplete; backtest blocked")
+    if quality_report is None:
+        raise ValueError("quality_report is required before running a persisted Cash-Future backtest")
+    quality_report.require_clean()
 
     result = run_multi_contract_backtest_streaming(
         iter_persisted_cash_future_points(
@@ -137,5 +167,6 @@ def run_persisted_cash_future_backtest(
 __all__ = [
     "iter_persisted_cash_future_points",
     "build_persisted_cash_future_coverage",
+    "audit_persisted_cash_future_data_quality",
     "run_persisted_cash_future_backtest",
 ]
