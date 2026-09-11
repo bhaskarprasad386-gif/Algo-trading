@@ -88,6 +88,9 @@ def _serialise_run(ledger: BacktestLedger, run_id: str) -> dict[str, Any]:
     equity = tuple(record.payload for record in ledger.records(run_id, "equity"))
     initial_capital = float(metadata["initial_capital"])
     final_capital = float(equity[-1]["equity"]) if equity else initial_capital
+    final_available_capital = float(equity[-1]["available_capital"]) if equity else initial_capital
+    final_reserved_margin = float(equity[-1]["reserved_margin"]) if equity else 0.0
+    blocked_entry_count = sum(1 for signal in signals if signal.get("execution_status") == "blocked")
     return {
         "status": "success",
         "run_id": run_id,
@@ -95,6 +98,9 @@ def _serialise_run(ledger: BacktestLedger, run_id: str) -> dict[str, Any]:
         "strategy_version": metadata["strategy_version"],
         "initial_capital": initial_capital,
         "final_capital": final_capital,
+        "final_available_capital": final_available_capital,
+        "final_reserved_margin": final_reserved_margin,
+        "blocked_entry_count": blocked_entry_count,
         "net_profit": final_capital - initial_capital,
         "signal_count": len(signals),
         "trade_count": len(trades),
@@ -171,6 +177,9 @@ def strategy_run(request: StrategyRunRequest):
         "strategy_version": result.strategy_version,
         "initial_capital": result.initial_capital,
         "final_capital": result.final_capital,
+        "final_available_capital": result.final_available_capital,
+        "final_reserved_margin": result.final_reserved_margin,
+        "blocked_entry_count": result.blocked_entry_count,
         "net_profit": result.net_profit,
         "signal_count": len(result.signals),
         "trade_count": len(result.trades),
