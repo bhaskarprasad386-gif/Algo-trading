@@ -51,8 +51,7 @@ def _market_bounds(day: date) -> tuple[int, int]:
 
 
 def _record_price(record: HistoricalRecord) -> float:
-    payload = record.payload
-    value = payload.get("close")
+    value = record.payload.get("close")
     if value is None:
         raise ValueError(f"historical record has no close price: {record.instrument} @ {record.timestamp_ns}")
     price = float(value)
@@ -71,6 +70,11 @@ def _optional_price(payload: dict, key: str) -> float | None:
 
 def _datetime_from_ns(timestamp_ns: int) -> datetime:
     return datetime.fromtimestamp(timestamp_ns / 1_000_000_000, tz=timezone.utc).astimezone(MARKET_TZ)
+
+
+def _in_nse_session(timestamp_ns: int) -> bool:
+    local = _datetime_from_ns(timestamp_ns)
+    return local.weekday() < 5 and time(9, 15) <= local.time() <= time(15, 30)
 
 
 def _payload_volume(payload: dict) -> float | None:
@@ -99,6 +103,11 @@ def _merge_pair(
         if future.timestamp_ns < cash.timestamp_ns:
             future = next(future_records, None)
             continue
+        timestamp_ns = cash.timestamp_ns
+        if not _in_nse_session(timestamp_ns):
+            cash = next(cash_records, None)
+            future = next(future_records, None)
+            continue
 
         cash_payload = dict(cash.payload)
         future_payload = dict(future.payload)
@@ -108,7 +117,7 @@ def _merge_pair(
         gap_pct = gap / cash_price * 100.0
         margin = float(future_payload.get("margin_required", future_payload.get("margin", 0.0)) or 0.0)
         yield CashFutureHistoryPoint(
-            timestamp=_datetime_from_ns(cash.timestamp_ns),
+            timestamp=_datetime_from_ns(timestamp_ns),
             symbol=symbol,
             contract_month=f"{contract.expiry.year:04d}-{contract.expiry.month:02d}",
             cash_price=cash_price,
@@ -172,24 +181,11 @@ class CashFutureHistoricalLoader:
 
     def iter_points(self, selection: CashFutureHistorySelection) -> Iterable[CashFutureHistoryPoint]:
         """Yield only matched timestamps; no selected history is materialized in RAM."""
-        segments = self._contracts_by_segment(selection)
-        for segment_start, segment_end, contract in segments:
+        for segment_start, segment_end, contract in self._contracts_by_segment(selection):
             start_ns, _ = _market_bounds(segment_start)
             _, end_ns = _market_bounds(segment_end)
-            cash_iter = self.catalog.iter_records(
-                source=selection.source,
-                instrument=selection.spot_instrument,
-                timeframe=selection.timeframe,
-                start_ns=start_ns,
-                end_ns=end_ns,
-            )
-            future_iter = self.catalog.iter_records(
-                source=selection.source,
-                instrument=f"{contract.exchange}:{contract.token}:{contract.symbol}",
-                timeframe=selection.timeframe,
-                start_ns=start_ns,
-                end_ns=end_ns,
-            )
+            cash_iter = self.catalog.iter_records(source=selection.source, instrument=selection.spot_instrument, timeframe=selection.timeframe, start_ns=start_ns, end_ns=end_ns)
+            future_iter = self.catalog.iter_records(source=selection.source, instrument=f"{contract.exchange}:{contract.token}:{contract.symbol}", timeframe=selection.timeframe, start_ns=start_ns, end_ns=end_ns)
             yield from _merge_pair(cash_iter, future_iter, symbol=selection.underlying.upper(), contract=contract)
 
     def load_points(self, selection: CashFutureHistorySelection) -> tuple[CashFutureHistoryPoint, ...]:
