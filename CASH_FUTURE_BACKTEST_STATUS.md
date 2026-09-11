@@ -29,11 +29,11 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [x] Default historical/backtest portfolio capital = **₹1,00,00,000**.
 - [x] Portfolio-level capital ledger primitive supports simultaneous symbol/contract reservations.
 - [x] Lock required capital/margin on entry and release the exact position reservation on exit.
-- [ ] Integrate portfolio ledger into the Cash-Future strategy runner for simultaneous positions.
-- [ ] Prevent over-allocation in the integrated runner and record blocked-entry reason/count.
-- [ ] Mark-to-market unrealized P&L for open positions.
-- [ ] Cumulative realized + unrealized equity curve.
-- [ ] Margin checks and historical forced liquidation/exit validation.
+- [x] Integrate portfolio ledger into the Cash-Future strategy runner for simultaneous positions.
+- [x] Prevent over-allocation in the integrated runner and record blocked-entry reason/count.
+- [x] Mark-to-market unrealized P&L for open positions.
+- [x] Cumulative realized + unrealized equity curve.
+- [x] Margin checks and historical forced liquidation/exit validation.
 - [ ] Realistic depth/liquidity limits and partial fills only where genuine historical bid/ask/depth exists.
 - [ ] Explicit rollover-boundary position policy: close/reopen or carry; never mix expiry-series prices.
 
@@ -100,6 +100,9 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [x] Session-aligned 15-minute replay buckets starting at 09:15.
 - [x] First ₹1 crore capital reservation/blocking layer in Cash-Future strategy runner.
 - [x] Reusable portfolio capital ledger for simultaneous symbol/contract reservations.
+- [x] Portfolio runner integration for simultaneous positions and independent capital reservations.
+- [x] Portfolio MTM unrealized P&L and cumulative realized + unrealized equity.
+- [x] Historical margin-breach forced liquidation using only the current observation's genuine price; stale-price liquidation is rejected.
 
 ## Locked rules
 1. Shorting gap for Results = `High - Open`.
@@ -118,11 +121,12 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 14. Existing completed behavior must be preserved when adding new layers.
 15. **Every future continuation starts by checking this status file + current GitHub state.**
 16. Do not mark work complete without implementation/test evidence.
+17. Historical forced liquidation may only use a genuine price observation at the liquidation timestamp; never liquidate another position using its stale last price.
 
 ## Current checkpoint
-**Next implementation = P1: integrate the reusable portfolio capital ledger into the Cash-Future strategy runner so simultaneous symbol/contract positions can reserve and release capital independently.**
+**Next implementation = P1: realistic historical depth/liquidity limits and partial fills, only where genuine historical bid/ask/depth data exists.**
 
-The integration must preserve existing single-position behavior/tests, keep each position isolated by `(symbol, contract_month)`, prevent over-allocation, and persist blocked-entry information. Do not jump to UI or live broker execution.
+The next layer must preserve the ₹1 crore portfolio ledger, MTM/equity behavior, independent `(symbol, contract_month)` positions, no-look-ahead evaluation, and no fabricated fills. If historical depth is unavailable, do not invent it; document the limitation and keep strict bid/ask behavior.
 
 ## Completion gate
 Cash-Future is complete only when every applicable P0–P5 item is implemented and tested, or explicitly documented as unavailable because genuine historical data does not exist.
