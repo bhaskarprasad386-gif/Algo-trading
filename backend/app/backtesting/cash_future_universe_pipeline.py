@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Iterable, Mapping
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .cash_future_historical_acquisition import CashFutureAcquisitionProgress, CashFutureHistoricalAcquisitionService
@@ -19,6 +20,7 @@ from .historical_job_store import HistoricalJobStore
 from .historical_sync import HistoricalSyncPlan
 from .provider_retry import ProviderRetryPolicy
 from .session_gap_planner import SessionWindow
+from app.models.cash_future_history import CashFutureHistory
 from app.scanner.cash_future_backtest import BacktestConfig
 from app.scanner.cash_future_coverage_store import (
     audit_persisted_cash_future_data_quality,
@@ -32,6 +34,7 @@ class CashFutureUniversePipelineResult:
     acquisition: CashFutureUniverseAcquisitionResult
     materialized_rows: int
     materialized_underlyings: tuple[str, ...] = ()
+    materialized_requests: tuple[tuple[str, int, int], ...] = ()
     coverage_store: CashFutureCoverageManifestStore | None = None
     coverage_source: str = "angelone"
     coverage_timeframe: str = "1m"
@@ -50,6 +53,15 @@ class CashFutureUniversePipelineResult:
             and tuple(sorted(set(self.materialized_underlyings))) == tuple(sorted(set(acquired_underlyings)))
         ):
             return False
+
+        expected_requests = tuple(
+            (request.instrument, request.start_ns, request.end_ns)
+            for result in self.acquisition.results
+            for request in getattr(result.queue, "futures", ())
+        )
+        if expected_requests and not set(expected_requests).issubset(set(self.materialized_requests)):
+            return False
+
         if self.coverage_store is None:
             return True
         requested_ranges = tuple(
@@ -119,6 +131,17 @@ def _underlying_from_cash_instrument(instrument: str) -> str:
     return parts[2].rsplit("-", 1)[0].upper()
 
 
+def _request_has_materialized_rows(db: Session, *, symbol: str, request) -> bool:
+    start = datetime.fromtimestamp(request.start_ns / 1_000_000_000)
+    end = datetime.fromtimestamp(request.end_ns / 1_000_000_000)
+    stmt = select(CashFutureHistory.id).where(
+        CashFutureHistory.symbol == symbol,
+        CashFutureHistory.timestamp >= start,
+        CashFutureHistory.timestamp <= end,
+    ).limit(1)
+    return db.scalars(stmt).first() is not None
+
+
 def acquire_and_materialize_cash_future_universe(
     *,
     service: CashFutureHistoricalAcquisitionService,
@@ -170,6 +193,7 @@ def acquire_and_materialize_cash_future_universe(
 
     materialized_rows = 0
     materialized_underlyings: list[str] = []
+    materialized_requests: list[tuple[str, int, int]] = []
     for result in acquisition.results:
         underlying = _underlying_from_cash_instrument(result.queue.spot.instrument)
         job = CashFutureUniverseDownloadJob(
@@ -194,11 +218,15 @@ def acquire_and_materialize_cash_future_universe(
         materialized_rows += rows
         if rows > 0:
             materialized_underlyings.append(underlying)
+        for request in result.queue.futures:
+            if _request_has_materialized_rows(db, symbol=underlying, request=request):
+                materialized_requests.append((request.instrument, request.start_ns, request.end_ns))
 
     return CashFutureUniversePipelineResult(
         acquisition,
         materialized_rows,
         tuple(sorted(set(materialized_underlyings))),
+        tuple(sorted(set(materialized_requests))),
         coverage_store=coverage_store,
         coverage_source=source,
         coverage_timeframe=timeframe,
