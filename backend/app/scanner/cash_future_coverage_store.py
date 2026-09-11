@@ -102,9 +102,20 @@ def run_persisted_cash_future_backtest(
     start: datetime | None = None,
     end: datetime | None = None,
     page_size: int = 1000,
+    coverage_report: CashFutureCoverageReport | None = None,
     result_ledger: CashFutureBacktestResultLedger | None = None,
 ) -> dict:
-    """Run Cash-Future backtest from persisted history and optionally persist trades."""
+    """Run Cash-Future backtest only after an explicit coverage readiness gate.
+
+    The caller must supply the coverage report built from the same persisted
+    history scope. This prevents a backtest from silently running on partial
+    historical data. The actual observations remain streamed from SQLite.
+    """
+    if coverage_report is None:
+        raise ValueError("coverage_report is required before running a persisted Cash-Future backtest")
+    if not coverage_report.complete:
+        raise ValueError("Cash-Future historical coverage is incomplete; backtest blocked")
+
     result = run_multi_contract_backtest_streaming(
         iter_persisted_cash_future_points(
             db,
