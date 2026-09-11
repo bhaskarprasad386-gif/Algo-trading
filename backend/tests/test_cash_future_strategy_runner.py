@@ -46,9 +46,12 @@ def test_strategy_applies_only_selected_date_range_and_normalizes_buy_sell():
         config=CashFutureStrategyConfig(start_date=start.date(), end_date=start.date()),
     )
 
-    assert len(seen) == 2
-    assert seen[0][0] == start
-    assert seen[0][1] == (start,)
+    assert len(seen) == 3
+    assert seen[0][0] == start - timedelta(days=1)
+    assert seen[0][1] == (start - timedelta(days=1),)
+    assert seen[1][1] == (start - timedelta(days=1), start)
+    assert seen[2][1] == (start - timedelta(days=1), start + timedelta(hours=1))
+    assert len(result.signals) == 2
     assert result.trades[0]["entry_time"] == start.isoformat()
     assert result.trades[0]["exit_time"] == (start + timedelta(hours=1)).isoformat()
     assert result.net_profit == 600.0
