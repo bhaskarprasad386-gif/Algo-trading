@@ -66,6 +66,64 @@
             android:textSize="12sp"
             android:fontFamily="monospace" />
 
+        <LinearLayout
+            android:id="@+id/llGapCalendarRows"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="vertical" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="INTRADAY REPLAY • 15 MIN CHART / 1 MIN STEP"
+            android:textColor="#9FB0C7"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvIntradayReplayStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="#0D1A2A"
+            android:padding="10dp"
+            android:text="Tap GRAPH beside a calendar row to replay that stock/date."
+            android:textColor="#DCE6F5"
+            android:textSize="12sp" />
+
+        <com.algotrading.app.IntradayReplayView
+            android:id="@+id/intradayReplayView"
+            android:layout_width="match_parent"
+            android:layout_height="260dp"
+            android:layout_marginTop="6dp"
+            android:background="#07101C" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnIntradayReplayPlay"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_weight="1"
+                android:text="PLAY 1 MIN"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btnIntradayReplayReset"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="RESET"
+                android:textSize="12sp" />
+        </LinearLayout>
+
         <Button
             android:id="@+id/btnFullFnoStart"
             android:layout_width="match_parent"
