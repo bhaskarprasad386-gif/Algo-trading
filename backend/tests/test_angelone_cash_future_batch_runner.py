@@ -177,7 +177,7 @@ def test_multi_stock_multi_day_execution_preserves_generator_and_window(monkeypa
     store.close()
 
 
-def test_real_angelone_multi_stock_multi_day_runner_materializes_sqlite():
+def test_real_angelone_multi_stock_multi_day_runner_materializes_sqlite(tmp_path):
     client = FakeClient()
     auth = FakeAuth(client)
     limiter = FakeLimiter()
@@ -186,7 +186,8 @@ def test_real_angelone_multi_stock_multi_day_runner_materializes_sqlite():
         ContractRecord("NFO", "AAA26OCTFUT", "4001", date(2026, 10, 29), "STOCK_FUTURE", "AAA", 100),
         ContractRecord("NFO", "ZZZ26OCTFUT", "4002", date(2026, 10, 29), "STOCK_FUTURE", "ZZZ", 100),
     ])
-    catalog = HistoricalCatalog()
+    catalog_path = str(tmp_path / "cash_future_catalog.db")
+    catalog = HistoricalCatalog(catalog_path)
     from app.backtesting.historical_ingest import HistoricalIngestionService
     ingestion = HistoricalIngestionService(catalog)
     days = (date(2026, 10, 1), date(2026, 10, 2))
@@ -225,3 +226,9 @@ def test_real_angelone_multi_stock_multi_day_runner_materializes_sqlite():
     store.close()
     contracts.close()
     catalog.close()
+
+    reopened = HistoricalCatalog(catalog_path)
+    assert reopened.count(source="angelone", timeframe="1m") == 16
+    assert len(reopened.records(source="angelone", instrument="NSE:3001:AAA-EQ", timeframe="1m")) == 4
+    assert len(reopened.records(source="angelone", instrument="NFO:4002:ZZZ26OCTFUT", timeframe="1m")) == 4
+    reopened.close()
