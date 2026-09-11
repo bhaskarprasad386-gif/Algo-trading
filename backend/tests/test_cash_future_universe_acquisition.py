@@ -114,7 +114,10 @@ def test_orchestrates_each_stock_with_master_cash_and_exact_future_sessions():
     assert len(calls) == 1
     assert calls[0]["underlying"] == "ABC"
     assert calls[0]["spot_instrument"] == "NSE:123:ABC-EQ"
-    assert tuple(calls[0]["future_sessions"]) == ("NFO:999:ABC26OCT",)
+    assert calls[0]["queue"].spot.instrument == "NSE:123:ABC-EQ"
+    assert tuple(request.instrument for request in calls[0]["queue"].futures) == (
+        "NFO:999:ABC26OCT",
+    )
     assert calls[0]["future_sessions"]["NFO:999:ABC26OCT"] == (session,)
     assert result.completed_chunks == 2
     assert result.pending_chunks == 0
