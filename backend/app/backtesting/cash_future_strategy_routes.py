@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
@@ -12,6 +13,7 @@ from app.backtesting.cash_future_historical_loader import CashFutureHistoricalLo
 from app.backtesting.cash_future_strategy_runner import CashFutureStrategyConfig, run_cash_future_strategy
 from app.backtesting.contract_master import ContractMasterCatalog
 from app.backtesting.historical_catalog import HistoricalCatalog
+from app.backtesting.ledger import BacktestLedger
 from app.core.config import settings
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
@@ -48,7 +50,7 @@ class StrategyRunRequest(BaseModel):
     execution_model: str = Field(default="gap", pattern="^(gap|bid_ask)$")
     charges_per_trade: float = Field(default=0.0, ge=0)
     funding_cost_per_trade: float = Field(default=0.0, ge=0)
-    initial_capital: float = Field(default=10_000_000.0, gt=0)
+    initial_capital: float = Field(default=100_000_000.0, gt=0)
     points: list[StrategyPointRequest] | None = None
     spot_instrument: str | None = None
     exchange: str = "NFO"
@@ -85,6 +87,8 @@ def strategy_run(request: StrategyRunRequest):
 
     catalog: HistoricalCatalog | None = None
     contracts: ContractMasterCatalog | None = None
+    ledger: BacktestLedger | None = None
+    run_id = f"cash-future-{uuid4().hex}"
     try:
         if request.points is not None:
             points = tuple(CashFutureHistoryPoint(**point.model_dump()) for point in request.points)
@@ -107,6 +111,7 @@ def strategy_run(request: StrategyRunRequest):
             # Keep this as a generator so SQLite history remains bounded in memory.
             points = CashFutureHistoricalLoader(catalog, contracts).iter_points(selection)
 
+        ledger = BacktestLedger(settings.BACKTEST_LEDGER_DB)
         result = run_cash_future_strategy(
             points,
             strategy,
@@ -121,6 +126,8 @@ def strategy_run(request: StrategyRunRequest):
                 end_date=request.end_date,
                 contract_month=request.contract_month,
             ),
+            ledger=ledger,
+            run_id=run_id,
         )
     except (ValueError, LookupError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -129,9 +136,12 @@ def strategy_run(request: StrategyRunRequest):
             catalog.close()
         if contracts is not None:
             contracts.close()
+        if ledger is not None:
+            ledger.close()
 
     return {
         "status": "success",
+        "run_id": run_id,
         "strategy_id": result.strategy_id,
         "strategy_version": result.strategy_version,
         "initial_capital": result.initial_capital,
