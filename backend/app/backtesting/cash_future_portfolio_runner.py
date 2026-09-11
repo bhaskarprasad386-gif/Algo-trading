@@ -34,18 +34,12 @@ def _unrealized_profit(entry: CashFutureHistoryPoint, current: CashFutureHistory
 
 
 def _historical_fill_capacity(point: CashFutureHistoryPoint, *, side: str, requested_quantity: float, execution_model: str) -> tuple[float, str]:
-    """Return executable quantity without inventing liquidity.
-
-    Partial fills are enabled only when all required historical depth quantities
-    are genuinely present for the executable legs. Otherwise bid/ask mode keeps
-    its legacy strict full-lot behavior; gap mode has no depth-aware fill model.
-    """
+    """Return executable quantity without inventing liquidity."""
     requested = max(float(requested_quantity), 0.0)
     if requested <= 0:
         return 0.0, "none"
     if execution_model != "bid_ask":
         return requested, "gap_analytical"
-
     required = (
         (point.cash_ask_qty, point.future_bid_qty)
         if side == "entry"
@@ -57,6 +51,49 @@ def _historical_fill_capacity(point: CashFutureHistoryPoint, *, side: str, reque
     return min(requested, capacity), "historical_depth"
 
 
+def _close_position(
+    account: CashFuturePortfolioLedger,
+    entries: dict[PositionKey, tuple[CashFutureHistoryPoint, float]],
+    key: PositionKey,
+    point: CashFutureHistoryPoint,
+    *,
+    execution_model: str,
+    charges_per_trade: float,
+    funding_cost_per_trade: float,
+    exit_reason: str,
+) -> dict[str, Any] | None:
+    """Close a position only against a genuine observation from its own contract."""
+    entry, quantity = entries[key]
+    fill_quantity, liquidity_source = _historical_fill_capacity(
+        point, side="exit", requested_quantity=quantity, execution_model=execution_model
+    )
+    if fill_quantity <= 0:
+        return None
+    gross = _unrealized_profit(entry, point, execution_model, fill_quantity)
+    net = gross - charges_per_trade - funding_cost_per_trade
+    account.apply_realized_pnl(net)
+    released_margin = account.reservation(key) * fill_quantity / quantity
+    account.release(key)
+    remaining = quantity - fill_quantity
+    if remaining > 0:
+        remaining_margin = max(float(entry.margin_required), 0.0) * remaining / entry.lot_size
+        account.reserve(key, remaining_margin)
+        entries[key] = (entry, remaining)
+    else:
+        entries.pop(key, None)
+    return {
+        "entry_time": entry.timestamp.isoformat(), "exit_time": point.timestamp.isoformat(),
+        "symbol": entry.symbol, "contract_month": entry.contract_month,
+        "lot_size": entry.lot_size, "requested_quantity": quantity,
+        "filled_quantity": fill_quantity, "unfilled_quantity": remaining,
+        "gross_profit": gross, "charges": charges_per_trade,
+        "funding_cost": funding_cost_per_trade, "net_profit": net,
+        "execution_model": execution_model, "exit_reason": exit_reason,
+        "reserved_margin": released_margin, "liquidity_source": liquidity_source,
+        "fill_status": "filled" if remaining == 0 else "partial_fill",
+    }
+
+
 def run_cash_future_portfolio_strategy(
     points: Iterable[CashFutureHistoryPoint],
     strategy: PortfolioStrategy,
@@ -65,17 +102,22 @@ def run_cash_future_portfolio_strategy(
     execution_model: str = "gap",
     charges_per_trade: float = 0.0,
     funding_cost_per_trade: float = 0.0,
+    rollover_policy: str = "force_exit",
 ) -> CashFuturePortfolioStrategyRun:
-    """Run one strategy chronologically with shared capital and portfolio MTM.
+    """Run chronologically with shared capital and explicit rollover policy.
 
-    Historical partial fills use only genuine bid/ask depth quantities. Missing
-    depth never becomes synthetic liquidity. A partial position retains only
-    the filled quantity and its proportional margin reservation.
+    ``force_exit`` closes an old-contract position at its own last historical
+    observation before the first observation of a new contract for that symbol.
+    This prevents expiry-series mixing and never uses a new-contract price to
+    close an old-contract position. ``reject`` fails fast if such a boundary is
+    encountered with an open position.
     """
     if initial_capital <= 0:
         raise ValueError("initial_capital must be positive")
     if execution_model not in {"gap", "bid_ask"}:
         raise ValueError("execution_model must be 'gap' or 'bid_ask'")
+    if rollover_policy not in {"force_exit", "reject"}:
+        raise ValueError("rollover_policy must be 'force_exit' or 'reject'")
     ordered = tuple(points)
     if any(current.timestamp < previous.timestamp for previous, current in zip(ordered, ordered[1:])):
         raise ValueError("Cash-Future portfolio input must be ordered by timestamp")
@@ -83,6 +125,7 @@ def run_cash_future_portfolio_strategy(
     account = CashFuturePortfolioLedger(initial_capital)
     history: list[CashFutureHistoryPoint] = []
     latest: dict[PositionKey, CashFutureHistoryPoint] = {}
+    active_contract: dict[str, str] = {}
     entries: dict[PositionKey, tuple[CashFutureHistoryPoint, float]] = {}
     signals: list[Mapping[str, Any]] = []
     trades: list[Mapping[str, Any]] = []
@@ -90,6 +133,29 @@ def run_cash_future_portfolio_strategy(
 
     for point in ordered:
         key: PositionKey = (point.symbol, point.contract_month)
+        previous_contract = active_contract.get(point.symbol)
+        if previous_contract is not None and previous_contract != point.contract_month:
+            old_key = (point.symbol, previous_contract)
+            if old_key in entries:
+                if rollover_policy == "reject":
+                    raise ValueError("open Cash-Future position crossed a contract rollover boundary")
+                old_point = latest.get(old_key)
+                if old_point is None:
+                    raise ValueError("cannot roll over without a genuine last observation for the old contract")
+                rollover_trade = _close_position(
+                    account, entries, old_key, old_point,
+                    execution_model=execution_model,
+                    charges_per_trade=charges_per_trade,
+                    funding_cost_per_trade=funding_cost_per_trade,
+                    exit_reason="rollover",
+                )
+                if rollover_trade is None:
+                    raise ValueError("rollover requires executable liquidity at the old contract boundary")
+                trades.append(rollover_trade)
+            active_contract[point.symbol] = point.contract_month
+        elif previous_contract is None:
+            active_contract[point.symbol] = point.contract_month
+
         visible_history = tuple(history + [point])
         raw_signal = strategy(point, visible_history)
         history.append(point)
@@ -120,8 +186,7 @@ def run_cash_future_portfolio_strategy(
                         "execution_status": "executed" if fill_quantity >= requested_quantity else "partial_fill",
                         "requested_quantity": requested_quantity, "filled_quantity": fill_quantity,
                         "unfilled_quantity": requested_quantity - fill_quantity,
-                        "liquidity_source": liquidity_source,
-                        "reserved_margin": proportional_margin,
+                        "liquidity_source": liquidity_source, "reserved_margin": proportional_margin,
                     })
                 else:
                     signal_record.update({
@@ -138,72 +203,43 @@ def run_cash_future_portfolio_strategy(
         signals.append(signal_record)
 
         if exit_reason is not None and entry_state is not None:
-            entry, open_quantity = entry_state
-            requested_exit = open_quantity
-            fill_quantity, liquidity_source = _historical_fill_capacity(
-                point, side="exit", requested_quantity=requested_exit, execution_model=execution_model
+            trade = _close_position(
+                account, entries, key, point,
+                execution_model=execution_model,
+                charges_per_trade=charges_per_trade,
+                funding_cost_per_trade=funding_cost_per_trade,
+                exit_reason=exit_reason,
             )
-            if fill_quantity > 0:
-                gross = _unrealized_profit(entry, point, execution_model, fill_quantity)
-                net = gross - charges_per_trade - funding_cost_per_trade
-                account.apply_realized_pnl(net)
-                released_margin = account.reservation(key) * fill_quantity / open_quantity
-                account.release(key)
-                remaining_quantity = open_quantity - fill_quantity
-                if remaining_quantity > 0:
-                    remaining_margin = max(float(entry.margin_required), 0.0) * remaining_quantity / entry.lot_size
-                    account.reserve(key, remaining_margin)
-                    entries[key] = (entry, remaining_quantity)
-                else:
-                    entries.pop(key, None)
-                trades.append({
-                    "entry_time": entry.timestamp.isoformat(), "exit_time": point.timestamp.isoformat(),
-                    "symbol": entry.symbol, "contract_month": entry.contract_month,
-                    "lot_size": entry.lot_size, "requested_quantity": requested_exit,
-                    "filled_quantity": fill_quantity, "unfilled_quantity": remaining_quantity,
-                    "gross_profit": gross, "charges": charges_per_trade,
-                    "funding_cost": funding_cost_per_trade, "net_profit": net,
-                    "execution_model": execution_model, "exit_reason": exit_reason,
-                    "reserved_margin": released_margin, "liquidity_source": liquidity_source,
-                    "fill_status": "filled" if remaining_quantity == 0 else "partial_fill",
-                })
+            if trade is not None:
+                trades.append(trade)
             else:
-                signal_record.update({"exit_execution_status": "no_fill", "exit_requested_quantity": requested_exit, "exit_filled_quantity": 0.0, "liquidity_source": liquidity_source})
+                signal_record.update({"exit_execution_status": "no_fill", "exit_requested_quantity": entry_state[1], "exit_filled_quantity": 0.0})
 
-        unrealized_by_key = {
-            open_key: _unrealized_profit(open_entry, latest[open_key], execution_model, open_quantity)
+        unrealized = sum(
+            _unrealized_profit(open_entry, latest[open_key], execution_model, open_quantity)
             for open_key, (open_entry, open_quantity) in entries.items()
             if open_key in latest
-        }
-        unrealized = sum(unrealized_by_key.values())
+        )
         marked_equity = float(account.realized_capital) + unrealized
 
         if entries and marked_equity < account.reserved_margin and key in entries:
             signal_record["margin_breach"] = True
             signal_record["margin_breach_equity"] = marked_equity
             signal_record["margin_breach_reserved_margin"] = account.reserved_margin
-            liquidation_entry, liquidation_quantity = entries[key]
-            gross = _unrealized_profit(liquidation_entry, point, execution_model, liquidation_quantity)
-            net = gross - charges_per_trade - funding_cost_per_trade
-            account.apply_realized_pnl(net)
-            released_margin = account.release(key)
-            trades.append({
-                "entry_time": liquidation_entry.timestamp.isoformat(), "exit_time": point.timestamp.isoformat(),
-                "symbol": liquidation_entry.symbol, "contract_month": liquidation_entry.contract_month,
-                "lot_size": liquidation_entry.lot_size, "requested_quantity": liquidation_quantity,
-                "filled_quantity": liquidation_quantity, "unfilled_quantity": 0.0,
-                "gross_profit": gross, "charges": charges_per_trade,
-                "funding_cost": funding_cost_per_trade, "net_profit": net,
-                "execution_model": execution_model, "exit_reason": "margin_breach",
-                "reserved_margin": released_margin, "liquidity_source": "current_observation",
-                "fill_status": "filled",
-            })
-            entries.pop(key, None)
-            unrealized = sum(
-                _unrealized_profit(open_entry, latest[open_key], execution_model, open_quantity)
-                for open_key, (open_entry, open_quantity) in entries.items()
-                if open_key in latest
+            liquidation_trade = _close_position(
+                account, entries, key, point,
+                execution_model=execution_model,
+                charges_per_trade=charges_per_trade,
+                funding_cost_per_trade=funding_cost_per_trade,
+                exit_reason="margin_breach",
             )
+            if liquidation_trade is not None:
+                trades.append(liquidation_trade)
+                unrealized = sum(
+                    _unrealized_profit(open_entry, latest[open_key], execution_model, open_quantity)
+                    for open_key, (open_entry, open_quantity) in entries.items()
+                    if open_key in latest
+                )
 
         equity.append({
             "timestamp": point.timestamp.isoformat(),
