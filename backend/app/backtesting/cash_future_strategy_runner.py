@@ -60,7 +60,9 @@ def run_cash_future_strategy(
     Strategy history may include observations before the selected start date for
     indicator warm-up, but signals, executions, ledger records and equity output
     are produced only inside the requested backtest date range. No observation
-    after the current point is ever exposed to the strategy.
+    after the current point is ever exposed to the strategy. If an open spread
+    reaches its historical expiry while that point is inside the requested range,
+    it is closed at that observed point; no synthetic post-expiry price is made.
     """
     if not strategy_id.strip():
         raise ValueError("strategy_id is required")
@@ -68,10 +70,7 @@ def run_cash_future_strategy(
         raise ValueError("strategy_version is required")
     config = config or CashFutureStrategyConfig()
     ordered = tuple(points)
-    if any(
-        current.timestamp < previous.timestamp
-        for previous, current in zip(ordered, ordered[1:])
-    ):
+    if any(current.timestamp < previous.timestamp for previous, current in zip(ordered, ordered[1:])):
         raise ValueError("Cash-Future strategy input must be ordered by timestamp")
 
     contract_points = tuple(
@@ -139,9 +138,15 @@ def run_cash_future_strategy(
         if ledger is not None:
             ledger.append_batch((ledger_record(run_id, "signal", point.timestamp, signal_record),))
 
+        exit_reason: str | None = None
         if action == "BUY" and entry is None:
             entry = point
         elif action == "SELL" and entry is not None:
+            exit_reason = "strategy"
+        elif entry is not None and point.expiry_date is not None and _point_date(point) >= point.expiry_date:
+            exit_reason = "expiry"
+
+        if exit_reason is not None and entry is not None:
             gross = (
                 _legacy_gap_profit(entry, point)
                 if config.execution_model == "gap"
@@ -160,6 +165,7 @@ def run_cash_future_strategy(
                 "funding_cost": config.funding_cost_per_trade,
                 "net_profit": net,
                 "execution_model": config.execution_model,
+                "exit_reason": exit_reason,
             }
             trades.append(trade)
             if ledger is not None:
@@ -185,7 +191,6 @@ def run_cash_future_strategy(
 
 def ledger_record(run_id: str, record_type: str, timestamp: datetime, payload: Mapping[str, Any]):
     from app.backtesting.ledger import LedgerRecord
-
     timestamp_ns = int(timestamp.timestamp() * 1_000_000_000)
     return LedgerRecord(run_id, record_type, timestamp_ns, payload)
 
