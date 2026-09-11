@@ -84,3 +84,25 @@ def test_portfolio_equity_includes_unrealized_mtm_for_all_open_positions():
     assert result.equity_curve[-1]["reserved_margin"] == 8000.0
     assert result.open_position_count == 2
     assert result.final_capital == 10700.0
+
+
+def test_portfolio_forces_historical_exit_when_marked_equity_breaches_margin():
+    start = datetime(2026, 9, 2, 10, 0)
+    points = [
+        point(start, "AAA", 10, margin=7000),
+        point(start + timedelta(minutes=1), "AAA", -30, margin=7000),
+    ]
+    result = run_cash_future_portfolio_strategy(
+        points,
+        lambda current, history: "BUY" if current.gap >= 10 else "NONE",
+        initial_capital=10000,
+    )
+    assert len(result.trades) == 1
+    trade = result.trades[0]
+    assert trade["exit_reason"] == "margin_breach"
+    assert trade["gross_profit"] == -4000.0
+    assert result.open_position_count == 0
+    assert result.final_reserved_margin == 0.0
+    assert result.final_capital == 6000.0
+    assert result.equity_curve[-1]["unrealized_pnl"] == 0.0
+    assert result.equity_curve[-1]["equity"] == 6000.0
