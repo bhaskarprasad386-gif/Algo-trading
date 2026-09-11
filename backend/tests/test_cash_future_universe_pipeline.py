@@ -5,6 +5,8 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from app.backtesting.cash_future_coverage_manifest import CoverageRange, build_coverage_manifest
+from app.backtesting.cash_future_coverage_manifest_store import CashFutureCoverageManifestStore
 from app.backtesting.cash_future_data_quality import CashFutureDataQualityReport
 from app.backtesting.cash_future_download_queue import CashFutureDownloadQueue
 from app.backtesting.cash_future_universe import CashFutureFnoUniverse, CashFutureUniverseItem
@@ -69,7 +71,7 @@ def test_acquisition_result_queue_is_materialized_without_rebuilding_instruments
 def test_pipeline_readiness_requires_every_acquisition_complete_and_materialized():
     complete = SimpleNamespace(complete=True)
     incomplete = SimpleNamespace(complete=False)
-    queue = SimpleNamespace(spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"))
+    queue = SimpleNamespace(spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"), all_requests=())
 
     ready = CashFutureUniversePipelineResult(
         SimpleNamespace(results=(SimpleNamespace(coverage=complete, queue=queue),)),
@@ -89,7 +91,7 @@ def test_pipeline_readiness_requires_every_acquisition_complete_and_materialized
     blocked_partial = CashFutureUniversePipelineResult(
         SimpleNamespace(results=(
             SimpleNamespace(coverage=complete, queue=queue),
-            SimpleNamespace(coverage=complete, queue=SimpleNamespace(spot=SimpleNamespace(instrument="NSE:22:XYZ-EQ"))),
+            SimpleNamespace(coverage=complete, queue=SimpleNamespace(spot=SimpleNamespace(instrument="NSE:22:XYZ-EQ"), all_requests=())),
         )),
         materialized_rows=2,
         materialized_underlyings=("ABC",),
@@ -108,9 +110,69 @@ def test_pipeline_readiness_requires_every_acquisition_complete_and_materialized
         blocked_partial.require_backtest_ready()
 
 
+def test_pipeline_manifest_gate_blocks_missing_requested_instrument():
+    queue = SimpleNamespace(
+        spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"),
+        all_requests=(
+            SimpleNamespace(instrument="NSE:11:ABC-EQ"),
+            SimpleNamespace(instrument="NFO:101:ABC26OCT"),
+        ),
+    )
+    acquisition = SimpleNamespace(results=(SimpleNamespace(coverage=SimpleNamespace(complete=True), queue=queue),))
+    store = CashFutureCoverageManifestStore(":memory:")
+    store.upsert(
+        build_coverage_manifest(
+            source="angelone",
+            ranges=(CoverageRange("NSE:11:ABC-EQ", 1, 3, 3, 3, 0, True),),
+        ),
+        timeframe="1m",
+    )
+    pipeline = CashFutureUniversePipelineResult(
+        acquisition,
+        materialized_rows=2,
+        materialized_underlyings=("ABC",),
+        coverage_store=store,
+    )
+
+    assert pipeline.backtest_ready is False
+    with pytest.raises(LookupError, match="backtest blocked"):
+        pipeline.require_backtest_ready()
+
+
+def test_pipeline_manifest_gate_accepts_all_requested_instruments_complete(tmp_path):
+    queue = SimpleNamespace(
+        spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"),
+        all_requests=(
+            SimpleNamespace(instrument="NSE:11:ABC-EQ"),
+            SimpleNamespace(instrument="NFO:101:ABC26OCT"),
+        ),
+    )
+    acquisition = SimpleNamespace(results=(SimpleNamespace(coverage=SimpleNamespace(complete=True), queue=queue),))
+    store = CashFutureCoverageManifestStore(tmp_path / "coverage.db")
+    store.upsert(
+        build_coverage_manifest(
+            source="angelone",
+            ranges=(
+                CoverageRange("NSE:11:ABC-EQ", 1, 3, 3, 3, 0, True),
+                CoverageRange("NFO:101:ABC26OCT", 1, 3, 3, 3, 0, True),
+            ),
+        ),
+        timeframe="1m",
+    )
+    pipeline = CashFutureUniversePipelineResult(
+        acquisition,
+        materialized_rows=2,
+        materialized_underlyings=("ABC",),
+        coverage_store=store,
+    )
+
+    assert pipeline.backtest_ready is True
+    pipeline.require_backtest_ready()
+
+
 def test_pipeline_run_backtest_passes_quality_report_to_persisted_runner(monkeypatch):
     complete = SimpleNamespace(complete=True)
-    queue = SimpleNamespace(spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"))
+    queue = SimpleNamespace(spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"), all_requests=())
     pipeline = CashFutureUniversePipelineResult(
         SimpleNamespace(results=(SimpleNamespace(coverage=complete, queue=queue),)),
         materialized_rows=2,
@@ -149,7 +211,7 @@ def test_pipeline_run_backtest_passes_quality_report_to_persisted_runner(monkeyp
 
 def test_pipeline_run_backtest_blocks_before_persisted_history_access(monkeypatch):
     incomplete = CashFutureUniversePipelineResult(
-        SimpleNamespace(results=(SimpleNamespace(coverage=SimpleNamespace(complete=False), queue=SimpleNamespace(spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"))),)),
+        SimpleNamespace(results=(SimpleNamespace(coverage=SimpleNamespace(complete=False), queue=SimpleNamespace(spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"), all_requests=())),)),
         materialized_rows=2,
         materialized_underlyings=("ABC",),
     )
