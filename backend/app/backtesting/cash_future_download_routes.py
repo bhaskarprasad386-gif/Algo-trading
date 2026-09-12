@@ -58,6 +58,13 @@ class CashFutureDownloadManager:
         catalog = HistoricalCatalog(self.data_db)
         contract_catalog = ContractMasterCatalog(self.contract_db)
         try:
+            # The manager owns the durable lifecycle boundary.  Mark the job RUNNING
+            # before invoking the service so the state is correct even when the
+            # service returns without changing status (for example a repaired/no-op run).
+            job = self.status_store.job(job_id)
+            if job is not None and job.status not in {"COMPLETE", "FAILED"}:
+                self.status_store.update_job(job_id, status="RUNNING", error=None)
+
             service = CashFutureHistoricalDownloadService(catalog, contract_catalog, status_store=self.status_store)
             service.run(spot_instrument=request.spot_instrument.strip(), exchange=request.exchange.strip().upper(),
                         underlying=request.underlying.strip().upper(), start=start, end=end, timeframe=request.timeframe,
