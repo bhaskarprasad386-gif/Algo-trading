@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 from app.backtesting import angelone_cash_future_runner as runner
 from app.backtesting.cash_future_download_queue import CashFutureDownloadQueue
 from app.backtesting.cash_future_universe import CashFutureFnoUniverse, CashFutureUniverseItem
-from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalFetchRequest, HistoricalRecord
+from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
+from app.backtesting.historical_ingest import HistoricalFetchRequest
 from app.core.database import Base
 from app.models.cash_future_history import CashFutureHistory
 
