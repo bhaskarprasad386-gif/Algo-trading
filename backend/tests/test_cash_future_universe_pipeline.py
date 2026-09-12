@@ -136,6 +136,28 @@ def test_pipeline_readiness_blocks_partial_materialization_within_one_underlying
         partial.require_backtest_ready()
 
 
+def test_pipeline_readiness_does_not_treat_another_contract_as_materialized():
+    start_ns = 1_000
+    end_ns = 3_000
+    queue = SimpleNamespace(
+        spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"),
+        futures=(SimpleNamespace(instrument="NFO:102:ABC26NOV", start_ns=start_ns, end_ns=end_ns),),
+        all_requests=(),
+    )
+    acquisition = SimpleNamespace(results=(SimpleNamespace(coverage=SimpleNamespace(complete=True), queue=queue),))
+
+    wrong_contract = CashFutureUniversePipelineResult(
+        acquisition,
+        materialized_rows=10,
+        materialized_underlyings=("ABC",),
+        materialized_requests=(("NFO:101:ABC26OCT", start_ns, end_ns),),
+    )
+
+    assert wrong_contract.backtest_ready is False
+    with pytest.raises(LookupError, match="backtest blocked"):
+        wrong_contract.require_backtest_ready()
+
+
 def test_pipeline_manifest_gate_blocks_missing_requested_instrument(tmp_path):
     queue = SimpleNamespace(
         spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"),
