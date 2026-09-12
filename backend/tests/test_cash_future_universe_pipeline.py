@@ -158,6 +158,69 @@ def test_pipeline_readiness_does_not_treat_another_contract_as_materialized():
         wrong_contract.require_backtest_ready()
 
 
+def test_pipeline_readiness_rejects_same_contract_with_wrong_historical_range():
+    requested_start_ns = 10_000
+    requested_end_ns = 20_000
+    persisted_start_ns = 1_000
+    persisted_end_ns = 5_000
+    queue = SimpleNamespace(
+        spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"),
+        futures=(SimpleNamespace(
+            instrument="NFO:101:ABC26OCT",
+            start_ns=requested_start_ns,
+            end_ns=requested_end_ns,
+        ),),
+        all_requests=(),
+    )
+    acquisition = SimpleNamespace(results=(SimpleNamespace(coverage=SimpleNamespace(complete=True), queue=queue),))
+
+    wrong_range = CashFutureUniversePipelineResult(
+        acquisition,
+        materialized_rows=10,
+        materialized_underlyings=("ABC",),
+        materialized_requests=(("NFO:101:ABC26OCT", persisted_start_ns, persisted_end_ns),),
+    )
+
+    assert wrong_range.backtest_ready is False
+    with pytest.raises(LookupError, match="backtest blocked"):
+        wrong_range.require_backtest_ready()
+
+
+def test_pipeline_manifest_gate_rejects_same_instrument_wrong_historical_range(tmp_path):
+    requested_start_ns = 10_000
+    requested_end_ns = 20_000
+    queue = SimpleNamespace(
+        spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"),
+        all_requests=(
+            SimpleNamespace(instrument="NSE:11:ABC-EQ", start_ns=requested_start_ns, end_ns=requested_end_ns),
+            SimpleNamespace(instrument="NFO:101:ABC26OCT", start_ns=requested_start_ns, end_ns=requested_end_ns),
+        ),
+    )
+    acquisition = SimpleNamespace(results=(SimpleNamespace(coverage=SimpleNamespace(complete=True), queue=queue),))
+    store = CashFutureCoverageManifestStore(tmp_path / "coverage.db")
+    store.upsert(
+        build_coverage_manifest(
+            source="angelone",
+            ranges=(
+                CoverageRange("NSE:11:ABC-EQ", 1_000, 5_000, 5, 5, 0, True),
+                CoverageRange("NFO:101:ABC26OCT", 1_000, 5_000, 5, 5, 0, True),
+            ),
+        ),
+        timeframe="1m",
+    )
+    pipeline = CashFutureUniversePipelineResult(
+        acquisition,
+        materialized_rows=10,
+        materialized_underlyings=("ABC",),
+        materialized_requests=(("NFO:101:ABC26OCT", requested_start_ns, requested_end_ns),),
+        coverage_store=store,
+    )
+
+    assert pipeline.backtest_ready is False
+    with pytest.raises(LookupError, match="backtest blocked"):
+        pipeline.require_backtest_ready()
+
+
 def test_pipeline_manifest_gate_blocks_missing_requested_instrument(tmp_path):
     queue = SimpleNamespace(
         spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"),
