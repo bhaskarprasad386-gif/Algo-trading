@@ -21,32 +21,33 @@ class StubAcquisition:
     results = ()
 
 
-def test_pipeline_strategy_requires_durable_readiness_before_loading():
-    pipeline = CashFutureUniversePipelineResult(StubAcquisition(), 0)
-    loader = StubLoader(())
-    selection = CashFutureHistorySelection(
+class ReadyPipeline(CashFutureUniversePipelineResult):
+    @property
+    def backtest_ready(self):
+        return True
+
+
+def selection():
+    return CashFutureHistorySelection(
         spot_instrument="NSE:1:ABC-EQ",
         exchange="NSE",
         underlying="ABC",
         start_date=date(2026, 9, 1),
         end_date=date(2026, 9, 1),
     )
+
+
+def test_pipeline_strategy_requires_durable_readiness_before_loading():
+    pipeline = CashFutureUniversePipelineResult(StubAcquisition(), 0)
+    loader = StubLoader(())
     with pytest.raises(LookupError, match="backtest blocked"):
-        pipeline.run_strategy(loader, selection, lambda current, history: "HOLD", strategy_id="blocked")
+        pipeline.run_strategy(loader, selection(), lambda current, history: "HOLD", strategy_id="blocked")
     assert loader.called is False
 
 
 def test_pipeline_strategy_streams_loader_into_existing_strategy_runner(monkeypatch):
-    pipeline = CashFutureUniversePipelineResult(StubAcquisition(), 1, ("ABC",))
+    pipeline = ReadyPipeline(StubAcquisition(), 1, ("ABC",))
     loader = StubLoader([])
-    selection = CashFutureHistorySelection(
-        spot_instrument="NSE:1:ABC-EQ",
-        exchange="NSE",
-        underlying="ABC",
-        start_date=date(2026, 9, 1),
-        end_date=date(2026, 9, 1),
-    )
-
     captured = {}
 
     def fake_runner(points, strategy, **kwargs):
@@ -58,7 +59,7 @@ def test_pipeline_strategy_streams_loader_into_existing_strategy_runner(monkeypa
     monkeypatch.setattr("app.backtesting.cash_future_universe_pipeline.run_cash_future_strategy", fake_runner)
     result = pipeline.run_strategy(
         loader,
-        selection,
+        selection(),
         lambda current, history: "HOLD",
         strategy_id="historical-gap",
         strategy_version="2",
