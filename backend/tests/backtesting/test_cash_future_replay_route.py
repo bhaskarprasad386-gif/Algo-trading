@@ -1,6 +1,9 @@
 from app.backtesting.cash_future_strategy_routes import router
 
 
+STRATEGY_PREFIX = "/api/v1/backtesting/cash-future"
+
+
 def _strategy_routes():
     routes = []
     for route in router.routes:
@@ -13,8 +16,8 @@ def _strategy_routes():
 
 
 def test_cash_future_replay_route_is_wired_under_strategy_api():
-    paths = {route.path for route in _strategy_routes()}
-    assert "/api/v1/backtesting/cash-future/replay" in paths
+    paths = {f"{STRATEGY_PREFIX}{route.path}" for route in _strategy_routes()}
+    assert f"{STRATEGY_PREFIX}/replay" in paths
 
 
 def test_cash_future_replay_route_accepts_real_resolution_controls():
