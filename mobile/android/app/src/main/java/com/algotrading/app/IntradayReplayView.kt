@@ -10,7 +10,7 @@ import android.widget.Button
 import kotlin.math.max
 import kotlin.math.min
 
-data class ReplayCandle(val bucket: Int, val open: Double, val high: Double, val low: Double, val close: Double)
+data class ReplayCandle(val bucket: Long, val open: Double, val high: Double, val low: Double, val close: Double)
 
 class IntradayReplayView @JvmOverloads constructor(
     context: Context,
@@ -20,31 +20,47 @@ class IntradayReplayView @JvmOverloads constructor(
     private val wickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 2f }
     private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var points: List<IntradayReplayPoint> = emptyList()
-    private var visibleMinutes = 0
-    private var replayTime = "--:--"
-    private var chartIntervalMinutes = 15
-    private var replayStepMinutes = 1
+    private var visiblePoints = 0
+    private var replayTime = "--:--:--"
+    private var chartIntervalSeconds = 15 * 60L
+    private var replayStepSeconds = 60L
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        bindModeButton(R.id.btnReplay1m, 1)
-        bindModeButton(R.id.btnReplay5m, 5)
-        bindModeButton(R.id.btnReplay15m, 15)
-        bindModeButton(R.id.btnReplay30m, 30)
+        bindModeButton(R.id.btnReplay1s, 1)
+        bindModeButton(R.id.btnReplay1m, 60)
+        bindModeButton(R.id.btnReplay5m, 5 * 60)
+        bindModeButton(R.id.btnReplay15m, 15 * 60)
+        bindModeButton(R.id.btnReplay30m, 30 * 60)
         refreshModeButtons()
     }
 
-    private fun bindModeButton(id: Int, minutes: Int) {
+    private fun bindModeButton(id: Int, seconds: Int) {
         rootView.findViewById<Button>(id)?.setOnClickListener {
-            setReplayMode(minutes)
-            rootView.findViewById<Button>(R.id.btnIntradayReplayPlay)?.text = "PLAY ${minutes} MIN"
+            setReplayMode(seconds)
+            rootView.findViewById<Button>(R.id.btnIntradayReplayPlay)?.text = "PLAY ${labelFor(seconds)}"
         }
     }
 
+    private fun labelFor(seconds: Int): String = when (seconds) {
+        1 -> "1 SEC"
+        60 -> "1 MIN"
+        300 -> "5 MIN"
+        900 -> "15 MIN"
+        1800 -> "30 MIN"
+        else -> "${seconds}s"
+    }
+
     private fun refreshModeButtons() {
-        val ids = listOf(R.id.btnReplay1m to 1, R.id.btnReplay5m to 5, R.id.btnReplay15m to 15, R.id.btnReplay30m to 30)
-        ids.forEach { (id, minutes) ->
-            rootView.findViewById<Button>(id)?.alpha = if (minutes == chartIntervalMinutes) 1f else 0.62f
+        val ids = listOf(
+            R.id.btnReplay1s to 1L,
+            R.id.btnReplay1m to 60L,
+            R.id.btnReplay5m to 300L,
+            R.id.btnReplay15m to 900L,
+            R.id.btnReplay30m to 1800L,
+        )
+        ids.forEach { (id, seconds) ->
+            rootView.findViewById<Button>(id)?.alpha = if (seconds == chartIntervalSeconds) 1f else 0.62f
         }
     }
 
@@ -53,70 +69,68 @@ class IntradayReplayView @JvmOverloads constructor(
         resetReplay()
     }
 
-    fun setReplayMode(minutes: Int) {
-        val supported = listOf(1, 5, 15, 30)
-        val value = supported.minByOrNull { kotlin.math.abs(it - minutes) } ?: 15
-        chartIntervalMinutes = value
-        replayStepMinutes = value
+    fun setReplayMode(seconds: Int) {
+        val supported = listOf(1L, 60L, 300L, 900L, 1800L)
+        val value = supported.minByOrNull { kotlin.math.abs(it - seconds.toLong()) } ?: 900L
+        chartIntervalSeconds = value
+        replayStepSeconds = value
         resetReplay()
         refreshModeButtons()
     }
 
-    fun replayIntervalMinutes(): Int = replayStepMinutes
+    fun replayIntervalSeconds(): Long = replayStepSeconds
+    fun replayIntervalMinutes(): Int = (replayStepSeconds / 60L).toInt()
 
     fun resetReplay() {
-        visibleMinutes = if (points.isEmpty()) 0 else 1
-        replayTime = timeOf(points.getOrNull(visibleMinutes - 1)?.timestamp)
-        rootView.findViewById<Button>(R.id.btnIntradayReplayPlay)?.text = "PLAY ${replayStepMinutes} MIN"
+        visiblePoints = if (points.isEmpty()) 0 else 1
+        replayTime = timeOf(points.getOrNull(visiblePoints - 1)?.timestamp)
+        rootView.findViewById<Button>(R.id.btnIntradayReplayPlay)?.text = "PLAY ${labelFor(replayStepSeconds.toInt())}"
         invalidate()
     }
 
     fun stepReplay(): Boolean {
-        if (visibleMinutes >= points.size) return false
-        if (replayStepMinutes <= 1) {
-            visibleMinutes += 1
-        } else {
-            val currentEpoch = parseEpochMinutes(points.getOrNull(visibleMinutes - 1)?.timestamp)
-            val target = currentEpoch + replayStepMinutes
-            var next = visibleMinutes
-            while (next < points.size && parseEpochMinutes(points[next].timestamp) < target) next += 1
-            visibleMinutes = if (next < points.size) next + 1 else points.size
-        }
-        replayTime = timeOf(points.getOrNull(visibleMinutes - 1)?.timestamp)
+        if (visiblePoints >= points.size) return false
+        val currentEpoch = parseEpochSeconds(points.getOrNull(visiblePoints - 1)?.timestamp)
+        val target = currentEpoch + replayStepSeconds
+        var next = visiblePoints
+        while (next < points.size && parseEpochSeconds(points[next].timestamp) < target) next += 1
+        visiblePoints = if (next < points.size) next + 1 else points.size
+        replayTime = timeOf(points.getOrNull(visiblePoints - 1)?.timestamp)
         invalidate()
-        return visibleMinutes < points.size
+        return visiblePoints < points.size
     }
 
     fun stepOneMinute(): Boolean = stepReplay()
     fun currentTime(): String = replayTime
-    fun isComplete(): Boolean = points.isNotEmpty() && visibleMinutes >= points.size
+    fun isComplete(): Boolean = points.isNotEmpty() && visiblePoints >= points.size
 
-    private fun timeOf(value: String?): String = if (value != null && value.length >= 16) value.substring(11, 16) else "--:--"
+    private fun timeOf(value: String?): String {
+        if (value == null || value.length < 16) return "--:--:--"
+        return if (value.length >= 19) value.substring(11, 19) else value.substring(11, 16) + ":00"
+    }
 
-    private fun parseEpochMinutes(value: String?): Long {
+    private fun parseEpochSeconds(value: String?): Long {
         if (value == null || value.length < 16) return 0L
         val h = value.substring(11, 13).toIntOrNull() ?: return 0L
         val m = value.substring(14, 16).toIntOrNull() ?: return 0L
-        return h * 60L + m
+        val s = if (value.length >= 19) value.substring(17, 19).toIntOrNull() ?: 0 else 0
+        return h * 3600L + m * 60L + s
     }
 
-    private fun sessionBucketMinutes(totalMinutes: Int): Int {
-        val sessionOpen = 9 * 60 + 15
-        val sessionClose = 15 * 60 + 30
-        if (totalMinutes < sessionOpen) return (totalMinutes / chartIntervalMinutes) * chartIntervalMinutes
-        if (totalMinutes >= sessionClose) return sessionClose - chartIntervalMinutes
-        return sessionOpen + ((totalMinutes - sessionOpen) / chartIntervalMinutes) * chartIntervalMinutes
+    private fun sessionBucketSeconds(totalSeconds: Long): Long {
+        val sessionOpen = (9 * 60 + 15) * 60L
+        val sessionClose = (15 * 60 + 30) * 60L
+        if (totalSeconds < sessionOpen) return (totalSeconds / chartIntervalSeconds) * chartIntervalSeconds
+        if (totalSeconds >= sessionClose) return sessionClose - chartIntervalSeconds
+        return sessionOpen + ((totalSeconds - sessionOpen) / chartIntervalSeconds) * chartIntervalSeconds
     }
 
     private fun candles(): List<ReplayCandle> {
-        val visible = points.take(visibleMinutes)
+        val visible = points.take(visiblePoints)
         if (visible.isEmpty()) return emptyList()
-        val groups = linkedMapOf<Int, MutableList<IntradayReplayPoint>>()
+        val groups = linkedMapOf<Long, MutableList<IntradayReplayPoint>>()
         visible.forEach { p ->
-            val time = timeOf(p.timestamp)
-            val h = time.substringBefore(":").toIntOrNull() ?: 0
-            val m = time.substringAfter(":").toIntOrNull() ?: 0
-            val bucket = sessionBucketMinutes(h * 60 + m)
+            val bucket = sessionBucketSeconds(parseEpochSeconds(p.timestamp))
             groups.getOrPut(bucket) { mutableListOf() }.add(p)
         }
         return groups.map { (bucket, bars) ->
@@ -139,7 +153,7 @@ class IntradayReplayView @JvmOverloads constructor(
         val maxPrice = cs.maxOf { it.high }
         val range = max(0.000001, maxPrice - minPrice)
         fun y(price: Double): Float = (bottom - ((price - minPrice) / range * (bottom - top))).toFloat()
-        canvas.drawText("${chartIntervalMinutes}m  •  replay $replayTime", left, height - 8f, axisPaint)
+        canvas.drawText("${labelFor(chartIntervalSeconds.toInt())} • replay $replayTime", left, height - 8f, axisPaint)
         canvas.drawText(String.format("%.2f", maxPrice), 4f, top + 10f, axisPaint)
         canvas.drawText(String.format("%.2f", minPrice), 4f, bottom, axisPaint)
 
@@ -159,7 +173,11 @@ class IntradayReplayView @JvmOverloads constructor(
             val bodyBottom = max(openY, closeY)
             canvas.drawRect(x - bodyWidth / 2f, bodyTop, x + bodyWidth / 2f, max(bodyTop + 2f, bodyBottom), bodyPaint)
             if (index == cs.lastIndex) {
-                canvas.drawText("${c.bucket / 60 % 24}:${(c.bucket % 60).toString().padStart(2, '0')}", max(left, x - 20f), bottom + 22f, axisPaint)
+                val total = c.bucket
+                val h = (total / 3600L) % 24L
+                val m = (total / 60L) % 60L
+                val s = total % 60L
+                canvas.drawText(String.format("%02d:%02d:%02d", h, m, s), max(left, x - 28f), bottom + 22f, axisPaint)
             }
         }
     }
