@@ -10,7 +10,7 @@ from typing import Any, Mapping
 
 @dataclass(frozen=True)
 class CashFutureStrategyCheckpoint:
-    """JSON-serializable execution state owned by the runner, not the strategy."""
+    """JSON-serializable runner state plus explicitly supplied strategy state."""
 
     run_id: str
     strategy_id: str
@@ -23,9 +23,13 @@ class CashFutureStrategyCheckpoint:
     blocked_entries: int
     open_entry: Mapping[str, Any] | None
     source_fingerprint: str | None
+    strategy_state: Mapping[str, Any] | None = None
 
     def to_json(self) -> str:
-        return json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
+        payload = asdict(self)
+        # Validate that a strategy cannot smuggle an unserializable object into
+        # a durable checkpoint. The runner-owned fields are already JSON-safe.
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
     @classmethod
     def from_json(cls, value: str) -> "CashFutureStrategyCheckpoint":
@@ -37,17 +41,9 @@ class CashFutureStrategyCheckpoint:
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "CashFutureStrategyCheckpoint":
         required = {
-            "run_id",
-            "strategy_id",
-            "strategy_version",
-            "last_timestamp",
-            "selected_contract",
-            "realized_capital",
-            "reserved_margin",
-            "blocked_entries",
-            "open_entry",
-            "strategy_hash",
-            "source_fingerprint",
+            "run_id", "strategy_id", "strategy_version", "last_timestamp",
+            "selected_contract", "realized_capital", "reserved_margin",
+            "blocked_entries", "open_entry", "strategy_hash", "source_fingerprint",
         }
         missing = required.difference(payload)
         if missing:
@@ -65,6 +61,14 @@ class CashFutureStrategyCheckpoint:
                 date.fromisoformat(str(payload["last_timestamp"]))
             except (TypeError, ValueError):
                 raise ValueError("checkpoint last_timestamp must be ISO date/datetime") from exc
+        strategy_state = payload.get("strategy_state")
+        if strategy_state is not None:
+            if not isinstance(strategy_state, Mapping):
+                raise ValueError("checkpoint strategy_state must be an object")
+            try:
+                json.dumps(dict(strategy_state), sort_keys=True)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("checkpoint strategy_state must be JSON-serializable") from exc
         return cls(
             run_id=payload["run_id"],
             strategy_id=payload["strategy_id"],
@@ -77,6 +81,7 @@ class CashFutureStrategyCheckpoint:
             blocked_entries=int(payload["blocked_entries"]),
             open_entry=payload["open_entry"],
             source_fingerprint=payload["source_fingerprint"],
+            strategy_state=dict(strategy_state) if strategy_state is not None else None,
         )
 
 
