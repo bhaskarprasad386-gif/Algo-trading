@@ -113,21 +113,26 @@ class HistoricalCatalog:
         rows = self._db.execute("SELECT source,instrument,timeframe,timestamp_ns,payload_json,sequence FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? ORDER BY timestamp_ns, sequence", (source, instrument, timeframe)).fetchall()
         return tuple(HistoricalRecord(r[0], r[1], r[2], r[3], json.loads(r[4]), r[5]) for r in rows)
 
-    def iter_records(self, *, source: str, instrument: str, timeframe: str, start_ns: int | None = None, end_ns: int | None = None):
+    def iter_records(self, *, source: str, instrument: str | None = None, timeframe: str, start_ns: int | None = None, end_ns: int | None = None):
         """Stream ordered records from SQLite without materializing the selected range."""
         if start_ns is not None and start_ns < 0:
             raise ValueError("start_ns cannot be negative")
         if end_ns is not None and (end_ns < 0 or (start_ns is not None and end_ns < start_ns)):
             raise ValueError("invalid timestamp range")
-        clauses = ["source=?", "instrument=?", "timeframe=?"]
-        params: list[Any] = [source, instrument, timeframe]
+        clauses = ["source=?", "timeframe=?"]
+        params: list[Any] = [source, timeframe]
+        if instrument is not None:
+            if not instrument.strip():
+                raise ValueError("instrument cannot be blank when provided")
+            clauses.append("instrument=?")
+            params.append(instrument)
         if start_ns is not None:
             clauses.append("timestamp_ns>=?")
             params.append(start_ns)
         if end_ns is not None:
             clauses.append("timestamp_ns<=?")
             params.append(end_ns)
-        cursor = self._db.execute("SELECT source,instrument,timeframe,timestamp_ns,payload_json,sequence FROM data_catalog WHERE " + " AND ".join(clauses) + " ORDER BY timestamp_ns, sequence", params)
+        cursor = self._db.execute("SELECT source,instrument,timeframe,timestamp_ns,payload_json,sequence FROM data_catalog WHERE " + " AND ".join(clauses) + " ORDER BY timestamp_ns, instrument, sequence", params)
         for row in cursor:
             yield HistoricalRecord(row[0], row[1], row[2], row[3], json.loads(row[4]), row[5])
 
