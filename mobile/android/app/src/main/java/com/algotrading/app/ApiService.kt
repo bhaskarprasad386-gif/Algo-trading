@@ -61,8 +61,50 @@ data class MonthlyGraphResponse(val status: String = "", val symbol: String = ""
 data class IntradayReplayPoint(val timestamp: String = "", val open: Double = 0.0, val high: Double = 0.0, val low: Double = 0.0, val volume: Double? = null, val oi: Double? = null, val lot_size: Double = 0.0, val contract_month: String? = null, val instrument_key: String? = null)
 data class CashFutureReplayPoint(val timestamp: String = "", val cash_price: Double = 0.0, val future_price: Double = 0.0, val gap: Double = 0.0, val gap_pct: Double = 0.0, val contract_month: String? = null, val lot_size: Double = 0.0, val margin_required: Double = 0.0, val volume: Double? = null, val oi: Double? = null, val cash_bid: Double? = null, val cash_ask: Double? = null, val future_bid: Double? = null, val future_ask: Double? = null, val charges: Double? = null, val funding_cost: Double? = null)
 data class CashFutureGraphPoint(val timestamp: String = "", val cash: Double = 0.0, val future: Double = 0.0, val gap: Double = 0.0, val gap_pct: Double = 0.0, val contract_month: String? = null)
+
+/** One durable historical backtest trade, mapped directly to graph entry/exit markers. */
+data class CashFutureTradeMarker(
+    val entry_time: String = "",
+    val exit_time: String = "",
+    val symbol: String = "",
+    val contract_month: String = "",
+    val lot_size: Double = 0.0,
+    val quantity: Double = 0.0,
+    val entry_cash_price: Double = 0.0,
+    val entry_future_price: Double = 0.0,
+    val entry_gap: Double = 0.0,
+    val exit_cash_price: Double = 0.0,
+    val exit_future_price: Double = 0.0,
+    val exit_gap: Double = 0.0,
+    val gross_profit: Double = 0.0,
+    val charges: Double = 0.0,
+    val funding_cost: Double = 0.0,
+    val net_profit: Double = 0.0,
+    val execution_model: String = "gap",
+    val exit_reason: String = "",
+    val reserved_margin: Double = 0.0,
+)
+
+data class CashFutureStrategyRunResponse(
+    val status: String = "",
+    val run_id: String = "",
+    val strategy_id: String = "",
+    val strategy_version: String = "1",
+    val initial_capital: Double = 0.0,
+    val final_capital: Double = 0.0,
+    val final_available_capital: Double = 0.0,
+    val final_reserved_margin: Double = 0.0,
+    val blocked_entry_count: Int = 0,
+    val net_profit: Double = 0.0,
+    val signal_count: Int = 0,
+    val trade_count: Int = 0,
+    val signals: List<Map<String, Any?>> = emptyList(),
+    val trades: List<CashFutureTradeMarker> = emptyList(),
+    val equity_curve: List<Map<String, Any?>> = emptyList(),
+)
+
 data class CashFutureReplayResponse(val status: String = "", val trading_date: String = "", val symbol: String = "", val contract_month: String? = null, val contracts_seen: List<String> = emptyList(), val mode: String = "CURRENT", val timeframe: String = "1m", val source: String = "", val count: Int = 0, val first_timestamp: String = "", val last_timestamp: String = "", val source_min_interval_seconds: Int? = null, val available_replay_intervals: List<String> = emptyList(), val series: List<CashFutureReplayPoint> = emptyList(), val graph: List<CashFutureGraphPoint> = emptyList())
-data class IntradayReplayResponse(val status: String = "", val trading_date: String = "", val symbol: String = "", val instrument_type: String = "CASH_FUTURE", val contract_month: String? = null, val source_interval_minutes: Int = 1, val chart_interval_minutes: Int = 15, val count: Int = 0, val series: List<IntradayReplayPoint> = emptyList())
+data class IntradayReplayResponse(val status: String = "", val trading_date: String = "", val symbol: String = "", val instrument_type: String = "CASH_FUTURE", val source_interval_minutes: Int = 1, val chart_interval_minutes: Int = 15, val count: Int = 0, val series: List<IntradayReplayPoint> = emptyList())
 data class DateGapResponse(val status: String = "", val trading_date: String = "", val mode: String = "shorting", val instrument_type: String = "STOCK", val count: Int = 0, val top: DailyGapCalendarItem? = null, val data: List<DailyGapCalendarItem> = emptyList())
 data class PriorGapComparisonResponse(val status: String = "", val trading_date: String = "", val mode: String = "shorting", val instrument_type: String = "STOCK", val symbol: String = "", val selected: DailyGapCalendarItem? = null, val has_larger_prior_gap: Boolean = false, val prior_larger: List<DailyGapCalendarItem> = emptyList())
 data class CashFutureDownloadRequest(val spot_instrument: String, val exchange: String = "NFO", val underlying: String, val start: String, val end: String, val timeframe: String = "1m", val mode: String = "BOTH", val retry_attempts: Int = 3)
@@ -99,6 +141,7 @@ interface ApiInterface {
     @GET("/api/v1/backtesting/results/monthly-gap-top10") suspend fun monthlyGapTop10(@Query("year") year: Int, @Query("month") month: Int, @Query("instrument_type") instrumentType: String = "STOCK", @Query("contract_month") contractMonth: String? = null): MonthlyGapTop10Response
     @GET("/api/v1/backtesting/results/monthly-graph") suspend fun monthlyGraph(@Query("year") year: Int, @Query("month") month: Int, @Query("symbol") symbol: String, @Query("instrument_type") instrumentType: String = "STOCK", @Query("contract_month") contractMonth: String? = null): MonthlyGraphResponse
     @GET("/api/v1/backtesting/cash-future/replay") suspend fun cashFutureReplay(@Query("trading_date") tradingDate: String, @Query("symbol") symbol: String, @Query("contract_month") contractMonth: String? = null, @Query("timeframe") timeframe: String = "1m", @Query("mode") mode: String = "CURRENT", @Query("source") source: String = "angelone", @Query("spot_instrument") spotInstrument: String? = null, @Query("exchange") exchange: String = "NSE"): CashFutureReplayResponse
+    @GET("/api/v1/backtesting/cash-future/strategy-run/{run_id}") suspend fun cashFutureStrategyRun(@Path("run_id") runId: String): CashFutureStrategyRunResponse
     @POST("/api/v1/backtesting/full-fno/start") suspend fun startFullFnoJob(@Body request: FullFnoJobRequest = FullFnoJobRequest()): FullFnoJobAcceptedResponse
     @GET("/api/v1/backtesting/full-fno/{job_id}") suspend fun fullFnoJob(@Path("job_id") jobId: String): FullFnoJobStatusResponse
     @POST("/api/v1/backtesting/full-fno/{job_id}/cancel") suspend fun cancelFullFnoJob(@Path("job_id") jobId: String): FullFnoJobControlResponse
