@@ -131,11 +131,28 @@ def _underlying_from_cash_instrument(instrument: str) -> str:
     return parts[2].rsplit("-", 1)[0].upper()
 
 
-def _request_has_materialized_rows(db: Session, *, symbol: str, request) -> bool:
+def _contract_month_for_request(universe: CashFutureFnoUniverse, *, underlying: str, request) -> str:
+    parts = request.instrument.split(":", 2)
+    if len(parts) != 3:
+        raise ValueError(f"invalid future instrument: {request.instrument}")
+    for item in universe.stocks:
+        if item.underlying.upper() == underlying.upper() and item.future_token == parts[1]:
+            return item.contract_month
+    raise ValueError(f"download plan future has no universe metadata: {request.instrument}")
+
+
+def _request_has_materialized_rows(
+    db: Session,
+    *,
+    symbol: str,
+    contract_month: str,
+    request,
+) -> bool:
     start = datetime.fromtimestamp(request.start_ns / 1_000_000_000)
     end = datetime.fromtimestamp(request.end_ns / 1_000_000_000)
     stmt = select(CashFutureHistory.id).where(
         CashFutureHistory.symbol == symbol,
+        CashFutureHistory.contract_month == contract_month,
         CashFutureHistory.timestamp >= start,
         CashFutureHistory.timestamp <= end,
     ).limit(1)
@@ -219,7 +236,17 @@ def acquire_and_materialize_cash_future_universe(
         if rows > 0:
             materialized_underlyings.append(underlying)
         for request in result.queue.futures:
-            if _request_has_materialized_rows(db, symbol=underlying, request=request):
+            contract_month = _contract_month_for_request(
+                universe,
+                underlying=underlying,
+                request=request,
+            )
+            if _request_has_materialized_rows(
+                db,
+                symbol=underlying,
+                contract_month=contract_month,
+                request=request,
+            ):
                 materialized_requests.append((request.instrument, request.start_ns, request.end_ns))
 
     return CashFutureUniversePipelineResult(
