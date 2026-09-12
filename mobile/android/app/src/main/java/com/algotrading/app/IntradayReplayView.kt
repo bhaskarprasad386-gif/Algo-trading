@@ -220,6 +220,7 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
                 canvas.drawText("GAP HIGH ₹${String.format("%.2f", highPoint.gap)}", labelX, gyHigh - 30f, highlightPaint)
                 canvas.drawText("${timeOf(highPoint)}  CASH ₹${String.format("%.2f", highPoint.cash_price)}", labelX, gyHigh - 8f, highlightPaint)
                 canvas.drawText("FUTURE ₹${String.format("%.2f", highPoint.future_price)}", labelX, gyHigh + 14f, highlightPaint)
+                canvas.drawText("MARGIN ₹${String.format("%.2f", highPoint.margin_required)}", labelX, gyHigh + 36f, highlightPaint)
             }
         }
     }
