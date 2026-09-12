@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 
 LEDGER_SCHEMA_VERSION = 2
@@ -78,7 +78,6 @@ class BacktestLedger:
                 FOREIGN KEY(run_id) REFERENCES runs(run_id)
             )
         """)
-        # Preserve a latest checkpoint created by an older schema during upgrade.
         self._db.execute("""
             INSERT OR IGNORE INTO checkpoint_history(run_id,event_index,timestamp_ns,state_json)
             SELECT run_id,event_index,timestamp_ns,state_json FROM checkpoints
@@ -127,7 +126,6 @@ class BacktestLedger:
 
     def validate_resume(self, run_id: str, *, schema_version: int = LEDGER_SCHEMA_VERSION,
                         data_source_fingerprint: str | None = None) -> None:
-        """Reject resume when the persisted schema/source identity does not match."""
         row = self._db.execute(
             "SELECT schema_version,data_source_fingerprint FROM runs WHERE run_id=?", (run_id,)
         ).fetchone()
@@ -152,6 +150,10 @@ class BacktestLedger:
             raise ValueError("run_id and record_type are required")
         return (record.run_id, record.record_type, record.timestamp_ns,
                 json.dumps(dict(record.payload), sort_keys=True, default=str))
+
+    @staticmethod
+    def _row_to_record(row: tuple[Any, ...]) -> LedgerRecord:
+        return LedgerRecord(row[0], row[1], row[2], json.loads(row[3]))
 
     def append(self, record: LedgerRecord) -> None:
         self._require_run(record.run_id)
@@ -218,17 +220,65 @@ class BacktestLedger:
         ).fetchall()
         return tuple(Checkpoint(r[0], r[1], r[2], json.loads(r[3])) for r in rows)
 
-    def records(self, run_id: str, record_type: str | None = None) -> tuple[LedgerRecord, ...]:
+    def iter_records(self, run_id: str, record_type: str | None = None,
+                     *, fetch_size: int = 256) -> Iterator[LedgerRecord]:
+        """Stream durable records without materializing the complete result set."""
+        if fetch_size <= 0:
+            raise ValueError("fetch_size must be positive")
+        self._require_run(run_id)
         if record_type is None:
-            rows = self._db.execute(
-                "SELECT run_id,record_type,timestamp_ns,payload_json FROM records WHERE run_id=? ORDER BY id", (run_id,)
-            ).fetchall()
+            cursor = self._db.execute(
+                "SELECT run_id,record_type,timestamp_ns,payload_json FROM records WHERE run_id=? ORDER BY id",
+                (run_id,),
+            )
         else:
-            rows = self._db.execute(
+            cursor = self._db.execute(
                 "SELECT run_id,record_type,timestamp_ns,payload_json FROM records WHERE run_id=? AND record_type=? ORDER BY id",
                 (run_id, record_type),
-            ).fetchall()
-        return tuple(LedgerRecord(r[0], r[1], r[2], json.loads(r[3])) for r in rows)
+            )
+        while True:
+            rows = cursor.fetchmany(fetch_size)
+            if not rows:
+                break
+            for row in rows:
+                yield self._row_to_record(row)
+
+    def record_count(self, run_id: str, record_type: str | None = None) -> int:
+        """Return a durable record count without loading record payloads."""
+        self._require_run(run_id)
+        if record_type is None:
+            row = self._db.execute("SELECT COUNT(*) FROM records WHERE run_id=?", (run_id,)).fetchone()
+        else:
+            row = self._db.execute(
+                "SELECT COUNT(*) FROM records WHERE run_id=? AND record_type=?", (run_id, record_type)
+            ).fetchone()
+        return int(row[0])
+
+    def record_at(self, run_id: str, record_type: str | None, index: int) -> LedgerRecord:
+        """Read one durable record by zero-based result index."""
+        self._require_run(run_id)
+        if index < 0:
+            count = self.record_count(run_id, record_type)
+            index += count
+        if index < 0:
+            raise IndexError("record index out of range")
+        if record_type is None:
+            row = self._db.execute(
+                "SELECT run_id,record_type,timestamp_ns,payload_json FROM records WHERE run_id=? ORDER BY id LIMIT 1 OFFSET ?",
+                (run_id, index),
+            ).fetchone()
+        else:
+            row = self._db.execute(
+                "SELECT run_id,record_type,timestamp_ns,payload_json FROM records WHERE run_id=? AND record_type=? ORDER BY id LIMIT 1 OFFSET ?",
+                (run_id, record_type, index),
+            ).fetchone()
+        if row is None:
+            raise IndexError("record index out of range")
+        return self._row_to_record(row)
+
+    def records(self, run_id: str, record_type: str | None = None) -> tuple[LedgerRecord, ...]:
+        """Compatibility API that materializes all matching records."""
+        return tuple(self.iter_records(run_id, record_type))
 
     def run_metadata(self, run_id: str) -> Mapping[str, Any] | None:
         row = self._db.execute(
