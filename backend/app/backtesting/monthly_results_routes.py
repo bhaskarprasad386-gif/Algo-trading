@@ -126,6 +126,8 @@ def _cash_future_shorting_payloads(
                 "gap_high_timestamp": top.timestamp.isoformat(),
                 "cash_price_at_gap_high": top.cash_price,
                 "future_price_at_gap_high": top.future_price,
+                "expiry_date": top.expiry_date,
+                "is_expiry_day": trading_date == top.expiry_date,
             })
     finally:
         catalog.close()
@@ -217,7 +219,7 @@ def monthly_gap_search(
     top = max(candidates, key=lambda x: (x[0], x[1], x[2]))
     if mode == "shorting":
         item = top[4]
-        return {"status":"success","month":f"{year:04d}-{month:02d}","mode":mode,"instrument_type":instrument_type.upper(),"result":{"trading_date":item["trading_date"],"symbol":item["symbol"],"gap":item["gap"],"gap_value":item["weighted_gap"],"open":item["open"],"high":item["high"],"low":item["low"],"close":item["close"],"lot_size":item["lot_size"],"previous_close":item["previous_close"],"contract_month":item["contract_month"],"gap_high_timestamp":item.get("gap_high_timestamp"),"cash_price_at_gap_high":item.get("cash_price_at_gap_high"),"future_price_at_gap_high":item.get("future_price_at_gap_high")}}
+        return {"status":"success","month":f"{year:04d}-{month:02d}","mode":mode,"instrument_type":instrument_type.upper(),"result":{"trading_date":item["trading_date"],"symbol":item["symbol"],"gap":item["gap"],"gap_value":item["weighted_gap"],"open":item["open"],"high":item["high"],"low":item["low"],"close":item["close"],"lot_size":item["lot_size"],"previous_close":item["previous_close"],"contract_month":item["contract_month"],"gap_high_timestamp":item.get("gap_high_timestamp"),"cash_price_at_gap_high":item.get("cash_price_at_gap_high"),"future_price_at_gap_high":item.get("future_price_at_gap_high"),"expiry_date":item.get("expiry_date"),"is_expiry_day":item.get("is_expiry_day", False)}}
     _, trading_date, symbol_name, gap, row = top
     return {"status":"success","month":f"{year:04d}-{month:02d}","mode":mode,"instrument_type":instrument_type.upper(),"result":{"trading_date":trading_date,"symbol":symbol_name,"gap":gap,"gap_value":top[0],"open":row["open"],"high":row["high"],"low":row["low"],"close":row["close"],"lot_size":row["lot_size"],"previous_close":row["previous_close"],"contract_month":row["contract_month"]}}
 
@@ -276,6 +278,8 @@ def monthly_gap_top10(
             "future_price_at_gap_high": item["future_price_at_gap_high"],
             "contract_month": item["contract_month"],
             "instrument_key": item["instrument_key"],
+            "expiry_date": item.get("expiry_date"),
+            "is_expiry_day": item.get("is_expiry_day", False),
         })
 
     return {
