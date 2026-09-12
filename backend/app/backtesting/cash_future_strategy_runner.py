@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Callable, Iterable, Mapping, Any
+from typing import Callable, Iterable, Iterator, Mapping, Any
 
 from app.scanner.cash_future_backtest import _executable_spread_profit, _legacy_gap_profit
 from app.scanner.cash_future_history import CashFutureHistoryPoint
@@ -69,6 +70,28 @@ class CashFutureCapitalLedger:
         self.realized_capital = float(self.realized_capital) + float(net_profit)
 
 
+class _LedgerPayloadSequence(Sequence[Mapping[str, Any]]):
+    """Lazy result view backed by durable ledger records."""
+
+    def __init__(self, ledger, run_id: str, record_type: str) -> None:
+        self._ledger = ledger
+        self._run_id = run_id
+        self._record_type = record_type
+
+    def __len__(self) -> int:
+        return self._ledger.record_count(self._run_id, self._record_type)
+
+    def __iter__(self) -> Iterator[Mapping[str, Any]]:
+        for record in self._ledger.iter_records(self._run_id, self._record_type):
+            yield record.payload
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            start, stop, step = index.indices(len(self))
+            return tuple(self[i] for i in range(start, stop, step))
+        return self._ledger.record_at(self._run_id, self._record_type, index).payload
+
+
 @dataclass(frozen=True)
 class CashFutureStrategyRun:
     strategy_id: str
@@ -76,9 +99,9 @@ class CashFutureStrategyRun:
     initial_capital: float
     final_capital: float
     net_profit: float
-    signals: tuple[Mapping[str, Any], ...]
-    trades: tuple[Mapping[str, Any], ...]
-    equity_curve: tuple[Mapping[str, Any], ...]
+    signals: Sequence[Mapping[str, Any]]
+    trades: Sequence[Mapping[str, Any]]
+    equity_curve: Sequence[Mapping[str, Any]]
     final_available_capital: float = 0.0
     final_reserved_margin: float = 0.0
     blocked_entry_count: int = 0
@@ -97,21 +120,18 @@ def run_cash_future_strategy(
 ) -> CashFutureStrategyRun:
     """Apply a Cash-Future strategy strictly point-in-time.
 
-    Strategy history may include observations before the selected start date for
-    indicator warm-up, but signals, executions, ledger records and equity output
-    are produced only inside the requested backtest date range. No observation
-    after the current point is ever exposed to the strategy. If an open spread
-    reaches its historical expiry while that point is inside the requested range,
-    it is closed at that observed point; no synthetic post-expiry price is made.
+    Historical input is consumed incrementally. When a durable ledger is supplied,
+    signals, trades and equity are appended directly to SQLite and the returned
+    result exposes lazy durable views instead of retaining the full result set in RAM.
+    Strategy history remains stateful because the public strategy contract exposes
+    prior observations for indicators/warm-up; a serializable strategy-state contract
+    is intentionally a separate future checkpoint/resume feature.
     """
     if not strategy_id.strip():
         raise ValueError("strategy_id is required")
     if not strategy_version.strip():
         raise ValueError("strategy_version is required")
     config = config or CashFutureStrategyConfig()
-    # Stream the historical input. Do not materialize the complete dataset in RAM.
-    # The strategy history remains stateful because the public strategy contract
-    # intentionally exposes prior observations for indicators/warm-up.
     point_iter = iter(points)
     previous_timestamp: datetime | date | None = None
     selected_contract: str | None = config.contract_month
@@ -135,9 +155,9 @@ def run_cash_future_strategy(
         )
 
     history: list[CashFutureHistoryPoint] = []
-    signals: list[Mapping[str, Any]] = []
-    trades: list[Mapping[str, Any]] = []
-    equity_curve: list[Mapping[str, Any]] = []
+    signals: list[Mapping[str, Any]] | None = [] if ledger is None else None
+    trades: list[Mapping[str, Any]] | None = [] if ledger is None else None
+    equity_curve: list[Mapping[str, Any]] | None = [] if ledger is None else None
     entry: CashFutureHistoryPoint | None = None
     capital_ledger = CashFutureCapitalLedger(config.initial_capital)
     start_date = config.start_date
@@ -195,8 +215,9 @@ def run_cash_future_strategy(
         elif entry is not None and point.expiry_date is not None and point_date >= point.expiry_date:
             exit_reason = "expiry"
 
-        signals.append(signal_record)
-        if ledger is not None:
+        if ledger is None:
+            signals.append(signal_record)
+        else:
             ledger.append_batch((ledger_record(run_id, "signal", point.timestamp, signal_record),))
 
         if exit_reason is not None and entry is not None:
@@ -222,8 +243,9 @@ def run_cash_future_strategy(
                 "exit_reason": exit_reason,
                 "reserved_margin": entry.margin_required,
             }
-            trades.append(trade)
-            if ledger is not None:
+            if ledger is None:
+                trades.append(trade)
+            else:
                 ledger.append_batch((ledger_record(run_id, "trade", point.timestamp, trade),))
             entry = None
 
@@ -233,9 +255,19 @@ def run_cash_future_strategy(
             "available_capital": capital_ledger.available_capital,
             "reserved_margin": capital_ledger.reserved_margin,
         }
-        equity_curve.append(equity_record)
-        if ledger is not None:
+        if ledger is None:
+            equity_curve.append(equity_record)
+        else:
             ledger.append_batch((ledger_record(run_id, "equity", point.timestamp, equity_record),))
+
+    if ledger is not None:
+        result_signals: Sequence[Mapping[str, Any]] = _LedgerPayloadSequence(ledger, run_id, "signal")
+        result_trades: Sequence[Mapping[str, Any]] = _LedgerPayloadSequence(ledger, run_id, "trade")
+        result_equity: Sequence[Mapping[str, Any]] = _LedgerPayloadSequence(ledger, run_id, "equity")
+    else:
+        result_signals = tuple(signals or ())
+        result_trades = tuple(trades or ())
+        result_equity = tuple(equity_curve or ())
 
     return CashFutureStrategyRun(
         strategy_id,
@@ -243,9 +275,9 @@ def run_cash_future_strategy(
         config.initial_capital,
         float(capital_ledger.realized_capital),
         float(capital_ledger.realized_capital) - config.initial_capital,
-        tuple(signals),
-        tuple(trades),
-        tuple(equity_curve),
+        result_signals,
+        result_trades,
+        result_equity,
         capital_ledger.available_capital,
         capital_ledger.reserved_margin,
         capital_ledger.blocked_entries,
