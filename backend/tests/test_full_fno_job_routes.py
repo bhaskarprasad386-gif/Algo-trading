@@ -48,6 +48,16 @@ def test_full_fno_status_api_contract(monkeypatch):
     assert payload["result_chunks"] == 17 and payload["result"] is None
 
 
+def test_full_fno_status_api_missing_job_is_404(monkeypatch):
+    monkeypatch.setattr(routes, "get_job", lambda db, job_id: None)
+    app.dependency_overrides[get_db] = _db
+    try:
+        response = client.get("/api/v1/scanner/cash-future/backtest/jobs/missing")
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 404
+
+
 def test_full_fno_results_api_keyset_contract(monkeypatch):
     job = SimpleNamespace(job_id="results-job")
     chunks = [SimpleNamespace(sequence=5, symbol="RELIANCE", result_json='{"net_profit": 100.0}', created_at=None), SimpleNamespace(sequence=6, symbol="TCS", result_json='{"net_profit": 200.0}', created_at=None)]
@@ -64,6 +74,16 @@ def test_full_fno_results_api_keyset_contract(monkeypatch):
     assert payload["after_sequence"] == 4 and payload["next_after_sequence"] == 6 and payload["total"] == 9
     assert [item["sequence"] for item in payload["data"]] == [5, 6]
     assert "ledger" not in payload["data"][0]["result"]
+
+
+def test_full_fno_results_api_missing_job_is_404(monkeypatch):
+    monkeypatch.setattr(routes, "get_job", lambda db, job_id: None)
+    app.dependency_overrides[get_db] = _db
+    try:
+        response = client.get("/api/v1/scanner/cash-future/backtest/jobs/missing/results")
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 404
 
 
 def test_full_fno_results_api_rejects_limit_above_200():
@@ -103,6 +123,16 @@ def test_full_fno_purge_api_terminal_contract(monkeypatch):
         app.dependency_overrides.clear()
     assert response.status_code == 200
     assert response.json()["deleted_chunks"] == 405
+
+
+def test_full_fno_purge_api_missing_job_is_404(monkeypatch):
+    monkeypatch.setattr(routes, "get_job", lambda db, job_id: None)
+    app.dependency_overrides[get_db] = _db
+    try:
+        response = client.delete("/api/v1/scanner/cash-future/backtest/jobs/missing/results")
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 404
 
 
 def test_full_fno_purge_api_rejects_active_job(monkeypatch):
