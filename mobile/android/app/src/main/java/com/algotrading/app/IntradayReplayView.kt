@@ -43,7 +43,7 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
     fun setReplayMode(seconds: Long) {
         val v=listOf(1L,60L,300L,900L,1800L).minByOrNull { kotlin.math.abs(it-seconds) } ?: 60L
         if(availableIntervals.isNotEmpty() && labelFor(v) !in availableIntervals) return
-        replayStepSeconds=v; resetReplay(); refreshModeButtons(); timeframeChangedListener?.invoke(labelFor(v).lowercase().replace(" ", ""))
+        replayStepSeconds=v; resetReplay(); refreshModeButtons(); timeframeChangedListener?.invoke(when(v){1L->"1s";60L->"1m";300L->"5m";900L->"15m";1800L->"30m";else->"1m"})
     }
     fun setReplayMode(seconds: Int)=setReplayMode(seconds.toLong())
     fun replayIntervalSeconds()=replayStepSeconds
