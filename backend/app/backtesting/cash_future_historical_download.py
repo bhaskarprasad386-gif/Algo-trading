@@ -44,9 +44,7 @@ def _normalise_cash_instrument(master: InstrumentMaster, value: str, exchange: s
         if len(parts) not in (2, 3) or not all(part.strip() for part in parts):
             raise ValueError(f"invalid cash instrument format: {instrument!r}")
         if parts[0].strip().upper() != requested_exchange:
-            raise ValueError(
-                f"cash instrument exchange mismatch: requested={requested_exchange}, instrument={parts[0].strip().upper()}"
-            )
+            raise ValueError(f"cash instrument exchange mismatch: requested={requested_exchange}, instrument={parts[0].strip().upper()}")
         return instrument
     resolved = master.resolve_cash_instrument(instrument, exchange="NSE")
     token = str(resolved["token"]).strip()
@@ -157,18 +155,14 @@ class CashFutureHistoricalDownloadService:
         return tuple(runs)
 
     def _missing_requests_for_chunk(self, job, chunk) -> tuple[HistoricalFetchRequest, ...]:
-        request = HistoricalFetchRequest(self.source_name, chunk.instrument, job.timeframe, chunk.start_ns, chunk.end_ns)
-        if job.timeframe == "1d":
-            expected = set(nse_daily_timestamps(request))
-            actual = set(self.catalog.timestamps(source=request.source, instrument=request.instrument, timeframe=request.timeframe, start_ns=min(expected), end_ns=max(expected))) if expected else set()
-            runs = self._missing_runs(expected - actual, _TIMEFRAME_INTERVAL_NS["1d"])
-        else:
-            interval_ns = _TIMEFRAME_INTERVAL_NS[job.timeframe]
-            sessions = tuple(self.session_windows(request))
-            expected = self.completeness.expected_timestamps(sessions, interval_ns)
-            actual = set(self.catalog.timestamps(source=request.source, instrument=request.instrument, timeframe=request.timeframe, start_ns=min(expected), end_ns=max(expected))) if expected else set()
-            runs = self._missing_runs(expected - actual, interval_ns)
-        return tuple(HistoricalFetchRequest(self.source_name, chunk.instrument, job.timeframe, start_ns, end_ns) for start_ns, end_ns in runs)
+        """Re-fetch the durable chunk boundary for any incomplete chunk.
+
+        The catalog is idempotent, so re-fetching the whole incomplete chunk is
+        safe and preserves the durable chunk identity/range. This also repairs
+        boundary timestamps that may fall outside a session's expected-timestamp
+        set while avoiding creation of synthetic sub-chunks during resume.
+        """
+        return (HistoricalFetchRequest(self.source_name, chunk.instrument, job.timeframe, chunk.start_ns, chunk.end_ns),)
 
     def _register_plan(self, job_id: str, plans: tuple[HistoricalSyncPlan, ...]) -> None:
         if self.status_store is None: return
