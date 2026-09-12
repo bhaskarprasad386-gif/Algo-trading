@@ -55,6 +55,7 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         replayStatus = findViewById(R.id.tvIntradayReplayStatus)
         replayView = findViewById(R.id.intradayReplayView)
         btnReplayPlay = findViewById(R.id.btnIntradayReplayPlay)
+        replayView.setTimeframeChangedListener { timeframe ->\n            val symbol = replayStatus.text.toString().substringAfter(" • ").substringBefore(" • ").trim()\n            val date = replayStatus.text.toString().substringBefore(" • ").trim()\n            if (symbol.isNotBlank() && date.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) loadCashFutureReplay(date, symbol, timeframe)\n        }
         btnReplayReset = findViewById(R.id.btnIntradayReplayReset)
         btnStart = findViewById(R.id.btnFullFnoStart)
         btnCancel = findViewById(R.id.btnFullFnoCancel)
@@ -171,24 +172,19 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         gapCalendarRows.addView(row)
     }
 
-    private fun loadIntradayReplay(tradingDate: String, symbol: String) = lifecycleScope.launch(Dispatchers.IO) {
+    private fun loadIntradayReplay(tradingDate: String, symbol: String) = loadCashFutureReplay(tradingDate, symbol, "1m")
+
+    private fun loadCashFutureReplay(tradingDate: String, symbol: String, timeframe: String) = lifecycleScope.launch(Dispatchers.IO) {
         replayJob?.cancel()
-        withContext(Dispatchers.Main) {
-            replayStatus.text = "$tradingDate • $symbol • loading paired Cash-Future history…"
-            btnReplayPlay.isEnabled = false; btnReplayReset.isEnabled = false
-        }
+        withContext(Dispatchers.Main) { replayStatus.text = "$tradingDate • $symbol • loading paired $timeframe history…"; btnReplayPlay.isEnabled=false; btnReplayReset.isEnabled=false }
         try {
-            val response = ApiService.retrofitService.cashFutureReplay(tradingDate, symbol, timeframe = "1m", mode = "CURRENT")
+            val response=ApiService.retrofitService.cashFutureReplay(tradingDate,symbol,timeframe=timeframe,mode="CURRENT")
             withContext(Dispatchers.Main) {
-                replayView.setCashFutureData(response.series, response.available_replay_intervals)
-                val intervals = response.available_replay_intervals.joinToString(" | ")
-                replayStatus.text = "$tradingDate • $symbol • ${response.count} paired rows • $intervals"
-                btnReplayPlay.isEnabled = true; btnReplayReset.isEnabled = true
-                btnReplayPlay.text = "PLAY 1 MIN"; updateReplayStatus()
+                replayView.setCashFutureData(response.series,response.available_replay_intervals)
+                replayStatus.text="$tradingDate • $symbol • ${response.count} paired rows • ${response.timeframe} • intervals ${response.available_replay_intervals.joinToString(" | ")}"
+                btnReplayPlay.isEnabled=true; btnReplayReset.isEnabled=true; updateReplayStatus()
             }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) { replayStatus.text = "$tradingDate • $symbol • paired replay failed • ${e.message ?: "API error"}" }
-        }
+        } catch(e:Exception) { withContext(Dispatchers.Main) { replayStatus.text="$tradingDate • $symbol • $timeframe replay failed • ${e.message ?: "API error"}" } }
     }
     private fun toggleReplay() {
         if (replayView.isComplete()) { replayView.resetReplay(); btnReplayPlay.text = "PLAY 1 MIN"; updateReplayStatus(); return }
