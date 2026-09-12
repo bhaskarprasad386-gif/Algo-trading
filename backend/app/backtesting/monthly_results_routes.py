@@ -222,6 +222,72 @@ def monthly_gap_search(
     return {"status":"success","month":f"{year:04d}-{month:02d}","mode":mode,"instrument_type":instrument_type.upper(),"result":{"trading_date":trading_date,"symbol":symbol_name,"gap":gap,"gap_value":top[0],"open":row["open"],"high":row["high"],"low":row["low"],"close":row["close"],"lot_size":row["lot_size"],"previous_close":row["previous_close"],"contract_month":row["contract_month"]}}
 
 
+@router.get("/monthly-gap-top10")
+def monthly_gap_top10(
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    instrument_type: str = Query("STOCK"),
+    contract_month: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Rank each stock once by its highest actual intraday Future-Cash gap in the month."""
+    start = date(year, month, 1)
+    end = date(year, month, monthrange(year, month)[1])
+    rows = _daily_rows(db, start, end, instrument_type=instrument_type)
+    if not rows:
+        raise HTTPException(status_code=404, detail="no historical rows found for the requested month")
+
+    monthly_highs: dict[str, dict] = {}
+    for trading_day in sorted({row["trading_date"] for row in rows}):
+        day_rows = [row for row in rows if row["trading_date"] == trading_day]
+        day_payloads = _cash_future_shorting_payloads(
+            trading_day,
+            [row["symbol"] for row in day_rows],
+            contract_month=contract_month,
+            mode="CURRENT",
+        )
+        for item in day_payloads:
+            symbol_name = item["symbol"]
+            current = monthly_highs.get(symbol_name)
+            if current is None or (item["weighted_gap"], item["gap_high_timestamp"]) > (current["weighted_gap"], current["gap_high_timestamp"]):
+                monthly_highs[symbol_name] = item
+
+    if not monthly_highs:
+        raise HTTPException(status_code=404, detail="no historical Cash-Future gap rows found for the requested month")
+
+    ranked = sorted(
+        monthly_highs.values(),
+        key=lambda item: (item["weighted_gap"], item["symbol"]),
+        reverse=True,
+    )[:10]
+    data = []
+    for rank, item in enumerate(ranked, start=1):
+        timestamp = item.get("gap_high_timestamp")
+        data.append({
+            "rank": rank,
+            "symbol": item["symbol"],
+            "lot_size": item["lot_size"],
+            "month_gap_high": item["gap"],
+            "gap_value": item["weighted_gap"],
+            "gap_high_date": item["trading_date"],
+            "gap_high_time": timestamp.split("T", 1)[1] if timestamp and "T" in timestamp else timestamp,
+            "gap_high_timestamp": timestamp,
+            "cash_price_at_gap_high": item["cash_price_at_gap_high"],
+            "future_price_at_gap_high": item["future_price_at_gap_high"],
+            "contract_month": item["contract_month"],
+            "instrument_key": item["instrument_key"],
+        })
+
+    return {
+        "status": "success",
+        "month": f"{year:04d}-{month:02d}",
+        "mode": "shorting",
+        "instrument_type": instrument_type.upper(),
+        "count": len(data),
+        "data": data,
+    }
+
+
 @router.get("/monthly-graph")
 def monthly_graph(
     symbol: str = Query(...), year: int = Query(..., ge=2000, le=2100), month: int = Query(..., ge=1, le=12),
