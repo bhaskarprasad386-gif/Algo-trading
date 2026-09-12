@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from app.backtesting.cash_future_historical_loader import CashFutureHistoricalLoader, CashFutureHistorySelection
+from app.backtesting.cash_future_replay_routes import router as cash_future_replay_router
 from app.backtesting.cash_future_strategy_runner import CashFutureStrategyConfig, run_cash_future_strategy
 from app.backtesting.contract_master import ContractMasterCatalog
 from app.backtesting.historical_catalog import HistoricalCatalog
@@ -18,6 +19,7 @@ from app.core.config import settings
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
 router = APIRouter(prefix="/api/v1/backtesting/cash-future", tags=["Cash-Future Backtesting"])
+router.include_router(cash_future_replay_router)
 
 
 class StrategyPointRequest(BaseModel):
