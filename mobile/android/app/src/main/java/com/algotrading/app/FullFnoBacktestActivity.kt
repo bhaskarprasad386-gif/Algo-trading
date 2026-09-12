@@ -150,11 +150,7 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         try {
             val response = ApiService.retrofitService.dateGapRanking(tradingDate, mode = "shorting", instrumentType = "STOCK", limit = 500)
             val prior = runCatching { ApiService.retrofitService.priorGapComparison(tradingDate, mode = "shorting", instrumentType = "STOCK", limit = 5) }.getOrNull()
-            val monthHighs = response.data.associate { item ->
-                item.symbol to runCatching {
-                    ApiService.retrofitService.monthlyGapSearch(year, month, mode = "shorting", instrumentType = "STOCK", symbol = item.symbol).result
-                }.getOrNull()
-            }
+            val monthHighs = response.data.associate { item -> item.symbol to runCatching { ApiService.retrofitService.monthlyGapSearch(year, month, mode = "shorting", instrumentType = "STOCK", symbol = item.symbol).result }.getOrNull() }
             val top = response.top
             withContext(Dispatchers.Main) {
                 tvGapCalendar.text = buildString {
@@ -167,8 +163,7 @@ class FullFnoBacktestActivity : AppCompatActivity() {
                         append("Gap High Time: ${top.gap_high_timestamp ?: "-"} • Cash ₹${"%.2f".format(topCash)} • Future ₹${"%.2f".format(topFuture)} • Lot ${"%.0f".format(top.lot_size)}")
                     }
                     append("\n\nPRIOR HIGHER GAPS")
-                    if (prior == null || !prior.has_larger_prior_gap) append("\nNone — this selected date is at/above all earlier available gaps.")
-                    else prior.prior_larger.forEach { p -> append("\n${p.trading_date} • ${p.symbol} • Gap ₹${"%.2f".format(p.gap)} • Gap×Lot ₹${"%.2f".format(p.weighted_gap)}") }
+                    if (prior == null || !prior.has_larger_prior_gap) append("\nNone — this selected date is at/above all earlier available gaps.") else prior.prior_larger.forEach { p -> append("\n${p.trading_date} • ${p.symbol} • Gap ₹${"%.2f".format(p.gap)} • Gap×Lot ₹${"%.2f".format(p.weighted_gap)}") }
                 }
                 response.data.forEach { item -> addCalendarRow(tradingDate, item, monthHighs[item.symbol]) }
             }
@@ -181,22 +176,16 @@ class FullFnoBacktestActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f); setTextColor(Color.WHITE); textSize = 11f
             text = buildString {
                 append("${item.symbol}  Shorting Gap (Day High) ₹${"%.2f".format(item.gap)} × Lot ${"%.0f".format(item.lot_size)} = ₹${"%.2f".format(item.weighted_gap)}\n")
-                val cashAtHigh = item.cash_price_at_gap_high ?: item.open
-                val futureAtHigh = item.future_price_at_gap_high ?: item.high
+                val cashAtHigh = item.cash_price_at_gap_high ?: item.open; val futureAtHigh = item.future_price_at_gap_high ?: item.high
                 append("Gap High Time: ${item.gap_high_timestamp ?: "-"}\n")
                 append("Cash/Future at Gap High: ₹${"%.2f".format(cashAtHigh)} / ₹${"%.2f".format(futureAtHigh)}\n")
-                if (monthHigh == null) append("Month Gap High: unavailable")
-                else append("Month Gap High: ₹${"%.2f".format(monthHigh.gap)} • ${monthHigh.trading_date} • Gap×Lot ₹${"%.2f".format(monthHigh.gap_value)}")
+                if (monthHigh == null) append("Month Gap High: unavailable") else append("Month Gap High: ₹${"%.2f".format(monthHigh.gap)} • ${monthHigh.trading_date} • Gap×Lot ₹${"%.2f".format(monthHigh.gap_value)}")
             }
         }
         val builder = Button(this).apply { text = "BUILD"; textSize = 10f; setOnClickListener { loadCalendarSelectionIntoBuilder(tradingDate, item) } }
         val graph = Button(this).apply { text = "GRAPH"; textSize = 10f; setOnClickListener { loadIntradayReplay(tradingDate, item.symbol, "CURRENT") } }
         val nextGraph = Button(this).apply { text = "NEXT"; textSize = 10f; setOnClickListener { loadIntradayReplay(tradingDate, item.symbol, "NEAR") } }
-        row.addView(details)
-        row.addView(builder, LinearLayout.LayoutParams(78, 44).apply { setMargins(3, 0, 3, 0) })
-        row.addView(graph, LinearLayout.LayoutParams(76, 44).apply { setMargins(2, 0, 2, 0) })
-        row.addView(nextGraph, LinearLayout.LayoutParams(76, 44))
-        gapCalendarRows.addView(row)
+        row.addView(details); row.addView(builder, LinearLayout.LayoutParams(78, 44).apply { setMargins(3, 0, 3, 0) }); row.addView(graph, LinearLayout.LayoutParams(76, 44).apply { setMargins(2, 0, 2, 0) }); row.addView(nextGraph, LinearLayout.LayoutParams(76, 44)); gapCalendarRows.addView(row)
     }
 
     private fun loadCalendarSelectionIntoBuilder(tradingDate: String, item: DailyGapCalendarItem) = lifecycleScope.launch(Dispatchers.IO) {
@@ -204,32 +193,19 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         try {
             val current = ApiService.retrofitService.cashFutureReplay(tradingDate, item.symbol, timeframe = "1m", mode = "CURRENT")
             val near = ApiService.retrofitService.cashFutureReplay(tradingDate, item.symbol, timeframe = "1m", mode = "NEAR")
-            val historicalCash = item.cash_price_at_gap_high ?: item.open
-            val historicalFuture = item.future_price_at_gap_high ?: item.high
+            val historicalCash = item.cash_price_at_gap_high ?: item.open; val historicalFuture = item.future_price_at_gap_high ?: item.high
             withContext(Dispatchers.Main) {
                 strategyBuilder.bindHistoricalSelection(selectedSymbol = item.symbol, historicalCash = historicalCash, historicalLot = item.lot_size, selectedDate = tradingDate, historicalFuture = historicalFuture, currentContract = current.contract_month, nearContract = near.contract_month)
                 tvStatus.text = "Cash-Future strategy loaded • ${item.symbol} • $tradingDate • Gap High ${item.gap_high_timestamp ?: "-"} • CURRENT ${current.contract_month ?: "-"} • NEAR ${near.contract_month ?: "-"}"
             }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                strategyBuilder.bindHistoricalSelection(item.symbol, item.cash_price_at_gap_high ?: item.open, item.lot_size, tradingDate, item.future_price_at_gap_high ?: item.high)
-                tvStatus.text = "Builder loaded • ${item.symbol} • $tradingDate • contract lookup failed: ${e.message ?: "API error"}"
-            }
-        }
+        } catch (e: Exception) { withContext(Dispatchers.Main) { strategyBuilder.bindHistoricalSelection(item.symbol, item.cash_price_at_gap_high ?: item.open, item.lot_size, tradingDate, item.future_price_at_gap_high ?: item.high); tvStatus.text = "Builder loaded • ${item.symbol} • $tradingDate • contract lookup failed: ${e.message ?: "API error"}" } }
     }
 
     private fun addMonthlyTop10Row(item: MonthlyGapTop10Item) {
         val expiryDay = item.is_expiry_day
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(8, 6, 4, 6)
-            if (expiryDay) setBackgroundColor(Color.rgb(70, 0, 0))
-        }
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(8, 6, 4, 6); if (expiryDay) setBackgroundColor(Color.rgb(70, 0, 0)) }
         val details = TextView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            setTextColor(if (expiryDay) Color.RED else Color.WHITE)
-            textSize = 11f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f); setTextColor(if (expiryDay) Color.RED else Color.WHITE); textSize = 11f
             text = buildString {
                 append(if (expiryDay) "🔴 EXPIRY DAY • NO TRADE\n" else "🟢 TRADEABLE • HISTORICAL OPPORTUNITY\n")
                 append("#${item.rank}  ${item.symbol} • Lot ${"%.0f".format(item.lot_size)}\n")
@@ -240,27 +216,10 @@ class FullFnoBacktestActivity : AppCompatActivity() {
                 if (expiryDay) append("\nHistorical ranking retained • execution disabled")
             }
         }
-        val build = Button(this).apply {
-            text = if (expiryDay) "NO TRADE" else "BUILD"
-            textSize = 9f
-            isEnabled = !expiryDay
-            setOnClickListener { loadMonthlySelectionIntoBuilder(item) }
-        }
-        val graph = Button(this).apply {
-            text = "GRAPH"
-            textSize = 9f
-            setOnClickListener { loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "CURRENT", item.contract_month, item.gap_high_timestamp) }
-        }
-        val nextGraph = Button(this).apply {
-            text = "NEXT"
-            textSize = 9f
-            setOnClickListener { loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "NEAR", null, null) }
-        }
-        row.addView(details)
-        row.addView(build, LinearLayout.LayoutParams(68, 44).apply { setMargins(2, 0, 2, 0) })
-        row.addView(graph, LinearLayout.LayoutParams(70, 44).apply { setMargins(2, 0, 2, 0) })
-        row.addView(nextGraph, LinearLayout.LayoutParams(66, 44))
-        gapCalendarRows.addView(row)
+        val build = Button(this).apply { text = if (expiryDay) "NO TRADE" else "BUILD"; textSize = 9f; isEnabled = !expiryDay; setOnClickListener { loadMonthlySelectionIntoBuilder(item) } }
+        val graph = Button(this).apply { text = "GRAPH"; textSize = 9f; setOnClickListener { loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "CURRENT", item.contract_month, item.gap_high_timestamp) } }
+        val nextGraph = Button(this).apply { text = "NEXT"; textSize = 9f; setOnClickListener { loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "NEAR", null, null) } }
+        row.addView(details); row.addView(build, LinearLayout.LayoutParams(68, 44).apply { setMargins(2, 0, 2, 0) }); row.addView(graph, LinearLayout.LayoutParams(70, 44).apply { setMargins(2, 0, 2, 0) }); row.addView(nextGraph, LinearLayout.LayoutParams(66, 44)); gapCalendarRows.addView(row)
     }
 
     private fun loadMonthlySelectionIntoBuilder(item: MonthlyGapTop10Item) = lifecycleScope.launch(Dispatchers.IO) {
@@ -268,13 +227,8 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         try {
             val current = ApiService.retrofitService.cashFutureReplay(item.gap_high_date, item.symbol, contractMonth = item.contract_month, timeframe = "1m", mode = "CURRENT")
             val near = ApiService.retrofitService.cashFutureReplay(item.gap_high_date, item.symbol, timeframe = "1m", mode = "NEAR")
-            withContext(Dispatchers.Main) {
-                strategyBuilder.bindHistoricalSelection(selectedSymbol = item.symbol, historicalCash = item.cash_price_at_gap_high, historicalLot = item.lot_size, selectedDate = item.gap_high_date, historicalFuture = item.future_price_at_gap_high, currentContract = current.contract_month ?: item.contract_month, nearContract = near.contract_month)
-                tvStatus.text = "Monthly strategy loaded • ${item.symbol} • ${item.gap_high_date} ${item.gap_high_time} • CURRENT ${current.contract_month ?: item.contract_month ?: "-"} • NEAR ${near.contract_month ?: "-"}"
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) { strategyBuilder.bindHistoricalSelection(item.symbol, item.cash_price_at_gap_high, item.lot_size, item.gap_high_date, item.future_price_at_gap_high, item.contract_month, null); tvStatus.text = "Monthly builder loaded • ${item.symbol} • contract lookup failed: ${e.message ?: "API error"}" }
-        }
+            withContext(Dispatchers.Main) { strategyBuilder.bindHistoricalSelection(selectedSymbol = item.symbol, historicalCash = item.cash_price_at_gap_high, historicalLot = item.lot_size, selectedDate = item.gap_high_date, historicalFuture = item.future_price_at_gap_high, currentContract = current.contract_month ?: item.contract_month, nearContract = near.contract_month); tvStatus.text = "Monthly strategy loaded • ${item.symbol} • ${item.gap_high_date} ${item.gap_high_time} • CURRENT ${current.contract_month ?: item.contract_month ?: "-"} • NEAR ${near.contract_month ?: "-"}" }
+        } catch (e: Exception) { withContext(Dispatchers.Main) { strategyBuilder.bindHistoricalSelection(item.symbol, item.cash_price_at_gap_high, item.lot_size, item.gap_high_date, item.future_price_at_gap_high, item.contract_month, null); tvStatus.text = "Monthly builder loaded • ${item.symbol} • contract lookup failed: ${e.message ?: "API error"}" } }
     }
 
     private fun loadIntradayReplay(tradingDate: String, symbol: String, mode: String = "CURRENT") = loadCashFutureReplay(tradingDate, symbol, "1m", mode, null, null)
@@ -285,8 +239,7 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         try {
             val response = ApiService.retrofitService.cashFutureReplay(tradingDate, symbol, contractMonth = contractMonth, timeframe = timeframe, mode = mode)
             withContext(Dispatchers.Main) {
-                replayView.setFocusTimestamp(focusTimestamp)
-                replayView.setCashFutureData(response.series, response.available_replay_intervals)
+                replayView.setFocusTimestamp(focusTimestamp); replayView.setCashFutureData(response.series, response.available_replay_intervals)
                 val focusPoint = focusTimestamp?.let { ts -> response.series.firstOrNull { it.timestamp == ts } }
                 val focusText = focusPoint?.let { " • GAP HIGH ${it.timestamp} • Cash ₹${"%.2f".format(it.cash_price)} • Future ₹${"%.2f".format(it.future_price)} • Gap ₹${"%.2f".format(it.gap)}" } ?: ""
                 replayStatus.text = "$tradingDate • $symbol • ${if (mode == "NEAR") "NEXT FUTURE" else "CURRENT FUTURE"} • ${response.count} paired rows • ${response.timeframe} • intervals ${response.available_replay_intervals.joinToString(" | ")}$focusText"
@@ -298,71 +251,29 @@ class FullFnoBacktestActivity : AppCompatActivity() {
     private fun toggleReplay() {
         if (replayView.isComplete()) { replayView.resetReplay(); btnReplayPlay.text = "PLAY ${replayView.replayIntervalSeconds()} SEC"; updateReplayStatus(); return }
         if (replayJob?.isActive == true) { replayJob?.cancel(); btnReplayPlay.text = "PLAY ${replayView.replayIntervalSeconds()} SEC"; return }
-        btnReplayPlay.text = "PAUSE"
-        replayJob = lifecycleScope.launch {
-            while (true) {
-                val hasMore = withContext(Dispatchers.Main) { replayView.stepOneMinute() }
-                withContext(Dispatchers.Main) { updateReplayStatus() }
-                if (!hasMore) break
-                delay(500)
-            }
-            btnReplayPlay.text = "REPLAY"
-        }
+        btnReplayPlay.text = "PAUSE"; replayJob = lifecycleScope.launch { while (true) { val hasMore = withContext(Dispatchers.Main) { replayView.stepOneMinute() }; withContext(Dispatchers.Main) { updateReplayStatus() }; if (!hasMore) break; delay(500) }; btnReplayPlay.text = "REPLAY" }
     }
 
     private fun updateReplayStatus() { replayStatus.text = replayStatus.text.toString().substringBefore(" • replay") + " • replay ${replayView.currentTime()}" }
 
     private fun searchGapResults() = lifecycleScope.launch(Dispatchers.IO) {
-        val query = etGapResultSearch.text.toString().trim(); val normalized = query.lowercase(Locale.ROOT); val today = Calendar.getInstance()
-        val exactDate = Regex("^(\\d{4})-(\\d{2})-(\\d{2})$").matchEntire(query); val monthQuery = Regex("^(\\d{4})-(\\d{2})$").matchEntire(query)
-        val monthMode = query.isBlank() || normalized.contains("month") || normalized.contains("महीना") || normalized.contains("इस महीने") || monthQuery != null
+        val query = etGapResultSearch.text.toString().trim(); val normalized = query.lowercase(Locale.ROOT); val today = Calendar.getInstance(); val exactDate = Regex("^(\\d{4})-(\\d{2})-(\\d{2})$").matchEntire(query); val monthQuery = Regex("^(\\d{4})-(\\d{2})$").matchEntire(query); val monthMode = query.isBlank() || normalized.contains("month") || normalized.contains("महीना") || normalized.contains("इस महीने") || monthQuery != null
         withContext(Dispatchers.Main) { btnGapResultSearch.isEnabled = false; tvResults.text = "Searching Cash-Future high gap…"; gapCalendarRows.removeAllViews() }
-        try {
-            if (exactDate != null) loadGapSearchDate(exactDate.groupValues[1].toInt(), exactDate.groupValues[2].toInt(), exactDate.groupValues[3].toInt())
-            else if (monthMode) { val y = monthQuery?.groupValues?.get(1)?.toInt() ?: today.get(Calendar.YEAR); val m = monthQuery?.groupValues?.get(2)?.toInt()?.minus(1) ?: today.get(Calendar.MONTH); loadGapSearchMonth(y, m) }
-            else withContext(Dispatchers.Main) { tvResults.text = "Use: this month, YYYY-MM, or YYYY-MM-DD" }
-        } finally { withContext(Dispatchers.Main) { btnGapResultSearch.isEnabled = true } }
+        try { if (exactDate != null) loadGapSearchDate(exactDate.groupValues[1].toInt(), exactDate.groupValues[2].toInt(), exactDate.groupValues[3].toInt()) else if (monthMode) { val y = monthQuery?.groupValues?.get(1)?.toInt() ?: today.get(Calendar.YEAR); val m = monthQuery?.groupValues?.get(2)?.toInt()?.minus(1) ?: today.get(Calendar.MONTH); loadGapSearchMonth(y, m) } else withContext(Dispatchers.Main) { tvResults.text = "Use: this month, YYYY-MM, or YYYY-MM-DD" } } finally { withContext(Dispatchers.Main) { btnGapResultSearch.isEnabled = true } }
     }
 
     private suspend fun loadGapSearchDate(year: Int, month: Int, day: Int) {
-        val tradingDate = "%04d-%02d-%02d".format(year, month, day)
-        val response = ApiService.retrofitService.dateGapRanking(tradingDate, mode = "shorting", instrumentType = "STOCK", limit = 500)
-        val top = response.top
-        val prior = runCatching { ApiService.retrofitService.priorGapComparison(tradingDate, mode = "shorting", instrumentType = "STOCK", limit = 5) }.getOrNull()
-        withContext(Dispatchers.Main) {
-            tvResults.text = buildString {
-                append(if (top == null) "$tradingDate\nNo historical Cash-Future data found." else formatGapResult("$tradingDate • TOP CASH-FUTURE GAP", top.symbol, top.direction, top.gap, top.gap_percent, top.weighted_gap, top.previous_close, top.open, top.high, top.low, top.close, top.lot_size))
-                append("\n\nPRIOR HIGHER GAPS")
-                if (prior == null || !prior.has_larger_prior_gap) append("\nNone found.") else prior.prior_larger.forEach { p -> append("\n${p.trading_date} • ${p.symbol} • Gap ₹${"%.2f".format(p.gap)} • Gap×Lot ₹${"%.2f".format(p.weighted_gap)}") }
-            }
-        }
+        val tradingDate = "%04d-%02d-%02d".format(year, month, day); val response = ApiService.retrofitService.dateGapRanking(tradingDate, mode = "shorting", instrumentType = "STOCK", limit = 500); val top = response.top; val prior = runCatching { ApiService.retrofitService.priorGapComparison(tradingDate, mode = "shorting", instrumentType = "STOCK", limit = 5) }.getOrNull()
+        withContext(Dispatchers.Main) { tvResults.text = buildString { append(if (top == null) "$tradingDate\nNo historical Cash-Future data found." else formatGapResult("$tradingDate • TOP CASH-FUTURE GAP", top.symbol, top.direction, top.gap, top.gap_percent, top.weighted_gap, top.previous_close, top.open, top.high, top.low, top.close, top.lot_size)); append("\n\nPRIOR HIGHER GAPS"); if (prior == null || !prior.has_larger_prior_gap) append("\nNone found.") else prior.prior_larger.forEach { p -> append("\n${p.trading_date} • ${p.symbol} • Gap ₹${"%.2f".format(p.gap)} • Gap×Lot ₹${"%.2f".format(p.weighted_gap)}") } } }
     }
 
     private suspend fun loadGapSearchMonth(year: Int, month: Int) {
         val result = ApiService.retrofitService.monthlyGapTop10(year, month + 1, instrumentType = "STOCK")
-        withContext(Dispatchers.Main) {
-            tvResults.text = buildString {
-                append("%04d-%02d • MONTHLY TOP 10 CASH-FUTURE GAP\n".format(year, month + 1))
-                append("Each stock appears once • actual paired intraday Future−Cash maximum • Gap×historical lot\n")
-                append("Rank • Stock • Lot • Gap High • Gap×Lot • Date • Time • Cash • Future • Contract")
-            }
-            result.data.forEach { addMonthlyTop10Row(it) }
-            if (result.data.isEmpty()) tvResults.append("\nNo historical Cash-Future gap data found.")
-        }
+        withContext(Dispatchers.Main) { tvResults.text = buildString { append("%04d-%02d • MONTHLY TOP 10 CASH-FUTURE GAP\n".format(year, month + 1)); append("Each stock appears once • actual paired intraday Future−Cash maximum • Gap×historical lot\n"); append("Rank • Stock • Lot • Gap High • Gap×Lot • Date • Time • Cash • Future • Contract") }; result.data.forEach { addMonthlyTop10Row(it) }; if (result.data.isEmpty()) tvResults.append("\nNo historical Cash-Future gap data found.")
     }
 
-    private fun formatGapResult(title: String, symbol: String, direction: String, gap: Double, gapPercent: Double, weightedGap: Double, previousClose: Double, open: Double, high: Double, low: Double, close: Double, lotSize: Double): String = buildString {
-        append("$title\n$symbol • $direction\nGap: ₹${"%.2f".format(gap)} (${"%.2f".format(gapPercent)}%)\nGap × Lot: ₹${"%.2f".format(weightedGap)}\nPrev Close: ₹${"%.2f".format(previousClose)}\nOpen: ₹${"%.2f".format(open)}\nHigh: ₹${"%.2f".format(high)}\nLow: ₹${"%.2f".format(low)}\nClose: ₹${"%.2f".format(close)}\nLot Size: ${"%.0f".format(lotSize)}")
-    }
+    private fun formatGapResult(title: String, symbol: String, direction: String, gap: Double, gapPercent: Double, weightedGap: Double, previousClose: Double, open: Double, high: Double, low: Double, close: Double, lotSize: Double): String = buildString { append("$title\n$symbol • $direction\nGap: ₹${"%.2f".format(gap)} (${"%.2f".format(gapPercent)}%)\nGap × Lot: ₹${"%.2f".format(weightedGap)}\nPrev Close: ₹${"%.2f".format(previousClose)}\nOpen: ₹${"%.2f".format(open)}\nHigh: ₹${"%.2f".format(high)}\nLow: ₹${"%.2f".format(low)}\nClose: ₹${"%.2f".format(close)}\nLot Size: ${"%.0f".format(lotSize)}") }
 
-    private fun confirmPurge() {
-        val id = jobId ?: return
-        AlertDialog.Builder(this).setTitle("Purge Full-F&O Results?").setMessage("This permanently deletes the durable result chunks for job $id. The compact job summary is retained.").setNegativeButton("CANCEL", null).setPositiveButton("PURGE") { _, _ -> purgeResults(id) }.show()
-    }
-
-    private fun purgeResults(id: String) = lifecycleScope.launch(Dispatchers.IO) {
-        withContext(Dispatchers.Main) { btnPurge.isEnabled = false; tvStatus.text = "Full-F&O: PURGING RESULTS…" }
-        try { val response = ApiService.retrofitService.purgeFullFnoResults(id); withContext(Dispatchers.Main) { tvResults.text = ""; nextSequence = null; btnLoadMore.isEnabled = false; tvStatus.text = "Full-F&O: purged ${response.deleted_chunks} result chunks • summary retained" } }
-        catch (e: Exception) { withContext(Dispatchers.Main) { btnPurge.isEnabled = true; tvStatus.text = "Purge failed • ${e.message ?: "API error"}" } }
-    }
+    private fun confirmPurge() { val id = jobId ?: return; AlertDialog.Builder(this).setTitle("Purge Full-F&O Results?").setMessage("This permanently deletes the durable result chunks for job $id. The compact job summary is retained.").setNegativeButton("CANCEL", null).setPositiveButton("PURGE") { _, _ -> purgeResults(id) }.show() }
+    private fun purgeResults(id: String) = lifecycleScope.launch(Dispatchers.IO) { withContext(Dispatchers.Main) { btnPurge.isEnabled = false; tvStatus.text = "Full-F&O: PURGING RESULTS…" }; try { val response = ApiService.retrofitService.purgeFullFnoResults(id); withContext(Dispatchers.Main) { tvResults.text = ""; nextSequence = null; btnLoadMore.isEnabled = false; tvStatus.text = "Full-F&O: purged ${response.deleted_chunks} result chunks • summary retained" } } catch (e: Exception) { withContext(Dispatchers.Main) { btnPurge.isEnabled = true; tvStatus.text = "Purge failed • ${e.message ?: "API error"}" } } }
 }
