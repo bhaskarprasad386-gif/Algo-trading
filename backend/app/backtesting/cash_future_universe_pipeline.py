@@ -10,6 +10,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .cash_future_historical_acquisition import CashFutureAcquisitionProgress, CashFutureHistoricalAcquisitionService
+from .cash_future_historical_loader import CashFutureHistoricalLoader, CashFutureHistorySelection
+from .cash_future_strategy_runner import CashFutureStrategy, CashFutureStrategyConfig, CashFutureStrategyRun, run_cash_future_strategy
 from .cash_future_universe import CashFutureFnoUniverse
 from .cash_future_universe_acquisition import CashFutureUniverseAcquisitionResult, acquire_cash_future_universe
 from .cash_future_universe_download_plan import CashFutureUniverseDownloadJob, CashFutureUniverseDownloadPlan
@@ -121,6 +123,37 @@ class CashFutureUniversePipelineResult:
             coverage_report=coverage,
             quality_report=quality,
             result_ledger=result_ledger,
+        )
+
+    def run_strategy(
+        self,
+        loader: CashFutureHistoricalLoader,
+        selection: CashFutureHistorySelection,
+        strategy: CashFutureStrategy,
+        *,
+        strategy_id: str,
+        strategy_version: str = "1",
+        config: CashFutureStrategyConfig | None = None,
+        ledger=None,
+        run_id: str | None = None,
+        strategy_hash: str | None = None,
+    ) -> CashFutureStrategyRun:
+        """Run a selected historical Cash-Future strategy only after durable readiness passes.
+
+        The loader streams durable catalog observations and resolves contracts as-of each
+        historical date. The strategy runner then applies the selected date range without
+        exposing future observations to the strategy. Live broker execution is not involved.
+        """
+        self.require_backtest_ready()
+        return run_cash_future_strategy(
+            loader.iter_points(selection),
+            strategy,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            config=config,
+            ledger=ledger,
+            run_id=run_id,
+            strategy_hash=strategy_hash,
         )
 
 
