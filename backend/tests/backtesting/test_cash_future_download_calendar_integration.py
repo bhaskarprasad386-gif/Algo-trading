@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from app.backtesting.cash_future_historical_loader import (
     CashFutureHistoricalLoader,
@@ -6,6 +7,9 @@ from app.backtesting.cash_future_historical_loader import (
 )
 from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
+
+
+MARKET_TZ = ZoneInfo("Asia/Kolkata")
 
 
 def test_downloaded_paired_records_are_read_by_calendar_loader() -> None:
@@ -25,7 +29,7 @@ def test_downloaded_paired_records_are_read_by_calendar_loader() -> None:
         )
         contracts.upsert_snapshot(trading_day, [contract])
 
-        timestamp = datetime(2026, 1, 6, 11, 0).astimezone()
+        timestamp = datetime(2026, 1, 6, 11, 0, tzinfo=MARKET_TZ)
         timestamp_ns = int(timestamp.timestamp() * 1_000_000_000)
         catalog.ingest(
             [
