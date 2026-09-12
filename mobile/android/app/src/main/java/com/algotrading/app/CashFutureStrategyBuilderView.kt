@@ -336,10 +336,11 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
             line.color = if (spread >= 0) 0xFF16B886.toInt() else 0xFFD6455D.toInt()
             val path = Path()
             val center = h / 2f
-            val scale = max(1f, abs(spread * qty) / max(1f, h / 2f))
+            val spreadQty = (spread * qty).toFloat()
+            val scale = max(1f, abs(spreadQty) / max(1f, h / 2f))
             for (i in 0..100) {
                 val x = 30f + (w - 50f) * i / 100f
-                val p = spread * qty + ((i - 50) / 50f) * abs(spread * qty + 1.0)
+                val p = spreadQty + ((i - 50) / 50f) * abs(spreadQty + 1f)
                 val y = center - (p / scale)
                 if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
             }
