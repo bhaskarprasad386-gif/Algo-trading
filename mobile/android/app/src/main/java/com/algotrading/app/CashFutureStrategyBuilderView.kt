@@ -163,7 +163,6 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         currentContract: String? = null,
         nearContract: String? = null,
     ) {
-        // A new historical selection invalidates markers from the previous strategy run.
         rootView.findViewById<IntradayReplayView>(R.id.intradayReplayView)?.clearStrategyTrades()
         symbol.setText(selectedSymbol)
         lotSize.setText("%.0f".format(historicalLot))
@@ -229,6 +228,9 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         val contract = if (mode == "NEAR") nearContract else currentContract
         val capitalValue = capital.text.toString().toDoubleOrNull() ?: 100_000_000.0
         val chargesValue = charges.text.toString().toDoubleOrNull() ?: 0.0
+        val stopLossValue = stopLoss.text.toString().toDoubleOrNull()
+        val targetValue = target.text.toString().toDoubleOrNull()
+        val slippageValue = slippage.text.toString().toDoubleOrNull() ?: 0.0
         runStrategyButton.isEnabled = false
         summary.text = "$selected • $date • $mode • running durable historical strategy…"
         CoroutineScope(Dispatchers.IO).launch {
@@ -249,6 +251,11 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
                     "timeframe" to "1m",
                     "mode" to mode,
                     "source" to "angelone",
+                    "cash_side" to cashSide,
+                    "future_side" to futureSide,
+                    "stop_loss" to stopLossValue,
+                    "target" to targetValue,
+                    "slippage_per_share" to slippageValue,
                 )
                 val json = Gson().toJson(payload)
                 val body = json.toRequestBody("application/json".toMediaType())
@@ -278,23 +285,65 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    summary.text = "$selected • $date • strategy failed • ${e.message ?: "API error"}"
+                    summary.text = "$selected • $date • strategy failed: ${e.message ?: "unknown error"}"
                     runStrategyButton.isEnabled = true
                 }
             }
         }
     }
 
-    private fun addRow(left: EditText, right: EditText) { val row = LinearLayout(context).apply { orientation = HORIZONTAL }; row.addView(left, LayoutParams(0, 50, 1f).apply { setMargins(0, 2, 5, 4) }); row.addView(right, LayoutParams(0, 50, 1f).apply { setMargins(5, 2, 0, 4) }); addView(row) }
-    private fun field(hintText: String, integer: Boolean = false): EditText = EditText(context).apply { hint = hintText; setSingleLine(); textSize = 12f; inputType = if (integer) 2 else 2 or 8192; setTextColor(0xFFE8F1FF.toInt()); setHintTextColor(0xFF7890AD.toInt()); setPadding(12, 0, 12, 0); setBackgroundColor(0xFF14253A.toInt()) }
-    private fun quantityField(hintText: String): EditText = field(hintText, integer = true).apply { isFocusable = false; isClickable = false }
-    private fun terminalButton(label: String, background: Int) = Button(context).apply { text = label; setTextColor(0xFFFFFFFF.toInt()); setBackgroundColor(background); textSize = 11f; typeface = Typeface.DEFAULT_BOLD }
+    private fun field(hint: String, integer: Boolean = false) = EditText(context).apply {
+        this.hint = hint
+        setTextColor(0xFFE8F1FF.toInt()); setHintTextColor(0xFF6F87A5.toInt()); textSize = 13f
+        setPadding(12, 0, 12, 0)
+        inputType = if (integer) android.text.InputType.TYPE_CLASS_NUMBER else android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        setBackgroundColor(0xFF14253A.toInt())
+    }
+
+    private fun quantityField(hint: String) = field(hint, integer = true).apply { isFocusable = false; isClickable = false }
+
+    private fun addRow(left: View, right: View) {
+        val row = LinearLayout(context).apply { orientation = HORIZONTAL }
+        row.addView(left, LayoutParams(0, 50, 1f).apply { setMargins(0, 3, 5, 3) })
+        row.addView(right, LayoutParams(0, 50, 1f).apply { setMargins(5, 3, 0, 3) })
+        addView(row)
+    }
+
+    private fun terminalButton(textValue: String, background: Int) = Button(context).apply {
+        text = textValue; setTextColor(0xFFFFFFFF.toInt()); textSize = 11f; typeface = Typeface.DEFAULT_BOLD
+        setBackgroundColor(background); stateListAnimator = null
+    }
 
     private class PayoffGraphView(context: Context) : View(context) {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val path = Path()
-        private var cash = 0.0; private var future = 0.0; private var qty = 0.0; private var spread = 0.0
-        fun setScenario(cashValue: Double, futureValue: Double, quantity: Double, spreadValue: Double) { cash = cashValue; future = futureValue; qty = quantity; spread = spreadValue; invalidate() }
-        override fun onDraw(canvas: Canvas) { super.onDraw(canvas); paint.textSize = 26f; paint.typeface = Typeface.DEFAULT_BOLD; canvas.drawText("PAYOFF  ₹${"%.2f".format(spread * qty)}", 18f, 42f, paint); paint.textSize = 12f; paint.typeface = Typeface.DEFAULT; canvas.drawText("Cash ₹${"%.2f".format(cash)} • Future ₹${"%.2f".format(future)} • Qty ${qty.toLong()}", 18f, 68f, paint) }
+        private var cash = 0.0
+        private var future = 0.0
+        private var qty = 0.0
+        private var spread = 0.0
+        private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 4f; style = Paint.Style.STROKE }
+        private val axis = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 2f }
+
+        fun setScenario(cash: Double, future: Double, qty: Double, spread: Double) {
+            this.cash = cash; this.future = future; this.qty = qty; this.spread = spread; invalidate()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat(); val h = height.toFloat()
+            canvas.drawColor(0xFF0A1424.toInt())
+            axis.color = 0xFF36506D.toInt()
+            canvas.drawLine(30f, h / 2f, w - 20f, h / 2f, axis)
+            canvas.drawLine(w / 2f, 20f, w / 2f, h - 20f, axis)
+            line.color = if (spread >= 0) 0xFF16B886.toInt() else 0xFFD6455D.toInt()
+            val path = Path()
+            val center = h / 2f
+            val scale = max(1f, abs(spread * qty) / max(1f, h / 2f))
+            for (i in 0..100) {
+                val x = 30f + (w - 50f) * i / 100f
+                val p = spread * qty + ((i - 50) / 50f) * abs(spread * qty + 1.0)
+                val y = center - (p / scale)
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            canvas.drawPath(path, line)
+        }
     }
 }
