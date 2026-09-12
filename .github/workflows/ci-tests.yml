@@ -43,3 +43,4 @@ jobs:
         run: python -m pytest -q
 
 # Backend test path includes repository root so package imports resolve from the backend working directory.
+# CI verification trigger: Cash-Future strategy-builder UI changes.
