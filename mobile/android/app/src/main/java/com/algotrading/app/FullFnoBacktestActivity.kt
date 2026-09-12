@@ -62,6 +62,7 @@ class FullFnoBacktestActivity : AppCompatActivity() {
             val symbol = replaySymbol
             if (date != null && symbol != null) loadCashFutureReplay(date, symbol, timeframe, replayMode)
         }
+        btnReplayPlay = findViewById(R.id.btnIntradayReplayPlay)
         btnReplayReset = findViewById(R.id.btnIntradayReplayReset)
         btnStart = findViewById(R.id.btnFullFnoStart)
         btnCancel = findViewById(R.id.btnFullFnoCancel)
@@ -178,10 +179,10 @@ class FullFnoBacktestActivity : AppCompatActivity() {
                 else append("Month Gap High: ₹${"%.2f".format(monthHigh.gap)} • ${monthHigh.trading_date} • Gap×Lot ₹${"%.2f".format(monthHigh.gap_value)}")
             }
         }
-        val builder = Button(this).apply { text = "BUILD"; textSize = 10f; setOnClickListener {
-            strategyBuilder.bindHistoricalSelection(item.symbol, item.open, item.lot_size)
-            tvStatus.text = "Cash-Future strategy loaded • ${item.symbol} • ${tradingDate} • lot ${item.lot_size.toLong()} • qty ${item.lot_size.toLong()}"
-        } }
+        val builder = Button(this).apply {
+            text = "BUILD"; textSize = 10f
+            setOnClickListener { loadCalendarSelectionIntoBuilder(tradingDate, item) }
+        }
         val graph = Button(this).apply { text = "GRAPH"; textSize = 10f; setOnClickListener { loadIntradayReplay(tradingDate, item.symbol, "CURRENT") } }
         val nextGraph = Button(this).apply { text = "NEXT"; textSize = 10f; setOnClickListener { loadIntradayReplay(tradingDate, item.symbol, "NEAR") } }
         row.addView(details)
@@ -189,6 +190,31 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         row.addView(graph, LinearLayout.LayoutParams(76, 44).apply { setMargins(2, 0, 2, 0) })
         row.addView(nextGraph, LinearLayout.LayoutParams(76, 44))
         gapCalendarRows.addView(row)
+    }
+
+    private fun loadCalendarSelectionIntoBuilder(tradingDate: String, item: DailyGapCalendarItem) = lifecycleScope.launch(Dispatchers.IO) {
+        withContext(Dispatchers.Main) { tvStatus.text = "Loading historical contracts • ${item.symbol} • $tradingDate…" }
+        try {
+            val current = ApiService.retrofitService.cashFutureReplay(tradingDate, item.symbol, timeframe = "1m", mode = "CURRENT")
+            val near = ApiService.retrofitService.cashFutureReplay(tradingDate, item.symbol, timeframe = "1m", mode = "NEAR")
+            withContext(Dispatchers.Main) {
+                strategyBuilder.bindHistoricalSelection(
+                    selectedSymbol = item.symbol,
+                    historicalCash = item.open,
+                    historicalLot = item.lot_size,
+                    selectedDate = tradingDate,
+                    historicalFuture = item.high,
+                    currentContract = current.contract_month,
+                    nearContract = near.contract_month
+                )
+                tvStatus.text = "Cash-Future strategy loaded • ${item.symbol} • $tradingDate • CURRENT ${current.contract_month ?: "-"} • NEAR ${near.contract_month ?: "-"}"
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                strategyBuilder.bindHistoricalSelection(item.symbol, item.open, item.lot_size, tradingDate, item.high)
+                tvStatus.text = "Builder loaded • ${item.symbol} • $tradingDate • contract lookup failed: ${e.message ?: "API error"}"
+            }
+        }
     }
 
     private fun addMonthlyTop10Row(item: MonthlyGapTop10Item) {
@@ -203,6 +229,10 @@ class FullFnoBacktestActivity : AppCompatActivity() {
                 append("Contract ${item.contract_month ?: "-"} • ${item.instrument_key ?: "-"}")
             }
         }
+        val build = Button(this).apply {
+            text = "BUILD"; textSize = 9f
+            setOnClickListener { loadMonthlySelectionIntoBuilder(item) }
+        }
         val graph = Button(this).apply {
             text = "GRAPH"; textSize = 9f
             setOnClickListener { loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "CURRENT", item.contract_month) }
@@ -212,9 +242,35 @@ class FullFnoBacktestActivity : AppCompatActivity() {
             setOnClickListener { loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "NEAR", null) }
         }
         row.addView(details)
-        row.addView(graph, LinearLayout.LayoutParams(76, 44).apply { setMargins(3, 0, 2, 0) })
-        row.addView(nextGraph, LinearLayout.LayoutParams(70, 44))
+        row.addView(build, LinearLayout.LayoutParams(68, 44).apply { setMargins(2, 0, 2, 0) })
+        row.addView(graph, LinearLayout.LayoutParams(70, 44).apply { setMargins(2, 0, 2, 0) })
+        row.addView(nextGraph, LinearLayout.LayoutParams(66, 44))
         gapCalendarRows.addView(row)
+    }
+
+    private fun loadMonthlySelectionIntoBuilder(item: MonthlyGapTop10Item) = lifecycleScope.launch(Dispatchers.IO) {
+        withContext(Dispatchers.Main) { tvStatus.text = "Loading monthly historical contracts • ${item.symbol} • ${item.gap_high_date}…" }
+        try {
+            val current = ApiService.retrofitService.cashFutureReplay(item.gap_high_date, item.symbol, contractMonth = item.contract_month, timeframe = "1m", mode = "CURRENT")
+            val near = ApiService.retrofitService.cashFutureReplay(item.gap_high_date, item.symbol, timeframe = "1m", mode = "NEAR")
+            withContext(Dispatchers.Main) {
+                strategyBuilder.bindHistoricalSelection(
+                    selectedSymbol = item.symbol,
+                    historicalCash = item.cash_price_at_gap_high,
+                    historicalLot = item.lot_size,
+                    selectedDate = item.gap_high_date,
+                    historicalFuture = item.future_price_at_gap_high,
+                    currentContract = current.contract_month ?: item.contract_month,
+                    nearContract = near.contract_month
+                )
+                tvStatus.text = "Monthly strategy loaded • ${item.symbol} • ${item.gap_high_date} ${item.gap_high_time} • CURRENT ${current.contract_month ?: item.contract_month ?: "-"} • NEAR ${near.contract_month ?: "-"}"
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                strategyBuilder.bindHistoricalSelection(item.symbol, item.cash_price_at_gap_high, item.lot_size, item.gap_high_date, item.future_price_at_gap_high, item.contract_month, null)
+                tvStatus.text = "Monthly builder loaded • ${item.symbol} • contract lookup failed: ${e.message ?: "API error"}"
+            }
+        }
     }
 
     private fun loadIntradayReplay(tradingDate: String, symbol: String, mode: String = "CURRENT") = loadCashFutureReplay(tradingDate, symbol, "1m", mode, null)
