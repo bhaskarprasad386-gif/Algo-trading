@@ -11,6 +11,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import kotlin.math.abs
 import kotlin.math.max
 
 /** Cash-Future strategy builder with a colourful trading-terminal presentation. */
@@ -24,6 +25,10 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
     private val lotSize = field("Historical lot size", integer = true)
     private val lots = field("Lots", integer = true).apply { setText("1") }
     private val capital = field("Capital ₹").apply { setText("10000000") }
+    private val stopLoss = field("Stop-loss ₹")
+    private val target = field("Target ₹")
+    private val charges = field("Charges ₹").apply { setText("0") }
+    private val slippage = field("Slippage ₹/share").apply { setText("0") }
     private val summary = TextView(context).apply {
         setTextColor(0xFFE8F1FF.toInt()); textSize = 12f; setPadding(12, 8, 12, 8)
         setBackgroundColor(0xFF14253A.toInt())
@@ -34,8 +39,13 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         setTextColor(0xFFFFC857.toInt()); textSize = 11f; typeface = Typeface.DEFAULT_BOLD
         setPadding(4, 8, 4, 4)
     }
-    private val currentButton = terminalButton("CURRENT FUTURE", 0xFF2673FF.toInt())
-    private val nearButton = terminalButton("NEAR FUTURE", 0xFF7B4DFF.toInt())
+    private val currentButton = terminalButton("CURRENT FUTURE • SELL", 0xFF2673FF.toInt())
+    private val nearButton = terminalButton("NEAR FUTURE • SELL", 0xFF7B4DFF.toInt())
+    private val exitLabel = TextView(context).apply {
+        text = "EXIT / RISK RULES"
+        setTextColor(0xFFFF78C8.toInt()); textSize = 11f; typeface = Typeface.DEFAULT_BOLD
+        setPadding(4, 8, 4, 4)
+    }
     private var futureMode = "CURRENT FUTURE"
 
     init {
@@ -48,7 +58,7 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
             gravity = Gravity.CENTER_VERTICAL
         }, LayoutParams(-1, 40))
         addView(TextView(context).apply {
-            text = "CASH BUY  +  FUTURE SELL  •  HISTORICAL CONTRACT / LOT"
+            text = "CASH BUY  +  FUTURE SELL  •  POINT-IN-TIME HISTORICAL CONTRACT / LOT"
             setTextColor(0xFF8FA7C4.toInt()); textSize = 10f
         }, LayoutParams(-1, 28))
         addRow(symbol, cashPrice)
@@ -59,11 +69,14 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         addView(contractRow)
         addRow(futurePrice, lotSize)
         addRow(lots, capital)
-        addView(terminalButton("BUILD PAYOFF", 0xFF16B886.toInt()).apply {
+        addView(exitLabel, LayoutParams(-1, 32))
+        addRow(stopLoss, target)
+        addRow(charges, slippage)
+        addView(terminalButton("BUILD PAYOFF • HISTORICAL SCENARIO", 0xFF16B886.toInt()).apply {
             setOnClickListener { calculatePayoff() }
         }, LayoutParams(-1, 46))
-        addView(summary, LayoutParams(-1, 72).apply { setMargins(0, 6, 0, 6) })
-        addView(payoff, LayoutParams(-1, 230))
+        addView(summary, LayoutParams(-1, 86).apply { setMargins(0, 6, 0, 6) })
+        addView(payoff, LayoutParams(-1, 240))
         currentButton.setOnClickListener { selectFutureMode("CURRENT FUTURE") }
         nearButton.setOnClickListener { selectFutureMode("NEAR FUTURE") }
         selectFutureMode(futureMode)
@@ -88,6 +101,15 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         contractLabel.text = "FUTURE LEG • $mode • SELL"
     }
 
+    /** Pre-fills the builder from a selected historical calendar/ranking row. */
+    fun bindHistoricalSelection(selectedSymbol: String, historicalCash: Double, historicalLot: Double) {
+        symbol.setText(selectedSymbol)
+        cashPrice.setText("%.2f".format(historicalCash))
+        lotSize.setText("%.0f".format(historicalLot))
+        futurePrice.requestFocus()
+        summary.text = "$selectedSymbol • historical selection loaded • enter the selected contract's Future SELL price"
+    }
+
     private fun addRow(left: EditText, right: EditText) {
         val row = LinearLayout(context).apply { orientation = HORIZONTAL }
         row.addView(left, LayoutParams(0, 50, 1f).apply { setMargins(0, 3, 6, 3) })
@@ -101,16 +123,27 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         val cash = number(cashPrice)
         val future = number(futurePrice)
         val lot = number(lotSize)
-        val qty = lot * max(1.0, number(lots))
+        val lotsValue = max(1.0, number(lots))
+        val qty = lot * lotsValue
         val capitalValue = number(capital)
+        val stop = number(stopLoss)
+        val tgt = number(target)
+        val fee = max(0.0, number(charges))
+        val slip = max(0.0, number(slippage))
         if (cash <= 0.0 || future <= 0.0 || lot <= 0.0) {
-            summary.text = "Enter historical cash price, future price and lot size."
+            summary.text = "Enter historical cash price, selected future price and historical lot size."
             payoff.setScenario(0.0, 0.0, 0.0); return
         }
         val basis = future - cash
-        val spreadValue = basis * qty
-        val capitalPct = if (capitalValue > 0.0) spreadValue / capitalValue * 100.0 else 0.0
-        summary.text = "${symbol.text.ifBlank { "Selected stock" }} • $futureMode SELL • Qty ${qty.toLong()} • Basis ₹${"%.2f".format(basis)} • Spread ₹${"%.2f".format(spreadValue)} • Capital impact ${"%.2f".format(capitalPct)}%"
+        val grossSpread = basis * qty
+        val executionCost = fee + slip * qty
+        val netSpread = grossSpread - executionCost
+        val capitalPct = if (capitalValue > 0.0) netSpread / capitalValue * 100.0 else 0.0
+        summary.text = buildString {
+            append("${symbol.text.ifBlank { "Selected stock" }} • $futureMode SELL\n")
+            append("Qty ${qty.toLong()} • Basis ₹${"%.2f".format(basis)} • Gross ₹${"%.2f".format(grossSpread)} • Costs ₹${"%.2f".format(executionCost)} • Net ₹${"%.2f".format(netSpread)}\n")
+            append("Capital impact ${"%.2f".format(capitalPct)}% • SL ${if (stop > 0) "₹%.2f".format(stop) else "—"} • Target ${if (tgt > 0) "₹%.2f".format(tgt) else "—"}")
+        }
         payoff.setScenario(cash, future, qty)
     }
 
@@ -118,8 +151,9 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2EE6A6.toInt(); strokeWidth = 5f; style = Paint.Style.STROKE }
         private val zero = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF5C7390.toInt(); strokeWidth = 2f }
         private val accent = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF4DA3FF.toInt(); strokeWidth = 2f }
+        private val marker = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF78C8.toInt(); strokeWidth = 3f }
         private var cash = 0.0; private var future = 0.0; private var qty = 0.0
-        init { setBackgroundColor(0xFF07101C.toInt()); setTextColor(0xFF7890AD.toInt()); textSize = 10f; text = "PAYOFF PREVIEW • build a scenario"; gravity = Gravity.CENTER }
+        init { setBackgroundColor(0xFF07101C.toInt()); setTextColor(0xFF7890AD.toInt()); textSize = 10f; text = "PAYOFF PREVIEW • build a historical scenario"; gravity = Gravity.CENTER }
         fun setScenario(cashPrice: Double, futurePrice: Double, quantity: Double) { cash = cashPrice; future = futurePrice; qty = quantity; invalidate() }
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
@@ -127,7 +161,7 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
             val w = width.toFloat(); val h = height.toFloat(); val midY = h / 2f
             canvas.drawLine(24f, midY, w - 18f, midY, zero)
             val minPrice = cash * 0.85; val maxPrice = cash * 1.15
-            val scale = max(1.0, kotlin.math.abs((future - cash) * qty) + cash * qty * 0.05)
+            val scale = max(1.0, abs((future - cash) * qty) + cash * qty * 0.05)
             val path = Path()
             for (i in 0..80) {
                 val p = minPrice + (maxPrice - minPrice) * i / 80.0
@@ -137,8 +171,10 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
                 if (i == 0) path.moveTo(x, y.toFloat()) else path.lineTo(x, y.toFloat())
             }
             canvas.drawPath(path, line)
-            val entryX = 24f + (w - 42f) * ((future - cash) / (cash * 0.30)).coerceIn(0.0, 1.0).toFloat()
-            canvas.drawLine(entryX, 12f, entryX, h - 12f, accent)
+            val cashX = 24f + (w - 42f) * 0.5f
+            val futureX = 24f + (w - 42f) * ((future - minPrice) / (maxPrice - minPrice)).coerceIn(0.0, 1.0).toFloat()
+            canvas.drawLine(cashX, 12f, cashX, h - 12f, marker)
+            canvas.drawLine(futureX, 12f, futureX, h - 12f, accent)
         }
     }
 }
