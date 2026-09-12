@@ -339,7 +339,7 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
             val scale = max(1f, abs(spread * qty) / max(1f, h / 2f))
             for (i in 0..100) {
                 val x = 30f + (w - 50f) * i / 100f
-                val p = spread * qty + ((i - 50) / 50f) * abs(spread * qty + 1.0)
+                val p = spread * qty + ((i - 50) / 50f) * abs(spread * qty + 1.0f)
                 val y = center - (p / scale)
                 if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
             }
