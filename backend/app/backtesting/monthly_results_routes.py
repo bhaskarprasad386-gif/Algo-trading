@@ -28,6 +28,27 @@ def _daily_rows(db: Session, start: date, end: date, symbol: str | None = None, 
     return [dict(row) for row in db.execute(sql, params).mappings().all()]
 
 
+def _downloaded_cash_future_symbols(start: date, end: date, symbol: str | None = None, source: str = "angelone") -> list[str]:
+    """Discover symbols directly from durable downloaded cash/future catalog data."""
+    catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
+    try:
+        start_ns = int(__import__("datetime").datetime.combine(start, __import__("datetime").time.min).timestamp() * 1_000_000_000)
+        end_ns = int(__import__("datetime").datetime.combine(end + timedelta(days=1), __import__("datetime").time.min).timestamp() * 1_000_000_000)
+        instruments = catalog.instruments(source=source, timeframe="1m", start_ns=start_ns, end_ns=end_ns)
+        requested = symbol.strip().upper() if symbol else None
+        symbols: set[str] = set()
+        for instrument in instruments:
+            parts = instrument.split(":")
+            candidate = parts[-1].upper() if parts else ""
+            if not candidate or candidate.endswith("-FUT"):
+                continue
+            if requested is None or candidate == requested:
+                symbols.add(candidate)
+        return sorted(symbols)
+    finally:
+        catalog.close()
+
+
 def _gap_payload(row: dict, mode: str) -> dict:
     lot = float(row["lot_size"] or 0)
     if mode == "shorting":
@@ -62,6 +83,8 @@ def _cash_future_shorting_payloads(trading_date: date, symbols: list[str], *, co
 @router.get("/date-gap")
 def date_gap_ranking(trading_date: date = Query(...), mode: str = Query("shorting", pattern="^(opening|shorting)$"), instrument_type: str = Query("STOCK"), symbol: str | None = Query(None), contract_month: str | None = Query(None), limit: int = Query(200, ge=1, le=500), db: Session = Depends(get_db)):
     rows = _daily_rows(db, trading_date, trading_date, symbol=symbol, instrument_type=instrument_type)
+    if mode == "shorting" and not rows:
+        rows = [{"symbol": value} for value in _downloaded_cash_future_symbols(trading_date, trading_date, symbol=symbol)]
     if mode == "shorting": payload = _cash_future_shorting_payloads(trading_date, [row["symbol"] for row in rows], contract_month=contract_month, mode="CURRENT")
     else: payload = [_gap_payload(row, mode) for row in rows if row["lot_size"] and (not contract_month or row["contract_month"] == contract_month)]
     payload.sort(key=lambda item: (item["weighted_gap"], item["symbol"]), reverse=True); payload = payload[:limit]
@@ -74,13 +97,32 @@ def monthly_gap_top10(year: int = Query(..., ge=2000, le=2100), month: int = Que
     """Rank each stock once by its highest actual intraday Future-Cash gap in the month."""
     start = date(year, month, 1); end = date(year, month, monthrange(year, month)[1])
     rows = _daily_rows(db, start, end, instrument_type=instrument_type)
+    if not rows:
+        symbols = _downloaded_cash_future_symbols(start, end)
+        if symbols:
+            rows = [{"symbol": value} for value in symbols]
     if not rows: raise HTTPException(status_code=404, detail="no historical rows found for the requested month")
     monthly_highs: dict[str, dict] = {}
-    for trading_day in sorted({row["trading_date"] for row in rows}):
+    for trading_day in sorted({row["trading_date"] for row in rows if "trading_date" in row}):
         day_rows = [row for row in rows if row["trading_date"] == trading_day]
         for item in _cash_future_shorting_payloads(trading_day, [row["symbol"] for row in day_rows], contract_month=contract_month, mode="CURRENT"):
             current = monthly_highs.get(item["symbol"])
             if current is None or (item["weighted_gap"], item["gap_high_timestamp"]) > (current["weighted_gap"], current["gap_high_timestamp"]): monthly_highs[item["symbol"]] = item
+    if not monthly_highs and rows and "trading_date" not in rows[0]:
+        trading_days = set()
+        catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
+        try:
+            start_ns = int(__import__("datetime").datetime.combine(start, __import__("datetime").time.min).timestamp() * 1_000_000_000)
+            end_ns = int(__import__("datetime").datetime.combine(end + timedelta(days=1), __import__("datetime").time.min).timestamp() * 1_000_000_000)
+            for record in catalog.iter_records(source="angelone", timeframe="1m", start_ns=start_ns, end_ns=end_ns):
+                from datetime import datetime
+                trading_days.add(datetime.fromtimestamp(record.timestamp_ns / 1_000_000_000).date())
+        finally:
+            catalog.close()
+        for trading_day in sorted(trading_days):
+            for item in _cash_future_shorting_payloads(trading_day, [row["symbol"] for row in rows], contract_month=contract_month, mode="CURRENT"):
+                current = monthly_highs.get(item["symbol"])
+                if current is None or (item["weighted_gap"], item["gap_high_timestamp"]) > (current["weighted_gap"], current["gap_high_timestamp"]): monthly_highs[item["symbol"]] = item
     if not monthly_highs: raise HTTPException(status_code=404, detail="no historical Cash-Future gap rows found for the requested month")
     ranked = sorted(monthly_highs.values(), key=lambda item: (item["weighted_gap"], item["symbol"]), reverse=True)[:10]
     data = []
@@ -130,7 +172,7 @@ def monthly_gap_search(year: int = Query(..., ge=2000, le=2100), month: int = Qu
     top = max(candidates, key=lambda x: (x[0], x[1], x[2]))
     if mode == "shorting":
         item = top[4]
-        return {"status":"success","month":f"{year:04d}-{month:02d}","mode":mode,"instrument_type":instrument_type.upper(),"result":{"trading_date":item["trading_date"],"symbol":item["symbol"],"gap":item["gap"],"gap_value":item["weighted_gap"],"open":item["open"],"high":item["high"],"low":item["low"],"close":item["close"],"lot_size":item["lot_size"],"previous_close":item["previous_close"],"contract_month":item["contract_month"],"gap_high_timestamp":item.get("gap_high_timestamp"),"cash_price_at_gap_high":item.get("cash_price_at_gap_high"),"future_price_at_gap_high":item.get("future_price_at_gap_high"),"expiry_date":item.get("expiry_date"),"is_expiry_day":item.get("is_expiry_day",False),"margin_required":item.get("margin_required",0.0),"charges":item.get("charges",0.0),"funding_cost":item.get("funding_cost",0.0),"net_profit":item.get("net_profit",0.0),"roi_pct":item.get("roi_pct",0.0)}}
+        return {"status":"success","month":f"{year:04d}-{month:02d}","mode":mode,"instrument_type":instrument_type.upper(),"result":{"trading_date":item["trading_date"],"symbol":item["symbol"],"gap":item["gap"],"gap_value":item["weighted_gap"],"open":item["open"],"high":item["high"],"low":item["low"],"close":item["close"],"lot_size":item["lot_size"],"previous_close":item["previous_close"],"contract_month":item["contract_month"],"gap_high_timestamp":item.get("gap_high_timestamp"),"cash_price_at_gap_high":item.get("cash_price_at_gap_high"),"expiry_date":item.get("expiry_date"),"is_expiry_day":item.get("is_expiry_day",False),"margin_required":item.get("margin_required",0.0),"charges":item.get("charges",0.0),"funding_cost":item.get("funding_cost",0.0),"net_profit":item.get("net_profit",0.0),"roi_pct":item.get("roi_pct",0.0)}}
     _, trading_date, symbol_name, gap, row = top
     return {"status":"success","month":f"{year:04d}-{month:02d}","mode":mode,"instrument_type":instrument_type.upper(),"result":{"trading_date":trading_date,"symbol":symbol_name,"gap":gap,"gap_value":top[0],"open":row["open"],"high":row["high"],"low":row["low"],"close":row["close"],"lot_size":row["lot_size"],"previous_close":row["previous_close"],"contract_month":row["contract_month"]}}
 
