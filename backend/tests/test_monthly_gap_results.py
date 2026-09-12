@@ -32,6 +32,16 @@ def test_monthly_shorting_gap_is_high_minus_open_times_lot():
     assert result.gap_value == 7000
 
 
+def test_monthly_shorting_gap_can_be_scoped_to_selected_symbol():
+    rows = [row(2, "A", 100, 108, 500), row(3, "A", 102, 111, 500), row(4, "B", 200, 230, 1000)]
+    result = search_monthly_largest_gap(rows, year=2026, month=9, mode="shorting", symbol="a")
+    assert result is not None
+    assert result.symbol == "A"
+    assert result.trading_date == date(2026, 9, 3)
+    assert result.gap == 9
+    assert result.gap_value == 4500
+
+
 def test_monthly_graph_returns_all_trading_days_sorted():
     rows = [row(3, "A", 103, 106, 500), row(1, "A", 101, 104, 500), row(4, "B", 110, 111, 100)]
     points = monthly_graph(rows, year=2026, month=9, symbol="a")
