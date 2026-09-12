@@ -20,7 +20,7 @@ class SessionWindow:
 
 
 class SessionAwareGapPlanner:
-    """Plan repairs only inside explicitly expected market sessions."""
+    """Plan repairs only for cadence gaps fully contained in expected sessions."""
 
     def __init__(self, catalog: HistoricalCatalog) -> None:
         self.catalog = catalog
@@ -36,17 +36,24 @@ class SessionAwareGapPlanner:
     ) -> tuple[Gap, ...]:
         if interval_ns <= 0:
             raise ValueError("interval_ns must be positive")
-        raw_gaps = self.catalog.gaps(
-            source=source,
-            instrument=instrument,
-            timeframe=timeframe,
-            interval_ns=interval_ns,
-        )
+
         planned: list[Gap] = []
-        for gap in raw_gaps:
-            for session in sorted(sessions, key=lambda item: item.start_ns):
-                start = max(gap.start_ns, session.start_ns)
-                end = min(gap.end_ns, session.end_ns)
-                if start <= end:
-                    planned.append(Gap(gap.instrument, gap.timeframe, start, end))
+        for session in sorted(sessions, key=lambda item: item.start_ns):
+            timestamps = self.catalog.timestamps(
+                source=source,
+                instrument=instrument,
+                timeframe=timeframe,
+                start_ns=session.start_ns,
+                end_ns=session.end_ns,
+            )
+            for previous, current in zip(timestamps, timestamps[1:]):
+                if current - previous > interval_ns:
+                    planned.append(
+                        Gap(
+                            instrument,
+                            timeframe,
+                            previous + interval_ns,
+                            current - interval_ns,
+                        )
+                    )
         return tuple(planned)
