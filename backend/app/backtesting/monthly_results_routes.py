@@ -128,6 +128,7 @@ def _cash_future_shorting_payloads(
                 "future_price_at_gap_high": top.future_price,
                 "expiry_date": top.expiry_date,
                 "is_expiry_day": trading_date == top.expiry_date,
+                "margin_required": top.margin_required,
             })
     finally:
         catalog.close()
