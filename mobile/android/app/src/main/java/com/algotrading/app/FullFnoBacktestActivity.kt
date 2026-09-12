@@ -158,7 +158,15 @@ class FullFnoBacktestActivity : AppCompatActivity() {
             val top = response.top
             withContext(Dispatchers.Main) {
                 tvGapCalendar.text = buildString {
-                    append(if (top == null) "$tradingDate\nNo historical Cash-Future data found." else "$tradingDate • TOP CASH-FUTURE GAP × HISTORICAL LOT\n${top.symbol} • Gap ₹${"%.2f".format(top.gap)} • Gap×Lot ₹${"%.2f".format(top.weighted_gap)} • Cash ₹${"%.2f".format(top.open)} • Future ₹${"%.2f".format(top.high)} • Lot ${"%.0f".format(top.lot_size)}")
+                    if (top == null) {
+                        append("$tradingDate\nNo historical Cash-Future data found.")
+                    } else {
+                        val topCash = top.cash_price_at_gap_high ?: top.open
+                        val topFuture = top.future_price_at_gap_high ?: top.high
+                        append("$tradingDate • TOP CASH-FUTURE GAP × HISTORICAL LOT\n")
+                        append("${top.symbol} • Shorting Gap (Day High) ₹${"%.2f".format(top.gap)} • Gap×Lot ₹${"%.2f".format(top.weighted_gap)}\n")
+                        append("Gap High Time: ${top.gap_high_timestamp ?: "-"} • Cash ₹${"%.2f".format(topCash)} • Future ₹${"%.2f".format(topFuture)} • Lot ${"%.0f".format(top.lot_size)}")
+                    }
                     append("\n\nPRIOR HIGHER GAPS")
                     if (prior == null || !prior.has_larger_prior_gap) append("\nNone — this selected date is at/above all earlier available gaps.")
                     else prior.prior_larger.forEach { p -> append("\n${p.trading_date} • ${p.symbol} • Gap ₹${"%.2f".format(p.gap)} • Gap×Lot ₹${"%.2f".format(p.weighted_gap)}") }
@@ -173,8 +181,11 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         val details = TextView(this).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f); setTextColor(Color.WHITE); textSize = 11f
             text = buildString {
-                append("${item.symbol}  Gap ₹${"%.2f".format(item.gap)} × Lot ${"%.0f".format(item.lot_size)} = ₹${"%.2f".format(item.weighted_gap)}\n")
-                append("Cash/Future high-point prices: ₹${"%.2f".format(item.open)} / ₹${"%.2f".format(item.high)}\n")
+                append("${item.symbol}  Shorting Gap (Day High) ₹${"%.2f".format(item.gap)} × Lot ${"%.0f".format(item.lot_size)} = ₹${"%.2f".format(item.weighted_gap)}\n")
+                val cashAtHigh = item.cash_price_at_gap_high ?: item.open
+                val futureAtHigh = item.future_price_at_gap_high ?: item.high
+                append("Gap High Time: ${item.gap_high_timestamp ?: "-"}\n")
+                append("Cash/Future at Gap High: ₹${"%.2f".format(cashAtHigh)} / ₹${"%.2f".format(futureAtHigh)}\n")
                 if (monthHigh == null) append("Month Gap High: unavailable")
                 else append("Month Gap High: ₹${"%.2f".format(monthHigh.gap)} • ${monthHigh.trading_date} • Gap×Lot ₹${"%.2f".format(monthHigh.gap_value)}")
             }
@@ -197,21 +208,23 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         try {
             val current = ApiService.retrofitService.cashFutureReplay(tradingDate, item.symbol, timeframe = "1m", mode = "CURRENT")
             val near = ApiService.retrofitService.cashFutureReplay(tradingDate, item.symbol, timeframe = "1m", mode = "NEAR")
+            val historicalCash = item.cash_price_at_gap_high ?: item.open
+            val historicalFuture = item.future_price_at_gap_high ?: item.high
             withContext(Dispatchers.Main) {
                 strategyBuilder.bindHistoricalSelection(
                     selectedSymbol = item.symbol,
-                    historicalCash = item.open,
+                    historicalCash = historicalCash,
                     historicalLot = item.lot_size,
                     selectedDate = tradingDate,
-                    historicalFuture = item.high,
+                    historicalFuture = historicalFuture,
                     currentContract = current.contract_month,
                     nearContract = near.contract_month
                 )
-                tvStatus.text = "Cash-Future strategy loaded • ${item.symbol} • $tradingDate • CURRENT ${current.contract_month ?: "-"} • NEAR ${near.contract_month ?: "-"}"
+                tvStatus.text = "Cash-Future strategy loaded • ${item.symbol} • $tradingDate • Gap High ${item.gap_high_timestamp ?: "-"} • CURRENT ${current.contract_month ?: "-"} • NEAR ${near.contract_month ?: "-"}"
             }
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
-                strategyBuilder.bindHistoricalSelection(item.symbol, item.open, item.lot_size, tradingDate, item.high)
+                strategyBuilder.bindHistoricalSelection(item.symbol, item.cash_price_at_gap_high ?: item.open, item.lot_size, tradingDate, item.future_price_at_gap_high ?: item.high)
                 tvStatus.text = "Builder loaded • ${item.symbol} • $tradingDate • contract lookup failed: ${e.message ?: "API error"}"
             }
         }
