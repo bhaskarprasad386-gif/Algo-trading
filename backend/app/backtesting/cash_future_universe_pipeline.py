@@ -141,14 +141,53 @@ def _contract_month_for_request(universe: CashFutureFnoUniverse, *, underlying: 
     raise ValueError(f"download plan future has no universe metadata: {request.instrument}")
 
 
+def _timeframe_interval_ns(timeframe: str) -> int:
+    """Return the fixed bar cadence used for persisted session reconciliation."""
+    normalized = timeframe.strip().lower()
+    units = {"m": 60, "h": 3600, "d": 86400}
+    if not normalized or normalized[-1] not in units:
+        raise ValueError(f"unsupported fixed-cadence timeframe: {timeframe}")
+    try:
+        amount = int(normalized[:-1])
+    except ValueError as exc:
+        raise ValueError(f"unsupported fixed-cadence timeframe: {timeframe}") from exc
+    if amount <= 0:
+        raise ValueError(f"unsupported fixed-cadence timeframe: {timeframe}")
+    return amount * units[normalized[-1]] * 1_000_000_000
+
+
+def _session_expected_timestamps(
+    sessions: tuple[SessionWindow, ...],
+    *,
+    start_ns: int,
+    end_ns: int,
+    interval_ns: int,
+):
+    """Yield expected fixed-cadence timestamps without bridging session boundaries."""
+    for session in sorted(sessions, key=lambda item: item.start_ns):
+        cursor = max(start_ns, session.start_ns)
+        session_end = min(end_ns, session.end_ns)
+        if cursor > session_end:
+            continue
+        # Session windows are inclusive and their starts define the cadence anchor.
+        offset = (cursor - session.start_ns) % interval_ns
+        if offset:
+            cursor += interval_ns - offset
+        while cursor <= session_end:
+            yield cursor
+            cursor += interval_ns
+
+
 def _request_has_materialized_rows(
     db: Session,
     *,
     symbol: str,
     contract_month: str,
     request,
+    sessions: tuple[SessionWindow, ...] | None = None,
+    timeframe: str = "1m",
 ) -> bool:
-    """Require persisted rows to span the requested endpoints, not merely exist inside it."""
+    """Require persisted rows to cover every expected session timestamp in the request."""
     start = datetime.fromtimestamp(request.start_ns / 1_000_000_000)
     end = datetime.fromtimestamp(request.end_ns / 1_000_000_000)
     stmt = select(
@@ -161,7 +200,39 @@ def _request_has_materialized_rows(
         CashFutureHistory.timestamp <= end,
     )
     first, last = db.execute(stmt).one()
-    return first is not None and last is not None and first <= start and last >= end
+    if first is None or last is None or first > start or last < end:
+        return False
+    if sessions is None:
+        return True
+
+    interval_ns = _timeframe_interval_ns(timeframe)
+    expected = _session_expected_timestamps(
+        sessions,
+        start_ns=request.start_ns,
+        end_ns=request.end_ns,
+        interval_ns=interval_ns,
+    )
+    observed_stmt = (
+        select(CashFutureHistory.timestamp)
+        .where(
+            CashFutureHistory.symbol == symbol,
+            CashFutureHistory.contract_month == contract_month,
+            CashFutureHistory.timestamp >= start,
+            CashFutureHistory.timestamp <= end,
+        )
+        .order_by(CashFutureHistory.timestamp)
+        .distinct()
+        .execution_options(stream_results=True)
+    )
+    observed = iter(db.execute(observed_stmt).scalars())
+    current = next(observed, None)
+    for expected_ns in expected:
+        expected_dt = datetime.fromtimestamp(expected_ns / 1_000_000_000)
+        while current is not None and current < expected_dt:
+            current = next(observed, None)
+        if current != expected_dt:
+            return False
+    return True
 
 
 def acquire_and_materialize_cash_future_universe(
@@ -240,17 +311,32 @@ def acquire_and_materialize_cash_future_universe(
         materialized_rows += rows
         if rows > 0:
             materialized_underlyings.append(underlying)
+
+        spot_sessions = spot_sessions_by_underlying.get(underlying, ())
+        if _request_has_materialized_rows(
+            db,
+            symbol=underlying,
+            contract_month=_contract_month_for_request(universe, underlying=underlying, request=result.queue.spot),
+            request=result.queue.spot,
+            sessions=spot_sessions,
+            timeframe=timeframe,
+        ):
+            materialized_requests.append((result.queue.spot.instrument, result.queue.spot.start_ns, result.queue.spot.end_ns))
+
         for request in result.queue.futures:
             contract_month = _contract_month_for_request(
                 universe,
                 underlying=underlying,
                 request=request,
             )
+            future_sessions = (future_sessions_by_instrument or {}).get(request.instrument, ())
             if _request_has_materialized_rows(
                 db,
                 symbol=underlying,
                 contract_month=contract_month,
                 request=request,
+                sessions=future_sessions,
+                timeframe=timeframe,
             ):
                 materialized_requests.append((request.instrument, request.start_ns, request.end_ns))
 
