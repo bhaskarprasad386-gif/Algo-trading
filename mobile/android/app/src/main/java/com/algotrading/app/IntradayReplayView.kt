@@ -15,19 +15,29 @@ class IntradayReplayView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
 ) : View(context, attrs) {
-    private val axisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF7F93AD.toInt(); textSize = 28f; typeface = Typeface.MONOSPACE }
+    private val axisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF9CB4CF.toInt(); textSize = 28f; typeface = Typeface.MONOSPACE }
     private val wickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 2f }
     private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var points: List<IntradayReplayPoint> = emptyList()
     private var visibleMinutes = 0
     private var replayTime = "--:--"
+    private var chartIntervalMinutes = 15
+    private var replayStepMinutes = 1
 
     fun setData(newPoints: List<IntradayReplayPoint>) {
         points = newPoints.sortedBy { it.timestamp }
-        visibleMinutes = if (points.isEmpty()) 0 else 1
-        replayTime = timeOf(points.getOrNull(visibleMinutes - 1)?.timestamp)
-        invalidate()
+        resetReplay()
     }
+
+    fun setReplayMode(minutes: Int) {
+        val supported = listOf(1, 5, 15, 30)
+        val value = minutes.coerceIn(supported.first(), supported.last())
+        chartIntervalMinutes = value
+        replayStepMinutes = value
+        resetReplay()
+    }
+
+    fun replayIntervalMinutes(): Int = replayStepMinutes
 
     fun resetReplay() {
         visibleMinutes = if (points.isEmpty()) 0 else 1
@@ -35,25 +45,42 @@ class IntradayReplayView @JvmOverloads constructor(
         invalidate()
     }
 
-    fun stepOneMinute(): Boolean {
+    fun stepReplay(): Boolean {
         if (visibleMinutes >= points.size) return false
-        visibleMinutes += 1
+        if (replayStepMinutes <= 1) {
+            visibleMinutes += 1
+        } else {
+            val current = points.getOrNull(visibleMinutes - 1)?.timestamp
+            val currentEpoch = parseEpochMinutes(current)
+            val target = currentEpoch + replayStepMinutes
+            var next = visibleMinutes
+            while (next < points.size && parseEpochMinutes(points[next].timestamp) < target) next += 1
+            visibleMinutes = if (next < points.size) next + 1 else points.size
+        }
         replayTime = timeOf(points.getOrNull(visibleMinutes - 1)?.timestamp)
         invalidate()
         return visibleMinutes < points.size
     }
 
+    fun stepOneMinute(): Boolean = stepReplay()
     fun currentTime(): String = replayTime
     fun isComplete(): Boolean = points.isNotEmpty() && visibleMinutes >= points.size
 
     private fun timeOf(value: String?): String = if (value != null && value.length >= 16) value.substring(11, 16) else "--:--"
 
+    private fun parseEpochMinutes(value: String?): Long {
+        if (value == null || value.length < 16) return 0L
+        val h = value.substring(11, 13).toIntOrNull() ?: return 0L
+        val m = value.substring(14, 16).toIntOrNull() ?: return 0L
+        return (h * 60L) + m
+    }
+
     private fun sessionBucketMinutes(totalMinutes: Int): Int {
         val sessionOpen = 9 * 60 + 15
         val sessionClose = 15 * 60 + 30
-        if (totalMinutes < sessionOpen) return (totalMinutes / 15) * 15
-        if (totalMinutes >= sessionClose) return sessionClose - 15
-        return sessionOpen + ((totalMinutes - sessionOpen) / 15) * 15
+        if (totalMinutes < sessionOpen) return (totalMinutes / chartIntervalMinutes) * chartIntervalMinutes
+        if (totalMinutes >= sessionClose) return sessionClose - chartIntervalMinutes
+        return sessionOpen + ((totalMinutes - sessionOpen) / chartIntervalMinutes) * chartIntervalMinutes
     }
 
     private fun candles(): List<ReplayCandle> {
@@ -87,7 +114,7 @@ class IntradayReplayView @JvmOverloads constructor(
         val maxPrice = cs.maxOf { it.high }
         val range = max(0.000001, maxPrice - minPrice)
         fun y(price: Double): Float = (bottom - ((price - minPrice) / range * (bottom - top))).toFloat()
-        canvas.drawText("15m  •  replay $replayTime", left, height - 8f, axisPaint)
+        canvas.drawText("${chartIntervalMinutes}m  •  replay $replayTime", left, height - 8f, axisPaint)
         canvas.drawText(String.format("%.2f", maxPrice), 4f, top + 10f, axisPaint)
         canvas.drawText(String.format("%.2f", minPrice), 4f, bottom, axisPaint)
 
