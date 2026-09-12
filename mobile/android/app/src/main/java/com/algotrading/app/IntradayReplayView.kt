@@ -17,6 +17,7 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
     private val cashPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF38D39F.toInt(); strokeWidth = 4f; style = Paint.Style.STROKE }
     private val futurePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF62B0FF.toInt(); strokeWidth = 4f; style = Paint.Style.STROKE }
     private val gapPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFC857.toInt(); strokeWidth = 3f; style = Paint.Style.STROKE }
+    private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF5C5C.toInt(); strokeWidth = 3f; style = Paint.Style.FILL; typeface = Typeface.DEFAULT_BOLD }
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF243A55.toInt(); strokeWidth = 1f }
     private var points: List<CashFutureReplayPoint> = emptyList()
     private var visiblePoints = 0
@@ -196,5 +197,21 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
         canvas.drawPath(cp, cashPaint)
         canvas.drawPath(fp, futurePaint)
         canvas.drawPath(gp, gapPaint)
+
+        val gapHighIndex = points.indices.maxByOrNull { index ->
+            val point = points[index]
+            point.gap
+        }
+        if (gapHighIndex != null && gapHighIndex < visiblePoints) {
+            val highPoint = points[gapHighIndex]
+            val visibleIndex = v.indexOfFirst { it.timestamp == highPoint.timestamp }
+            if (visibleIndex >= 0) {
+                val px = x(visibleIndex)
+                val gyHigh = gy(highPoint.gap)
+                canvas.drawCircle(px, gyHigh, 8f, highlightPaint)
+                canvas.drawText("HIGH ${String.format("%.2f", highPoint.gap)}", min(px + 10f, right - 150f), gyHigh - 10f, highlightPaint)
+                canvas.drawText(timeOf(highPoint), min(px + 10f, right - 110f), gyHigh + 18f, highlightPaint)
+            }
+        }
     }
 }
