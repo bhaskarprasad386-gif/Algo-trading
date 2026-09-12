@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -23,6 +24,7 @@ class CashFutureStrategyConfig:
     start_date: date | None = None
     end_date: date | None = None
     contract_month: str | None = None
+    history_window: int | None = None
 
     def __post_init__(self) -> None:
         if self.initial_capital <= 0:
@@ -31,6 +33,8 @@ class CashFutureStrategyConfig:
             raise ValueError("execution_model must be 'gap' or 'bid_ask'")
         if self.start_date is not None and self.end_date is not None and self.end_date < self.start_date:
             raise ValueError("end_date cannot be before start_date")
+        if self.history_window is not None and self.history_window <= 0:
+            raise ValueError("history_window must be positive when provided")
 
 
 @dataclass
@@ -123,9 +127,8 @@ def run_cash_future_strategy(
     Historical input is consumed incrementally. When a durable ledger is supplied,
     signals, trades and equity are appended directly to SQLite and the returned
     result exposes lazy durable views instead of retaining the full result set in RAM.
-    Strategy history remains stateful because the public strategy contract exposes
-    prior observations for indicators/warm-up; a serializable strategy-state contract
-    is intentionally a separate future checkpoint/resume feature.
+    Strategy history is full by default for compatibility. ``history_window`` can
+    bound the in-memory prior-observation window for finite-lookback strategies.
     """
     if not strategy_id.strip():
         raise ValueError("strategy_id is required")
@@ -151,10 +154,14 @@ def run_cash_future_strategy(
                 "start_date": config.start_date.isoformat() if config.start_date else None,
                 "end_date": config.end_date.isoformat() if config.end_date else None,
                 "contract_month": config.contract_month,
+                "history_window": config.history_window,
             },
         )
 
-    history: list[CashFutureHistoryPoint] = []
+    if config.history_window is None:
+        history: list[CashFutureHistoryPoint] | deque[CashFutureHistoryPoint] = []
+    else:
+        history = deque(maxlen=config.history_window)
     signals: list[Mapping[str, Any]] | None = [] if ledger is None else None
     trades: list[Mapping[str, Any]] | None = [] if ledger is None else None
     equity_curve: list[Mapping[str, Any]] | None = [] if ledger is None else None
