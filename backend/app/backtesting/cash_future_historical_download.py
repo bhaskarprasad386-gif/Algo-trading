@@ -139,6 +139,37 @@ class CashFutureHistoricalDownloadService:
         missing_set = expected_set - actual_set
         return len(expected_set), len(actual_set), len(missing_set), min(missing_set) if missing_set else None
 
+    @staticmethod
+    def _missing_runs(missing: set[int], interval_ns: int) -> tuple[tuple[int, int], ...]:
+        """Collapse exact missing timestamps into minimal contiguous fetch ranges."""
+        if not missing:
+            return ()
+        ordered = sorted(missing)
+        runs: list[tuple[int, int]] = []
+        start = previous = ordered[0]
+        for timestamp in ordered[1:]:
+            if timestamp == previous + interval_ns:
+                previous = timestamp
+                continue
+            runs.append((start, previous))
+            start = previous = timestamp
+        runs.append((start, previous))
+        return tuple(runs)
+
+    def _missing_requests_for_chunk(self, job, chunk) -> tuple[HistoricalFetchRequest, ...]:
+        request = HistoricalFetchRequest(self.source_name, chunk.instrument, job.timeframe, chunk.start_ns, chunk.end_ns)
+        if job.timeframe == "1d":
+            expected = set(nse_daily_timestamps(request))
+            actual = set(self.catalog.timestamps(source=request.source, instrument=request.instrument, timeframe=request.timeframe, start_ns=min(expected), end_ns=max(expected))) if expected else set()
+            runs = self._missing_runs(expected - actual, _TIMEFRAME_INTERVAL_NS["1d"])
+        else:
+            interval_ns = _TIMEFRAME_INTERVAL_NS[job.timeframe]
+            sessions = tuple(self.session_windows(request))
+            expected = self.completeness.expected_timestamps(sessions, interval_ns)
+            actual = set(self.catalog.timestamps(source=request.source, instrument=request.instrument, timeframe=request.timeframe, start_ns=min(expected), end_ns=max(expected))) if expected else set()
+            runs = self._missing_runs(expected - actual, interval_ns)
+        return tuple(HistoricalFetchRequest(self.source_name, chunk.instrument, job.timeframe, start_ns, end_ns) for start_ns, end_ns in runs)
+
     def _register_plan(self, job_id: str, plans: tuple[HistoricalSyncPlan, ...]) -> None:
         if self.status_store is None: return
         sequence = 0
@@ -162,7 +193,7 @@ class CashFutureHistoricalDownloadService:
         def complete(index, request, result, attempt):
             from .download_status_progress import persist_chunk_result
             expected, actual, missing, first_missing = self._chunk_metrics(request)
-            persist_chunk_result(store, job_id=job_id, sequence=status_sequence(index), instrument=request.instrument, start_ns=request.start_ns, end_ns=request.end_ns, attempts=attempt, status="COMPLETE", expected_timestamps=expected, actual_timestamps=actual, missing_timestamps=missing, first_missing_ns=first_missing, fetched_records=result.fetched, inserted_records=result.inserted)
+            persist_chunk_result(store, job_id=job_id, sequence=status_sequence(index), instrument=request.instrument, start_ns=request.start_ns, end_ns=request.end_ns, attempts=attempt, status="COMPLETE" if missing == 0 else "RUNNING", expected_timestamps=expected, actual_timestamps=actual, missing_timestamps=missing, first_missing_ns=first_missing, fetched_records=result.fetched, inserted_records=result.inserted)
         def failed(index, request, error, attempts):
             from .download_status_progress import persist_chunk_result
             expected, actual, missing, first_missing = self._chunk_metrics(request)
@@ -177,8 +208,14 @@ class CashFutureHistoricalDownloadService:
         if job.source != self.source_name:
             raise ValueError(f"historical download provider mismatch: job={job.source!r}, source={self.source_name!r}")
         chunks = self.status_store.incomplete_chunks(job_id)
-        requests = tuple(HistoricalFetchRequest(self.source_name, chunk.instrument, job.timeframe, chunk.start_ns, chunk.end_ns) for chunk in chunks)
-        return HistoricalSyncPlan(requests), tuple(chunk.sequence for chunk in chunks)
+        requests: list[HistoricalFetchRequest] = []
+        sequences: list[int] = []
+        for chunk in chunks:
+            missing_requests = self._missing_requests_for_chunk(job, chunk)
+            for request in missing_requests:
+                requests.append(request)
+                sequences.append(chunk.sequence)
+        return HistoricalSyncPlan(tuple(requests)), tuple(sequences)
 
     def run(self, *, spot_instrument: str, exchange: str, underlying: str, start, end, timeframe: str = "1m", mode: str = "BOTH", retry_attempts: int = 3, should_skip: Callable[[object], bool] | None = None, session_windows: Callable[[object], Iterable[SessionWindow]] | None = None, job_id: str | None = None, resume: bool = False) -> CashFutureHistoricalDownloadReport:
         original_session_windows = self.session_windows
