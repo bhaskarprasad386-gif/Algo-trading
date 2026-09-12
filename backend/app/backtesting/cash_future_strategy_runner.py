@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Callable, Iterable, Iterator, Mapping, Any
 
+from app.backtesting.cash_future_strategy_checkpoint import CashFutureStrategyCheckpoint
 from app.scanner.cash_future_backtest import _executable_spread_profit, _legacy_gap_profit
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
@@ -25,6 +26,7 @@ class CashFutureStrategyConfig:
     end_date: date | None = None
     contract_month: str | None = None
     history_window: int | None = None
+    checkpoint_interval: int | None = None
 
     def __post_init__(self) -> None:
         if self.initial_capital <= 0:
@@ -35,6 +37,8 @@ class CashFutureStrategyConfig:
             raise ValueError("end_date cannot be before start_date")
         if self.history_window is not None and self.history_window <= 0:
             raise ValueError("history_window must be positive when provided")
+        if self.checkpoint_interval is not None and self.checkpoint_interval <= 0:
+            raise ValueError("checkpoint_interval must be positive when provided")
 
 
 @dataclass
@@ -121,6 +125,7 @@ def run_cash_future_strategy(
     ledger=None,
     run_id: str | None = None,
     strategy_hash: str | None = None,
+    data_source_fingerprint: str | None = None,
 ) -> CashFutureStrategyRun:
     """Apply a Cash-Future strategy strictly point-in-time.
 
@@ -129,6 +134,9 @@ def run_cash_future_strategy(
     result exposes lazy durable views instead of retaining the full result set in RAM.
     Strategy history is full by default for compatibility. ``history_window`` can
     bound the in-memory prior-observation window for finite-lookback strategies.
+    ``checkpoint_interval`` additionally persists runner-owned execution state to
+    the ledger. It does not serialize arbitrary strategy internals, so checkpoints
+    are capture/recovery markers rather than an implicit strategy-state resume.
     """
     if not strategy_id.strip():
         raise ValueError("strategy_id is required")
@@ -138,6 +146,7 @@ def run_cash_future_strategy(
     point_iter = iter(points)
     previous_timestamp: datetime | date | None = None
     selected_contract: str | None = config.contract_month
+    event_index = 0
 
     if ledger is not None:
         if not run_id or not run_id.strip():
@@ -148,6 +157,7 @@ def run_cash_future_strategy(
             strategy_version,
             config.initial_capital,
             strategy_hash=strategy_hash,
+            data_source_fingerprint=data_source_fingerprint,
             metadata={
                 "domain": "cash_future",
                 "execution_model": config.execution_model,
@@ -155,6 +165,7 @@ def run_cash_future_strategy(
                 "end_date": config.end_date.isoformat() if config.end_date else None,
                 "contract_month": config.contract_month,
                 "history_window": config.history_window,
+                "checkpoint_interval": config.checkpoint_interval,
             },
         )
 
@@ -168,6 +179,7 @@ def run_cash_future_strategy(
     entry: CashFutureHistoryPoint | None = None
     capital_ledger = CashFutureCapitalLedger(config.initial_capital)
     start_date = config.start_date
+    last_point: CashFutureHistoryPoint | None = None
 
     for point in point_iter:
         point_date = _point_date(point)
@@ -182,11 +194,18 @@ def run_cash_future_strategy(
         if point.contract_month != selected_contract:
             continue
 
+        event_index += 1
+        last_point = point
         history.append(point)
         visible_history = tuple(history)
         raw_signal = strategy(point, visible_history)
 
         if start_date is not None and point_date < start_date:
+            _maybe_checkpoint(
+                ledger, config, run_id, event_index, point, selected_contract,
+                capital_ledger, entry, strategy_id, strategy_version,
+                strategy_hash, data_source_fingerprint,
+            )
             continue
 
         action = "NONE" if raw_signal is None else str(raw_signal).upper()
@@ -267,6 +286,19 @@ def run_cash_future_strategy(
         else:
             ledger.append_batch((ledger_record(run_id, "equity", point.timestamp, equity_record),))
 
+        _maybe_checkpoint(
+            ledger, config, run_id, event_index, point, selected_contract,
+            capital_ledger, entry, strategy_id, strategy_version,
+            strategy_hash, data_source_fingerprint,
+        )
+
+    if ledger is not None and last_point is not None and config.checkpoint_interval is not None:
+        _write_checkpoint(
+            ledger, run_id, event_index, last_point, selected_contract,
+            capital_ledger, entry, strategy_id, strategy_version,
+            strategy_hash, data_source_fingerprint,
+        )
+
     if ledger is not None:
         result_signals: Sequence[Mapping[str, Any]] = _LedgerPayloadSequence(ledger, run_id, "signal")
         result_trades: Sequence[Mapping[str, Any]] = _LedgerPayloadSequence(ledger, run_id, "trade")
@@ -289,6 +321,87 @@ def run_cash_future_strategy(
         capital_ledger.reserved_margin,
         capital_ledger.blocked_entries,
     )
+
+
+def _maybe_checkpoint(
+    ledger,
+    config: CashFutureStrategyConfig,
+    run_id: str | None,
+    event_index: int,
+    point: CashFutureHistoryPoint,
+    selected_contract: str | None,
+    capital_ledger: CashFutureCapitalLedger,
+    entry: CashFutureHistoryPoint | None,
+    strategy_id: str,
+    strategy_version: str,
+    strategy_hash: str | None,
+    data_source_fingerprint: str | None,
+) -> None:
+    if ledger is None or config.checkpoint_interval is None:
+        return
+    if event_index % config.checkpoint_interval != 0:
+        return
+    _write_checkpoint(
+        ledger, run_id, event_index, point, selected_contract,
+        capital_ledger, entry, strategy_id, strategy_version,
+        strategy_hash, data_source_fingerprint,
+    )
+
+
+def _write_checkpoint(
+    ledger,
+    run_id: str | None,
+    event_index: int,
+    point: CashFutureHistoryPoint,
+    selected_contract: str | None,
+    capital_ledger: CashFutureCapitalLedger,
+    entry: CashFutureHistoryPoint | None,
+    strategy_id: str,
+    strategy_version: str,
+    strategy_hash: str | None,
+    data_source_fingerprint: str | None,
+) -> None:
+    if ledger is None or run_id is None:
+        return
+    checkpoint = CashFutureStrategyCheckpoint(
+        run_id=run_id,
+        strategy_id=strategy_id,
+        strategy_version=strategy_version,
+        strategy_hash=strategy_hash,
+        last_timestamp=point.timestamp.isoformat(),
+        selected_contract=selected_contract,
+        realized_capital=float(capital_ledger.realized_capital),
+        reserved_margin=float(capital_ledger.reserved_margin),
+        blocked_entries=int(capital_ledger.blocked_entries),
+        open_entry=_serialize_entry(entry),
+        source_fingerprint=data_source_fingerprint,
+    )
+    from app.backtesting.ledger import Checkpoint
+    ledger.checkpoint(
+        Checkpoint(
+            run_id=run_id,
+            event_index=event_index,
+            timestamp_ns=int(point.timestamp.timestamp() * 1_000_000_000),
+            state=checkpoint.to_json() and checkpoint.__dict__,
+        )
+    )
+
+
+def _serialize_entry(entry: CashFutureHistoryPoint | None) -> Mapping[str, Any] | None:
+    if entry is None:
+        return None
+    return {
+        "timestamp": entry.timestamp.isoformat(),
+        "symbol": entry.symbol,
+        "contract_month": entry.contract_month,
+        "cash_price": entry.cash_price,
+        "future_price": entry.future_price,
+        "gap": entry.gap,
+        "gap_pct": entry.gap_pct,
+        "lot_size": entry.lot_size,
+        "margin_required": entry.margin_required,
+        "expiry_date": entry.expiry_date.isoformat() if entry.expiry_date else None,
+    }
 
 
 def ledger_record(run_id: str, record_type: str, timestamp: datetime, payload: Mapping[str, Any]):
