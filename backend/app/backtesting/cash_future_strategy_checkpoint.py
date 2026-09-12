@@ -26,10 +26,7 @@ class CashFutureStrategyCheckpoint:
     strategy_state: Mapping[str, Any] | None = None
 
     def to_json(self) -> str:
-        payload = asdict(self)
-        # Validate that a strategy cannot smuggle an unserializable object into
-        # a durable checkpoint. The runner-owned fields are already JSON-safe.
-        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
 
     @classmethod
     def from_json(cls, value: str) -> "CashFutureStrategyCheckpoint":
@@ -48,12 +45,9 @@ class CashFutureStrategyCheckpoint:
         missing = required.difference(payload)
         if missing:
             raise ValueError(f"checkpoint missing fields: {sorted(missing)}")
-        if not isinstance(payload["run_id"], str) or not payload["run_id"].strip():
-            raise ValueError("checkpoint run_id is required")
-        if not isinstance(payload["strategy_id"], str) or not payload["strategy_id"].strip():
-            raise ValueError("checkpoint strategy_id is required")
-        if not isinstance(payload["strategy_version"], str) or not payload["strategy_version"].strip():
-            raise ValueError("checkpoint strategy_version is required")
+        for field in ("run_id", "strategy_id", "strategy_version"):
+            if not isinstance(payload[field], str) or not payload[field].strip():
+                raise ValueError(f"checkpoint {field} is required")
         try:
             datetime.fromisoformat(str(payload["last_timestamp"]))
         except (TypeError, ValueError) as exc:
@@ -85,4 +79,29 @@ class CashFutureStrategyCheckpoint:
         )
 
 
-__all__ = ["CashFutureStrategyCheckpoint"]
+def validate_cash_future_checkpoint(
+    checkpoint: CashFutureStrategyCheckpoint,
+    *,
+    run_id: str,
+    strategy_id: str,
+    strategy_version: str,
+    strategy_hash: str | None,
+    data_source_fingerprint: str | None,
+) -> None:
+    """Reject a checkpoint when its execution identity differs from the resume request."""
+    checks = (
+        ("run_id", checkpoint.run_id, run_id),
+        ("strategy_id", checkpoint.strategy_id, strategy_id),
+        ("strategy_version", checkpoint.strategy_version, strategy_version),
+        ("strategy_hash", checkpoint.strategy_hash, strategy_hash),
+        ("source_fingerprint", checkpoint.source_fingerprint, data_source_fingerprint),
+    )
+    for name, stored, requested in checks:
+        if stored != requested:
+            raise ValueError(
+                f"unsafe Cash-Future resume: {name} mismatch "
+                f"(stored={stored!r}, requested={requested!r})"
+            )
+
+
+__all__ = ["CashFutureStrategyCheckpoint", "validate_cash_future_checkpoint"]
