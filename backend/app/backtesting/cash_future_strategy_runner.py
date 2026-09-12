@@ -224,8 +224,16 @@ def run_cash_future_strategy(
             "lot_size": point.lot_size,
         }
 
+        expiry_day = point.expiry_date is not None and point_date >= point.expiry_date
         if action == "BUY" and entry is None:
-            if capital_ledger.reserve(point.margin_required):
+            if expiry_day:
+                signal_record.update(
+                    {
+                        "execution_status": "blocked",
+                        "blocked_reason": "expiry_day_new_entry",
+                    }
+                )
+            elif capital_ledger.reserve(point.margin_required):
                 entry = point
             else:
                 signal_record.update(
@@ -239,7 +247,7 @@ def run_cash_future_strategy(
         exit_reason: str | None = None
         if action == "SELL" and entry is not None:
             exit_reason = "strategy"
-        elif entry is not None and point.expiry_date is not None and point_date >= point.expiry_date:
+        elif entry is not None and expiry_day:
             exit_reason = "expiry"
 
         if ledger is None:
@@ -426,23 +434,8 @@ def _serialize_entry(entry: CashFutureHistoryPoint | None) -> Mapping[str, Any] 
 
 def ledger_record(run_id: str, record_type: str, timestamp: datetime, payload: Mapping[str, Any]):
     from app.backtesting.ledger import LedgerRecord
-    timestamp_ns = int(timestamp.timestamp() * 1_000_000_000)
-    return LedgerRecord(run_id, record_type, timestamp_ns, payload)
+    return LedgerRecord(run_id=run_id, record_type=record_type, timestamp_ns=int(timestamp.timestamp() * 1_000_000_000), payload=dict(payload))
 
 
 def _point_date(point: CashFutureHistoryPoint) -> date:
-    timestamp = point.timestamp
-    if isinstance(timestamp, datetime):
-        return timestamp.date()
-    if isinstance(timestamp, date):
-        return timestamp
-    raise ValueError("Cash-Future point timestamp must be a date or datetime")
-
-
-__all__ = [
-    "CashFutureCapitalLedger",
-    "CashFutureStrategy",
-    "CashFutureStrategyConfig",
-    "CashFutureStrategyRun",
-    "run_cash_future_strategy",
-]
+    return point.timestamp.date()
