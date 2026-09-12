@@ -18,6 +18,10 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
     private val futurePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF62B0FF.toInt(); strokeWidth = 4f; style = Paint.Style.STROKE }
     private val gapPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFC857.toInt(); strokeWidth = 3f; style = Paint.Style.STROKE }
     private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF5C5C.toInt(); strokeWidth = 3f; style = Paint.Style.FILL; typeface = Typeface.DEFAULT_BOLD }
+    private val buyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF16B886.toInt(); strokeWidth = 3f; style = Paint.Style.FILL; typeface = Typeface.DEFAULT_BOLD }
+    private val sellPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFD6455D.toInt(); strokeWidth = 3f; style = Paint.Style.FILL; typeface = Typeface.DEFAULT_BOLD }
+    private val pnlPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF8FF0C5.toInt(); textSize = 20f; typeface = Typeface.DEFAULT_BOLD }
+    private val pnlLossPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF7B86.toInt(); textSize = 20f; typeface = Typeface.DEFAULT_BOLD }
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF243A55.toInt(); strokeWidth = 1f }
     private var points: List<CashFutureReplayPoint> = emptyList()
     private var visiblePoints = 0
@@ -26,6 +30,7 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
     private var availableIntervals: Set<String> = emptySet()
     private var timeframeChangedListener: ((String) -> Unit)? = null
     private var focusTimestamp: String? = null
+    private var strategyTrades: List<CashFutureTradeMarker> = emptyList()
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
@@ -90,6 +95,17 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
         availableIntervals = intervals.map(::normalizeInterval).toSet()
         resetReplay()
         refreshModeButtons()
+    }
+
+    /** Bind only real historical strategy trades returned by the Cash-Future backtest. */
+    fun setStrategyTrades(newTrades: List<CashFutureTradeMarker>) {
+        strategyTrades = newTrades.sortedBy { it.entry_time }
+        invalidate()
+    }
+
+    fun clearStrategyTrades() {
+        strategyTrades = emptyList()
+        invalidate()
     }
 
     fun setData(newPoints: List<IntradayReplayPoint>) {
@@ -215,6 +231,8 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
         canvas.drawPath(fp, futurePaint)
         canvas.drawPath(gp, gapPaint)
 
+        drawTradeMarkers(canvas, v, left, right, top, priceBottom, pMin, pRange, ::x, ::py)
+
         val fallbackIndex = points.indices.maxByOrNull { index -> points[index].gap }
         val focusedIndex = focusTimestamp?.let { timestamp -> points.indexOfFirst { it.timestamp == timestamp }.takeIf { it >= 0 } }
         val gapHighIndex = focusedIndex ?: fallbackIndex
@@ -231,6 +249,64 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
                 canvas.drawText("FUTURE ₹${String.format("%.2f", highPoint.future_price)}", labelX, gyHigh + 14f, highlightPaint)
                 canvas.drawText("MARGIN ₹${String.format("%.2f", highPoint.margin_required)}", labelX, gyHigh + 36f, highlightPaint)
             }
+        }
+    }
+
+    private fun drawTradeMarkers(
+        canvas: Canvas,
+        visible: List<CashFutureReplayPoint>,
+        left: Float,
+        right: Float,
+        top: Float,
+        priceBottom: Float,
+        pMin: Double,
+        pRange: Double,
+        x: (Int) -> Float,
+        py: (Double) -> Float,
+    ) {
+        if (strategyTrades.isEmpty()) return
+        strategyTrades.forEach { trade ->
+            drawMarker(canvas, visible, trade.entry_time, trade.entry_cash_price, "BUY", trade.net_profit, x, py, top, priceBottom)
+            drawMarker(canvas, visible, trade.exit_time, trade.exit_cash_price, "SELL", trade.net_profit, x, py, top, priceBottom)
+        }
+    }
+
+    private fun drawMarker(
+        canvas: Canvas,
+        visible: List<CashFutureReplayPoint>,
+        timestamp: String,
+        price: Double,
+        label: String,
+        pnl: Double,
+        x: (Int) -> Float,
+        py: (Double) -> Float,
+        top: Float,
+        priceBottom: Float,
+    ) {
+        val index = visible.indexOfFirst { it.timestamp == timestamp }.takeIf { it >= 0 }
+            ?: visible.indexOfLast { it.timestamp <= timestamp }.takeIf { it >= 0 }
+            ?: return
+        val px = x(index)
+        val y = py(price)
+        val paint = if (label == "BUY") buyPaint else sellPaint
+        val marker = Path()
+        if (label == "BUY") {
+            marker.moveTo(px, max(top + 12f, y - 24f))
+            marker.lineTo(px - 10f, max(top + 28f, y - 4f))
+            marker.lineTo(px + 10f, max(top + 28f, y - 4f))
+        } else {
+            marker.moveTo(px, min(priceBottom - 12f, y + 24f))
+            marker.lineTo(px - 10f, min(priceBottom - 28f, y + 4f))
+            marker.lineTo(px + 10f, min(priceBottom - 28f, y + 4f))
+        }
+        marker.close()
+        canvas.drawPath(marker, paint)
+        canvas.drawText(label, px + 12f, if (label == "BUY") max(top + 20f, y - 20f) else min(priceBottom - 16f, y + 28f), paint)
+        if (label == "SELL") {
+            val pnlText = "P&L ${if (pnl >= 0) "+" else ""}₹${String.format("%.2f", pnl)}"
+            val pnlX = min(px + 12f, width - 180f)
+            val pnlY = min(priceBottom - 2f, max(top + 42f, y + 50f))
+            canvas.drawText(pnlText, pnlX, pnlY, if (pnl >= 0) pnlPaint else pnlLossPaint)
         }
     }
 }
