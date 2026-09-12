@@ -203,6 +203,8 @@ def _request_has_materialized_rows(
         return False
     if sessions is None:
         return True
+    if not sessions:
+        return False
 
     interval_ns = _timeframe_interval_ns(timeframe)
     expected = _session_expected_timestamps(
@@ -317,7 +319,9 @@ def acquire_and_materialize_cash_future_universe(
                 underlying=underlying,
                 request=request,
             )
-            future_sessions = (future_sessions_by_instrument or {}).get(request.instrument, ())
+            future_sessions = None
+            if future_sessions_by_instrument is not None:
+                future_sessions = future_sessions_by_instrument.get(request.instrument, ())
             if _request_has_materialized_rows(
                 db,
                 symbol=underlying,
