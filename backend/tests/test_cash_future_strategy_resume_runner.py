@@ -36,6 +36,59 @@ def _strategy(point, history):
     return "NONE"
 
 
+def _run_kwargs(config):
+    return {
+        "strategy_id": "resume-test",
+        "strategy_version": "1",
+        "config": config,
+        "strategy_hash": "hash-1",
+        "data_source_fingerprint": "source-1",
+    }
+
+
+def test_resume_matches_uninterrupted_run_without_duplicate_records():
+    points = _points()
+    config = CashFutureStrategyConfig(
+        initial_capital=100000.0,
+        checkpoint_interval=2,
+        history_window=10,
+    )
+
+    full_ledger = BacktestLedger(":memory:")
+    full = run_cash_future_strategy(
+        points,
+        _strategy,
+        ledger=full_ledger,
+        run_id="full-run",
+        **_run_kwargs(config),
+    )
+
+    resumed_ledger = BacktestLedger(":memory:")
+    run_cash_future_strategy(
+        points[:2],
+        _strategy,
+        ledger=resumed_ledger,
+        run_id="resumed-run",
+        **_run_kwargs(config),
+    )
+    resumed = resume_cash_future_strategy(
+        points,
+        _strategy,
+        ledger=resumed_ledger,
+        run_id="resumed-run",
+        **_run_kwargs(config),
+    )
+
+    assert list(resumed.signals) == list(full.signals)
+    assert list(resumed.trades) == list(full.trades)
+    assert list(resumed.equity_curve) == list(full.equity_curve)
+    assert resumed.final_capital == full.final_capital
+    assert resumed.net_profit == full.net_profit
+    assert resumed.final_available_capital == full.final_available_capital
+    assert resumed.final_reserved_margin == full.final_reserved_margin
+    assert resumed.blocked_entry_count == full.blocked_entry_count
+
+
 def test_resume_continues_after_checkpoint_without_duplicate_records():
     ledger = BacktestLedger(":memory:")
     config = CashFutureStrategyConfig(
@@ -48,13 +101,9 @@ def test_resume_continues_after_checkpoint_without_duplicate_records():
     run_cash_future_strategy(
         points[:2],
         _strategy,
-        strategy_id="resume-test",
-        strategy_version="1",
-        config=config,
         ledger=ledger,
         run_id="run-1",
-        strategy_hash="hash-1",
-        data_source_fingerprint="source-1",
+        **_run_kwargs(config),
     )
 
     resumed = resume_cash_future_strategy(
@@ -62,11 +111,7 @@ def test_resume_continues_after_checkpoint_without_duplicate_records():
         _strategy,
         ledger=ledger,
         run_id="run-1",
-        strategy_id="resume-test",
-        strategy_version="1",
-        config=config,
-        strategy_hash="hash-1",
-        data_source_fingerprint="source-1",
+        **_run_kwargs(config),
     )
 
     assert len(resumed.signals) == 4
@@ -86,13 +131,9 @@ def test_resume_rejects_source_that_ends_at_checkpoint():
     run_cash_future_strategy(
         points[:2],
         _strategy,
-        strategy_id="resume-test",
-        strategy_version="1",
-        config=config,
         ledger=ledger,
         run_id="run-1",
-        strategy_hash="hash-1",
-        data_source_fingerprint="source-1",
+        **_run_kwargs(config),
     )
 
     try:
@@ -101,11 +142,7 @@ def test_resume_rejects_source_that_ends_at_checkpoint():
             _strategy,
             ledger=ledger,
             run_id="run-1",
-            strategy_id="resume-test",
-            strategy_version="1",
-            config=config,
-            strategy_hash="hash-1",
-            data_source_fingerprint="source-1",
+            **_run_kwargs(config),
         )
     except ValueError as exc:
         assert "does not contain observations after checkpoint" in str(exc)
