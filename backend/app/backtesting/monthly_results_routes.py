@@ -280,6 +280,7 @@ def monthly_gap_top10(
             "instrument_key": item["instrument_key"],
             "expiry_date": item.get("expiry_date"),
             "is_expiry_day": item.get("is_expiry_day", False),
+            "margin_required": item.get("margin_required", 0.0),
         })
 
     return {
