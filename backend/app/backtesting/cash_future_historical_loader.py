@@ -96,13 +96,7 @@ def _payload_oi(payload: dict) -> float | None:
     return None if value is None else float(value)
 
 
-def _merge_pair(
-    cash_records: Iterator[HistoricalRecord],
-    future_records: Iterator[HistoricalRecord],
-    *,
-    symbol: str,
-    contract: ContractRecord,
-) -> Iterator[CashFutureHistoryPoint]:
+def _merge_pair(cash_records: Iterator[HistoricalRecord], future_records: Iterator[HistoricalRecord], *, symbol: str, contract: ContractRecord) -> Iterator[CashFutureHistoryPoint]:
     cash = next(cash_records, None)
     future = next(future_records, None)
     while cash is not None and future is not None:
@@ -117,7 +111,6 @@ def _merge_pair(
             cash = next(cash_records, None)
             future = next(future_records, None)
             continue
-
         cash_payload = dict(cash.payload)
         future_payload = dict(future.payload)
         cash_price = _record_price(cash)
@@ -125,30 +118,7 @@ def _merge_pair(
         gap = future_price - cash_price
         gap_pct = gap / cash_price * 100.0
         margin = float(future_payload.get("margin_required", future_payload.get("margin", 0.0)) or 0.0)
-        yield CashFutureHistoryPoint(
-            timestamp=_datetime_from_ns(timestamp_ns),
-            symbol=symbol,
-            contract_month=f"{contract.expiry.year:04d}-{contract.expiry.month:02d}",
-            cash_price=cash_price,
-            future_price=future_price,
-            gap=gap,
-            gap_pct=gap_pct,
-            lot_size=contract.lot_size,
-            margin_required=max(0.0, margin),
-            volume=_payload_volume(future_payload),
-            oi=_payload_oi(future_payload),
-            cash_bid=_optional_price(cash_payload, "bid"),
-            cash_ask=_optional_price(cash_payload, "ask"),
-            future_bid=_optional_price(future_payload, "bid"),
-            future_ask=_optional_price(future_payload, "ask"),
-            cash_bid_qty=_optional_quantity(cash_payload, "bid_qty", "bid_quantity", "buy_quantity"),
-            cash_ask_qty=_optional_quantity(cash_payload, "ask_qty", "ask_quantity", "sell_quantity"),
-            future_bid_qty=_optional_quantity(future_payload, "bid_qty", "bid_quantity", "buy_quantity"),
-            future_ask_qty=_optional_quantity(future_payload, "ask_qty", "ask_quantity", "sell_quantity"),
-            charges=float(future_payload.get("charges", 0.0) or 0.0),
-            funding_cost=float(future_payload.get("funding_cost", 0.0) or 0.0),
-            expiry_date=contract.expiry,
-        )
+        yield CashFutureHistoryPoint(timestamp=_datetime_from_ns(timestamp_ns), symbol=symbol, contract_month=f"{contract.expiry.year:04d}-{contract.expiry.month:02d}", cash_price=cash_price, future_price=future_price, gap=gap, gap_pct=gap_pct, lot_size=contract.lot_size, margin_required=max(0.0, margin), volume=_payload_volume(future_payload), oi=_payload_oi(future_payload), cash_bid=_optional_price(cash_payload, "bid"), cash_ask=_optional_price(cash_payload, "ask"), future_bid=_optional_price(future_payload, "bid"), future_ask=_optional_price(future_payload, "ask"), cash_bid_qty=_optional_quantity(cash_payload, "bid_qty", "bid_quantity", "buy_quantity"), cash_ask_qty=_optional_quantity(cash_payload, "ask_qty", "ask_quantity", "sell_quantity"), future_bid_qty=_optional_quantity(future_payload, "bid_qty", "bid_quantity", "buy_quantity"), future_ask_qty=_optional_quantity(future_payload, "ask_qty", "ask_quantity", "sell_quantity"), charges=float(future_payload.get("charges", 0.0) or 0.0), funding_cost=float(future_payload.get("funding_cost", 0.0) or 0.0), expiry_date=contract.expiry)
         cash = next(cash_records, None)
         future = next(future_records, None)
 
@@ -166,38 +136,44 @@ class CashFutureHistoricalLoader:
         while current <= selection.end_date:
             if current.weekday() < 5:
                 try:
-                    contract = (
-                        self.contract_catalog.resolve_contract_month(
-                            exchange=selection.exchange,
-                            underlying=selection.underlying.upper(),
-                            contract_month=selection.contract_month,
-                            as_of=current,
-                        )
-                        if selection.contract_month
-                        else self.contract_catalog.resolve(
-                            exchange=selection.exchange,
-                            underlying=selection.underlying.upper(),
-                            as_of=current,
-                            mode=selection.mode,
-                        )
-                    )
+                    def resolve(exchange: str):
+                        if selection.contract_month:
+                            return self.contract_catalog.resolve_contract_month(exchange=exchange, underlying=selection.underlying.upper(), contract_month=selection.contract_month, as_of=current)
+                        return self.contract_catalog.resolve(exchange=exchange, underlying=selection.underlying.upper(), as_of=current, mode=selection.mode)
+                    try:
+                        contract = resolve(selection.exchange)
+                    except LookupError:
+                        if selection.exchange.upper() != "NFO":
+                            contract = resolve("NFO")
+                        else:
+                            raise
                     days.append((current, contract))
                 except LookupError:
                     pass
             current = current.fromordinal(current.toordinal() + 1)
-
         segments: list[tuple[date, date, ContractRecord]] = []
         for _, grouped in groupby(days, key=lambda item: item[1].token):
             block = list(grouped)
             segments.append((block[0][0], block[-1][0], block[0][1]))
         return tuple(segments)
 
+    def _resolve_spot_instrument(self, symbol: str, start_ns: int, end_ns: int) -> str:
+        requested = self._selection_spot_instrument
+        if ":" in requested:
+            return requested
+        exact = [instrument for instrument in self.catalog.instruments(source=self._selection_source, timeframe=self._selection_timeframe, start_ns=start_ns, end_ns=end_ns, prefix="NSE:") if instrument.rsplit(":", 1)[-1].upper() == symbol.upper()]
+        return exact[0] if exact else requested
+
     def iter_points(self, selection: CashFutureHistorySelection) -> Iterable[CashFutureHistoryPoint]:
         """Yield only matched timestamps; no selected history is materialized in RAM."""
+        self._selection_spot_instrument = selection.spot_instrument
+        self._selection_source = selection.source
+        self._selection_timeframe = selection.timeframe
         for segment_start, segment_end, contract in self._contracts_by_segment(selection):
             start_ns, _ = _market_bounds(segment_start)
             _, end_ns = _market_bounds(segment_end)
-            cash_iter = self.catalog.iter_records(source=selection.source, instrument=selection.spot_instrument, timeframe=selection.timeframe, start_ns=start_ns, end_ns=end_ns)
+            cash_instrument = self._resolve_spot_instrument(selection.underlying.upper(), start_ns, end_ns)
+            cash_iter = self.catalog.iter_records(source=selection.source, instrument=cash_instrument, timeframe=selection.timeframe, start_ns=start_ns, end_ns=end_ns)
             future_iter = self.catalog.iter_records(source=selection.source, instrument=f"{contract.exchange}:{contract.token}:{contract.symbol}", timeframe=selection.timeframe, start_ns=start_ns, end_ns=end_ns)
             yield from _merge_pair(cash_iter, future_iter, symbol=selection.underlying.upper(), contract=contract)
 
