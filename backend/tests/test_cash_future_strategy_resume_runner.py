@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 
+import pytest
+
 from app.backtesting.cash_future_strategy_resume_runner import resume_cash_future_strategy
 from app.backtesting.cash_future_strategy_runner import (
     CashFutureStrategyConfig,
@@ -34,6 +36,25 @@ def _strategy(point, history):
     if point.timestamp.minute == 17:
         return "SELL"
     return "NONE"
+
+
+class _StatefulStrategy:
+    def __init__(self):
+        self.count = 0
+
+    def __call__(self, point, history):
+        self.count += 1
+        if self.count == 2:
+            return "BUY"
+        if self.count == 3:
+            return "SELL"
+        return "NONE"
+
+    def checkpoint_state(self):
+        return {"count": self.count}
+
+    def restore_checkpoint_state(self, state):
+        self.count = int(state["count"])
 
 
 def _run_kwargs(config):
@@ -87,6 +108,76 @@ def test_resume_matches_uninterrupted_run_without_duplicate_records():
     assert resumed.final_available_capital == full.final_available_capital
     assert resumed.final_reserved_margin == full.final_reserved_margin
     assert resumed.blocked_entry_count == full.blocked_entry_count
+
+
+def test_stateful_strategy_checkpoint_restores_and_matches_uninterrupted_run():
+    points = _points()
+    config = CashFutureStrategyConfig(
+        initial_capital=100000.0,
+        checkpoint_interval=2,
+        history_window=10,
+    )
+
+    full_ledger = BacktestLedger(":memory:")
+    full = run_cash_future_strategy(
+        points,
+        _StatefulStrategy(),
+        ledger=full_ledger,
+        run_id="stateful-full",
+        **_run_kwargs(config),
+    )
+
+    resumed_ledger = BacktestLedger(":memory:")
+    run_cash_future_strategy(
+        points[:2],
+        _StatefulStrategy(),
+        ledger=resumed_ledger,
+        run_id="stateful-resumed",
+        **_run_kwargs(config),
+    )
+
+    fresh_strategy = _StatefulStrategy()
+    resumed = resume_cash_future_strategy(
+        points,
+        fresh_strategy,
+        ledger=resumed_ledger,
+        run_id="stateful-resumed",
+        **_run_kwargs(config),
+    )
+
+    assert fresh_strategy.count == 4
+    assert list(resumed.signals) == list(full.signals)
+    assert list(resumed.trades) == list(full.trades)
+    assert list(resumed.equity_curve) == list(full.equity_curve)
+    assert resumed.final_capital == full.final_capital
+    assert resumed.net_profit == full.net_profit
+
+
+def test_stateful_resume_rejects_checkpoint_without_strategy_state():
+    ledger = BacktestLedger(":memory:")
+    config = CashFutureStrategyConfig(
+        initial_capital=100000.0,
+        checkpoint_interval=None,
+    )
+    points = _points()
+    run_cash_future_strategy(
+        points[:2],
+        _strategy,
+        ledger=ledger,
+        run_id="missing-state",
+        **_run_kwargs(config),
+    )
+
+    # No checkpoint exists when checkpointing is disabled, so the resume helper
+    # must fail before a stateful strategy can continue.
+    with pytest.raises(ValueError, match="checkpoint"):
+        resume_cash_future_strategy(
+            points,
+            _StatefulStrategy(),
+            ledger=ledger,
+            run_id="missing-state",
+            **_run_kwargs(config),
+        )
 
 
 def test_resume_continues_after_checkpoint_without_duplicate_records():
