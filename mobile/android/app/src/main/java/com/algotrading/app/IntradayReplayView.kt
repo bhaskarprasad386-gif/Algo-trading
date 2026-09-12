@@ -22,7 +22,7 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
     private var visiblePoints = 0
     private var replayTime = "--:--:--"
     private var replayStepSeconds = 60L
-    private var availableIntervals: Set<String> = emptySet()
+    private var availableIntervals: Set<String> = emptySet()\n    private var timeframeChangedListener: ((String) -> Unit)? = null
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
@@ -34,7 +34,7 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
     private fun refreshModeButtons() {
         listOf(R.id.btnReplay1s to "1 SEC", R.id.btnReplay1m to "1 MIN", R.id.btnReplay5m to "5 MIN", R.id.btnReplay15m to "15 MIN", R.id.btnReplay30m to "30 MIN").forEach { (id,label) -> rootView.findViewById<Button>(id)?.apply { alpha = if(labelFor(replayStepSeconds)==label) 1f else .62f; isEnabled = availableIntervals.isEmpty() || label in availableIntervals } }
     }
-    fun setCashFutureData(newPoints: List<CashFutureReplayPoint>, intervals: List<String>) {
+    fun setTimeframeChangedListener(listener: (String) -> Unit) { timeframeChangedListener = listener }\n\n    fun setCashFutureData(newPoints: List<CashFutureReplayPoint>, intervals: List<String>) {
         points = newPoints.sortedBy { it.timestamp }; availableIntervals = intervals.toSet(); resetReplay(); refreshModeButtons()
     }
     fun setData(newPoints: List<IntradayReplayPoint>) {
@@ -43,7 +43,7 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
     fun setReplayMode(seconds: Long) {
         val v=listOf(1L,60L,300L,900L,1800L).minByOrNull { kotlin.math.abs(it-seconds) } ?: 60L
         if(availableIntervals.isNotEmpty() && labelFor(v) !in availableIntervals) return
-        replayStepSeconds=v; resetReplay(); refreshModeButtons()
+        replayStepSeconds=v; resetReplay(); refreshModeButtons(); timeframeChangedListener?.invoke(labelFor(v).lowercase().replace(" ", ""))
     }
     fun setReplayMode(seconds: Int)=setReplayMode(seconds.toLong())
     fun replayIntervalSeconds()=replayStepSeconds
