@@ -14,6 +14,14 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.google.gson.Gson
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -52,6 +60,7 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
     private val cashSellButton = terminalButton("CASH • SELL", 0xFFD6455D.toInt())
     private val futureBuyButton = terminalButton("FUTURE • BUY", 0xFF16B886.toInt())
     private val futureSellButton = terminalButton("FUTURE • SELL", 0xFFD6455D.toInt())
+    private val runStrategyButton = terminalButton("RUN HISTORICAL STRATEGY", 0xFF2673FF.toInt())
     private val exitLabel = TextView(context).apply {
         text = "EXIT / RISK RULES"
         setTextColor(0xFFFF78C8.toInt()); textSize = 11f; typeface = Typeface.DEFAULT_BOLD
@@ -61,6 +70,9 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
     private var futureSide = "SELL"
     private var futureMode = "CURRENT FUTURE"
     private var syncingQuantities = false
+    private var selectedDate = ""
+    private var currentContract: String? = null
+    private var nearContract: String? = null
 
     init {
         orientation = VERTICAL
@@ -115,6 +127,7 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         addView(terminalButton("BUILD PAYOFF • HISTORICAL SCENARIO", 0xFF16B886.toInt()).apply {
             setOnClickListener { calculatePayoff() }
         }, LayoutParams(-1, 46))
+        addView(runStrategyButton, LayoutParams(-1, 46).apply { setMargins(0, 4, 0, 0) })
         addView(summary, LayoutParams(-1, 100).apply { setMargins(0, 6, 0, 6) })
         addView(payoff, LayoutParams(-1, 250))
 
@@ -124,6 +137,7 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         futureSellButton.setOnClickListener { selectFutureSide("SELL") }
         currentButton.setOnClickListener { selectFutureMode("CURRENT FUTURE") }
         nearButton.setOnClickListener { selectFutureMode("NEAR FUTURE") }
+        runStrategyButton.setOnClickListener { runHistoricalStrategy() }
         val quantityWatcher = object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -155,6 +169,9 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         if (historicalFuture != null && historicalFuture > 0.0) futurePrice.setText("%.2f".format(historicalFuture)) else futurePrice.setText("")
         cashLots.setText("1")
         futureLots.setText("1")
+        this.selectedDate = selectedDate
+        this.currentContract = currentContract
+        this.nearContract = nearContract
         selectCashSide("BUY")
         selectFutureSide("SELL")
         selectFutureMode("CURRENT FUTURE")
@@ -197,6 +214,73 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         val capitalValue = capital.text.toString().toDoubleOrNull() ?: 0.0
         summary.text = "$symbol • $futureMode • Cash $cashSide ₹${"%.2f".format(cash)} • Future $futureSide ₹${"%.2f".format(future)} • Spread ₹${"%.2f".format(spread)} • Qty ${qty.toLong()} • Capital ₹${"%.0f".format(capitalValue)}"
         payoff.setScenario(cash, future, qty, spread)
+    }
+
+    private fun runHistoricalStrategy() {
+        val selected = symbol.text.toString().trim().uppercase()
+        val date = selectedDate.trim()
+        if (selected.isBlank() || date.isBlank()) {
+            summary.text = "Select a historical calendar row first so symbol + trading date are known."
+            return
+        }
+        val mode = if (futureMode == "NEAR FUTURE") "NEAR" else "CURRENT"
+        val contract = if (mode == "NEAR") nearContract else currentContract
+        val capitalValue = capital.text.toString().toDoubleOrNull() ?: 100_000_000.0
+        val chargesValue = charges.text.toString().toDoubleOrNull() ?: 0.0
+        runStrategyButton.isEnabled = false
+        summary.text = "$selected • $date • $mode • running durable historical strategy…"
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val payload = mapOf(
+                    "strategy_id" to "gap_threshold",
+                    "strategy_version" to "1",
+                    "start_date" to date,
+                    "end_date" to date,
+                    "contract_month" to contract,
+                    "execution_model" to "gap",
+                    "charges_per_trade" to chargesValue,
+                    "funding_cost_per_trade" to 0.0,
+                    "initial_capital" to capitalValue,
+                    "spot_instrument" to selected,
+                    "exchange" to "NFO",
+                    "underlying" to selected,
+                    "timeframe" to "1m",
+                    "mode" to mode,
+                    "source" to "angelone",
+                )
+                val json = Gson().toJson(payload)
+                val body = json.toRequestBody("application/json".toMediaType())
+                val request = Request.Builder()
+                    .url(BuildConfig.BACKEND_BASE_URL + "api/v1/backtesting/cash-future/strategy-run")
+                    .post(body)
+                    .apply {
+                        ApiService.getToken(context)?.takeIf { it.isNotBlank() }?.let { addHeader("Authorization", "Bearer $it") }
+                    }
+                    .build()
+                val client = okhttp3.OkHttpClient.Builder().build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) throw IllegalStateException("strategy API ${response.code}: ${response.body?.string() ?: "error"}")
+                    val run = Gson().fromJson(response.body?.string().orEmpty(), CashFutureStrategyRunResponse::class.java)
+                    val replay = ApiService.retrofitService.cashFutureReplay(date, selected, contractMonth = contract, timeframe = "1m", mode = mode)
+                    withContext(Dispatchers.Main) {
+                        val replayView = rootView.findViewById<IntradayReplayView>(R.id.intradayReplayView)
+                        replayView.setFocusTimestamp(null)
+                        replayView.setCashFutureData(replay.series, replay.available_replay_intervals)
+                        replayView.setStrategyTrades(run.trades.filter { trade ->
+                            trade.symbol.equals(selected, ignoreCase = true) &&
+                                (contract.isNullOrBlank() || trade.contract_month == contract)
+                        })
+                        summary.text = "$selected • $date • $mode • run ${run.run_id}\nTrades ${run.trade_count} • Signals ${run.signal_count} • Net P&L ₹${"%.2f".format(run.net_profit)}\nActual historical replay + BUY/SELL/P&L markers loaded"
+                        runStrategyButton.isEnabled = true
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    summary.text = "$selected • $date • strategy failed • ${e.message ?: "API error"}"
+                    runStrategyButton.isEnabled = true
+                }
+            }
+        }
     }
 
     private fun addRow(left: EditText, right: EditText) { val row = LinearLayout(context).apply { orientation = HORIZONTAL }; row.addView(left, LayoutParams(0, 50, 1f).apply { setMargins(0, 2, 5, 4) }); row.addView(right, LayoutParams(0, 50, 1f).apply { setMargins(5, 2, 0, 4) }); addView(row) }
