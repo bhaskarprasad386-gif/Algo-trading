@@ -52,6 +52,15 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
         else -> "${seconds}s"
     }
 
+    private fun normalizeInterval(value: String): String = when (value.trim().lowercase()) {
+        "1s", "1 sec", "1 second", "1 seconds" -> "1 SEC"
+        "1m", "1 min", "1 minute", "1 minutes" -> "1 MIN"
+        "5m", "5 min", "5 minute", "5 minutes" -> "5 MIN"
+        "15m", "15 min", "15 minute", "15 minutes" -> "15 MIN"
+        "30m", "30 min", "30 minute", "30 minutes" -> "30 MIN"
+        else -> value.trim().uppercase()
+    }
+
     private fun refreshModeButtons() {
         listOf(
             R.id.btnReplay1s to "1 SEC",
@@ -78,7 +87,7 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
 
     fun setCashFutureData(newPoints: List<CashFutureReplayPoint>, intervals: List<String>) {
         points = newPoints.sortedBy { it.timestamp }
-        availableIntervals = intervals.toSet()
+        availableIntervals = intervals.map(::normalizeInterval).toSet()
         resetReplay()
         refreshModeButtons()
     }
