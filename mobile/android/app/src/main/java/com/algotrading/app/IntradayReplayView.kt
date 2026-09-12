@@ -16,9 +16,12 @@ class IntradayReplayView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
 ) : View(context, attrs) {
-    private val axisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF9CB4CF.toInt(); textSize = 28f; typeface = Typeface.MONOSPACE }
-    private val wickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 2f }
-    private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val axisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF9CB4CF.toInt(); textSize = 24f; typeface = Typeface.MONOSPACE }
+    private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF203248.toInt(); strokeWidth = 1f }
+    private val cashPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF55E6B0.toInt(); strokeWidth = 4f }
+    private val futurePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF62B0FF.toInt(); strokeWidth = 4f }
+    private val gapPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFC857.toInt(); strokeWidth = 4f }
+    private val markerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFFFFF.toInt(); strokeWidth = 2f }
     private var points: List<IntradayReplayPoint> = emptyList()
     private var visiblePoints = 0
     private var replayTime = "--:--:--"
@@ -60,7 +63,7 @@ class IntradayReplayView @JvmOverloads constructor(
             R.id.btnReplay30m to 1800L,
         )
         ids.forEach { (id, seconds) ->
-            rootView.findViewById<Button>(id)?.alpha = if (seconds == chartIntervalSeconds) 1f else 0.62f
+            rootView.findViewById<Button>(id)?.alpha = if (seconds == replayStepSeconds) 1f else 0.62f
         }
     }
 
@@ -71,9 +74,8 @@ class IntradayReplayView @JvmOverloads constructor(
 
     fun setReplayMode(seconds: Int) {
         val supported = listOf(1L, 60L, 300L, 900L, 1800L)
-        val value = supported.minByOrNull { kotlin.math.abs(it - seconds.toLong()) } ?: 900L
-        chartIntervalSeconds = value
-        replayStepSeconds = value
+        replayStepSeconds = supported.minByOrNull { kotlin.math.abs(it - seconds.toLong()) } ?: 900L
+        chartIntervalSeconds = replayStepSeconds
         resetReplay()
         refreshModeButtons()
     }
@@ -117,6 +119,32 @@ class IntradayReplayView @JvmOverloads constructor(
         return h * 3600L + m * 60L + s
     }
 
+    private fun bucketPoints(): List<IntradayReplayPoint> {
+        if (points.isEmpty()) return emptyList()
+        if (chartIntervalSeconds <= 1L) return points.take(visiblePoints)
+        val visible = points.take(visiblePoints)
+        val groups = linkedMapOf<Long, MutableList<IntradayReplayPoint>>()
+        visible.forEach { point ->
+            val bucket = sessionBucketSeconds(parseEpochSeconds(point.timestamp))
+            groups.getOrPut(bucket) { mutableListOf() }.add(point)
+        }
+        return groups.values.map { bars ->
+            val first = bars.first()
+            val last = bars.last()
+            last.copy(
+                timestamp = last.timestamp,
+                cash_price = bars.map { it.cash_price }.average(),
+                future_price = bars.map { it.future_price }.average(),
+                gap = bars.map { it.gap }.average(),
+                gap_pct = bars.map { it.gap_pct }.average(),
+                open = first.open,
+                high = bars.maxOf { it.high },
+                low = bars.minOf { it.low },
+                close = last.close,
+            )
+        }
+    }
+
     private fun sessionBucketSeconds(totalSeconds: Long): Long {
         val sessionOpen = (9 * 60 + 15) * 60L
         val sessionClose = (15 * 60 + 30) * 60L
@@ -125,60 +153,62 @@ class IntradayReplayView @JvmOverloads constructor(
         return sessionOpen + ((totalSeconds - sessionOpen) / chartIntervalSeconds) * chartIntervalSeconds
     }
 
-    private fun candles(): List<ReplayCandle> {
-        val visible = points.take(visiblePoints)
-        if (visible.isEmpty()) return emptyList()
-        val groups = linkedMapOf<Long, MutableList<IntradayReplayPoint>>()
-        visible.forEach { p ->
-            val bucket = sessionBucketSeconds(parseEpochSeconds(p.timestamp))
-            groups.getOrPut(bucket) { mutableListOf() }.add(p)
-        }
-        return groups.map { (bucket, bars) ->
-            ReplayCandle(bucket, bars.first().open, bars.maxOf { it.high }, bars.minOf { it.low }, bars.last().close)
+    private fun drawSeries(canvas: Canvas, values: List<Double>, paint: Paint, top: Float, bottom: Float, left: Float, right: Float) {
+        if (values.isEmpty()) return
+        val minValue = values.minOrNull() ?: return
+        val maxValue = values.maxOrNull() ?: return
+        val range = max(0.000001, maxValue - minValue)
+        fun y(value: Double): Float = (bottom - ((value - minValue) / range * (bottom - top))).toFloat()
+        var previousX = left
+        var previousY = y(values.first())
+        values.forEachIndexed { index, value ->
+            val x = if (values.size == 1) left else left + (right - left) * index / (values.size - 1f)
+            val currentY = y(value)
+            if (index > 0) canvas.drawLine(previousX, previousY, x, currentY, paint)
+            previousX = x
+            previousY = currentY
         }
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val cs = candles()
-        if (cs.isEmpty()) {
+        val visible = bucketPoints()
+        if (visible.isEmpty()) {
             canvas.drawText("Select GRAPH from a calendar row", 18f, 42f, axisPaint)
             return
         }
+
         val left = 58f
         val right = width - 16f
-        val top = 18f
-        val bottom = height - 30f
-        val minPrice = cs.minOf { it.low }
-        val maxPrice = cs.maxOf { it.high }
-        val range = max(0.000001, maxPrice - minPrice)
-        fun y(price: Double): Float = (bottom - ((price - minPrice) / range * (bottom - top))).toFloat()
-        canvas.drawText("${labelFor(chartIntervalSeconds.toInt())} • replay $replayTime", left, height - 8f, axisPaint)
-        canvas.drawText(String.format("%.2f", maxPrice), 4f, top + 10f, axisPaint)
-        canvas.drawText(String.format("%.2f", minPrice), 4f, bottom, axisPaint)
+        val panelHeight = (height - 66f) / 3f
+        val panels = listOf(
+            "CASH PRICE" to cashPaint,
+            "FUTURE PRICE" to futurePaint,
+            "GAP = FUTURE − CASH" to gapPaint,
+        )
+        val values = listOf(
+            visible.map { it.cash_price },
+            visible.map { it.future_price },
+            visible.map { it.gap },
+        )
 
-        val slot = max(5f, (right - left) / cs.size)
-        val bodyWidth = min(24f, slot * 0.62f)
-        cs.forEachIndexed { index, c ->
-            val x = left + slot * index + slot / 2f
-            val openY = y(c.open)
-            val closeY = y(c.close)
-            val highY = y(c.high)
-            val lowY = y(c.low)
-            val up = c.close >= c.open
-            wickPaint.color = if (up) 0xFF38D39F.toInt() else 0xFFFF6B6B.toInt()
-            bodyPaint.color = wickPaint.color
-            canvas.drawLine(x, highY, x, lowY, wickPaint)
-            val bodyTop = min(openY, closeY)
-            val bodyBottom = max(openY, closeY)
-            canvas.drawRect(x - bodyWidth / 2f, bodyTop, x + bodyWidth / 2f, max(bodyTop + 2f, bodyBottom), bodyPaint)
-            if (index == cs.lastIndex) {
-                val total = c.bucket
-                val h = (total / 3600L) % 24L
-                val m = (total / 60L) % 60L
-                val s = total % 60L
-                canvas.drawText(String.format("%02d:%02d:%02d", h, m, s), max(left, x - 28f), bottom + 22f, axisPaint)
-            }
+        panels.forEachIndexed { index, (title, paint) ->
+            val top = 18f + index * panelHeight
+            val bottom = top + panelHeight - 18f
+            canvas.drawLine(left, bottom, right, bottom, gridPaint)
+            canvas.drawText(title, left, top + 16f, paint)
+            drawSeries(canvas, values[index], paint, top + 24f, bottom - 4f, left, right)
+            val minValue = values[index].minOrNull() ?: 0.0
+            val maxValue = values[index].maxOrNull() ?: 0.0
+            canvas.drawText(String.format("%.2f", maxValue), 4f, top + 16f, axisPaint)
+            canvas.drawText(String.format("%.2f", minValue), 4f, bottom, axisPaint)
+        }
+
+        val lastIndex = visible.lastIndex
+        if (lastIndex >= 0) {
+            val x = if (lastIndex == 0) left else left + (right - left) * lastIndex / (visible.size - 1f)
+            canvas.drawLine(x, 18f, x, height - 32f, markerPaint)
+            canvas.drawText("${labelFor(replayStepSeconds.toInt())} • $replayTime", left, height - 8f, axisPaint)
         }
     }
 }
