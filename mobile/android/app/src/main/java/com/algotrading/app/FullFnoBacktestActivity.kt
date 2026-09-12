@@ -232,8 +232,8 @@ class FullFnoBacktestActivity : AppCompatActivity() {
             }
         }
         val build = Button(this).apply { text = "BUILD"; textSize = 9f; setOnClickListener { loadMonthlySelectionIntoBuilder(item) } }
-        val graph = Button(this).apply { text = "GRAPH"; textSize = 9f; setOnClickListener { loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "CURRENT", item.contract_month) } }
-        val nextGraph = Button(this).apply { text = "NEXT"; textSize = 9f; setOnClickListener { loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "NEAR", null) } }
+        val graph = Button(this).apply { text = "GRAPH"; textSize = 9f; setOnClickListener { loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "CURRENT", item.contract_month, item.gap_high_timestamp) } }
+        val nextGraph = Button(this).apply { text = "NEXT"; textSize = 9f; setOnClickListener { loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "NEAR", null, null) } }
         row.addView(details)
         row.addView(build, LinearLayout.LayoutParams(68, 44).apply { setMargins(2, 0, 2, 0) })
         row.addView(graph, LinearLayout.LayoutParams(70, 44).apply { setMargins(2, 0, 2, 0) })
@@ -255,16 +255,19 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadIntradayReplay(tradingDate: String, symbol: String, mode: String = "CURRENT") = loadCashFutureReplay(tradingDate, symbol, "1m", mode, null)
+    private fun loadIntradayReplay(tradingDate: String, symbol: String, mode: String = "CURRENT") = loadCashFutureReplay(tradingDate, symbol, "1m", mode, null, null)
 
-    private fun loadCashFutureReplay(tradingDate: String, symbol: String, timeframe: String, mode: String = "CURRENT", contractMonth: String? = null) = lifecycleScope.launch(Dispatchers.IO) {
+    private fun loadCashFutureReplay(tradingDate: String, symbol: String, timeframe: String, mode: String = "CURRENT", contractMonth: String? = null, focusTimestamp: String? = null) = lifecycleScope.launch(Dispatchers.IO) {
         replayJob?.cancel(); replayTradingDate = tradingDate; replaySymbol = symbol; replayMode = mode
         withContext(Dispatchers.Main) { replayStatus.text = "$tradingDate • $symbol • ${if (mode == "NEAR") "NEXT FUTURE" else "CURRENT FUTURE"} • loading paired $timeframe history…"; btnReplayPlay.isEnabled = false; btnReplayReset.isEnabled = false }
         try {
             val response = ApiService.retrofitService.cashFutureReplay(tradingDate, symbol, contractMonth = contractMonth, timeframe = timeframe, mode = mode)
             withContext(Dispatchers.Main) {
+                replayView.setFocusTimestamp(focusTimestamp)
                 replayView.setCashFutureData(response.series, response.available_replay_intervals)
-                replayStatus.text = "$tradingDate • $symbol • ${if (mode == "NEAR") "NEXT FUTURE" else "CURRENT FUTURE"} • ${response.count} paired rows • ${response.timeframe} • intervals ${response.available_replay_intervals.joinToString(" | ")}"
+                val focusPoint = focusTimestamp?.let { ts -> response.series.firstOrNull { it.timestamp == ts } }
+                val focusText = focusPoint?.let { " • GAP HIGH ${it.timestamp} • Cash ₹${"%.2f".format(it.cash_price)} • Future ₹${"%.2f".format(it.future_price)} • Gap ₹${"%.2f".format(it.gap)}" } ?: ""
+                replayStatus.text = "$tradingDate • $symbol • ${if (mode == "NEAR") "NEXT FUTURE" else "CURRENT FUTURE"} • ${response.count} paired rows • ${response.timeframe} • intervals ${response.available_replay_intervals.joinToString(" | ")}$focusText"
                 btnReplayPlay.isEnabled = response.count > 0; btnReplayReset.isEnabled = response.count > 0; updateReplayStatus()
             }
         } catch (e: Exception) { withContext(Dispatchers.Main) { replayStatus.text = "$tradingDate • $symbol • ${if (mode == "NEAR") "NEXT FUTURE" else "CURRENT FUTURE"} • $timeframe replay failed • ${e.message ?: "API error"}" } }
