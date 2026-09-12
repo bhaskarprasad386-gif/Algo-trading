@@ -34,7 +34,7 @@ class CashFutureUniversePipelineResult:
     acquisition: CashFutureUniverseAcquisitionResult
     materialized_rows: int
     materialized_underlyings: tuple[str, ...] = ()
-    materialized_requests: tuple[tuple[str, int, int], ...] = ()
+    materialized_requests: tuple[tuple[str, int, int]] = ()
     coverage_store: CashFutureCoverageManifestStore | None = None
     coverage_source: str = "angelone"
     coverage_timeframe: str = "1m"
@@ -169,7 +169,6 @@ def _session_expected_timestamps(
         session_end = min(end_ns, session.end_ns)
         if cursor > session_end:
             continue
-        # Session windows are inclusive and their starts define the cadence anchor.
         offset = (cursor - session.start_ns) % interval_ns
         if offset:
             cursor += interval_ns - offset
@@ -311,17 +310,6 @@ def acquire_and_materialize_cash_future_universe(
         materialized_rows += rows
         if rows > 0:
             materialized_underlyings.append(underlying)
-
-        spot_sessions = spot_sessions_by_underlying.get(underlying, ())
-        if _request_has_materialized_rows(
-            db,
-            symbol=underlying,
-            contract_month=_contract_month_for_request(universe, underlying=underlying, request=result.queue.spot),
-            request=result.queue.spot,
-            sessions=spot_sessions,
-            timeframe=timeframe,
-        ):
-            materialized_requests.append((result.queue.spot.instrument, result.queue.spot.start_ns, result.queue.spot.end_ns))
 
         for request in result.queue.futures:
             contract_month = _contract_month_for_request(
