@@ -233,14 +233,12 @@ class CashFutureHistoricalDownloadService:
         if job.source != self.source_name:
             raise ValueError(f"historical download provider mismatch: job={job.source!r}, source={self.source_name!r}")
         chunks = self.status_store.incomplete_chunks(job_id)
-        requests: list[HistoricalFetchRequest] = []
-        sequences: list[int] = []
-        for chunk in chunks:
-            missing_requests = self._missing_requests_for_chunk(job, chunk)
-            for request in missing_requests:
-                requests.append(request)
-                sequences.append(chunk.sequence)
-        return HistoricalSyncPlan(tuple(requests)), tuple(sequences)
+        requests = tuple(
+            HistoricalFetchRequest(self.source_name, chunk.instrument, job.timeframe, chunk.start_ns, chunk.end_ns)
+            for chunk in chunks
+        )
+        sequences = tuple(chunk.sequence for chunk in chunks)
+        return HistoricalSyncPlan(requests), sequences
 
     def run(self, *, spot_instrument: str, exchange: str, underlying: str, start, end, timeframe: str = "1m", mode: str = "BOTH", retry_attempts: int = 3, should_skip: Callable[[object], bool] | None = None, session_windows: Callable[[object], Iterable[SessionWindow]] | None = None, job_id: str | None = None, resume: bool = False) -> CashFutureHistoricalDownloadReport:
         original_session_windows = self.session_windows
