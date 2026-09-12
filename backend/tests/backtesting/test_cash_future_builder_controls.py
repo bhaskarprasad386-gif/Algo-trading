@@ -26,6 +26,8 @@ def test_builder_default_cash_buy_future_sell_targets_gap_convergence():
         cash_side="BUY",
         future_side="SELL",
         target=2.0,
+        start_date=date(2026, 1, 2),
+        end_date=date(2026, 1, 2),
     )
     strategy = _build_builder_strategy(request)
     assert strategy(point(5.0), ()) == "BUY"
@@ -38,6 +40,8 @@ def test_builder_reverse_cash_sell_future_buy_uses_opposite_gap_direction():
         cash_side="SELL",
         future_side="BUY",
         target=2.0,
+        start_date=date(2026, 1, 2),
+        end_date=date(2026, 1, 2),
     )
     strategy = _build_builder_strategy(request)
     assert strategy(point(-5.0), ()) == "BUY"
@@ -50,6 +54,8 @@ def test_builder_stop_loss_exits_when_spread_moves_against_selected_direction():
         cash_side="BUY",
         future_side="SELL",
         stop_loss=2.0,
+        start_date=date(2026, 1, 2),
+        end_date=date(2026, 1, 2),
     )
     strategy = _build_builder_strategy(request)
     assert strategy(point(5.0), ()) == "BUY"
@@ -57,7 +63,7 @@ def test_builder_stop_loss_exits_when_spread_moves_against_selected_direction():
 
 
 def test_runner_default_direction_applies_gap_profit_and_capital():
-    request = StrategyRunRequest(strategy_id="gap_threshold", cash_side="BUY", future_side="SELL", target=2.0)
+    request = StrategyRunRequest(strategy_id="gap_threshold", cash_side="BUY", future_side="SELL", target=2.0, start_date=date(2026, 1, 2), end_date=date(2026, 1, 2))
     strategy = _build_builder_strategy(request)
     result = run_cash_future_strategy(
         [point(5.0), point(3.0, minute=16)],
@@ -72,7 +78,7 @@ def test_runner_default_direction_applies_gap_profit_and_capital():
 
 
 def test_runner_reverse_direction_applies_opposite_gap_profit():
-    request = StrategyRunRequest(strategy_id="gap_threshold", cash_side="SELL", future_side="BUY", target=2.0)
+    request = StrategyRunRequest(strategy_id="gap_threshold", cash_side="SELL", future_side="BUY", target=2.0, start_date=date(2026, 1, 2), end_date=date(2026, 1, 2))
     strategy = _build_builder_strategy(request)
     result = run_cash_future_strategy(
         [point(-5.0), point(-3.0, minute=16)],
@@ -86,7 +92,7 @@ def test_runner_reverse_direction_applies_opposite_gap_profit():
 
 
 def test_runner_slippage_is_deducted_for_both_legs():
-    request = StrategyRunRequest(strategy_id="gap_threshold", cash_side="BUY", future_side="SELL", target=2.0)
+    request = StrategyRunRequest(strategy_id="gap_threshold", cash_side="BUY", future_side="SELL", target=2.0, start_date=date(2026, 1, 2), end_date=date(2026, 1, 2))
     strategy = _build_builder_strategy(request)
     result = run_cash_future_strategy(
         [point(5.0), point(3.0, minute=16)],
