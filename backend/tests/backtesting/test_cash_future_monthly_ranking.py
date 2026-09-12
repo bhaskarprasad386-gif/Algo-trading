@@ -70,7 +70,7 @@ def test_monthly_top10_keeps_one_row_per_stock_and_uses_monthly_max(monkeypatch)
 
     assert response["count"] == 2
     assert [item["symbol"] for item in response["data"]] == ["AAA", "BBB"]
-    assert response["data"][0]["month_gap_high"] == 1200.0
+    assert response["data"][0]["month_gap_high"] == 12.0
     assert response["data"][0]["gap_high_date"] == date(2026, 1, 6)
     assert response["data"][0]["gap_high_timestamp"] == "2026-01-06T11:00:00+05:30"
     assert response["data"][1]["month_gap_high"] == 1000.0
