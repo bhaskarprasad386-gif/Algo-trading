@@ -1,5 +1,5 @@
 from app.backtesting.session_gap_planner import SessionAwareGapPlanner, SessionWindow
-from app.backtesting.historical_catalog import HistoricalCatalog
+from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 
 
 def test_planner_splits_cross_session_gap_and_ignores_overnight(tmp_path):
@@ -13,9 +13,13 @@ def test_planner_splits_cross_session_gap_and_ignores_overnight(tmp_path):
     session_start = day + morning * minute
     session_end = day + (15 * 60 + 29) * minute
 
-    catalog.ingest(source, instrument, timeframe, session_start, {"close": 100})
-    catalog.ingest(source, instrument, timeframe, session_start + 2 * minute, {"close": 102})
-    catalog.ingest(source, instrument, timeframe, session_end, {"close": 103})
+    catalog.ingest(
+        (
+            HistoricalRecord(source, instrument, timeframe, session_start, {"close": 100}),
+            HistoricalRecord(source, instrument, timeframe, session_start + 2 * minute, {"close": 102}),
+            HistoricalRecord(source, instrument, timeframe, session_end, {"close": 103}),
+        )
+    )
 
     next_day_start = 2 * day + morning * minute
     sessions = (
@@ -45,8 +49,12 @@ def test_planner_does_not_create_weekend_gap(tmp_path):
     friday = 5 * 86_400_000_000_000
     monday = 8 * 86_400_000_000_000
     minute = 60_000_000_000
-    catalog.ingest(source, instrument, timeframe, friday, {"close": 100})
-    catalog.ingest(source, instrument, timeframe, monday, {"close": 101})
+    catalog.ingest(
+        (
+            HistoricalRecord(source, instrument, timeframe, friday, {"close": 100}),
+            HistoricalRecord(source, instrument, timeframe, monday, {"close": 101}),
+        )
+    )
     sessions = (SessionWindow(friday, friday), SessionWindow(monday, monday))
 
     assert SessionAwareGapPlanner(catalog).plan(
