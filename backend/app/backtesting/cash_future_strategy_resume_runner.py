@@ -6,7 +6,6 @@ from collections import deque
 from datetime import date, datetime
 from typing import Any, Iterable, Mapping
 
-from app.backtesting.cash_future_strategy_checkpoint import CashFutureStrategyCheckpoint
 from app.backtesting.cash_future_strategy_resume import load_validated_cash_future_checkpoint
 from app.backtesting.cash_future_strategy_runner import (
     CashFutureCapitalLedger,
@@ -17,7 +16,6 @@ from app.backtesting.cash_future_strategy_runner import (
     _executable_spread_profit,
     _legacy_gap_profit,
     _point_date,
-    _serialize_entry,
 )
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
@@ -40,9 +38,9 @@ def resume_cash_future_strategy(
     checkpoint event. Strategy execution and ledger output begin strictly after
     that event, preventing duplicate signals/trades/equity records.
 
-    Arbitrary strategy internals are not restored. A strategy that exposes
-    ``restore_checkpoint_state`` must have a matching serialized state in the
-    checkpoint; otherwise the resume is rejected as unsafe.
+    Strategy state is restored only through the explicit
+    ``restore_checkpoint_state`` contract. Arbitrary strategy internals are not
+    serialized or restored.
     """
     config = config or CashFutureStrategyConfig()
     checkpoint_row = ledger.load_checkpoint(run_id)
@@ -114,7 +112,7 @@ def resume_cash_future_strategy(
         if config.start_date is not None and point_date < config.start_date:
             _maybe_checkpoint(
                 ledger, config, run_id, seen_events, point, selected_contract,
-                capital_ledger, entry, strategy_id, strategy_version,
+                capital_ledger, entry, strategy, strategy_id, strategy_version,
                 strategy_hash, data_source_fingerprint,
             )
             continue
@@ -188,7 +186,7 @@ def resume_cash_future_strategy(
         ledger.append(LedgerRecord(run_id, "equity", int(point.timestamp.timestamp() * 1_000_000_000), equity))
         _maybe_checkpoint(
             ledger, config, run_id, seen_events, point, selected_contract,
-            capital_ledger, entry, strategy_id, strategy_version,
+            capital_ledger, entry, strategy, strategy_id, strategy_version,
             strategy_hash, data_source_fingerprint,
         )
 
@@ -222,6 +220,7 @@ def _maybe_checkpoint(
     selected_contract: str,
     capital_ledger: CashFutureCapitalLedger,
     entry: CashFutureHistoryPoint | None,
+    strategy,
     strategy_id: str,
     strategy_version: str,
     strategy_hash: str | None,
@@ -232,7 +231,7 @@ def _maybe_checkpoint(
     from app.backtesting.cash_future_strategy_runner import _write_checkpoint
     _write_checkpoint(
         ledger, run_id, event_index, point, selected_contract,
-        capital_ledger, entry, strategy_id, strategy_version,
+        capital_ledger, entry, strategy, strategy_id, strategy_version,
         strategy_hash, data_source_fingerprint,
     )
 
