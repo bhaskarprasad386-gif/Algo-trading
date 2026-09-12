@@ -55,7 +55,11 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         replayStatus = findViewById(R.id.tvIntradayReplayStatus)
         replayView = findViewById(R.id.intradayReplayView)
         btnReplayPlay = findViewById(R.id.btnIntradayReplayPlay)
-        replayView.setTimeframeChangedListener { timeframe ->\n            val symbol = replayStatus.text.toString().substringAfter(" • ").substringBefore(" • ").trim()\n            val date = replayStatus.text.toString().substringBefore(" • ").trim()\n            if (symbol.isNotBlank() && date.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) loadCashFutureReplay(date, symbol, timeframe)\n        }
+        replayView.setTimeframeChangedListener { timeframe ->
+            val symbol = replayStatus.text.toString().substringAfter(" • ").substringBefore(" • ").trim()
+            val date = replayStatus.text.toString().substringBefore(" • ").trim()
+            if (symbol.isNotBlank() && date.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) loadCashFutureReplay(date, symbol, timeframe)
+        }
         btnReplayReset = findViewById(R.id.btnIntradayReplayReset)
         btnStart = findViewById(R.id.btnFullFnoStart)
         btnCancel = findViewById(R.id.btnFullFnoCancel)
@@ -121,10 +125,15 @@ class FullFnoBacktestActivity : AppCompatActivity() {
     private suspend fun loadNextPageInternal(id: String) {
         val page = ApiService.retrofitService.fullFnoResults(id, limit = 50, afterSequence = nextSequence)
         if (page.data.isEmpty()) { withContext(Dispatchers.Main) { btnLoadMore.isEnabled = false; tvStatus.text = "Full-F&O: no more results" }; return }
-        val text = buildString { page.data.forEach { chunk -> append("#${chunk.sequence}  ${chunk.symbol}\n"); append(chunk.result.toString()); append("\n────────────────────\n") } }
+        val text = buildString { page.data.forEach { chunk -> append("#${chunk.sequence}  ${chunk.symbol}
+"); append(chunk.result.toString()); append("
+────────────────────
+") } }
         withContext(Dispatchers.Main) {
             val combined = tvResults.text.toString() + text
-            tvResults.text = if (combined.length <= MAX_RESULT_TEXT_CHARS) combined else "[Older results trimmed from device display to keep Android memory bounded]\n\n" + combined.takeLast(MAX_RESULT_TEXT_CHARS)
+            tvResults.text = if (combined.length <= MAX_RESULT_TEXT_CHARS) combined else "[Older results trimmed from device display to keep Android memory bounded]
+
+" + combined.takeLast(MAX_RESULT_TEXT_CHARS)
             nextSequence = page.next_after_sequence
             btnLoadMore.isEnabled = page.next_after_sequence != null && page.data.isNotEmpty()
             tvStatus.text = "Full-F&O: loaded ${page.data.size} results • total ${page.total} • next ${page.next_after_sequence ?: "END"}"
@@ -145,10 +154,16 @@ class FullFnoBacktestActivity : AppCompatActivity() {
             val top = response.top
             withContext(Dispatchers.Main) {
                 tvGapCalendar.text = buildString {
-                    append(if (top == null) "$tradingDate\nNo historical OHLC data found." else "$tradingDate • TOP GAP BY HIGH−OPEN × HISTORICAL LOT\n${top.symbol} • Gap ₹${"%.2f".format(top.gap)} • Gap×Lot ₹${"%.2f".format(top.weighted_gap)} • O ₹${"%.2f".format(top.open)} H ₹${"%.2f".format(top.high)} L ₹${"%.2f".format(top.low)} C ₹${"%.2f".format(top.close)} • Lot ${"%.0f".format(top.lot_size)}")
-                    append("\n\nPRIOR HIGHER GAPS")
-                    if (prior == null || !prior.has_larger_prior_gap) append("\nNone — this selected date is at/above all earlier available gaps.")
-                    else prior.prior_larger.forEach { p -> append("\n${p.trading_date} • ${p.symbol} • Gap ₹${"%.2f".format(p.gap)} • Gap×Lot ₹${"%.2f".format(p.weighted_gap)} • O ${"%.2f".format(p.open)} H ${"%.2f".format(p.high)}") }
+                    append(if (top == null) "$tradingDate
+No historical OHLC data found." else "$tradingDate • TOP GAP BY HIGH−OPEN × HISTORICAL LOT
+${top.symbol} • Gap ₹${"%.2f".format(top.gap)} • Gap×Lot ₹${"%.2f".format(top.weighted_gap)} • O ₹${"%.2f".format(top.open)} H ₹${"%.2f".format(top.high)} L ₹${"%.2f".format(top.low)} C ₹${"%.2f".format(top.close)} • Lot ${"%.0f".format(top.lot_size)}")
+                    append("
+
+PRIOR HIGHER GAPS")
+                    if (prior == null || !prior.has_larger_prior_gap) append("
+None — this selected date is at/above all earlier available gaps.")
+                    else prior.prior_larger.forEach { p -> append("
+${p.trading_date} • ${p.symbol} • Gap ₹${"%.2f".format(p.gap)} • Gap×Lot ₹${"%.2f".format(p.weighted_gap)} • O ${"%.2f".format(p.open)} H ${"%.2f".format(p.high)}") }
                 }
                 response.data.forEach { item -> addCalendarRow(tradingDate, item) }
             }
@@ -159,7 +174,8 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(8, 6, 4, 6) }
         val details = TextView(this).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f); setTextColor(Color.WHITE); textSize = 11f
-            text = "${item.symbol}  Gap ₹${"%.2f".format(item.gap)} × Lot ${"%.0f".format(item.lot_size)} = ₹${"%.2f".format(item.weighted_gap)}\nO ${"%.2f".format(item.open)}  H ${"%.2f".format(item.high)}  L ${"%.2f".format(item.low)}  C ${"%.2f".format(item.close)}"
+            text = "${item.symbol}  Gap ₹${"%.2f".format(item.gap)} × Lot ${"%.0f".format(item.lot_size)} = ₹${"%.2f".format(item.weighted_gap)}
+O ${"%.2f".format(item.open)}  H ${"%.2f".format(item.high)}  L ${"%.2f".format(item.low)}  C ${"%.2f".format(item.close)}"
         }
         val builder = Button(this).apply { text = "BUILD"; textSize = 10f; setOnClickListener {
             strategyBuilder.bindHistoricalSelection(item.symbol, item.open, item.lot_size)
@@ -222,20 +238,35 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         val prior = runCatching { ApiService.retrofitService.priorGapComparison(tradingDate, mode = "shorting", instrumentType = "STOCK", limit = 5) }.getOrNull()
         withContext(Dispatchers.Main) {
             tvResults.text = buildString {
-                append(if (top == null) "$tradingDate\nNo historical OHLC data found." else formatGapResult("$tradingDate • TOP HIGH-BASED GAP", top.symbol, top.direction, top.gap, top.gap_percent, top.weighted_gap, top.previous_close, top.open, top.high, top.low, top.close, top.lot_size))
-                append("\n\nPRIOR HIGHER GAPS")
-                if (prior == null || !prior.has_larger_prior_gap) append("\nNone found.") else prior.prior_larger.forEach { p -> append("\n${p.trading_date} • ${p.symbol} • Gap ₹${"%.2f".format(p.gap)} • Gap×Lot ₹${"%.2f".format(p.weighted_gap)}") }
+                append(if (top == null) "$tradingDate
+No historical OHLC data found." else formatGapResult("$tradingDate • TOP HIGH-BASED GAP", top.symbol, top.direction, top.gap, top.gap_percent, top.weighted_gap, top.previous_close, top.open, top.high, top.low, top.close, top.lot_size))
+                append("
+
+PRIOR HIGHER GAPS")
+                if (prior == null || !prior.has_larger_prior_gap) append("
+None found.") else prior.prior_larger.forEach { p -> append("
+${p.trading_date} • ${p.symbol} • Gap ₹${"%.2f".format(p.gap)} • Gap×Lot ₹${"%.2f".format(p.weighted_gap)}") }
             }
         }
     }
 
     private suspend fun loadGapSearchMonth(year: Int, month: Int) {
         val result = ApiService.retrofitService.monthlyGapSearch(year, month + 1, mode = "shorting", instrumentType = "STOCK"); val top = result.result
-        withContext(Dispatchers.Main) { tvResults.text = if (top == null) "%04d-%02d\nNo historical high-based gap data found.".format(year, month + 1) else formatGapResult("%04d-%02d • MONTH TOP HIGH-BASED GAP".format(year, month + 1), top.symbol, "UP", top.gap, if (top.open != 0.0) top.gap / top.open * 100.0 else 0.0, top.gap_value, top.previous_close ?: 0.0, top.open, top.high, top.low, top.close, top.lot_size) }
+        withContext(Dispatchers.Main) { tvResults.text = if (top == null) "%04d-%02d
+No historical high-based gap data found.".format(year, month + 1) else formatGapResult("%04d-%02d • MONTH TOP HIGH-BASED GAP".format(year, month + 1), top.symbol, "UP", top.gap, if (top.open != 0.0) top.gap / top.open * 100.0 else 0.0, top.gap_value, top.previous_close ?: 0.0, top.open, top.high, top.low, top.close, top.lot_size) }
     }
 
     private fun formatGapResult(title: String, symbol: String, direction: String, gap: Double, gapPercent: Double, weightedGap: Double, previousClose: Double, open: Double, high: Double, low: Double, close: Double, lotSize: Double): String = buildString {
-        append("$title\n$symbol • $direction\nGap: ₹${"%.2f".format(gap)} (${"%.2f".format(gapPercent)}%)\nGap × Lot: ₹${"%.2f".format(weightedGap)}\nPrev Close: ₹${"%.2f".format(previousClose)}\nOpen: ₹${"%.2f".format(open)}\nHigh: ₹${"%.2f".format(high)}\nLow: ₹${"%.2f".format(low)}\nClose: ₹${"%.2f".format(close)}\nLot Size: ${"%.0f".format(lotSize)}")
+        append("$title
+$symbol • $direction
+Gap: ₹${"%.2f".format(gap)} (${"%.2f".format(gapPercent)}%)
+Gap × Lot: ₹${"%.2f".format(weightedGap)}
+Prev Close: ₹${"%.2f".format(previousClose)}
+Open: ₹${"%.2f".format(open)}
+High: ₹${"%.2f".format(high)}
+Low: ₹${"%.2f".format(low)}
+Close: ₹${"%.2f".format(close)}
+Lot Size: ${"%.0f".format(lotSize)}")
     }
 
     private fun confirmPurge() {
