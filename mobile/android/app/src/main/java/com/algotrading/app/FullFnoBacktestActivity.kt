@@ -231,7 +231,7 @@ class FullFnoBacktestActivity : AppCompatActivity() {
             setTextColor(if (expiryDay) Color.RED else Color.WHITE)
             textSize = 11f
             text = buildString {
-                if (expiryDay) append("🔴 EXPIRY DAY • NO TRADE\n")
+                append(if (expiryDay) "🔴 EXPIRY DAY • NO TRADE\n" else "🟢 TRADEABLE • HISTORICAL OPPORTUNITY\n")
                 append("#${item.rank}  ${item.symbol} • Lot ${"%.0f".format(item.lot_size)}\n")
                 append("Month Gap High ₹${"%.2f".format(item.month_gap_high)} • Gap×Lot ₹${"%.2f".format(item.gap_value)}\n")
                 append("Date ${item.gap_high_date} • Time ${item.gap_high_time}\n")
