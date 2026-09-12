@@ -158,9 +158,8 @@ class FullFnoBacktestActivity : AppCompatActivity() {
             val top = response.top
             withContext(Dispatchers.Main) {
                 tvGapCalendar.text = buildString {
-                    if (top == null) {
-                        append("$tradingDate\nNo historical Cash-Future data found.")
-                    } else {
+                    if (top == null) append("$tradingDate\nNo historical Cash-Future data found.")
+                    else {
                         val topCash = top.cash_price_at_gap_high ?: top.open
                         val topFuture = top.future_price_at_gap_high ?: top.high
                         append("$tradingDate • TOP CASH-FUTURE GAP × HISTORICAL LOT\n")
@@ -220,20 +219,43 @@ class FullFnoBacktestActivity : AppCompatActivity() {
     }
 
     private fun addMonthlyTop10Row(item: MonthlyGapTop10Item) {
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(8, 6, 4, 6) }
+        val expiryDay = item.is_expiry_day
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(8, 6, 4, 6)
+            if (expiryDay) setBackgroundColor(Color.rgb(70, 0, 0))
+        }
         val details = TextView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f); setTextColor(Color.WHITE); textSize = 11f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setTextColor(if (expiryDay) Color.RED else Color.WHITE)
+            textSize = 11f
             text = buildString {
+                if (expiryDay) append("🔴 EXPIRY DAY • NO TRADE\n")
                 append("#${item.rank}  ${item.symbol} • Lot ${"%.0f".format(item.lot_size)}\n")
                 append("Month Gap High ₹${"%.2f".format(item.month_gap_high)} • Gap×Lot ₹${"%.2f".format(item.gap_value)}\n")
                 append("Date ${item.gap_high_date} • Time ${item.gap_high_time}\n")
                 append("Cash ₹${"%.2f".format(item.cash_price_at_gap_high)} • Future ₹${"%.2f".format(item.future_price_at_gap_high)}\n")
                 append("Contract ${item.contract_month ?: "-"} • ${item.instrument_key ?: "-"}")
+                if (expiryDay) append("\nHistorical ranking retained • execution disabled")
             }
         }
-        val build = Button(this).apply { text = "BUILD"; textSize = 9f; setOnClickListener { loadMonthlySelectionIntoBuilder(item) } }
-        val graph = Button(this).apply { text = "GRAPH"; textSize = 9f; setOnClickListener { loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "CURRENT", item.contract_month, item.gap_high_timestamp) } }
-        val nextGraph = Button(this).apply { text = "NEXT"; textSize = 9f; setOnClickListener { loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "NEAR", null, null) } }
+        val build = Button(this).apply {
+            text = if (expiryDay) "NO TRADE" else "BUILD"
+            textSize = 9f
+            isEnabled = !expiryDay
+            setOnClickListener { loadMonthlySelectionIntoBuilder(item) }
+        }
+        val graph = Button(this).apply {
+            text = "GRAPH"
+            textSize = 9f
+            setOnClickListener { loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "CURRENT", item.contract_month, item.gap_high_timestamp) }
+        }
+        val nextGraph = Button(this).apply {
+            text = "NEXT"
+            textSize = 9f
+            setOnClickListener { loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "NEAR", null, null) }
+        }
         row.addView(details)
         row.addView(build, LinearLayout.LayoutParams(68, 44).apply { setMargins(2, 0, 2, 0) })
         row.addView(graph, LinearLayout.LayoutParams(70, 44).apply { setMargins(2, 0, 2, 0) })
