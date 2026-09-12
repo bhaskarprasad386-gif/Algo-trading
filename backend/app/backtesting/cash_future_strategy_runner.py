@@ -135,8 +135,9 @@ def run_cash_future_strategy(
     result exposes lazy durable views instead of retaining the full result set in RAM.
     Strategy history is full by default for compatibility. ``history_window`` can
     bound the in-memory prior-observation window for finite-lookback strategies.
-    ``checkpoint_interval`` persists runner-owned execution state to the ledger;
-    arbitrary strategy internals are deliberately not serialized.
+    ``checkpoint_interval`` persists runner-owned execution state and, when the
+    strategy explicitly implements ``checkpoint_state``, its JSON-safe state.
+    Arbitrary strategy internals are deliberately not serialized.
     """
     if not strategy_id.strip():
         raise ValueError("strategy_id is required")
@@ -203,7 +204,7 @@ def run_cash_future_strategy(
         if start_date is not None and point_date < start_date:
             _maybe_checkpoint(
                 ledger, config, run_id, event_index, point, selected_contract,
-                capital_ledger, entry, strategy_id, strategy_version,
+                capital_ledger, entry, strategy, strategy_id, strategy_version,
                 strategy_hash, data_source_fingerprint,
             )
             continue
@@ -288,14 +289,14 @@ def run_cash_future_strategy(
 
         _maybe_checkpoint(
             ledger, config, run_id, event_index, point, selected_contract,
-            capital_ledger, entry, strategy_id, strategy_version,
+            capital_ledger, entry, strategy, strategy_id, strategy_version,
             strategy_hash, data_source_fingerprint,
         )
 
     if ledger is not None and last_point is not None and config.checkpoint_interval is not None:
         _write_checkpoint(
             ledger, run_id, event_index, last_point, selected_contract,
-            capital_ledger, entry, strategy_id, strategy_version,
+            capital_ledger, entry, strategy, strategy_id, strategy_version,
             strategy_hash, data_source_fingerprint,
         )
 
@@ -332,6 +333,7 @@ def _maybe_checkpoint(
     selected_contract: str | None,
     capital_ledger: CashFutureCapitalLedger,
     entry: CashFutureHistoryPoint | None,
+    strategy,
     strategy_id: str,
     strategy_version: str,
     strategy_hash: str | None,
@@ -343,7 +345,7 @@ def _maybe_checkpoint(
         return
     _write_checkpoint(
         ledger, run_id, event_index, point, selected_contract,
-        capital_ledger, entry, strategy_id, strategy_version,
+        capital_ledger, entry, strategy, strategy_id, strategy_version,
         strategy_hash, data_source_fingerprint,
     )
 
@@ -356,6 +358,7 @@ def _write_checkpoint(
     selected_contract: str | None,
     capital_ledger: CashFutureCapitalLedger,
     entry: CashFutureHistoryPoint | None,
+    strategy,
     strategy_id: str,
     strategy_version: str,
     strategy_hash: str | None,
@@ -375,6 +378,7 @@ def _write_checkpoint(
         blocked_entries=int(capital_ledger.blocked_entries),
         open_entry=_serialize_entry(entry),
         source_fingerprint=data_source_fingerprint,
+        strategy_state=_capture_strategy_state(strategy),
     )
     from app.backtesting.ledger import Checkpoint
     ledger.checkpoint(
@@ -385,6 +389,22 @@ def _write_checkpoint(
             state=json.loads(checkpoint.to_json()),
         )
     )
+
+
+def _capture_strategy_state(strategy) -> Mapping[str, Any] | None:
+    capture = getattr(strategy, "checkpoint_state", None)
+    if capture is None:
+        return None
+    state = capture()
+    if not isinstance(state, Mapping):
+        raise ValueError("Cash-Future strategy checkpoint_state() must return a Mapping")
+    try:
+        json.dumps(state)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "Cash-Future strategy checkpoint_state() must return JSON-serializable data"
+        ) from exc
+    return dict(state)
 
 
 def _serialize_entry(entry: CashFutureHistoryPoint | None) -> Mapping[str, Any] | None:
