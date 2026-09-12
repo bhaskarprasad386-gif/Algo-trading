@@ -147,6 +147,11 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         try {
             val response = ApiService.retrofitService.dateGapRanking(tradingDate, mode = "shorting", instrumentType = "STOCK", limit = 10)
             val prior = runCatching { ApiService.retrofitService.priorGapComparison(tradingDate, mode = "shorting", instrumentType = "STOCK", limit = 5) }.getOrNull()
+            val monthHighs = response.data.associate { item ->
+                item.symbol to runCatching {
+                    ApiService.retrofitService.monthlyGapSearch(year, month, mode = "shorting", instrumentType = "STOCK", symbol = item.symbol).result
+                }.getOrNull()
+            }
             val top = response.top
             withContext(Dispatchers.Main) {
                 tvGapCalendar.text = buildString {
@@ -155,16 +160,21 @@ class FullFnoBacktestActivity : AppCompatActivity() {
                     if (prior == null || !prior.has_larger_prior_gap) append("\nNone — this selected date is at/above all earlier available gaps.")
                     else prior.prior_larger.forEach { p -> append("\n${p.trading_date} • ${p.symbol} • Gap ₹${"%.2f".format(p.gap)} • Gap×Lot ₹${"%.2f".format(p.weighted_gap)} • O ${"%.2f".format(p.open)} H ${"%.2f".format(p.high)}") }
                 }
-                response.data.forEach { item -> addCalendarRow(tradingDate, item) }
+                response.data.forEach { item -> addCalendarRow(tradingDate, item, monthHighs[item.symbol]) }
             }
         } catch (e: Exception) { withContext(Dispatchers.Main) { tvGapCalendar.text = "$tradingDate • Gap calendar failed • ${e.message ?: "API error"}" } }
     }
 
-    private fun addCalendarRow(tradingDate: String, item: DailyGapCalendarItem) {
+    private fun addCalendarRow(tradingDate: String, item: DailyGapCalendarItem, monthHigh: MonthlyGapResult?) {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(8, 6, 4, 6) }
         val details = TextView(this).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f); setTextColor(Color.WHITE); textSize = 11f
-            text = "${item.symbol}  Gap ₹${"%.2f".format(item.gap)} × Lot ${"%.0f".format(item.lot_size)} = ₹${"%.2f".format(item.weighted_gap)}\nO ${"%.2f".format(item.open)}  H ${"%.2f".format(item.high)}  L ${"%.2f".format(item.low)}  C ${"%.2f".format(item.close)}"
+            text = buildString {
+                append("${item.symbol}  Gap ₹${"%.2f".format(item.gap)} × Lot ${"%.0f".format(item.lot_size)} = ₹${"%.2f".format(item.weighted_gap)}\n")
+                append("O ${"%.2f".format(item.open)}  H ${"%.2f".format(item.high)}  L ${"%.2f".format(item.low)}  C ${"%.2f".format(item.close)}\n")
+                if (monthHigh == null) append("Month Gap High: unavailable")
+                else append("Month Gap High: ₹${"%.2f".format(monthHigh.gap)} • ${monthHigh.trading_date} • Gap×Lot ₹${"%.2f".format(monthHigh.gap_value)}")
+            }
         }
         val builder = Button(this).apply { text = "BUILD"; textSize = 10f; setOnClickListener {
             strategyBuilder.bindHistoricalSelection(item.symbol, item.open, item.lot_size)
