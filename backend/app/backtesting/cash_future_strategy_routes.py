@@ -60,6 +60,11 @@ class StrategyRunRequest(BaseModel):
     timeframe: str = "1m"
     mode: str = Field(default="CURRENT", pattern="^(CURRENT|NEAR)$")
     source: str = "angelone"
+    cash_side: str = Field(default="BUY", pattern="^(BUY|SELL)$")
+    future_side: str = Field(default="SELL", pattern="^(BUY|SELL)$")
+    stop_loss: float | None = Field(default=None, ge=0)
+    target: float | None = Field(default=None, ge=0)
+    slippage_per_share: float = Field(default=0.0, ge=0)
 
     @model_validator(mode="after")
     def validate_input_mode(self):
@@ -112,11 +117,50 @@ def _serialise_run(ledger: BacktestLedger, run_id: str) -> dict[str, Any]:
     }
 
 
+def _build_builder_strategy(request: StrategyRunRequest):
+    """Adapt the generic gap signal to the builder's selected cash/future legs.
+
+    The runner's BUY/SELL lifecycle represents opening/closing the selected spread.
+    Reversing the observed gap for SELL-cash/BUY-future makes the same deterministic
+    lifecycle calculate the opposite spread direction without duplicating the engine.
+    Stop/target are measured as absolute per-share spread P&L from the opened gap.
+    """
+    orientation = 1.0 if (request.cash_side, request.future_side) == ("BUY", "SELL") else -1.0
+    stop = request.stop_loss
+    target = request.target
+    state: dict[str, float | None] = {"entry_gap": None}
+
+    def strategy(current: CashFutureHistoryPoint, history: tuple[CashFutureHistoryPoint, ...]):
+        effective_gap = orientation * float(current.gap)
+        entry_gap = state["entry_gap"]
+        if entry_gap is None:
+            if effective_gap > 0:
+                state["entry_gap"] = effective_gap
+                return "BUY"
+            return "HOLD"
+
+        spread_profit_per_share = entry_gap - effective_gap
+        if target is not None and spread_profit_per_share >= target:
+            state["entry_gap"] = None
+            return "SELL"
+        if stop is not None and spread_profit_per_share <= -stop:
+            state["entry_gap"] = None
+            return "SELL"
+        if effective_gap <= 0:
+            state["entry_gap"] = None
+            return "SELL"
+        return "HOLD"
+
+    return strategy
+
+
 @router.post("/strategy-run")
 def strategy_run(request: StrategyRunRequest):
     strategy = _strategy_registry().get(request.strategy_id)
     if strategy is None:
         raise HTTPException(status_code=404, detail=f"unknown Cash-Future strategy: {request.strategy_id}")
+    if request.strategy_id == "gap_threshold":
+        strategy = _build_builder_strategy(request)
 
     catalog: HistoricalCatalog | None = None
     contracts: ContractMasterCatalog | None = None
@@ -141,7 +185,6 @@ def strategy_run(request: StrategyRunRequest):
                 mode=request.mode,
                 source=request.source,
             )
-            # Keep this as a generator so SQLite history remains bounded in memory.
             points = CashFutureHistoricalLoader(catalog, contracts).iter_points(selection)
 
         ledger = BacktestLedger(settings.BACKTEST_LEDGER_DB)
