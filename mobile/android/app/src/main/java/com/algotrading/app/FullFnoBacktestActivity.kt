@@ -187,8 +187,8 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         } catch(e:Exception) { withContext(Dispatchers.Main) { replayStatus.text="$tradingDate • $symbol • $timeframe replay failed • ${e.message ?: "API error"}" } }
     }
     private fun toggleReplay() {
-        if (replayView.isComplete()) { replayView.resetReplay(); btnReplayPlay.text = "PLAY 1 MIN"; updateReplayStatus(); return }
-        if (replayJob?.isActive == true) { replayJob?.cancel(); btnReplayPlay.text = "PLAY 1 MIN"; return }
+        if (replayView.isComplete()) { replayView.resetReplay(); btnReplayPlay.text = "PLAY ${replayView.replayIntervalSeconds()} SEC"; updateReplayStatus(); return }
+        if (replayJob?.isActive == true) { replayJob?.cancel(); btnReplayPlay.text = "PLAY ${replayView.replayIntervalSeconds()} SEC"; return }
         btnReplayPlay.text = "PAUSE"
         replayJob = lifecycleScope.launch {
             while (true) {
