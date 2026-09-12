@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 import json
+import math
 from typing import Any, Mapping
 
 
@@ -26,17 +27,24 @@ class CashFutureStrategyCheckpoint:
     strategy_state: Mapping[str, Any] | None = None
 
     def to_json(self) -> str:
-        return json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
+        payload = asdict(self)
+        _validate_payload_values(payload)
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
     @classmethod
     def from_json(cls, value: str) -> "CashFutureStrategyCheckpoint":
-        payload = json.loads(value)
+        try:
+            payload = json.loads(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("checkpoint payload must be valid JSON") from exc
         if not isinstance(payload, dict):
             raise ValueError("checkpoint payload must be an object")
         return cls.from_mapping(payload)
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "CashFutureStrategyCheckpoint":
+        if not isinstance(payload, Mapping):
+            raise ValueError("checkpoint payload must be an object")
         required = {
             "run_id", "strategy_id", "strategy_version", "last_timestamp",
             "selected_contract", "realized_capital", "reserved_margin",
@@ -48,6 +56,11 @@ class CashFutureStrategyCheckpoint:
         for field in ("run_id", "strategy_id", "strategy_version"):
             if not isinstance(payload[field], str) or not payload[field].strip():
                 raise ValueError(f"checkpoint {field} is required")
+        for field in ("strategy_hash", "source_fingerprint"):
+            if payload[field] is not None and not isinstance(payload[field], str):
+                raise ValueError(f"checkpoint {field} must be a string or null")
+        if payload["selected_contract"] is not None and not isinstance(payload["selected_contract"], str):
+            raise ValueError("checkpoint selected_contract must be a string or null")
         try:
             datetime.fromisoformat(str(payload["last_timestamp"]))
         except (TypeError, ValueError) as exc:
@@ -55,15 +68,32 @@ class CashFutureStrategyCheckpoint:
                 date.fromisoformat(str(payload["last_timestamp"]))
             except (TypeError, ValueError):
                 raise ValueError("checkpoint last_timestamp must be ISO date/datetime") from exc
+        _validate_number(payload["realized_capital"], "realized_capital")
+        _validate_number(payload["reserved_margin"], "reserved_margin")
+        if not isinstance(payload["blocked_entries"], int) or isinstance(payload["blocked_entries"], bool):
+            raise ValueError("checkpoint blocked_entries must be an integer")
+        if payload["blocked_entries"] < 0:
+            raise ValueError("checkpoint blocked_entries cannot be negative")
+
+        open_entry = payload.get("open_entry")
+        if open_entry is not None:
+            if not isinstance(open_entry, Mapping):
+                raise ValueError("checkpoint open_entry must be an object or null")
+            try:
+                json.dumps(dict(open_entry), sort_keys=True, allow_nan=False)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("checkpoint open_entry must be JSON-serializable") from exc
+
         strategy_state = payload.get("strategy_state")
         if strategy_state is not None:
             if not isinstance(strategy_state, Mapping):
                 raise ValueError("checkpoint strategy_state must be an object")
             try:
-                json.dumps(dict(strategy_state), sort_keys=True)
+                json.dumps(dict(strategy_state), sort_keys=True, allow_nan=False)
             except (TypeError, ValueError) as exc:
                 raise ValueError("checkpoint strategy_state must be JSON-serializable") from exc
-        return cls(
+
+        checkpoint = cls(
             run_id=payload["run_id"],
             strategy_id=payload["strategy_id"],
             strategy_version=payload["strategy_version"],
@@ -72,11 +102,45 @@ class CashFutureStrategyCheckpoint:
             selected_contract=payload["selected_contract"],
             realized_capital=float(payload["realized_capital"]),
             reserved_margin=float(payload["reserved_margin"]),
-            blocked_entries=int(payload["blocked_entries"]),
-            open_entry=payload["open_entry"],
+            blocked_entries=payload["blocked_entries"],
+            open_entry=dict(open_entry) if open_entry is not None else None,
             source_fingerprint=payload["source_fingerprint"],
             strategy_state=dict(strategy_state) if strategy_state is not None else None,
         )
+        _validate_payload_values(asdict(checkpoint))
+        return checkpoint
+
+
+def _validate_number(value: Any, field: str) -> None:
+    if isinstance(value, bool):
+        raise ValueError(f"checkpoint {field} must be a finite number")
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"checkpoint {field} must be a finite number") from exc
+    if not math.isfinite(numeric):
+        raise ValueError(f"checkpoint {field} must be a finite number")
+
+
+def _validate_payload_values(payload: Mapping[str, Any]) -> None:
+    _validate_number(payload["realized_capital"], "realized_capital")
+    _validate_number(payload["reserved_margin"], "reserved_margin")
+    if payload["blocked_entries"] < 0:
+        raise ValueError("checkpoint blocked_entries cannot be negative")
+    if payload.get("open_entry") is not None:
+        if not isinstance(payload["open_entry"], Mapping):
+            raise ValueError("checkpoint open_entry must be an object or null")
+        try:
+            json.dumps(dict(payload["open_entry"]), sort_keys=True, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("checkpoint open_entry must be JSON-serializable") from exc
+    if payload.get("strategy_state") is not None:
+        if not isinstance(payload["strategy_state"], Mapping):
+            raise ValueError("checkpoint strategy_state must be an object")
+        try:
+            json.dumps(dict(payload["strategy_state"]), sort_keys=True, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("checkpoint strategy_state must be JSON-serializable") from exc
 
 
 def validate_cash_future_checkpoint(
