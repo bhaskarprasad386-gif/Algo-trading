@@ -6,6 +6,7 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.util.AttributeSet
 import android.view.View
+import android.widget.Button
 import kotlin.math.max
 import kotlin.math.min
 
@@ -24,6 +25,29 @@ class IntradayReplayView @JvmOverloads constructor(
     private var chartIntervalMinutes = 15
     private var replayStepMinutes = 1
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        bindModeButton(R.id.btnReplay1m, 1)
+        bindModeButton(R.id.btnReplay5m, 5)
+        bindModeButton(R.id.btnReplay15m, 15)
+        bindModeButton(R.id.btnReplay30m, 30)
+        refreshModeButtons()
+    }
+
+    private fun bindModeButton(id: Int, minutes: Int) {
+        rootView.findViewById<Button>(id)?.setOnClickListener {
+            setReplayMode(minutes)
+            rootView.findViewById<Button>(R.id.btnIntradayReplayPlay)?.text = "PLAY ${minutes} MIN"
+        }
+    }
+
+    private fun refreshModeButtons() {
+        val ids = listOf(R.id.btnReplay1m to 1, R.id.btnReplay5m to 5, R.id.btnReplay15m to 15, R.id.btnReplay30m to 30)
+        ids.forEach { (id, minutes) ->
+            rootView.findViewById<Button>(id)?.alpha = if (minutes == chartIntervalMinutes) 1f else 0.62f
+        }
+    }
+
     fun setData(newPoints: List<IntradayReplayPoint>) {
         points = newPoints.sortedBy { it.timestamp }
         resetReplay()
@@ -31,10 +55,11 @@ class IntradayReplayView @JvmOverloads constructor(
 
     fun setReplayMode(minutes: Int) {
         val supported = listOf(1, 5, 15, 30)
-        val value = minutes.coerceIn(supported.first(), supported.last())
+        val value = supported.minByOrNull { kotlin.math.abs(it - minutes) } ?: 15
         chartIntervalMinutes = value
         replayStepMinutes = value
         resetReplay()
+        refreshModeButtons()
     }
 
     fun replayIntervalMinutes(): Int = replayStepMinutes
@@ -42,6 +67,7 @@ class IntradayReplayView @JvmOverloads constructor(
     fun resetReplay() {
         visibleMinutes = if (points.isEmpty()) 0 else 1
         replayTime = timeOf(points.getOrNull(visibleMinutes - 1)?.timestamp)
+        rootView.findViewById<Button>(R.id.btnIntradayReplayPlay)?.text = "PLAY ${replayStepMinutes} MIN"
         invalidate()
     }
 
@@ -50,8 +76,7 @@ class IntradayReplayView @JvmOverloads constructor(
         if (replayStepMinutes <= 1) {
             visibleMinutes += 1
         } else {
-            val current = points.getOrNull(visibleMinutes - 1)?.timestamp
-            val currentEpoch = parseEpochMinutes(current)
+            val currentEpoch = parseEpochMinutes(points.getOrNull(visibleMinutes - 1)?.timestamp)
             val target = currentEpoch + replayStepMinutes
             var next = visibleMinutes
             while (next < points.size && parseEpochMinutes(points[next].timestamp) < target) next += 1
@@ -72,7 +97,7 @@ class IntradayReplayView @JvmOverloads constructor(
         if (value == null || value.length < 16) return 0L
         val h = value.substring(11, 13).toIntOrNull() ?: return 0L
         val m = value.substring(14, 16).toIntOrNull() ?: return 0L
-        return (h * 60L) + m
+        return h * 60L + m
     }
 
     private fun sessionBucketMinutes(totalMinutes: Int): Int {
