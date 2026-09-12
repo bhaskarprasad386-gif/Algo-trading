@@ -47,6 +47,11 @@ def resume_cash_future_strategy(
     event_index = checkpoint_row.event_index if checkpoint_row is not None else 0
 
     restore = getattr(strategy, "restore_checkpoint_state", None)
+    has_strategy_state = checkpoint.strategy_state is not None
+    if has_strategy_state and restore is None:
+        raise ValueError(
+            "unsafe Cash-Future resume: checkpoint contains strategy state but strategy cannot restore it"
+        )
     if restore is not None:
         if checkpoint.strategy_state is None:
             raise ValueError("unsafe Cash-Future resume: strategy state is unavailable")
