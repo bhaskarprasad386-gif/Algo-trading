@@ -173,13 +173,23 @@ class FullFnoBacktestActivity : AppCompatActivity() {
 
     private fun loadIntradayReplay(tradingDate: String, symbol: String) = lifecycleScope.launch(Dispatchers.IO) {
         replayJob?.cancel()
-        withContext(Dispatchers.Main) { replayStatus.text = "$tradingDate • $symbol • loading 1-minute data…"; btnReplayPlay.isEnabled = false; btnReplayReset.isEnabled = false }
+        withContext(Dispatchers.Main) {
+            replayStatus.text = "$tradingDate • $symbol • loading paired Cash-Future history…"
+            btnReplayPlay.isEnabled = false; btnReplayReset.isEnabled = false
+        }
         try {
-            val response = ApiService.retrofitService.intradayReplay(tradingDate, symbol, intervalMinutes = 1)
-            withContext(Dispatchers.Main) { replayView.setData(response.series); replayStatus.text = "$tradingDate • $symbol • ${response.count} × 1m bars • chart 15m • step 1m"; btnReplayPlay.isEnabled = true; btnReplayReset.isEnabled = true; btnReplayPlay.text = "PLAY 1 MIN"; updateReplayStatus() }
-        } catch (e: Exception) { withContext(Dispatchers.Main) { replayStatus.text = "$tradingDate • $symbol • replay data failed • ${e.message ?: "API error"}" } }
+            val response = ApiService.retrofitService.cashFutureReplay(tradingDate, symbol, timeframe = "1m", mode = "CURRENT")
+            withContext(Dispatchers.Main) {
+                replayView.setCashFutureData(response.series, response.available_replay_intervals)
+                val intervals = response.available_replay_intervals.joinToString(" | ")
+                replayStatus.text = "$tradingDate • $symbol • ${response.count} paired rows • $intervals"
+                btnReplayPlay.isEnabled = true; btnReplayReset.isEnabled = true
+                btnReplayPlay.text = "PLAY 1 MIN"; updateReplayStatus()
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) { replayStatus.text = "$tradingDate • $symbol • paired replay failed • ${e.message ?: "API error"}" }
+        }
     }
-
     private fun toggleReplay() {
         if (replayView.isComplete()) { replayView.resetReplay(); btnReplayPlay.text = "PLAY 1 MIN"; updateReplayStatus(); return }
         if (replayJob?.isActive == true) { replayJob?.cancel(); btnReplayPlay.text = "PLAY 1 MIN"; return }
