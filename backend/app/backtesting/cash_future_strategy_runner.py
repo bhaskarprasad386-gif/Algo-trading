@@ -109,22 +109,12 @@ def run_cash_future_strategy(
     if not strategy_version.strip():
         raise ValueError("strategy_version is required")
     config = config or CashFutureStrategyConfig()
-    ordered = tuple(points)
-    if any(current.timestamp < previous.timestamp for previous, current in zip(ordered, ordered[1:])):
-        raise ValueError("Cash-Future strategy input must be ordered by timestamp")
-
-    contract_points = tuple(
-        point for point in ordered
-        if config.contract_month is None or point.contract_month == config.contract_month
-    )
-    contracts = {point.contract_month for point in contract_points}
-    if len(contracts) > 1:
-        raise ValueError("Cash-Future strategy input contains multiple contract months")
-
-    visible_points = tuple(
-        point for point in contract_points
-        if config.end_date is None or _point_date(point) <= config.end_date
-    )
+    # Stream the historical input. Do not materialize the complete dataset in RAM.
+    # The strategy history remains stateful because the public strategy contract
+    # intentionally exposes prior observations for indicators/warm-up.
+    point_iter = iter(points)
+    previous_timestamp: datetime | date | None = None
+    selected_contract: str | None = config.contract_month
 
     if ledger is not None:
         if not run_id or not run_id.strip():
@@ -152,12 +142,24 @@ def run_cash_future_strategy(
     capital_ledger = CashFutureCapitalLedger(config.initial_capital)
     start_date = config.start_date
 
-    for point in visible_points:
-        visible_history = tuple(history + [point])
-        raw_signal = strategy(point, visible_history)
-        history.append(point)
+    for point in point_iter:
+        point_date = _point_date(point)
+        if previous_timestamp is not None and point.timestamp < previous_timestamp:
+            raise ValueError("Cash-Future strategy input must be ordered by timestamp")
+        previous_timestamp = point.timestamp
 
-        if start_date is not None and _point_date(point) < start_date:
+        if config.end_date is not None and point_date > config.end_date:
+            break
+        if selected_contract is None:
+            selected_contract = point.contract_month
+        if point.contract_month != selected_contract:
+            continue
+
+        history.append(point)
+        visible_history = tuple(history)
+        raw_signal = strategy(point, visible_history)
+
+        if start_date is not None and point_date < start_date:
             continue
 
         action = "NONE" if raw_signal is None else str(raw_signal).upper()
@@ -190,7 +192,7 @@ def run_cash_future_strategy(
         exit_reason: str | None = None
         if action == "SELL" and entry is not None:
             exit_reason = "strategy"
-        elif entry is not None and point.expiry_date is not None and _point_date(point) >= point.expiry_date:
+        elif entry is not None and point.expiry_date is not None and point_date >= point.expiry_date:
             exit_reason = "expiry"
 
         signals.append(signal_record)
