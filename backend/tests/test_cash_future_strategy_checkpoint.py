@@ -1,6 +1,11 @@
 from datetime import datetime
 
-from app.backtesting.cash_future_strategy_checkpoint import CashFutureStrategyCheckpoint
+import pytest
+
+from app.backtesting.cash_future_strategy_checkpoint import (
+    CashFutureStrategyCheckpoint,
+    validate_cash_future_checkpoint,
+)
 
 
 def checkpoint() -> CashFutureStrategyCheckpoint:
@@ -16,6 +21,7 @@ def checkpoint() -> CashFutureStrategyCheckpoint:
         blocked_entries=2,
         open_entry={"symbol": "SBIN", "lot_size": 750},
         source_fingerprint="source-1",
+        strategy_state={"lookback": 20, "last_signal": "BUY"},
     )
 
 
@@ -31,25 +37,56 @@ def test_checkpoint_json_is_deterministic():
 
 
 def test_checkpoint_rejects_missing_state():
-    payload = checkpoint().to_json()
     import json
-
-    data = json.loads(payload)
+    data = json.loads(checkpoint().to_json())
     del data["reserved_margin"]
-    try:
+    with pytest.raises(ValueError, match="reserved_margin"):
         CashFutureStrategyCheckpoint.from_mapping(data)
-    except ValueError as exc:
-        assert "reserved_margin" in str(exc)
-    else:
-        raise AssertionError("incomplete checkpoint was accepted")
 
 
 def test_checkpoint_rejects_invalid_timestamp():
     data = checkpoint().__dict__.copy()
     data["last_timestamp"] = "not-a-timestamp"
-    try:
+    with pytest.raises(ValueError, match="last_timestamp"):
         CashFutureStrategyCheckpoint.from_mapping(data)
-    except ValueError as exc:
-        assert "last_timestamp" in str(exc)
-    else:
-        raise AssertionError("invalid timestamp was accepted")
+
+
+def test_checkpoint_rejects_strategy_state_that_is_not_json_safe():
+    data = checkpoint().__dict__.copy()
+    data["strategy_state"] = {"bad": object()}
+    with pytest.raises(ValueError, match="JSON-serializable"):
+        CashFutureStrategyCheckpoint.from_mapping(data)
+
+
+def test_resume_validation_accepts_matching_identity():
+    validate_cash_future_checkpoint(
+        checkpoint(),
+        run_id="run-1",
+        strategy_id="mean-reversion",
+        strategy_version="3",
+        strategy_hash="abc123",
+        data_source_fingerprint="source-1",
+    )
+
+
+@pytest.mark.parametrize(
+    "field, value, message",
+    [
+        ("run_id", "other-run", "run_id mismatch"),
+        ("strategy_id", "other-strategy", "strategy_id mismatch"),
+        ("strategy_version", "4", "strategy_version mismatch"),
+        ("strategy_hash", "different", "strategy_hash mismatch"),
+        ("data_source_fingerprint", "different", "source_fingerprint mismatch"),
+    ],
+)
+def test_resume_validation_rejects_identity_mismatch(field, value, message):
+    kwargs = {
+        "run_id": "run-1",
+        "strategy_id": "mean-reversion",
+        "strategy_version": "3",
+        "strategy_hash": "abc123",
+        "data_source_fingerprint": "source-1",
+    }
+    kwargs[field] = value
+    with pytest.raises(ValueError, match=message):
+        validate_cash_future_checkpoint(checkpoint(), **kwargs)
