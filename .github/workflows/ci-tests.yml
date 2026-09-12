@@ -16,6 +16,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       SECRET_KEY: ci-test-secret-key-not-for-production
       PYTHONPATH: ..
@@ -40,7 +41,7 @@ jobs:
         run: python -m compileall -q app
 
       - name: Run tests
-        run: python -m pytest -q
+        run: python -m pytest -vv -x
 
 # Backend test path includes repository root so package imports resolve from the backend working directory.
 # CI verification trigger: Cash-Future strategy-builder UI changes.
