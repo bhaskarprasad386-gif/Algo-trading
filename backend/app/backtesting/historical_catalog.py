@@ -127,38 +127,25 @@ class HistoricalCatalog:
         if end_ns is not None:
             clauses.append("timestamp_ns<=?")
             params.append(end_ns)
-        cursor = self._db.execute(
-            "SELECT source,instrument,timeframe,timestamp_ns,payload_json,sequence FROM data_catalog WHERE "
-            + " AND ".join(clauses)
-            + " ORDER BY timestamp_ns, sequence",
-            params,
-        )
+        cursor = self._db.execute("SELECT source,instrument,timeframe,timestamp_ns,payload_json,sequence FROM data_catalog WHERE " + " AND ".join(clauses) + " ORDER BY timestamp_ns, sequence", params)
         for row in cursor:
             yield HistoricalRecord(row[0], row[1], row[2], row[3], json.loads(row[4]), row[5])
 
-    def events(self, *, source: str, instrument: str, timeframe: str = "tick", start_ns: int | None = None, end_ns: int | None = None) -> tuple[HistoricalRecord, ...]:
-        """Retrieve raw events ordered by timestamp and sequence, optionally by inclusive range."""
-        if not is_event_timeframe(timeframe):
-            raise ValueError("events requires an event timeframe")
-        if start_ns is not None and start_ns < 0:
-            raise ValueError("start_ns cannot be negative")
-        if end_ns is not None and (end_ns < 0 or (start_ns is not None and end_ns < start_ns)):
-            raise ValueError("invalid event timestamp range")
-        clauses = ["source=?", "instrument=?", "timeframe=?"]
-        params: list[Any] = [source, instrument, timeframe]
+    def instruments(self, *, source: str, timeframe: str, start_ns: int | None = None, end_ns: int | None = None, prefix: str | None = None) -> tuple[str, ...]:
+        """Return distinct durable instruments observed in an optional timestamp range."""
+        clauses = ["source=?", "timeframe=?"]
+        params: list[Any] = [source, timeframe]
         if start_ns is not None:
             clauses.append("timestamp_ns>=?")
             params.append(start_ns)
         if end_ns is not None:
             clauses.append("timestamp_ns<=?")
             params.append(end_ns)
-        rows = self._db.execute("SELECT source,instrument,timeframe,timestamp_ns,payload_json,sequence FROM data_catalog WHERE " + " AND ".join(clauses) + " ORDER BY timestamp_ns, sequence", params).fetchall()
-        return tuple(HistoricalRecord(r[0], r[1], r[2], r[3], json.loads(r[4]), r[5]) for r in rows)
-
-    def event_count(self, *, source: str, instrument: str, timeframe: str = "tick") -> int:
-        if not is_event_timeframe(timeframe):
-            raise ValueError("event_count requires an event timeframe")
-        return self.count(source=source, instrument=instrument, timeframe=timeframe)
+        if prefix is not None:
+            clauses.append("instrument LIKE ?")
+            params.append(prefix + "%")
+        rows = self._db.execute("SELECT DISTINCT instrument FROM data_catalog WHERE " + " AND ".join(clauses) + " ORDER BY instrument", params).fetchall()
+        return tuple(str(row[0]) for row in rows)
 
     def records_by_instruments(self, *, source: str, instruments: Iterable[str], timeframe: str) -> dict[str, tuple[HistoricalRecord, ...]]:
         instruments = tuple(dict.fromkeys(instruments))
