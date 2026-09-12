@@ -60,6 +60,7 @@ def test_acquisition_result_queue_is_materialized_without_rebuilding_instruments
 
     assert result.materialized_rows == 1
     assert result.materialized_underlyings == ("ABC",)
+    assert result.materialized_requests == (("NFO:101:ABC26OCT", start_ns, start_ns),)
     assert len(rows) == 1
     assert rows[0].symbol == "ABC"
     assert rows[0].contract_month == "2026-10"
@@ -108,6 +109,31 @@ def test_pipeline_readiness_requires_every_acquisition_complete_and_materialized
         blocked_empty.require_backtest_ready()
     with pytest.raises(LookupError, match="backtest blocked"):
         blocked_partial.require_backtest_ready()
+
+
+def test_pipeline_readiness_blocks_partial_materialization_within_one_underlying():
+    start_ns = 1_000
+    end_ns = 3_000
+    queue = SimpleNamespace(
+        spot=SimpleNamespace(instrument="NSE:11:ABC-EQ"),
+        futures=(
+            SimpleNamespace(instrument="NFO:101:ABC26OCT", start_ns=start_ns, end_ns=end_ns),
+            SimpleNamespace(instrument="NFO:102:ABC26NOV", start_ns=start_ns, end_ns=end_ns),
+        ),
+        all_requests=(),
+    )
+    acquisition = SimpleNamespace(results=(SimpleNamespace(coverage=SimpleNamespace(complete=True), queue=queue),))
+
+    partial = CashFutureUniversePipelineResult(
+        acquisition,
+        materialized_rows=10,
+        materialized_underlyings=("ABC",),
+        materialized_requests=(("NFO:101:ABC26OCT", start_ns, end_ns),),
+    )
+
+    assert partial.backtest_ready is False
+    with pytest.raises(LookupError, match="backtest blocked"):
+        partial.require_backtest_ready()
 
 
 def test_pipeline_manifest_gate_blocks_missing_requested_instrument(tmp_path):
