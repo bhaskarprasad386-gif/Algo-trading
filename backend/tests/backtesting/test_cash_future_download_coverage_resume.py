@@ -7,6 +7,7 @@ from app.backtesting.historical_download_status import (
     DownloadChunkStatus,
     HistoricalDownloadStatusStore,
 )
+from app.backtesting.session_gap_planner import SessionWindow
 
 
 def _seed_job(store: HistoricalDownloadStatusStore) -> None:
@@ -36,7 +37,7 @@ def _seed_job(store: HistoricalDownloadStatusStore) -> None:
             start_ns=60, end_ns=120, status="FAILED", attempts=1,
             expected_timestamps=2, actual_timestamps=1, missing_timestamps=1,
             first_missing_ns=120,
-        )
+    )
     )
     store.upsert_chunk(
         DownloadChunkStatus(
@@ -85,6 +86,7 @@ def test_resume_plan_reuses_only_incomplete_chunk_identity_and_range(tmp_path):
             object(),
             source=type("Source", (), {"source_name": "angelonehistoricalsource"})(),
             status_store=store,
+            session_windows=lambda request: (SessionWindow(request.start_ns, request.end_ns),),
         )
         plan, sequences = service._resume_plan("job-1")
         assert sequences == (1,)
