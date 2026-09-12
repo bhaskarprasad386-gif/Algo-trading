@@ -23,7 +23,12 @@ def _checkpoint() -> CashFutureStrategyCheckpoint:
     )
 
 
-def _ledger() -> BacktestLedger:
+def _ledger(
+    *,
+    event_index: int = 10,
+    timestamp_ns: int = 1_000,
+    state: dict | None = None,
+) -> BacktestLedger:
     ledger = BacktestLedger(":memory:")
     ledger.start_run(
         "run-1",
@@ -37,9 +42,9 @@ def _ledger() -> BacktestLedger:
     ledger.checkpoint(
         Checkpoint(
             run_id="run-1",
-            event_index=10,
-            timestamp_ns=checkpoint.last_timestamp and 1000,
-            state={"run_id": "run-1", **checkpoint.__dict__},
+            event_index=event_index,
+            timestamp_ns=timestamp_ns,
+            state=state or {"run_id": "run-1", **checkpoint.__dict__},
         )
     )
     return ledger
@@ -97,5 +102,52 @@ def test_load_validated_checkpoint_requires_checkpoint():
             strategy_id="mean-reversion",
             strategy_version="3",
             strategy_hash=None,
+            data_source_fingerprint="source-1",
+        )
+
+
+@pytest.mark.parametrize(
+    ("event_index", "timestamp_ns", "message"),
+    [
+        (0, 1_000, "event_index must be positive"),
+        (-1, 1_000, "event_index must be positive"),
+        (10, -1, "checkpoint timestamp is invalid"),
+    ],
+)
+def test_load_validated_checkpoint_rejects_unsafe_checkpoint_metadata(
+    event_index, timestamp_ns, message
+):
+    with pytest.raises(ValueError, match=message):
+        load_validated_cash_future_checkpoint(
+            _ledger(event_index=event_index, timestamp_ns=timestamp_ns),
+            run_id="run-1",
+            strategy_id="mean-reversion",
+            strategy_version="3",
+            strategy_hash="abc123",
+            data_source_fingerprint="source-1",
+        )
+
+
+def test_load_validated_checkpoint_rejects_corrupt_state_payload():
+    corrupt_state = {
+        "run_id": "run-1",
+        "strategy_id": "mean-reversion",
+        "strategy_version": "3",
+        "strategy_hash": "abc123",
+        "last_timestamp": "not-a-timestamp",
+        "selected_contract": "SEP",
+        "realized_capital": 10000500.0,
+        "reserved_margin": 25000.0,
+        "blocked_entries": 2,
+        "open_entry": None,
+        "source_fingerprint": "source-1",
+    }
+    with pytest.raises(ValueError, match="invalid ISO timestamp"):
+        load_validated_cash_future_checkpoint(
+            _ledger(state=corrupt_state),
+            run_id="run-1",
+            strategy_id="mean-reversion",
+            strategy_version="3",
+            strategy_hash="abc123",
             data_source_fingerprint="source-1",
         )
