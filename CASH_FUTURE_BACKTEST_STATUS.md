@@ -38,13 +38,16 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [x] Explicit rollover-boundary position policy: close/reopen or carry; never mix expiry-series prices.
 
 ### P2 — Production historical data pipeline
-- [ ] Connect production Cash-Future historical downloader end-to-end to the backtest runner.
-- [ ] Require verified coverage manifests before a historical run is considered complete.
-- [ ] Durable full-F&O Cash-Future jobs: progress, cancel, resume, idempotent retry, bounded resources.
+- [x] Connect durable Cash-Future acquisition/materialization to the historical backtest readiness path.
+- [x] Require verified coverage manifests before a historical run is considered complete.
+- [x] Durable full-F&O Cash-Future jobs: progress, cancel, resume, idempotent retry, bounded resources.
 - [ ] Validate 6-month and 1-year runs where genuine data exists, without whole-history RAM materialization.
 - [x] Data-quality gates: duplicate timestamps, missing sessions, stale/crossed quotes, impossible OHLC, incomplete contracts.
 - [ ] Source → bars → strategy signals → fills → costs → P&L → Results reconciliation.
 - [ ] Preserve genuine finer-resolution data when available; never manufacture millisecond data from minute candles.
+- [x] Persisted DB reconciliation checks that requested historical ranges are actually covered at expected session cadence.
+- [x] Session-aware reconciliation does not treat weekends/market-closed boundaries as missing bars.
+- [x] Historical readiness blocks wrong-range, interior-gap, incomplete-manifest and non-materialized requests.
 
 ### P3 — Results / Calendar / Replay completion
 - [ ] Make date/month Results use the same canonical Cash-Future contract identity + point-in-time lot path as the backtest engine.
@@ -107,6 +110,9 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [x] Rollover-boundary policy closes the old contract only on its own genuine observation or rejects the boundary; expiry-series prices are never mixed.
 - [x] Streaming Cash-Future data-quality audit and persisted-backtest quality gate.
 - [x] Quality tests for clean data, crossed quotes, negative depth, duplicate identity and gate failure.
+- [x] Persisted historical-range reconciliation against actual materialized Cash-Future rows.
+- [x] Session-aware interior-gap reconciliation without bridging weekends or closed-market periods.
+- [x] Regression coverage for wrong historical range, interior manifest gaps, split/adjacent coverage, and persisted rows that do not span requested endpoints.
 
 ## Locked rules
 1. Shorting gap for Results = `High - Open`.
@@ -128,9 +134,9 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 17. Historical forced liquidation may only use a genuine price observation at the liquidation timestamp; never liquidate another position using its stale last price.
 
 ## Current checkpoint
-**Next implementation = P2: production Cash-Future historical data pipeline — connect the durable downloader/catalog/coverage system end-to-end to historical Cash-Future backtest execution, with verified coverage manifests, bounded/resumable jobs, and no whole-history RAM materialization.**
+**Next implementation = P0: historical Cash-Future strategy application/execution — select a historical date/date-range and strategy, stream only the requested Cash + Future observations, evaluate strictly point-in-time, normalize BUY/SELL actions, and execute them through the existing Cash-Future portfolio/executable-price model with deterministic persisted results.**
 
-The next layer must preserve all P0/P1 execution behavior, point-in-time lot/contract identity, genuine liquidity rules, rollover safety, ₹1 crore portfolio accounting, and no-look-ahead evaluation.
+The next layer must preserve all P1 execution behavior, point-in-time lot/contract identity, genuine liquidity rules, rollover safety, ₹1 crore portfolio accounting, and no-look-ahead evaluation.
 
 ## Completion gate
 Cash-Future is complete only when every applicable P0–P5 item is implemented and tested, or explicitly documented as unavailable because genuine historical data does not exist.
