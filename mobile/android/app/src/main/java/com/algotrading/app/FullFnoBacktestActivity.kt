@@ -35,6 +35,7 @@ class FullFnoBacktestActivity : AppCompatActivity() {
     private lateinit var btnLoadMore: Button
     private lateinit var btnPurge: Button
     private lateinit var btnGapCalendar: Button
+    private lateinit var strategyBuilder: CashFutureStrategyBuilderView
     private var jobId: String? = null
     private var nextSequence: Int? = null
     private var loading = false
@@ -60,6 +61,8 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         btnLoadMore = findViewById(R.id.btnFullFnoLoadMore)
         btnPurge = findViewById(R.id.btnFullFnoPurge)
         btnGapCalendar = findViewById(R.id.btnGapCalendar)
+        btnGapResultSearch.setOnClickListener { searchGapResults() }
+        strategyBuilder = findViewById(R.id.cashFutureStrategyBuilder)
         btnLoadMore.isEnabled = false
         btnCancel.isEnabled = false
         btnPurge.isEnabled = false
@@ -157,8 +160,15 @@ class FullFnoBacktestActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f); setTextColor(Color.WHITE); textSize = 11f
             text = "${item.symbol}  Gap ₹${"%.2f".format(item.gap)} × Lot ${"%.0f".format(item.lot_size)} = ₹${"%.2f".format(item.weighted_gap)}\nO ${"%.2f".format(item.open)}  H ${"%.2f".format(item.high)}  L ${"%.2f".format(item.low)}  C ${"%.2f".format(item.close)}"
         }
+        val builder = Button(this).apply { text = "BUILD"; textSize = 10f; setOnClickListener {
+            strategyBuilder.bindHistoricalSelection(item.symbol, item.open, item.lot_size)
+            tvStatus.text = "Cash-Future strategy loaded • ${item.symbol} • ${tradingDate} • lot ${item.lot_size.toLong()} • qty ${item.lot_size.toLong()}"
+        } }
         val graph = Button(this).apply { text = "GRAPH"; textSize = 10f; setOnClickListener { loadIntradayReplay(tradingDate, item.symbol) } }
-        row.addView(details); row.addView(graph, LinearLayout.LayoutParams(90, 44)); gapCalendarRows.addView(row)
+        row.addView(details)
+        row.addView(builder, LinearLayout.LayoutParams(86, 44).apply { setMargins(4, 0, 4, 0) })
+        row.addView(graph, LinearLayout.LayoutParams(82, 44))
+        gapCalendarRows.addView(row)
     }
 
     private fun loadIntradayReplay(tradingDate: String, symbol: String) = lifecycleScope.launch(Dispatchers.IO) {
