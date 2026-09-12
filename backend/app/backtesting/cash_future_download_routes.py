@@ -1,4 +1,4 @@
-"""Start and resume endpoints for long-running Cash-Future historical downloads."""
+"""Start, inspect, repair and resume endpoints for Cash-Future downloads."""
 
 from __future__ import annotations
 
@@ -104,6 +104,57 @@ class CashFutureDownloadManager:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
+    def coverage(self, job_id: str) -> dict:
+        job = self.status_store.job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="download job not found")
+        chunks = self.status_store.chunks(job_id)
+        expected = sum(chunk.expected_timestamps for chunk in chunks)
+        actual = sum(min(chunk.actual_timestamps, chunk.expected_timestamps) for chunk in chunks)
+        missing = sum(chunk.missing_timestamps for chunk in chunks)
+        incomplete = [chunk for chunk in chunks if chunk.status not in {"COMPLETE", "SKIPPED"} or chunk.missing_timestamps > 0]
+        return {
+            "job_id": job_id,
+            "status": job.status,
+            "timeframe": job.timeframe,
+            "expected_timestamps": expected,
+            "actual_timestamps": actual,
+            "missing_timestamps": missing,
+            "coverage_pct": round((actual / expected) * 100, 2) if expected else 100.0,
+            "chunks": len(chunks),
+            "incomplete_chunks": len(incomplete),
+        }
+
+    def gaps(self, job_id: str) -> dict:
+        job = self.status_store.job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="download job not found")
+        gaps = [
+            {
+                "sequence": chunk.sequence,
+                "instrument": chunk.instrument,
+                "start_ns": chunk.start_ns,
+                "end_ns": chunk.end_ns,
+                "status": chunk.status,
+                "expected_timestamps": chunk.expected_timestamps,
+                "actual_timestamps": chunk.actual_timestamps,
+                "missing_timestamps": chunk.missing_timestamps,
+                "first_missing_ns": chunk.first_missing_ns,
+            }
+            for chunk in self.status_store.incomplete_chunks(job_id)
+        ]
+        return {"job_id": job_id, "status": job.status, "gaps": gaps, "count": len(gaps)}
+
+    def repair(self, job_id: str, *, retry_attempts: int = 3) -> None:
+        job = self.status_store.job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="download job not found")
+        if job.status == "RUNNING":
+            raise HTTPException(status_code=409, detail="download job is already running")
+        if not self.status_store.incomplete_chunks(job_id):
+            raise HTTPException(status_code=409, detail="download job has no gaps to repair")
+        self.resume(job_id, retry_attempts=retry_attempts)
+
     def close(self) -> None:
         self._tasks.clear()
 
@@ -114,6 +165,21 @@ def create_cash_future_download_router(manager: CashFutureDownloadManager) -> AP
     @router.post("/cash-future/downloads", status_code=202)
     def start_cash_future_download(request: CashFutureDownloadStartRequest) -> dict:
         return {"job_id": manager.start(request), "status": "QUEUED"}
+
+    @router.get("/cash-future/downloads/{job_id}/coverage")
+    def cash_future_download_coverage(job_id: str) -> dict:
+        return manager.coverage(job_id)
+
+    @router.get("/cash-future/downloads/{job_id}/gaps")
+    def cash_future_download_gaps(job_id: str) -> dict:
+        return manager.gaps(job_id)
+
+    @router.post("/cash-future/downloads/{job_id}/repair", status_code=202)
+    def repair_cash_future_download(job_id: str, retry_attempts: int = 3) -> dict:
+        if retry_attempts < 1 or retry_attempts > 10:
+            raise HTTPException(status_code=422, detail="retry_attempts must be 1..10")
+        manager.repair(job_id, retry_attempts=retry_attempts)
+        return {"job_id": job_id, "status": "QUEUED", "repaired": True}
 
     @router.post("/cash-future/downloads/{job_id}/resume", status_code=202)
     def resume_cash_future_download(job_id: str, retry_attempts: int = 3) -> dict:
