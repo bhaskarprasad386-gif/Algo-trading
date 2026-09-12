@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from math import sqrt
 from typing import Callable
 
-from app.backtesting.engine import BacktestConfig, BacktestResult, BacktestTrade, EventContext, EventStrategy, _build_trade, _calculate_cagr_from_timestamps
+from app.backtesting.engine import BacktestConfig, BacktestResult, BacktestTrade, EventContext, EventStrategy, _build_trade
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 
 
@@ -126,6 +127,17 @@ def run_events_incremental(
         max_drawdown=max_drawdown,
         cagr=cagr,
     )
+
+
+def _calculate_cagr_from_timestamps(start: object | None, end: object | None, initial_capital: float, final_capital: float) -> float:
+    if start is None or end is None or final_capital <= 0:
+        return 0.0
+    if not isinstance(start, (datetime, date)) or not isinstance(end, (datetime, date)):
+        return 0.0
+    if isinstance(start, datetime) != isinstance(end, datetime):
+        return 0.0
+    years = (end - start).total_seconds() / (365.25 * 24 * 60 * 60) if isinstance(start, datetime) else (end - start).days / 365.25
+    return (final_capital / initial_capital) ** (1.0 / years) - 1.0 if years > 0 else 0.0
 
 
 def run_catalog_events_incremental(
