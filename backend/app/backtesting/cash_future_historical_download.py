@@ -155,14 +155,30 @@ class CashFutureHistoricalDownloadService:
         return tuple(runs)
 
     def _missing_requests_for_chunk(self, job, chunk) -> tuple[HistoricalFetchRequest, ...]:
-        """Re-fetch the durable chunk boundary for any incomplete chunk.
-
-        The catalog is idempotent, so re-fetching the whole incomplete chunk is
-        safe and preserves the durable chunk identity/range. This also repairs
-        boundary timestamps that may fall outside a session's expected-timestamp
-        set while avoiding creation of synthetic sub-chunks during resume.
-        """
-        return (HistoricalFetchRequest(self.source_name, chunk.instrument, job.timeframe, chunk.start_ns, chunk.end_ns),)
+        """Build minimal provider requests for the exact missing timestamps in a parent chunk."""
+        request = HistoricalFetchRequest(self.source_name, chunk.instrument, job.timeframe, chunk.start_ns, chunk.end_ns)
+        if job.timeframe == "1d":
+            expected = set(nse_daily_timestamps(request))
+            if not expected:
+                return ()
+            actual = set(self.catalog.timestamps(source=request.source, instrument=request.instrument, timeframe=request.timeframe, start_ns=min(expected), end_ns=max(expected)))
+            interval_ns = _TIMEFRAME_INTERVAL_NS["1d"]
+        else:
+            interval_ns = _TIMEFRAME_INTERVAL_NS.get(job.timeframe)
+            if interval_ns is None:
+                raise ValueError(f"unsupported timeframe for targeted repair: {job.timeframe}")
+            sessions = tuple(self.session_windows(request))
+            if not sessions:
+                return (request,)
+            expected = self.completeness.expected_timestamps(sessions, interval_ns)
+            if not expected:
+                return ()
+            actual = set(self.catalog.timestamps(source=request.source, instrument=request.instrument, timeframe=request.timeframe, start_ns=min(expected), end_ns=max(expected)))
+        missing = expected - actual
+        return tuple(
+            HistoricalFetchRequest(self.source_name, chunk.instrument, job.timeframe, start_ns, end_ns)
+            for start_ns, end_ns in self._missing_runs(missing, interval_ns)
+        )
 
     def _register_plan(self, job_id: str, plans: tuple[HistoricalSyncPlan, ...]) -> None:
         if self.status_store is None: return
