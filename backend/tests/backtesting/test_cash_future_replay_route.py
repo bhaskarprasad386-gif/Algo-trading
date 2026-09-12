@@ -7,11 +7,15 @@ STRATEGY_PREFIX = "/api/v1/backtesting/cash-future"
 def _flatten_routes(routes):
     flattened = []
     for route in routes:
+        if hasattr(route, "path"):
+            flattened.append(route)
+            continue
         nested = getattr(route, "routes", None)
+        if nested is None:
+            nested_router = getattr(route, "router", None)
+            nested = getattr(nested_router, "routes", None)
         if nested is not None:
             flattened.extend(_flatten_routes(nested))
-        else:
-            flattened.append(route)
     return flattened
 
 
