@@ -1,0 +1,71 @@
+name: One-time Cash-Future top10 margin wiring
+
+on:
+  push:
+    paths:
+      - .github/workflows/one-time-margin-top10.yml
+  workflow_dispatch:
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch margin fields
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('backend/app/backtesting/monthly_results_routes.py')
+          s = p.read_text()
+          old = '                "future_price_at_gap_high": top.future_price,\n                "expiry_date": top.expiry_date,'
+          new = '                "future_price_at_gap_high": top.future_price,\n                "margin_required": top.margin_required,\n                "expiry_date": top.expiry_date,'
+          assert old in s and '"margin_required": top.margin_required' not in s
+          s = s.replace(old, new, 1)
+          old = '            "future_price_at_gap_high": item["future_price_at_gap_high"],\n            "contract_month": item["contract_month"],'
+          new = '            "future_price_at_gap_high": item["future_price_at_gap_high"],\n            "margin_required": item.get("margin_required", 0.0),\n            "contract_month": item["contract_month"],'
+          assert old in s
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          p = Path('mobile/android/app/src/main/java/com/algotrading/app/ApiService.kt')
+          s = p.read_text()
+          old = 'val future_price_at_gap_high: Double = 0.0, val contract_month: String? = null, val instrument_key: String? = null, val expiry_date: String? = null, val is_expiry_day: Boolean = false)'
+          new = 'val future_price_at_gap_high: Double = 0.0, val margin_required: Double = 0.0, val contract_month: String? = null, val instrument_key: String? = null, val expiry_date: String? = null, val is_expiry_day: Boolean = false)'
+          assert old in s and 'val margin_required: Double = 0.0, val contract_month' not in s
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          p = Path('mobile/android/app/src/main/java/com/algotrading/app/FullFnoBacktestActivity.kt')
+          s = p.read_text()
+          old = '            append("Cash ₹${"%.2f".format(item.cash_price_at_gap_high)} • Future ₹${"%.2f".format(item.future_price_at_gap_high)}\\n")\n            append("Contract ${item.contract_month ?: "-"} • ${item.instrument_key ?: "-"}")'
+          new = '            append("Cash ₹${"%.2f".format(item.cash_price_at_gap_high)} • Future ₹${"%.2f".format(item.future_price_at_gap_high)}\\n")\n            append("Historical Margin ₹${"%.2f".format(item.margin_required)}\\n")\n            append("Contract ${item.contract_month ?: "-"} • ${item.instrument_key ?: "-"}")'
+          assert old in s and 'Historical Margin' not in s
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          p = Path('backend/tests/test_monthly_results_routes_cash_future.py')
+          s = p.read_text()
+          s = s.replace('            "future_price_at_gap_high": 1022.0,\n', '            "future_price_at_gap_high": 1022.0,\n            "margin_required": 150000.0,\n', 1)
+          s = s.replace('            "future_price_at_gap_high": 2022.0,\n', '            "future_price_at_gap_high": 2022.0,\n            "margin_required": 250000.0,\n', 1)
+          marker = '    assert result["data"][0]["gap_value"] == 12000.0\n'
+          insert = marker + '    assert result["data"][0]["margin_required"] == 250000.0\n'
+          assert marker in s and 'margin_required"] == 250000.0' not in s
+          s = s.replace(marker, insert, 1)
+          p.write_text(s)
+          PY
+      - name: Verify targeted tests and Android compile
+        run: |
+          cd backend
+          python -m pytest tests/test_monthly_results_routes_cash_future.py -q
+          cd ../mobile/android
+          ./gradlew :app:compileDebugKotlin --no-daemon
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend/app/backtesting/monthly_results_routes.py backend/tests/test_monthly_results_routes_cash_future.py mobile/android/app/src/main/java/com/algotrading/app/ApiService.kt mobile/android/app/src/main/java/com/algotrading/app/FullFnoBacktestActivity.kt
+          git commit -m 'Show historical margin in Cash-Future monthly top10'
+          git push origin main
