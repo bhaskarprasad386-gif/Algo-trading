@@ -5,6 +5,8 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Typeface
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.AttributeSet
 import android.view.Gravity
 import android.widget.Button
@@ -22,10 +24,10 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
     private val symbol = field("Selected stock (e.g. SBIN)")
     private val cashPrice = field("Cash entry price")
     private val cashLots = field("Cash lots", integer = true).apply { setText("1") }
-    private val cashQty = field("Cash quantity", integer = true).apply { setText("1") }
+    private val cashQty = quantityField("Cash quantity • auto")
     private val futurePrice = field("Future entry price")
     private val futureLots = field("Future lots", integer = true).apply { setText("1") }
-    private val futureQty = field("Future quantity", integer = true).apply { setText("1") }
+    private val futureQty = quantityField("Future quantity • auto")
     private val lotSize = field("Historical lot size", integer = true)
     private val capital = field("Capital ₹").apply { setText("10000000") }
     private val stopLoss = field("Stop-loss ₹")
@@ -56,6 +58,7 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
     private var cashSide = "BUY"
     private var futureSide = "SELL"
     private var futureMode = "CURRENT FUTURE"
+    private var syncingQuantities = false
 
     init {
         orientation = VERTICAL
@@ -67,7 +70,7 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
             gravity = Gravity.CENTER_VERTICAL
         }, LayoutParams(-1, 40))
         addView(TextView(context).apply {
-            text = "CASH BUY / SELL  +  FUTURE BUY / SELL  •  LOT + QUANTITY"
+            text = "CASH BUY / SELL  +  FUTURE BUY / SELL • LOT + QUANTITY"
             setTextColor(0xFF8FA7C4.toInt()); textSize = 10f
         }, LayoutParams(-1, 28))
         addRow(symbol, lotSize)
@@ -82,7 +85,7 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         addView(cashSideRow)
         addRow(cashPrice, cashLots)
         addView(TextView(context).apply {
-            text = "CASH QUANTITY • exact shares / units"
+            text = "CASH QUANTITY • historical lot size × cash lots"
             setTextColor(0xFF61B0FF.toInt()); textSize = 10f
         }, LayoutParams(-1, 24))
         addView(cashQty, LayoutParams(-1, 50).apply { setMargins(0, 2, 0, 4) })
@@ -98,7 +101,7 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         addView(futureSideRow)
         addRow(futurePrice, futureLots)
         addView(TextView(context).apply {
-            text = "FUTURE QUANTITY • exact contracts / units"
+            text = "FUTURE QUANTITY • historical lot size × future lots"
             setTextColor(0xFFB78CFF.toInt()); textSize = 10f
         }, LayoutParams(-1, 24))
         addView(futureQty, LayoutParams(-1, 50).apply { setMargins(0, 2, 0, 4) })
@@ -119,9 +122,20 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         futureSellButton.setOnClickListener { selectFutureSide("SELL") }
         currentButton.setOnClickListener { selectFutureMode("CURRENT FUTURE") }
         nearButton.setOnClickListener { selectFutureMode("NEAR FUTURE") }
+        val quantityWatcher = object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                if (!syncingQuantities) syncQuantitiesFromLots()
+            }
+            override fun afterTextChanged(s: Editable?) = Unit
+        }
+        cashLots.addTextChangedListener(quantityWatcher)
+        futureLots.addTextChangedListener(quantityWatcher)
+        lotSize.addTextChangedListener(quantityWatcher)
         selectCashSide(cashSide)
         selectFutureSide(futureSide)
         selectFutureMode(futureMode)
+        syncQuantitiesFromLots()
     }
 
     private fun field(hintText: String, integer: Boolean = false): EditText = EditText(context).apply {
@@ -129,6 +143,13 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         inputType = if (integer) 2 else 2 or 8192
         setTextColor(0xFFE8F1FF.toInt()); setHintTextColor(0xFF7890AD.toInt())
         setPadding(12, 0, 12, 0); setBackgroundColor(0xFF14253A.toInt())
+    }
+
+    private fun quantityField(hintText: String): EditText = field(hintText, integer = true).apply {
+        isFocusable = false
+        isClickable = false
+        isLongClickable = false
+        alpha = 0.92f
     }
 
     private fun terminalButton(label: String, background: Int): Button = Button(context).apply {
@@ -156,19 +177,41 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         contractLabel.text = "FUTURE LEG • $mode • $futureSide"
     }
 
+    /** Keeps both leg quantities as exact historical-lot multiples. */
+    private fun syncQuantitiesFromLots() {
+        if (syncingQuantities) return
+        val lot = lotSize.text.toString().trim().toDoubleOrNull()
+        val cashLotCount = cashLots.text.toString().trim().toDoubleOrNull()
+        val futureLotCount = futureLots.text.toString().trim().toDoubleOrNull()
+        if (lot == null || lot <= 0.0) {
+            syncingQuantities = true
+            cashQty.setText("")
+            futureQty.setText("")
+            syncingQuantities = false
+            return
+        }
+        syncingQuantities = true
+        if (cashLotCount != null && cashLotCount > 0.0) {
+            cashQty.setText((lot * cashLotCount).toLong().toString())
+        }
+        if (futureLotCount != null && futureLotCount > 0.0) {
+            futureQty.setText((lot * futureLotCount).toLong().toString())
+        }
+        syncingQuantities = false
+    }
+
     /** Pre-fills the builder from a selected historical calendar/ranking row. */
     fun bindHistoricalSelection(selectedSymbol: String, historicalCash: Double, historicalLot: Double) {
         symbol.setText(selectedSymbol)
         lotSize.setText("%.0f".format(historicalLot))
         cashPrice.setText("%.2f".format(historicalCash))
         cashLots.setText("1")
-        cashQty.setText("%.0f".format(historicalLot))
         futureLots.setText("1")
-        futureQty.setText("%.0f".format(historicalLot))
         selectCashSide("BUY")
         selectFutureSide("SELL")
+        syncQuantitiesFromLots()
         futurePrice.requestFocus()
-        summary.text = "$selectedSymbol • historical selection loaded • Cash BUY + Future SELL • enter selected contract price"
+        summary.text = "$selectedSymbol • historical selection loaded • Cash BUY + Future SELL • lot ${historicalLot.toLong()} • 1 lot = ${historicalLot.toLong()} qty"
     }
 
     private fun addRow(left: EditText, right: EditText) {
@@ -188,8 +231,8 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         val futureLotsValue = max(0.0, number(futureLots))
         val cashQuantity = max(0.0, number(cashQty))
         val futureQuantity = max(0.0, number(futureQty))
-        val cashUnits = if (cashQuantity > 0) cashQuantity else lot * cashLotsValue
-        val futureUnits = if (futureQuantity > 0) futureQuantity else lot * futureLotsValue
+        val cashUnits = if (cashQuantity > 0.0) cashQuantity else lot * cashLotsValue
+        val futureUnits = if (futureQuantity > 0.0) futureQuantity else lot * futureLotsValue
         val capitalValue = number(capital)
         val stop = number(stopLoss)
         val tgt = number(target)
