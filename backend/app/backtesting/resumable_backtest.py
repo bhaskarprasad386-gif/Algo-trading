@@ -72,13 +72,13 @@ class ResumableBacktestRunner:
             chunk.append(event)
             if len(chunk) < self.chunk_size:
                 continue
-            self._persist_chunk(job_id, execute_chunk(chunk))
+            self._persist_chunk(job_id, execute_chunk(tuple(chunk)))
             processed += len(chunk)
             chunk.clear()
             chunk_index += 1
 
         if chunk:
-            self._persist_chunk(job_id, execute_chunk(chunk))
+            self._persist_chunk(job_id, execute_chunk(tuple(chunk)))
             processed += len(chunk)
             chunk_index += 1
 
