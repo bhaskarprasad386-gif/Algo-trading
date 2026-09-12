@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Iterable, Mapping
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .cash_future_historical_acquisition import CashFutureAcquisitionProgress, CashFutureHistoricalAcquisitionService
@@ -148,15 +148,20 @@ def _request_has_materialized_rows(
     contract_month: str,
     request,
 ) -> bool:
+    """Require persisted rows to span the requested endpoints, not merely exist inside it."""
     start = datetime.fromtimestamp(request.start_ns / 1_000_000_000)
     end = datetime.fromtimestamp(request.end_ns / 1_000_000_000)
-    stmt = select(CashFutureHistory.id).where(
+    stmt = select(
+        func.min(CashFutureHistory.timestamp),
+        func.max(CashFutureHistory.timestamp),
+    ).where(
         CashFutureHistory.symbol == symbol,
         CashFutureHistory.contract_month == contract_month,
         CashFutureHistory.timestamp >= start,
         CashFutureHistory.timestamp <= end,
-    ).limit(1)
-    return db.scalars(stmt).first() is not None
+    )
+    first, last = db.execute(stmt).one()
+    return first is not None and last is not None and first <= start and last >= end
 
 
 def acquire_and_materialize_cash_future_universe(
