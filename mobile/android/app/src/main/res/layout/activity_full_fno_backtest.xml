@@ -14,7 +14,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="FULL F&amp;O BACKTEST"
+            android:text="CASH–FUTURE BACKTEST"
             android:textColor="#FFFFFF"
             android:textSize="20sp"
             android:textStyle="bold" />
@@ -23,7 +23,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
-            android:text="Incremental results • low RAM"
+            android:text="Historical strategy discovery • calendar → ranking → payoff → replay"
             android:textColor="#70839D"
             android:textSize="11sp" />
 
@@ -51,7 +51,7 @@
             android:layout_width="match_parent"
             android:layout_height="46dp"
             android:layout_marginTop="12dp"
-            android:text="OPEN GAP CALENDAR"
+            android:text="OPEN HISTORICAL CALENDAR"
             android:textSize="13sp" />
 
         <TextView
@@ -61,7 +61,7 @@
             android:layout_marginTop="6dp"
             android:background="#0D1A2A"
             android:padding="10dp"
-            android:text="Select a date to see the stock with the largest opening gap × lot size."
+            android:text="Select a date → scan all F&amp;O stocks → rank by (High − Open) × historical lot size."
             android:textColor="#DCE6F5"
             android:textSize="12sp"
             android:fontFamily="monospace" />
@@ -72,6 +72,21 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
             android:orientation="vertical" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="STRATEGY BUILDER"
+            android:textColor="#6EA8FF"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <com.algotrading.app.CashFutureStrategyBuilderView
+            android:id="@+id/cashFutureStrategyBuilder"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp" />
 
         <TextView
             android:layout_width="wrap_content"
@@ -89,7 +104,7 @@
             android:layout_marginTop="6dp"
             android:background="#0D1A2A"
             android:padding="10dp"
-            android:text="Tap GRAPH beside a calendar row to replay that stock/date."
+            android:text="Select a ranked stock and open its historical replay."
             android:textColor="#DCE6F5"
             android:textSize="12sp" />
 
@@ -129,7 +144,7 @@
             android:layout_width="match_parent"
             android:layout_height="46dp"
             android:layout_marginTop="12dp"
-            android:text="START FULL-F&amp;O BACKTEST"
+            android:text="RUN HISTORICAL CASH–FUTURE BACKTEST"
             android:textSize="13sp" />
 
         <Button
@@ -171,7 +186,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
-            android:text="RESULTS"
+            android:text="RESULTS • MONTH / DATE SEARCH"
             android:textColor="#9FB0C7"
             android:textSize="11sp"
             android:textStyle="bold" />
@@ -187,7 +202,7 @@
                 android:layout_width="0dp"
                 android:layout_height="46dp"
                 android:layout_weight="1"
-                android:hint="Search: this month / 2026-09 / 2026-09-10"
+                android:hint="YYYY-MM or YYYY-MM-DD"
                 android:inputType="text"
                 android:singleLine="true"
                 android:textColor="#DCE6F5"
