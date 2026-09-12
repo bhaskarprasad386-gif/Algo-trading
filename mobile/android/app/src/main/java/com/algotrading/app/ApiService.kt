@@ -52,31 +52,14 @@ data class FullFnoJobControlResponse(val status: String, val job_id: String, val
 data class FullFnoPurgeResponse(val status: String, val job_id: String, val job_status: String, val deleted_chunks: Int)
 data class DailyGapCalendarItem(val trading_date: String = "", val symbol: String = "", val direction: String = "FLAT", val gap: Double = 0.0, val gap_percent: Double = 0.0, val weighted_gap: Double = 0.0, val previous_close: Double = 0.0, val open: Double = 0.0, val high: Double = 0.0, val low: Double = 0.0, val close: Double = 0.0, val lot_size: Double = 0.0, val gap_high_timestamp: String? = null, val cash_price_at_gap_high: Double? = null, val future_price_at_gap_high: Double? = null)
 data class DailyGapCalendarResponse(val status: String = "", val trading_date: String = "", val top: DailyGapCalendarItem? = null, val data: List<DailyGapCalendarItem> = emptyList())
-data class MonthlyGapResult(val trading_date: String = "", val symbol: String = "", val gap: Double = 0.0, val gap_value: Double = 0.0, val open: Double = 0.0, val high: Double = 0.0, val low: Double = 0.0, val close: Double = 0.0, val lot_size: Double = 0.0, val previous_close: Double? = null, val contract_month: String? = null)
+data class MonthlyGapResult(val trading_date: String = "", val symbol: String = "", val gap: Double = 0.0, val gap_value: Double = 0.0, val open: Double = 0.0, val high: Double = 0.0, val low: Double = 0.0, val close: Double = 0.0, val lot_size: Double = 0.0, val previous_close: Double? = null, val contract_month: String? = null, val expiry_date: String? = null, val is_expiry_day: Boolean = false)
 data class MonthlyGapSearchResponse(val status: String = "", val month: String = "", val mode: String = "opening", val instrument_type: String = "STOCK", val result: MonthlyGapResult? = null)
-data class MonthlyGapTop10Item(val rank: Int = 0, val symbol: String = "", val lot_size: Double = 0.0, val month_gap_high: Double = 0.0, val gap_value: Double = 0.0, val gap_high_date: String = "", val gap_high_time: String = "", val gap_high_timestamp: String = "", val cash_price_at_gap_high: Double = 0.0, val future_price_at_gap_high: Double = 0.0, val contract_month: String? = null, val instrument_key: String? = null)
+data class MonthlyGapTop10Item(val rank: Int = 0, val symbol: String = "", val lot_size: Double = 0.0, val month_gap_high: Double = 0.0, val gap_value: Double = 0.0, val gap_high_date: String = "", val gap_high_time: String = "", val gap_high_timestamp: String = "", val cash_price_at_gap_high: Double = 0.0, val future_price_at_gap_high: Double = 0.0, val contract_month: String? = null, val instrument_key: String? = null, val expiry_date: String? = null, val is_expiry_day: Boolean = false)
 data class MonthlyGapTop10Response(val status: String = "", val month: String = "", val mode: String = "shorting", val instrument_type: String = "STOCK", val count: Int = 0, val data: List<MonthlyGapTop10Item> = emptyList())
 data class MonthlyGraphPoint(val trading_date: String = "", val open: Double = 0.0, val high: Double = 0.0, val low: Double = 0.0, val close: Double = 0.0, val lot_size: Double = 0.0, val contract_month: String? = null)
 data class MonthlyGraphResponse(val status: String = "", val symbol: String = "", val month: String = "", val instrument_type: String = "STOCK", val contract_month: String? = null, val count: Int = 0, val series: List<MonthlyGraphPoint> = emptyList())
 data class IntradayReplayPoint(val timestamp: String = "", val open: Double = 0.0, val high: Double = 0.0, val low: Double = 0.0, val close: Double = 0.0, val volume: Double? = null, val oi: Double? = null, val lot_size: Double = 0.0, val contract_month: String? = null, val instrument_key: String? = null)
-data class CashFutureReplayPoint(
-    val timestamp: String = "",
-    val cash_price: Double = 0.0,
-    val future_price: Double = 0.0,
-    val gap: Double = 0.0,
-    val gap_pct: Double = 0.0,
-    val contract_month: String? = null,
-    val lot_size: Double = 0.0,
-    val margin_required: Double = 0.0,
-    val volume: Double? = null,
-    val oi: Double? = null,
-    val cash_bid: Double? = null,
-    val cash_ask: Double? = null,
-    val future_bid: Double? = null,
-    val future_ask: Double? = null,
-    val charges: Double? = null,
-    val funding_cost: Double? = null
-)
+data class CashFutureReplayPoint(val timestamp: String = "", val cash_price: Double = 0.0, val future_price: Double = 0.0, val gap: Double = 0.0, val gap_pct: Double = 0.0, val contract_month: String? = null, val lot_size: Double = 0.0, val margin_required: Double = 0.0, val volume: Double? = null, val oi: Double? = null, val cash_bid: Double? = null, val cash_ask: Double? = null, val future_bid: Double? = null, val future_ask: Double? = null, val charges: Double? = null, val funding_cost: Double? = null)
 data class CashFutureGraphPoint(val timestamp: String = "", val cash: Double = 0.0, val future: Double = 0.0, val gap: Double = 0.0, val gap_pct: Double = 0.0, val contract_month: String? = null)
 data class CashFutureReplayResponse(val status: String = "", val trading_date: String = "", val symbol: String = "", val contract_month: String? = null, val contracts_seen: List<String> = emptyList(), val mode: String = "CURRENT", val timeframe: String = "1m", val source: String = "", val count: Int = 0, val first_timestamp: String = "", val last_timestamp: String = "", val source_min_interval_seconds: Int? = null, val available_replay_intervals: List<String> = emptyList(), val series: List<CashFutureReplayPoint> = emptyList(), val graph: List<CashFutureGraphPoint> = emptyList())
 data class IntradayReplayResponse(val status: String = "", val trading_date: String = "", val symbol: String = "", val instrument_type: String = "CASH_FUTURE", val contract_month: String? = null, val source_interval_minutes: Int = 1, val chart_interval_minutes: Int = 15, val count: Int = 0, val series: List<IntradayReplayPoint> = emptyList())
