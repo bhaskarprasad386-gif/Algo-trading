@@ -15,18 +15,14 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 
-/** Cash-Future strategy builder with historical calendar binding. */
+/** Cash-Future strategy builder with a colourful trading-terminal presentation. */
 class CashFutureStrategyBuilderView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
 ) : LinearLayout(context, attrs) {
     private val symbol = field("Selected stock (e.g. SBIN)")
-    private val selectionDate = TextView(context).apply {
-        text = "HISTORICAL SELECTION • —"
-        setTextColor(0xFFFFC857.toInt()); textSize = 11f; typeface = Typeface.DEFAULT_BOLD
-        setPadding(4, 8, 4, 4)
-    }
     private val cashPrice = field("Cash entry price")
     private val cashLots = field("Cash lots", integer = true).apply { setText("1") }
     private val cashQty = quantityField("Cash quantity • auto")
@@ -63,8 +59,6 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
     private var cashSide = "BUY"
     private var futureSide = "SELL"
     private var futureMode = "CURRENT FUTURE"
-    private var currentContractMonth: String? = null
-    private var nearContractMonth: String? = null
     private var syncingQuantities = false
 
     init {
@@ -76,7 +70,6 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
             setTextColor(0xFF62B0FF.toInt()); textSize = 17f; typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER_VERTICAL
         }, LayoutParams(-1, 40))
-        addView(selectionDate, LayoutParams(-1, 32))
         addView(TextView(context).apply {
             text = "CASH BUY / SELL  +  FUTURE BUY / SELL • LOT + QUANTITY"
             setTextColor(0xFF8FA7C4.toInt()); textSize = 10f
@@ -92,8 +85,12 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         cashSideRow.addView(cashSellButton, LayoutParams(0, 44, 1f).apply { setMargins(5, 2, 0, 4) })
         addView(cashSideRow)
         addRow(cashPrice, cashLots)
-        addView(TextView(context).apply { text = "CASH QUANTITY • historical lot size × cash lots"; setTextColor(0xFF61B0FF.toInt()); textSize = 10f }, LayoutParams(-1, 24))
+        addView(TextView(context).apply {
+            text = "CASH QUANTITY • historical lot size × cash lots"
+            setTextColor(0xFF61B0FF.toInt()); textSize = 10f
+        }, LayoutParams(-1, 24))
         addView(cashQty, LayoutParams(-1, 50).apply { setMargins(0, 2, 0, 4) })
+
         addView(contractLabel, LayoutParams(-1, 32))
         val contractRow = LinearLayout(context).apply { orientation = HORIZONTAL }
         contractRow.addView(currentButton, LayoutParams(0, 44, 1f).apply { setMargins(0, 2, 5, 4) })
@@ -104,15 +101,22 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         futureSideRow.addView(futureSellButton, LayoutParams(0, 44, 1f).apply { setMargins(5, 2, 0, 4) })
         addView(futureSideRow)
         addRow(futurePrice, futureLots)
-        addView(TextView(context).apply { text = "FUTURE QUANTITY • historical lot size × future lots"; setTextColor(0xFFB78CFF.toInt()); textSize = 10f }, LayoutParams(-1, 24))
+        addView(TextView(context).apply {
+            text = "FUTURE QUANTITY • historical lot size × future lots"
+            setTextColor(0xFFB78CFF.toInt()); textSize = 10f
+        }, LayoutParams(-1, 24))
         addView(futureQty, LayoutParams(-1, 50).apply { setMargins(0, 2, 0, 4) })
+
         addRow(capital, charges)
         addView(exitLabel, LayoutParams(-1, 32))
         addRow(stopLoss, target)
         addView(slippage, LayoutParams(-1, 50).apply { setMargins(0, 3, 0, 3) })
-        addView(terminalButton("BUILD PAYOFF • HISTORICAL SCENARIO", 0xFF16B886.toInt()).apply { setOnClickListener { calculatePayoff() } }, LayoutParams(-1, 46))
-        addView(summary, LayoutParams(-1, 112).apply { setMargins(0, 6, 0, 6) })
+        addView(terminalButton("BUILD PAYOFF • HISTORICAL SCENARIO", 0xFF16B886.toInt()).apply {
+            setOnClickListener { calculatePayoff() }
+        }, LayoutParams(-1, 46))
+        addView(summary, LayoutParams(-1, 100).apply { setMargins(0, 6, 0, 6) })
         addView(payoff, LayoutParams(-1, 250))
+
         cashBuyButton.setOnClickListener { selectCashSide("BUY") }
         cashSellButton.setOnClickListener { selectCashSide("SELL") }
         futureBuyButton.setOnClickListener { selectFutureSide("BUY") }
@@ -121,126 +125,89 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         nearButton.setOnClickListener { selectFutureMode("NEAR FUTURE") }
         val quantityWatcher = object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { if (!syncingQuantities) syncQuantitiesFromLots() }
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                if (!syncingQuantities) syncQuantitiesFromLots()
+            }
             override fun afterTextChanged(s: Editable?) = Unit
         }
-        cashLots.addTextChangedListener(quantityWatcher); futureLots.addTextChangedListener(quantityWatcher); lotSize.addTextChangedListener(quantityWatcher)
-        selectCashSide(cashSide); selectFutureSide(futureSide); selectFutureMode(futureMode); syncQuantitiesFromLots()
+        cashLots.addTextChangedListener(quantityWatcher)
+        futureLots.addTextChangedListener(quantityWatcher)
+        lotSize.addTextChangedListener(quantityWatcher)
+        selectCashSide(cashSide)
+        selectFutureSide(futureSide)
+        selectFutureMode(futureMode)
+        syncQuantitiesFromLots()
     }
 
-    private fun field(hintText: String, integer: Boolean = false): EditText = EditText(context).apply {
-        hint = hintText; setSingleLine(); textSize = 12f; inputType = if (integer) 2 else 2 or 8192
-        setTextColor(0xFFE8F1FF.toInt()); setHintTextColor(0xFF7890AD.toInt()); setPadding(12, 0, 12, 0); setBackgroundColor(0xFF14253A.toInt())
-    }
-
-    private fun quantityField(hintText: String): EditText = field(hintText, integer = true).apply { isFocusable = false; isClickable = false; isLongClickable = false; alpha = 0.92f }
-
-    private fun terminalButton(label: String, background: Int): Button = Button(context).apply { text = label; textSize = 11f; setTextColor(0xFFFFFFFF.toInt()); setBackgroundColor(background); typeface = Typeface.DEFAULT_BOLD; isAllCaps = false }
-
-    private fun selectCashSide(side: String) { cashSide = side; cashBuyButton.alpha = if (side == "BUY") 1f else 0.45f; cashSellButton.alpha = if (side == "SELL") 1f else 0.45f }
-
-    private fun selectFutureSide(side: String) { futureSide = side; futureBuyButton.alpha = if (side == "BUY") 1f else 0.45f; futureSellButton.alpha = if (side == "SELL") 1f else 0.45f; refreshContractLabel() }
-
-    private fun selectFutureMode(mode: String) { futureMode = mode; currentButton.alpha = if (mode == "CURRENT FUTURE") 1f else 0.45f; nearButton.alpha = if (mode == "NEAR FUTURE") 1f else 0.45f; refreshContractLabel() }
-
-    private fun refreshContractLabel() {
-        val contract = if (futureMode == "CURRENT FUTURE") currentContractMonth else nearContractMonth
-        contractLabel.text = "FUTURE LEG • $futureMode • $futureSide • CONTRACT ${contract ?: "—"}"
-    }
-
-    /** Keeps both leg quantities as exact historical-lot multiples. */
-    private fun syncQuantitiesFromLots() {
-        if (syncingQuantities) return
-        val lot = lotSize.text.toString().trim().toDoubleOrNull()
-        val cashLotCount = cashLots.text.toString().trim().toDoubleOrNull()
-        val futureLotCount = futureLots.text.toString().trim().toDoubleOrNull()
-        syncingQuantities = true
-        if (lot == null || lot <= 0.0) { cashQty.setText(""); futureQty.setText("") }
-        else {
-            if (cashLotCount != null && cashLotCount > 0.0) cashQty.setText((lot * cashLotCount).toLong().toString())
-            if (futureLotCount != null && futureLotCount > 0.0) futureQty.setText((lot * futureLotCount).toLong().toString())
+    fun bindHistoricalSelection(
+        selectedSymbol: String,
+        historicalCash: Double,
+        historicalLot: Double,
+        selectedDate: String = "",
+        historicalFuture: Double? = null,
+        currentContract: String? = null,
+        nearContract: String? = null,
+    ) {
+        symbol.setText(selectedSymbol)
+        lotSize.setText("%.0f".format(historicalLot))
+        cashPrice.setText("%.2f".format(historicalCash))
+        if (historicalFuture != null && historicalFuture > 0.0) futurePrice.setText("%.2f".format(historicalFuture)) else futurePrice.setText("")
+        cashLots.setText("1")
+        futureLots.setText("1")
+        selectCashSide("BUY")
+        selectFutureSide("SELL")
+        selectFutureMode("CURRENT FUTURE")
+        syncQuantitiesFromLots()
+        val contractText = buildString {
+            append("CURRENT=${currentContract ?: "-"}")
+            append(" • NEAR=${nearContract ?: "-"}")
         }
+        contractLabel.text = "FUTURE LEG • $contractText"
+        summary.text = buildString {
+            append("$selectedSymbol • historical selection loaded")
+            if (selectedDate.isNotBlank()) append(" • date $selectedDate")
+            append("\nCash ₹${"%.2f".format(historicalCash)} • Future ₹${historicalFuture?.let { "%.2f".format(it) } ?: "-"}")
+            append(" • lot ${historicalLot.toLong()} • 1 lot = ${historicalLot.toLong()} qty")
+            append("\nCash BUY + Future SELL • CURRENT/NEAR contracts preserved")
+        }
+        futurePrice.requestFocus()
+    }
+
+    private fun syncQuantitiesFromLots() {
+        syncingQuantities = true
+        val lot = lotSize.text.toString().toDoubleOrNull() ?: 0.0
+        val cashLotsValue = cashLots.text.toString().toDoubleOrNull() ?: 0.0
+        val futureLotsValue = futureLots.text.toString().toDoubleOrNull() ?: 0.0
+        cashQty.setText(if (lot > 0.0) "%.0f".format(lot * cashLotsValue) else "")
+        futureQty.setText(if (lot > 0.0) "%.0f".format(lot * futureLotsValue) else "")
         syncingQuantities = false
     }
 
-    /** Binds the exact calendar high-gap point and the contracts returned by historical replay. */
-    fun bindHistoricalSelection(
-        selectedSymbol: String,
-        historicalDate: String,
-        historicalCash: Double,
-        historicalFuture: Double,
-        historicalLot: Double,
-        historicalCurrentContract: String?,
-        historicalNearContract: String?,
-    ) {
-        symbol.setText(selectedSymbol)
-        selectionDate.text = "HISTORICAL SELECTION • $historicalDate • EXACT GAP HIGH"
-        lotSize.setText("%.0f".format(historicalLot))
-        cashPrice.setText("%.2f".format(historicalCash))
-        futurePrice.setText("%.2f".format(historicalFuture))
-        cashLots.setText("1"); futureLots.setText("1")
-        currentContractMonth = historicalCurrentContract
-        nearContractMonth = historicalNearContract
-        selectCashSide("BUY"); selectFutureSide("SELL"); selectFutureMode("CURRENT FUTURE")
-        syncQuantitiesFromLots()
-        summary.text = buildString {
-            append("$selectedSymbol • $historicalDate • exact paired Future−Cash high\n")
-            append("Cash ₹${"%.2f".format(historicalCash)} + Future ₹${"%.2f".format(historicalFuture)} • Gap ₹${"%.2f".format(historicalFuture - historicalCash)}\n")
-            append("Lot ${historicalLot.toLong()} • Cash qty ${historicalLot.toLong()} • Future qty ${historicalLot.toLong()}\n")
-            append("CURRENT ${historicalCurrentContract ?: "—"} • NEAR ${historicalNearContract ?: "—"}\n")
-            append("Default: Cash BUY + Future SELL")
-        }
-        futurePrice.requestFocus()
-        calculatePayoff()
-    }
-
-    /** Backward-compatible binding for callers that only have cash/lot data. */
-    fun bindHistoricalSelection(selectedSymbol: String, historicalCash: Double, historicalLot: Double) {
-        symbol.setText(selectedSymbol); lotSize.setText("%.0f".format(historicalLot)); cashPrice.setText("%.2f".format(historicalCash))
-        futurePrice.setText(""); currentContractMonth = null; nearContractMonth = null; selectionDate.text = "HISTORICAL SELECTION • DATE NOT PROVIDED"
-        cashLots.setText("1"); futureLots.setText("1"); selectCashSide("BUY"); selectFutureSide("SELL"); selectFutureMode("CURRENT FUTURE"); syncQuantitiesFromLots(); futurePrice.requestFocus()
-        summary.text = "$selectedSymbol • historical cash/lot loaded • enter the paired Future price or use Calendar BUILD"
-    }
-
-    private fun addRow(left: EditText, right: EditText) {
-        val row = LinearLayout(context).apply { orientation = HORIZONTAL }
-        row.addView(left, LayoutParams(0, 50, 1f).apply { setMargins(0, 3, 6, 3) }); row.addView(right, LayoutParams(0, 50, 1f).apply { setMargins(6, 3, 0, 3) }); addView(row, LayoutParams(-1, 56))
-    }
-
-    private fun number(view: EditText): Double = view.text.toString().trim().toDoubleOrNull() ?: 0.0
+    private fun selectCashSide(side: String) { cashSide = side; cashBuyButton.alpha = if (side == "BUY") 1f else .55f; cashSellButton.alpha = if (side == "SELL") 1f else .55f }
+    private fun selectFutureSide(side: String) { futureSide = side; futureBuyButton.alpha = if (side == "BUY") 1f else .55f; futureSellButton.alpha = if (side == "SELL") 1f else .55f }
+    private fun selectFutureMode(mode: String) { futureMode = mode; currentButton.alpha = if (mode == "CURRENT FUTURE") 1f else .55f; nearButton.alpha = if (mode == "NEAR FUTURE") 1f else .55f }
 
     private fun calculatePayoff() {
-        val cash = number(cashPrice); val future = number(futurePrice); val lot = number(lotSize)
-        val cashLotsValue = max(0.0, number(cashLots)); val futureLotsValue = max(0.0, number(futureLots)); val cashQuantity = max(0.0, number(cashQty)); val futureQuantity = max(0.0, number(futureQty))
-        val cashUnits = if (cashQuantity > 0.0) cashQuantity else lot * cashLotsValue; val futureUnits = if (futureQuantity > 0.0) futureQuantity else lot * futureLotsValue
-        val capitalValue = number(capital); val stop = number(stopLoss); val tgt = number(target); val fee = max(0.0, number(charges)); val slip = max(0.0, number(slippage))
-        if (cash <= 0.0 || future <= 0.0 || lot <= 0.0 || cashUnits <= 0.0 || futureUnits <= 0.0) { payoff.setScenario(0.0, 0.0, 0.0, cashSide, futureSide); return }
-        val cashSign = if (cashSide == "BUY") 1.0 else -1.0; val futureSign = if (futureSide == "BUY") 1.0 else -1.0
-        val grossCash = -cashSign * cash * cashUnits; val grossFuture = -futureSign * future * futureUnits; val grossNotional = abs(grossCash) + abs(grossFuture); val executionCost = fee + slip * (cashUnits + futureUnits); val netExposure = grossCash + grossFuture; val capitalPct = if (capitalValue > 0.0) grossNotional / capitalValue * 100.0 else 0.0
-        summary.text = buildString {
-            append("${symbol.text.ifBlank { "Selected stock" }} • Cash $cashSide + $futureMode $futureSide\n")
-            append("Date ${selectionDate.text.toString().removePrefix("HISTORICAL SELECTION • ").removeSuffix(" • EXACT GAP HIGH")} • Current ${currentContractMonth ?: "—"} • Near ${nearContractMonth ?: "—"}\n")
-            append("Cash qty ${cashUnits.toLong()} • Future qty ${futureUnits.toLong()} • Lot ${lot.toLong()}\n")
-            append("Cash notional ₹${"%.2f".format(abs(grossCash))} • Future notional ₹${"%.2f".format(abs(grossFuture))} • Exposure ₹${"%.2f".format(netExposure)}\n")
-            append("Costs ₹${"%.2f".format(executionCost)} • Capital utilisation ${"%.2f".format(capitalPct)}% • SL ${if (stop > 0) "₹%.2f".format(stop) else "—"} • Target ${if (tgt > 0) "₹%.2f".format(tgt) else "—"}")
-        }
-        payoff.setScenario(cash, future, min(cashUnits, futureUnits), cashSide, futureSide)
+        val cash = cashPrice.text.toString().toDoubleOrNull() ?: return
+        val future = futurePrice.text.toString().toDoubleOrNull() ?: return
+        val lot = lotSize.text.toString().toDoubleOrNull() ?: return
+        val qty = lot * max(1.0, futureLots.text.toString().toDoubleOrNull() ?: 1.0)
+        val spread = if (futureSide == "SELL") future - cash else cash - future
+        val capitalValue = capital.text.toString().toDoubleOrNull() ?: 0.0
+        summary.text = "$symbol • $futureMode • Cash $cashSide ₹${"%.2f".format(cash)} • Future $futureSide ₹${"%.2f".format(future)} • Spread ₹${"%.2f".format(spread)} • Qty ${qty.toLong()} • Capital ₹${"%.0f".format(capitalValue)}"
+        payoff.setScenario(cash, future, qty, spread)
     }
 
-    private class PayoffGraphView(context: Context) : androidx.appcompat.widget.AppCompatTextView(context) {
-        private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2EE6A6.toInt(); strokeWidth = 5f; style = Paint.Style.STROKE }
-        private val zero = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF5C7390.toInt(); strokeWidth = 2f }
-        private val accent = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF4DA3FF.toInt(); strokeWidth = 2f }
-        private val marker = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF78C8.toInt(); strokeWidth = 3f }
-        private var cash = 0.0; private var future = 0.0; private var qty = 0.0; private var cashSide = "BUY"; private var futureSide = "SELL"
-        init { setBackgroundColor(0xFF07101C.toInt()); setTextColor(0xFF7890AD.toInt()); textSize = 10f; text = "PAYOFF PREVIEW • build a historical scenario"; gravity = Gravity.CENTER }
-        fun setScenario(cashPrice: Double, futurePrice: Double, quantity: Double, cashOrderSide: String = "BUY", futureOrderSide: String = "SELL") { cash = cashPrice; future = futurePrice; qty = quantity; cashSide = cashOrderSide; futureSide = futureOrderSide; invalidate() }
-        override fun onDraw(canvas: Canvas) {
-            super.onDraw(canvas); if (cash <= 0.0 || future <= 0.0 || qty <= 0.0) return
-            val w = width.toFloat(); val h = height.toFloat(); val midY = h / 2f; canvas.drawLine(24f, midY, w - 18f, midY, zero)
-            val minPrice = cash * 0.85; val maxPrice = cash * 1.15; val scale = max(1.0, abs(future - cash) * qty + cash * qty * 0.05); val path = Path()
-            for (i in 0..80) { val p = minPrice + (maxPrice - minPrice) * i / 80.0; val cashPnl = if (cashSide == "BUY") (p - cash) * qty else (cash - p) * qty; val futurePnl = if (futureSide == "BUY") (p - future) * qty else (future - p) * qty; val pnl = cashPnl + futurePnl; val y = midY - pnl / scale * (h * 0.35f); val x = 24f + (w - 42f) * i / 80f; if (i == 0) path.moveTo(x, y.toFloat()) else path.lineTo(x, y.toFloat()) }
-            canvas.drawPath(path, line); val cashX = 24f + (w - 42f) * 0.5f; val futureX = 24f + (w - 42f) * ((future - minPrice) / (maxPrice - minPrice)).coerceIn(0.0, 1.0).toFloat(); canvas.drawLine(cashX, 12f, cashX, h - 12f, marker); canvas.drawLine(futureX, 12f, futureX, h - 12f, accent)
-        }
+    private fun addRow(left: EditText, right: EditText) { val row = LinearLayout(context).apply { orientation = HORIZONTAL }; row.addView(left, LayoutParams(0, 50, 1f).apply { setMargins(0, 2, 5, 4) }); row.addView(right, LayoutParams(0, 50, 1f).apply { setMargins(5, 2, 0, 4) }); addView(row) }
+    private fun field(hintText: String, integer: Boolean = false): EditText = EditText(context).apply { hint = hintText; setSingleLine(); textSize = 12f; inputType = if (integer) 2 else 2 or 8192; setTextColor(0xFFE8F1FF.toInt()); setHintTextColor(0xFF7890AD.toInt()); setPadding(12, 0, 12, 0); setBackgroundColor(0xFF14253A.toInt()) }
+    private fun quantityField(hintText: String): EditText = field(hintText, integer = true).apply { isFocusable = false; isClickable = false }
+    private fun terminalButton(label: String, background: Int) = Button(context).apply { text = label; setTextColor(0xFFFFFFFF.toInt()); setBackgroundColor(background); textSize = 11f; typeface = Typeface.DEFAULT_BOLD }
+
+    private class PayoffGraphView(context: Context) : View(context) {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val path = Path()
+        private var cash = 0.0; private var future = 0.0; private var qty = 0.0; private var spread = 0.0
+        fun setScenario(cashValue: Double, futureValue: Double, quantity: Double, spreadValue: Double) { cash = cashValue; future = futureValue; qty = quantity; spread = spreadValue; invalidate() }
+        override fun onDraw(canvas: Canvas) { super.onDraw(canvas); paint.textSize = 26f; paint.typeface = Typeface.DEFAULT_BOLD; canvas.drawText("PAYOFF  ₹${"%.2f".format(spread * qty)}", 18f, 42f, paint); paint.textSize = 12f; paint.typeface = Typeface.DEFAULT; canvas.drawText("Cash ₹${"%.2f".format(cash)} • Future ₹${"%.2f".format(future)} • Qty ${qty.toLong()}", 18f, 68f, paint) }
     }
 }
