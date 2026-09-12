@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from app.backtesting.cash_future_historical_download import CashFutureHistoricalDownloadService
-from app.backtesting.historical_catalog import HistoricalCatalog
+from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 from app.backtesting.historical_ingest import HistoricalFetchRequest
 from app.backtesting.session_chunk_completeness import SessionChunk, SessionChunkCompleteness
 from app.backtesting.nse_session_calendars import nse_session_windows
@@ -33,14 +33,17 @@ def test_session_completeness_ignores_overnight_and_weekend_gap(tmp_path):
         expected = SessionChunkCompleteness.expected_timestamps(sessions, interval)
         assert len(expected) == 2 * 375
 
-        for timestamp_ns in expected:
-            catalog.ingest(
+        records = [
+            HistoricalRecord(
                 source="angelone",
                 instrument="NSE:1:AAA",
                 timeframe="1m",
                 timestamp_ns=timestamp_ns,
                 payload={"close": 100.0},
             )
+            for timestamp_ns in expected
+        ]
+        catalog.ingest(records)
 
         assert service._chunk_is_complete(request)
         assert service._chunk_is_complete(request, result=None)
