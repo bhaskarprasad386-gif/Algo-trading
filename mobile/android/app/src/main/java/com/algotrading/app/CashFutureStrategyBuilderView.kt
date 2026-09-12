@@ -163,6 +163,8 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         currentContract: String? = null,
         nearContract: String? = null,
     ) {
+        // A new historical selection invalidates markers from the previous strategy run.
+        rootView.findViewById<IntradayReplayView>(R.id.intradayReplayView)?.clearStrategyTrades()
         symbol.setText(selectedSymbol)
         lotSize.setText("%.0f".format(historicalLot))
         cashPrice.setText("%.2f".format(historicalCash))
