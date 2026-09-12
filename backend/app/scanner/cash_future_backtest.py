@@ -51,7 +51,12 @@ def _legacy_gap_profit(entry: CashFutureHistoryPoint, exit_point: CashFutureHist
 
 
 def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfig) -> dict:
-    """Backtest one contract without materializing the input iterable."""
+    """Backtest one contract without materializing the input iterable.
+
+    A new position may be opened before expiry, but never on or after the
+    contract's expiry date. An already-open position is still allowed to reach
+    the expiry day and is then closed by the normal expiry exit path.
+    """
     trades = []
     equity = 0.0
     peak = 0.0
@@ -70,7 +75,8 @@ def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfi
             raise ValueError("backtest input contains multiple contract months; run each contract separately")
 
         if entry is None:
-            if point.gap >= config.min_entry_gap:
+            expiry_day = point.expiry_date is not None and point.timestamp.date() >= point.expiry_date
+            if not expiry_day and point.gap >= config.min_entry_gap:
                 entry = point
             equity_curve.append({"timestamp": point.timestamp.isoformat(), "equity": equity})
             continue
