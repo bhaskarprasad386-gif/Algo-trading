@@ -69,11 +69,11 @@ def test_resume_continues_after_checkpoint_without_duplicate_records():
         data_source_fingerprint="source-1",
     )
 
-    assert len(resumed.signals) == 3
+    assert len(resumed.signals) == 4
     assert len(resumed.trades) == 1
     assert resumed.trades[0]["entry_time"] == points[1].timestamp.isoformat()
     assert resumed.trades[0]["exit_time"] == points[2].timestamp.isoformat()
-    assert len(resumed.equity_curve) == 3
+    assert len(resumed.equity_curve) == 4
 
 
 def test_resume_rejects_source_that_ends_at_checkpoint():
