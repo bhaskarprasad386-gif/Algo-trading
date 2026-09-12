@@ -12,7 +12,7 @@ from app.backtesting.historical_catalog import HistoricalCatalog
 from app.core.config import settings
 from app.scanner.cash_future_history import build_graph_series
 
-router = APIRouter(prefix="/api/v1/backtesting/cash-future", tags=["Cash-Future Backtesting"])
+router = APIRouter(tags=["Cash-Future Backtesting"])
 
 
 @router.get("/replay")
