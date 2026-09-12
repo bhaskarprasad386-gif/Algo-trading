@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 
 import pytest
 
@@ -37,7 +38,6 @@ def test_checkpoint_json_is_deterministic():
 
 
 def test_checkpoint_rejects_missing_state():
-    import json
     data = json.loads(checkpoint().to_json())
     del data["reserved_margin"]
     with pytest.raises(ValueError, match="reserved_margin"):
@@ -51,9 +51,43 @@ def test_checkpoint_rejects_invalid_timestamp():
         CashFutureStrategyCheckpoint.from_mapping(data)
 
 
+def test_checkpoint_rejects_malformed_json():
+    with pytest.raises(ValueError, match="valid JSON"):
+        CashFutureStrategyCheckpoint.from_json("{not-json")
+
+
+@pytest.mark.parametrize("field", ["realized_capital", "reserved_margin"])
+def test_checkpoint_rejects_non_finite_numeric_state(field):
+    data = checkpoint().__dict__.copy()
+    data[field] = float("nan")
+    with pytest.raises(ValueError, match="finite number"):
+        CashFutureStrategyCheckpoint.from_mapping(data)
+
+
+def test_checkpoint_rejects_negative_blocked_entries():
+    data = checkpoint().__dict__.copy()
+    data["blocked_entries"] = -1
+    with pytest.raises(ValueError, match="cannot be negative"):
+        CashFutureStrategyCheckpoint.from_mapping(data)
+
+
+def test_checkpoint_rejects_invalid_open_entry():
+    data = checkpoint().__dict__.copy()
+    data["open_entry"] = ["not", "an", "object"]
+    with pytest.raises(ValueError, match="open_entry"):
+        CashFutureStrategyCheckpoint.from_mapping(data)
+
+
 def test_checkpoint_rejects_strategy_state_that_is_not_json_safe():
     data = checkpoint().__dict__.copy()
     data["strategy_state"] = {"bad": object()}
+    with pytest.raises(ValueError, match="JSON-serializable"):
+        CashFutureStrategyCheckpoint.from_mapping(data)
+
+
+def test_checkpoint_rejects_strategy_state_with_non_finite_number():
+    data = checkpoint().__dict__.copy()
+    data["strategy_state"] = {"bad": float("inf")}
     with pytest.raises(ValueError, match="JSON-serializable"):
         CashFutureStrategyCheckpoint.from_mapping(data)
 
