@@ -63,7 +63,7 @@ class CashFutureDownloadManager:
                         underlying=request.underlying.strip().upper(), start=start, end=end, timeframe=request.timeframe,
                         mode=request.mode.upper(), retry_attempts=request.retry_attempts, job_id=job_id, resume=resume)
             job = self.status_store.job(job_id)
-            if job is not None and job.status not in {"COMPLETE", "FAILED"}:
+            if job is not None and job.status not in {"COMPLETE", "FAILED"} and not self.status_store.incomplete_chunks(job_id):
                 self.status_store.update_job(job_id, status="COMPLETE", catalog_count=catalog.count())
         except Exception as exc:
             job = self.status_store.job(job_id)
