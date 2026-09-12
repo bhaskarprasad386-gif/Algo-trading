@@ -7,7 +7,7 @@ from app.backtesting.cash_future_strategy_runner import (
     CashFutureStrategyConfig,
     run_cash_future_strategy,
 )
-from app.backtesting.ledger import BacktestLedger
+from app.backtesting.ledger import BacktestLedger, Checkpoint
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
 
@@ -55,6 +55,15 @@ class _StatefulStrategy:
 
     def restore_checkpoint_state(self, state):
         self.count = int(state["count"])
+
+
+class _NonRestoringStrategy:
+    def __init__(self):
+        self.called = False
+
+    def __call__(self, point, history):
+        self.called = True
+        return "NONE"
 
 
 def _run_kwargs(config):
@@ -176,6 +185,98 @@ def test_stateful_resume_rejects_checkpoint_without_strategy_state():
             _StatefulStrategy(),
             ledger=ledger,
             run_id="missing-state",
+            **_run_kwargs(config),
+        )
+
+
+def test_resume_rejects_stateful_checkpoint_for_non_restoring_strategy():
+    points = _points()
+    config = CashFutureStrategyConfig(initial_capital=100000.0, checkpoint_interval=2)
+    ledger = BacktestLedger(":memory:")
+
+    run_cash_future_strategy(
+        points[:2],
+        _StatefulStrategy(),
+        ledger=ledger,
+        run_id="state-contract",
+        **_run_kwargs(config),
+    )
+
+    strategy = _NonRestoringStrategy()
+    with pytest.raises(ValueError, match="cannot restore"):
+        resume_cash_future_strategy(
+            points,
+            strategy,
+            ledger=ledger,
+            run_id="state-contract",
+            **_run_kwargs(config),
+        )
+    assert strategy.called is False
+
+
+def test_resume_rejects_malformed_open_entry_before_strategy_execution():
+    points = _points()
+    config = CashFutureStrategyConfig(initial_capital=100000.0, checkpoint_interval=2)
+    ledger = BacktestLedger(":memory:")
+
+    run_cash_future_strategy(
+        points[:2],
+        _strategy,
+        ledger=ledger,
+        run_id="bad-entry",
+        **_run_kwargs(config),
+    )
+    row = ledger.load_checkpoint("bad-entry")
+    assert row is not None
+    state = dict(row.state)
+    state["open_entry"] = {"symbol": "SBIN"}
+    ledger.checkpoint(Checkpoint("bad-entry", row.event_index, row.timestamp_ns, state))
+
+    with pytest.raises(ValueError, match="open_entry missing fields"):
+        resume_cash_future_strategy(
+            points,
+            _strategy,
+            ledger=ledger,
+            run_id="bad-entry",
+            **_run_kwargs(config),
+        )
+
+
+def test_resume_rejects_invalid_open_entry_values():
+    points = _points()
+    config = CashFutureStrategyConfig(initial_capital=100000.0, checkpoint_interval=2)
+    ledger = BacktestLedger(":memory:")
+
+    run_cash_future_strategy(
+        points[:2],
+        _strategy,
+        ledger=ledger,
+        run_id="bad-entry-value",
+        **_run_kwargs(config),
+    )
+    row = ledger.load_checkpoint("bad-entry-value")
+    assert row is not None
+    state = dict(row.state)
+    state["open_entry"] = {
+        "timestamp": points[0].timestamp.isoformat(),
+        "symbol": "SBIN",
+        "contract_month": "SEP",
+        "cash_price": "not-a-number",
+        "future_price": 105.0,
+        "gap": 5.0,
+        "gap_pct": 5.0,
+        "lot_size": 100,
+        "margin_required": 10000.0,
+        "expiry_date": None,
+    }
+    ledger.checkpoint(Checkpoint("bad-entry-value", row.event_index, row.timestamp_ns, state))
+
+    with pytest.raises(ValueError, match="open_entry contains invalid values"):
+        resume_cash_future_strategy(
+            points,
+            _strategy,
+            ledger=ledger,
+            run_id="bad-entry-value",
             **_run_kwargs(config),
         )
 
