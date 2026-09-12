@@ -9,38 +9,75 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="12dp">
+        android:padding="10dp">
 
+        <!-- PREMIUM TERMINAL HEADER -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="14dp"
+            android:padding="15dp"
             android:background="#0D1B2E">
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="CASH–FUTURE BACKTEST" android:textColor="#FFFFFF" android:textSize="21sp" android:textStyle="bold" />
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:text="Calendar → Stock Ranking → Strategy → Payoff → Replay" android:textColor="#61B0FF" android:textSize="11sp" />
-            <TextView android:id="@+id/tvFullFnoStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:background="#162A42" android:padding="11dp" android:text="READY • Historical Cash-Future" android:textColor="#8FF0C5" android:textSize="12sp" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="CASH–FUTURE TERMINAL" android:textColor="#FFFFFF" android:textSize="21sp" android:textStyle="bold" />
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:text="Historical Strategy Lab • Research Mode" android:textColor="#61B0FF" android:textSize="10sp" />
+                </LinearLayout>
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="#123D35" android:padding="9dp" android:text="● READY" android:textColor="#8FF0C5" android:textSize="11sp" android:textStyle="bold" />
+            </LinearLayout>
+            <TextView android:id="@+id/tvFullFnoStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="11dp" android:background="#162A42" android:padding="11dp" android:text="READY • Historical Cash-Future • Live orders OFF" android:textColor="#8FF0C5" android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- QUICK ANALYTICS STRIP -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="7dp" android:orientation="horizontal">
+            <TextView android:layout_width="0dp" android:layout_height="58dp" android:layout_weight="1" android:layout_marginEnd="4dp" android:background="#0D2430" android:padding="8dp" android:text="MAX GAP\n—\n₹/share" android:textColor="#55E6B0" android:textSize="10sp" android:textStyle="bold" />
+            <TextView android:layout_width="0dp" android:layout_height="58dp" android:layout_weight="1" android:layout_marginStart="2dp" android:layout_marginEnd="2dp" android:background="#251D38" android:padding="8dp" android:text="GROSS\n—\n₹/lot" android:textColor="#C9A7FF" android:textSize="10sp" android:textStyle="bold" />
+            <TextView android:layout_width="0dp" android:layout_height="58dp" android:layout_weight="1" android:layout_marginStart="2dp" android:layout_marginEnd="2dp" android:background="#302615" android:padding="8dp" android:text="MARGIN\n—\n₹ required" android:textColor="#FFD77A" android:textSize="10sp" android:textStyle="bold" />
+            <TextView android:layout_width="0dp" android:layout_height="58dp" android:layout_weight="1" android:layout_marginStart="4dp" android:background="#2D1720" android:padding="8dp" android:text="P&amp;L\n—\n₹ net" android:textColor="#FF7895" android:textSize="10sp" android:textStyle="bold" />
         </LinearLayout>
 
         <ProgressBar android:id="@+id/progressFullFno" android:layout_width="match_parent" android:layout_height="4dp" android:layout_marginTop="5dp" android:indeterminate="true" android:visibility="gone" />
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="01  •  HISTORICAL CALENDAR &amp; STOCK SCANNER" android:textColor="#62B0FF" android:textSize="11sp" android:textStyle="bold" />
+        <!-- 01 CALENDAR / SCANNER -->
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="15dp" android:text="01  •  HISTORICAL CALENDAR &amp; STOCK SCANNER" android:textColor="#62B0FF" android:textSize="11sp" android:textStyle="bold" />
         <Button android:id="@+id/btnGapCalendar" android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="6dp" android:text="SELECT DATE • SCAN ALL F&amp;O STOCKS" android:textSize="12sp" android:textColor="#FFFFFF" android:backgroundTint="#246BFF" />
-        <TextView android:id="@+id/tvGapCalendar" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:background="#0B1727" android:padding="10dp" android:text="Select a date → rank every F&amp;O stock by (High − Open) × historical lot size." android:textColor="#DDEBFF" android:textSize="12sp" android:fontFamily="monospace" />
+        <TextView android:id="@+id/tvGapCalendar" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:background="#0B1727" android:padding="10dp" android:text="Daily rank = maximum intraday Future − Cash gap × historical lot size.&#10;OHLC gap = Open / High / Low / Close Future − Cash." android:textColor="#DDEBFF" android:textSize="11sp" android:fontFamily="monospace" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:orientation="horizontal">
+            <TextView android:layout_width="0dp" android:layout_height="42dp" android:layout_weight="1" android:background="#102238" android:gravity="center_vertical" android:padding="9dp" android:text="OPEN GAP\n—" android:textColor="#75B8FF" android:textSize="9sp" />
+            <TextView android:layout_width="0dp" android:layout_height="42dp" android:layout_weight="1" android:layout_marginStart="4dp" android:background="#173024" android:gravity="center_vertical" android:padding="9dp" android:text="HIGH GAP\n—" android:textColor="#62E5B0" android:textSize="9sp" />
+            <TextView android:layout_width="0dp" android:layout_height="42dp" android:layout_weight="1" android:layout_marginStart="4dp" android:background="#302A16" android:gravity="center_vertical" android:padding="9dp" android:text="LOW GAP\n—" android:textColor="#FFD36B" android:textSize="9sp" />
+            <TextView android:layout_width="0dp" android:layout_height="42dp" android:layout_weight="1" android:layout_marginStart="4dp" android:background="#281B30" android:gravity="center_vertical" android:padding="9dp" android:text="CLOSE GAP\n—" android:textColor="#D2A7FF" android:textSize="9sp" />
+        </LinearLayout>
         <LinearLayout android:id="@+id/llGapCalendarRows" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:orientation="vertical" />
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="02  •  STRATEGY BUILDER" android:textColor="#B78CFF" android:textSize="11sp" android:textStyle="bold" />
+        <!-- 02 STRATEGY BUILDER -->
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="15dp" android:text="02  •  STRATEGY BUILDER" android:textColor="#B78CFF" android:textSize="11sp" android:textStyle="bold" />
         <com.algotrading.app.CashFutureStrategyBuilderView android:id="@+id/cashFutureStrategyBuilder" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" />
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="03  •  INTRADAY REPLAY" android:textColor="#FFC857" android:textSize="11sp" android:textStyle="bold" />
-        <TextView android:id="@+id/tvIntradayReplayStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:background="#172235" android:padding="10dp" android:text="1-minute source • 15-minute chart • 1-minute step" android:textColor="#FFE6A3" android:textSize="12sp" />
-        <com.algotrading.app.IntradayReplayView android:id="@+id/intradayReplayView" android:layout_width="match_parent" android:layout_height="280dp" android:layout_marginTop="6dp" android:background="#060E1A" />
+        <!-- 03 GRAPH / REPLAY -->
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="15dp" android:text="03  •  SYNCHRONIZED CASH • FUTURE • GAP GRAPH" android:textColor="#FFC857" android:textSize="11sp" android:textStyle="bold" />
+        <TextView android:id="@+id/tvIntradayReplayStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:background="#172235" android:padding="10dp" android:text="Available data decides graph resolution • Cash + Future + Gap synchronized" android:textColor="#FFE6A3" android:textSize="11sp" />
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:orientation="horizontal">
-            <Button android:id="@+id/btnIntradayReplayPlay" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="PLAY 1 MIN" android:textSize="12sp" android:textColor="#FFFFFF" android:backgroundTint="#16B886" />
-            <Button android:id="@+id/btnIntradayReplayReset" android:layout_width="0dp" android:layout_height="44dp" android:layout_marginStart="8dp" android:layout_weight="1" android:text="RESET" android:textSize="12sp" android:textColor="#FFFFFF" android:backgroundTint="#465A73" />
+            <Button android:id="@+id/btnReplay1m" android:layout_width="0dp" android:layout_height="40dp" android:layout_weight="1" android:text="1 MIN" android:textSize="10sp" android:textColor="#FFFFFF" android:backgroundTint="#16B886" />
+            <Button android:id="@+id/btnReplay5m" android:layout_width="0dp" android:layout_height="40dp" android:layout_marginStart="4dp" android:layout_weight="1" android:text="5 MIN" android:textSize="10sp" android:textColor="#FFFFFF" android:backgroundTint="#246BFF" />
+            <Button android:id="@+id/btnReplay15m" android:layout_width="0dp" android:layout_height="40dp" android:layout_marginStart="4dp" android:layout_weight="1" android:text="15 MIN" android:textSize="10sp" android:textColor="#FFFFFF" android:backgroundTint="#7B4DFF" />
+            <Button android:id="@+id/btnReplay30m" android:layout_width="0dp" android:layout_height="40dp" android:layout_marginStart="4dp" android:layout_weight="1" android:text="30 MIN" android:textSize="10sp" android:textColor="#FFFFFF" android:backgroundTint="#B24CFF" />
+        </LinearLayout>
+        <TextView android:layout_width="match_parent" android:layout_height="32dp" android:layout_marginTop="5dp" android:background="#091522" android:gravity="center_vertical" android:paddingStart="10dp" android:text="● CASH PRICE    ● FUTURE PRICE    ● GAP (FUTURE − CASH)    |    CROSSHAIR / ENTRY / EXIT" android:textColor="#9CB4CF" android:textSize="9sp" />
+        <com.algotrading.app.IntradayReplayView android:id="@+id/intradayReplayView" android:layout_width="match_parent" android:layout_height="320dp" android:layout_marginTop="2dp" android:background="#060E1A" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:orientation="horizontal">
+            <Button android:id="@+id/btnIntradayReplayPlay" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="PLAY" android:textSize="12sp" android:textColor="#FFFFFF" android:backgroundTint="#16B886" />
+            <Button android:id="@+id/btnIntradayReplayReset" android:layout_width="0dp" android:layout_height="44dp" android:layout_marginStart="7dp" android:layout_weight="1" android:text="RESET" android:textSize="12sp" android:textColor="#FFFFFF" android:backgroundTint="#465A73" />
         </LinearLayout>
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="04  •  HISTORICAL EXECUTION" android:textColor="#5CE1E6" android:textSize="11sp" android:textStyle="bold" />
+        <!-- TRADE / MARGIN PANEL -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="7dp" android:padding="11dp" android:background="#101D2F" android:orientation="vertical">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="TRADE SNAPSHOT • HISTORICAL CONTRACT" android:textColor="#5CE1E6" android:textSize="10sp" android:textStyle="bold" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Lot Size     —        Qty     —        Margin/Lot     —&#10;Required Margin     —        Capital Used     —        Charges + Slippage     —&#10;Gross Opportunity     —        Estimated Net     —" android:textColor="#DDEBFF" android:textSize="10sp" android:fontFamily="monospace" />
+        </LinearLayout>
+
+        <!-- 04 EXECUTION -->
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="15dp" android:text="04  •  HISTORICAL EXECUTION" android:textColor="#5CE1E6" android:textSize="11sp" android:textStyle="bold" />
         <Button android:id="@+id/btnFullFnoStart" android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="6dp" android:text="RUN HISTORICAL CASH–FUTURE STRATEGY" android:textSize="12sp" android:textColor="#FFFFFF" android:backgroundTint="#7B4DFF" />
         <Button android:id="@+id/btnFullFnoCancel" android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="8dp" android:text="STOP / CANCEL" android:textSize="12sp" android:textColor="#FFFFFF" android:backgroundTint="#D6455D" android:enabled="false" />
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="horizontal">
@@ -48,7 +85,8 @@
             <Button android:id="@+id/btnFullFnoPurge" android:layout_width="0dp" android:layout_height="44dp" android:layout_marginStart="8dp" android:layout_weight="1" android:text="PURGE RESULTS" android:textSize="11sp" android:backgroundTint="#465A73" android:textColor="#FFFFFF" android:enabled="false" />
         </LinearLayout>
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="05  •  MONTH / DATE SEARCH" android:textColor="#FF78C8" android:textSize="11sp" android:textStyle="bold" />
+        <!-- 05 MONTH / DATE SEARCH -->
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="15dp" android:text="05  •  MONTH / DATE SEARCH" android:textColor="#FF78C8" android:textSize="11sp" android:textStyle="bold" />
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:orientation="horizontal">
             <EditText android:id="@+id/etGapResultSearch" android:layout_width="0dp" android:layout_height="46dp" android:layout_weight="1" android:hint="YYYY-MM or YYYY-MM-DD" android:inputType="text" android:singleLine="true" android:textColor="#E8F1FF" android:textColorHint="#7890AD" android:textSize="12sp" android:backgroundTint="#4DA3FF" />
             <Button android:id="@+id/btnGapResultSearch" android:layout_width="92dp" android:layout_height="46dp" android:layout_marginStart="8dp" android:text="SEARCH" android:textSize="12sp" android:textColor="#FFFFFF" android:backgroundTint="#FF4FA3" />
