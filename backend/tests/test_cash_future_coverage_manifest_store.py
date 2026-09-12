@@ -55,3 +55,41 @@ def test_manifest_store_repair_plan_is_scoped_and_idempotent(tmp_path):
     assert store.repair_plan(source="angelone", instrument="FUT-A") == (
         ("FUT-A", 500, 600),
     )
+
+
+def test_manifest_store_rejects_requested_interval_with_interior_gap(tmp_path):
+    store = CashFutureCoverageManifestStore(tmp_path / "coverage.sqlite")
+    store.upsert(
+        build_coverage_manifest(
+            source="angelone",
+            generated_at=5,
+            ranges=(
+                CoverageRange("FUT", 0, 5, 6, 6, 0, True),
+                CoverageRange("FUT", 7, 10, 4, 4, 0, True),
+            ),
+        )
+    )
+
+    assert store.is_complete_for_requests(
+        source="angelone",
+        requests=(("FUT", 0, 10),),
+    ) is False
+
+
+def test_manifest_store_accepts_split_adjacent_requested_interval(tmp_path):
+    store = CashFutureCoverageManifestStore(tmp_path / "coverage.sqlite")
+    store.upsert(
+        build_coverage_manifest(
+            source="angelone",
+            generated_at=6,
+            ranges=(
+                CoverageRange("FUT", 0, 5, 6, 6, 0, True),
+                CoverageRange("FUT", 5, 10, 6, 6, 0, True),
+            ),
+        )
+    )
+
+    assert store.is_complete_for_requests(
+        source="angelone",
+        requests=(("FUT", 0, 10),),
+    ) is True
