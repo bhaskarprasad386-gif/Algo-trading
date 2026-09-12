@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Callable, Iterable, Iterator, Mapping, Any
+import json
 
 from app.backtesting.cash_future_strategy_checkpoint import CashFutureStrategyCheckpoint
 from app.scanner.cash_future_backtest import _executable_spread_profit, _legacy_gap_profit
@@ -134,9 +135,8 @@ def run_cash_future_strategy(
     result exposes lazy durable views instead of retaining the full result set in RAM.
     Strategy history is full by default for compatibility. ``history_window`` can
     bound the in-memory prior-observation window for finite-lookback strategies.
-    ``checkpoint_interval`` additionally persists runner-owned execution state to
-    the ledger. It does not serialize arbitrary strategy internals, so checkpoints
-    are capture/recovery markers rather than an implicit strategy-state resume.
+    ``checkpoint_interval`` persists runner-owned execution state to the ledger;
+    arbitrary strategy internals are deliberately not serialized.
     """
     if not strategy_id.strip():
         raise ValueError("strategy_id is required")
@@ -382,7 +382,7 @@ def _write_checkpoint(
             run_id=run_id,
             event_index=event_index,
             timestamp_ns=int(point.timestamp.timestamp() * 1_000_000_000),
-            state=checkpoint.to_json() and checkpoint.__dict__,
+            state=json.loads(checkpoint.to_json()),
         )
     )
 
