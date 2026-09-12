@@ -56,8 +56,51 @@ data class MonthlyGapResult(val trading_date: String = "", val symbol: String = 
 data class MonthlyGapSearchResponse(val status: String = "", val month: String = "", val mode: String = "opening", val instrument_type: String = "STOCK", val result: MonthlyGapResult? = null)
 data class MonthlyGraphPoint(val trading_date: String = "", val open: Double = 0.0, val high: Double = 0.0, val low: Double = 0.0, val close: Double = 0.0, val lot_size: Double = 0.0, val contract_month: String? = null)
 data class MonthlyGraphResponse(val status: String = "", val symbol: String = "", val month: String = "", val instrument_type: String = "STOCK", val contract_month: String? = null, val count: Int = 0, val series: List<MonthlyGraphPoint> = emptyList())
-data class IntradayReplayPoint(val timestamp: String = "", val open: Double = 0.0, val high: Double = 0.0, val low: Double = 0.0, val close: Double = 0.0, val cash_price: Double = 0.0, val future_price: Double = 0.0, val gap: Double = 0.0, val gap_pct: Double = 0.0, val volume: Double? = null, val oi: Double? = null, val lot_size: Double = 0.0, val margin_required: Double = 0.0, val contract_month: String? = null, val instrument_key: String? = null)
-data class IntradayReplayResponse(val status: String = "", val trading_date: String = "", val symbol: String = "", val instrument_type: String = "CASH_FUTURE", val contract_month: String? = null, val mode: String = "CURRENT", val timeframe: String = "1m", val source_min_interval_seconds: Int? = null, val available_replay_intervals: List<String> = emptyList(), val first_timestamp: String? = null, val last_timestamp: String? = null, val count: Int = 0, val series: List<IntradayReplayPoint> = emptyList())
+data class IntradayReplayPoint(val timestamp: String = "", val open: Double = 0.0, val high: Double = 0.0, val low: Double = 0.0, val close: Double = 0.0, val volume: Double? = null, val oi: Double? = null, val lot_size: Double = 0.0, val contract_month: String? = null, val instrument_key: String? = null)
+data class CashFutureReplayPoint(
+    val timestamp: String = "",
+    val cash_price: Double = 0.0,
+    val future_price: Double = 0.0,
+    val gap: Double = 0.0,
+    val gap_pct: Double = 0.0,
+    val contract_month: String? = null,
+    val lot_size: Double = 0.0,
+    val margin_required: Double = 0.0,
+    val volume: Double? = null,
+    val oi: Double? = null,
+    val cash_bid: Double? = null,
+    val cash_ask: Double? = null,
+    val future_bid: Double? = null,
+    val future_ask: Double? = null,
+    val charges: Double? = null,
+    val funding_cost: Double? = null
+)
+data class CashFutureGraphPoint(
+    val timestamp: String = "",
+    val cash: Double = 0.0,
+    val future: Double = 0.0,
+    val gap: Double = 0.0,
+    val gap_pct: Double = 0.0,
+    val contract_month: String? = null
+)
+data class CashFutureReplayResponse(
+    val status: String = "",
+    val trading_date: String = "",
+    val symbol: String = "",
+    val contract_month: String? = null,
+    val contracts_seen: List<String> = emptyList(),
+    val mode: String = "CURRENT",
+    val timeframe: String = "1m",
+    val source: String = "",
+    val count: Int = 0,
+    val first_timestamp: String = "",
+    val last_timestamp: String = "",
+    val source_min_interval_seconds: Int? = null,
+    val available_replay_intervals: List<String> = emptyList(),
+    val series: List<CashFutureReplayPoint> = emptyList(),
+    val graph: List<CashFutureGraphPoint> = emptyList()
+)
+data class IntradayReplayResponse(val status: String = "", val trading_date: String = "", val symbol: String = "", val instrument_type: String = "CASH_FUTURE", val contract_month: String? = null, val source_interval_minutes: Int = 1, val chart_interval_minutes: Int = 15, val count: Int = 0, val series: List<IntradayReplayPoint> = emptyList())
 data class DateGapResponse(val status: String = "", val trading_date: String = "", val mode: String = "shorting", val instrument_type: String = "STOCK", val count: Int = 0, val top: DailyGapCalendarItem? = null, val data: List<DailyGapCalendarItem> = emptyList())
 data class PriorGapComparisonResponse(val status: String = "", val trading_date: String = "", val mode: String = "shorting", val instrument_type: String = "STOCK", val selected: DailyGapCalendarItem? = null, val has_larger_prior_gap: Boolean = false, val prior_larger: List<DailyGapCalendarItem> = emptyList())
 
@@ -87,7 +130,7 @@ interface ApiInterface {
     @GET("/api/v1/backtesting/results/prior-gap") suspend fun priorGapComparison(@Query("trading_date") tradingDate: String, @Query("mode") mode: String = "shorting", @Query("instrument_type") instrumentType: String = "STOCK", @Query("symbol") symbol: String? = null, @Query("contract_month") contractMonth: String? = null, @Query("limit") limit: Int = 5): PriorGapComparisonResponse
     @GET("/api/v1/backtesting/results/monthly-gap") suspend fun monthlyGapSearch(@Query("year") year: Int, @Query("month") month: Int, @Query("mode") mode: String = "opening", @Query("instrument_type") instrumentType: String = "STOCK", @Query("symbol") symbol: String? = null, @Query("contract_month") contractMonth: String? = null): MonthlyGapSearchResponse
     @GET("/api/v1/backtesting/results/monthly-graph") suspend fun monthlyGraph(@Query("symbol") symbol: String, @Query("year") year: Int, @Query("month") month: Int, @Query("instrument_type") instrumentType: String = "STOCK", @Query("contract_month") contractMonth: String? = null): MonthlyGraphResponse
-    @GET("/api/v1/backtesting/cash-future/replay") suspend fun intradayReplay(@Query("trading_date") tradingDate: String, @Query("symbol") symbol: String, @Query("instrument_type") instrumentType: String = "CASH_FUTURE", @Query("contract_month") contractMonth: String? = null, @Query("timeframe") timeframe: String = "1m", @Query("mode") mode: String = "CURRENT"): IntradayReplayResponse
+    @GET("/api/v1/backtesting/cash-future/replay") suspend fun cashFutureReplay(@Query("trading_date") tradingDate: String, @Query("symbol") symbol: String, @Query("contract_month") contractMonth: String? = null, @Query("timeframe") timeframe: String = "1m", @Query("mode") mode: String = "CURRENT", @Query("source") source: String = "angelone", @Query("spot_instrument") spotInstrument: String? = null, @Query("exchange") exchange: String = "NSE"): CashFutureReplayResponse
     @POST("/api/v1/scanner/cash-future/backtest/full/jobs") suspend fun startFullFnoJob(@Query("days") days: Int = 365, @Query("min_entry_gap") minEntryGap: Double = 0.0, @Query("exit_gap") exitGap: Double = 0.0, @Query("charges_per_trade") chargesPerTrade: Double = 0.0, @Query("funding_cost_per_trade") fundingCostPerTrade: Double = 0.0, @Query("max_holding_days") maxHoldingDays: Int = 30, @Query("future_selection") futureSelection: String = "BOTH"): FullFnoJobAcceptedResponse
     @GET("/api/v1/scanner/cash-future/backtest/jobs/{job_id}") suspend fun fullFnoJob(@Path("job_id") jobId: String): FullFnoJobStatusResponse
     @GET("/api/v1/scanner/cash-future/backtest/jobs/{job_id}/results") suspend fun fullFnoResults(@Path("job_id") jobId: String, @Query("limit") limit: Int = 50, @Query("after_sequence") afterSequence: Int? = null): FullFnoResultsPage
