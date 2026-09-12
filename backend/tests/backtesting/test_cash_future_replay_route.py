@@ -4,15 +4,19 @@ from app.backtesting.cash_future_strategy_routes import router
 STRATEGY_PREFIX = "/api/v1/backtesting/cash-future"
 
 
-def _strategy_routes():
-    routes = []
-    for route in router.routes:
+def _flatten_routes(routes):
+    flattened = []
+    for route in routes:
         nested = getattr(route, "routes", None)
         if nested is not None:
-            routes.extend(nested)
+            flattened.extend(_flatten_routes(nested))
         else:
-            routes.append(route)
-    return routes
+            flattened.append(route)
+    return flattened
+
+
+def _strategy_routes():
+    return _flatten_routes(router.routes)
 
 
 def test_cash_future_replay_route_is_wired_under_strategy_api():
