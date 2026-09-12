@@ -9,6 +9,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.backtesting.cash_future_historical_loader import CashFutureHistoricalLoader, CashFutureHistorySelection
+from app.backtesting.contract_master import ContractMasterCatalog
+from app.backtesting.historical_catalog import HistoricalCatalog
+from app.core.config import settings
 from app.core.database import get_db
 
 router = APIRouter(prefix="/api/v1/backtesting/results", tags=["Backtesting Results"])
@@ -72,6 +76,63 @@ def _gap_payload(row: dict, mode: str) -> dict:
     }
 
 
+def _cash_future_shorting_payloads(
+    trading_date: date,
+    symbols: list[str],
+    *,
+    contract_month: str | None = None,
+    source: str = "angelone",
+    mode: str = "CURRENT",
+) -> list[dict]:
+    """Return the highest actual intraday Future-Cash gap for each symbol/day."""
+    catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
+    contracts = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
+    loader = CashFutureHistoricalLoader(catalog, contracts)
+    result: list[dict] = []
+    try:
+        for symbol in sorted({value.strip().upper() for value in symbols if value and value.strip()}):
+            selection = CashFutureHistorySelection(
+                spot_instrument=symbol,
+                exchange="NSE",
+                underlying=symbol,
+                start_date=trading_date,
+                end_date=trading_date,
+                timeframe="1m",
+                contract_month=contract_month,
+                mode=mode,
+                source=source,
+            )
+            points = list(loader.iter_points(selection))
+            if not points:
+                continue
+            top = max(points, key=lambda point: (point.gap, point.timestamp))
+            if top.lot_size <= 0:
+                continue
+            result.append({
+                "trading_date": trading_date,
+                "symbol": symbol,
+                "direction": "UP" if top.gap > 0 else "DOWN" if top.gap < 0 else "FLAT",
+                "gap": top.gap,
+                "gap_percent": top.gap_pct,
+                "weighted_gap": top.gap * top.lot_size,
+                "previous_close": 0.0,
+                "open": top.cash_price,
+                "high": top.future_price,
+                "low": top.cash_price,
+                "close": top.future_price,
+                "lot_size": top.lot_size,
+                "contract_month": top.contract_month,
+                "instrument_key": f"NFO:{top.contract_month}",
+                "gap_high_timestamp": top.timestamp.isoformat(),
+                "cash_price_at_gap_high": top.cash_price,
+                "future_price_at_gap_high": top.future_price,
+            })
+    finally:
+        catalog.close()
+        contracts.close()
+    return result
+
+
 @router.get("/date-gap")
 def date_gap_ranking(
     trading_date: date = Query(...),
@@ -83,11 +144,19 @@ def date_gap_ranking(
     db: Session = Depends(get_db),
 ):
     rows = _daily_rows(db, trading_date, trading_date, symbol=symbol, instrument_type=instrument_type)
-    payload = [_gap_payload(row, mode) for row in rows if row["lot_size"] and (not contract_month or row["contract_month"] == contract_month)]
+    if mode == "shorting":
+        payload = _cash_future_shorting_payloads(
+            trading_date,
+            [row["symbol"] for row in rows],
+            contract_month=contract_month,
+            mode="CURRENT",
+        )
+    else:
+        payload = [_gap_payload(row, mode) for row in rows if row["lot_size"] and (not contract_month or row["contract_month"] == contract_month)]
     payload.sort(key=lambda item: (item["weighted_gap"], item["symbol"]), reverse=True)
     payload = payload[:limit]
     if not payload:
-        raise HTTPException(status_code=404, detail="no historical OHLC rows found for the requested date")
+        raise HTTPException(status_code=404, detail="no historical Cash-Future gap rows found for the requested date")
     return {"status": "success", "trading_date": trading_date, "mode": mode, "instrument_type": instrument_type.upper(), "count": len(payload), "top": payload[0], "data": payload}
 
 
@@ -101,23 +170,27 @@ def prior_gap_comparison(
     limit: int = Query(5, ge=1, le=20),
     db: Session = Depends(get_db),
 ):
-    """Compare selected date's top gap with all earlier available trading days."""
     selected_rows = _daily_rows(db, trading_date, trading_date, symbol=symbol, instrument_type=instrument_type)
-    selected = [_gap_payload(row, mode) for row in selected_rows if row["lot_size"] and (not contract_month or row["contract_month"] == contract_month)]
+    if mode == "shorting":
+        selected = _cash_future_shorting_payloads(trading_date, [row["symbol"] for row in selected_rows], contract_month=contract_month)
+        prior_rows = _daily_rows(db, date(2000, 1, 1), trading_date - timedelta(days=1), symbol=symbol, instrument_type=instrument_type)
+        prior_by_day: dict[date, list[str]] = {}
+        for row in prior_rows:
+            prior_by_day.setdefault(row["trading_date"], []).append(row["symbol"])
+        prior: list[dict] = []
+        for prior_day, symbols in prior_by_day.items():
+            prior.extend(_cash_future_shorting_payloads(prior_day, symbols, contract_month=contract_month))
+    else:
+        selected = [_gap_payload(row, mode) for row in selected_rows if row["lot_size"] and (not contract_month or row["contract_month"] == contract_month)]
+        prior_rows = _daily_rows(db, date(2000, 1, 1), trading_date - timedelta(days=1), symbol=symbol, instrument_type=instrument_type)
+        prior = [_gap_payload(row, mode) for row in prior_rows if row["lot_size"] and (not contract_month or row["contract_month"] == contract_month)]
     selected.sort(key=lambda item: (item["weighted_gap"], item["symbol"]), reverse=True)
     if not selected:
-        raise HTTPException(status_code=404, detail="no historical OHLC rows found for the selected date")
-
-    prior_rows = _daily_rows(db, date(2000, 1, 1), trading_date - timedelta(days=1), symbol=symbol, instrument_type=instrument_type)
-    prior = [_gap_payload(row, mode) for row in prior_rows if row["lot_size"] and (not contract_month or row["contract_month"] == contract_month)]
+        raise HTTPException(status_code=404, detail="no historical gap rows found for the selected date")
     threshold = selected[0]["weighted_gap"]
     larger = [item for item in prior if item["weighted_gap"] > threshold]
     larger.sort(key=lambda item: (item["weighted_gap"], item["trading_date"], item["symbol"]), reverse=True)
-    return {
-        "status": "success", "trading_date": trading_date, "mode": mode,
-        "instrument_type": instrument_type.upper(), "selected": selected[0],
-        "has_larger_prior_gap": bool(larger), "prior_larger": larger[:limit],
-    }
+    return {"status":"success","trading_date":trading_date,"mode":mode,"instrument_type":instrument_type.upper(),"selected":selected[0],"has_larger_prior_gap":bool(larger),"prior_larger":larger[:limit]}
 
 
 @router.get("/monthly-gap")
@@ -129,19 +202,23 @@ def monthly_gap_search(
     start = date(year, month, 1); end = date(year, month, monthrange(year, month)[1])
     rows = _daily_rows(db, start, end, symbol=symbol, instrument_type=instrument_type)
     candidates = []
-    for row in rows:
-        if contract_month and row["contract_month"] != contract_month: continue
-        if not row["lot_size"]: continue
-        if mode == "opening":
-            if row["previous_close"] is None: continue
+    if mode == "shorting":
+        for trading_day in sorted({row["trading_date"] for row in rows}):
+            day_rows = [row for row in rows if row["trading_date"] == trading_day]
+            for item in _cash_future_shorting_payloads(trading_day, [row["symbol"] for row in day_rows], contract_month=contract_month):
+                candidates.append((item["weighted_gap"], item["trading_date"], item["symbol"], item["gap"], item))
+    else:
+        for row in rows:
+            if contract_month and row["contract_month"] != contract_month: continue
+            if not row["lot_size"] or row["previous_close"] is None: continue
             gap = float(row["open"]) - float(row["previous_close"])
-            gap_value = abs(gap) * float(row["lot_size"])
-        else:
-            gap = float(row["high"]) - float(row["open"])
-            gap_value = gap * float(row["lot_size"])
-        candidates.append((gap_value, row["trading_date"], row["symbol"], gap, row))
-    if not candidates: raise HTTPException(status_code=404, detail="no historical OHLC rows found for the requested month")
-    top = max(candidates, key=lambda x: (x[0], x[1], x[2])); _, trading_date, symbol_name, gap, row = top
+            candidates.append((abs(gap) * float(row["lot_size"]), row["trading_date"], row["symbol"], gap, row))
+    if not candidates: raise HTTPException(status_code=404, detail="no historical gap rows found for the requested month")
+    top = max(candidates, key=lambda x: (x[0], x[1], x[2]))
+    if mode == "shorting":
+        item = top[4]
+        return {"status":"success","month":f"{year:04d}-{month:02d}","mode":mode,"instrument_type":instrument_type.upper(),"result":{"trading_date":item["trading_date"],"symbol":item["symbol"],"gap":item["gap"],"gap_value":item["weighted_gap"],"open":item["open"],"high":item["high"],"low":item["low"],"close":item["close"],"lot_size":item["lot_size"],"previous_close":item["previous_close"],"contract_month":item["contract_month"],"gap_high_timestamp":item.get("gap_high_timestamp"),"cash_price_at_gap_high":item.get("cash_price_at_gap_high"),"future_price_at_gap_high":item.get("future_price_at_gap_high")}}
+    _, trading_date, symbol_name, gap, row = top
     return {"status":"success","month":f"{year:04d}-{month:02d}","mode":mode,"instrument_type":instrument_type.upper(),"result":{"trading_date":trading_date,"symbol":symbol_name,"gap":gap,"gap_value":top[0],"open":row["open"],"high":row["high"],"low":row["low"],"close":row["close"],"lot_size":row["lot_size"],"previous_close":row["previous_close"],"contract_month":row["contract_month"]}}
 
 
