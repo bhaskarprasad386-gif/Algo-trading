@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from app.backtesting.cash_future_download_routes import CashFutureDownloadManager
 from app.backtesting.cash_future_historical_download import CashFutureHistoricalDownloadService
-from app.backtesting.historical_catalog import HistoricalCatalog
+from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 from app.backtesting.historical_download_status import (
     DownloadChunkStatus,
     HistoricalDownloadStatusStore,
@@ -37,7 +37,7 @@ def _seed_job(store: HistoricalDownloadStatusStore) -> None:
             start_ns=60, end_ns=120, status="FAILED", attempts=1,
             expected_timestamps=2, actual_timestamps=1, missing_timestamps=1,
             first_missing_ns=120,
-    )
+        )
     )
     store.upsert_chunk(
         DownloadChunkStatus(
@@ -104,21 +104,15 @@ def test_duplicate_reingest_remains_deduplicated_for_repair(tmp_path):
     catalog = HistoricalCatalog(str(tmp_path / "data.db"))
     try:
         timestamp_ns = int(datetime(2026, 1, 5, 5, 30, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
-        record = {"close": 100.0}
-        assert catalog.ingest(
+        record = HistoricalRecord(
             source="angelone",
             instrument="NSE:1:AAA",
             timeframe="1m",
             timestamp_ns=timestamp_ns,
-            payload=record,
+            payload={"close": 100.0},
         )
-        assert not catalog.ingest(
-            source="angelone",
-            instrument="NSE:1:AAA",
-            timeframe="1m",
-            timestamp_ns=timestamp_ns,
-            payload=record,
-        )
+        assert catalog.ingest((record,)) == 1
+        assert catalog.ingest((record,)) == 0
         assert catalog.count(source="angelone", instrument="NSE:1:AAA", timeframe="1m") == 1
     finally:
         catalog.close()
