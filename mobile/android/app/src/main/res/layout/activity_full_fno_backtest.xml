@@ -24,8 +24,8 @@
 
         <ProgressBar android:id="@+id/progressFullFno" android:layout_width="match_parent" android:layout_height="4dp" android:layout_marginTop="5dp" android:indeterminate="true" android:visibility="gone" />
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="01  •  HISTORICAL CALENDAR & STOCK SCANNER" android:textColor="#62B0FF" android:textSize="11sp" android:textStyle="bold" />
-        <Button android:id="@+id/btnGapCalendar" android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="6dp" android:text="SELECT DATE • SCAN ALL F&O STOCKS" android:textSize="12sp" android:textColor="#FFFFFF" android:backgroundTint="#246BFF" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="01  •  HISTORICAL CALENDAR &amp; STOCK SCANNER" android:textColor="#62B0FF" android:textSize="11sp" android:textStyle="bold" />
+        <Button android:id="@+id/btnGapCalendar" android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="6dp" android:text="SELECT DATE • SCAN ALL F&amp;O STOCKS" android:textSize="12sp" android:textColor="#FFFFFF" android:backgroundTint="#246BFF" />
         <TextView android:id="@+id/tvGapCalendar" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:background="#0B1727" android:padding="10dp" android:text="Select a date → rank every F&amp;O stock by (High − Open) × historical lot size." android:textColor="#DDEBFF" android:textSize="12sp" android:fontFamily="monospace" />
         <LinearLayout android:id="@+id/llGapCalendarRows" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:orientation="vertical" />
 
