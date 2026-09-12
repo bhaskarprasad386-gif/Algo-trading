@@ -54,3 +54,31 @@ def test_streaming_runner_rejects_out_of_order_points():
         assert "ordered by timestamp" in str(exc)
     else:
         raise AssertionError("out-of-order stream was accepted")
+
+
+def test_history_window_bounds_visible_strategy_history():
+    now = datetime(2026, 9, 2, 10, 0)
+    observed_lengths = []
+
+    def strategy(current, history):
+        observed_lengths.append(len(history))
+        assert history[-1] is current
+        return "HOLD"
+
+    run_cash_future_strategy(
+        [point(now + timedelta(minutes=i), 10 - i) for i in range(5)],
+        strategy,
+        strategy_id="window",
+        config=CashFutureStrategyConfig(history_window=2),
+    )
+
+    assert observed_lengths == [1, 2, 2, 2, 2]
+
+
+def test_history_window_must_be_positive():
+    try:
+        CashFutureStrategyConfig(history_window=0)
+    except ValueError as exc:
+        assert "history_window must be positive" in str(exc)
+    else:
+        raise AssertionError("non-positive history_window was accepted")
