@@ -25,6 +25,7 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
     private var replayStepSeconds = 60L
     private var availableIntervals: Set<String> = emptySet()
     private var timeframeChangedListener: ((String) -> Unit)? = null
+    private var focusTimestamp: String? = null
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
@@ -67,6 +68,13 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
     }
 
     fun setTimeframeChangedListener(listener: (String) -> Unit) { timeframeChangedListener = listener }
+
+    fun setFocusTimestamp(timestamp: String?) {
+        focusTimestamp = timestamp?.takeIf { it.isNotBlank() }
+        invalidate()
+    }
+
+    fun focusedTimestamp(): String? = focusTimestamp
 
     fun setCashFutureData(newPoints: List<CashFutureReplayPoint>, intervals: List<String>) {
         points = newPoints.sortedBy { it.timestamp }
@@ -198,7 +206,9 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
         canvas.drawPath(fp, futurePaint)
         canvas.drawPath(gp, gapPaint)
 
-        val gapHighIndex = points.indices.maxByOrNull { index -> points[index].gap }
+        val fallbackIndex = points.indices.maxByOrNull { index -> points[index].gap }
+        val focusedIndex = focusTimestamp?.let { timestamp -> points.indexOfFirst { it.timestamp == timestamp }.takeIf { it >= 0 } }
+        val gapHighIndex = focusedIndex ?: fallbackIndex
         if (gapHighIndex != null && gapHighIndex < visiblePoints) {
             val highPoint = points[gapHighIndex]
             val visibleIndex = v.indexOfFirst { it.timestamp == highPoint.timestamp }
