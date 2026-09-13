@@ -327,7 +327,10 @@ def acquire_and_materialize_cash_future_universe(
         job = CashFutureUniverseDownloadJob(
             underlying=underlying,
             spot=result.queue.spot,
-            futures=result.queue.futures,
+            futures=tuple(
+                item.request if hasattr(item, "request") else item
+                for item in result.queue.futures
+            ),
         )
         plan = CashFutureUniverseDownloadPlan(
             jobs=(job,),
