@@ -223,9 +223,9 @@ def test_real_angelone_multi_stock_multi_day_runner_materializes_sqlite(tmp_path
     )
     assert tuple(item.stock_underlyings for item in output) == (("AAA",), ("ZZZ",))
     assert all(item.result.backtest_ready for item in output)
-    assert auth.calls == 6
-    assert limiter.calls >= 4
-    assert len(client.requests) >= 4
+    assert auth.calls == 10
+    assert limiter.calls >= 8
+    assert len(client.requests) >= 8
     assert catalog.count(source="angelone", timeframe="1m") == 16
     assert len(catalog.records(source="angelone", instrument="NSE:3001:AAA-EQ", timeframe="1m")) == 4
     assert len(catalog.records(source="angelone", instrument="NSE:3002:ZZZ-EQ", timeframe="1m")) == 4
