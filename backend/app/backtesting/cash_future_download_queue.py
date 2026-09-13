@@ -17,18 +17,18 @@ DEFAULT_SOURCE = "angelone"
 
 @dataclass(frozen=True)
 class CashFutureSegmentDownload:
-    segment: CashFutureSegment
+    segment: CashFutureSegment | None  # None for spot
     request: HistoricalFetchRequest
 
 
 @dataclass(frozen=True)
 class CashFutureDownloadQueue:
-    spot: HistoricalFetchRequest
+    spot: CashFutureSegmentDownload
     futures: tuple[CashFutureSegmentDownload, ...]
 
     @property
     def all_requests(self) -> tuple[HistoricalFetchRequest, ...]:
-        return (self.spot, *(item.request for item in self.futures))
+        return (self.spot.request, *(item.request for item in self.futures))
 
 
 def _ns(value: datetime) -> int:
@@ -78,7 +78,9 @@ def build_rollover_download_queue(
     )
 
     start_ns, end_ns = _ns(start), _ns(end)
-    spot = HistoricalFetchRequest(source, spot_instrument, timeframe, start_ns, end_ns)
+    spot_request = HistoricalFetchRequest(source, spot_instrument, timeframe, start_ns, end_ns)
+    spot = CashFutureSegmentDownload(None, spot_request)
+    
     items: list[CashFutureSegmentDownload] = []
     for segments in segments_by_leg:
         for segment in segments:
