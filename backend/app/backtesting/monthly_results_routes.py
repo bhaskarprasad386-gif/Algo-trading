@@ -83,8 +83,11 @@ def _cash_future_shorting_payloads(trading_date: date, symbols: list[str], *, co
 @router.get("/date-gap")
 def date_gap_ranking(trading_date: date = Query(...), mode: str = Query("shorting", pattern="^(opening|shorting)$"), instrument_type: str = Query("STOCK"), symbol: str | None = Query(None), contract_month: str | None = Query(None), limit: int = Query(200, ge=1, le=500), db: Session = Depends(get_db)):
     rows = _daily_rows(db, trading_date, trading_date, symbol=symbol, instrument_type=instrument_type)
-    if mode == "shorting" and not rows:
-        rows = [{"symbol": value} for value in _downloaded_cash_future_symbols(trading_date, trading_date, symbol=symbol)]
+    if mode == "shorting":
+        downloaded_symbols = _downloaded_cash_future_symbols(trading_date, trading_date, symbol=symbol)
+        if downloaded_symbols:
+            known = {row["symbol"] for row in rows}
+            rows.extend({"symbol": value} for value in downloaded_symbols if value not in known)
     if mode == "shorting": payload = _cash_future_shorting_payloads(trading_date, [row["symbol"] for row in rows], contract_month=contract_month, mode="CURRENT")
     else: payload = [_gap_payload(row, mode) for row in rows if row["lot_size"] and (not contract_month or row["contract_month"] == contract_month)]
     payload.sort(key=lambda item: (item["weighted_gap"], item["symbol"]), reverse=True); payload = payload[:limit]
@@ -136,7 +139,10 @@ def monthly_gap_top10(year: int = Query(..., ge=2000, le=2100), month: int = Que
 def prior_gap_comparison(trading_date: date = Query(...), mode: str = Query("shorting", pattern="^(opening|shorting)$"), instrument_type: str = Query("STOCK"), symbol: str | None = Query(None), contract_month: str | None = Query(None), limit: int = Query(5, ge=1, le=20), db: Session = Depends(get_db)):
     selected_rows = _daily_rows(db, trading_date, trading_date, symbol=symbol, instrument_type=instrument_type)
     if mode == "shorting":
-        selected = _cash_future_shorting_payloads(trading_date, [row["symbol"] for row in selected_rows], contract_month=contract_month)
+        selected_symbols = [row["symbol"] for row in selected_rows]
+        downloaded_symbols = _downloaded_cash_future_symbols(trading_date, trading_date, symbol=symbol)
+        selected_symbols.extend(value for value in downloaded_symbols if value not in selected_symbols)
+        selected = _cash_future_shorting_payloads(trading_date, selected_symbols, contract_month=contract_month)
         prior_rows = _daily_rows(db, date(2000, 1, 1), trading_date - timedelta(days=1), symbol=symbol, instrument_type=instrument_type)
         prior_by_day: dict[date, list[str]] = {}
         for row in prior_rows: prior_by_day.setdefault(row["trading_date"], []).append(row["symbol"])
@@ -160,9 +166,22 @@ def monthly_gap_search(year: int = Query(..., ge=2000, le=2100), month: int = Qu
     rows = _daily_rows(db, start, end, symbol=symbol, instrument_type=instrument_type)
     candidates = []
     if mode == "shorting":
-        for trading_day in sorted({row["trading_date"] for row in rows}):
-            day_rows = [row for row in rows if row["trading_date"] == trading_day]
-            for item in _cash_future_shorting_payloads(trading_day, [row["symbol"] for row in day_rows], contract_month=contract_month): candidates.append((item["weighted_gap"], item["trading_date"], item["symbol"], item["gap"], item))
+        downloaded_symbols = _downloaded_cash_future_symbols(start, end, symbol=symbol)
+        trading_days = {row["trading_date"] for row in rows if "trading_date" in row}
+        if downloaded_symbols and not trading_days:
+            catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
+            try:
+                start_ns = int(__import__("datetime").datetime.combine(start, __import__("datetime").time.min).timestamp() * 1_000_000_000)
+                end_ns = int(__import__("datetime").datetime.combine(end + timedelta(days=1), __import__("datetime").time.min).timestamp() * 1_000_000_000)
+                from datetime import datetime
+                trading_days = {datetime.fromtimestamp(record.timestamp_ns / 1_000_000_000).date() for record in catalog.iter_records(source="angelone", timeframe="1m", start_ns=start_ns, end_ns=end_ns)}
+            finally:
+                catalog.close()
+        for trading_day in sorted(trading_days):
+            day_rows = [row for row in rows if row.get("trading_date") == trading_day]
+            day_symbols = [row["symbol"] for row in day_rows]
+            day_symbols.extend(value for value in downloaded_symbols if value not in day_symbols)
+            for item in _cash_future_shorting_payloads(trading_day, day_symbols, contract_month=contract_month): candidates.append((item["weighted_gap"], item["trading_date"], item["symbol"], item["gap"], item))
     else:
         for row in rows:
             if contract_month and row["contract_month"] != contract_month: continue
