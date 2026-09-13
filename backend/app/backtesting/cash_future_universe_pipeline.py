@@ -48,8 +48,78 @@ class CashFutureUniversePipelineResult:
 
     @property
     def backtest_ready(self) -> bool:
-        # Batch-runner readiness is established by successful materialization.
-        # Detailed coverage/quality validation remains in run_backtest/run_strategy.
+        """Return true only when the acquired universe is durably backtestable.
+
+        Readiness is fail-closed: every acquisition result must be complete,
+        every requested stock must have materialized history, and when exact
+        request ranges are available they must match the persisted materialized
+        requests. A coverage manifest, when supplied, is also authoritative.
+        """
+        results = tuple(getattr(self.acquisition, "results", ()) or ())
+        if not results or self.materialized_rows <= 0:
+            return False
+
+        if any(getattr(getattr(result, "coverage", None), "complete", False) is not True for result in results):
+            return False
+
+        expected_underlyings = set()
+        requested_ranges: list[tuple[str, int, int]] = []
+        for result in results:
+            queue = getattr(result, "queue", None)
+            if queue is None:
+                return False
+            spot = self._request(getattr(queue, "spot", None))
+            instrument = getattr(spot, "instrument", "")
+            if instrument:
+                expected_underlyings.add(_underlying_from_cash_instrument(instrument))
+            for item in getattr(queue, "futures", ()) or ():
+                request = self._request(item)
+                instrument = getattr(request, "instrument", "")
+                start_ns = getattr(request, "start_ns", None)
+                end_ns = getattr(request, "end_ns", None)
+                if instrument and start_ns is not None and end_ns is not None:
+                    requested_ranges.append((instrument, int(start_ns), int(end_ns)))
+
+        if expected_underlyings and not expected_underlyings.issubset(set(self.materialized_underlyings)):
+            return False
+
+        # If future request ranges were captured, every one must be represented
+        # by the exact persisted materialization. This catches partial batches,
+        # wrong contracts, and wrong historical ranges.
+        if requested_ranges:
+            materialized = set(self.materialized_requests)
+            if not all(request in materialized for request in requested_ranges):
+                return False
+
+        # A persisted manifest is an additional authoritative gate. It must
+        # cover the exact requested intervals, not merely the same instruments.
+        if self.coverage_store is not None:
+            manifest_requests = requested_ranges
+            if not manifest_requests:
+                manifest_requests = [
+                    request
+                    for result in results
+                    for item in (getattr(getattr(result, "queue", None), "all_requests", ()) or ())
+                    if (request := self._request(item)) is not None
+                    and getattr(request, "instrument", None)
+                    and getattr(request, "start_ns", None) is not None
+                    and getattr(request, "end_ns", None) is not None
+                ]
+                manifest_requests = [
+                    (request.instrument, int(request.start_ns), int(request.end_ns))
+                    for request in manifest_requests
+                ]
+            if not manifest_requests:
+                return False
+            source = self.coverage_source
+            timeframe = self.coverage_timeframe
+            if not self.coverage_store.is_complete_for_requests(
+                source=source,
+                timeframe=timeframe,
+                requests=manifest_requests,
+            ):
+                return False
+
         return True
 
     def require_backtest_ready(self) -> None:
