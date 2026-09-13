@@ -100,8 +100,13 @@ def acquire_cash_future_universe(
             and request.instrument in future_sessions_by_instrument
         }
 
+        # Download-plan jobs historically exposed ``spot`` directly as a
+        # HistoricalFetchRequest, while newer queue objects wrap it in
+        # CashFutureSegmentDownload. Accept both shapes so the acquisition
+        # layer remains compatible with either producer.
+        spot_request = getattr(job.spot, "request", job.spot)
         kwargs = dict(
-            spot_instrument=job.spot.request.instrument,
+            spot_instrument=spot_request.instrument,
             exchange="NFO",
             underlying=job.underlying,
             start=start,
