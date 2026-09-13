@@ -21,11 +21,26 @@ class CashFutureGapRepairPlanner:
              spot_sessions: tuple[SessionWindow, ...],
              future_sessions: dict[str, tuple[SessionWindow, ...]] | None = None):
         fs = future_sessions or {}
-        spans = [queue.spot.request.end_ns - queue.spot.request.start_ns + 1] + [x.request.end_ns - x.request.start_ns + 1 for x in queue.futures]
-        p = CashFutureGapDownloadPlanner(interval_ns=interval_ns, max_request_ns=max(interval_ns, max(spans)))
-        spot = p._requests_for(queue.spot.request, spot_sessions, self._catalog)
+
+        # Accept both direct HistoricalFetchRequest objects and wrapped payloads.
+        spot_req = getattr(queue.spot, "request", queue.spot)
+        future_reqs = [getattr(x, "request", x) for x in queue.futures]
+
+        spans = [spot_req.end_ns - spot_req.start_ns + 1] + [
+            req.end_ns - req.start_ns + 1 for req in future_reqs
+        ]
+        p = CashFutureGapDownloadPlanner(
+            interval_ns=interval_ns,
+            max_request_ns=max(interval_ns, max(spans)),
+        )
+        spot = p._requests_for(spot_req, spot_sessions, self._catalog)
         futures = []
-        for x in queue.futures:
-            r = x.request
-            futures.extend(p._requests_for(r, fs.get(r.instrument, spot_sessions), self._catalog))
+        for req in future_reqs:
+            futures.extend(
+                p._requests_for(
+                    req,
+                    fs.get(req.instrument, spot_sessions),
+                    self._catalog,
+                )
+            )
         return CashFutureGapRepairPlan(tuple(spot), tuple(futures))
