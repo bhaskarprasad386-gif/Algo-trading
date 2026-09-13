@@ -30,7 +30,7 @@ def _universe():
         return CashFutureUniverseItem(symbol, "2026-10", token, f"{symbol}26OCTFUT", expiry, 100)
 
     return CashFutureFnoUniverse(
-        stocks=(item("ZZZ", "3002", date(2026, 10, 29)), item("AAA", "3001", date(2026, 10, 29))),
+        stocks=(item("ZZZ", "4002", date(2026, 10, 29)), item("AAA", "4001", date(2026, 10, 29))),
         indices=(),
     )
 
@@ -60,7 +60,7 @@ class FakeClient:
         start_day = datetime.strptime(params["fromdate"], "%Y-%m-%d %H:%M").date()
         end_day = datetime.strptime(params["todate"], "%Y-%m-%d %H:%M").date()
         token = params["symboltoken"]
-        base = 100.0 if token in {"3001", "4001"} else 200.0
+        base = {"3001": 100.0, "4001": 110.0, "3002": 200.0, "4002": 210.0}[token]
         rows = []
         day = start_day
         while day <= end_day:
