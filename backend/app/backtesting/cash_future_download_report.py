@@ -41,12 +41,14 @@ class CashFutureDownloadReporter:
         statuses = []
         for session in sessions:
             expected = max(0, (session.end_ns - session.start_ns) // interval_ns)
-            present = self.catalog.count(
-                source=request.source,
-                instrument=request.instrument,
-                timeframe=request.timeframe,
-                start_ns=session.start_ns,
-                end_ns=session.end_ns,
+            present = len(
+                self.catalog.timestamps(
+                    source=request.source,
+                    instrument=request.instrument,
+                    timeframe=request.timeframe,
+                    start_ns=session.start_ns,
+                    end_ns=session.end_ns,
+                )
             )
             statuses.append(
                 CashFutureDownloadChunkStatus(
