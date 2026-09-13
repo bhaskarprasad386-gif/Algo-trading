@@ -128,7 +128,7 @@ class CashFutureDownloadReporter:
             raise ValueError("interval_ns must be positive")
         future_sessions = future_sessions or {}
         spot = self.chunk_status(
-            queue.spot,
+            queue.spot.request,
             interval_ns=interval_ns,
             sessions=spot_sessions,
         )
