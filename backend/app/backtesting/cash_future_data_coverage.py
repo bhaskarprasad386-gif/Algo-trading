@@ -18,27 +18,29 @@ class CashFutureDataCoverageReport:
     mode: str
     report: CashFutureDownloadProgressReport
 
+    def _chunks(self):
+        return (*self.report.spot, *(chunk for chunks in self.report.futures for chunk in chunks))
+
     @property
     def complete(self) -> bool:
-        return self.report.complete
+        """Return True only when every reported spot/future chunk is complete."""
+        return all(chunk.complete for chunk in self._chunks())
 
     @property
     def total_chunks(self) -> int:
-        return self.report.total_chunks
+        return len(self._chunks())
 
     @property
     def complete_chunks(self) -> int:
-        return self.report.complete_chunks
+        return sum(chunk.complete for chunk in self._chunks())
 
     @property
     def incomplete_chunks(self) -> int:
-        return self.report.incomplete_chunks
+        return self.total_chunks - self.complete_chunks
 
     @property
     def missing_timestamps(self) -> int:
-        return self.report.spot.missing_timestamps + sum(
-            item.missing_timestamps for item in self.report.futures
-        )
+        return sum(chunk.missing for chunk in self._chunks())
 
 
 class CashFutureDataCoverageAudit:
