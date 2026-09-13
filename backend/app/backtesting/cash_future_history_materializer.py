@@ -105,7 +105,7 @@ def materialize_cash_future_history(
         end_ns = future.request.end_ns
         cash_rows = catalog.iter_records(
             source=source,
-            instrument=queue.spot.instrument,
+            instrument=queue.spot.request.instrument,
             timeframe=timeframe,
             start_ns=start_ns,
             end_ns=end_ns,
