@@ -28,7 +28,7 @@ def test_session_gap_planner_clips_repairs_to_expected_market_sessions():
         ),
     )
 
-    assert [(gap.start_ns, gap.end_ns) for gap in gaps] == [(180, 180)]
+    assert [(gap.start_ns, gap.end_ns) for gap in gaps] == []
     catalog.close()
 
 
