@@ -47,7 +47,7 @@ def materialize_cash_future_universe_history(
                 db,
                 catalog,
                 source=source,
-                spot_instrument=job.spot.instrument,
+                spot_instrument=job.spot.request.instrument,
                 future_instrument=request.instrument,
                 symbol=item.underlying,
                 contract_month=item.contract_month,
