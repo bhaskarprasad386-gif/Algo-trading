@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Callable, Iterable, Mapping
+from zoneinfo import ZoneInfo
 
 from app.algo.auth import AngelOneAuth
 
@@ -22,6 +23,14 @@ from .session_gap_planner import SessionWindow
 
 
 _ONE_DAY_NS = 86_400_000_000_000
+MARKET_TZ = ZoneInfo("Asia/Kolkata")
+
+
+def _normalize_market_time(value: datetime) -> datetime:
+    """Interpret naive UI/request times as India market time."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=MARKET_TZ)
+    return value
 
 
 @dataclass(frozen=True)
@@ -127,6 +136,10 @@ def run_angelone_cash_future_history(
     """Acquire bounded Angel One history and materialize it for backtesting."""
     auth = auth or AngelOneAuth()
     auth.get_client()
+    start = _normalize_market_time(start)
+    end = _normalize_market_time(end)
+    if start >= end:
+        raise ValueError("start must be before end")
     universe = bound_cash_future_universe(
         universe,
         max_stock_underlyings=config.max_stock_underlyings,
