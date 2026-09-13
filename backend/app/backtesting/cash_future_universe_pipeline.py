@@ -45,7 +45,7 @@ class CashFutureUniversePipelineResult:
     def backtest_ready(self) -> bool:
         """Return whether every acquired request is completely materialized and manifested."""
         acquired_underlyings = tuple(
-            sorted(_underlying_from_cash_instrument(result.queue.spot.instrument)
+            sorted(_underlying_from_cash_instrument(result.queue.spot.request.instrument)
                    for result in self.acquisition.results)
         )
         if not (
@@ -323,7 +323,7 @@ def acquire_and_materialize_cash_future_universe(
     materialized_underlyings: list[str] = []
     materialized_requests: list[tuple[str, int, int]] = []
     for result in acquisition.results:
-        underlying = _underlying_from_cash_instrument(result.queue.spot.instrument)
+        underlying = _underlying_from_cash_instrument(result.queue.spot.request.instrument)
         job = CashFutureUniverseDownloadJob(
             underlying=underlying,
             spot=result.queue.spot,
