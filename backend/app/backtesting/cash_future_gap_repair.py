@@ -21,9 +21,9 @@ class CashFutureGapRepairPlanner:
              spot_sessions: tuple[SessionWindow, ...],
              future_sessions: dict[str, tuple[SessionWindow, ...]] | None = None):
         fs = future_sessions or {}
-        spans = [queue.spot.end_ns - queue.spot.start_ns + 1] + [x.request.end_ns - x.request.start_ns + 1 for x in queue.futures]
+        spans = [queue.spot.request.end_ns - queue.spot.request.start_ns + 1] + [x.request.end_ns - x.request.start_ns + 1 for x in queue.futures]
         p = CashFutureGapDownloadPlanner(interval_ns=interval_ns, max_request_ns=max(interval_ns, max(spans)))
-        spot = p._requests_for(queue.spot, spot_sessions, self._catalog)
+        spot = p._requests_for(queue.spot.request, spot_sessions, self._catalog)
         futures = []
         for x in queue.futures:
             r = x.request
