@@ -346,7 +346,8 @@ def acquire_and_materialize_cash_future_universe(
         if rows > 0:
             materialized_underlyings.append(underlying)
 
-        for request in result.queue.futures:
+        for item in result.queue.futures:
+            request = item.request if hasattr(item, "request") else item
             contract_month = _contract_month_for_request(
                 universe,
                 underlying=underlying,
