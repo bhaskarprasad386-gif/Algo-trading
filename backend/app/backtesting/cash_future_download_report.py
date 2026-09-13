@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .cash_future_download_queue import CashFutureDownloadQueue
-from .historical_catalog import HistoricalFetchRequest
+from .historical_ingest import HistoricalFetchRequest
 from .historical_gap import SessionWindow
 
 
