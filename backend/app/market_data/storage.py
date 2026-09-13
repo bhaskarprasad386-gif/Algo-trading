@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -34,7 +34,7 @@ class TickStorage:
             symbol=symbol,
             ltp=self._float(tick.get("ltp")),
             volume=self._float(tick.get("volume")),
-            received_at=datetime.utcnow(),
+            received_at=datetime.now(timezone.utc),
         )
         self.db.add(row)
         self.db.flush()
