@@ -56,7 +56,10 @@ def _timestamp_ns(value: Any) -> int:
         text = text[:-1] + "+00:00"
     dt = datetime.fromisoformat(text)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        # Angel One candle timestamps are documented/returned as local market
+        # time. Treat a naive provider timestamp as IST rather than UTC so the
+        # value stays aligned with the IST request bounds and session windows.
+        dt = dt.replace(tzinfo=IST)
     return int(dt.timestamp() * 1_000_000_000)
 
 
