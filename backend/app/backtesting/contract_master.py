@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Iterable
 
 
@@ -61,7 +61,7 @@ class ContractMasterCatalog:
 
     def upsert_snapshot(self, snapshot_date: date, records: Iterable[ContractRecord], *, payload_sha256: str | None = None, fetched_at: datetime | None = None) -> int:
         rows = self._rows(snapshot_date, records)
-        now = (fetched_at or datetime.utcnow()).isoformat(timespec="seconds")
+        now = (fetched_at or datetime.now(timezone.utc)).isoformat(timespec="seconds")
         with self._db:
             self._db.execute("INSERT INTO contract_master_snapshots(snapshot_date,fetched_at,payload_sha256) VALUES(?,?,?) ON CONFLICT(snapshot_date) DO UPDATE SET fetched_at=excluded.fetched_at,payload_sha256=excluded.payload_sha256", (snapshot_date.isoformat(), now, payload_sha256))
             self._db.execute("DELETE FROM derivative_contracts WHERE snapshot_date=?", (snapshot_date.isoformat(),))
