@@ -36,7 +36,11 @@ def _universe():
 
 
 def _config(**overrides):
-    values = {"interval_ns": 60_000_000_000, "max_request_ns": 86_400_000_000_000, "chunk_days": 30, "retry_attempts": 1, "max_repair_passes": 1}
+    # This E2E fixture provides exactly one historical futures contract per
+    # underlying. CURRENT therefore models the intended cash + current-future
+    # pair; BOTH is reserved for CURRENT+NEAR replay where two distinct future
+    # contracts are supplied by the contract master.
+    values = {"interval_ns": 60_000_000_000, "max_request_ns": 86_400_000_000_000, "chunk_days": 30, "retry_attempts": 1, "max_repair_passes": 1, "mode": "CURRENT"}
     values.update(overrides)
     return batch_runner.AngelOneCashFutureRunConfig(**values)
 
