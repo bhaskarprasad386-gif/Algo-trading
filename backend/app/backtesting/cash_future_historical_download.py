@@ -82,7 +82,7 @@ class CashFutureHistoricalDownloadReport:
 class CashFutureHistoricalDownloadService:
     """Download spot/future requests sequentially and persist each chunk immediately."""
 
-    def __init__(self, catalog: HistoricalCatalog, contract_catalog, *, source=None, executor=None, session_windows: Callable[[object], Iterable[SessionWindow]] | None = None, status_store: HistoricalDownloadStatusStore | None = None, instrument_master: InstrumentMaster | None = None) -> None:
+    def __init__(self, catalog: HistoricalCatalog, contract_catalog, *, source=None, executor=None, session_windows: Callable[[object], Iterable[SessionWindow]] | None = None, status_store: HistoricalDownloadStatusStore | None = None, instrument_master: InstrumentMaster | None = None):
         self.catalog = catalog
         self.contract_catalog = contract_catalog
         self.ingestion = HistoricalIngestionService(catalog)
@@ -186,7 +186,7 @@ class CashFutureHistoricalDownloadService:
         for plan in plans:
             for request in plan.requests:
                 expected, actual, missing, first_missing = self._chunk_metrics(request)
-                self.status_store.upsert_chunk(DownloadChunkStatus(job_id=job_id, sequence=sequence, instrument=request.instrument, start_ns=request.start_ns, end_ns=request.end_ns, status="QUEUED", attempts=0, expected_timestamps=expected, actual_timestamps=actual, missing_timestamps=missing, first_missing_ns=first_missing))
+                self.status_store.upsert_chunk(DownloadChunkStatus(job_id=job_id, sequence=sequence, instrument=request.instrument, start_ns=request.start_ns, end_ns=request.end_ns, status="QUEUED", expected_records=expected, actual_records=actual, missing_records=missing, first_missing_ns=first_missing))
                 sequence += 1
 
     def _callbacks(self, job_id: str, sequence_offset: int = 0, sequence_numbers: tuple[int, ...] | None = None):
@@ -209,7 +209,7 @@ class CashFutureHistoricalDownloadService:
             from .download_status_progress import persist_chunk_result
             target = status_request(index, request)
             expected, actual, missing, first_missing = self._chunk_metrics(target)
-            persist_chunk_result(store, job_id=job_id, sequence=status_sequence(index), instrument=target.instrument, start_ns=target.start_ns, end_ns=target.end_ns, attempts=0, status="SKIPPED", expected_timestamps=expected, actual_timestamps=actual, missing_timestamps=missing, first_missing_ns=first_missing)
+            persist_chunk_result(store, job_id=job_id, sequence=status_sequence(index), instrument=target.instrument, start_ns=target.start_ns, end_ns=target.end_ns, attempts=0, status="SKIPPED", fetched_records=0, inserted_records=0, expected_records=expected, actual_records=actual, missing_records=missing, first_missing_ns=first_missing)
         def complete(index, request, result, attempt):
             from .download_status_progress import persist_chunk_result
             target = status_request(index, request)
@@ -217,12 +217,12 @@ class CashFutureHistoricalDownloadService:
             existing = next((chunk for chunk in store.chunks(job_id) if chunk.sequence == status_sequence(index)), None)
             fetched = (existing.fetched_records if existing else 0) + result.fetched
             inserted = (existing.inserted_records if existing else 0) + result.inserted
-            persist_chunk_result(store, job_id=job_id, sequence=status_sequence(index), instrument=target.instrument, start_ns=target.start_ns, end_ns=target.end_ns, attempts=attempt, status="COMPLETE" if missing == 0 else "RUNNING", expected_timestamps=expected, actual_timestamps=actual, missing_timestamps=missing, first_missing_ns=first_missing, fetched_records=fetched, inserted_records=inserted)
+            persist_chunk_result(store, job_id=job_id, sequence=status_sequence(index), instrument=target.instrument, start_ns=target.start_ns, end_ns=target.end_ns, attempts=attempt, status="COMPLETED", fetched_records=fetched, inserted_records=inserted, expected_records=expected, actual_records=actual, missing_records=missing, first_missing_ns=first_missing)
         def failed(index, request, error, attempts):
             from .download_status_progress import persist_chunk_result
             target = status_request(index, request)
             expected, actual, missing, first_missing = self._chunk_metrics(target)
-            persist_chunk_result(store, job_id=job_id, sequence=status_sequence(index), instrument=target.instrument, start_ns=target.start_ns, end_ns=target.end_ns, attempts=attempts, status="FAILED", expected_timestamps=expected, actual_timestamps=actual, missing_timestamps=missing, first_missing_ns=first_missing, error=str(error))
+            persist_chunk_result(store, job_id=job_id, sequence=status_sequence(index), instrument=target.instrument, start_ns=target.start_ns, end_ns=target.end_ns, attempts=attempts, status="FAILED", error=str(error), fetched_records=0, inserted_records=0, expected_records=expected, actual_records=actual, missing_records=missing, first_missing_ns=first_missing)
             store.update_job(job_id, status="FAILED", error=str(error))
         return {"on_chunk_start": start, "on_chunk_skip": skip, "on_chunk_complete": complete, "on_chunk_failed": failed}
 
@@ -240,7 +240,7 @@ class CashFutureHistoricalDownloadService:
         sequences = tuple(chunk.sequence for chunk in chunks)
         return HistoricalSyncPlan(requests), sequences
 
-    def run(self, *, spot_instrument: str, exchange: str, underlying: str, start, end, timeframe: str = "1m", mode: str = "BOTH", retry_attempts: int = 3, should_skip: Callable[[object], bool] | None = None, session_windows: Callable[[object], Iterable[SessionWindow]] | None = None, job_id: str | None = None, resume: bool = False) -> CashFutureHistoricalDownloadReport:
+    def run(self, *, spot_instrument: str, exchange: str, underlying: str, start, end, timeframe: str = "1m", mode: str = "BOTH", retry_attempts: int = 3, should_skip: Callable[[object], bool] | None = None, session_windows: Callable[[object], Iterable[SessionWindow]] | None = None, job_id: str | None = None, resume: bool = False):
         original_session_windows = self.session_windows
         if session_windows is not None: self.session_windows = session_windows
         try:
@@ -263,17 +263,17 @@ class CashFutureHistoricalDownloadService:
             self.contract_preflight.require_complete(exchange=exchange, underlying=underlying, start=start_date, end=end_date, mode=mode)
             resolved_spot_instrument = _normalise_cash_instrument(self.instrument_master, spot_instrument, "NSE")
             queue = build_rollover_download_queue(catalog=self.contract_catalog, spot_instrument=resolved_spot_instrument, exchange=exchange, underlying=underlying, start=start, end=end, timeframe=timeframe, mode=mode, source=self.source_name)
-            spot_plan = self._plan_for_request(queue.spot)
+            spot_plan = self._plan_for_request(queue.spot.request)
             future_plans = tuple(self._plan_for_request(item.request) for item in queue.futures)
             all_plans = (spot_plan, *future_plans)
             total_chunks = sum(len(plan.requests) for plan in all_plans)
             if self.status_store is not None and job_id is not None:
-                start_ns = min([queue.spot.start_ns, *[item.request.start_ns for item in queue.futures]])
-                end_ns = max([queue.spot.end_ns, *[item.request.end_ns for item in queue.futures]])
-                self.status_store.create_job(job_id=job_id, mode=mode, timeframe=timeframe, spot_instrument=resolved_spot_instrument, exchange=exchange, underlying=underlying, start_ns=start_ns, end_ns=end_ns, requested_chunks=total_chunks, source=self.source_name, reset_existing=True)
+                start_ns = min([queue.spot.request.start_ns, *[item.request.start_ns for item in queue.futures]])
+                end_ns = max([queue.spot.request.end_ns, *[item.request.end_ns for item in queue.futures]])
+                self.status_store.create_job(job_id=job_id, mode=mode, timeframe=timeframe, spot_instrument=resolved_spot_instrument, exchange=exchange, underlying=underlying, start_ns=start_ns, end_ns=end_ns, source=self.source_name, total_chunks=total_chunks)
                 self._register_plan(job_id, all_plans)
             effective_skip = should_skip or self._chunk_is_complete; sequence_offset = 0
-            spot_result = self.executor.run(self.source, spot_plan, retry_attempts=retry_attempts, should_skip=effective_skip, should_accept=self._chunk_is_complete, **(self._callbacks(job_id, sequence_offset) if job_id else {}))
+            spot_result = self.executor.run(self.source, spot_plan, retry_attempts=retry_attempts, should_skip=effective_skip, should_accept=self._chunk_is_complete, **(self._callbacks(job_id, sequence_offset=0) if job_id else {}))
             sequence_offset += len(spot_plan.requests)
             if spot_result.failed_request_index is not None:
                 if self.status_store is not None and job_id is not None:
@@ -281,7 +281,7 @@ class CashFutureHistoricalDownloadService:
                 return CashFutureHistoricalDownloadReport(queue, spot_result, tuple(), self.catalog.count())
             future_results = []
             for item, plan in zip(queue.futures, future_plans):
-                result = self.executor.run(self.source, plan, retry_attempts=retry_attempts, should_skip=effective_skip, should_accept=self._chunk_is_complete, **(self._callbacks(job_id, sequence_offset) if job_id else {}))
+                result = self.executor.run(self.source, plan, retry_attempts=retry_attempts, should_skip=effective_skip, should_accept=self._chunk_is_complete, **(self._callbacks(job_id, sequence_offset=sequence_offset) if job_id else {}))
                 future_results.append(result); sequence_offset += len(plan.requests)
                 if result.failed_request_index is not None:
                     if self.status_store is not None and job_id is not None:
