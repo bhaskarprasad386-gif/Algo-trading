@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from app.backtesting.angelone_cash_future_acquisition import (
     build_angelone_cash_future_acquisition_service,
 )
@@ -18,8 +20,10 @@ class FakeLimiter:
 
 
 def test_builds_real_angelone_source_into_cash_future_service():
+    # Wiring test only — ingestion needs a .catalog attribute for coverage audit
+    fake_ingestion = SimpleNamespace(catalog=object())
     service = build_angelone_cash_future_acquisition_service(
-        object(),
+        fake_ingestion,
         object(),
         interval_ns=60_000_000_000,
         max_request_ns=30 * 86_400 * 1_000_000_000,
