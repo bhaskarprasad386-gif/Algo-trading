@@ -217,7 +217,8 @@ class CashFutureHistoricalDownloadService:
             existing = next((chunk for chunk in store.chunks(job_id) if chunk.sequence == status_sequence(index)), None)
             fetched = (existing.fetched_records if existing else 0) + result.fetched
             inserted = (existing.inserted_records if existing else 0) + result.inserted
-            persist_chunk_result(store, job_id=job_id, sequence=status_sequence(index), instrument=target.instrument, start_ns=target.start_ns, end_ns=target.end_ns, attempts=attempt, status="COMPLETED", fetched_records=fetched, inserted_records=inserted, expected_timestamps=expected, actual_timestamps=actual, missing_timestamps=missing, first_missing_ns=first_missing)
+            status = "COMPLETE" if missing == 0 else "RUNNING"
+            persist_chunk_result(store, job_id=job_id, sequence=status_sequence(index), instrument=target.instrument, start_ns=target.start_ns, end_ns=target.end_ns, attempts=attempt, status=status, fetched_records=fetched, inserted_records=inserted, expected_timestamps=expected, actual_timestamps=actual, missing_timestamps=missing, first_missing_ns=first_missing)
         def failed(index, request, error, attempts):
             from .download_status_progress import persist_chunk_result
             target = status_request(index, request)
