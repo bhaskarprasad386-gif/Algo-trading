@@ -236,39 +236,55 @@ def _request_has_materialized_rows(
     timeframe: str = "1m",
 ) -> bool:
     """Require persisted rows to cover every expected session timestamp in the request."""
-    start = datetime.fromtimestamp(request.start_ns / 1_000_000_000)
-    end = datetime.fromtimestamp(request.end_ns / 1_000_000_000)
+    if sessions is None:
+        start = datetime.fromtimestamp(request.start_ns / 1_000_000_000)
+        end = datetime.fromtimestamp(request.end_ns / 1_000_000_000)
+        expected_datetimes = (
+            start,
+            end,
+        )
+    else:
+        if not sessions:
+            return False
+        interval_ns = _timeframe_interval_ns(timeframe)
+        expected_ns = tuple(
+            _session_expected_timestamps(
+                sessions,
+                start_ns=request.start_ns,
+                end_ns=request.end_ns,
+                interval_ns=interval_ns,
+            )
+        )
+        if not expected_ns:
+            return False
+        expected_datetimes = tuple(
+            datetime.fromtimestamp(timestamp_ns / 1_000_000_000)
+            for timestamp_ns in expected_ns
+        )
+
     stmt = select(
         func.min(CashFutureHistory.timestamp),
         func.max(CashFutureHistory.timestamp),
     ).where(
         CashFutureHistory.symbol == symbol,
         CashFutureHistory.contract_month == contract_month,
-        CashFutureHistory.timestamp >= start,
-        CashFutureHistory.timestamp <= end,
+        CashFutureHistory.timestamp >= expected_datetimes[0],
+        CashFutureHistory.timestamp <= expected_datetimes[-1],
     )
     first, last = db.execute(stmt).one()
-    if first is None or last is None or first > start or last < end:
-        return False
-    if sessions is None:
-        return True
-    if not sessions:
+    if first is None or last is None or first > expected_datetimes[0] or last < expected_datetimes[-1]:
         return False
 
-    interval_ns = _timeframe_interval_ns(timeframe)
-    expected = _session_expected_timestamps(
-        sessions,
-        start_ns=request.start_ns,
-        end_ns=request.end_ns,
-        interval_ns=interval_ns,
-    )
+    if sessions is None:
+        return True
+
     observed_stmt = (
         select(CashFutureHistory.timestamp)
         .where(
             CashFutureHistory.symbol == symbol,
             CashFutureHistory.contract_month == contract_month,
-            CashFutureHistory.timestamp >= start,
-            CashFutureHistory.timestamp <= end,
+            CashFutureHistory.timestamp >= expected_datetimes[0],
+            CashFutureHistory.timestamp <= expected_datetimes[-1],
         )
         .order_by(CashFutureHistory.timestamp)
         .distinct()
@@ -276,8 +292,7 @@ def _request_has_materialized_rows(
     )
     observed = iter(db.execute(observed_stmt).scalars())
     current = next(observed, None)
-    for expected_ns in expected:
-        expected_dt = datetime.fromtimestamp(expected_ns / 1_000_000_000)
+    for expected_dt in expected_datetimes:
         while current is not None and current < expected_dt:
             current = next(observed, None)
         if current != expected_dt:
