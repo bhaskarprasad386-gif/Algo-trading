@@ -41,12 +41,21 @@ class CashFutureUniversePipelineResult:
     coverage_source: str = "angelone"
     coverage_timeframe: str = "1m"
 
+    @staticmethod
+    def _request(item):
+        """Accept both wrapped download items and legacy direct requests."""
+        return getattr(item, "request", item)
+
     @property
     def backtest_ready(self) -> bool:
         """Return whether every acquired request is completely materialized and manifested."""
         acquired_underlyings = tuple(
-            sorted(_underlying_from_cash_instrument(result.queue.spot.request.instrument)
-                   for result in self.acquisition.results)
+            sorted(
+                _underlying_from_cash_instrument(
+                    self._request(result.queue.spot).instrument
+                )
+                for result in self.acquisition.results
+            )
         )
         if not (
             self.materialized_rows > 0
@@ -60,7 +69,7 @@ class CashFutureUniversePipelineResult:
             (request.instrument, request.start_ns, request.end_ns)
             for result in self.acquisition.results
             for item in getattr(result.queue, "futures", ())
-            for request in (item.request if hasattr(item, "request") else item,)
+            for request in (self._request(item),)
         )
         if expected_requests and not set(expected_requests).issubset(set(self.materialized_requests)):
             return False
@@ -70,7 +79,13 @@ class CashFutureUniversePipelineResult:
         requested_ranges = tuple(
             (request.instrument, request.start_ns, request.end_ns)
             for result in self.acquisition.results
-            for request in result.queue.all_requests
+            for request in (
+                self._request(item)
+                for item in (
+                    result.queue.spot,
+                    *getattr(result.queue, "futures", ()),
+                )
+            )
         )
         return self.coverage_store.is_complete_for_requests(
             source=self.coverage_source,
@@ -323,12 +338,13 @@ def acquire_and_materialize_cash_future_universe(
     materialized_underlyings: list[str] = []
     materialized_requests: list[tuple[str, int, int]] = []
     for result in acquisition.results:
-        underlying = _underlying_from_cash_instrument(result.queue.spot.request.instrument)
+        spot_request = CashFutureUniversePipelineResult._request(result.queue.spot)
+        underlying = _underlying_from_cash_instrument(spot_request.instrument)
         job = CashFutureUniverseDownloadJob(
             underlying=underlying,
             spot=result.queue.spot,
             futures=tuple(
-                item.request if hasattr(item, "request") else item
+                CashFutureUniversePipelineResult._request(item)
                 for item in result.queue.futures
             ),
         )
@@ -351,7 +367,7 @@ def acquire_and_materialize_cash_future_universe(
             materialized_underlyings.append(underlying)
 
         for item in result.queue.futures:
-            request = item.request if hasattr(item, "request") else item
+            request = CashFutureUniversePipelineResult._request(item)
             contract_month = _contract_month_for_request(
                 universe,
                 underlying=underlying,
