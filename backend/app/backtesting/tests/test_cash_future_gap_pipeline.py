@@ -105,9 +105,7 @@ def test_gap_download_planner_is_bounded_and_handles_exact_future_tokens():
     queue = CashFutureDownloadQueue(
         spot=HistoricalFetchRequest("angelone", "NSE:1:NIFTY", "1m", 60, 60),
         futures=(
-            type("FutureDownload", (), {
-                "request": HistoricalFetchRequest("angelone", future, "1m", 60, 360)
-            })(),
+            HistoricalFetchRequest("angelone", future, "1m", 60, 360),
         ),
     )
 
