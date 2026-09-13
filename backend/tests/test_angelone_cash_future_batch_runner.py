@@ -1,4 +1,4 @@
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -53,13 +53,19 @@ class FakeClient:
 
     def getCandleData(self, params):
         self.requests.append(dict(params))
-        day = datetime.strptime(params["fromdate"], "%Y-%m-%d %H:%M").date()
+        start_day = datetime.strptime(params["fromdate"], "%Y-%m-%d %H:%M").date()
+        end_day = datetime.strptime(params["todate"], "%Y-%m-%d %H:%M").date()
         token = params["symboltoken"]
         base = 100.0 if token in {"3001", "4001"} else 200.0
-        return {"status": True, "data": [
-            [f"{day} 09:15", base, base + 1, base - 1, base + 0.5, 1000, 250],
-            [f"{day} 09:16", base + 0.5, base + 2, base, base + 1.5, 1200, 275],
-        ]}
+        rows = []
+        day = start_day
+        while day <= end_day:
+            rows.extend([
+                [f"{day} 09:15", base, base + 1, base - 1, base + 0.5, 1000, 250],
+                [f"{day} 09:16", base + 0.5, base + 2, base, base + 1.5, 1200, 275],
+            ])
+            day += timedelta(days=1)
+        return {"status": True, "data": rows}
 
 
 class FakeAuth:
