@@ -188,7 +188,7 @@ class CashFutureHistoricalAcquisitionService:
         ranges = []
         instruments = {request.instrument for request in queue.all_requests}
         sessions_by_instrument: dict[str, tuple[SessionWindow, ...]] = {
-            queue.spot.instrument: spot_sessions,
+            queue.spot.request.instrument: spot_sessions,
         }
         if future_sessions:
             sessions_by_instrument.update(future_sessions)
