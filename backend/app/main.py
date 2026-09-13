@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from pathlib import Path
@@ -39,7 +41,32 @@ from app.backtesting.cash_future_strategy_routes import router as cash_future_st
 run_schema_migrations()
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _history_collector_task, _contract_master_sync_task
+    app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
+    if settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
+        _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
+    if _collector_enabled() and _history_collector_task is None:
+        _history_collector_task = asyncio.create_task(_cash_future_history_loop())
+    try:
+        yield
+    finally:
+        for task in (_history_collector_task, _contract_master_sync_task):
+            if task is not None:
+                task.cancel()
+        for task in (_history_collector_task, _contract_master_sync_task):
+            if task is not None:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        _history_collector_task = None
+        _contract_master_sync_task = None
+        backtest_download_manager.close()
+        backtest_status_store.close()
+
+app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug, lifespan=lifespan)
 app.add_exception_handler(TradingAppException, trading_exception_handler)
 app.add_exception_handler(Exception, global_exception_handler)
 
@@ -261,34 +288,6 @@ async def _contract_master_sync_loop() -> None:
         except Exception as exc:
             app_logger.error(f"Contract-master auto-sync failed: {exc}")
         await asyncio.sleep(interval)
-
-
-@app.on_event("startup")
-async def startup_event():
-    global _history_collector_task, _contract_master_sync_task
-    app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
-    if settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
-        _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
-    if _collector_enabled() and _history_collector_task is None:
-        _history_collector_task = asyncio.create_task(_cash_future_history_loop())
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    global _history_collector_task, _contract_master_sync_task
-    for task in (_history_collector_task, _contract_master_sync_task):
-        if task is not None:
-            task.cancel()
-    for task in (_history_collector_task, _contract_master_sync_task):
-        if task is not None:
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-    _history_collector_task = None
-    _contract_master_sync_task = None
-    backtest_download_manager.close()
-    backtest_status_store.close()
 
 
 @app.get("/")
