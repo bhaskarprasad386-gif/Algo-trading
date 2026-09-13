@@ -40,7 +40,8 @@ class CashFutureDownloadReporter:
     ) -> tuple[CashFutureDownloadChunkStatus, ...]:
         statuses = []
         for session in sessions:
-            expected = max(0, (session.end_ns - session.start_ns) // interval_ns)
+            # SessionWindow is inclusive: both start_ns and end_ns are expected bars.
+            expected = max(0, ((session.end_ns - session.start_ns) // interval_ns) + 1)
             present = len(
                 self.catalog.timestamps(
                     source=request.source,
@@ -89,11 +90,12 @@ class CashFutureDownloadReporter:
             sessions=spot_sessions,
         )
         futures = tuple(
-            self.chunk_status(
+            status
+            for item in queue.futures
+            for status in self.chunk_status(
                 item.request,
                 interval_ns=interval_ns,
                 sessions=future_sessions.get(item.request.instrument, ()),
             )
-            for item in queue.futures
         )
         return CashFutureDownloadProgressReport(mode=mode, spot=spot, futures=futures)
