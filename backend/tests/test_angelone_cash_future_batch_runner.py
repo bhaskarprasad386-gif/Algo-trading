@@ -172,7 +172,7 @@ def test_multi_stock_multi_day_execution_preserves_generator_and_window(monkeypa
     )
     assert [call[0] for call in calls] == [0, 1]
     assert all(call[1] == start and call[2] == end for call in calls)
-    assert all(call[3] == (("symbol", "AAA"), ("symbol", "BBB"), ("symbol", "ZZZ")) for call in calls)
+    assert all(call[3] == ({"symbol": "AAA"}, {"symbol": "BBB"}, {"symbol": "ZZZ"}) for call in calls)
     assert tuple(item.skipped for item in output) == (False, False)
     store.close()
 
