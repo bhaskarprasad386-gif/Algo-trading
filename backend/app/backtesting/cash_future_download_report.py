@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .cash_future_download_queue import CashFutureDownloadQueue
+from .cash_future_download_queue import CashFutureDownloadQueue, CashFutureSegmentDownload
 from .historical_catalog import HistoricalFetchRequest
 from .historical_gap import SessionWindow
 
@@ -63,6 +63,14 @@ class CashFutureDownloadReporter:
             )
         return tuple(statuses)
 
+    @staticmethod
+    def _spot_request(queue: CashFutureDownloadQueue) -> HistoricalFetchRequest:
+        """Accept both the current wrapped queue shape and direct-test requests."""
+        spot = queue.spot
+        if isinstance(spot, CashFutureSegmentDownload):
+            return spot.request
+        return spot
+
     def report(
         self,
         *,
@@ -77,7 +85,7 @@ class CashFutureDownloadReporter:
             raise ValueError("interval_ns must be positive")
         future_sessions = future_sessions or {}
         spot = self.chunk_status(
-            queue.spot,
+            self._spot_request(queue),
             interval_ns=interval_ns,
             sessions=spot_sessions,
         )
