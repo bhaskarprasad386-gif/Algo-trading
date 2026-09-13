@@ -93,15 +93,15 @@ class CashFutureGapDownloadPlanner:
     def coverage_manifest(self, *, queue: CashFutureDownloadQueue, catalog, spot_sessions: tuple[SessionWindow, ...], future_sessions: dict[str, tuple[SessionWindow, ...]] | None = None):
         """Build a session-aware coverage manifest for spot and every exact future leg."""
         future_sessions = future_sessions or {}
-        ranges = list(self._coverage_for(queue.spot, spot_sessions, catalog))
+        ranges = list(self._coverage_for(queue.spot.request, spot_sessions, catalog))
         for item in queue.futures:
-            ranges.extend(self._coverage_for(item, future_sessions.get(item.instrument, ()), catalog))
-        return build_coverage_manifest(source=queue.spot.source, ranges=ranges)
+            ranges.extend(self._coverage_for(item.request, future_sessions.get(item.request.instrument, ()), catalog))
+        return build_coverage_manifest(source=queue.spot.request.source, ranges=ranges)
 
     def plan(self, *, queue: CashFutureDownloadQueue, catalog, spot_sessions: tuple[SessionWindow, ...], future_sessions: dict[str, tuple[SessionWindow, ...]] | None = None) -> HistoricalSyncPlan:
         """Return deterministic, session-only repair requests for spot and exact future tokens."""
         future_sessions = future_sessions or {}
-        requests = list(self._requests_for(queue.spot, spot_sessions, catalog))
+        requests = list(self._requests_for(queue.spot.request, spot_sessions, catalog))
         for item in queue.futures:
-            requests.extend(self._requests_for(item, future_sessions.get(item.instrument, ()), catalog))
+            requests.extend(self._requests_for(item.request, future_sessions.get(item.request.instrument, ()), catalog))
         return HistoricalSyncPlan(tuple(sorted(requests, key=lambda item: (item.instrument, item.start_ns, item.end_ns))))
