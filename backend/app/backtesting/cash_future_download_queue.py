@@ -26,6 +26,21 @@ class CashFutureDownloadQueue:
     spot: CashFutureSegmentDownload
     futures: tuple[CashFutureSegmentDownload, ...]
 
+    def __post_init__(self) -> None:
+        """Normalize legacy direct requests into the wrapped queue shape."""
+        spot = self.spot
+        if isinstance(spot, HistoricalFetchRequest):
+            object.__setattr__(self, "spot", CashFutureSegmentDownload(None, spot))
+
+        futures = tuple(self.futures)
+        normalized_futures = tuple(
+            item if isinstance(item, CashFutureSegmentDownload)
+            else CashFutureSegmentDownload(None, item)
+            for item in futures
+        )
+        if normalized_futures != futures:
+            object.__setattr__(self, "futures", normalized_futures)
+
     @property
     def all_requests(self) -> tuple[HistoricalFetchRequest, ...]:
         return (self.spot.request, *(item.request for item in self.futures))
@@ -80,7 +95,7 @@ def build_rollover_download_queue(
     start_ns, end_ns = _ns(start), _ns(end)
     spot_request = HistoricalFetchRequest(source, spot_instrument, timeframe, start_ns, end_ns)
     spot = CashFutureSegmentDownload(None, spot_request)
-    
+
     items: list[CashFutureSegmentDownload] = []
     for segments in segments_by_leg:
         for segment in segments:
