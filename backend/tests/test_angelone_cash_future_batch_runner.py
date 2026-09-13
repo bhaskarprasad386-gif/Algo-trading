@@ -213,7 +213,7 @@ def test_real_angelone_multi_stock_multi_day_runner_materializes_sqlite(tmp_path
     )
     assert tuple(item.stock_underlyings for item in output) == (("AAA",), ("ZZZ",))
     assert all(item.result.backtest_ready for item in output)
-    assert auth.calls == 2
+    assert auth.calls == 6
     assert limiter.calls >= 4
     assert len(client.requests) >= 4
     rows = db.scalars(select(CashFutureHistory)).all()
