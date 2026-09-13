@@ -38,7 +38,7 @@ def test_queue_propagates_custom_historical_provider_to_every_request():
         end=datetime(2026, 2, 2, tzinfo=timezone.utc),
         timeframe="1m", mode="CURRENT", source="other-provider",
     )
-    assert queue.spot.source == "other-provider"
+    assert queue.spot.request.source == "other-provider"
     assert [item.request.source for item in queue.futures] == ["other-provider", "other-provider"]
 
 
