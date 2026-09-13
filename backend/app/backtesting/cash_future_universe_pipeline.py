@@ -59,7 +59,8 @@ class CashFutureUniversePipelineResult:
         expected_requests = tuple(
             (request.instrument, request.start_ns, request.end_ns)
             for result in self.acquisition.results
-            for request in getattr(result.queue, "futures", ())
+            for item in getattr(result.queue, "futures", ())
+            for request in (item.request if hasattr(item, "request") else item,)
         )
         if expected_requests and not set(expected_requests).issubset(set(self.materialized_requests)):
             return False
