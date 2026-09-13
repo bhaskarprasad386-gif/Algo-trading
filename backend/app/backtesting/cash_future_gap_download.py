@@ -95,13 +95,19 @@ class CashFutureGapDownloadPlanner:
         """Accept both direct HistoricalFetchRequest and wrapped spot payloads."""
         return getattr(queue.spot, "request", queue.spot)
 
+    @staticmethod
+    def _future_request(item: HistoricalFetchRequest) -> HistoricalFetchRequest:
+        """Accept both direct HistoricalFetchRequest and wrapped future payloads."""
+        return getattr(item, "request", item)
+
     def coverage_manifest(self, *, queue: CashFutureDownloadQueue, catalog, spot_sessions: tuple[SessionWindow, ...], future_sessions: dict[str, tuple[SessionWindow, ...]] | None = None):
         """Build a session-aware coverage manifest for spot and every exact future leg."""
         future_sessions = future_sessions or {}
         spot_request = self._spot_request(queue)
         ranges = list(self._coverage_for(spot_request, spot_sessions, catalog))
         for item in queue.futures:
-            ranges.extend(self._coverage_for(item.request, future_sessions.get(item.request.instrument, ()), catalog))
+            future_request = self._future_request(item)
+            ranges.extend(self._coverage_for(future_request, future_sessions.get(future_request.instrument, ()), catalog))
         return build_coverage_manifest(source=spot_request.source, ranges=ranges)
 
     def plan(self, *, queue: CashFutureDownloadQueue, catalog, spot_sessions: tuple[SessionWindow, ...], future_sessions: dict[str, tuple[SessionWindow, ...]] | None = None) -> HistoricalSyncPlan:
@@ -110,5 +116,6 @@ class CashFutureGapDownloadPlanner:
         spot_request = self._spot_request(queue)
         requests = list(self._requests_for(spot_request, spot_sessions, catalog))
         for item in queue.futures:
-            requests.extend(self._requests_for(item.request, future_sessions.get(item.request.instrument, ()), catalog))
+            future_request = self._future_request(item)
+            requests.extend(self._requests_for(future_request, future_sessions.get(future_request.instrument, ()), catalog))
         return HistoricalSyncPlan(tuple(sorted(requests, key=lambda item: (item.instrument, item.start_ns, item.end_ns))))
