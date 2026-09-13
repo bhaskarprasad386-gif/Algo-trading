@@ -25,7 +25,7 @@ def test_queue_uses_exact_historical_tokens_per_segment():
         end=datetime(2026, 2, 2, tzinfo=timezone.utc),
         timeframe="1m", mode="CURRENT",
     )
-    assert queue.spot.instrument == "NSE:3045:SBIN"
+    assert queue.spot.request.instrument == "NSE:3045:SBIN"
     assert [x.request.instrument for x in queue.futures] == ["NFO:101:SBINJAN", "NFO:102:SBINFEB"]
     assert queue.futures[0].request.end_ns < queue.futures[1].request.start_ns
 
