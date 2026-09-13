@@ -34,7 +34,11 @@ def materialize_cash_future_universe_history(
     }
     inserted = 0
     for job in download_plan.jobs:
-        for request in job.futures:
+        # CashFutureSegmentDownload wraps its HistoricalFetchRequest in `.request`.
+        # Keep the unwrap explicit; getattr's default argument is evaluated eagerly.
+        spot_request = job.spot.request
+        for request_item in job.futures:
+            request = request_item.request
             parts = request.instrument.split(":", 2)
             if len(parts) != 3:
                 raise ValueError(f"invalid future instrument: {request.instrument}")
@@ -47,7 +51,7 @@ def materialize_cash_future_universe_history(
                 db,
                 catalog,
                 source=source,
-                spot_instrument=getattr(job.spot, "request", job.spot).instrument,
+                spot_instrument=spot_request.instrument,
                 future_instrument=request.instrument,
                 symbol=item.underlying,
                 contract_month=item.contract_month,
