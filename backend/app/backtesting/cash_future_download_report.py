@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .cash_future_download_queue import CashFutureDownloadQueue, CashFutureSegmentDownload
+from .cash_future_download_queue import CashFutureDownloadQueue
 from .historical_catalog import HistoricalFetchRequest
 from .historical_gap import SessionWindow
 
@@ -65,11 +65,8 @@ class CashFutureDownloadReporter:
 
     @staticmethod
     def _spot_request(queue: CashFutureDownloadQueue) -> HistoricalFetchRequest:
-        """Accept both the current wrapped queue shape and direct-test requests."""
-        spot = queue.spot
-        if isinstance(spot, CashFutureSegmentDownload):
-            return spot.request
-        return spot
+        """Accept both direct HistoricalFetchRequest and wrapped spot payloads."""
+        return getattr(queue.spot, "request", queue.spot)
 
     def report(
         self,
