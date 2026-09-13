@@ -101,7 +101,7 @@ def acquire_cash_future_universe(
         }
 
         kwargs = dict(
-            spot_instrument=job.spot.instrument,
+            spot_instrument=job.spot.request.instrument,
             exchange="NFO",
             underlying=job.underlying,
             start=start,
