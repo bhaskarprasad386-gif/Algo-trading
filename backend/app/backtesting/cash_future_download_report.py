@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from .cash_future_download_queue import CashFutureDownloadQueue
 from .historical_ingest import HistoricalFetchRequest
-from .historical_gap import SessionWindow
+from .session_gap_planner import SessionWindow
 
 
 @dataclass(frozen=True)
