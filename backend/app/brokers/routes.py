@@ -13,6 +13,7 @@ from app.brokers.connections import broker_connections
 from app.brokers.registry import BrokerRegistry
 from app.brokers.safety import trading_safety
 from app.core.config import settings
+from app.core.logger import app_logger
 from app.core.security import ALGORITHM
 
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
@@ -69,7 +70,6 @@ def enable_real_trading(payload: RealTradingEnableRequest, user_id: int = Depend
     connection = next((c for c in broker_connections.list(user_id) if c.connected), None)
     if connection is None:
         raise HTTPException(status_code=409, detail="Connect a broker before enabling real trading")
-    # Safety arming only: broker adapters still reject live order routing.
     state = trading_safety.enable(user_id)
     return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "live_order_routing": False, "message": "Real trading armed, but live order routing is still disabled."}
 
@@ -95,7 +95,10 @@ def connect(payload: ConnectRequest, user_id: int = Depends(current_user_id)) ->
     try:
         result = adapter.connect(api_key=payload.api_key, client_code=payload.client_code, password=payload.password, totp_secret=payload.totp_secret)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Angel One connection failed: {exc}") from exc
+        # Broker SDK errors may contain credential fragments or internal request
+        # details. Log server-side, but never reflect them to the client.
+        app_logger.error("Angel One connection failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Angel One connection failed") from exc
     old = _sessions.get((user_id, broker))
     if old is not None:
         old.disconnect()
