@@ -39,8 +39,6 @@ class RiskEngine:
         today = datetime.now(timezone.utc).date()
         if today != self._day:
             self._day = today
-            # Daily order/loss counters reset, but open positions and their
-            # cost basis must survive the calendar boundary.
             self._orders_today = 0
             self._realized_pnl = 0.0
 
@@ -48,11 +46,13 @@ class RiskEngine:
         with self._lock:
             return self._check_unlocked(quantity, current_position, realized_pnl)
 
-    def _check_unlocked(self, quantity: int, current_position: int, realized_pnl: float) -> tuple[bool, str]:
+    def _check_unlocked(self, quantity: int, current_position: int, realized_pnl: float, projected_position: int | None = None) -> tuple[bool, str]:
         self._roll_day()
         for value, name in ((quantity, "quantity"), (current_position, "current_position"), (realized_pnl, "realized_pnl")):
             if isinstance(value, bool) or not math.isfinite(float(value)):
                 return False, f"{name} must be finite"
+        if projected_position is not None and (isinstance(projected_position, bool) or not isinstance(projected_position, int)):
+            return False, "projected_position must be an integer"
         if isinstance(quantity, bool) or isinstance(current_position, bool) or int(quantity) != quantity or int(current_position) != current_position:
             return False, "quantity and current_position must be integers"
         if quantity <= 0:
@@ -61,7 +61,8 @@ class RiskEngine:
             return False, "quantity exceeds per-order risk limit"
         if self._orders_today >= self.limits.max_orders_per_day:
             return False, "daily order limit reached"
-        if abs(current_position) + quantity > self.limits.max_position_quantity:
+        position_after = projected_position if projected_position is not None else current_position + quantity
+        if abs(position_after) > self.limits.max_position_quantity:
             return False, "position limit exceeded"
         if realized_pnl <= -self.limits.max_loss:
             return False, "maximum loss limit reached"
@@ -84,11 +85,9 @@ class RiskEngine:
             average = self._average_prices.get(symbol, price)
             signed = quantity if transaction_type == "BUY" else -quantity
             projected = current + signed
-            allowed, reason = self._check_unlocked(quantity, current, self._realized_pnl)
+            allowed, reason = self._check_unlocked(quantity, current, self._realized_pnl, projected_position=projected)
             if not allowed:
                 raise ValueError(reason)
-            if abs(projected) > self.limits.max_position_quantity:
-                raise ValueError("position limit exceeded")
 
             realized_delta = 0.0
             if current == 0 or (current > 0 and signed > 0) or (current < 0 and signed < 0):
