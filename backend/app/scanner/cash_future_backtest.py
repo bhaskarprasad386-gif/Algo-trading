@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from itertools import groupby
 from operator import attrgetter
 from typing import Iterable
+import math
 
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
@@ -30,10 +31,20 @@ class BacktestConfig:
     execution_model: str = "gap"
 
     def __post_init__(self) -> None:
+        for value, name in (
+            (self.min_entry_gap, "min_entry_gap"),
+            (self.exit_gap, "exit_gap"),
+            (self.charges_per_trade, "charges_per_trade"),
+            (self.funding_cost_per_trade, "funding_cost_per_trade"),
+        ):
+            if not math.isfinite(float(value)):
+                raise ValueError(f"{name} must be finite")
+        if self.charges_per_trade < 0 or self.funding_cost_per_trade < 0:
+            raise ValueError("charges_per_trade and funding_cost_per_trade must be non-negative")
+        if not isinstance(self.max_holding_days, int) or isinstance(self.max_holding_days, bool) or self.max_holding_days <= 0:
+            raise ValueError("max_holding_days must be a positive integer")
         if self.execution_model not in {"gap", "bid_ask"}:
             raise ValueError("execution_model must be 'gap' or 'bid_ask'")
-        if self.max_holding_days <= 0:
-            raise ValueError("max_holding_days must be positive")
 
 
 def _executable_spread_profit(entry: CashFutureHistoryPoint, exit_point: CashFutureHistoryPoint) -> float:
