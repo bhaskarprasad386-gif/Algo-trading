@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import math
 
 
 @dataclass
@@ -31,8 +32,12 @@ class CandleBuilder:
         return datetime.fromtimestamp(start, tz=timezone.utc)
 
     def update(self, price: float, volume: float = 0.0, timestamp: datetime | None = None) -> Candle | None:
-        if price < 0:
-            raise ValueError("price must be non-negative")
+        price = float(price)
+        volume = float(volume)
+        if not math.isfinite(price) or price < 0:
+            raise ValueError("price must be a finite non-negative number")
+        if not math.isfinite(volume) or volume < 0:
+            raise ValueError("volume must be a finite non-negative number")
         timestamp = timestamp or datetime.now(timezone.utc)
         bucket = self._bucket(timestamp)
 
