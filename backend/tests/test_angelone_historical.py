@@ -74,7 +74,7 @@ def test_candle_rows_are_normalized_to_historical_records():
 def test_unknown_timeframe_is_rejected():
     source = AngelOneHistoricalSource(auth=FakeAuth())
     request = HistoricalFetchRequest("angelone", "NSE:3045", "2m", 1, 2)
-    with pytest.raises(ValueError, match="unsupported Angel One timeframe"):
+    with pytest.raises(ValueError, match="does not natively support timeframe"):
         tuple(source.fetch(request))
 
 
