@@ -12,12 +12,13 @@ class RiskLimits:
     max_loss: float = 10000.0
 
     def __post_init__(self) -> None:
-        if self.max_orders_per_day <= 0:
-            raise ValueError("max_orders_per_day must be positive")
-        if self.max_quantity_per_order <= 0:
-            raise ValueError("max_quantity_per_order must be positive")
-        if self.max_position_quantity <= 0:
-            raise ValueError("max_position_quantity must be positive")
+        for value, name in (
+            (self.max_orders_per_day, "max_orders_per_day"),
+            (self.max_quantity_per_order, "max_quantity_per_order"),
+            (self.max_position_quantity, "max_position_quantity"),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
         if not math.isfinite(float(self.max_loss)) or self.max_loss <= 0:
             raise ValueError("max_loss must be finite and positive")
 
@@ -38,9 +39,9 @@ class RiskEngine:
         today = datetime.now(timezone.utc).date()
         if today != self._day:
             self._day = today
+            # Daily order/loss counters reset, but open positions and their
+            # cost basis must survive the calendar boundary.
             self._orders_today = 0
-            self._positions.clear()
-            self._average_prices.clear()
             self._realized_pnl = 0.0
 
     def check(self, quantity: int, current_position: int = 0, realized_pnl: float = 0.0) -> tuple[bool, str]:
@@ -50,9 +51,9 @@ class RiskEngine:
     def _check_unlocked(self, quantity: int, current_position: int, realized_pnl: float) -> tuple[bool, str]:
         self._roll_day()
         for value, name in ((quantity, "quantity"), (current_position, "current_position"), (realized_pnl, "realized_pnl")):
-            if not math.isfinite(float(value)):
+            if isinstance(value, bool) or not math.isfinite(float(value)):
                 return False, f"{name} must be finite"
-        if int(quantity) != quantity or int(current_position) != current_position:
+        if isinstance(quantity, bool) or isinstance(current_position, bool) or int(quantity) != quantity or int(current_position) != current_position:
             return False, "quantity and current_position must be integers"
         if quantity <= 0:
             return False, "quantity must be greater than zero"
@@ -74,6 +75,8 @@ class RiskEngine:
             raise ValueError("symbol is required")
         if transaction_type not in {"BUY", "SELL"}:
             raise ValueError("transaction_type must be BUY or SELL")
+        if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
+            raise ValueError("quantity must be a positive integer")
         if not math.isfinite(float(price)) or price <= 0:
             raise ValueError("price must be finite and positive for paper risk accounting")
         with self._lock:
