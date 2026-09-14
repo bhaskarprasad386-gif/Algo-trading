@@ -12,8 +12,8 @@ class FakeClient:
         return {
             "status": True,
             "data": [
-                ["2026-01-05 09:15", 100, 101, 99, 100.5, 1000, 250],
-                ["2026-01-05 09:16", 100.5, 102, 100, 101.5, 1200, 275],
+                ["2026-01-05 09:15+05:30", 100, 101, 99, 100.5, 1000, 250],
+                ["2026-01-05 09:16+05:30", 100.5, 102, 100, 101.5, 1200, 275],
             ],
         }
 
@@ -45,7 +45,7 @@ def test_angelone_source_streams_real_response_shape_into_sqlite_catalog():
     catalog = HistoricalCatalog()
     ingestion = HistoricalIngestionService(catalog)
 
-    start_ns = 1767604500 * 1_000_000_000
+    start_ns = 1767584700 * 1_000_000_000
     end_ns = start_ns + 60 * 1_000_000_000
     request = HistoricalFetchRequest(
         source="angelone",
