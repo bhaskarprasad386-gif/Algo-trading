@@ -14,9 +14,8 @@ from app.backtesting.cash_future_strategy_runner import (
     CashFutureStrategyConfig,
     CashFutureStrategyRun,
     _LedgerPayloadSequence,
-    _executable_spread_profit,
-    _legacy_gap_profit,
     _point_date,
+    _trade_gross_profit,
 )
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
@@ -143,17 +142,32 @@ def resume_cash_future_strategy(
         ledger.append(LedgerRecord(run_id, "signal", int(point.timestamp.timestamp() * 1_000_000_000), signal_record))
 
         if exit_reason is not None and entry is not None:
-            gross = (_legacy_gap_profit(entry, point) if config.execution_model == "gap"
-                     else _executable_spread_profit(entry, point))
+            gross = _trade_gross_profit(entry, point, config)
             net = gross - config.charges_per_trade - config.funding_cost_per_trade
             capital_ledger.apply_realized_pnl(net)
             capital_ledger.release(entry.margin_required)
             ledger.append(LedgerRecord(run_id, "trade", int(point.timestamp.timestamp() * 1_000_000_000), {
-                "entry_time": entry.timestamp.isoformat(), "exit_time": point.timestamp.isoformat(),
-                "symbol": entry.symbol, "contract_month": entry.contract_month, "lot_size": entry.lot_size,
-                "gross_profit": gross, "charges": config.charges_per_trade,
-                "funding_cost": config.funding_cost_per_trade, "net_profit": net,
-                "execution_model": config.execution_model, "exit_reason": exit_reason,
+                "entry_time": entry.timestamp.isoformat(),
+                "exit_time": point.timestamp.isoformat(),
+                "symbol": entry.symbol,
+                "contract_month": entry.contract_month,
+                "lot_size": entry.lot_size,
+                "quantity": entry.lot_size,
+                "entry_cash_price": entry.cash_price,
+                "entry_future_price": entry.future_price,
+                "entry_gap": entry.gap,
+                "exit_cash_price": point.cash_price,
+                "exit_future_price": point.future_price,
+                "exit_gap": point.gap,
+                "gross_profit": gross,
+                "charges": config.charges_per_trade,
+                "funding_cost": config.funding_cost_per_trade,
+                "net_profit": net,
+                "execution_model": config.execution_model,
+                "cash_side": config.cash_side,
+                "future_side": config.future_side,
+                "slippage_per_share": config.slippage_per_share,
+                "exit_reason": exit_reason,
                 "reserved_margin": entry.margin_required,
             }))
             entry = None
