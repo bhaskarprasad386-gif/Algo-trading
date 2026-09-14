@@ -18,6 +18,7 @@ ProgressCallback = Callable[[int, int, str], None]
 CancelCallback = Callable[[], bool]
 ResultSink = Callable[[int, str, dict], None]
 HistoricalContract: TypeAlias = tuple[str, date]
+PAPER_STARTING_CAPITAL = 10_000_000.0
 
 
 def historical_current_near_contracts(contracts: Sequence[HistoricalContract], as_of: date) -> tuple[HistoricalContract | None, HistoricalContract | None]:
@@ -45,19 +46,11 @@ def _finite_metric(value: object, name: str) -> float:
     return numeric
 
 
-def _durable_prefix_aggregates(
-    db: Session,
-    symbols: list[str],
-    resume_count: int,
-    job_id: str,
-) -> tuple[float, float, int, int]:
+def _durable_prefix_aggregates(db: Session, symbols: list[str], resume_count: int, job_id: str) -> tuple[float, float, int, int]:
     """Rebuild summary metrics from this job's durable chunks without replaying them."""
     if resume_count <= 0:
         return 0.0, 0.0, 0, 0
-    rows = db.query(BacktestJobResultChunk).filter(
-        BacktestJobResultChunk.job_id == job_id,
-        BacktestJobResultChunk.sequence < resume_count,
-    ).order_by(BacktestJobResultChunk.sequence).all()
+    rows = db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id, BacktestJobResultChunk.sequence < resume_count).order_by(BacktestJobResultChunk.sequence).all()
     if len(rows) != resume_count:
         raise ValueError("durable full-F&O prefix is incomplete")
     total_net_profit = 0.0
@@ -97,29 +90,17 @@ def run_full_fno_backtest(
     resume_after_sequence: int | None = None,
     durable_job_id: str | None = None,
 ) -> dict:
-    """Run the persisted F&O stock universe, optionally resuming after durable chunks.
-
-    A result sink is the durable/background execution path. In that mode the runner
-    must remain streaming even if a caller accidentally requests result collection;
-    otherwise a full-universe run could retain every symbol result in RAM.
-    """
+    """Run the persisted F&O stock universe, optionally resuming after durable chunks."""
     if result_sink is not None:
         collect_results = False
-
     if not isinstance(days, int) or isinstance(days, bool) or days <= 0:
         raise ValueError("days must be a positive integer")
     if not isinstance(max_holding_days, int) or isinstance(max_holding_days, bool) or max_holding_days <= 0:
         raise ValueError("max_holding_days must be a positive integer")
-    for value, name in (
-        (min_entry_gap, "min_entry_gap"),
-        (exit_gap, "exit_gap"),
-        (charges_per_trade, "charges_per_trade"),
-        (funding_cost_per_trade, "funding_cost_per_trade"),
-    ):
+    for value, name in ((min_entry_gap, "min_entry_gap"), (exit_gap, "exit_gap"), (charges_per_trade, "charges_per_trade"), (funding_cost_per_trade, "funding_cost_per_trade")):
         numeric = _finite_metric(value, name)
         if numeric < 0:
             raise ValueError(f"{name} must be non-negative")
-
     selection = future_selection.upper()
     if selection not in {"CURRENT", "NEAR", "BOTH"}:
         raise ValueError("future_selection must be CURRENT, NEAR or BOTH")
@@ -127,16 +108,12 @@ def run_full_fno_backtest(
         raise ValueError("resume_after_sequence must be >= -1")
     if resume_after_sequence is not None and resume_after_sequence >= 0 and not durable_job_id:
         raise ValueError("durable_job_id is required when resuming durable full-F&O results")
-
     symbols = persisted_stock_symbols(db)
     total = len(symbols)
     resume_count = max(0, (resume_after_sequence + 1) if resume_after_sequence is not None else 0)
     if resume_count > total:
         raise ValueError("resume_after_sequence exceeds persisted symbol universe")
-
-    total_net_profit, max_drawdown, completed_symbols, no_entry_symbols = _durable_prefix_aggregates(
-        db, symbols, resume_count, durable_job_id or ""
-    )
+    total_net_profit, max_drawdown, completed_symbols, no_entry_symbols = _durable_prefix_aggregates(db, symbols, resume_count, durable_job_id or "")
     processed = resume_count
     chunks_written = 0
     results: list[dict] | None = [] if collect_results else None
@@ -147,26 +124,15 @@ def run_full_fno_backtest(
         if sequence < resume_count:
             continue
         if cancelled is not None and cancelled():
-            return {"status": "cancelled", "universe": "FULL_FNO_STOCK", "future_selection": selection,
-                    "symbols_total": total, "symbols_processed": processed, "chunks_written": chunks_written,
-                    "contracts_processed": completed_symbols, "no_entry_symbols": no_entry_symbols,
-                    "total_net_profit": total_net_profit, "max_drawdown": max_drawdown, "results": results}
-
+            return {"status": "cancelled", "universe": "FULL_FNO_STOCK", "future_selection": selection, "symbols_total": total, "symbols_processed": processed, "chunks_written": chunks_written, "contracts_processed": completed_symbols, "no_entry_symbols": no_entry_symbols, "total_net_profit": total_net_profit, "max_drawdown": max_drawdown, "results": results}
         bars = iter_persisted_symbol_replay(db, symbol, start, end)
         result = run_cash_future_paper_backtest(
             bars,
-            PaperBacktestConfig(starting_capital=2_000_000.0, min_entry_gap=min_entry_gap,
-                                exit_gap=exit_gap, charges_per_leg=charges_per_trade,
-                                funding_cost_per_day=funding_cost_per_trade, future_selection=selection,
-                                max_holding_days=max_holding_days, collect_ledger=collect_results),
+            PaperBacktestConfig(starting_capital=PAPER_STARTING_CAPITAL, min_entry_gap=min_entry_gap, exit_gap=exit_gap, charges_per_leg=charges_per_trade, funding_cost_per_day=funding_cost_per_trade, future_selection=selection, max_holding_days=max_holding_days, collect_ledger=collect_results),
             cancelled=cancelled,
         )
         if result.get("status") == "cancelled" or (cancelled is not None and cancelled()):
-            return {"status": "cancelled", "universe": "FULL_FNO_STOCK", "future_selection": selection,
-                    "symbols_total": total, "symbols_processed": processed, "chunks_written": chunks_written,
-                    "contracts_processed": completed_symbols, "no_entry_symbols": no_entry_symbols,
-                    "total_net_profit": total_net_profit, "max_drawdown": max_drawdown, "results": results}
-
+            return {"status": "cancelled", "universe": "FULL_FNO_STOCK", "future_selection": selection, "symbols_total": total, "symbols_processed": processed, "chunks_written": chunks_written, "contracts_processed": completed_symbols, "no_entry_symbols": no_entry_symbols, "total_net_profit": total_net_profit, "max_drawdown": max_drawdown, "results": results}
         item = {"symbol": symbol, **result}
         result_net_profit = _finite_metric(result.get("net_profit", 0.0), "net_profit")
         result_drawdown = _finite_metric(result.get("max_drawdown", 0.0), "max_drawdown")
@@ -187,8 +153,4 @@ def run_full_fno_backtest(
         processed = sequence + 1
         if progress is not None:
             progress(processed, total, f"Processed {symbol}")
-
-    return {"status": "completed", "universe": "FULL_FNO_STOCK", "future_selection": selection,
-            "symbols_total": total, "symbols_processed": processed, "chunks_written": chunks_written,
-            "contracts_processed": completed_symbols, "no_entry_symbols": no_entry_symbols,
-            "total_net_profit": total_net_profit, "max_drawdown": max_drawdown, "results": results}
+    return {"status": "completed", "universe": "FULL_FNO_STOCK", "future_selection": selection, "symbols_total": total, "symbols_processed": processed, "chunks_written": chunks_written, "contracts_processed": completed_symbols, "no_entry_symbols": no_entry_symbols, "total_net_profit": total_net_profit, "max_drawdown": max_drawdown, "results": results}
