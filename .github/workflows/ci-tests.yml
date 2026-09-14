@@ -7,13 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
-concurrency:
-  group: backend-tests-\${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
-  contents: write       # Code commit/push karne ke liye
-  pull-requests: write  # PR par automated comment post karne ke liye
+  contents: write
+  pull-requests: write
 
 jobs:
   test:
@@ -63,7 +59,6 @@ jobs:
               print('Error: GEMINI_API_KEY nahi mili!')
               exit(1)
 
-          # Files scan karna
           python_files = glob.glob('**/*.py', recursive=True)
           code_snapshot = ''
           for f in python_files:
@@ -74,7 +69,7 @@ jobs:
                   except:
                       pass
 
-          # 🌟 FIXED ENDPOINT URL 🌟
+          # Sahi Endpoint bina kisi external variable ke string me fix kar diya hai
           url = 'https://googleapis.com' + api_key
           headers = {'Content-Type': 'application/json'}
           
@@ -87,13 +82,11 @@ jobs:
               res_json = response.json()
               ai_text = res_json['candidates'][0]['content']['parts'][0]['text']
               
-              # Summary block nikalna
               summary_match = re.search(r'SUMMARY:(.*?)(?:<<< FILE|$)', ai_text, re.DOTALL)
               summary_text = summary_match.group(1).strip() if summary_match else 'Gemini ne code fix kar diya hai.'
               with open('gemini_summary.txt', 'w') as sf:
                   sf.write(summary_text)
 
-              # Code files extract aur clean karna
               matches = re.findall(r'<<< FILE: (.*?) >>>\n(.*?)<<< END >>>', ai_text, re.DOTALL)
               if matches:
                   for file_path, corrected_code in matches:
@@ -106,13 +99,13 @@ jobs:
                           f.write(cleaned_code.strip())
                   print('Gemini ne saari files successfully update kar di hain!')
               else:
-                  print('AI output format galat tha ya koi badlav nahi mila. Gemini ka actual output tha:\n', ai_text)
+                  print('AI output format galat tha ya koi badlav nahi mila.')
           except Exception as e:
               print('AI se response process karne me error:', e)
-              print('Raw response body tha:', response.text)
+              print('Raw response body:', response.text)
           "
 
-      # 3. PR par Automated Comment post karna (Sirf Pull Request ke waqt chalega)
+      # 3. PR par Comment post karna
       - name: Post Comment on PR
         if: steps.run-tests.outcome == 'failure' && github.event_name == 'pull_request'
         uses: actions/github-script@v7
@@ -130,7 +123,7 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `### 🤖 Gemini Auto-Fixer Report\n\n**Test Status:** ❌ Failed\n\n**Gemini AI Feedback:**\n\${summary}\n\n*Note: corrected code repository me push kar diya gaya hai.*`
+              body: `### 🤖 Gemini Auto-Fixer Report\n\n**Test Status:** ❌ Failed\n\n**Gemini AI Feedback:**\n${summary}\n\n*Note: corrected code repository me push kar diya gaya hai.*`
             })
 
       # 4. Code Commit aur Push karna
