@@ -19,7 +19,7 @@ class CashFutureDataCoverageReport:
     report: CashFutureDownloadProgressReport
 
     def _chunks(self):
-        return (*self.report.spot, *(chunk for chunks in self.report.futures for chunk in chunks))
+        return (*self.report.spot, *self.report.futures)
 
     @property
     def complete(self) -> bool:
