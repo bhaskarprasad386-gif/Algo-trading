@@ -94,9 +94,18 @@ jobs:
           PRODUCTION SOURCE:
           {snapshot}'''
 
-          url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + os.environ["GEMINI_API_KEY"]
-          r = requests.post(url, headers={"Content-Type":"application/json"}, json={"contents":[{"parts":[{"text":prompt}]}]}, timeout=120)
-          r.raise_for_status()
+          url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+          r = requests.post(
+              url,
+              headers={
+                  "Content-Type": "application/json",
+                  "x-goog-api-key": os.environ["GEMINI_API_KEY"],
+              },
+              json={"contents":[{"parts":[{"text":prompt}]}]},
+              timeout=120,
+          )
+          if r.status_code >= 400:
+              raise RuntimeError(f"Gemini API {r.status_code}: {r.text[:2000]}")
           body = r.json()
           text = body["candidates"][0]["content"]["parts"][0]["text"]
 
