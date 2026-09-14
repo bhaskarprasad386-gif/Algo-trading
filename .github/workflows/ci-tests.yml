@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write  # यह GitHub को अपने आप कोड लिखने और बदलने की अनुमति देता है
+  contents: write  # GitHub Actions ko repository me code commit/push karne ki permission deta hai
 
 jobs:
   test:
@@ -41,13 +41,13 @@ jobs:
       - name: Compile backend
         run: python -m compileall -q app
 
-      # 1. यहाँ आपका बैकएंड टेस्ट रन होगा (यह तेज़ी से एरर पकड़ेगा)
+      # 1. Backend Test execution
       - name: Run tests
         id: run-tests
         run: python -m pytest --maxfail=1 -q
-        continue-on-error: true # टेस्ट制造 फेल होने पर भी प्रोसेस रुकेगा नहीं ताकि जेमिनी कोड सुधार सके
+        continue-on-error: true # Test fail hone par bhi process aage chalega taaki Gemini fix kar sake
 
-      # 2. अगर टेस्ट फेल हुआ, तो Gemini Pro बैकग्राउंड में एक्टिव होकर कोड ऑटो-राइट करेगा
+      # 2. Gemini Pro Auto-Writer (Fixed API URL & Parsing Logic)
       - name: Gemini Pro Auto-Writer
         if: steps.run-tests.outcome == 'failure'
         env:
@@ -55,45 +55,59 @@ jobs:
         run: |
           echo "बैकएंड टेस्ट फेल हो गया है। Gemini Pro कोड को ऑटो-राइट कर रहा है..."
           python -c "
-          import os, requests, json, glob
+          import os, requests, json, glob, re
 
           api_key = os.getenv('GEMINI_API_KEY')
           if not api_key:
               print('Error: GEMINI_API_KEY नहीं मिली!')
               exit(1)
 
-          # backend फ़ोल्डर की सभी पायथन फाइलों को स्कैन करना
+          # Files scan karna
           python_files = glob.glob('**/*.py', recursive=True)
           code_snapshot = ''
           for f in python_files:
               if 'venv' not in f and '.github' not in f:
                   try:
                       with open(f, 'r') as file:
-                          code_snapshot += f'\n--- File: backend/{f} ---\n' + file.read()
+                          code_snapshot += f'\n<<< FILE: {f} >>>\n' + file.read() + '\n<<< END >>>\n'
                   except:
                       pass
 
-          # Gemini API को कॉल करने का सेटअप (Gemini 1.5 Pro)
+          # Sahi Gemini 1.5 Pro API URL aur payload
           url = f'https://googleapis.com{api_key}'
           headers = {'Content-Type': 'application/json'}
           
-          prompt = f'मेरा पायथन बैकएंड कोड गिटहब एक्शन्स में फेल/टाइमआउट हो रहा है। नीचे दिए गए कोड में मौजूद इनफिनिट लूप्स या लॉजिक एरर्स को ठीक करो। केवल बदला हुआ पूरा कोड फ़ाइल-वाइज़ फ़ॉर्मेट में दो ताकि मैं उसे सीधे सेव कर सकूं। कोई अतिरिक्त स्पष्टीकरण मत लिखना।\n\n{code_snapshot}'
+          prompt = f'मेरा पायथन बैकएंड कोड फेल हो गया है। नीचे दिए गए कोड में गलतियां सुधारो। मुझे रिस्पॉन्स सिर्फ इसी फॉर्मेट में देना: <<< FILE: file_path.py >>>\n[सुधरा हुआ कोड]\n<<< END >>>\n\nCode Snapshot:\n{code_snapshot}'
           
           data = {'contents': [{'parts': [{'text': prompt}]}]}
           response = requests.post(url, headers=headers, json=data)
           
           try:
-              result = response.json()['contents']['parts']['text']
-              print('Gemini ने कोड सफलतापूर्वक लिख दिया है!')
+              res_json = response.json()
+              ai_text = res_json['candidates'][0]['content']['parts'][0]['text']
+              
+              # AI ke code ko files me wapas likhna/overwrite karna
+              matches = re.findall(r'<<< FILE: (.*?) >>>\n(.*?)<<< END >>>', ai_text, re.DOTALL)
+              if matches:
+                  for file_path, corrected_code in matches:
+                      file_path = file_path.strip()
+                      print(f'Updating file: {file_path}')
+                      with open(file_path, 'w') as f:
+                          f.write(corrected_code.strip())
+                  print('Gemini ne saari files successfully update kar di hain!')
+              else:
+                  print('AI output format galat tha ya koi badlav nahi mila.')
           except Exception as e:
-              print('AI से रिस्पॉन्स प्राप्त करने में त्रुटि हुई:', e)
+              print('AI se response process karne me error:', e)
+              print('Response body tha:', response.text)
           "
 
-      # 3. जेमिनी के लिखे गए नए कोड को अपने आप गिटहब पर पुश (Commit) करना और री-ट्रिगर करना
+      # 3. Code Commit aur Push karna (Runs inside 'backend' folder context)
       - name: Commit and Push Fixed Code
         if: steps.run-tests.outcome == 'failure'
         run: |
           git config --global user.name 'Gemini-Auto-Bot'
           git config --global user.email 'gemini-bot@github.com'
-          git add .
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Fix: Gemini Auto-wrote code to fix backend test failure" && git push)
+          # default backend dir se bahar pure repo root ko check karne ke liye git add
+          git add ../backend/
+          git diff --quiet --cached || (git commit -m "Fix: Gemini Auto-wrote code to fix backend test failure" && git push)
