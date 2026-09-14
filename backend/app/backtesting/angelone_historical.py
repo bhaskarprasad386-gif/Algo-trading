@@ -36,7 +36,11 @@ IST = ZoneInfo("Asia/Kolkata")
 
 def _ns_to_angel_datetime(timestamp_ns: int) -> str:
     """Format a UTC nanosecond timestamp in the IST format Angel One expects."""
-    dt = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, tz=timezone.utc)
+    # Convert from whole epoch seconds so a boundary such as ``00:00 - 1ns``
+    # stays in the previous minute. Floating-point conversion can round that
+    # value up to the next minute and create overlapping API chunks.
+    epoch_seconds = timestamp_ns // 1_000_000_000
+    dt = datetime.fromtimestamp(epoch_seconds, tz=timezone.utc)
     return dt.astimezone(IST).strftime("%Y-%m-%d %H:%M")
 
 
