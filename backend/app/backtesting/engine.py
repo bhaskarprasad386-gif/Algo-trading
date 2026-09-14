@@ -149,7 +149,7 @@ class BacktestEngine:
         return _build_result(self.config.initial_capital, capital, trades, max_drawdown)
 
     def run_catalog_events(self, catalog: HistoricalCatalog, *, source: str, instrument: str, strategy: EventStrategy, timeframe: str = "tick", start_ns: int | None = None, end_ns: int | None = None, price_field: str = "price") -> BacktestResult:
-        return self.run_events(catalog.events(source=source, instrument=instrument, timeframe=timeframe, start_ns=start_ns, end_ns=end_ns), strategy, price_field=price_field)
+        return self.run_events(catalog.iter_records(source=source, instrument=instrument, timeframe=timeframe, start_ns=start_ns, end_ns=end_ns), strategy, price_field=price_field)
 
     def run_continuous_futures(self, windows: Iterable[FNORolloverWindow], records_by_token: Mapping[str, Iterable[HistoricalRecord]], entry_strategy: Strategy, exit_strategy: Strategy) -> BacktestResult:
         series = build_continuous_futures_series(windows, records_by_token)
