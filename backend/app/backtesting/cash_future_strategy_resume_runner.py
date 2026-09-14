@@ -183,8 +183,17 @@ def resume_cash_future_strategy(
             }))
             entry = None
 
+        unrealized = 0.0
+        if entry is not None:
+            try:
+                unrealized = _trade_gross_profit(entry, point, config)
+            except ValueError:
+                unrealized = 0.0
         ledger.append(LedgerRecord(run_id, "equity", int(point.timestamp.timestamp() * 1_000_000_000), {
-            "timestamp": point.timestamp.isoformat(), "equity": float(capital_ledger.realized_capital),
+            "timestamp": point.timestamp.isoformat(),
+            "equity": float(capital_ledger.realized_capital) + unrealized,
+            "realized_capital": float(capital_ledger.realized_capital),
+            "unrealized_pnl": unrealized,
             "available_capital": capital_ledger.available_capital,
             "reserved_margin": capital_ledger.reserved_margin,
         }))
@@ -240,13 +249,28 @@ def _deserialize_entry(payload: Mapping[str, Any] | None, *, selected_contract: 
             "cash_price": float(payload["cash_price"]), "future_price": float(payload["future_price"]),
             "gap": float(payload["gap"]), "gap_pct": float(payload["gap_pct"]),
             "margin_required": float(payload["margin_required"]),
+            "volume": float(payload["volume"]) if payload.get("volume") is not None else None,
+            "oi": float(payload["oi"]) if payload.get("oi") is not None else None,
+            "cash_bid": float(payload["cash_bid"]) if payload.get("cash_bid") is not None else None,
+            "cash_ask": float(payload["cash_ask"]) if payload.get("cash_ask") is not None else None,
+            "future_bid": float(payload["future_bid"]) if payload.get("future_bid") is not None else None,
+            "future_ask": float(payload["future_ask"]) if payload.get("future_ask") is not None else None,
+            "cash_bid_qty": float(payload["cash_bid_qty"]) if payload.get("cash_bid_qty") is not None else None,
+            "cash_ask_qty": float(payload["cash_ask_qty"]) if payload.get("cash_ask_qty") is not None else None,
+            "future_bid_qty": float(payload["future_bid_qty"]) if payload.get("future_bid_qty") is not None else None,
+            "future_ask_qty": float(payload["future_ask_qty"]) if payload.get("future_ask_qty") is not None else None,
+            "charges": float(payload.get("charges", 0.0)),
+            "funding_cost": float(payload.get("funding_cost", 0.0)),
+            "net_profit": float(payload.get("net_profit", 0.0)),
+            "roi_pct": float(payload.get("roi_pct", 0.0)),
         }
         lot_size = int(payload["lot_size"])
     except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError("unsafe Cash-Future resume: open_entry contains invalid values") from exc
     if str(payload["contract_month"]) != selected_contract:
         raise ValueError("unsafe Cash-Future resume: open_entry contract does not match selected contract")
-    if not all(isfinite(value) for value in values.values()) or values["margin_required"] < 0 or lot_size <= 0:
+    numeric_values = [value for value in values.values() if value is not None]
+    if not all(isfinite(value) for value in numeric_values) or values["margin_required"] < 0 or lot_size <= 0:
         raise ValueError("unsafe Cash-Future resume: open_entry contains non-finite or invalid values")
     return CashFutureHistoryPoint(timestamp=timestamp, symbol=str(payload["symbol"]),
         contract_month=str(payload["contract_month"]), lot_size=lot_size, expiry_date=expiry,
