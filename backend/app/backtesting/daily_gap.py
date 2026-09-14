@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from typing import Iterable, Mapping
+import math
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,8 @@ class DailyGapObservation:
             (self.close, "close"),
             (self.lot_size, "lot_size"),
         ):
+            if not math.isfinite(float(value)):
+                raise ValueError(f"{name} must be finite")
             if value <= 0:
                 raise ValueError(f"{name} must be positive")
         if self.high < max(self.open_price, self.close):
@@ -42,7 +45,6 @@ class DailyGapObservation:
 
     @property
     def gap(self) -> float:
-        """Opening gap in price points: today's open minus previous close."""
         return self.open_price - self.previous_close
 
     @property
@@ -51,7 +53,6 @@ class DailyGapObservation:
 
     @property
     def weighted_gap(self) -> float:
-        """Absolute gap value for one futures lot."""
         return abs(self.gap) * self.lot_size
 
     @property
@@ -106,28 +107,16 @@ def build_daily_gap_observations(
     )
 
 
-def top_daily_gap(
-    observations: Iterable[DailyGapObservation],
-    trading_date: date,
-) -> TopDailyGap | None:
-    """Return the stock with the largest absolute gap x lot-size on a date."""
+def top_daily_gap(observations: Iterable[DailyGapObservation], trading_date: date) -> TopDailyGap | None:
     candidates = (row for row in observations if row.trading_date == trading_date)
     top = max(candidates, key=lambda row: (row.weighted_gap, row.symbol), default=None)
     if top is None:
         return None
     return TopDailyGap(
-        trading_date=top.trading_date,
-        symbol=top.symbol,
-        direction=top.direction,
-        gap=top.gap,
-        gap_percent=top.gap_percent,
-        weighted_gap=top.weighted_gap,
-        previous_close=top.previous_close,
-        open_price=top.open_price,
-        high=top.high,
-        low=top.low,
-        close=top.close,
-        lot_size=top.lot_size,
+        trading_date=top.trading_date, symbol=top.symbol, direction=top.direction,
+        gap=top.gap, gap_percent=top.gap_percent, weighted_gap=top.weighted_gap,
+        previous_close=top.previous_close, open_price=top.open_price, high=top.high,
+        low=top.low, close=top.close, lot_size=top.lot_size,
     )
 
 
@@ -137,9 +126,4 @@ def _as_date(value: object) -> date:
     return date.fromisoformat(str(value))
 
 
-__all__ = [
-    "DailyGapObservation",
-    "TopDailyGap",
-    "build_daily_gap_observations",
-    "top_daily_gap",
-]
+__all__ = ["DailyGapObservation", "TopDailyGap", "build_daily_gap_observations", "top_daily_gap"]
