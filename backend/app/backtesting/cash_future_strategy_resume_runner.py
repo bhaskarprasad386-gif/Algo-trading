@@ -139,6 +139,9 @@ def resume_cash_future_strategy(
                     "required_margin": max(float(point.margin_required), 0.0),
                     "available_capital": capital_ledger.available_capital,
                 })
+        elif action == "BUY" and entry is not None:
+            capital_ledger.blocked_entries += 1
+            signal_record.update({"execution_status": "blocked", "blocked_reason": "position_already_open"})
 
         exit_reason: str | None = None
         if action == "SELL" and entry is not None:
