@@ -48,7 +48,7 @@ jobs:
         run: python -m pytest --maxfail=1 -q
         continue-on-error: true
 
-      # 2. Gemini Pro Auto-Writer (Fixed URL, Format, and Indexing)
+      # 2. Gemini Pro Auto-Writer
       - name: Gemini Pro Auto-Writer
         if: steps.run-tests.outcome == 'failure'
         env:
@@ -74,11 +74,11 @@ jobs:
                   except:
                       pass
 
-          # Sahi aur working Gemini 1.5 Pro endpoint URL
-          url = f'https://googleapis.com{api_key}'
+          # 🌟 FIXED ENDPOINT URL 🌟
+          url = 'https://googleapis.com' + api_key
           headers = {'Content-Type': 'application/json'}
           
-          prompt = f'मेरा पायथन बैकएंड कोड फेल हो गया है। कोड में गलतियां सुधारो। मुझे रिस्पॉन्स में पहले एक छोटा summary दो कि क्या गलती थी SUMMARY block में, फिर सुधरा हुआ कोड इस फॉर्मेट में देना। कोई Markdown backticks (```python) मत लगाना:\n<<< FILE: file_path.py >>>\n[सुधरा हुआ कोड]\n<<< END >>>\n\nCode Snapshot:\n{code_snapshot}'
+          prompt = 'मेरा पायथन बैकएंड कोड फेल हो गया है। कोड में गलतियां सुधारो। मुझे रिस्पॉन्स में पहले एक छोटा summary दो कि क्या गलती थी SUMMARY block में, फिर सुधरा हुआ कोड इस फॉर्मेट में देना। कोई Markdown backticks (```python) मत लगाना:\n<<< FILE: file_path.py >>>\n[सुधरा हुआ कोड]\n<<< END >>>\n\nCode Snapshot:\n' + code_snapshot
           
           data = {'contents': [{'parts': [{'text': prompt}]}]}
           response = requests.post(url, headers=headers, json=data)
@@ -98,7 +98,6 @@ jobs:
               if matches:
                   for file_path, corrected_code in matches:
                       file_path = file_path.strip()
-                      # Clean any accidental markdown code blocks
                       cleaned_code = re.sub(r'^```[a-zA-Z]*\n', '', corrected_code)
                       cleaned_code = re.sub(r'\n```$', '', cleaned_code)
                       
@@ -131,7 +130,7 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `### 🤖 Gemini Auto-Fixer Report\n\n**Test Status:** ❌ Failed\n\n**Gemini AI Feedback:**\n${summary}\n\n*Note: corrected code repository me push kar diya gaya hai.*`
+              body: `### 🤖 Gemini Auto-Fixer Report\n\n**Test Status:** ❌ Failed\n\n**Gemini AI Feedback:**\n\${summary}\n\n*Note: corrected code repository me push kar diya gaya hai.*`
             })
 
       # 4. Code Commit aur Push karna
