@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.backtesting.cash_future_historical_loader import CashFutureHistoricalLoader, CashFutureHistorySelection
 from app.backtesting.cash_future_replay_routes import router as cash_future_replay_router
 from app.backtesting.cash_future_strategy_runner import CashFutureStrategyConfig, run_cash_future_strategy
+from app.backtesting.reporting import build_cash_future_report
 from app.backtesting.contract_master import ContractMasterCatalog
 from app.backtesting.historical_catalog import HistoricalCatalog
 from app.backtesting.ledger import BacktestLedger
@@ -144,7 +145,8 @@ def strategy_run(request: StrategyRunRequest):
         if catalog is not None: catalog.close()
         if contracts is not None: contracts.close()
         if ledger is not None: ledger.close()
-    return {"status":"success","run_id":run_id,"strategy_id":result.strategy_id,"strategy_version":result.strategy_version,"initial_capital":result.initial_capital,"final_capital":result.final_capital,"final_available_capital":result.final_available_capital,"final_reserved_margin":result.final_reserved_margin,"blocked_entry_count":result.blocked_entry_count,"net_profit":result.net_profit,"signal_count":len(result.signals),"trade_count":len(result.trades),"signals":result.signals,"trades":result.trades,"equity_curve":result.equity_curve}
+    report = build_cash_future_report(result.initial_capital, result.trades, result.equity_curve)
+    return {"status":"success","run_id":run_id,"strategy_id":result.strategy_id,"strategy_version":result.strategy_version,"initial_capital":result.initial_capital,"final_capital":result.final_capital,"final_available_capital":result.final_available_capital,"final_reserved_margin":result.final_reserved_margin,"blocked_entry_count":result.blocked_entry_count,"net_profit":result.net_profit,"signal_count":len(result.signals),"trade_count":len(result.trades),"signals":result.signals,"trades":result.trades,"equity_curve":result.equity_curve,"analysis":{"final_equity":report.final_equity,"net_pnl":report.net_pnl,"roi":report.roi,"max_drawdown":report.max_drawdown,"max_drawdown_pct":report.max_drawdown_pct,"win_rate":report.win_rate,"profit_factor":report.profit_factor,"turnover":report.turnover,"wins":report.wins,"losses":report.losses,"monthly_pnl":dict(report.monthly_pnl),"yearly_pnl":dict(report.yearly_pnl)}}
 
 @router.get("/strategy-run/{run_id}")
 def strategy_run_result(run_id: str):
