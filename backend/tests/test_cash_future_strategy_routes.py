@@ -109,6 +109,6 @@ def test_strategy_run_route_returns_output_analysis():
     assert analysis["trade_count"] == 1
     assert analysis["wins"] == 1
     assert analysis["losses"] == 0
-    assert analysis["profit_factor"] == float("inf")
+    assert analysis["profit_factor"] is None
     assert analysis["monthly_pnl"] == {"2026-09": 600.0}
     assert analysis["yearly_pnl"] == {"2026": 600.0}
