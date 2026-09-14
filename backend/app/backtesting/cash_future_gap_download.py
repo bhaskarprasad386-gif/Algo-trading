@@ -41,6 +41,16 @@ class CashFutureGapDownloadPlanner:
         return tuple(sorted(timestamps))
 
     @staticmethod
+    def _expected_session_timestamps(sessions: tuple[SessionWindow, ...], interval_ns: int) -> tuple[int, ...]:
+        timestamps: set[int] = set()
+        for session in sessions:
+            timestamp = session.start_ns
+            while timestamp <= session.end_ns:
+                timestamps.add(timestamp)
+                timestamp += interval_ns
+        return tuple(sorted(timestamps))
+
+    @staticmethod
     def _missing_ranges(expected: tuple[int, ...], actual: set[int], interval_ns: int, max_request_ns: int) -> tuple[tuple[int, int], ...]:
         ranges: list[tuple[int, int]] = []
         missing_start: int | None = None
@@ -76,9 +86,24 @@ class CashFutureGapDownloadPlanner:
         return tuple(parts)
 
     def _requests_for(self, request: HistoricalFetchRequest, sessions: tuple[SessionWindow, ...], catalog) -> tuple[HistoricalFetchRequest, ...]:
-        expected = self._expected(sessions, request, self.interval_ns)
-        actual = set(catalog.timestamps(source=request.source, instrument=request.instrument, timeframe=request.timeframe, start_ns=request.start_ns, end_ns=request.end_ns))
-        return tuple(HistoricalFetchRequest(request.source, request.instrument, request.timeframe, start, end) for start, end in self._missing_ranges(expected, actual, self.interval_ns, self.max_request_ns))
+        if not sessions:
+            return ()
+        # Session windows are authoritative. The queue request can be a broad
+        # UTC/calendar range and must not suppress a valid exchange session.
+        expected = self._expected_session_timestamps(sessions, self.interval_ns)
+        actual: set[int] = set()
+        for session in sessions:
+            actual.update(catalog.timestamps(
+                source=request.source,
+                instrument=request.instrument,
+                timeframe=request.timeframe,
+                start_ns=session.start_ns,
+                end_ns=session.end_ns,
+            ))
+        return tuple(
+            HistoricalFetchRequest(request.source, request.instrument, request.timeframe, start, end)
+            for start, end in self._missing_ranges(expected, actual, self.interval_ns, self.max_request_ns)
+        )
 
     def _coverage_for(self, request: HistoricalFetchRequest, sessions: tuple[SessionWindow, ...], catalog) -> tuple[CoverageRange, ...]:
         expected = self._expected(sessions, request, self.interval_ns)
