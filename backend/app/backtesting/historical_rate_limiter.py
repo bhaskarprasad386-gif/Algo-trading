@@ -19,7 +19,11 @@ class HistoricalRateLimiter:
 
     def __init__(self, limit: HistoricalRateLimit | None = None, *, safety_delay_seconds: float = 0.40) -> None:
         self.limit = limit or HistoricalRateLimit()
-        if self.limit.requests_per_second <= 0 or self.limit.requests_per_minute <= 0:
+        if (
+            self.limit.requests_per_second <= 0
+            or self.limit.requests_per_minute <= 0
+            or self.limit.requests_per_hour <= 0
+        ):
             raise ValueError("rate limits must be positive")
         if safety_delay_seconds < 0:
             raise ValueError("safety delay cannot be negative")
@@ -34,11 +38,14 @@ class HistoricalRateLimiter:
                 self._timestamps = [t for t in self._timestamps if now - t < 3600]
                 recent_minute = [t for t in self._timestamps if now - t < 60]
                 recent_second = [t for t in self._timestamps if now - t < 1]
+                recent_hour = self._timestamps
                 waits = [self.safety_delay_seconds - (now - self._timestamps[-1])] if self._timestamps else [0.0]
                 if len(recent_minute) >= self.limit.requests_per_minute:
                     waits.append(60 - (now - recent_minute[0]))
                 if len(recent_second) >= self.limit.requests_per_second:
                     waits.append(1 - (now - recent_second[0]))
+                if len(recent_hour) >= self.limit.requests_per_hour:
+                    waits.append(3600 - (now - recent_hour[0]))
                 wait = max(0.0, *waits)
                 if wait <= 0:
                     self._timestamps.append(now)
