@@ -1,3 +1,5 @@
+import math
+
 from app.core.logger import app_logger
 
 
@@ -5,14 +7,16 @@ class ArbitrageEngine:
     """Pure signal engine. It never places orders directly."""
 
     def __init__(self, threshold_percent: float = 0.5):
-        if threshold_percent < 0:
-            raise ValueError("threshold_percent cannot be negative")
+        if not math.isfinite(float(threshold_percent)) or threshold_percent < 0:
+            raise ValueError("threshold_percent must be finite and non-negative")
         self.threshold_percent = threshold_percent
         app_logger.info(f"ArbitrageEngine initialized with threshold: {self.threshold_percent}%")
 
     def calculate_spread(self, price_a: float, price_b: float) -> float:
+        if not math.isfinite(float(price_a)) or not math.isfinite(float(price_b)):
+            raise ValueError("prices must be finite")
         if price_a <= 0 or price_b <= 0:
-            return 0.0
+            raise ValueError("prices must be positive")
         diff = abs(price_a - price_b)
         avg_price = (price_a + price_b) / 2
         return round((diff / avg_price) * 100, 4)
@@ -22,8 +26,8 @@ class ArbitrageEngine:
         symbol = symbol.strip().upper()
         if not symbol:
             raise ValueError("symbol is required")
-        if quantity <= 0:
-            raise ValueError("quantity must be greater than zero")
+        if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
+            raise ValueError("quantity must be a positive integer")
 
         spread = self.calculate_spread(exchange_a_price, exchange_b_price)
         if spread < self.threshold_percent:
