@@ -7,6 +7,7 @@ The reducer is deterministic and keeps the state small enough for live/paper use
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,8 @@ class ExecutedFill:
     def __post_init__(self) -> None:
         if self.side.upper() not in {"BUY", "SELL"}:
             raise ValueError("side must be BUY or SELL")
+        if not math.isfinite(float(self.price)) or not math.isfinite(float(self.quantity)):
+            raise ValueError("price and quantity must be finite")
         if self.price <= 0 or self.quantity <= 0:
             raise ValueError("price and quantity must be positive")
 
@@ -37,6 +40,10 @@ def apply_executed_fill(state: FillPnlState, fill: ExecutedFill) -> FillPnlState
     currently executed long quantity. Pending/rejected/cancelled orders are
     represented by no fill and therefore cannot change the state.
     """
+    if not math.isfinite(state.quantity) or not math.isfinite(state.average_price) or not math.isfinite(state.realized_pnl):
+        raise ValueError("fill P&L state must contain finite values")
+    if state.quantity < 0 or state.average_price < 0:
+        raise ValueError("fill P&L state cannot contain negative values")
     side = fill.side.upper()
     qty = float(fill.quantity)
     price = float(fill.price)
