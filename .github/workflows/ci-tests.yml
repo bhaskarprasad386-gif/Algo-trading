@@ -48,7 +48,7 @@ jobs:
       - name: Gemini Pro Auto-Writer
         if: steps.run-tests.outcome == 'failure'
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY: \${{ secrets.GEMINI_API_KEY }}
         run: |
           echo "बैकएंड टेस्ट फेल हो गया है। Gemini Pro कोड को ऑटो-राइट कर रहा है..."
           python -c "
@@ -69,10 +69,8 @@ jobs:
                   except:
                       pass
 
-          # Sahi Endpoint bina kisi external variable ke string me fix kar diya hai
-          url = "https://googleapis.com" + api_key
-
-
+          # 🌟 FIXED LINK WITH DOUBLE QUOTES 🌟
+          url = \"https://googleapis.com\" + api_key
           headers = {'Content-Type': 'application/json'}
           
           prompt = 'मेरा पायथन बैकएंड कोड फेल हो गया है। कोड में गलतियां सुधारो। मुझे रिस्पॉन्स में पहले एक छोटा summary दो कि क्या गलती थी SUMMARY block में, फिर सुधरा हुआ कोड इस फॉर्मेट में देना। कोई Markdown backticks (```python) मत लगाना:\n<<< FILE: file_path.py >>>\n[सुधरा हुआ कोड]\n<<< END >>>\n\nCode Snapshot:\n' + code_snapshot
@@ -84,7 +82,6 @@ jobs:
               res_json = response.json()
               ai_text = res_json['candidates']['content']['parts']['text']
 
-              
               summary_match = re.search(r'SUMMARY:(.*?)(?:<<< FILE|$)', ai_text, re.DOTALL)
               summary_text = summary_match.group(1).strip() if summary_match else 'Gemini ne code fix kar diya hai.'
               with open('gemini_summary.txt', 'w') as sf:
@@ -126,7 +123,7 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `### 🤖 Gemini Auto-Fixer Report\n\n**Test Status:** ❌ Failed\n\n**Gemini AI Feedback:**\n${summary}\n\n*Note: corrected code repository me push kar diya gaya hai.*`
+              body: \`### 🤖 Gemini Auto-Fixer Report\\n\\n**Test Status:** ❌ Failed\\n\\n**Gemini AI Feedback:**\\n\${summary}\\n\\n*Note: corrected code repository me push kar diya gaya hai.*\`
             })
 
       # 4. Code Commit aur Push karna
