@@ -72,7 +72,8 @@ def _close_position(
     gross = _unrealized_profit(entry, point, execution_model, fill_quantity)
     net = gross - charges_per_trade - funding_cost_per_trade
     account.apply_realized_pnl(net)
-    released_margin = account.reservation(key) * fill_quantity / quantity
+    reservation = account.reservation(key)
+    released_margin = float(reservation.margin_required) * fill_quantity / quantity
     account.release(key)
     remaining = quantity - fill_quantity
     if remaining > 0:
