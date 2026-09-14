@@ -16,6 +16,7 @@ from app.backtesting.cash_future_strategy_runner import (
     _LedgerPayloadSequence,
     _point_date,
     _trade_gross_profit,
+    _write_checkpoint,
 )
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
@@ -86,6 +87,8 @@ def resume_cash_future_strategy(
     previous_timestamp: datetime | date | None = None
     seen_events = 0
     resumed = False
+    last_processed_point: CashFutureHistoryPoint | None = None
+    last_processed_event_index = event_index
 
     for point in points:
         point_date = _point_date(point)
@@ -102,6 +105,8 @@ def resume_cash_future_strategy(
         if seen_events <= event_index:
             continue
         resumed = True
+        last_processed_point = point
+        last_processed_event_index = seen_events
 
         visible_history = tuple(history)
         raw_signal = strategy(point, visible_history)
@@ -187,6 +192,16 @@ def resume_cash_future_strategy(
             f"event_index={event_index}"
         )
 
+    # Match the uninterrupted runner's durability semantics: the latest processed
+    # event must become the durable resume point even when the total event count
+    # is not an exact multiple of checkpoint_interval.
+    if config.checkpoint_interval is not None and last_processed_point is not None:
+        _write_checkpoint(
+            ledger, run_id, last_processed_event_index, last_processed_point,
+            selected_contract, capital_ledger, entry, strategy, strategy_id,
+            strategy_version, strategy_hash, data_source_fingerprint,
+        )
+
     return CashFutureStrategyRun(
         strategy_id, strategy_version, initial_capital, float(capital_ledger.realized_capital),
         float(capital_ledger.realized_capital) - initial_capital,
@@ -202,7 +217,6 @@ def _maybe_checkpoint(ledger, config, run_id, event_index, point, selected_contr
                       strategy_hash, data_source_fingerprint):
     if config.checkpoint_interval is None or event_index % config.checkpoint_interval != 0:
         return
-    from app.backtesting.cash_future_strategy_runner import _write_checkpoint
     _write_checkpoint(ledger, run_id, event_index, point, selected_contract, capital_ledger, entry,
                       strategy, strategy_id, strategy_version, strategy_hash, data_source_fingerprint)
 
