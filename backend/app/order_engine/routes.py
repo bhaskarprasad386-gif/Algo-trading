@@ -19,13 +19,13 @@ def place_manual_order(
     exchange: str = Query("NSE", min_length=1),
     transaction_type: str = Query("BUY", pattern="^(BUY|SELL)$"),
     quantity: int = Query(10, ge=1),
-    price: float = Query(0.0, ge=0.0),
+    price: float = Query(..., gt=0),
     mode: str = Query("paper", pattern="^paper$", description="Only paper mode is enabled."),
 ):
     """Atomically risk-check and simulate a paper order."""
     try:
         normalized_symbol = symbol.strip().upper()
-        risk_engine.check_and_reserve(normalized_symbol, transaction_type, quantity)
+        risk_engine.check_and_reserve(normalized_symbol, transaction_type, quantity, price)
         result = OrderExecutionClient(mode="paper").place_order(
             symbol=normalized_symbol, exchange=exchange, transaction_type=transaction_type,
             quantity=quantity, price=price,
