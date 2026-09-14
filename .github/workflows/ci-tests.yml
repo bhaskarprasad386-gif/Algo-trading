@@ -70,7 +70,8 @@ jobs:
                       pass
 
           # Sahi Endpoint bina kisi external variable ke string me fix kar diya hai
-          url = ' https://googleapis.com + api_key
+                    url = 'https://googleapis.com' + api_key
+
           headers = {'Content-Type': 'application/json'}
           
           prompt = 'मेरा पायथन बैकएंड कोड फेल हो गया है। कोड में गलतियां सुधारो। मुझे रिस्पॉन्स में पहले एक छोटा summary दो कि क्या गलती थी SUMMARY block में, फिर सुधरा हुआ कोड इस फॉर्मेट में देना। कोई Markdown backticks (```python) मत लगाना:\n<<< FILE: file_path.py >>>\n[सुधरा हुआ कोड]\n<<< END >>>\n\nCode Snapshot:\n' + code_snapshot
