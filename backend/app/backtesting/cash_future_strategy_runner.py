@@ -261,9 +261,19 @@ def run_cash_future_strategy(
             else:
                 ledger.append_batch((ledger_record(run_id, "trade", point.timestamp, trade),))
             entry = None
+        unrealized = 0.0
+        if entry is not None:
+            try:
+                unrealized = _trade_gross_profit(entry, point, config)
+            except ValueError:
+                unrealized = 0.0
         equity_record = {
-            "timestamp": point.timestamp.isoformat(), "equity": float(capital_ledger.realized_capital),
-            "available_capital": capital_ledger.available_capital, "reserved_margin": capital_ledger.reserved_margin,
+            "timestamp": point.timestamp.isoformat(),
+            "equity": float(capital_ledger.realized_capital) + unrealized,
+            "realized_capital": float(capital_ledger.realized_capital),
+            "unrealized_pnl": unrealized,
+            "available_capital": capital_ledger.available_capital,
+            "reserved_margin": capital_ledger.reserved_margin,
         }
         if ledger is None:
             equity_curve.append(equity_record)
@@ -321,7 +331,20 @@ def _capture_strategy_state(strategy) -> Mapping[str, Any] | None:
 def _serialize_entry(entry: CashFutureHistoryPoint | None) -> Mapping[str, Any] | None:
     if entry is None:
         return None
-    return {"timestamp": entry.timestamp.isoformat(), "symbol": entry.symbol, "contract_month": entry.contract_month, "cash_price": entry.cash_price, "future_price": entry.future_price, "gap": entry.gap, "gap_pct": entry.gap_pct, "lot_size": entry.lot_size, "margin_required": entry.margin_required, "volume": entry.volume, "oi": entry.oi, "cash_bid": entry.cash_bid, "cash_ask": entry.cash_ask, "future_bid": entry.future_bid, "future_ask": entry.future_ask, "charges": entry.charges, "funding_cost": entry.funding_cost, "expiry_date": entry.expiry_date.isoformat() if entry.expiry_date else None}
+    return {
+        "timestamp": entry.timestamp.isoformat(), "symbol": entry.symbol,
+        "contract_month": entry.contract_month, "cash_price": entry.cash_price,
+        "future_price": entry.future_price, "gap": entry.gap, "gap_pct": entry.gap_pct,
+        "lot_size": entry.lot_size, "margin_required": entry.margin_required,
+        "volume": entry.volume, "oi": entry.oi, "cash_bid": entry.cash_bid,
+        "cash_ask": entry.cash_ask, "future_bid": entry.future_bid,
+        "future_ask": entry.future_ask, "cash_bid_qty": entry.cash_bid_qty,
+        "cash_ask_qty": entry.cash_ask_qty, "future_bid_qty": entry.future_bid_qty,
+        "future_ask_qty": entry.future_ask_qty, "charges": entry.charges,
+        "funding_cost": entry.funding_cost,
+        "net_profit": entry.net_profit, "roi_pct": entry.roi_pct,
+        "expiry_date": entry.expiry_date.isoformat() if entry.expiry_date else None,
+    }
 
 
 def _point_date(point: CashFutureHistoryPoint) -> date:
