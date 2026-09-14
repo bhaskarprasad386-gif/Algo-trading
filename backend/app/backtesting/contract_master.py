@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -26,8 +27,8 @@ class ContractRecord:
                 raise ValueError(f"{name} is required")
         if self.lot_size <= 0:
             raise ValueError("lot_size must be positive")
-        if self.tick_size is not None and self.tick_size <= 0:
-            raise ValueError("tick_size must be positive when supplied")
+        if self.tick_size is not None and (not math.isfinite(float(self.tick_size)) or self.tick_size <= 0):
+            raise ValueError("tick_size must be finite and positive when supplied")
 
 
 class ContractMasterCatalog:
@@ -72,7 +73,7 @@ class ContractMasterCatalog:
     def merge_snapshot(self, snapshot_date: date, records: Iterable[ContractRecord], *, payload_sha256: str | None = None, fetched_at: datetime | None = None) -> int:
         """Merge one exchange/instrument segment without deleting other segments in the snapshot."""
         rows = self._rows(snapshot_date, records)
-        now = (fetched_at or datetime.utcnow()).isoformat(timespec="seconds")
+        now = (fetched_at or datetime.now(timezone.utc)).isoformat(timespec="seconds")
         with self._db:
             self._db.execute("INSERT INTO contract_master_snapshots(snapshot_date,fetched_at,payload_sha256) VALUES(?,?,?) ON CONFLICT(snapshot_date) DO UPDATE SET fetched_at=excluded.fetched_at,payload_sha256=excluded.payload_sha256", (snapshot_date.isoformat(), now, payload_sha256))
             if rows:
@@ -81,7 +82,6 @@ class ContractMasterCatalog:
         return len(rows)
 
     def upsert(self, records: Iterable[ContractRecord]) -> int:
-        """Compatibility helper: store records under their supplied snapshot date, or today."""
         records = tuple(records)
         snapshot = next((r.snapshot_date for r in records if r.snapshot_date), None) or date.today()
         return self.upsert_snapshot(snapshot, records)
@@ -95,7 +95,6 @@ class ContractMasterCatalog:
         return None if row is None else date.fromisoformat(row[0])
 
     def all_contracts(self, *, snapshot_date: date) -> tuple[ContractRecord, ...]:
-        """Enumerate every contract stored in one exact provider snapshot."""
         rows = self._db.execute("""SELECT exchange,symbol,token,expiry,instrument_type,underlying,lot_size,tick_size
             FROM derivative_contracts WHERE snapshot_date=? ORDER BY instrument_type,underlying,expiry,token""", (snapshot_date.isoformat(),)).fetchall()
         return tuple(ContractRecord(r[0], r[1], r[2], date.fromisoformat(r[3]), r[4], r[5], int(r[6]), snapshot_date, None if r[7] is None else float(r[7])) for r in rows)
@@ -120,7 +119,7 @@ class ContractMasterCatalog:
         return contracts[0] if mode == "CURRENT" else (contracts[1] if len(contracts) > 1 else contracts[0])
 
     def resolve_contract_month(self, *, exchange: str, underlying: str, contract_month: str, as_of: date, instrument_type: str = "STOCK_FUTURE") -> ContractRecord:
-        """Resolve the exact historical futures contract for a YYYY-MM expiry month."""
+        """Resolve the exact historical futures contract for a YYYY-MM expiry month without returning an expired contract."""
         try:
             year_text, month_text = contract_month.strip().split("-", 1)
             year, month = int(year_text), int(month_text)
@@ -128,17 +127,16 @@ class ContractMasterCatalog:
             next_month = date(year + (1 if month == 12 else 0), 1 if month == 12 else month + 1, 1)
         except (AttributeError, TypeError, ValueError):
             raise ValueError("contract_month must be YYYY-MM") from None
-
         row = self._db.execute("SELECT snapshot_date FROM contract_master_snapshots WHERE snapshot_date<=? ORDER BY snapshot_date DESC LIMIT 1", (as_of.isoformat(),)).fetchone()
         if row is None:
             raise LookupError(f"no historical contract-master snapshot for {as_of.isoformat()}")
         snapshot = row[0]
         rows = self._db.execute("""SELECT exchange,symbol,token,expiry,instrument_type,underlying,lot_size,tick_size
             FROM derivative_contracts WHERE snapshot_date=? AND exchange=? AND underlying=?
-            AND instrument_type=? AND expiry>=? AND expiry<? ORDER BY expiry""", (
-                snapshot, exchange, underlying, instrument_type, target.isoformat(), next_month.isoformat()
+            AND instrument_type=? AND expiry>=? AND expiry>=? AND expiry<? ORDER BY expiry""", (
+                snapshot, exchange, underlying, instrument_type, as_of.isoformat(), target.isoformat(), next_month.isoformat()
             )).fetchall()
         if not rows:
-            raise LookupError(f"no historical {instrument_type} contract for {underlying} in {year:04d}-{month:02d}")
+            raise LookupError(f"no active historical {instrument_type} contract for {underlying} in {year:04d}-{month:02d} on {as_of.isoformat()}")
         r = rows[0]
         return ContractRecord(r[0], r[1], r[2], date.fromisoformat(r[3]), r[4], r[5], int(r[6]), date.fromisoformat(snapshot), None if r[7] is None else float(r[7]))
