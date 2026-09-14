@@ -70,7 +70,8 @@ jobs:
                       pass
 
           # Sahi Endpoint bina kisi external variable ke string me fix kar diya hai
-          url = ''https://googleapis.com'' + api_key
+          url = "https://googleapis.com" + api_key
+
 
           headers = {'Content-Type': 'application/json'}
           
