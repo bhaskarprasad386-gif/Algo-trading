@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping
 
@@ -35,16 +36,16 @@ def _unrealized_profit(entry: CashFutureHistoryPoint, current: CashFutureHistory
     # quotes exist; otherwise the portfolio runner would fail while merely
     # marking the freshly opened position to market.
     exit_prices = (current.cash_bid, current.future_ask)
-    if any(price is None or float(price) <= 0 for price in exit_prices):
+    if any(price is None or not math.isfinite(float(price)) or float(price) <= 0 for price in exit_prices):
         return 0.0
     return _executable_spread_profit(entry, current) * (quantity / entry.lot_size)
 
 
 def _historical_fill_capacity(point: CashFutureHistoryPoint, *, side: str, requested_quantity: float, execution_model: str) -> tuple[float, str]:
-    """Return executable quantity without inventing liquidity."""
-    requested = max(float(requested_quantity), 0.0)
-    if requested <= 0:
-        return 0.0, "none"
+    """Return executable quantity without inventing liquidity or accepting NaN/Inf."""
+    requested = float(requested_quantity)
+    if not math.isfinite(requested) or requested <= 0:
+        return 0.0, "invalid_quantity"
     if execution_model != "bid_ask":
         return requested, "gap_analytical"
     required = (
@@ -54,7 +55,10 @@ def _historical_fill_capacity(point: CashFutureHistoryPoint, *, side: str, reque
     )
     if any(value is None for value in required):
         return requested, "strict_bid_ask_no_depth"
-    capacity = min(max(float(value), 0.0) for value in required)
+    numeric_depth = tuple(float(value) for value in required)
+    if any(not math.isfinite(value) or value < 0 for value in numeric_depth):
+        return 0.0, "invalid_depth"
+    capacity = min(numeric_depth)
     return min(requested, capacity), "historical_depth"
 
 
