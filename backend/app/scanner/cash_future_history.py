@@ -86,6 +86,10 @@ def analyze_historical_gap_outcomes(
     symbol and contract month. The exit is the first observation at/below
     ``exit_gap``, expiry, or ``max_holding_days``. No CURRENT/NEAR mixing occurs.
     """
+    if max_holding_days <= 0:
+        raise ValueError("max_holding_days must be positive")
+    if charges_per_trade < 0 or funding_cost_per_trade < 0:
+        raise ValueError("charges_per_trade and funding_cost_per_trade must be non-negative")
     ordered = sorted(points, key=lambda p: p.timestamp)
     matches = find_historical_gap_matches(ordered, target_gap, tolerance, contract_month)
     outcomes: list[HistoricalGapOutcome] = []
