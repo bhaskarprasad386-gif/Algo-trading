@@ -1,4 +1,4 @@
-name: Backend Tests & Gemini Auto-Fixer
+name: Backend Tests & Controlled Gemini Auto-Fixer
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       SECRET_KEY: ci-test-secret-key-not-for-production
       PYTHONPATH: ..
@@ -33,104 +33,137 @@ jobs:
           cache-dependency-path: backend/requirements.txt
 
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && pip install -r requirements.txt && pip install pytest requests
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest requests
 
       - name: Compile backend
         run: python -m compileall -q app
 
-      # 1. Backend Test execution
       - name: Run tests
         id: run-tests
-        run: python -m pytest --maxfail=1 -q
         continue-on-error: true
-
-      # 2. Gemini Pro Auto-Writer
-      - name: Gemini Pro Auto-Writer
-        if: steps.run-tests.outcome == 'failure'
-        env:
-          GEMINI_API_KEY: \${{ secrets.GEMINI_API_KEY }}
         run: |
-          echo "बैकएंड टेस्ट फेल हो गया है। Gemini Pro कोड को ऑटो-राइट कर रहा है..."
-          python -c "
-          import os, requests, json, glob, re
+          set +e
+          python -m pytest --maxfail=1 -q 2>&1 | tee pytest_failure.log
+          status=${PIPESTATUS[0]}
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
 
-          api_key = os.getenv('GEMINI_API_KEY')
-          if not api_key:
-              print('Error: GEMINI_API_KEY nahi mili!')
-              exit(1)
+      - name: Gemini Controlled Auto-Fixer
+        if: steps.run-tests.outcome == 'failure' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GEMINI_API_KEY:-}" ]; then
+            echo "GEMINI_API_KEY is missing; no automatic code change will be made."
+            exit 1
+          fi
 
-          python_files = glob.glob('**/*.py', recursive=True)
-          code_snapshot = ''
-          for f in python_files:
-              if 'venv' not in f and '.github' not in f:
-                  try:
-                      with open(f, 'r') as file:
-                          code_snapshot += f'\n<<< FILE: {f} >>>\n' + file.read() + '\n<<< END >>>\n'
-                  except:
-                      pass
+          cat > gemini_fixer.py <<'PY'
+          import os, re, requests
+          from pathlib import Path
 
-          # 🌟 FIXED LINK WITH DOUBLE QUOTES 🌟
-          url = \"https://googleapis.com\" + api_key
-          headers = {'Content-Type': 'application/json'}
-          
-          prompt = 'मेरा पायथन बैकएंड कोड फेल हो गया है। कोड में गलतियां सुधारो। मुझे रिस्पॉन्स में पहले एक छोटा summary दो कि क्या गलती थी SUMMARY block में, फिर सुधरा हुआ कोड इस फॉर्मेट में देना। कोई Markdown backticks (```python) मत लगाना:\n<<< FILE: file_path.py >>>\n[सुधरा हुआ कोड]\n<<< END >>>\n\nCode Snapshot:\n' + code_snapshot
-          
-          data = {'contents': [{'parts': [{'text': prompt}]}]}
-          response = requests.post(url, headers=headers, json=data)
-          
-          try:
-              res_json = response.json()
-              ai_text = res_json['candidates']['content']['parts']['text']
+          root = Path.cwd()
+          failure = (root / "pytest_failure.log").read_text(errors="replace")[-30000:]
+          files = []
+          for p in sorted((root / "app").rglob("*.py")):
+              if "__pycache__" not in p.parts:
+                  files.append(f"<<< FILE: {p.relative_to(root).as_posix()} >>>\n{p.read_text(errors='replace')}\n<<< END >>>")
+          snapshot = "\n".join(files)
 
-              summary_match = re.search(r'SUMMARY:(.*?)(?:<<< FILE|$)', ai_text, re.DOTALL)
-              summary_text = summary_match.group(1).strip() if summary_match else 'Gemini ne code fix kar diya hai.'
-              with open('gemini_summary.txt', 'w') as sf:
-                  sf.write(summary_text)
+          prompt = f'''You are a senior Python backend maintainer.
+          Diagnose the REAL pytest failure below and make the smallest safe production-code fix.
+          STRICT RULES:
+          - Modify ONLY existing files under backend/app/ (the working directory is backend, so paths must begin app/).
+          - NEVER modify tests, workflows, requirements, config, or generated files.
+          - NEVER weaken/change assertions or expected values.
+          - NEVER use fake data, constants, mocks, or special cases merely to pass the test.
+          - Preserve existing Cash-Future/backtesting architecture, durable ledger behavior, resume/checkpoint safety, and JSON-safe API output.
+          - No unrelated cleanup or refactoring.
+          - Return COMPLETE contents only for files that genuinely need changes.
+          - First output exactly: SUMMARY: <root cause and fix>
+          - Then use exactly: <<< FILE: app/path.py >>> followed by complete code and <<< END >>>
+          - No Markdown fences.
 
-              matches = re.findall(r'<<< FILE: (.*?) >>>\n(.*?)<<< END >>>', ai_text, re.DOTALL)
-              if matches:
-                  for file_path, corrected_code in matches:
-                      file_path = file_path.strip()
-                      cleaned_code = re.sub(r'^```[a-zA-Z]*\n', '', corrected_code)
-                      cleaned_code = re.sub(r'\n```$', '', cleaned_code)
-                      
-                      print(f'Updating file: {file_path}')
-                      with open(file_path, 'w') as f:
-                          f.write(cleaned_code.strip())
-                  print('Gemini ne saari files successfully update kar di hain!')
-              else:
-                  print('AI output format galat tha ya koi badlav nahi mila.')
-          except Exception as e:
-              print('AI se response process karne me error:', e)
-              print('Raw response body:', response.text)
-          "
+          TEST FAILURE:
+          {failure}
 
-      # 3. PR par Comment post karna
-      - name: Post Comment on PR
+          PRODUCTION SOURCE:
+          {snapshot}'''
+
+          url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + os.environ["GEMINI_API_KEY"]
+          r = requests.post(url, headers={"Content-Type":"application/json"}, json={"contents":[{"parts":[{"text":prompt}]}]}, timeout=120)
+          r.raise_for_status()
+          body = r.json()
+          text = body["candidates"][0]["content"]["parts"][0]["text"]
+
+          m = re.search(r"^SUMMARY:\s*(.+)$", text, re.MULTILINE)
+          (root / "gemini_summary.txt").write_text((m.group(1).strip() if m else "No summary returned.") + "\n")
+
+          matches = re.findall(r"<<< FILE:\s*(.*?)\s*>>>\n(.*?)\n<<< END >>>", text, re.DOTALL)
+          if not matches:
+              raise RuntimeError("Gemini returned no valid file changes")
+          for raw, code in matches:
+              rel = raw.strip()
+              if not rel.startswith("app/") or not rel.endswith(".py") or ".." in Path(rel).parts:
+                  raise RuntimeError(f"Forbidden Gemini path: {rel}")
+              target = root / rel
+              if not target.exists():
+                  raise RuntimeError(f"Gemini tried to create unknown file: {rel}")
+              target.write_text(code.strip() + "\n")
+          PY
+
+          for attempt in 1 2; do
+            echo "=== Controlled Gemini repair $attempt/2 ==="
+            python gemini_fixer.py
+            python -m compileall -q app
+            set +e
+            python -m pytest -q 2>&1 | tee "pytest_after_gemini_${attempt}.log"
+            status=${PIPESTATUS[0]}
+            set -e
+            if [ "$status" -eq 0 ]; then
+              echo "VERIFIED GREEN: full pytest suite passed."
+              exit 0
+            fi
+            if [ "$attempt" -eq 1 ]; then
+              echo "First repair failed verification; allowing one fresh diagnosis."
+              cp "pytest_after_gemini_${attempt}.log" pytest_failure.log
+            fi
+          done
+          echo "Gemini repair was NOT verified GREEN. No commit will be made."
+          exit 1
+
+      - name: PR failure report
         if: steps.run-tests.outcome == 'failure' && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
-            const fs = require('fs');
-            let summary = 'Gemini AI ne errors fix karne ke liye code generate kar diya hai.';
-            try {
-              summary = fs.readFileSync('backend/gemini_summary.txt', 'utf8');
-            } catch (err) {
-              console.log('Summary file nahi mili');
-            }
-            
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: \`### 🤖 Gemini Auto-Fixer Report\\n\\n**Test Status:** ❌ Failed\\n\\n**Gemini AI Feedback:**\\n\${summary}\\n\\n*Note: corrected code repository me push kar diya gaya hai.*\`
+              body: "### Backend Tests ❌\n\nTests failed. Automatic code changes are disabled for pull requests."
             })
 
-      # 4. Code Commit aur Push karna
-      - name: Commit and Push Fixed Code
-        if: steps.run-tests.outcome == 'failure'
+      - name: Commit verified fix
+        if: success() && steps.run-tests.outcome == 'failure' && github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          git config --global user.name 'Gemini-Auto-Bot'
-          git config --global user.email 'gemini-bot@github.com'
-          git add ../backend/
-          git diff --quiet --cached || (git commit -m "Fix: Gemini Auto-wrote code to fix backend test failure" && git push)
+          set -euo pipefail
+          git status --short
+          if git status --short | grep -vE '^ M backend/app/|^?? backend/gemini_summary.txt$|^?? backend/pytest_' | grep .; then
+            echo "Forbidden files changed; refusing to commit."
+            exit 1
+          fi
+          rm -f gemini_fixer.py pytest_failure.log pytest_after_gemini_*.log gemini_summary.txt
+          git config user.name 'Gemini-Auto-Bot'
+          git config user.email 'gemini-bot@github.com'
+          git add app/
+          if git diff --cached --quiet; then
+            echo "No production-code change to commit."
+            exit 1
+          fi
+          git commit -m 'Fix: verified backend test failure'
+          git push
