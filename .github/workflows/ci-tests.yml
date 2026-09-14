@@ -48,7 +48,7 @@ jobs:
       - name: Gemini Pro Auto-Writer
         if: steps.run-tests.outcome == 'failure'
         env:
-          GEMINI_API_KEY: \${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           echo "बैकएंड टेस्ट फेल हो गया है। Gemini Pro कोड को ऑटो-राइट कर रहा है..."
           python -c "
@@ -80,7 +80,8 @@ jobs:
           
           try:
               res_json = response.json()
-              ai_text = res_json['candidates'][0]['content']['parts'][0]['text']
+              ai_text = res_json['candidates']['content']['parts']['text']
+
               
               summary_match = re.search(r'SUMMARY:(.*?)(?:<<< FILE|$)', ai_text, re.DOTALL)
               summary_text = summary_match.group(1).strip() if summary_match else 'Gemini ne code fix kar diya hai.'
