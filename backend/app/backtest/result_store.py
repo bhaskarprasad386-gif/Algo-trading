@@ -37,7 +37,8 @@ def persist_trade_chunk(db: Session, *, job_id: str, sequence: int, symbol: str,
         item = BacktestJobResultChunk(job_id=job_id, sequence=sequence, symbol=symbol, result_json=encoded)
         db.add(item)
     else:
-        item.symbol = symbol
+        if item.symbol.upper() != symbol.upper():
+            raise ValueError("result chunk sequence already belongs to another symbol")
         item.result_json = encoded
     db.commit()
     return item
