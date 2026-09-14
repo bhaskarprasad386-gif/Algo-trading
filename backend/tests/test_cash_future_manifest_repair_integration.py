@@ -125,6 +125,16 @@ def test_successful_provider_repair_completes_manifest_and_next_prepare_is_idemp
     service, _ = _service(tmp_path, source)
     session = _session()
     store = _store_with_range(tmp_path, complete=False)
+    # This scenario must require repair on both legs; the coverage result is
+    # catalog-backed, so a manifest marked complete for the future would not
+    # make the acquisition result complete when that future has no stored rows.
+    store.upsert(
+        build_coverage_manifest(
+            source="angelone",
+            ranges=(CoverageRange("NFO:101:SBINJAN", session.start_ns, session.end_ns, 3, 2, 1, False),),
+        ),
+        timeframe="1m",
+    )
 
     result = service.acquire(
         spot_instrument="NSE:3045:SBIN", exchange="NFO", underlying="SBIN",
