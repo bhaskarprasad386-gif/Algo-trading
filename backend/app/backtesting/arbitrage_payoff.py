@@ -7,6 +7,7 @@ It never invents a fill, expiry, strike, or higher-resolution price.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Any, Mapping
 
 from app.execution.payoff import PayoffLeg
@@ -22,8 +23,16 @@ class StrategyPayoff:
 
 
 def _validate_quote_prices(*values: float) -> None:
-    if any(value < 0 for value in values):
-        raise ValueError("quote prices cannot be negative")
+    numeric = [float(value) for value in values]
+    if any(not math.isfinite(value) or value < 0 for value in numeric):
+        raise ValueError("quote prices must be finite and non-negative")
+
+
+def _validate_quantity(value: Any) -> float:
+    quantity = float(value)
+    if not math.isfinite(quantity) or quantity <= 0:
+        raise ValueError("lot_size must be finite and positive")
+    return quantity
 
 
 def build_box_payoff(event: Mapping[str, Any], *, direction: str = "LONG") -> StrategyPayoff:
@@ -31,13 +40,13 @@ def build_box_payoff(event: Mapping[str, Any], *, direction: str = "LONG") -> St
     high = event["high"]
     if low["underlying"] != high["underlying"] or low["expiry"] != high["expiry"]:
         raise ValueError("box legs must share underlying and expiry")
-    if not float(low["strike"]) < float(high["strike"]):
-        raise ValueError("box low strike must be below high strike")
-    _validate_quote_prices(low["call_bid"], low["call_ask"], low["put_bid"], low["put_ask"],
-                           high["call_bid"], high["call_ask"], high["put_bid"], high["put_ask"])
-    qty = float(low.get("lot_size", 1))
     low_strike = float(low["strike"])
     high_strike = float(high["strike"])
+    if not math.isfinite(low_strike) or not math.isfinite(high_strike) or not low_strike < high_strike:
+        raise ValueError("box strikes must be finite and low strike must be below high strike")
+    _validate_quote_prices(low["call_bid"], low["call_ask"], low["put_bid"], low["put_ask"],
+                           high["call_bid"], high["call_ask"], high["put_bid"], high["put_ask"])
+    qty = _validate_quantity(low.get("lot_size", 1))
     if direction == "LONG":
         legs = (
             PayoffLeg("CALL", "BUY", low_strike, float(low["call_ask"]), qty),
@@ -70,12 +79,15 @@ def build_synthetic_cash_carry_payoff(
         raise ValueError("synthetic legs must share underlying and expiry")
     if option["timestamp_ns"] != future["timestamp_ns"]:
         raise ValueError("synthetic legs must share timestamp")
-    if carry_factor <= 0:
-        raise ValueError("carry_factor must be positive")
+    carry_factor = float(carry_factor)
+    if not math.isfinite(carry_factor) or carry_factor <= 0:
+        raise ValueError("carry_factor must be finite and positive")
     _validate_quote_prices(option["call_bid"], option["call_ask"], option["put_bid"], option["put_ask"],
                            future["bid"], future["ask"])
-    qty = float(future.get("lot_size", 1))
     strike = float(option["strike"])
+    if not math.isfinite(strike):
+        raise ValueError("option strike must be finite")
+    qty = _validate_quantity(future.get("lot_size", 1))
     if direction == "LONG":
         legs = (
             PayoffLeg("CALL", "BUY", strike, float(option["call_ask"]), qty),
@@ -93,7 +105,7 @@ def build_synthetic_cash_carry_payoff(
     return StrategyPayoff("synthetic-cash-carry", legs, {
         "underlying": option["underlying"], "expiry": option["expiry"],
         "strike": strike, "quote_timestamp_ns": option["timestamp_ns"],
-        "direction": direction, "carry_factor": float(carry_factor),
+        "direction": direction, "carry_factor": carry_factor,
     })
 
 
@@ -102,7 +114,7 @@ def build_cash_future_payoff(event: Mapping[str, Any], *, direction: str = "LONG
     _validate_quote_prices(quote["spot_bid"], quote["spot_ask"], quote["future_bid"], quote["future_ask"])
     if quote["spot_ask"] < quote["spot_bid"] or quote["future_ask"] < quote["future_bid"]:
         raise ValueError("invalid cash/future quote")
-    qty = float(quote.get("lot_size", 1))
+    qty = _validate_quantity(quote.get("lot_size", 1))
     if direction == "LONG_CASH_SHORT_FUTURE":
         legs = (
             PayoffLeg("SPOT", "BUY", None, float(quote["spot_ask"]), qty),
@@ -134,11 +146,13 @@ def build_calendar_payoff(event: Mapping[str, Any], *, direction: str = "LONG_NE
     if near.get("strike") != far.get("strike") or near.get("option_type") != far.get("option_type"):
         raise ValueError("calendar legs must share strike and option type")
     _validate_quote_prices(near["bid"], near["ask"], far["bid"], far["ask"])
-    qty = float(near.get("lot_size", 1))
+    qty = _validate_quantity(near.get("lot_size", 1))
     kind = str(near.get("option_type") or "FUTURE").upper()
     if kind not in {"CALL", "PUT", "FUTURE"}:
         raise ValueError("unsupported calendar option type")
     strike = None if kind == "FUTURE" else float(near["strike"])
+    if strike is not None and not math.isfinite(strike):
+        raise ValueError("calendar strike must be finite")
     if direction == "LONG_NEAR_SHORT_FAR":
         legs = (
             PayoffLeg(kind, "BUY", strike, float(near["ask"]), qty),
@@ -174,5 +188,5 @@ def build_strategy_payoff(strategy_id: str, event: Mapping[str, Any], *, directi
 
 __all__ = [
     "StrategyPayoff", "build_box_payoff", "build_synthetic_cash_carry_payoff",
-    "build_cash_future_payoff", "build_calendar_payoff", "build_strategy_payoff",
+    "build_cash_future_payoff", "build_strategy_payoff",
 ]
