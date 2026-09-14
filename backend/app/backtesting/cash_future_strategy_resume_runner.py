@@ -126,8 +126,11 @@ def resume_cash_future_strategy(
             "cash_price": point.cash_price, "future_price": point.future_price,
             "gap": point.gap, "lot_size": point.lot_size,
         }
+        expiry_day = point.expiry_date is not None and point_date >= point.expiry_date
         if action == "BUY" and entry is None:
-            if capital_ledger.reserve(point.margin_required):
+            if expiry_day:
+                signal_record.update({"execution_status": "blocked", "blocked_reason": "expiry_day_new_entry"})
+            elif capital_ledger.reserve(point.margin_required):
                 entry = point
             else:
                 signal_record.update({
@@ -140,7 +143,7 @@ def resume_cash_future_strategy(
         exit_reason: str | None = None
         if action == "SELL" and entry is not None:
             exit_reason = "strategy"
-        elif entry is not None and point.expiry_date is not None and point_date >= point.expiry_date:
+        elif entry is not None and expiry_day:
             exit_reason = "expiry"
 
         from app.backtesting.ledger import LedgerRecord
@@ -192,9 +195,6 @@ def resume_cash_future_strategy(
             f"event_index={event_index}"
         )
 
-    # Match the uninterrupted runner's durability semantics: the latest processed
-    # event must become the durable resume point even when the total event count
-    # is not an exact multiple of checkpoint_interval.
     if config.checkpoint_interval is not None and last_processed_point is not None:
         _write_checkpoint(
             ledger, run_id, last_processed_event_index, last_processed_point,
