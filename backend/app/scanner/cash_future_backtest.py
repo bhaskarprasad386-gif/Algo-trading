@@ -153,6 +153,8 @@ def _aggregate_contract_results(results: list[dict]) -> dict:
     running_peak = 0.0
     max_drawdown = 0.0
     equity_curve = []
+    if trades:
+        equity_curve.append({"timestamp": trades[0]["entry_time"], "equity": 0.0})
     for trade in trades:
         equity += trade["net_profit"]
         running_peak = max(running_peak, equity)
