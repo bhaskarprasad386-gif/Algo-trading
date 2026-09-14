@@ -103,6 +103,14 @@ def backtest_cash_future_basis(
                 open_position = row
             continue
 
+        # A position must never be closed by the same timestamp that opened it.
+        # A contract rollover must also never manufacture a synthetic trade.
+        if row.timestamp_ns <= open_position.timestamp_ns:
+            continue
+        if open_position.contract_token and row.contract_token and open_position.contract_token != row.contract_token:
+            open_position = None
+            continue
+
         should_exit = row.basis <= exit_basis if entry_side == "SELL_FUTURE_BUY_CASH" else row.basis >= -exit_basis
         if not should_exit:
             continue
