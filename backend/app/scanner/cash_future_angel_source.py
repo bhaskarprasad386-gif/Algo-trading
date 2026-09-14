@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta
 from typing import Callable, Iterable
 from zoneinfo import ZoneInfo
@@ -14,14 +15,7 @@ IST = ZoneInfo("Asia/Kolkata")
 
 
 class AngelOneCashFutureHistoricalSource(CashFutureHistoricalSource):
-    """Build synchronized Cash-Future points from bounded Angel One requests.
-
-    ``token_resolver`` supplies source-backed NSE cash and NFO futures tokens.
-    ``metadata_resolver`` supplies the contract lot size and historical margin
-    value used by the backtest record; this adapter never invents either value.
-    Requests are split into at most one calendar day, so a long history is never
-    materialized in one in-memory response.
-    """
+    """Build synchronized Cash-Future points from bounded Angel One requests."""
 
     def __init__(
         self,
@@ -40,15 +34,22 @@ class AngelOneCashFutureHistoricalSource(CashFutureHistoricalSource):
 
     @staticmethod
     def _candle_map(response: dict) -> dict[datetime, float]:
-        candles = response.get("data") or []
+        if not isinstance(response, dict):
+            raise ValueError("Angel One candle response must be an object")
+        candles = response.get("data")
+        if not isinstance(candles, list):
+            raise ValueError("Angel One candle response data must be a list")
         result: dict[datetime, float] = {}
         for candle in candles:
-            if len(candle) < 5:
+            if not isinstance(candle, (list, tuple)) or len(candle) < 5:
                 raise ValueError("Angel One candle record is incomplete")
             timestamp = datetime.fromisoformat(str(candle[0]).replace("Z", "+00:00"))
             if timestamp.tzinfo is None:
                 timestamp = timestamp.replace(tzinfo=IST)
-            result[timestamp.astimezone(IST)] = float(candle[4])
+            price = float(candle[4])
+            if not math.isfinite(price) or price <= 0:
+                raise ValueError("Angel One candle close price must be finite and positive")
+            result[timestamp.astimezone(IST)] = price
         return result
 
     def fetch(
@@ -61,8 +62,10 @@ class AngelOneCashFutureHistoricalSource(CashFutureHistoricalSource):
     ) -> Iterable[CashFutureHistoryPoint]:
         cash_token, future_token = self.token_resolver(symbol, contract_month)
         lot_size, margin_required = self.metadata_resolver(symbol, contract_month)
-        if lot_size <= 0 or margin_required < 0:
-            raise ValueError("metadata_resolver returned invalid contract metadata")
+        if isinstance(lot_size, bool) or not isinstance(lot_size, int) or lot_size <= 0:
+            raise ValueError("metadata_resolver returned invalid lot size")
+        if not math.isfinite(float(margin_required)) or margin_required < 0:
+            raise ValueError("metadata_resolver returned invalid margin")
 
         cursor = start.astimezone(IST)
         final = end.astimezone(IST)
@@ -82,6 +85,9 @@ class AngelOneCashFutureHistoricalSource(CashFutureHistoricalSource):
                 cash_price = cash[timestamp]
                 future_price = future[timestamp]
                 gap = future_price - cash_price
+                gap_pct = gap / cash_price * 100.0
+                if not math.isfinite(gap) or not math.isfinite(gap_pct):
+                    raise ValueError("Cash-Future candle result must be finite")
                 yield CashFutureHistoryPoint(
                     timestamp=timestamp,
                     symbol=symbol.upper(),
@@ -89,7 +95,7 @@ class AngelOneCashFutureHistoricalSource(CashFutureHistoricalSource):
                     cash_price=cash_price,
                     future_price=future_price,
                     gap=gap,
-                    gap_pct=(gap / cash_price * 100.0) if cash_price else 0.0,
+                    gap_pct=gap_pct,
                     lot_size=lot_size,
                     margin_required=margin_required,
                 )
