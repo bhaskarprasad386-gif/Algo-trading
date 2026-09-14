@@ -118,6 +118,8 @@ def analyze_historical_gap_outcomes(
     """Find prior gap occurrences and measure the first subsequent exit."""
     if max_holding_days <= 0:
         raise ValueError("max_holding_days must be positive")
+    if not math.isfinite(float(charges_per_trade)) or not math.isfinite(float(funding_cost_per_trade)):
+        raise ValueError("charges_per_trade and funding_cost_per_trade must be finite")
     if charges_per_trade < 0 or funding_cost_per_trade < 0:
         raise ValueError("charges_per_trade and funding_cost_per_trade must be non-negative")
     if not math.isfinite(float(exit_gap)):
