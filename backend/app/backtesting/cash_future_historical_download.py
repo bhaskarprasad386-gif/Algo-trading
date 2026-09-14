@@ -186,7 +186,7 @@ class CashFutureHistoricalDownloadService:
         for plan in plans:
             for request in plan.requests:
                 expected, actual, missing, first_missing = self._chunk_metrics(request)
-                self.status_store.upsert_chunk(DownloadChunkStatus(job_id=job_id, sequence=sequence, instrument=request.instrument, start_ns=request.start_ns, end_ns=request.end_ns, status="QUEUED", expected_records=expected, actual_records=actual, missing_records=missing, first_missing_ns=first_missing))
+                self.status_store.upsert_chunk(DownloadChunkStatus(job_id=job_id, sequence=sequence, instrument=request.instrument, start_ns=request.start_ns, end_ns=request.end_ns, status="QUEUED", expected_timestamps=expected, actual_timestamps=actual, missing_timestamps=missing, first_missing_ns=first_missing))
                 sequence += 1
 
     def _callbacks(self, job_id: str, sequence_offset: int = 0, sequence_numbers: tuple[int, ...] | None = None):
