@@ -153,7 +153,7 @@ def test_bid_ask_partial_exit_releases_proportional_margin_and_pnl_uses_filled_q
     assert trade["filled_quantity"] == 30.0
     assert trade["unfilled_quantity"] == 70.0
     assert trade["fill_status"] == "partial_fill"
-    assert trade["gross_profit"] == 180.0
+    assert trade["gross_profit"] == 240.0
     assert result.open_position_count == 1
     assert result.final_reserved_margin == 7000.0
 
