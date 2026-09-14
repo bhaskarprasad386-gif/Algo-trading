@@ -17,13 +17,7 @@ IST = ZoneInfo("Asia/Kolkata")
 class AngelOneCashFutureHistoricalSource(CashFutureHistoricalSource):
     """Build synchronized Cash-Future points from bounded Angel One requests."""
 
-    def __init__(
-        self,
-        historical_client: HistoricalDataClient | None = None,
-        *,
-        token_resolver: Callable[[str, str], tuple[str, str]] | None = None,
-        metadata_resolver: Callable[[str, str], tuple[int, float]] | None = None,
-    ) -> None:
+    def __init__(self, historical_client: HistoricalDataClient | None = None, *, token_resolver: Callable[[str, str], tuple[str, str]] | None = None, metadata_resolver: Callable[[str, str], tuple[int, float]] | None = None) -> None:
         if token_resolver is None:
             raise ValueError("token_resolver is required")
         if metadata_resolver is None:
@@ -31,6 +25,14 @@ class AngelOneCashFutureHistoricalSource(CashFutureHistoricalSource):
         self.historical_client = historical_client or HistoricalDataClient()
         self.token_resolver = token_resolver
         self.metadata_resolver = metadata_resolver
+
+    @staticmethod
+    def _as_ist(value: datetime, name: str) -> datetime:
+        if not isinstance(value, datetime):
+            raise ValueError(f"{name} must be a datetime")
+        if value.tzinfo is None:
+            return value.replace(tzinfo=IST)
+        return value.astimezone(IST)
 
     @staticmethod
     def _candle_map(response: dict) -> dict[datetime, float]:
@@ -52,35 +54,30 @@ class AngelOneCashFutureHistoricalSource(CashFutureHistoricalSource):
             result[timestamp.astimezone(IST)] = price
         return result
 
-    def fetch(
-        self,
-        *,
-        symbol: str,
-        contract_month: str,
-        start: datetime,
-        end: datetime,
-    ) -> Iterable[CashFutureHistoryPoint]:
+    def fetch(self, *, symbol: str, contract_month: str, start: datetime, end: datetime) -> Iterable[CashFutureHistoryPoint]:
+        start_ist = self._as_ist(start, "start")
+        end_ist = self._as_ist(end, "end")
+        if start_ist > end_ist:
+            raise ValueError("start must not be after end")
         cash_token, future_token = self.token_resolver(symbol, contract_month)
+        if not str(cash_token).strip() or not str(future_token).strip():
+            raise ValueError("token_resolver returned empty token")
         lot_size, margin_required = self.metadata_resolver(symbol, contract_month)
         if isinstance(lot_size, bool) or not isinstance(lot_size, int) or lot_size <= 0:
             raise ValueError("metadata_resolver returned invalid lot size")
         if not math.isfinite(float(margin_required)) or margin_required < 0:
             raise ValueError("metadata_resolver returned invalid margin")
 
-        cursor = start.astimezone(IST)
-        final = end.astimezone(IST)
+        cursor = start_ist
+        final = end_ist
         while cursor <= final:
             session_end = min(cursor + timedelta(days=1) - timedelta(minutes=1), final)
             from_date = cursor.strftime("%Y-%m-%d %H:%M")
             to_date = session_end.strftime("%Y-%m-%d %H:%M")
-            cash = self._candle_map(
-                self.historical_client.get_candles("NSE", cash_token, "ONE_MINUTE", from_date, to_date)
-            )
-            future = self._candle_map(
-                self.historical_client.get_candles("NFO", future_token, "ONE_MINUTE", from_date, to_date)
-            )
+            cash = self._candle_map(self.historical_client.get_candles("NSE", cash_token, "ONE_MINUTE", from_date, to_date))
+            future = self._candle_map(self.historical_client.get_candles("NFO", future_token, "ONE_MINUTE", from_date, to_date))
             for timestamp in sorted(cash.keys() & future.keys()):
-                if timestamp < start.astimezone(IST) or timestamp > final:
+                if timestamp < start_ist or timestamp > final:
                     continue
                 cash_price = cash[timestamp]
                 future_price = future[timestamp]
@@ -88,17 +85,7 @@ class AngelOneCashFutureHistoricalSource(CashFutureHistoricalSource):
                 gap_pct = gap / cash_price * 100.0
                 if not math.isfinite(gap) or not math.isfinite(gap_pct):
                     raise ValueError("Cash-Future candle result must be finite")
-                yield CashFutureHistoryPoint(
-                    timestamp=timestamp,
-                    symbol=symbol.upper(),
-                    contract_month=contract_month,
-                    cash_price=cash_price,
-                    future_price=future_price,
-                    gap=gap,
-                    gap_pct=gap_pct,
-                    lot_size=lot_size,
-                    margin_required=margin_required,
-                )
+                yield CashFutureHistoryPoint(timestamp=timestamp, symbol=symbol.upper(), contract_month=contract_month, cash_price=cash_price, future_price=future_price, gap=gap, gap_pct=gap_pct, lot_size=lot_size, margin_required=margin_required)
             cursor = session_end + timedelta(minutes=1)
 
 
