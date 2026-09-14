@@ -90,7 +90,7 @@ def test_portfolio_forces_historical_exit_when_marked_equity_breaches_margin():
     start = datetime(2026, 9, 2, 10, 0)
     points = [
         point(start, "AAA", 10, margin=7000),
-        point(start + timedelta(minutes=1), "AAA", -30, margin=7000),
+        point(start + timedelta(minutes=1), "AAA", 50, margin=7000),
     ]
     result = run_cash_future_portfolio_strategy(
         points,
