@@ -94,21 +94,29 @@ class CashFutureUniversePipelineResult:
         # A persisted manifest is an additional authoritative gate. It must
         # cover the exact requested intervals, not merely the same instruments.
         if self.coverage_store is not None:
-            manifest_requests = requested_ranges
+            # The manifest must cover the complete acquisition queue, including
+            # the cash leg. Using only future requests here would allow a run
+            # with complete futures but missing spot history to pass readiness.
+            manifest_requests = []
+            for result in results:
+                queue = getattr(result, "queue", None)
+                if queue is None:
+                    return False
+                for item in (getattr(queue, "all_requests", ()) or ()):
+                    request = self._request(item)
+                    if (
+                        request is not None
+                        and getattr(request, "instrument", None)
+                        and getattr(request, "start_ns", None) is not None
+                        and getattr(request, "end_ns", None) is not None
+                    ):
+                        manifest_requests.append(
+                            (request.instrument, int(request.start_ns), int(request.end_ns))
+                        )
             if not manifest_requests:
-                manifest_requests = [
-                    request
-                    for result in results
-                    for item in (getattr(getattr(result, "queue", None), "all_requests", ()) or ())
-                    if (request := self._request(item)) is not None
-                    and getattr(request, "instrument", None)
-                    and getattr(request, "start_ns", None) is not None
-                    and getattr(request, "end_ns", None) is not None
-                ]
-                manifest_requests = [
-                    (request.instrument, int(request.start_ns), int(request.end_ns))
-                    for request in manifest_requests
-                ]
+                # Legacy queue objects may expose only the future requests.
+                # In that case retain the exact future-range gate above.
+                manifest_requests = requested_ranges
             if not manifest_requests:
                 return False
             source = self.coverage_source
