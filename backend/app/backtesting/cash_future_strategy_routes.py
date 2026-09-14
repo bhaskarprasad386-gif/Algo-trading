@@ -22,6 +22,7 @@ from app.scanner.cash_future_history import CashFutureHistoryPoint
 router = APIRouter(prefix="/api/v1/backtesting/cash-future", tags=["Cash-Future Backtesting"])
 router.include_router(cash_future_replay_router)
 
+
 class StrategyPointRequest(BaseModel):
     timestamp: datetime
     symbol: str
@@ -41,6 +42,7 @@ class StrategyPointRequest(BaseModel):
     charges: float = Field(default=0.0, ge=0)
     funding_cost: float = Field(default=0.0, ge=0)
     expiry_date: date | None = None
+
 
 class StrategyRunRequest(BaseModel):
     strategy_id: str = Field(min_length=1)
@@ -76,8 +78,10 @@ class StrategyRunRequest(BaseModel):
             raise ValueError("points cannot be empty")
         return self
 
+
 def _strategy_registry() -> dict[str, Any]:
     return {"gap_threshold": lambda current, history: "BUY" if current.gap > 0 else "SELL" if current.gap < 0 else "HOLD"}
+
 
 def _serialise_run(ledger: BacktestLedger, run_id: str) -> dict[str, Any]:
     metadata = ledger.run_metadata(run_id)
@@ -93,10 +97,12 @@ def _serialise_run(ledger: BacktestLedger, run_id: str) -> dict[str, Any]:
     blocked_entry_count = sum(1 for signal in signals if signal.get("execution_status") == "blocked")
     return {"status":"success","run_id":run_id,"strategy_id":metadata["strategy_id"],"strategy_version":metadata["strategy_version"],"initial_capital":initial_capital,"final_capital":final_capital,"final_available_capital":final_available_capital,"final_reserved_margin":final_reserved_margin,"blocked_entry_count":blocked_entry_count,"net_profit":final_capital-initial_capital,"signal_count":len(signals),"trade_count":len(trades),"signals":signals,"trades":trades,"equity_curve":equity}
 
+
 def _build_builder_strategy(request: StrategyRunRequest):
     orientation = 1.0 if (request.cash_side, request.future_side) == ("BUY", "SELL") else -1.0
     stop, target = request.stop_loss, request.target
     state: dict[str, float | None] = {"entry_gap": None}
+
     def strategy(current: CashFutureHistoryPoint, history: tuple[CashFutureHistoryPoint, ...]):
         effective_gap = orientation * float(current.gap)
         entry_gap = state["entry_gap"]
@@ -116,7 +122,9 @@ def _build_builder_strategy(request: StrategyRunRequest):
             state["entry_gap"] = None
             return "SELL"
         return "HOLD"
+
     return strategy
+
 
 @router.post("/strategy-run")
 def strategy_run(request: StrategyRunRequest):
@@ -139,19 +147,32 @@ def strategy_run(request: StrategyRunRequest):
             points = CashFutureHistoricalLoader(catalog, contracts).iter_points(selection)
         ledger = BacktestLedger(settings.BACKTEST_LEDGER_DB)
         result = run_cash_future_strategy(points, strategy, strategy_id=request.strategy_id, strategy_version=request.strategy_version, config=CashFutureStrategyConfig(initial_capital=request.initial_capital, execution_model=request.execution_model, charges_per_trade=request.charges_per_trade, funding_cost_per_trade=request.funding_cost_per_trade, start_date=request.start_date, end_date=request.end_date, contract_month=request.contract_month, cash_side=request.cash_side, future_side=request.future_side, slippage_per_share=request.slippage_per_share), ledger=ledger, run_id=run_id)
+
+        # The ledger-backed result sequences are lazy. Materialize them while the
+        # ledger is still open; the finally block closes the SQLite connection.
+        signals = tuple(result.signals)
+        trades = tuple(result.trades)
+        equity_curve = tuple(result.equity_curve)
+        report = build_cash_future_report(result.initial_capital, trades, equity_curve)
+        return {"status":"success","run_id":run_id,"strategy_id":result.strategy_id,"strategy_version":result.strategy_version,"initial_capital":result.initial_capital,"final_capital":result.final_capital,"final_available_capital":result.final_available_capital,"final_reserved_margin":result.final_reserved_margin,"blocked_entry_count":result.blocked_entry_count,"net_profit":result.net_profit,"signal_count":len(signals),"trade_count":len(trades),"signals":signals,"trades":trades,"equity_curve":equity_curve,"analysis":{"final_equity":report.final_equity,"net_pnl":report.net_pnl,"roi":report.roi,"max_drawdown":report.max_drawdown,"max_drawdown_pct":report.max_drawdown_pct,"win_rate":report.win_rate,"profit_factor":report.profit_factor,"turnover":report.turnover,"wins":report.wins,"losses":report.losses,"monthly_pnl":dict(report.monthly_pnl),"yearly_pnl":dict(report.yearly_pnl)}}
     except (ValueError, LookupError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
-        if catalog is not None: catalog.close()
-        if contracts is not None: contracts.close()
-        if ledger is not None: ledger.close()
-    report = build_cash_future_report(result.initial_capital, result.trades, result.equity_curve)
-    return {"status":"success","run_id":run_id,"strategy_id":result.strategy_id,"strategy_version":result.strategy_version,"initial_capital":result.initial_capital,"final_capital":result.final_capital,"final_available_capital":result.final_available_capital,"final_reserved_margin":result.final_reserved_margin,"blocked_entry_count":result.blocked_entry_count,"net_profit":result.net_profit,"signal_count":len(result.signals),"trade_count":len(result.trades),"signals":result.signals,"trades":result.trades,"equity_curve":result.equity_curve,"analysis":{"final_equity":report.final_equity,"net_pnl":report.net_pnl,"roi":report.roi,"max_drawdown":report.max_drawdown,"max_drawdown_pct":report.max_drawdown_pct,"win_rate":report.win_rate,"profit_factor":report.profit_factor,"turnover":report.turnover,"wins":report.wins,"losses":report.losses,"monthly_pnl":dict(report.monthly_pnl),"yearly_pnl":dict(report.yearly_pnl)}}
+        if catalog is not None:
+            catalog.close()
+        if contracts is not None:
+            contracts.close()
+        if ledger is not None:
+            ledger.close()
+
 
 @router.get("/strategy-run/{run_id}")
 def strategy_run_result(run_id: str):
     ledger = BacktestLedger(settings.BACKTEST_LEDGER_DB)
-    try: return _serialise_run(ledger, run_id)
-    finally: ledger.close()
+    try:
+        return _serialise_run(ledger, run_id)
+    finally:
+        ledger.close()
+
 
 __all__ = ["router"]
