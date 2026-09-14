@@ -42,11 +42,12 @@ def iter_persisted_cash_future_points(
     if end is not None:
         stmt = stmt.where(CashFutureHistory.timestamp <= end)
 
-    result = db.scalars(stmt.order_by(
+    stmt = stmt.order_by(
         CashFutureHistory.symbol,
         CashFutureHistory.contract_month,
         CashFutureHistory.timestamp,
-    ).yield_per(page_size))
+    ).execution_options(yield_per=page_size)
+    result = db.scalars(stmt)
     for row in result:
         yield CashFutureHistoryPoint(
             timestamp=row.timestamp,
