@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
+import math
 import time
 
 from app.core.logger import app_logger
@@ -30,19 +31,24 @@ def _expiry(value: Any) -> date | None:
 
 
 def _number(value: Any, default: float | int = 0):
-    try:
-        return float(value) if value is not None else default
-    except (TypeError, ValueError):
+    if value is None or value == "":
         return default
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"broker numeric value is invalid: {value!r}") from exc
+    if not math.isfinite(numeric):
+        raise ValueError("broker numeric value must be finite")
+    return numeric
 
 
 def _quote_side(value: Any) -> float | None:
-    if value is None:
+    if value is None or value == "":
         return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+    numeric = _number(value, 0.0)
+    if numeric <= 0:
+        raise ValueError("broker quote side must be positive")
+    return numeric
 
 
 def _quote_timestamp(value: Any) -> datetime | None:
@@ -50,12 +56,14 @@ def _quote_timestamp(value: Any) -> datetime | None:
         return None
     if isinstance(value, (int, float)):
         number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("broker quote timestamp must be finite")
         if number > 10_000_000_000:
             number /= 1000.0
         try:
             return datetime.fromtimestamp(number, tz=timezone.utc).astimezone(IST)
-        except (OverflowError, OSError, ValueError):
-            return None
+        except (OverflowError, OSError, ValueError) as exc:
+            raise ValueError("broker quote timestamp is invalid") from exc
     text = str(value).strip()
     if text.isdigit():
         return _quote_timestamp(float(text))
@@ -71,7 +79,7 @@ def _quote_timestamp(value: Any) -> datetime | None:
             except ValueError:
                 pass
         if parsed is None:
-            return None
+            raise ValueError("broker quote timestamp is invalid")
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=IST)
     return parsed.astimezone(IST)
@@ -118,12 +126,9 @@ class CashFutureHistoryCollector:
         self.market_client = market_client or MarketDataClient()
         self.instrument_master = instrument_master or InstrumentMaster()
         self.config = config or CashFutureConfig()
-        if symbol_timeout_seconds is not None and symbol_timeout_seconds <= 0:
-            raise ValueError("symbol_timeout_seconds must be positive or None")
-        if max_quote_age_seconds is not None and max_quote_age_seconds <= 0:
-            raise ValueError("max_quote_age_seconds must be positive or None")
-        if max_quote_timestamp_skew_seconds is not None and max_quote_timestamp_skew_seconds <= 0:
-            raise ValueError("max_quote_timestamp_skew_seconds must be positive or None")
+        for value, name in ((symbol_timeout_seconds, "symbol_timeout_seconds"), (max_quote_age_seconds, "max_quote_age_seconds"), (max_quote_timestamp_skew_seconds, "max_quote_timestamp_skew_seconds")):
+            if value is not None and (not math.isfinite(float(value)) or value <= 0):
+                raise ValueError(f"{name} must be finite and positive or None")
         self.symbol_timeout_seconds = symbol_timeout_seconds
         self.max_quote_age_seconds = max_quote_age_seconds
         self.max_quote_timestamp_skew_seconds = max_quote_timestamp_skew_seconds
@@ -183,12 +188,13 @@ class CashFutureHistoryCollector:
         cash_quote = _full_quote(self.market_client.quote("NSE", cash_symbol, str(cash["token"])))
         self._validate_quote_freshness("CASH", cash_symbol, cash_quote["quote_timestamp"])
         cash_ltp = cash_quote["ltp"]
-        if cash_ltp <= 0:
+        if not math.isfinite(cash_ltp) or cash_ltp <= 0:
             raise ValueError(f"invalid cash LTP for {cash_symbol}")
+        if cash_quote["quote_timestamp"] is None:
+            raise ValueError(f"cash quote timestamp missing for {cash_symbol}")
         futures = self._future_instruments(symbol)
         if not futures:
             raise ValueError(f"no eligible NFO FUTSTK contracts found: {symbol}")
-        observation_time = datetime.now(IST).replace(microsecond=0)
         results: list[dict] = []
         for label, future in zip(("CURRENT", "NEAR"), futures):
             if self.symbol_timeout_seconds is not None and time.monotonic() - started >= self.symbol_timeout_seconds:
@@ -202,26 +208,20 @@ class CashFutureHistoryCollector:
                 market_quote = _full_quote(self.market_client.quote("NFO", future_symbol, str(future["token"])))
                 self._validate_quote_freshness(label, future_symbol, market_quote["quote_timestamp"])
                 self._validate_quote_timestamp_skew(cash_quote["quote_timestamp"], market_quote["quote_timestamp"], future_symbol)
+                if market_quote["quote_timestamp"] is None:
+                    raise ValueError(f"future quote timestamp missing for {future_symbol}")
                 future_ltp = market_quote["ltp"]
-                if future_ltp <= 0:
+                if not math.isfinite(future_ltp) or future_ltp <= 0:
                     raise ValueError(f"invalid future LTP for {future_symbol}")
                 lot_size = int(_number(future.get("lotsize") or future.get("lotSize"), 0))
+                if lot_size <= 0:
+                    raise ValueError(f"invalid lot size for {future_symbol}")
                 margin = self._future_margin(future, future_ltp, lot_size)
+                observation_time = max(cash_quote["quote_timestamp"], market_quote["quote_timestamp"]).replace(microsecond=0)
                 future_quote = FutureQuote(symbol=future_symbol, contract_month=label, ltp=future_ltp, lot_size=lot_size, margin_required=margin, volume=market_quote["volume"], oi=market_quote["oi"], bid=market_quote["bid"], ask=market_quote["ask"], expiry=_expiry(future.get("expiry")))
                 result = calculate_cash_future(CashQuote(symbol=cash_symbol, ltp=cash_ltp, bid=cash_quote["bid"], ask=cash_quote["ask"]), future_quote, self.config)
                 item = result.__dict__.copy()
-                item.update({
-                    "contract_month": label,
-                    "timestamp": observation_time.isoformat(),
-                    "volume": market_quote["volume"],
-                    "oi": market_quote["oi"],
-                    "cash_bid": cash_quote["bid"],
-                    "cash_ask": cash_quote["ask"],
-                    "future_bid": market_quote["bid"],
-                    "future_ask": market_quote["ask"],
-                    "cash_quote_timestamp": cash_quote["quote_timestamp"].isoformat() if cash_quote["quote_timestamp"] else None,
-                    "quote_timestamp": market_quote["quote_timestamp"].isoformat() if market_quote["quote_timestamp"] else None,
-                })
+                item.update({"contract_month": label, "timestamp": observation_time.isoformat(), "volume": market_quote["volume"], "oi": market_quote["oi"], "cash_bid": cash_quote["bid"], "cash_ask": cash_quote["ask"], "future_bid": market_quote["bid"], "future_ask": market_quote["ask"], "cash_quote_timestamp": cash_quote["quote_timestamp"].isoformat(), "quote_timestamp": market_quote["quote_timestamp"].isoformat()})
                 save_history_point(db, CashFutureHistoryPoint(symbol=symbol, contract_month=label, timestamp=observation_time, cash_price=cash_ltp, future_price=future_ltp, gap=result.gap, gap_pct=result.gap_pct, lot_size=lot_size, margin_required=margin, volume=market_quote["volume"], oi=market_quote["oi"], cash_bid=cash_quote["bid"], cash_ask=cash_quote["ask"], future_bid=market_quote["bid"], future_ask=market_quote["ask"], charges=self.config.charges, funding_cost=self.config.funding_cost, net_profit=result.net_profit, roi_pct=result.roi_pct, expiry_date=future_quote.expiry), expiry_date=future_quote.expiry)
                 results.append(item)
             except Exception as exc:
