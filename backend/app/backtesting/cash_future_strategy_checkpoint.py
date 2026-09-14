@@ -61,6 +61,7 @@ class CashFutureStrategyCheckpoint:
                 raise ValueError(f"checkpoint {field} must be a string or null")
         if payload["selected_contract"] is not None and not isinstance(payload["selected_contract"], str):
             raise ValueError("checkpoint selected_contract must be a string or null")
+        # Checkpoint timestamps accept both ISO date and ISO datetime forms.
         try:
             datetime.fromisoformat(str(payload["last_timestamp"]))
         except (TypeError, ValueError) as exc:
