@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 router = APIRouter()
 
+
 class QuoteResponse(BaseModel):
     symbol: str
     exchange: str
@@ -11,20 +12,14 @@ class QuoteResponse(BaseModel):
     ltp: float
     spread: float
 
+
 @router.get("/quote", response_model=QuoteResponse)
 def get_market_quote(symbol: str):
-    # यहाँ वास्तविक डेटा या स्मार्टएपी (SmartAPI) का इंटीग्रेशन किया जा सकता है
-    # अभी टेस्टिंग के लिए डमी बिड-आस्क वैल्यू रिटर्न की जा रही है
-    dummy_bid = 2450.50
-    dummy_ask = 2451.25
-    dummy_ltp = 2451.00
-    spread_value = round(dummy_ask - dummy_bid, 2)
-    
-    return {
-        "symbol": symbol.upper(),
-        "exchange": "NSE",
-        "bidPrice": dummy_bid,
-        "askPrice": dummy_ask,
-        "ltp": dummy_ltp,
-        "spread": spread_value
-    }
+    """Return a quote only when a real market-data provider is wired in."""
+    normalized = symbol.strip().upper()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="symbol is required")
+    raise HTTPException(
+        status_code=503,
+        detail="Live market quote provider is not configured; refusing to return fabricated prices.",
+    )
