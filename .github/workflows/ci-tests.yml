@@ -12,7 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write  # GitHub Actions ko repository me code commit/push karne ki permission deta hai
+  contents: write       # Code commit/push karne ke liye
+  pull-requests: write  # PR par automated comment post karne ke liye
 
 jobs:
   test:
@@ -45,11 +46,12 @@ jobs:
       - name: Run tests
         id: run-tests
         run: python -m pytest --maxfail=1 -q
-        continue-on-error: true # Test fail hone par bhi process aage chalega taaki Gemini fix kar sake
+        continue-on-error: true
 
-      # 2. Gemini Pro Auto-Writer (Fixed API URL & Parsing Logic)
+      # 2. Gemini Pro Auto-Writer & Comment Generator
       - name: Gemini Pro Auto-Writer
         if: steps.run-tests.outcome == 'failure'
+        id: gemini-fixer
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -73,20 +75,28 @@ jobs:
                   except:
                       pass
 
-          # Sahi Gemini 1.5 Pro API URL aur payload
           url = f'https://googleapis.com{api_key}'
           headers = {'Content-Type': 'application/json'}
           
-          prompt = f'मेरा पायथन बैकएंड कोड फेल हो गया है। नीचे दिए गए कोड में गलतियां सुधारो। मुझे रिस्पॉन्स सिर्फ इसी फॉर्मेट में देना: <<< FILE: file_path.py >>>\n[सुधरा हुआ कोड]\n<<< END >>>\n\nCode Snapshot:\n{code_snapshot}'
+          # AI ko code fix karne aur ek summary dene ko kehna
+          prompt = f'मेरा पायठन बैकएंड कोड फेल हो गया है। कोड में गलतियां सुधारो। मुझे रिस्पॉन्स में पहले एक छोटा summary दो कि क्या गलती थी (SUMMARY block में), फिर सुधरा हुआ कोड इस फॉर्मेट में देना: <<< FILE: file_path.py >>>\n[सुधरा हुआ कोड]\n<<< END >>>\n\nCode Snapshot:\n{code_snapshot}'
           
           data = {'contents': [{'parts': [{'text': prompt}]}]}
           response = requests.post(url, headers=headers, json=data)
           
           try:
               res_json = response.json()
-              ai_text = res_json['candidates'][0]['content']['parts'][0]['text']
+              ai_text = res_json['candidates']['content']['parts']['text']
               
-              # AI ke code ko files me wapas likhna/overwrite karna
+              # Explanation extract karna PR comment ke liye
+              summary_match = re.search(r'SUMMARY:(.*?)(?:<<< FILE|$)', ai_text, re.DOTALL)
+              summary_text = summary_match.group(1).strip() if summary_match else 'Gemini ne code fix kar diya hai.'
+              
+              # GitHub step output me summary save karna (PR Comment ke liye)
+              with open('gemini_summary.txt', 'w') as sf:
+                  sf.write(summary_text)
+
+              # Code files overwrite karna
               matches = re.findall(r'<<< FILE: (.*?) >>>\n(.*?)<<< END >>>', ai_text, re.DOTALL)
               if matches:
                   for file_path, corrected_code in matches:
@@ -99,15 +109,34 @@ jobs:
                   print('AI output format galat tha ya koi badlav nahi mila.')
           except Exception as e:
               print('AI se response process karne me error:', e)
-              print('Response body tha:', response.text)
           "
 
-      # 3. Code Commit aur Push karna (Runs inside 'backend' folder context)
+      # 3. PR par Automated Comment post karna (Sirf Pull Request ke waqt chalega)
+      - name: Post Comment on PR
+        if: steps.run-tests.outcome == 'failure' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let summary = 'Gemini AI ne errors fix karne ke liye code generate kar diya hai.';
+            try {
+              summary = fs.readFileSync('backend/gemini_summary.txt', 'utf8');
+            } catch (err) {
+              console.log('Summary file nahi mili');
+            }
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `### 🤖 Gemini Auto-Fixer Report\n\n**Test Status:** ❌ Failed\n\n**Gemini AI Feedback:**\n${summary}\n\n*Note: corrected code repository me push kar diya gaya hai.*`
+            })
+
+      # 4. Code Commit aur Push karna
       - name: Commit and Push Fixed Code
         if: steps.run-tests.outcome == 'failure'
         run: |
           git config --global user.name 'Gemini-Auto-Bot'
           git config --global user.email 'gemini-bot@github.com'
-          # default backend dir se bahar pure repo root ko check karne ke liye git add
           git add ../backend/
           git diff --quiet --cached || (git commit -m "Fix: Gemini Auto-wrote code to fix backend test failure" && git push)
