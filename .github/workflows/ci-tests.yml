@@ -100,7 +100,6 @@ jobs:
               "x-goog-api-key": api_key,
           }
 
-          # Do not hard-code a model that may be retired or unavailable to this API key.
           models_response = requests.get(
               "https://generativelanguage.googleapis.com/v1beta/models",
               headers={"x-goog-api-key": api_key},
@@ -119,30 +118,42 @@ jobs:
               "gemini-2.5-flash-lite",
               "gemini-2.5-flash",
           )
-          selected = None
+          ordered = []
           for wanted in preferred:
-              for model in candidates:
-                  if model.get("name", "").split("/", 1)[-1] == wanted:
-                      selected = model["name"]
-                      break
-              if selected:
-                  break
-          if not selected and candidates:
-              selected = candidates[0]["name"]
-          if not selected:
+              ordered.extend(
+                  m for m in candidates
+                  if m.get("name", "").split("/", 1)[-1] == wanted
+              )
+          ordered.extend(m for m in candidates if m not in ordered)
+          if not ordered:
               raise RuntimeError("No Gemini model available for generateContent with this API key")
 
-          print(f"Selected Gemini model: {selected}")
-          r = requests.post(
-              f"https://generativelanguage.googleapis.com/v1beta/{selected}:generateContent",
-              headers=headers,
-              json={"contents":[{"parts":[{"text":prompt}]}]},
-              timeout=120,
-          )
-          if r.status_code >= 400:
-              raise RuntimeError(f"Gemini API {r.status_code}: {r.text[:2000]}")
-          body = r.json()
-          text = body["candidates"][0]["content"]["parts"][0]["text"]
+          text = None
+          last_error = None
+          for model in ordered:
+              selected = model["name"]
+              print(f"Trying Gemini model: {selected}")
+              r = requests.post(
+                  f"https://generativelanguage.googleapis.com/v1beta/{selected}:generateContent",
+                  headers=headers,
+                  json={"contents":[{"parts":[{"text":prompt}]}]},
+                  timeout=120,
+              )
+              if r.status_code == 404:
+                  last_error = r.text[:2000]
+                  print(f"Gemini model unavailable (404), trying next model: {selected}")
+                  continue
+              if r.status_code >= 400:
+                  raise RuntimeError(f"Gemini API {r.status_code}: {r.text[:2000]}")
+              body = r.json()
+              try:
+                  text = body["candidates"][0]["content"]["parts"][0]["text"]
+              except (KeyError, IndexError, TypeError) as exc:
+                  raise RuntimeError(f"Gemini returned an unexpected response: {r.text[:2000]}") from exc
+              print(f"Selected Gemini model: {selected}")
+              break
+          if text is None:
+              raise RuntimeError(f"All discovered Gemini models failed with 404. Last response: {last_error}")
 
           m = re.search(r"^SUMMARY:\s*(.+)$", text, re.MULTILINE)
           (root / "gemini_summary.txt").write_text((m.group(1).strip() if m else "No summary returned.") + "\n")
