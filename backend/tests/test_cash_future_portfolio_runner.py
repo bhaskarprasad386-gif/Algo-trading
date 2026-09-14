@@ -21,12 +21,12 @@ def test_portfolio_allows_simultaneous_symbols_and_reserves_margin_independently
         point(start + timedelta(minutes=3), "BBB", 4, margin=6000),
     ]
     result = run_cash_future_portfolio_strategy(
-        points, lambda current, history: "BUY" if current.gap >= 10 else "SELL", initial_capital=10000,
+        points, lambda current, history: "BUY" if current.gap >= 10 else "SELL", initial_capital=12000,
     )
     assert len(result.trades) == 2
     assert {trade["symbol"] for trade in result.trades} == {"AAA", "BBB"}
     assert result.final_reserved_margin == 0.0
-    assert result.final_available_capital == 11200.0
+    assert result.final_available_capital == 13200.0
     assert result.blocked_entry_count == 0
 
 
