@@ -31,10 +31,6 @@ class CashFuturePortfolioStrategyRun:
 def _unrealized_profit(entry: CashFutureHistoryPoint, current: CashFutureHistoryPoint, execution_model: str, quantity: float) -> float:
     if execution_model == "gap":
         return _legacy_gap_profit(entry, current) * (quantity / entry.lot_size)
-    # An entry observation can legitimately contain only entry-side quotes.
-    # Do not call the executable-spread calculator until genuine exit-side
-    # quotes exist; otherwise the portfolio runner would fail while merely
-    # marking the freshly opened position to market.
     exit_prices = (current.cash_bid, current.future_ask)
     if any(price is None or not math.isfinite(float(price)) or float(price) <= 0 for price in exit_prices):
         return 0.0
@@ -42,19 +38,24 @@ def _unrealized_profit(entry: CashFutureHistoryPoint, current: CashFutureHistory
 
 
 def _historical_fill_capacity(point: CashFutureHistoryPoint, *, side: str, requested_quantity: float, execution_model: str) -> tuple[float, str]:
-    """Return executable quantity without inventing liquidity or accepting NaN/Inf."""
+    """Return executable quantity without inventing liquidity or prices."""
     requested = float(requested_quantity)
     if not math.isfinite(requested) or requested <= 0:
         return 0.0, "invalid_quantity"
     if execution_model != "bid_ask":
         return requested, "gap_analytical"
-    required = (
-        (point.cash_ask_qty, point.future_bid_qty)
-        if side == "entry"
-        else (point.cash_bid_qty, point.future_ask_qty)
-    )
+
+    if side == "entry":
+        prices = (point.cash_ask, point.future_bid)
+        required = (point.cash_ask_qty, point.future_bid_qty)
+    else:
+        prices = (point.cash_bid, point.future_ask)
+        required = (point.cash_bid_qty, point.future_ask_qty)
+
+    if any(value is None or not math.isfinite(float(value)) or float(value) <= 0 for value in prices):
+        return 0.0, "missing_executable_quote"
     if any(value is None for value in required):
-        return requested, "strict_bid_ask_no_depth"
+        return 0.0, "strict_bid_ask_no_depth"
     numeric_depth = tuple(float(value) for value in required)
     if any(not math.isfinite(value) or value < 0 for value in numeric_depth):
         return 0.0, "invalid_depth"
@@ -89,7 +90,8 @@ def _close_position(
     remaining = quantity - fill_quantity
     if remaining > 0:
         remaining_margin = max(float(entry.margin_required), 0.0) * remaining / entry.lot_size
-        account.reserve(key, remaining_margin)
+        if not account.reserve(key, remaining_margin):
+            raise ValueError("cannot restore capital reservation for unfilled Cash-Future quantity")
         entries[key] = (entry, remaining)
     else:
         entries.pop(key, None)
@@ -106,6 +108,15 @@ def _close_position(
     }
 
 
+def _marked_equity(account: CashFuturePortfolioLedger, entries: Mapping[PositionKey, tuple[CashFutureHistoryPoint, float]], latest: Mapping[PositionKey, CashFutureHistoryPoint], execution_model: str) -> float:
+    unrealized = sum(
+        _unrealized_profit(open_entry, latest[open_key], execution_model, open_quantity)
+        for open_key, (open_entry, open_quantity) in entries.items()
+        if open_key in latest
+    )
+    return float(account.realized_capital) + unrealized
+
+
 def run_cash_future_portfolio_strategy(
     points: Iterable[CashFutureHistoryPoint],
     strategy: PortfolioStrategy,
@@ -116,20 +127,15 @@ def run_cash_future_portfolio_strategy(
     funding_cost_per_trade: float = 0.0,
     rollover_policy: str = "force_exit",
 ) -> CashFuturePortfolioStrategyRun:
-    """Run chronologically with shared capital and explicit rollover policy.
-
-    ``force_exit`` closes an old-contract position at its own last historical
-    observation before the first observation of a new contract for that symbol.
-    This prevents expiry-series mixing and never uses a new-contract price to
-    close an old-contract position. ``reject`` fails fast if such a boundary is
-    encountered with an open position.
-    """
+    """Run chronologically with shared capital and explicit rollover policy."""
     if initial_capital <= 0:
         raise ValueError("initial_capital must be positive")
     if execution_model not in {"gap", "bid_ask"}:
         raise ValueError("execution_model must be 'gap' or 'bid_ask'")
     if rollover_policy not in {"force_exit", "reject"}:
         raise ValueError("rollover_policy must be 'force_exit' or 'reject'")
+    if charges_per_trade < 0 or funding_cost_per_trade < 0:
+        raise ValueError("charges_per_trade and funding_cost_per_trade must be non-negative")
     ordered = tuple(points)
     if any(current.timestamp < previous.timestamp for previous, current in zip(ordered, ordered[1:])):
         raise ValueError("Cash-Future portfolio input must be ordered by timestamp")
@@ -247,12 +253,20 @@ def run_cash_future_portfolio_strategy(
             )
             if liquidation_trade is not None:
                 trades.append(liquidation_trade)
-                unrealized = sum(
-                    _unrealized_profit(open_entry, latest[open_key], execution_model, open_quantity)
-                    for open_key, (open_entry, open_quantity) in entries.items()
-                    if open_key in latest
+
+        if entries:
+            post_liquidation_equity = _marked_equity(account, entries, latest, execution_model)
+            if post_liquidation_equity < account.reserved_margin:
+                raise ValueError(
+                    "portfolio margin breach remains after liquidation; "
+                    "current observations cannot safely liquidate all open positions"
                 )
 
+        unrealized = sum(
+            _unrealized_profit(open_entry, latest[open_key], execution_model, open_quantity)
+            for open_key, (open_entry, open_quantity) in entries.items()
+            if open_key in latest
+        )
         equity.append({
             "timestamp": point.timestamp.isoformat(),
             "equity": float(account.realized_capital) + unrealized,
