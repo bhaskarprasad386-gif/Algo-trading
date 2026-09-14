@@ -6,6 +6,7 @@ from app.backtesting.cash_future_backtest_result_ledger import RECORD_TYPE, Cash
 from app.backtesting.ledger import BacktestLedger
 from app.scanner.cash_future_backtest import BacktestConfig, run_multi_contract_backtest
 from app.scanner.cash_future_coverage_store import (
+    audit_persisted_cash_future_data_quality,
     build_persisted_cash_future_coverage,
     iter_persisted_cash_future_points,
     run_persisted_cash_future_backtest,
@@ -88,6 +89,7 @@ def test_persisted_backtest_matches_direct_stream_result(db_session):
     save_history_points(db_session, points)
     config = BacktestConfig(min_entry_gap=8.0, exit_gap=5.0)
     coverage = build_persisted_cash_future_coverage(db_session)
+    quality = audit_persisted_cash_future_data_quality(db_session, symbol="ABC", page_size=1)
 
     persisted = run_persisted_cash_future_backtest(
         db_session,
@@ -95,6 +97,7 @@ def test_persisted_backtest_matches_direct_stream_result(db_session):
         symbol="ABC",
         page_size=1,
         coverage_report=coverage,
+        quality_report=quality,
     )
     direct = run_multi_contract_backtest(points, config)
 
@@ -113,6 +116,7 @@ def test_persisted_backtest_can_write_results_to_durable_ledger(db_session):
     save_history_points(db_session, points)
     config = BacktestConfig(min_entry_gap=8.0, exit_gap=5.0)
     coverage = build_persisted_cash_future_coverage(db_session)
+    quality = audit_persisted_cash_future_data_quality(db_session, symbol="ABC", page_size=1)
 
     ledger = BacktestLedger()
     ledger.start_run("cf-persisted", "cash-future", "1", 100_000)
@@ -124,6 +128,7 @@ def test_persisted_backtest_can_write_results_to_durable_ledger(db_session):
         symbol="ABC",
         page_size=1,
         coverage_report=coverage,
+        quality_report=quality,
         result_ledger=writer,
     )
 
