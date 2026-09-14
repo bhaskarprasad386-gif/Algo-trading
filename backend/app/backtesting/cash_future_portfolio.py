@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import Hashable
 
 
@@ -32,10 +33,14 @@ class CashFuturePortfolioLedger:
     blocked_entries: int = 0
 
     def __post_init__(self) -> None:
-        if self.initial_capital <= 0:
-            raise ValueError("initial_capital must be positive")
+        if not isfinite(float(self.initial_capital)) or self.initial_capital <= 0:
+            raise ValueError("initial_capital must be finite and positive")
         if self.realized_capital is None:
             self.realized_capital = self.initial_capital
+        elif not isfinite(float(self.realized_capital)):
+            raise ValueError("realized_capital must be finite")
+        if not isfinite(float(self.blocked_entries)) or self.blocked_entries < 0:
+            raise ValueError("blocked_entries must be non-negative")
 
     @property
     def reserved_margin(self) -> float:
@@ -70,7 +75,12 @@ class CashFuturePortfolioLedger:
         return reservation.margin_required
 
     def apply_realized_pnl(self, net_profit: float) -> None:
-        self.realized_capital = float(self.realized_capital) + float(net_profit)
+        if not isfinite(float(net_profit)):
+            raise ValueError("net_profit must be finite")
+        updated = float(self.realized_capital) + float(net_profit)
+        if not isfinite(updated):
+            raise ValueError("realized_capital must remain finite")
+        self.realized_capital = updated
 
     def reservation(self, position_key: PositionKey) -> CashFutureCapitalReservation | None:
         return self.reservations.get(_validate_key(position_key))
@@ -87,8 +97,8 @@ def _validate_key(position_key: PositionKey) -> PositionKey:
 
 def _normalize_margin(margin_required: float) -> float:
     margin = float(margin_required)
-    if margin < 0:
-        raise ValueError("margin_required cannot be negative")
+    if not isfinite(margin) or margin < 0:
+        raise ValueError("margin_required must be finite and non-negative")
     return margin
 
 
