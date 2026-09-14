@@ -23,13 +23,14 @@ class RiskLimits:
 
 
 class RiskEngine:
-    """Fail-closed paper pre-trade checks with atomic reservation."""
+    """Fail-closed paper pre-trade checks with atomic reservation and P&L tracking."""
 
     def __init__(self, limits: RiskLimits | None = None):
         self.limits = limits or RiskLimits()
         self._orders_today = 0
         self._day = datetime.now(timezone.utc).date()
         self._positions: dict[str, int] = {}
+        self._average_prices: dict[str, float] = {}
         self._realized_pnl = 0.0
         self._lock = Lock()
 
@@ -38,6 +39,9 @@ class RiskEngine:
         if today != self._day:
             self._day = today
             self._orders_today = 0
+            self._positions.clear()
+            self._average_prices.clear()
+            self._realized_pnl = 0.0
 
     def check(self, quantity: int, current_position: int = 0, realized_pnl: float = 0.0) -> tuple[bool, str]:
         with self._lock:
@@ -62,24 +66,48 @@ class RiskEngine:
             return False, "maximum loss limit reached"
         return True, "risk checks passed"
 
-    def check_and_reserve(self, symbol: str, transaction_type: str, quantity: int) -> None:
-        """Atomically check and reserve a paper order against tracked position state."""
+    def check_and_reserve(self, symbol: str, transaction_type: str, quantity: int, price: float) -> None:
+        """Atomically check, update position/P&L state and reserve a paper order."""
         symbol = symbol.strip().upper()
         transaction_type = transaction_type.strip().upper()
         if not symbol:
             raise ValueError("symbol is required")
         if transaction_type not in {"BUY", "SELL"}:
             raise ValueError("transaction_type must be BUY or SELL")
+        if not math.isfinite(float(price)) or price <= 0:
+            raise ValueError("price must be finite and positive for paper risk accounting")
         with self._lock:
             current = self._positions.get(symbol, 0)
-            projected = current + quantity if transaction_type == "BUY" else current - quantity
+            average = self._average_prices.get(symbol, price)
+            signed = quantity if transaction_type == "BUY" else -quantity
+            projected = current + signed
             allowed, reason = self._check_unlocked(quantity, current, self._realized_pnl)
             if not allowed:
                 raise ValueError(reason)
             if abs(projected) > self.limits.max_position_quantity:
                 raise ValueError("position limit exceeded")
+
+            realized_delta = 0.0
+            if current == 0 or (current > 0 and signed > 0) or (current < 0 and signed < 0):
+                total = abs(current) + abs(signed)
+                average = ((abs(current) * average) + (abs(signed) * price)) / total
+            else:
+                closed = min(abs(current), abs(signed))
+                direction = 1 if current > 0 else -1
+                realized_delta = closed * (price - average) * direction
+                projected_realized = self._realized_pnl + realized_delta
+                if projected_realized <= -self.limits.max_loss:
+                    raise ValueError("maximum loss limit reached")
+                self._realized_pnl = projected_realized
+                if projected == 0:
+                    self._average_prices.pop(symbol, None)
+                elif current * projected < 0:
+                    average = price
+
             self._orders_today += 1
             self._positions[symbol] = projected
+            if projected != 0:
+                self._average_prices[symbol] = average
 
     def reserve_order(self) -> None:
         with self._lock:
