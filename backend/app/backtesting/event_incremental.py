@@ -157,7 +157,13 @@ def run_catalog_events_incremental(
     """Stream catalog events into bounded-chunk event backtesting."""
     return run_events_incremental(
         engine_config,
-        catalog.events(source, instrument, timeframe, start_ns, end_ns),
+        catalog.iter_records(
+            source=source,
+            instrument=instrument,
+            timeframe=timeframe,
+            start_ns=start_ns,
+            end_ns=end_ns,
+        ),
         strategy,
         persist_chunk=persist_chunk,
         chunk_size=chunk_size,
