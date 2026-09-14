@@ -7,12 +7,13 @@ router = APIRouter(
     tags=["Arbitrage Strategy"],
 )
 
+
 @router.get("/evaluate")
 def evaluate_arbitrage(
-    symbol: str = Query(..., description="Trading symbol e.g. RELIANCE"),
-    price_a: float = Query(..., description="Price on Exchange A (e.g. NSE)"),
-    price_b: float = Query(..., description="Price on Exchange B (e.g. BSE)"),
-    threshold: float = Query(0.5, description="Min threshold percentage to trigger opportunity"),
+    symbol: str = Query(..., min_length=1),
+    price_a: float = Query(..., gt=0),
+    price_b: float = Query(..., gt=0),
+    threshold: float = Query(0.5, ge=0),
 ):
     """Evaluate price difference and detect arbitrage opportunities between two prices."""
     try:
@@ -20,6 +21,8 @@ def evaluate_arbitrage(
         engine = ArbitrageEngine(threshold_percent=threshold)
         result = engine.evaluate_opportunity(symbol=symbol, exchange_a_price=price_a, exchange_b_price=price_b)
         return {"status": "success", "data": result}
-    except Exception as e:
-        app_logger.error(f"Arbitrage evaluation error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        app_logger.error(f"Arbitrage evaluation error: {exc}")
+        raise HTTPException(status_code=502, detail="Arbitrage evaluation failed") from exc
