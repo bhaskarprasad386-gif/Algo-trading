@@ -185,46 +185,47 @@ class BacktestLedger:
         return len(rows)
 
     def checkpoint(self, checkpoint: Checkpoint) -> None:
-        if checkpoint.event_index < 0 or checkpoint.timestamp_ns < 0:
-            raise ValueError("checkpoint indexes and timestamps cannot be negative")
+        if checkpoint.event_index < 0:
+            raise ValueError("event_index must be positive")
+        if checkpoint.timestamp_ns < 0:
+            raise ValueError("checkpoint timestamp cannot be negative")
         self._require_run(checkpoint.run_id)
-        state_json = json.dumps(dict(checkpoint.state), sort_keys=True, default=str)
-        try:
-            self._db.execute(
-                "INSERT OR IGNORE INTO checkpoint_history(run_id,event_index,timestamp_ns,state_json) VALUES(?,?,?,?)",
-                (checkpoint.run_id, checkpoint.event_index, checkpoint.timestamp_ns, state_json),
-            )
-            self._db.execute(
-                "INSERT INTO checkpoints(run_id,event_index,timestamp_ns,state_json) VALUES(?,?,?,?) "
-                "ON CONFLICT(run_id) DO UPDATE SET event_index=excluded.event_index,timestamp_ns=excluded.timestamp_ns,state_json=excluded.state_json",
-                (checkpoint.run_id, checkpoint.event_index, checkpoint.timestamp_ns, state_json),
-            )
-            self._db.commit()
-        except Exception:
-            self._db.rollback()
-            raise
+        params = (
+            checkpoint.run_id,
+            int(checkpoint.event_index),
+            int(checkpoint.timestamp_ns),
+            json.dumps(dict(checkpoint.state), sort_keys=True, default=str),
+        )
+        self._db.execute(
+            """
+            INSERT INTO checkpoints(run_id,event_index,timestamp_ns,state_json)
+            VALUES(?,?,?,?)
+            ON CONFLICT(run_id) DO UPDATE SET
+                event_index=excluded.event_index,
+                timestamp_ns=excluded.timestamp_ns,
+                state_json=excluded.state_json
+            """,
+            params,
+        )
+        self._db.execute(
+            """
+            INSERT OR IGNORE INTO checkpoint_history(run_id,event_index,timestamp_ns,state_json)
+            VALUES(?,?,?,?)
+            """,
+            params,
+        )
+        self._db.commit()
 
     def load_checkpoint(self, run_id: str) -> Checkpoint | None:
         row = self._db.execute(
-            "SELECT run_id,event_index,timestamp_ns,state_json FROM checkpoints WHERE run_id=?", (run_id,)
+            "SELECT run_id,event_index,timestamp_ns,state_json FROM checkpoints WHERE run_id=?",
+            (run_id,),
         ).fetchone()
         if row is None:
             return None
-        return Checkpoint(row[0], row[1], row[2], json.loads(row[3]))
+        return Checkpoint(row[0], int(row[1]), int(row[2]), json.loads(row[3]))
 
-    def checkpoint_history(self, run_id: str) -> tuple[Checkpoint, ...]:
-        """Return all durable checkpoints in write order; latest remains available via load_checkpoint()."""
-        rows = self._db.execute(
-            "SELECT run_id,event_index,timestamp_ns,state_json FROM checkpoint_history WHERE run_id=? ORDER BY id",
-            (run_id,),
-        ).fetchall()
-        return tuple(Checkpoint(r[0], r[1], r[2], json.loads(r[3])) for r in rows)
-
-    def iter_records(self, run_id: str, record_type: str | None = None,
-                     *, fetch_size: int = 256) -> Iterator[LedgerRecord]:
-        """Stream durable records without materializing the complete result set."""
-        if fetch_size <= 0:
-            raise ValueError("fetch_size must be positive")
+    def iter_records(self, run_id: str, *, record_type: str | None = None) -> Iterator[LedgerRecord]:
         self._require_run(run_id)
         if record_type is None:
             cursor = self._db.execute(
@@ -236,56 +237,17 @@ class BacktestLedger:
                 "SELECT run_id,record_type,timestamp_ns,payload_json FROM records WHERE run_id=? AND record_type=? ORDER BY id",
                 (run_id, record_type),
             )
-        while True:
-            rows = cursor.fetchmany(fetch_size)
-            if not rows:
-                break
-            for row in rows:
-                yield self._row_to_record(row)
+        for row in cursor:
+            yield self._row_to_record(row)
 
-    def record_count(self, run_id: str, record_type: str | None = None) -> int:
-        """Return a durable record count without loading record payloads."""
+    def iter_checkpoint_history(self, run_id: str) -> Iterator[Checkpoint]:
         self._require_run(run_id)
-        if record_type is None:
-            row = self._db.execute("SELECT COUNT(*) FROM records WHERE run_id=?", (run_id,)).fetchone()
-        else:
-            row = self._db.execute(
-                "SELECT COUNT(*) FROM records WHERE run_id=? AND record_type=?", (run_id, record_type)
-            ).fetchone()
-        return int(row[0])
+        cursor = self._db.execute(
+            "SELECT run_id,event_index,timestamp_ns,state_json FROM checkpoint_history WHERE run_id=? ORDER BY id",
+            (run_id,),
+        )
+        for row in cursor:
+            yield Checkpoint(row[0], int(row[1]), int(row[2]), json.loads(row[3]))
 
-    def record_at(self, run_id: str, record_type: str | None, index: int) -> LedgerRecord:
-        """Read one durable record by zero-based result index."""
-        self._require_run(run_id)
-        if index < 0:
-            count = self.record_count(run_id, record_type)
-            index += count
-        if index < 0:
-            raise IndexError("record index out of range")
-        if record_type is None:
-            row = self._db.execute(
-                "SELECT run_id,record_type,timestamp_ns,payload_json FROM records WHERE run_id=? ORDER BY id LIMIT 1 OFFSET ?",
-                (run_id, index),
-            ).fetchone()
-        else:
-            row = self._db.execute(
-                "SELECT run_id,record_type,timestamp_ns,payload_json FROM records WHERE run_id=? AND record_type=? ORDER BY id LIMIT 1 OFFSET ?",
-                (run_id, record_type, index),
-            ).fetchone()
-        if row is None:
-            raise IndexError("record index out of range")
-        return self._row_to_record(row)
 
-    def records(self, run_id: str, record_type: str | None = None) -> tuple[LedgerRecord, ...]:
-        """Compatibility API that materializes all matching records."""
-        return tuple(self.iter_records(run_id, record_type))
-
-    def run_metadata(self, run_id: str) -> Mapping[str, Any] | None:
-        row = self._db.execute(
-            "SELECT strategy_id,strategy_version,strategy_hash,initial_capital,metadata_json,schema_version,data_source_fingerprint FROM runs WHERE run_id=?", (run_id,)
-        ).fetchone()
-        if row is None:
-            return None
-        return {"strategy_id": row[0], "strategy_version": row[1], "strategy_hash": row[2],
-                "initial_capital": row[3], "metadata": json.loads(row[4]),
-                "schema_version": row[5], "data_source_fingerprint": row[6]}
+__all__ = ["BacktestLedger", "Checkpoint", "LedgerRecord", "LEDGER_SCHEMA_VERSION"]
