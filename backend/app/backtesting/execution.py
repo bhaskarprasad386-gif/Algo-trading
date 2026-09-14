@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
+import math
 from typing import Iterable
 
 
@@ -39,6 +40,8 @@ class SimOrder:
     def __post_init__(self) -> None:
         if not self.order_id.strip() or not self.instrument.strip():
             raise ValueError("order_id and instrument are required")
+        if not isinstance(self.side, ExecutionSide) or not isinstance(self.order_type, OrderType):
+            raise ValueError("invalid order side or order type")
         if self.quantity <= 0:
             raise ValueError("quantity must be greater than zero")
         if self.submitted_at_ns < 0:
@@ -47,10 +50,16 @@ class SimOrder:
             raise ValueError("queue_ahead_quantity cannot be negative")
         if not isinstance(self.time_in_force, TimeInForce):
             raise ValueError("invalid time_in_force")
-        if self.order_type == OrderType.LIMIT and self.limit_price is None:
-            raise ValueError("limit_price is required for LIMIT orders")
-        if self.order_type == OrderType.STOP and self.stop_price is None:
-            raise ValueError("stop_price is required for STOP orders")
+        if self.order_type == OrderType.LIMIT:
+            if self.limit_price is None or not math.isfinite(float(self.limit_price)) or self.limit_price <= 0:
+                raise ValueError("limit_price must be finite and positive for LIMIT orders")
+        elif self.limit_price is not None:
+            raise ValueError("limit_price is only valid for LIMIT orders")
+        if self.order_type == OrderType.STOP:
+            if self.stop_price is None or not math.isfinite(float(self.stop_price)) or self.stop_price <= 0:
+                raise ValueError("stop_price must be finite and positive for STOP orders")
+        elif self.stop_price is not None:
+            raise ValueError("stop_price is only valid for STOP orders")
 
 
 @dataclass(frozen=True)
@@ -59,8 +68,8 @@ class DepthLevel:
     quantity: int
 
     def __post_init__(self) -> None:
-        if self.price <= 0 or self.quantity < 0:
-            raise ValueError("depth price must be positive and quantity non-negative")
+        if not math.isfinite(float(self.price)) or self.price <= 0 or self.quantity < 0:
+            raise ValueError("depth price must be finite and positive and quantity non-negative")
 
 
 @dataclass(frozen=True)
@@ -77,23 +86,21 @@ class OrderBook:
             raise ValueError("bids must be ordered best-to-worst")
         if ask_prices != tuple(sorted(ask_prices)):
             raise ValueError("asks must be ordered best-to-worst")
+        if self.bids and self.asks and self.bids[0].price >= self.asks[0].price:
+            raise ValueError("crossed order book")
 
 
 @dataclass(frozen=True)
 class QueueEvidence:
-    """Observed events that can legitimately advance a resting queue position.
-
-    A disappearing depth level is not treated as a fill: the caller must supply
-    explicit executed or cancelled quantity supported by source data.
-    """
+    """Observed events that can legitimately advance a resting queue position."""
 
     price: float
     executed_quantity: int = 0
     cancelled_quantity_ahead: int = 0
 
     def __post_init__(self) -> None:
-        if self.price <= 0:
-            raise ValueError("queue evidence price must be positive")
+        if not math.isfinite(float(self.price)) or self.price <= 0:
+            raise ValueError("queue evidence price must be finite and positive")
         if self.executed_quantity < 0 or self.cancelled_quantity_ahead < 0:
             raise ValueError("queue evidence quantities cannot be negative")
 
@@ -108,6 +115,18 @@ class SimFill:
     filled_at_ns: int
     fee: float = 0.0
 
+    def __post_init__(self) -> None:
+        if not self.order_id.strip() or not self.instrument.strip():
+            raise ValueError("fill order_id and instrument are required")
+        if not isinstance(self.side, ExecutionSide):
+            raise ValueError("invalid fill side")
+        if self.quantity <= 0:
+            raise ValueError("fill quantity must be greater than zero")
+        if not math.isfinite(float(self.price)) or self.price <= 0:
+            raise ValueError("fill price must be finite and positive")
+        if self.filled_at_ns < 0 or not math.isfinite(float(self.fee)) or self.fee < 0:
+            raise ValueError("fill timestamp/fee is invalid")
+
 
 @dataclass(frozen=True)
 class ExecutionResult:
@@ -119,12 +138,7 @@ class ExecutionResult:
 
 @dataclass(frozen=True)
 class AtomicExecutionResult:
-    """All-or-nothing result for a multi-leg execution attempt.
-
-    Leg results retain diagnostics, while ``fills`` is empty whenever any leg
-    fails to fully execute. The simulator has no external state mutation, so
-    rollback is represented by withholding all tentative fills from commit.
-    """
+    """All-or-nothing result for a multi-leg execution attempt."""
 
     fills: tuple[SimFill, ...]
     leg_results: tuple[ExecutionResult, ...]
@@ -140,7 +154,11 @@ class ExecutionConfig:
     allow_partial_fills: bool = True
 
     def __post_init__(self) -> None:
-        if self.slippage_bps < 0 or self.latency_ns < 0 or self.fee_per_unit < 0:
+        if not math.isfinite(float(self.slippage_bps)) or self.slippage_bps < 0:
+            raise ValueError("slippage_bps must be finite and non-negative")
+        if self.slippage_bps >= 10_000:
+            raise ValueError("slippage_bps must be below 10000")
+        if self.latency_ns < 0 or not math.isfinite(float(self.fee_per_unit)) or self.fee_per_unit < 0:
             raise ValueError("execution costs and latency cannot be negative")
 
 
@@ -152,17 +170,26 @@ class ExecutionSimulator:
 
     @staticmethod
     def advance_queue_ahead(queue_ahead_quantity: int, evidence: QueueEvidence) -> int:
-        """Advance a resting queue only from explicit source-backed evidence."""
         if queue_ahead_quantity < 0:
             raise ValueError("queue_ahead_quantity cannot be negative")
         consumed = evidence.executed_quantity + evidence.cancelled_quantity_ahead
         return max(0, queue_ahead_quantity - consumed)
 
+    @staticmethod
+    def _stop_triggered(order: SimOrder, market_price: float) -> bool:
+        if order.order_type != OrderType.STOP:
+            return True
+        if order.stop_price is None:
+            raise ValueError("stop_price is required for STOP orders")
+        return market_price >= order.stop_price if order.side == ExecutionSide.BUY else market_price <= order.stop_price
+
     def execute(self, order: SimOrder, market_price: float, timestamp_ns: int) -> SimFill:
-        if market_price <= 0:
-            raise ValueError("market_price must be greater than zero")
+        if not math.isfinite(float(market_price)) or market_price <= 0:
+            raise ValueError("market_price must be finite and greater than zero")
         if timestamp_ns < order.submitted_at_ns:
             raise ValueError("fill timestamp cannot precede order submission")
+        if not self._stop_triggered(order, market_price):
+            raise ValueError("stop order has not triggered")
         fill_time = timestamp_ns + self.config.latency_ns
         direction = 1 if order.side == ExecutionSide.BUY else -1
         price = market_price * (1 + direction * self.config.slippage_bps / 10_000)
@@ -172,6 +199,8 @@ class ExecutionSimulator:
     @staticmethod
     def _executable_levels(order: SimOrder, book: OrderBook) -> tuple[DepthLevel, ...]:
         levels = book.asks if order.side == ExecutionSide.BUY else book.bids
+        if order.order_type == OrderType.STOP:
+            return levels
         if order.order_type != OrderType.LIMIT:
             return levels
         if order.limit_price is None:
@@ -192,14 +221,12 @@ class ExecutionSimulator:
         timestamp_ns: int,
         queue_evidence: Iterable[QueueEvidence] = (),
     ) -> ExecutionResult:
-        """Consume displayed depth after applying explicit queue evidence.
-
-        Queue advancement is price-specific and can combine executed quantity
-        with cancellations ahead. A book disappearing or shrinking by itself
-        never creates a fill.
-        """
         if timestamp_ns < order.submitted_at_ns:
             raise ValueError("fill timestamp cannot precede order submission")
+        if order.order_type == OrderType.STOP:
+            best = (book.asks if order.side == ExecutionSide.BUY else book.bids)
+            if not best or not self._stop_triggered(order, best[0].price):
+                return ExecutionResult((), order.quantity, True, "stop order has not triggered")
         levels = self._executable_levels(order, book)
         if not levels:
             return ExecutionResult((), order.quantity, True, "no executable depth")
@@ -237,6 +264,8 @@ class ExecutionSimulator:
 
         if not fills:
             return ExecutionResult((), order.quantity, True, "no executable quantity")
+        if order.time_in_force == TimeInForce.FOK and remaining:
+            return ExecutionResult((), order.quantity, True, "insufficient displayed depth for FOK")
         return ExecutionResult(tuple(fills), remaining, False, None if remaining == 0 else "partial fill")
 
     def execute_depth_updates(
@@ -244,13 +273,6 @@ class ExecutionSimulator:
         order: SimOrder,
         updates: Iterable[tuple[int, OrderBook, Iterable[QueueEvidence]]],
     ) -> ExecutionResult:
-        """Replay timestamped book updates without reusing stale displayed depth.
-
-        Each level's quantity is treated as currently displayed liquidity. Across
-        updates, only quantity newly displayed above the simulator's consumed
-        amount is executable; unchanged depth cannot be filled twice. Resting
-        queue-ahead is reduced only by explicit evidence at the order price.
-        """
         remaining = order.quantity
         queue_ahead = order.queue_ahead_quantity
         consumed_by_price: dict[float, int] = {}
@@ -262,6 +284,10 @@ class ExecutionSimulator:
             if timestamp_ns < order.submitted_at_ns:
                 raise ValueError("fill timestamp cannot precede order submission")
             levels = self._executable_levels(order, book)
+            if order.order_type == OrderType.STOP:
+                best = book.asks if order.side == ExecutionSide.BUY else book.bids
+                if not best or not self._stop_triggered(order, best[0].price):
+                    continue
             if not levels:
                 continue
 
@@ -292,6 +318,8 @@ class ExecutionSimulator:
             return ExecutionResult((), order.quantity, True, "no executable depth")
         if order.time_in_force == TimeInForce.FOK and remaining:
             return ExecutionResult((), order.quantity, True, "insufficient displayed depth for FOK")
+        if order.time_in_force == TimeInForce.IOC and remaining:
+            return ExecutionResult(tuple(fills), 0, False, "IOC remainder cancelled")
         return ExecutionResult(tuple(fills), remaining, False, None if remaining == 0 else "partial fill")
 
     def execute_many(self, orders: Iterable[tuple[SimOrder, float, int]]) -> tuple[SimFill, ...]:
@@ -301,13 +329,6 @@ class ExecutionSimulator:
         self,
         legs: Iterable[tuple[SimOrder, OrderBook, int]],
     ) -> AtomicExecutionResult:
-        """Execute multi-leg orders transactionally: commit only full-leg success.
-
-        Each leg is simulated independently first. If every leg fills completely,
-        all fills are returned as the committed transaction. If any leg rejects
-        or partially fills, every tentative fill is discarded and the result is
-        marked rejected, preventing a backtest from inventing an unhedged leg.
-        """
         leg_results = tuple(
             self.execute_depth(order, book, timestamp_ns)
             for order, book, timestamp_ns in legs
