@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 
 @dataclass(frozen=True)
@@ -19,10 +20,14 @@ class PayoffLeg:
             raise ValueError("unsupported leg kind")
         if self.side.upper() not in {"BUY", "SELL"}:
             raise ValueError("side must be BUY or SELL")
+        if not math.isfinite(float(self.entry_price)) or not math.isfinite(float(self.quantity)) or not math.isfinite(float(self.multiplier)):
+            raise ValueError("leg values must be finite")
         if self.entry_price < 0 or self.quantity <= 0 or self.multiplier <= 0:
             raise ValueError("invalid leg values")
-        if self.kind.upper() in {"CALL", "PUT"} and (self.strike is None or self.strike <= 0):
-            raise ValueError("option legs require a positive strike")
+        if self.kind.upper() in {"CALL", "PUT"} and (self.strike is None or not math.isfinite(float(self.strike)) or self.strike <= 0):
+            raise ValueError("option legs require a positive finite strike")
+        if self.kind.upper() in {"SPOT", "FUTURE"} and self.strike is not None:
+            raise ValueError("spot/future legs cannot have a strike")
 
 
 def _leg_pnl(leg: PayoffLeg, underlying_price: float) -> float:
@@ -40,6 +45,8 @@ def _leg_pnl(leg: PayoffLeg, underlying_price: float) -> float:
 
 
 def payoff_at_price(legs: tuple[PayoffLeg, ...], underlying_price: float) -> float:
+    if not math.isfinite(float(underlying_price)):
+        raise ValueError("underlying_price must be finite")
     if underlying_price < 0:
         raise ValueError("underlying_price cannot be negative")
     return round(sum(_leg_pnl(leg, underlying_price) for leg in legs), 8)
@@ -48,6 +55,8 @@ def payoff_at_price(legs: tuple[PayoffLeg, ...], underlying_price: float) -> flo
 def payoff_curve(legs: tuple[PayoffLeg, ...], prices: tuple[float, ...]) -> tuple[float, ...]:
     if not prices:
         return ()
+    if any(not math.isfinite(float(price)) or price < 0 for price in prices):
+        raise ValueError("payoff curve prices must be finite and non-negative")
     return tuple(payoff_at_price(legs, price) for price in prices)
 
 
