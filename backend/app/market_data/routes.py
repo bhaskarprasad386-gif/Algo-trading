@@ -29,7 +29,7 @@ def get_ltp(
         raise
     except Exception as e:
         app_logger.error(f"LTP error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=502, detail="Market data provider request failed") from e
 
 
 @router.get("/ltp-by-symbol")
@@ -41,9 +41,9 @@ def get_ltp_by_symbol(
     from app.market_data.client import MarketDataClient
     from app.market_data.instruments import InstrumentMaster
 
+    symbol = tradingsymbol.strip().upper()
+    segment = exchange.strip().upper()
     try:
-        symbol = tradingsymbol.strip().upper()
-        segment = exchange.strip().upper()
         instrument = InstrumentMaster().get_instrument(symbol, segment)
         if not instrument:
             raise HTTPException(
@@ -75,7 +75,7 @@ def get_ltp_by_symbol(
         raise
     except Exception as e:
         app_logger.error(f"Symbol LTP error for {segment} {symbol}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=502, detail="Market data provider request failed") from e
 
 
 @router.get("/historical")
@@ -105,4 +105,4 @@ def get_historical(
         raise
     except Exception as e:
         app_logger.error(f"Historical error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=502, detail="Historical market data provider request failed") from e
