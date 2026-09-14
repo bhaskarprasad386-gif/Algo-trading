@@ -1,6 +1,10 @@
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from typing import Callable, Iterable, Optional
+from zoneinfo import ZoneInfo
+
+
+MARKET_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
 
 @dataclass(frozen=True)
@@ -15,10 +19,19 @@ class MarketSession:
         return day in self.holidays or day.weekday() >= 5
 
     def is_open(self, now: Optional[datetime] = None) -> bool:
-        now = now or datetime.now()
-        if self.is_holiday(now.date()):
+        """Return whether *now* falls inside the NSE session in India time.
+
+        Naive datetimes are treated as India-local for backward compatibility;
+        timezone-aware datetimes are converted to the exchange timezone.
+        """
+        current = now or datetime.now(MARKET_TIMEZONE)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=MARKET_TIMEZONE)
+        else:
+            current = current.astimezone(MARKET_TIMEZONE)
+        if self.is_holiday(current.date()):
             return False
-        return self.open_time <= now.time() < self.close_time
+        return self.open_time <= current.time() < self.close_time
 
 
 def should_start_live_data(
