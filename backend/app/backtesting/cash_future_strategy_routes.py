@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from math import isfinite
 from typing import Any
 from uuid import uuid4
 
@@ -154,7 +155,11 @@ def strategy_run(request: StrategyRunRequest):
         trades = tuple(result.trades)
         equity_curve = tuple(result.equity_curve)
         report = build_cash_future_report(result.initial_capital, trades, equity_curve)
-        return {"status":"success","run_id":run_id,"strategy_id":result.strategy_id,"strategy_version":result.strategy_version,"initial_capital":result.initial_capital,"final_capital":result.final_capital,"final_available_capital":result.final_available_capital,"final_reserved_margin":result.final_reserved_margin,"blocked_entry_count":result.blocked_entry_count,"net_profit":result.net_profit,"signal_count":len(signals),"trade_count":len(trades),"signals":signals,"trades":trades,"equity_curve":equity_curve,"analysis":{"final_equity":report.final_equity,"net_pnl":report.net_pnl,"roi":report.roi,"max_drawdown":report.max_drawdown,"max_drawdown_pct":report.max_drawdown_pct,"win_rate":report.win_rate,"profit_factor":report.profit_factor,"turnover":report.turnover,"wins":report.wins,"losses":report.losses,"monthly_pnl":dict(report.monthly_pnl),"yearly_pnl":dict(report.yearly_pnl)}}
+        # JSON does not permit non-finite numbers. A profit factor with gains but
+        # no losses is mathematically unbounded, so expose it as null at the API
+        # boundary rather than returning invalid JSON or changing the core metric.
+        profit_factor = report.profit_factor if isfinite(report.profit_factor) else None
+        return {"status":"success","run_id":run_id,"strategy_id":result.strategy_id,"strategy_version":result.strategy_version,"initial_capital":result.initial_capital,"final_capital":result.final_capital,"final_available_capital":result.final_available_capital,"final_reserved_margin":result.final_reserved_margin,"blocked_entry_count":result.blocked_entry_count,"net_profit":result.net_profit,"signal_count":len(signals),"trade_count":len(trades),"signals":signals,"trades":trades,"equity_curve":equity_curve,"analysis":{"final_equity":report.final_equity,"net_pnl":report.net_pnl,"roi":report.roi,"max_drawdown":report.max_drawdown,"max_drawdown_pct":report.max_drawdown_pct,"win_rate":report.win_rate,"profit_factor":profit_factor,"turnover":report.turnover,"wins":report.wins,"losses":report.losses,"monthly_pnl":dict(report.monthly_pnl),"yearly_pnl":dict(report.yearly_pnl)}}
     except (ValueError, LookupError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
