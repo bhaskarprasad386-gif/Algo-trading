@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import date, datetime, timedelta
 from typing import Callable, Sequence, TypeAlias
 
@@ -34,6 +35,16 @@ def persisted_stock_symbols(db: Session) -> list[str]:
     return [symbol.upper() for (symbol,) in rows]
 
 
+def _finite_metric(value: object, name: str) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be numeric") from exc
+    if not math.isfinite(numeric):
+        raise ValueError(f"{name} must be finite")
+    return numeric
+
+
 def _durable_prefix_aggregates(
     db: Session,
     symbols: list[str],
@@ -57,8 +68,11 @@ def _durable_prefix_aggregates(
         if row.sequence != expected_sequence or row.symbol.upper() != symbols[expected_sequence].upper():
             raise ValueError("durable full-F&O prefix does not match current symbol universe")
         result = json.loads(row.result_json)
-        total_net_profit += float(result.get("net_profit", 0.0) or 0.0)
-        max_drawdown = max(max_drawdown, float(result.get("max_drawdown", 0.0) or 0.0))
+        total_net_profit += _finite_metric(result.get("net_profit", 0.0), "durable net_profit")
+        drawdown = _finite_metric(result.get("max_drawdown", 0.0), "durable max_drawdown")
+        if drawdown < 0:
+            raise ValueError("durable max_drawdown cannot be negative")
+        max_drawdown = max(max_drawdown, drawdown)
         if result.get("status") == "no_entry":
             no_entry_symbols += 1
         else:
@@ -91,6 +105,20 @@ def run_full_fno_backtest(
     """
     if result_sink is not None:
         collect_results = False
+
+    if not isinstance(days, int) or isinstance(days, bool) or days <= 0:
+        raise ValueError("days must be a positive integer")
+    if not isinstance(max_holding_days, int) or isinstance(max_holding_days, bool) or max_holding_days <= 0:
+        raise ValueError("max_holding_days must be a positive integer")
+    for value, name in (
+        (min_entry_gap, "min_entry_gap"),
+        (exit_gap, "exit_gap"),
+        (charges_per_trade, "charges_per_trade"),
+        (funding_cost_per_trade, "funding_cost_per_trade"),
+    ):
+        numeric = _finite_metric(value, name)
+        if numeric < 0:
+            raise ValueError(f"{name} must be non-negative")
 
     selection = future_selection.upper()
     if selection not in {"CURRENT", "NEAR", "BOTH"}:
@@ -140,14 +168,18 @@ def run_full_fno_backtest(
                     "total_net_profit": total_net_profit, "max_drawdown": max_drawdown, "results": results}
 
         item = {"symbol": symbol, **result}
+        result_net_profit = _finite_metric(result.get("net_profit", 0.0), "net_profit")
+        result_drawdown = _finite_metric(result.get("max_drawdown", 0.0), "max_drawdown")
+        if result_drawdown < 0:
+            raise ValueError("max_drawdown cannot be negative")
         if result_sink is not None:
             result_sink(sequence, symbol, item)
             chunks_written += 1
         if collect_results:
             assert results is not None
             results.append(item)
-        total_net_profit += float(result.get("net_profit", 0.0) or 0.0)
-        max_drawdown = max(max_drawdown, float(result.get("max_drawdown", 0.0) or 0.0))
+        total_net_profit += result_net_profit
+        max_drawdown = max(max_drawdown, result_drawdown)
         if result.get("status") == "no_entry":
             no_entry_symbols += 1
         else:
