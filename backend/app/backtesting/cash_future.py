@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable, Mapping
+import math
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,9 @@ class CashFutureObservation:
     def __post_init__(self) -> None:
         if self.timestamp_ns < 0:
             raise ValueError("timestamp_ns cannot be negative")
+        for value, name in ((self.cash_price, "cash_price"), (self.future_price, "future_price"), (self.lot_size, "lot_size")):
+            if not math.isfinite(float(value)):
+                raise ValueError(f"{name} must be finite")
         if self.cash_price <= 0 or self.future_price <= 0:
             raise ValueError("cash_price and future_price must be positive")
         if self.lot_size <= 0:
@@ -53,26 +57,17 @@ class CashFutureBacktestResult:
     max_drawdown: float
 
 
-
 def build_cash_future_observations(
     rows: Iterable[Mapping[str, object]],
-    *,
-    cash_price_field: str = "cash_price",
-    future_price_field: str = "future_price",
-    timestamp_field: str = "timestamp_ns",
-    contract_token_field: str = "contract_token",
+    *, cash_price_field: str = "cash_price", future_price_field: str = "future_price",
+    timestamp_field: str = "timestamp_ns", contract_token_field: str = "contract_token",
     lot_size_field: str = "lot_size",
 ) -> tuple[CashFutureObservation, ...]:
-    observations = tuple(
-        CashFutureObservation(
-            timestamp_ns=int(row[timestamp_field]),
-            cash_price=float(row[cash_price_field]),
-            future_price=float(row[future_price_field]),
-            contract_token=str(row.get(contract_token_field, "")),
-            lot_size=float(row.get(lot_size_field, 1.0)),
-        )
-        for row in rows
-    )
+    observations = tuple(CashFutureObservation(
+        timestamp_ns=int(row[timestamp_field]), cash_price=float(row[cash_price_field]),
+        future_price=float(row[future_price_field]), contract_token=str(row.get(contract_token_field, "")),
+        lot_size=float(row.get(lot_size_field, 1.0)),
+    ) for row in rows)
     for previous, current in zip(observations, observations[1:]):
         if current.timestamp_ns < previous.timestamp_ns:
             raise ValueError("cash-future observations must be timestamp ordered")
@@ -80,13 +75,13 @@ def build_cash_future_observations(
 
 
 def backtest_cash_future_basis(
-    observations: Iterable[CashFutureObservation],
-    *,
-    entry_basis: float,
-    exit_basis: float = 0.0,
-    initial_capital: float = 1_000_000.0,
+    observations: Iterable[CashFutureObservation], *, entry_basis: float,
+    exit_basis: float = 0.0, initial_capital: float = 1_000_000.0,
     entry_side: str = "SELL_FUTURE_BUY_CASH",
 ) -> CashFutureBacktestResult:
+    for value, name in ((entry_basis, "entry_basis"), (exit_basis, "exit_basis"), (initial_capital, "initial_capital")):
+        if not math.isfinite(float(value)):
+            raise ValueError(f"{name} must be finite")
     if entry_basis <= exit_basis:
         raise ValueError("entry_basis must be greater than exit_basis")
     if initial_capital <= 0:
@@ -126,10 +121,4 @@ def backtest_cash_future_basis(
     return CashFutureBacktestResult(len(rows), tuple(trades), initial_capital, capital, capital - initial_capital, max_drawdown)
 
 
-__all__ = [
-    "CashFutureObservation",
-    "CashFutureTrade",
-    "CashFutureBacktestResult",
-    "build_cash_future_observations",
-    "backtest_cash_future_basis",
-]
+__all__ = ["CashFutureObservation", "CashFutureTrade", "CashFutureBacktestResult", "build_cash_future_observations", "backtest_cash_future_basis"]
