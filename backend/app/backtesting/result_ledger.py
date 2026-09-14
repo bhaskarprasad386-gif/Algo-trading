@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
@@ -33,12 +34,21 @@ class BacktestTrade:
     metadata: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
-        if not self.trade_id.strip():
-            raise ValueError("trade_id is required")
+        if not self.trade_id.strip() or not self.instrument.strip() or not self.side.strip():
+            raise ValueError("trade_id, instrument and side are required")
         if self.sequence < 0 or self.timestamp_ns < 0:
             raise ValueError("sequence/timestamp must be non-negative")
-        if self.quantity <= 0:
-            raise ValueError("quantity must be positive")
+        numeric = (self.quantity, self.entry_price, self.gross_pnl, self.fees, self.slippage, self.net_pnl)
+        if any(not math.isfinite(float(value)) for value in numeric):
+            raise ValueError("trade numeric values must be finite")
+        if self.exit_price is not None and (not math.isfinite(float(self.exit_price)) or self.exit_price <= 0):
+            raise ValueError("exit_price must be finite and positive")
+        if self.quantity <= 0 or self.entry_price <= 0:
+            raise ValueError("quantity and entry_price must be positive")
+        if self.fees < 0 or self.slippage < 0:
+            raise ValueError("fees and slippage must be non-negative")
+        if self.strike is not None and (not math.isfinite(float(self.strike)) or self.strike <= 0):
+            raise ValueError("strike must be finite and positive")
 
 
 @dataclass(frozen=True)
@@ -55,6 +65,12 @@ class BacktestEvent:
             raise ValueError("sequence/timestamp must be non-negative")
         if not self.event_type.strip():
             raise ValueError("event_type is required")
+        try:
+            encoded = json.dumps(self.payload, sort_keys=True, separators=(",", ":"), allow_nan=False, default=str)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("event payload must be JSON-safe") from exc
+        if not encoded:
+            raise ValueError("event payload is required")
 
 
 @dataclass(frozen=True)
@@ -65,14 +81,18 @@ class EquityPoint:
     unrealized_pnl: float
     drawdown: float
 
+    def __post_init__(self) -> None:
+        if self.timestamp_ns < 0:
+            raise ValueError("equity timestamp must be non-negative")
+        values = (self.equity, self.realized_pnl, self.unrealized_pnl, self.drawdown)
+        if any(not math.isfinite(float(value)) for value in values):
+            raise ValueError("equity values must be finite")
+        if self.equity < 0 or self.drawdown < 0:
+            raise ValueError("equity and drawdown cannot be negative")
+
 
 class BacktestResultLedger:
-    """SQLite WAL ledger; appends are transactional and idempotent.
-
-    Results are partitioned by run_id, so concurrent/independent backtests can
-    never mix trades, events or equity points. Data is written incrementally;
-    callers do not need to keep a complete historical result set in RAM.
-    """
+    """SQLite WAL ledger; appends are transactional and idempotent."""
 
     def __init__(self, path: str = ":memory:") -> None:
         self._db = sqlite3.connect(path)
@@ -138,27 +158,27 @@ class BacktestResultLedger:
                 PRIMARY KEY (run_id, timestamp_ns),
                 FOREIGN KEY (run_id) REFERENCES backtest_runs(run_id) ON DELETE CASCADE
             );
-            CREATE INDEX IF NOT EXISTS idx_backtest_trades_time
-                ON backtest_trades(run_id, timestamp_ns, sequence);
-            CREATE INDEX IF NOT EXISTS idx_backtest_events_time
-                ON backtest_events(run_id, timestamp_ns, sequence);
-            CREATE INDEX IF NOT EXISTS idx_backtest_equity_time
-                ON backtest_equity(run_id, timestamp_ns);
+            CREATE INDEX IF NOT EXISTS idx_backtest_trades_time ON backtest_trades(run_id, timestamp_ns, sequence);
+            CREATE INDEX IF NOT EXISTS idx_backtest_events_time ON backtest_events(run_id, timestamp_ns, sequence);
+            CREATE INDEX IF NOT EXISTS idx_backtest_equity_time ON backtest_equity(run_id, timestamp_ns);
             """
         )
         self._db.commit()
 
     @staticmethod
     def _json(value: Mapping[str, Any]) -> str:
-        return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+        try:
+            return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False, default=str)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("value must be JSON-safe") from exc
 
     @staticmethod
     def _hash(text: str) -> str:
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     def create_run(self, run_id: str, provenance: Mapping[str, Any], *, created_at_ns: int = 0) -> None:
-        if not run_id.strip():
-            raise ValueError("run_id is required")
+        if not run_id.strip() or created_at_ns < 0:
+            raise ValueError("run_id is required and created_at_ns must be non-negative")
         payload = self._json(provenance)
         try:
             self._db.execute(
@@ -171,6 +191,9 @@ class BacktestResultLedger:
 
     def set_status(self, run_id: str, status: str) -> None:
         self._require_run(run_id)
+        status = status.strip().upper()
+        if status not in {"CREATED", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"}:
+            raise ValueError(f"invalid run status: {status}")
         self._db.execute("UPDATE backtest_runs SET status=? WHERE run_id=?", (status, run_id))
         self._db.commit()
 
@@ -180,29 +203,21 @@ class BacktestResultLedger:
         for trade in trades:
             metadata_json = self._json(dict(trade.metadata or {}))
             identity = self._json({
-                "trade_id": trade.trade_id, "sequence": trade.sequence,
-                "timestamp_ns": trade.timestamp_ns, "instrument": trade.instrument,
-                "side": trade.side, "quantity": trade.quantity,
-                "entry_price": trade.entry_price, "exit_price": trade.exit_price,
-                "gross_pnl": trade.gross_pnl, "fees": trade.fees, "slippage": trade.slippage,
-                "net_pnl": trade.net_pnl, "contract": trade.contract, "expiry": trade.expiry,
-                "strike": trade.strike, "leg": trade.leg, "data_resolution": trade.data_resolution,
-                "metadata": dict(trade.metadata or {}),
+                "trade_id": trade.trade_id, "sequence": trade.sequence, "timestamp_ns": trade.timestamp_ns,
+                "instrument": trade.instrument, "side": trade.side, "quantity": trade.quantity,
+                "entry_price": trade.entry_price, "exit_price": trade.exit_price, "gross_pnl": trade.gross_pnl,
+                "fees": trade.fees, "slippage": trade.slippage, "net_pnl": trade.net_pnl,
+                "contract": trade.contract, "expiry": trade.expiry, "strike": trade.strike,
+                "leg": trade.leg, "data_resolution": trade.data_resolution, "metadata": dict(trade.metadata or {}),
             })
-            rows.append((
-                run_id, trade.trade_id, trade.sequence, trade.timestamp_ns, trade.instrument,
-                trade.side, trade.quantity, trade.entry_price, trade.exit_price, trade.gross_pnl,
-                trade.fees, trade.slippage, trade.net_pnl, trade.contract, trade.expiry,
-                trade.strike, trade.leg, trade.data_resolution, metadata_json, self._hash(identity),
-            ))
+            rows.append((run_id, trade.trade_id, trade.sequence, trade.timestamp_ns, trade.instrument, trade.side,
+                         trade.quantity, trade.entry_price, trade.exit_price, trade.gross_pnl, trade.fees,
+                         trade.slippage, trade.net_pnl, trade.contract, trade.expiry, trade.strike, trade.leg,
+                         trade.data_resolution, metadata_json, self._hash(identity)))
         return self._insert_idempotent(
             """INSERT INTO backtest_trades
-            (run_id,trade_id,sequence,timestamp_ns,instrument,side,quantity,entry_price,exit_price,
-             gross_pnl,fees,slippage,net_pnl,contract,expiry,strike,leg,data_resolution,metadata_json,payload_hash)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            rows,
-            "backtest_trades",
-        )
+            (run_id,trade_id,sequence,timestamp_ns,instrument,side,quantity,entry_price,exit_price,gross_pnl,fees,slippage,net_pnl,contract,expiry,strike,leg,data_resolution,metadata_json,payload_hash)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows, "backtest_trades")
 
     def append_events(self, run_id: str, events: Iterable[BacktestEvent]) -> int:
         self._require_run(run_id)
@@ -213,18 +228,14 @@ class BacktestResultLedger:
                          payload_json, self._hash(payload_json)))
         return self._insert_idempotent(
             "INSERT INTO backtest_events(run_id,sequence,timestamp_ns,event_type,payload_json,payload_hash) VALUES (?,?,?,?,?,?)",
-            rows,
-            "backtest_events",
-        )
+            rows, "backtest_events")
 
     def append_equity(self, run_id: str, points: Iterable[EquityPoint]) -> int:
         self._require_run(run_id)
         rows = [(run_id, p.timestamp_ns, p.equity, p.realized_pnl, p.unrealized_pnl, p.drawdown) for p in points]
         return self._insert_idempotent(
             "INSERT INTO backtest_equity(run_id,timestamp_ns,equity,realized_pnl,unrealized_pnl,drawdown) VALUES (?,?,?,?,?,?)",
-            rows,
-            "backtest_equity",
-        )
+            rows, "backtest_equity")
 
     def _insert_idempotent(self, sql: str, rows: list[tuple[Any, ...]], table: str) -> int:
         if not rows:
@@ -239,15 +250,13 @@ class BacktestResultLedger:
                     except sqlite3.IntegrityError:
                         if table == "backtest_trades":
                             existing = self._db.execute(
-                                "SELECT payload_hash FROM backtest_trades WHERE run_id=? AND trade_id=?",
-                                (row[0], row[1]),
+                                "SELECT payload_hash FROM backtest_trades WHERE run_id=? AND trade_id=?", (row[0], row[1])
                             ).fetchone()
                             if existing and existing[0] == row[-1]:
                                 continue
                         elif table == "backtest_events":
                             existing = self._db.execute(
-                                "SELECT payload_hash FROM backtest_events WHERE run_id=? AND sequence=?",
-                                (row[0], row[1]),
+                                "SELECT payload_hash FROM backtest_events WHERE run_id=? AND sequence=?", (row[0], row[1])
                             ).fetchone()
                             if existing and existing[0] == row[-1]:
                                 continue
@@ -267,26 +276,37 @@ class BacktestResultLedger:
         if self._db.execute("SELECT 1 FROM backtest_runs WHERE run_id=?", (run_id,)).fetchone() is None:
             raise ValueError(f"unknown run: {run_id}")
 
+    @staticmethod
+    def _validate_limit(limit: int) -> None:
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            raise ValueError("limit must be a positive integer")
+
     def trades(self, run_id: str, *, limit: int = 500, after_sequence: int = -1) -> list[sqlite3.Row]:
         self._require_run(run_id)
+        self._validate_limit(limit)
+        if after_sequence < -1:
+            raise ValueError("after_sequence must be >= -1")
         return list(self._db.execute(
             "SELECT * FROM backtest_trades WHERE run_id=? AND sequence>? ORDER BY sequence LIMIT ?",
-            (run_id, after_sequence, limit),
-        ))
+            (run_id, after_sequence, limit)))
 
     def events(self, run_id: str, *, limit: int = 500, after_sequence: int = -1) -> list[sqlite3.Row]:
         self._require_run(run_id)
+        self._validate_limit(limit)
+        if after_sequence < -1:
+            raise ValueError("after_sequence must be >= -1")
         return list(self._db.execute(
             "SELECT * FROM backtest_events WHERE run_id=? AND sequence>? ORDER BY sequence LIMIT ?",
-            (run_id, after_sequence, limit),
-        ))
+            (run_id, after_sequence, limit)))
 
     def equity(self, run_id: str, *, limit: int = 500, after_timestamp_ns: int = -1) -> list[sqlite3.Row]:
         self._require_run(run_id)
+        self._validate_limit(limit)
+        if after_timestamp_ns < -1:
+            raise ValueError("after_timestamp_ns must be >= -1")
         return list(self._db.execute(
             "SELECT * FROM backtest_equity WHERE run_id=? AND timestamp_ns>? ORDER BY timestamp_ns LIMIT ?",
-            (run_id, after_timestamp_ns, limit),
-        ))
+            (run_id, after_timestamp_ns, limit)))
 
     def run(self, run_id: str) -> sqlite3.Row:
         self._require_run(run_id)
