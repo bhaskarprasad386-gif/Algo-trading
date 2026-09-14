@@ -40,6 +40,8 @@ class CashFutureStrategyConfig:
             raise ValueError("cash_side must be 'BUY' or 'SELL'")
         if self.future_side not in {"BUY", "SELL"}:
             raise ValueError("future_side must be 'BUY' or 'SELL'")
+        if self.cash_side == self.future_side:
+            raise ValueError("cash_side and future_side must be opposite")
         if self.slippage_per_share < 0:
             raise ValueError("slippage_per_share must be non-negative")
         if self.start_date is not None and self.end_date is not None and self.end_date < self.start_date:
@@ -225,6 +227,9 @@ def run_cash_future_strategy(
                 entry = point
             else:
                 signal_record.update({"execution_status": "blocked", "blocked_reason": "insufficient_available_capital", "required_margin": max(float(point.margin_required), 0.0), "available_capital": capital_ledger.available_capital})
+        elif action == "BUY" and entry is not None:
+            capital_ledger.blocked_entries += 1
+            signal_record.update({"execution_status": "blocked", "blocked_reason": "position_already_open"})
         exit_reason: str | None = None
         if action == "SELL" and entry is not None:
             exit_reason = "strategy"
