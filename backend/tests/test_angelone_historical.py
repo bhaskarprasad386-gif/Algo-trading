@@ -94,17 +94,15 @@ def test_historical_fetch_uses_bounded_non_overlapping_chunks():
     assert not isinstance(records, list)
     tuple(records)
 
-    assert len(client.requests) == 3
-    assert limiter.calls == 3
+    assert len(client.requests) == 2
+    assert limiter.calls == 2
     assert [item["fromdate"] for item in client.requests] == [
         "2026-01-01 05:30",
         "2026-01-02 05:30",
-        "2026-01-03 05:30",
     ]
     assert [item["todate"] for item in client.requests] == [
         "2026-01-02 05:29",
         "2026-01-03 05:29",
-        "2026-01-03 05:30",
     ]
 
 
