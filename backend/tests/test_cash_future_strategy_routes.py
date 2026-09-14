@@ -81,3 +81,34 @@ def test_strategy_run_route_preserves_contract_isolation_error():
     )
     assert response.status_code == 422
     assert "multiple contract months" in response.json()["detail"]
+
+
+def test_strategy_run_route_returns_output_analysis():
+    start = datetime(2026, 9, 2, 10, 0)
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "gap_threshold",
+            "strategy_version": "1",
+            "start_date": start.date().isoformat(),
+            "end_date": start.date().isoformat(),
+            "initial_capital": 10_000_000,
+            "points": [
+                payload(gap=10, timestamp=start),
+                payload(gap=4, timestamp=start + timedelta(hours=1)),
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    analysis = response.json()["analysis"]
+    assert analysis["initial_capital"] == 10_000_000
+    assert analysis["final_equity"] == 10_000_600.0
+    assert analysis["net_pnl"] == 600.0
+    assert analysis["roi"] == 0.00006
+    assert analysis["trade_count"] == 1
+    assert analysis["wins"] == 1
+    assert analysis["losses"] == 0
+    assert analysis["profit_factor"] == float("inf")
+    assert analysis["monthly_pnl"] == {"2026-09": 600.0}
+    assert analysis["yearly_pnl"] == {"2026": 600.0}
