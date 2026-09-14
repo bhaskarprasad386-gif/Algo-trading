@@ -18,6 +18,19 @@ class CashFutureDownloadChunkStatus:
     present: int
     missing: int
     complete: bool
+    first_missing_ns: int | None = None
+
+    @property
+    def expected_timestamps(self) -> int:
+        return self.expected
+
+    @property
+    def actual_timestamps(self) -> int:
+        return self.present
+
+    @property
+    def missing_timestamps(self) -> int:
+        return self.missing
 
 
 @dataclass(frozen=True)
@@ -26,23 +39,44 @@ class CashFutureDownloadProgressReport:
     spot: tuple[CashFutureDownloadChunkStatus, ...]
     futures: tuple[CashFutureDownloadChunkStatus, ...]
 
+    def _chunks(self) -> tuple[CashFutureDownloadChunkStatus, ...]:
+        return (*self.spot, *self.futures)
+
+    @property
+    def total_chunks(self) -> int:
+        return len(self._chunks())
+
+    @property
+    def complete_chunks(self) -> int:
+        return sum(chunk.complete for chunk in self._chunks())
+
+    @property
+    def incomplete_chunks(self) -> int:
+        return self.total_chunks - self.complete_chunks
+
+    @property
+    def complete(self) -> bool:
+        return all(chunk.complete for chunk in self._chunks())
+
 
 class CashFutureDownloadReporter:
     def __init__(self, catalog):
         self.catalog = catalog
 
-    def chunk_status(
+    def _chunk_statuses(
         self,
         request: HistoricalFetchRequest,
         *,
         interval_ns: int,
         sessions: tuple[SessionWindow, ...],
     ) -> tuple[CashFutureDownloadChunkStatus, ...]:
+        if interval_ns <= 0:
+            raise ValueError("interval_ns must be positive")
+
         statuses = []
         for session in sessions:
-            # SessionWindow is inclusive: both start_ns and end_ns are expected bars.
             expected = max(0, ((session.end_ns - session.start_ns) // interval_ns) + 1)
-            present = len(
+            timestamps = tuple(
                 self.catalog.timestamps(
                     source=request.source,
                     instrument=request.instrument,
@@ -51,6 +85,16 @@ class CashFutureDownloadReporter:
                     end_ns=session.end_ns,
                 )
             )
+            present_timestamps = set(timestamps)
+            first_missing = next(
+                (
+                    session.start_ns + offset * interval_ns
+                    for offset in range(expected)
+                    if session.start_ns + offset * interval_ns not in present_timestamps
+                ),
+                None,
+            )
+            present = len(timestamps)
             statuses.append(
                 CashFutureDownloadChunkStatus(
                     instrument=request.instrument,
@@ -62,9 +106,54 @@ class CashFutureDownloadReporter:
                     present=present,
                     missing=max(0, expected - present),
                     complete=present >= expected,
+                    first_missing_ns=first_missing,
                 )
             )
         return tuple(statuses)
+
+    def chunk_status(
+        self,
+        request: HistoricalFetchRequest,
+        *,
+        interval_ns: int,
+        sessions: tuple[SessionWindow, ...],
+    ) -> CashFutureDownloadChunkStatus:
+        """Return one aggregate status for the supplied request/session set."""
+        statuses = self._chunk_statuses(
+            request, interval_ns=interval_ns, sessions=sessions
+        )
+        if not statuses:
+            return CashFutureDownloadChunkStatus(
+                instrument=request.instrument,
+                source=request.source,
+                timeframe=request.timeframe,
+                start_ns=request.start_ns,
+                end_ns=request.end_ns,
+                expected=0,
+                present=0,
+                missing=0,
+                complete=True,
+            )
+
+        return CashFutureDownloadChunkStatus(
+            instrument=request.instrument,
+            source=request.source,
+            timeframe=request.timeframe,
+            start_ns=min(status.start_ns for status in statuses),
+            end_ns=max(status.end_ns for status in statuses),
+            expected=sum(status.expected for status in statuses),
+            present=sum(status.present for status in statuses),
+            missing=sum(status.missing for status in statuses),
+            complete=all(status.complete for status in statuses),
+            first_missing_ns=next(
+                (
+                    status.first_missing_ns
+                    for status in statuses
+                    if status.first_missing_ns is not None
+                ),
+                None,
+            ),
+        )
 
     @staticmethod
     def _spot_request(queue: CashFutureDownloadQueue) -> HistoricalFetchRequest:
@@ -81,10 +170,8 @@ class CashFutureDownloadReporter:
         future_sessions: dict[str, tuple[SessionWindow, ...]] | None = None,
     ) -> CashFutureDownloadProgressReport:
         """Report spot and exact-token future coverage for the supplied queue."""
-        if interval_ns <= 0:
-            raise ValueError("interval_ns must be positive")
         future_sessions = future_sessions or {}
-        spot = self.chunk_status(
+        spot = self._chunk_statuses(
             self._spot_request(queue),
             interval_ns=interval_ns,
             sessions=spot_sessions,
@@ -92,7 +179,7 @@ class CashFutureDownloadReporter:
         futures = tuple(
             status
             for item in queue.futures
-            for status in self.chunk_status(
+            for status in self._chunk_statuses(
                 item.request,
                 interval_ns=interval_ns,
                 sessions=future_sessions.get(item.request.instrument, ()),
