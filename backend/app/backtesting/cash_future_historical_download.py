@@ -271,7 +271,7 @@ class CashFutureHistoricalDownloadService:
             if self.status_store is not None and job_id is not None:
                 start_ns = min([queue.spot.request.start_ns, *[item.request.start_ns for item in queue.futures]])
                 end_ns = max([queue.spot.request.end_ns, *[item.request.end_ns for item in queue.futures]])
-                self.status_store.create_job(job_id=job_id, mode=mode, timeframe=timeframe, spot_instrument=resolved_spot_instrument, exchange=exchange, underlying=underlying, start_ns=start_ns, end_ns=end_ns, source=self.source_name, total_chunks=total_chunks)
+                self.status_store.create_job(job_id=job_id, mode=mode, timeframe=timeframe, spot_instrument=resolved_spot_instrument, exchange=exchange, underlying=underlying, start_ns=start_ns, end_ns=end_ns, source=self.source_name, requested_chunks=total_chunks)
                 self._register_plan(job_id, all_plans)
             effective_skip = should_skip or self._chunk_is_complete; sequence_offset = 0
             spot_result = self.executor.run(self.source, spot_plan, retry_attempts=retry_attempts, should_skip=effective_skip, should_accept=self._chunk_is_complete, **(self._callbacks(job_id, sequence_offset=0) if job_id else {}))
