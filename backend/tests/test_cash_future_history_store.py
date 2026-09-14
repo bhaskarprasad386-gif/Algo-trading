@@ -1,26 +1,9 @@
 from dataclasses import replace
 from datetime import datetime
 
-import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
-from app.core.database import Base
 from app.models.cash_future_history import CashFutureHistory
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 from app.scanner.cash_future_history_store import read_history, save_history_point, save_history_points
-
-
-@pytest.fixture
-def db_session():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(engine)
-    session = sessionmaker(bind=engine)()
-    try:
-        yield session
-    finally:
-        session.close()
-        engine.dispose()
 
 
 def test_history_persists_and_reads_quote_liquidity_fields(db_session):
