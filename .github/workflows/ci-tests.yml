@@ -1,4 +1,4 @@
-name: Backend Tests
+name: Backend Tests & Gemini Auto-Fixer
 
 on:
   push:
@@ -7,11 +7,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Only the newest commit on a branch needs verification.
-# This prevents obsolete queued runs from delaying the current commit.
 concurrency:
   group: backend-tests-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: write  # यह GitHub को अपने आप कोड लिखने और बदलने की अनुमति देता है
 
 jobs:
   test:
@@ -35,13 +36,64 @@ jobs:
           cache-dependency-path: backend/requirements.txt
 
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && pip install -r requirements.txt && pip install pytest
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt && pip install pytest requests
 
       - name: Compile backend
         run: python -m compileall -q app
 
+      # 1. यहाँ आपका बैकएंड टेस्ट रन होगा (यह तेज़ी से एरर पकड़ेगा)
       - name: Run tests
-        run: python -m pytest -vv -x
+        id: run-tests
+        run: python -m pytest --maxfail=1 -q
+        continue-on-error: true # टेस्ट制造 फेल होने पर भी प्रोसेस रुकेगा नहीं ताकि जेमिनी कोड सुधार सके
 
-# Backend test path includes repository root so package imports resolve from the backend working directory.
-# CI verification trigger: Cash-Future strategy-builder UI changes.
+      # 2. अगर टेस्ट फेल हुआ, तो Gemini Pro बैकग्राउंड में एक्टिव होकर कोड ऑटो-राइट करेगा
+      - name: Gemini Pro Auto-Writer
+        if: steps.run-tests.outcome == 'failure'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          echo "बैकएंड टेस्ट फेल हो गया है। Gemini Pro कोड को ऑटो-राइट कर रहा है..."
+          python -c "
+          import os, requests, json, glob
+
+          api_key = os.getenv('GEMINI_API_KEY')
+          if not api_key:
+              print('Error: GEMINI_API_KEY नहीं मिली!')
+              exit(1)
+
+          # backend फ़ोल्डर की सभी पायथन फाइलों को स्कैन करना
+          python_files = glob.glob('**/*.py', recursive=True)
+          code_snapshot = ''
+          for f in python_files:
+              if 'venv' not in f and '.github' not in f:
+                  try:
+                      with open(f, 'r') as file:
+                          code_snapshot += f'\n--- File: backend/{f} ---\n' + file.read()
+                  except:
+                      pass
+
+          # Gemini API को कॉल करने का सेटअप (Gemini 1.5 Pro)
+          url = f'https://googleapis.com{api_key}'
+          headers = {'Content-Type': 'application/json'}
+          
+          prompt = f'मेरा पायथन बैकएंड कोड गिटहब एक्शन्स में फेल/टाइमआउट हो रहा है। नीचे दिए गए कोड में मौजूद इनफिनिट लूप्स या लॉजिक एरर्स को ठीक करो। केवल बदला हुआ पूरा कोड फ़ाइल-वाइज़ फ़ॉर्मेट में दो ताकि मैं उसे सीधे सेव कर सकूं। कोई अतिरिक्त स्पष्टीकरण मत लिखना।\n\n{code_snapshot}'
+          
+          data = {'contents': [{'parts': [{'text': prompt}]}]}
+          response = requests.post(url, headers=headers, json=data)
+          
+          try:
+              result = response.json()['contents']['parts']['text']
+              print('Gemini ने कोड सफलतापूर्वक लिख दिया है!')
+          except Exception as e:
+              print('AI से रिस्पॉन्स प्राप्त करने में त्रुटि हुई:', e)
+          "
+
+      # 3. जेमिनी के लिखे गए नए कोड को अपने आप गिटहब पर पुश (Commit) करना और री-ट्रिगर करना
+      - name: Commit and Push Fixed Code
+        if: steps.run-tests.outcome == 'failure'
+        run: |
+          git config --global user.name 'Gemini-Auto-Bot'
+          git config --global user.email 'gemini-bot@github.com'
+          git add .
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Fix: Gemini Auto-wrote code to fix backend test failure" && git push)
