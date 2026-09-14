@@ -22,23 +22,20 @@ def place_manual_order(
     price: float = Query(0.0, ge=0.0),
     mode: str = Query("paper", pattern="^paper$", description="Only paper mode is enabled."),
 ):
-    """Risk-check and simulate an order. Live execution is unavailable."""
+    """Atomically risk-check and simulate a paper order."""
     try:
-        allowed, reason = risk_engine.check(quantity=quantity)
-        if not allowed:
-            raise HTTPException(status_code=409, detail=reason)
-
+        normalized_symbol = symbol.strip().upper()
+        risk_engine.check_and_reserve(normalized_symbol, transaction_type, quantity)
         result = OrderExecutionClient(mode="paper").place_order(
-            symbol=symbol, exchange=exchange, transaction_type=transaction_type,
+            symbol=normalized_symbol, exchange=exchange, transaction_type=transaction_type,
             quantity=quantity, price=price,
         )
-        risk_engine.reserve_order()
-        app_logger.info(f"Paper order accepted for {symbol} ({quantity})")
+        app_logger.info(f"Paper order accepted for {normalized_symbol} ({quantity})")
         return {"status": "success", "data": result}
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except HTTPException:
         raise
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         app_logger.error(f"Order placement error: {exc}")
         raise HTTPException(status_code=500, detail="Order processing failed")
