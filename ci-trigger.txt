@@ -29,3 +29,4 @@ Fresh ATR and India VIX position sizing verification.
 Fresh smart limit slippage protection verification.
 Fresh smart limit slippage boundary fix verification.
 Fresh final smart limit verification.
+Fresh catalog iterator fix verification.
