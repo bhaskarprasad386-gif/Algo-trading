@@ -10,6 +10,8 @@ class CandlePipeline:
     """Convert normalized ticks into completed candles, kept independent of storage."""
 
     def __init__(self, interval_seconds: int = 60):
+        if interval_seconds <= 0:
+            raise ValueError("interval_seconds must be positive")
         self.interval_seconds = interval_seconds
         self._builders: dict[str, CandleBuilder] = {}
 
@@ -27,12 +29,14 @@ class CandlePipeline:
     @staticmethod
     def _timestamp(tick: dict[str, Any]) -> datetime:
         value = tick.get("timestamp") or tick.get("exchange_timestamp")
+        if value is None:
+            raise ValueError("tick requires exchange timestamp")
         if isinstance(value, datetime):
             return value
         if isinstance(value, str):
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
             return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-        return datetime.now(timezone.utc)
+        raise ValueError("tick timestamp must be a datetime or ISO-8601 string")
 
     def update(self, tick: dict[str, Any]) -> Candle | None:
         symbol = str(tick.get("symbol") or tick.get("tradingSymbol") or tick.get("token") or "").strip()
