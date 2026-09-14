@@ -23,10 +23,14 @@ def load_validated_cash_future_checkpoint(
     This is deliberately a preflight primitive: it does not execute strategy code,
     mutate ledger records, or attempt unsafe restoration of arbitrary strategy state.
     """
-    ledger.validate_resume(
-        run_id,
-        data_source_fingerprint=data_source_fingerprint,
-    )
+    try:
+        ledger.validate_resume(
+            run_id,
+            data_source_fingerprint=data_source_fingerprint,
+        )
+    except ValueError as exc:
+        raise ValueError(f"unsafe Cash-Future resume: {exc}") from exc
+
     checkpoint = ledger.load_checkpoint(run_id)
     if checkpoint is None:
         raise ValueError(f"no Cash-Future checkpoint exists for run_id: {run_id}")
