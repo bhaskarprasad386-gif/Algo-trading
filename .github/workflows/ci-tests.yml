@@ -48,12 +48,11 @@ jobs:
         run: python -m pytest --maxfail=1 -q
         continue-on-error: true
 
-      # 2. Gemini Pro Auto-Writer & Comment Generator
+            # 2. Gemini Pro Auto-Writer (Fixed API URL & Payload Structure)
       - name: Gemini Pro Auto-Writer
         if: steps.run-tests.outcome == 'failure'
-        id: gemini-fixer
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY: \${{ secrets.GEMINI_API_KEY }}
         run: |
           echo "बैकएंड टेस्ट फेल हो गया है। Gemini Pro कोड को ऑटो-राइट कर रहा है..."
           python -c "
@@ -61,7 +60,7 @@ jobs:
 
           api_key = os.getenv('GEMINI_API_KEY')
           if not api_key:
-              print('Error: GEMINI_API_KEY नहीं मिली!')
+              print('Error: GEMINI_API_KEY nahi mili!')
               exit(1)
 
           # Files scan karna
@@ -75,41 +74,46 @@ jobs:
                   except:
                       pass
 
+          # Sahi aur updated Gemini 1.5 Pro endpoint URL
           url = f'https://googleapis.com{api_key}'
           headers = {'Content-Type': 'application/json'}
           
-          # AI ko code fix karne aur ek summary dene ko kehna
-          prompt = f'मेरा पायठन बैकएंड कोड फेल हो गया है। कोड में गलतियां सुधारो। मुझे रिस्पॉन्स में पहले एक छोटा summary दो कि क्या गलती थी (SUMMARY block में), फिर सुधरा हुआ कोड इस फॉर्मेट में देना: <<< FILE: file_path.py >>>\n[सुधरा हुआ कोड]\n<<< END >>>\n\nCode Snapshot:\n{code_snapshot}'
+          prompt = f'मेरा पायथन बैकएंड कोड फेल हो गया है। कोड में गलतियां सुधारो। मुझे रिस्पॉन्स में पहले एक छोटा summary दो कि क्या गलती थी SUMMARY block में, फिर सुधरा हुआ कोड इस फॉर्मेट में देना। कोई Markdown backticks (```python) मत लगाना:\n<<< FILE: file_path.py >>>\n[सुधरा हुआ कोड]\n<<< END >>>\n\nCode Snapshot:\n{code_snapshot}'
           
           data = {'contents': [{'parts': [{'text': prompt}]}]}
           response = requests.post(url, headers=headers, json=data)
           
           try:
               res_json = response.json()
-              ai_text = res_json['candidates']['content']['parts']['text']
+              ai_text = res_json['candidates'][0]['content']['parts'][0]['text']
               
-              # Explanation extract karna PR comment ke liye
+              # Summary block nikalna
               summary_match = re.search(r'SUMMARY:(.*?)(?:<<< FILE|$)', ai_text, re.DOTALL)
               summary_text = summary_match.group(1).strip() if summary_match else 'Gemini ne code fix kar diya hai.'
-              
-              # GitHub step output me summary save karna (PR Comment ke liye)
               with open('gemini_summary.txt', 'w') as sf:
                   sf.write(summary_text)
 
-              # Code files overwrite karna
+              # Code files extract aur clean karna
               matches = re.findall(r'<<< FILE: (.*?) >>>\n(.*?)<<< END >>>', ai_text, re.DOTALL)
               if matches:
                   for file_path, corrected_code in matches:
                       file_path = file_path.strip()
+                      # Clean any accidental markdown code blocks
+                      cleaned_code = re.sub(r'^```[a-zA-Z]*\n', '', corrected_code)
+                      cleaned_code = re.sub(r'\n```$', '', cleaned_code)
+                      
                       print(f'Updating file: {file_path}')
                       with open(file_path, 'w') as f:
-                          f.write(corrected_code.strip())
+                          f.write(cleaned_code.strip())
                   print('Gemini ne saari files successfully update kar di hain!')
               else:
-                  print('AI output format galat tha ya koi badlav nahi mila.')
+                  print('AI output format galat tha ya koi badlav nahi mila. Gemini ka actual output tha:\n', ai_text)
           except Exception as e:
               print('AI se response process karne me error:', e)
+              print('Raw response body tha:', response.text)
           "
+
+        
 
       # 3. PR par Automated Comment post karna (Sirf Pull Request ke waqt chalega)
       - name: Post Comment on PR
