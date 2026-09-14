@@ -196,6 +196,20 @@ class BacktestLedger:
             int(checkpoint.timestamp_ns),
             json.dumps(dict(checkpoint.state), sort_keys=True, default=str),
         )
+        current = self._db.execute(
+            "SELECT event_index,timestamp_ns FROM checkpoints WHERE run_id=?",
+            (checkpoint.run_id,),
+        ).fetchone()
+        if current is not None:
+            current_event_index, current_timestamp_ns = int(current[0]), int(current[1])
+            if checkpoint.event_index < current_event_index or (
+                checkpoint.event_index == current_event_index
+                and checkpoint.timestamp_ns < current_timestamp_ns
+            ):
+                raise ValueError(
+                    "checkpoint cannot move backwards "
+                    f"(stored_event_index={current_event_index}, requested_event_index={checkpoint.event_index})"
+                )
         self._db.execute(
             """
             INSERT INTO checkpoints(run_id,event_index,timestamp_ns,state_json)
