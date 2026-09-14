@@ -225,7 +225,20 @@ class BacktestLedger:
             return None
         return Checkpoint(row[0], int(row[1]), int(row[2]), json.loads(row[3]))
 
-    def iter_records(self, run_id: str, *, record_type: str | None = None) -> Iterator[LedgerRecord]:
+    def checkpoint_history(self, run_id: str) -> tuple[Checkpoint, ...]:
+        """Return all durable checkpoints in write order; latest remains available via load_checkpoint()."""
+        self._require_run(run_id)
+        rows = self._db.execute(
+            "SELECT run_id,event_index,timestamp_ns,state_json FROM checkpoint_history WHERE run_id=? ORDER BY id",
+            (run_id,),
+        ).fetchall()
+        return tuple(Checkpoint(r[0], int(r[1]), int(r[2]), json.loads(r[3])) for r in rows)
+
+    def iter_records(self, run_id: str, record_type: str | None = None,
+                     *, fetch_size: int = 256) -> Iterator[LedgerRecord]:
+        """Stream durable records without materializing the complete result set."""
+        if fetch_size <= 0:
+            raise ValueError("fetch_size must be positive")
         self._require_run(run_id)
         if record_type is None:
             cursor = self._db.execute(
@@ -237,8 +250,66 @@ class BacktestLedger:
                 "SELECT run_id,record_type,timestamp_ns,payload_json FROM records WHERE run_id=? AND record_type=? ORDER BY id",
                 (run_id, record_type),
             )
-        for row in cursor:
-            yield self._row_to_record(row)
+        while True:
+            rows = cursor.fetchmany(fetch_size)
+            if not rows:
+                break
+            for row in rows:
+                yield self._row_to_record(row)
+
+    def record_count(self, run_id: str, record_type: str | None = None) -> int:
+        """Return a durable record count without loading record payloads."""
+        self._require_run(run_id)
+        if record_type is None:
+            row = self._db.execute("SELECT COUNT(*) FROM records WHERE run_id=?", (run_id,)).fetchone()
+        else:
+            row = self._db.execute(
+                "SELECT COUNT(*) FROM records WHERE run_id=? AND record_type=?", (run_id, record_type)
+            ).fetchone()
+        return int(row[0])
+
+    def record_at(self, run_id: str, record_type: str | None, index: int) -> LedgerRecord:
+        """Read one durable record by zero-based result index."""
+        self._require_run(run_id)
+        if index < 0:
+            count = self.record_count(run_id, record_type)
+            index += count
+        if index < 0:
+            raise IndexError("record index out of range")
+        if record_type is None:
+            row = self._db.execute(
+                "SELECT run_id,record_type,timestamp_ns,payload_json FROM records WHERE run_id=? ORDER BY id LIMIT 1 OFFSET ?",
+                (run_id, index),
+            ).fetchone()
+        else:
+            row = self._db.execute(
+                "SELECT run_id,record_type,timestamp_ns,payload_json FROM records WHERE run_id=? AND record_type=? ORDER BY id LIMIT 1 OFFSET ?",
+                (run_id, record_type, index),
+            ).fetchone()
+        if row is None:
+            raise IndexError("record index out of range")
+        return self._row_to_record(row)
+
+    def records(self, run_id: str, record_type: str | None = None) -> tuple[LedgerRecord, ...]:
+        """Compatibility API that materializes all matching records."""
+        return tuple(self.iter_records(run_id, record_type))
+
+    def run_metadata(self, run_id: str) -> Mapping[str, Any] | None:
+        row = self._db.execute(
+            "SELECT strategy_id,strategy_version,strategy_hash,initial_capital,metadata_json,schema_version,data_source_fingerprint FROM runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "strategy_id": row[0],
+            "strategy_version": row[1],
+            "strategy_hash": row[2],
+            "initial_capital": row[3],
+            "metadata": json.loads(row[4]),
+            "schema_version": row[5],
+            "data_source_fingerprint": row[6],
+        }
 
     def iter_checkpoint_history(self, run_id: str) -> Iterator[Checkpoint]:
         self._require_run(run_id)
