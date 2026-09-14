@@ -1,3 +1,4 @@
+import math
 from uuid import uuid4
 
 from app.core.logger import app_logger
@@ -37,10 +38,10 @@ class OrderExecutionClient:
             raise ValueError("exchange is required")
         if transaction_type not in self.VALID_TRANSACTION_TYPES:
             raise ValueError("transaction_type must be BUY or SELL")
-        if quantity <= 0:
-            raise ValueError("quantity must be greater than zero")
-        if price < 0:
-            raise ValueError("price cannot be negative")
+        if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
+            raise ValueError("quantity must be a positive integer")
+        if not isinstance(price, (int, float)) or isinstance(price, bool) or not math.isfinite(float(price)) or price < 0:
+            raise ValueError("price must be finite and non-negative")
 
         app_logger.info(
             f"[{self.mode.upper()}] Placing {transaction_type} order for "
