@@ -46,7 +46,11 @@ class CashFutureGapDownloadPlanner:
         for session in sessions:
             timestamp = session.start_ns
             while timestamp <= session.end_ns:
-                timestamps.add(timestamp)
+                # Timestamp 0 is a sentinel/invalid historical timestamp, not
+                # a real market event. Session windows may use 0 as a synthetic
+                # lower bound, so never turn it into a repair request.
+                if timestamp > 0:
+                    timestamps.add(timestamp)
                 timestamp += interval_ns
         return tuple(sorted(timestamps))
 
