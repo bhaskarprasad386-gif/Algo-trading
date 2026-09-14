@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from app.core.logger import app_logger
 
 
@@ -49,7 +51,7 @@ class OrderExecutionClient:
             return {
                 "status": "success",
                 "mode": "paper",
-                "order_id": "PAPER_ORD_987654321",
+                "order_id": f"PAPER_{uuid4().hex}",
                 "symbol": symbol,
                 "exchange": exchange,
                 "transaction_type": transaction_type,
