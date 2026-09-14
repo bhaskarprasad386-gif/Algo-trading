@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+import math
 from typing import Iterable
 
 
@@ -34,6 +35,36 @@ class CashFutureHistoryPoint:
     roi_pct: float = 0.0
     expiry_date: date | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.timestamp, datetime):
+            raise ValueError("timestamp must be a datetime")
+        if not self.symbol or not self.contract_month:
+            raise ValueError("symbol and contract_month are required")
+        for value, name in (
+            (self.cash_price, "cash_price"), (self.future_price, "future_price"),
+            (self.gap, "gap"), (self.gap_pct, "gap_pct"),
+            (self.margin_required, "margin_required"), (self.charges, "charges"),
+            (self.funding_cost, "funding_cost"), (self.net_profit, "net_profit"),
+            (self.roi_pct, "roi_pct"),
+        ):
+            if not math.isfinite(float(value)):
+                raise ValueError(f"{name} must be finite")
+        if self.cash_price <= 0 or self.future_price <= 0:
+            raise ValueError("cash_price and future_price must be positive")
+        if self.lot_size <= 0:
+            raise ValueError("lot_size must be positive")
+        if self.margin_required < 0 or self.charges < 0 or self.funding_cost < 0:
+            raise ValueError("margin_required, charges and funding_cost must be non-negative")
+        for value, name in (
+            (self.volume, "volume"), (self.oi, "oi"), (self.cash_bid, "cash_bid"),
+            (self.cash_ask, "cash_ask"), (self.future_bid, "future_bid"),
+            (self.future_ask, "future_ask"), (self.cash_bid_qty, "cash_bid_qty"),
+            (self.cash_ask_qty, "cash_ask_qty"), (self.future_bid_qty, "future_bid_qty"),
+            (self.future_ask_qty, "future_ask_qty"),
+        ):
+            if value is not None and not math.isfinite(float(value)):
+                raise ValueError(f"{name} must be finite when provided")
+
 
 @dataclass(frozen=True)
 class HistoricalGapMatch:
@@ -59,7 +90,11 @@ class HistoricalGapOutcome:
 
 
 def find_historical_gap_matches(points: Iterable[CashFutureHistoryPoint], target_gap: float, tolerance: float = 0.0, contract_month: str | None = None) -> list[HistoricalGapMatch]:
-    lower_bound = target_gap - max(tolerance, 0.0)
+    if not math.isfinite(float(target_gap)) or not math.isfinite(float(tolerance)):
+        raise ValueError("target_gap and tolerance must be finite")
+    if tolerance < 0:
+        raise ValueError("tolerance must be non-negative")
+    lower_bound = target_gap - tolerance
     matches = []
     for point in points:
         if contract_month is not None and point.contract_month != contract_month:
@@ -80,16 +115,13 @@ def analyze_historical_gap_outcomes(
     charges_per_trade: float = 0.0,
     funding_cost_per_trade: float = 0.0,
 ) -> list[HistoricalGapOutcome]:
-    """Find prior gap occurrences and measure the first subsequent exit.
-
-    Each occurrence is evaluated only against later observations from the same
-    symbol and contract month. The exit is the first observation at/below
-    ``exit_gap``, expiry, or ``max_holding_days``. No CURRENT/NEAR mixing occurs.
-    """
+    """Find prior gap occurrences and measure the first subsequent exit."""
     if max_holding_days <= 0:
         raise ValueError("max_holding_days must be positive")
     if charges_per_trade < 0 or funding_cost_per_trade < 0:
         raise ValueError("charges_per_trade and funding_cost_per_trade must be non-negative")
+    if not math.isfinite(float(exit_gap)):
+        raise ValueError("exit_gap must be finite")
     ordered = sorted(points, key=lambda p: p.timestamp)
     matches = find_historical_gap_matches(ordered, target_gap, tolerance, contract_month)
     outcomes: list[HistoricalGapOutcome] = []
@@ -124,13 +156,27 @@ def analyze_historical_gap_outcomes(
             continue
 
         duration_days = (exit_point.timestamp - match.timestamp).total_seconds() / 86400.0
-        gross = (match.gap - exit_point.gap) * max(1, next(
-            p.lot_size for p in later if p.timestamp == exit_point.timestamp
-        ))
+        gross = (match.gap - exit_point.gap) * next(
+            p.lot_size for p in later
+            if p.timestamp == exit_point.timestamp
+            and p.symbol == match.symbol
+            and p.contract_month == match.contract_month
+        )
         net = gross - charges_per_trade - funding_cost_per_trade
-        entry_point = next(p for p in ordered if p.timestamp == match.timestamp and p.symbol == match.symbol and p.contract_month == match.contract_month)
+        entry_point = next(
+            p for p in ordered
+            if p.timestamp == match.timestamp
+            and p.symbol == match.symbol
+            and p.contract_month == match.contract_month
+        )
         capital = entry_point.cash_price * entry_point.lot_size + entry_point.margin_required
-        roi = net / capital * 100.0 if capital else 0.0
+        if not math.isfinite(capital) or capital <= 0:
+            raise ValueError("entry capital must be finite and positive")
+        if not math.isfinite(net):
+            raise ValueError("historical outcome P&L must be finite")
+        roi = net / capital * 100.0
+        if not math.isfinite(roi):
+            raise ValueError("historical outcome ROI must be finite")
         outcomes.append(HistoricalGapOutcome(match, exit_point.timestamp, exit_point.gap, duration_days, exit_reason, net, roi))
 
     return outcomes
