@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: backend-tests-${{ github.ref }}
+  group: backend-tests-\${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -48,7 +48,7 @@ jobs:
         run: python -m pytest --maxfail=1 -q
         continue-on-error: true
 
-            # 2. Gemini Pro Auto-Writer (Fixed API URL & Payload Structure)
+      # 2. Gemini Pro Auto-Writer (Fixed URL, Format, and Indexing)
       - name: Gemini Pro Auto-Writer
         if: steps.run-tests.outcome == 'failure'
         env:
@@ -74,7 +74,7 @@ jobs:
                   except:
                       pass
 
-          # Sahi aur updated Gemini 1.5 Pro endpoint URL
+          # Sahi aur working Gemini 1.5 Pro endpoint URL
           url = f'https://googleapis.com{api_key}'
           headers = {'Content-Type': 'application/json'}
           
@@ -112,8 +112,6 @@ jobs:
               print('AI se response process karne me error:', e)
               print('Raw response body tha:', response.text)
           "
-
-        
 
       # 3. PR par Automated Comment post karna (Sirf Pull Request ke waqt chalega)
       - name: Post Comment on PR
