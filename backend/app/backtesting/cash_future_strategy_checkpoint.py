@@ -67,7 +67,7 @@ class CashFutureStrategyCheckpoint:
             try:
                 date.fromisoformat(str(payload["last_timestamp"]))
             except (TypeError, ValueError):
-                raise ValueError("checkpoint last_timestamp must be ISO date/datetime") from exc
+                raise ValueError("checkpoint last_timestamp invalid ISO timestamp") from exc
         _validate_number(payload["realized_capital"], "realized_capital")
         _validate_number(payload["reserved_margin"], "reserved_margin")
         if not isinstance(payload["blocked_entries"], int) or isinstance(payload["blocked_entries"], bool):
