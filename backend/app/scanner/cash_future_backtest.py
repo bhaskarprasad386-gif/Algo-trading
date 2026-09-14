@@ -51,11 +51,11 @@ def _legacy_gap_profit(entry: CashFutureHistoryPoint, exit_point: CashFutureHist
 
 
 def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfig) -> dict:
-    """Backtest one contract without materializing the input iterable.
+    """Backtest one symbol/contract without materializing the input iterable.
 
-    A new position may be opened before expiry, but never on or after the
-    contract's expiry date. An already-open position is still allowed to reach
-    the expiry day and is then closed by the normal expiry exit path.
+    The input must be chronological and contain one symbol and one contract
+    month. Mixing symbols would otherwise allow an entry from one stock to be
+    closed by another stock's observation and corrupt the trade result.
     """
     trades = []
     equity = 0.0
@@ -65,14 +65,25 @@ def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfi
     equity_curve = []
     entry = None
     seen_contract: str | None = None
+    seen_symbol: str | None = None
+    previous_timestamp = None
 
     for point in points:
         if config.contract_month is not None and point.contract_month != config.contract_month:
             continue
+        if previous_timestamp is not None and point.timestamp < previous_timestamp:
+            raise ValueError("backtest input must be ordered by timestamp")
+        previous_timestamp = point.timestamp
+
         if seen_contract is None:
             seen_contract = point.contract_month
         elif point.contract_month != seen_contract:
             raise ValueError("backtest input contains multiple contract months; run each contract separately")
+
+        if seen_symbol is None:
+            seen_symbol = point.symbol
+        elif point.symbol != seen_symbol:
+            raise ValueError("backtest input contains multiple symbols; run each symbol separately")
 
         if entry is None:
             expiry_day = point.expiry_date is not None and point.timestamp.date() >= point.expiry_date
