@@ -31,3 +31,4 @@ Fresh smart limit slippage boundary fix verification.
 Fresh final smart limit verification.
 Fresh catalog iterator fix verification.
 Fresh rollover segment verification after non-consecutive session fix.
+Fresh download report status contract verification.
