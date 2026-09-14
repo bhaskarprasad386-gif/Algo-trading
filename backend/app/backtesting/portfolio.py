@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
+import math
 
 from app.backtesting.config import DEFAULT_PAPER_CAPITAL
 from app.backtesting.execution import ExecutionSide, SimFill
@@ -22,18 +23,18 @@ class RiskConfig:
     max_drawdown: float | None = None
 
     def __post_init__(self) -> None:
-        if not 0 < self.initial_margin_rate <= 1:
-            raise ValueError("initial_margin_rate must be in (0, 1]")
+        if not math.isfinite(float(self.initial_margin_rate)) or not 0 < self.initial_margin_rate <= 1:
+            raise ValueError("initial_margin_rate must be finite and in (0, 1]")
         maintenance = self.initial_margin_rate if self.maintenance_margin_rate is None else self.maintenance_margin_rate
-        if not 0 < maintenance <= 1:
-            raise ValueError("maintenance_margin_rate must be in (0, 1]")
+        if not math.isfinite(float(maintenance)) or not 0 < maintenance <= 1:
+            raise ValueError("maintenance_margin_rate must be finite and in (0, 1]")
         if maintenance > self.initial_margin_rate:
             raise ValueError("maintenance_margin_rate cannot exceed initial_margin_rate")
         object.__setattr__(self, "maintenance_margin_rate", maintenance)
         for name in ("max_gross_notional", "max_net_notional", "max_leverage", "max_drawdown"):
             value = getattr(self, name)
-            if value is not None and value < 0:
-                raise ValueError(f"{name} cannot be negative")
+            if value is not None and (not math.isfinite(float(value)) or value < 0):
+                raise ValueError(f"{name} must be finite and non-negative")
         if self.max_position_quantity is not None and self.max_position_quantity <= 0:
             raise ValueError("max_position_quantity must be positive")
 
@@ -83,8 +84,8 @@ class Portfolio:
     """Deterministic capital, margin, risk and P&L accounting."""
 
     def __init__(self, initial_cash: float = DEFAULT_PAPER_CAPITAL, risk_config: RiskConfig | None = None) -> None:
-        if initial_cash < 0:
-            raise ValueError("initial_cash cannot be negative")
+        if not math.isfinite(float(initial_cash)) or initial_cash < 0:
+            raise ValueError("initial_cash must be finite and non-negative")
         self.initial_cash = float(initial_cash)
         self.cash = float(initial_cash)
         self.risk_config = risk_config or RiskConfig()
@@ -107,8 +108,8 @@ class Portfolio:
         gross = net = unrealized = 0.0
         for p in self._positions.values():
             mark = marks.get(p.instrument, p.average_price)
-            if mark <= 0:
-                raise ValueError(f"mark must be positive for {p.instrument}")
+            if not math.isfinite(float(mark)) or mark <= 0:
+                raise ValueError(f"mark must be finite and positive for {p.instrument}")
             notional = p.quantity * mark
             gross += abs(notional)
             net += notional
@@ -118,8 +119,8 @@ class Portfolio:
     def reserve_margin(self, order_id: str, amount: float, marks: dict[str, float] | None = None) -> float:
         if not order_id.strip():
             raise ValueError("order_id is required")
-        if amount < 0:
-            raise ValueError("reserved margin cannot be negative")
+        if not math.isfinite(float(amount)) or amount < 0:
+            raise ValueError("reserved margin must be finite and non-negative")
         if order_id in self._reserved_margin:
             raise RiskViolation("margin already reserved for order")
         available = self.snapshot(marks).available_margin
@@ -134,7 +135,7 @@ class Portfolio:
             released = current
             self._reserved_margin.pop(order_id, None)
             return released
-        if amount < 0 or amount > current + 1e-9:
+        if not math.isfinite(float(amount)) or amount < 0 or amount > current + 1e-9:
             raise ValueError("invalid margin release amount")
         remaining = current - amount
         if remaining <= 1e-9:
@@ -144,8 +145,10 @@ class Portfolio:
         return amount
 
     def validate_fill(self, fill: SimFill, marks: dict[str, float] | None = None) -> None:
-        if fill.quantity <= 0 or fill.price <= 0:
-            raise ValueError("fill quantity and price must be positive")
+        if fill.quantity <= 0 or not math.isfinite(float(fill.price)) or fill.price <= 0:
+            raise ValueError("fill quantity and price must be finite and positive")
+        if not math.isfinite(float(fill.fee)) or fill.fee < 0:
+            raise ValueError("fill fee must be finite and non-negative")
         marks = dict(marks or {})
         marks.setdefault(fill.instrument, fill.price)
         old = self._positions.get(fill.instrument, Position(fill.instrument))
@@ -166,11 +169,7 @@ class Portfolio:
         projected_margin = projected_gross * cfg.initial_margin_rate
         own_reservation = self._reserved_margin.get(fill.order_id, 0.0)
         other_reservations = max(0.0, self.reserved_margin - own_reservation)
-        reduces_position_risk = (
-            old.quantity != 0
-            and abs(new_qty) < abs(old.quantity)
-            and (old.quantity * new_qty >= 0 or new_qty == 0)
-        )
+        reduces_position_risk = old.quantity != 0 and abs(new_qty) < abs(old.quantity) and (old.quantity * new_qty >= 0 or new_qty == 0)
         if not reduces_position_risk and projected_margin > equity - other_reservations + 1e-9:
             raise RiskViolation("insufficient available margin")
         if cfg.max_leverage is not None and equity > 0 and projected_gross / equity > cfg.max_leverage:
@@ -250,11 +249,7 @@ class Portfolio:
         return self.snapshot(marks)
 
     def forced_liquidation(self, fills: Iterable[SimFill], marks: dict[str, float] | None = None) -> PortfolioSnapshot:
-        """Atomically apply only position-reducing fills after a maintenance breach.
-
-        The batch must start from a maintenance-margin breach and must restore
-        maintenance headroom. No new exposure or position reversal is permitted.
-        """
+        """Atomically apply only position-reducing fills after a maintenance breach."""
         marks = dict(marks or {})
         before = self.snapshot(marks)
         if before.equity + 1e-9 >= before.maintenance_margin:
@@ -284,11 +279,7 @@ class Portfolio:
         return after
 
     def restore_state(self, state: Mapping[str, Any]) -> None:
-        """Restore a durable checkpoint produced by :meth:`export_state`.
-
-        The checkpoint is validated before replacing live state so a malformed
-        resume payload cannot partially mutate the portfolio.
-        """
+        """Restore a durable checkpoint after strict finite-value validation."""
         if not isinstance(state, Mapping):
             raise ValueError("invalid portfolio checkpoint")
         try:
@@ -298,6 +289,8 @@ class Portfolio:
             peak_equity = float(state["peak_equity"])
             raw_positions = state.get("positions", [])
             raw_reserved = state.get("reserved_margin", {})
+            if not all(math.isfinite(v) for v in (cash, realized_pnl, fees, peak_equity)):
+                raise ValueError("portfolio checkpoint contains non-finite values")
             if not isinstance(raw_positions, (list, tuple)) or not isinstance(raw_reserved, Mapping):
                 raise ValueError("invalid portfolio checkpoint collections")
             positions: dict[str, Position] = {}
@@ -308,11 +301,11 @@ class Portfolio:
                 quantity = int(raw["quantity"])
                 average_price = float(raw["average_price"])
                 position_realized = float(raw["realized_pnl"])
-                if not instrument or quantity == 0 or average_price <= 0:
+                if not instrument or quantity == 0 or not math.isfinite(average_price) or average_price <= 0 or not math.isfinite(position_realized):
                     raise ValueError("invalid portfolio position checkpoint values")
                 positions[instrument] = Position(instrument, quantity, average_price, position_realized)
             reserved = {str(order_id): float(amount) for order_id, amount in raw_reserved.items()}
-            if any(not order_id or amount < 0 for order_id, amount in reserved.items()):
+            if any(not order_id or not math.isfinite(amount) or amount < 0 for order_id, amount in reserved.items()):
                 raise ValueError("invalid reserved margin checkpoint")
             if cash < 0 or fees < 0 or peak_equity < 0:
                 raise ValueError("invalid portfolio checkpoint values")
