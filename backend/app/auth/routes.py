@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -15,7 +16,7 @@ from app.models import PasswordResetToken, TradingAccount, User
 router = APIRouter(prefix="/api/v1/auth", tags=["User Authentication"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
-PAPER_STARTING_BALANCE = 1_000_000.0
+PAPER_STARTING_BALANCE = 10_000_000.0
 MOBILE_RE = re.compile(r"^\+?[1-9]\d{9,14}$")
 PASSWORD_RESET_TTL_MINUTES = 15
 GENERIC_RESET_MESSAGE = "If the account exists, reset instructions will be sent to the registered contact."
@@ -103,7 +104,6 @@ def _hash_reset_token(token: str) -> str:
 
 
 def _create_reset_token(db: Session, user: User, now: datetime | None = None) -> str:
-    """Create a single-use token; only its SHA-256 digest is persisted."""
     now = now or datetime.utcnow()
     db.query(PasswordResetToken).filter(
         PasswordResetToken.user_id == user.id,
@@ -145,9 +145,13 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         full_name=payload.full_name.strip() if payload.full_name else None,
     )
     db.add(user)
-    db.flush()
-    _ensure_account(db, user)
-    db.commit()
+    try:
+        db.flush()
+        _ensure_account(db, user)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Email or mobile number already registered") from exc
     db.refresh(user)
     return _issue_token(user)
 
@@ -174,12 +178,6 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 
 @router.post("/password-reset/request")
 def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db)):
-    """Create a short-lived reset token without revealing whether an account exists.
-
-    A delivery provider must pass the raw token to the registered email/SMS channel in
-    production. The API deliberately never returns the token, preventing account takeover
-    through this endpoint alone.
-    """
     user = _find_user(db, payload.identifier)
     if user and user.is_active:
         _create_reset_token(db, user)
