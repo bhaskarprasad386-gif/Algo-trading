@@ -9,6 +9,7 @@ T = TypeVar("T")
 @dataclass(frozen=True)
 class RetryPolicy:
     max_attempts: int = 2
+    retryable: bool = False
 
     def __post_init__(self) -> None:
         if self.max_attempts < 1:
@@ -24,14 +25,15 @@ def execute_with_retry(
     policy: RetryPolicy | None = None,
     fallback: Callable[[], T] | None = None,
 ) -> T:
-    """Retry the primary operation, then optionally use a fallback once."""
+    """Execute once by default; retries require an explicitly retry-safe operation."""
     active_policy = policy or RetryPolicy()
+    attempts = active_policy.max_attempts if active_policy.retryable else 1
     last_error: Exception | None = None
 
-    for _ in range(active_policy.max_attempts):
+    for _ in range(attempts):
         try:
             return operation()
-        except Exception as exc:  # adapter failures are intentionally normalized here
+        except Exception as exc:
             last_error = exc
 
     if fallback is not None:
