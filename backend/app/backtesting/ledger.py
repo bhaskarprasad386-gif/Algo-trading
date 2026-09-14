@@ -188,7 +188,7 @@ class BacktestLedger:
         if checkpoint.event_index < 0:
             raise ValueError("event_index must be positive")
         if checkpoint.timestamp_ns < 0:
-            raise ValueError("checkpoint timestamp cannot be negative")
+            raise ValueError("checkpoint timestamp is invalid")
         self._require_run(checkpoint.run_id)
         params = (
             checkpoint.run_id,
