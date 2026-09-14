@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from .catalog_futures_rollover import build_catalog_futures_rollover_windows, build_catalog_futures_rollover_windows_for_universe
 from .continuous_futures import build_continuous_futures_series_from_catalog
 from .contract_master import ContractMasterCatalog
-from .fno_rollover import FNORolloverWindow, validate_futures_rollover_chain
+from .fno_rollover import FNORolloverWindow
 from .historical_catalog import HistoricalCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_ingest import HistoricalFetchRequest, HistoricalIngestionService, HistoricalSource
@@ -35,13 +35,29 @@ def _validate_inputs(*, source: str, timeframe: str, interval_ns: int, max_reque
 
 
 def _validate_rollover_windows(windows: tuple[FNORolloverWindow, ...]) -> None:
-    """Validate each underlying/instrument rollover chain independently."""
-    if not windows: return
+    """Validate acquisition windows without requiring calendar-day contiguity.
+
+    Acquisition may intentionally receive sparse expiry/session windows (for
+    example one window per contract expiry). The strict continuous-chain
+    validator belongs to ``fno_rollover`` and is used when a continuous date
+    mapping is being constructed. Here we only require valid identity,
+    chronological ordering, and no overlap within each chain.
+    """
     groups: dict[tuple[str, str], list[FNORolloverWindow]] = {}
     for window in windows:
+        if not window.underlying.strip() or not window.instrument_type.strip():
+            raise ValueError("underlying and instrument_type are required")
+        if not window.contract_token.strip():
+            raise ValueError("contract_token is required")
+        if window.start_date > window.end_date:
+            raise ValueError("rollover window start_date cannot exceed end_date")
         groups.setdefault((window.underlying, window.instrument_type), []).append(window)
-    for (underlying, instrument_type), group in groups.items():
-        validate_futures_rollover_chain(group, underlying=underlying, instrument_type=instrument_type)
+
+    for group in groups.values():
+        ordered = sorted(group, key=lambda window: (window.start_date, window.end_date, window.contract_token))
+        for previous, current in zip(ordered, ordered[1:]):
+            if current.start_date <= previous.end_date:
+                raise ValueError("rollover chain windows overlap")
 
 
 def _window_sessions(window: FNORolloverWindow, calendar: TradingCalendar) -> tuple[tuple[int, int], ...]:
@@ -121,7 +137,7 @@ def acquire_continuous_futures_history(catalog: HistoricalCatalog, source: Histo
         if job_id is not None or run_id is not None: raise ValueError("job_id and run_id require job_store")
         execution = runner.run(gap_aware_source, plan, should_skip=should_skip, should_accept=should_accept)
     else:
-        if not job_id or not run_id: raise ValueError("job_store requires both job_id and run_id")
+        if not job_id or not run_id: raise ValueError("job_id and run_id require both job_id and run_id")
         execution = runner.run_durable(gap_aware_source, plan, job_store=job_store, job_id=job_id, run_id=run_id, should_skip=should_skip, should_accept=should_accept)
     return ContinuousFuturesAcquisitionReport(windows, plan, execution)
 
