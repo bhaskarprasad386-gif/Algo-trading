@@ -30,6 +30,13 @@ class CashFuturePortfolioStrategyRun:
 def _unrealized_profit(entry: CashFutureHistoryPoint, current: CashFutureHistoryPoint, execution_model: str, quantity: float) -> float:
     if execution_model == "gap":
         return _legacy_gap_profit(entry, current) * (quantity / entry.lot_size)
+    # An entry observation can legitimately contain only entry-side quotes.
+    # Do not call the executable-spread calculator until genuine exit-side
+    # quotes exist; otherwise the portfolio runner would fail while merely
+    # marking the freshly opened position to market.
+    exit_prices = (current.cash_bid, current.future_ask)
+    if any(price is None or float(price) <= 0 for price in exit_prices):
+        return 0.0
     return _executable_spread_profit(entry, current) * (quantity / entry.lot_size)
 
 
