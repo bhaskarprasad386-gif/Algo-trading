@@ -182,7 +182,10 @@ def test_runner_materializes_catalog_rows_into_cash_future_history(monkeypatch):
     acquisition = type("Acquisition", (), {"results": (type("Result", (), {"queue": queue, "coverage": type("Coverage", (), {"complete": True})()})(),)})()
 
     monkeypatch.setattr(runner, "build_angelone_cash_future_acquisition_service", lambda *args, **kwargs: object())
-    monkeypatch.setattr(runner, "acquire_cash_future_universe", lambda **kwargs: acquisition)
+    monkeypatch.setattr(
+        "app.backtesting.cash_future_universe_pipeline.acquire_cash_future_universe",
+        lambda **kwargs: acquisition,
+    )
 
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
