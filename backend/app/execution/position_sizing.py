@@ -50,16 +50,15 @@ def calculate_dynamic_quantity(
         (stop_loss_price, "stop_loss_price"),
         (atr, "atr"),
         (india_vix, "india_vix"),
-        (lot_size, "lot_size"),
     ):
         if not math.isfinite(float(value)):
             raise ValueError(f"{name} must be finite")
+    if isinstance(lot_size, bool) or not isinstance(lot_size, int) or lot_size < 1:
+        raise ValueError("lot_size must be a positive integer")
     if entry_price <= 0 or stop_loss_price <= 0:
         raise ValueError("prices must be positive")
     if atr <= 0 or india_vix <= 0:
         raise ValueError("ATR and India VIX must be positive")
-    if lot_size < 1 or int(lot_size) != lot_size:
-        raise ValueError("lot_size must be a positive integer")
 
     active_config = config or PositionSizingConfig(risk_amount=10_000.0)
     stop_distance = abs(entry_price - stop_loss_price)
@@ -76,4 +75,4 @@ def calculate_dynamic_quantity(
     if not math.isfinite(risk_budget) or risk_budget <= 0:
         raise ValueError("risk_budget must be finite and positive")
     units = math.floor(risk_budget / risk_per_unit)
-    return (units // int(lot_size)) * int(lot_size)
+    return (units // lot_size) * lot_size
