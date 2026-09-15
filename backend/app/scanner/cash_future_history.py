@@ -117,11 +117,12 @@ def find_historical_gap_matches(points: Iterable[CashFutureHistoryPoint], target
     if tolerance < 0:
         raise ValueError("tolerance must be non-negative")
     lower_bound = target_gap - tolerance
+    upper_bound = target_gap + tolerance
     matches = []
     for point in points:
         if contract_month is not None and point.contract_month != contract_month:
             continue
-        if point.gap < lower_bound:
+        if point.gap < lower_bound or point.gap > upper_bound:
             continue
         matches.append(HistoricalGapMatch(point.timestamp, point.symbol, point.contract_month, point.gap, point.gap_pct, point.net_profit, point.roi_pct, point.gap - target_gap))
     return sorted(matches, key=lambda item: item.timestamp, reverse=True)
