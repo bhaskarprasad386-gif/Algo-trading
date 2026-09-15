@@ -1,5 +1,7 @@
 from datetime import date, datetime, timedelta
 import json
+import math
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -27,6 +29,12 @@ from app.scanner.backtest_jobs import (
 from app.scanner.result_chunk_store import delete_result_chunks_batched
 
 router = APIRouter(prefix="/api/v1/scanner", tags=["Scanner"])
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def _history_now() -> datetime:
+    """Return the naive IST timestamp used by the history store."""
+    return datetime.now(IST).replace(tzinfo=None)
 
 
 @router.get("/cash-future/evaluate")
@@ -66,19 +74,53 @@ def save_cash_future_history(symbol: str, contract_month: str, timestamp: dateti
     future_price: float, lot_size: int, margin_required: float, charges: float = 0.0,
     funding_cost: float = 0.0, volume: float | None = None, oi: float | None = None,
     expiry_date: date | None = None, db: Session = Depends(get_db)):
-    if cash_price <= 0 or future_price <= 0 or lot_size <= 0 or margin_required < 0:
-        raise HTTPException(status_code=400, detail="invalid Cash-Future history values")
-    gap = future_price - cash_price
-    gap_pct = gap / cash_price * 100.0
-    gross = gap * lot_size
-    net = gross - charges - funding_cost
-    deployed = cash_price * lot_size + margin_required
-    roi = net / deployed * 100.0 if deployed else 0.0
-    point = CashFutureHistoryPoint(timestamp, symbol.upper(), contract_month, cash_price, future_price, gap, gap_pct,
-                                   lot_size, margin_required, charges, funding_cost, net, roi, expiry_date)
+    values = {
+        "cash_price": cash_price, "future_price": future_price, "margin_required": margin_required,
+        "charges": charges, "funding_cost": funding_cost,
+    }
+    try:
+        if type(lot_size) is not int or lot_size <= 0:
+            raise ValueError("lot_size must be a positive integer")
+        for name, value in values.items():
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                raise ValueError(f"{name} must be finite")
+        for name, value in (("volume", volume), ("oi", oi)):
+            if value is not None:
+                numeric = float(value)
+                if not math.isfinite(numeric) or numeric < 0:
+                    raise ValueError(f"{name} must be finite and non-negative when supplied")
+        if cash_price <= 0 or future_price <= 0 or margin_required < 0 or charges < 0 or funding_cost < 0:
+            raise ValueError("invalid Cash-Future history values")
+        gap = future_price - cash_price
+        gap_pct = gap / cash_price * 100.0
+        gross = gap * lot_size
+        net = gross - charges - funding_cost
+        deployed = cash_price * lot_size + margin_required
+        if deployed <= 0:
+            raise ValueError("deployed capital must be positive")
+        roi = net / deployed * 100.0
+        point = CashFutureHistoryPoint(
+            timestamp=timestamp,
+            symbol=symbol.upper(),
+            contract_month=contract_month,
+            cash_price=cash_price,
+            future_price=future_price,
+            gap=gap,
+            gap_pct=gap_pct,
+            lot_size=lot_size,
+            margin_required=margin_required,
+            volume=volume,
+            oi=oi,
+            charges=charges,
+            funding_cost=funding_cost,
+            net_profit=net,
+            roi_pct=roi,
+            expiry_date=expiry_date,
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     row = save_history_point(db, point, expiry_date=expiry_date)
-    row.volume = volume
-    row.oi = oi
     db.commit()
     return {"status": "success", "id": row.id, "timestamp": row.timestamp.isoformat(), "gap": row.gap, "gap_pct": row.gap_pct}
 
@@ -96,7 +138,7 @@ def collect_cash_future_history(symbols: str = Query(...), db: Session = Depends
 
 @router.get("/cash-future/history")
 def get_cash_future_history(symbol: str, contract_month: str, days: int = Query(30, ge=1, le=3650), db: Session = Depends(get_db)):
-    end = datetime.utcnow()
+    end = _history_now()
     points = read_history(db, symbol, contract_month, end - timedelta(days=days), end)
     return {"status": "success", "contract_month": contract_month, "count": len(points), "data": [p.__dict__ for p in points]}
 
@@ -105,7 +147,7 @@ def get_cash_future_history(symbol: str, contract_month: str, days: int = Query(
 def query_cash_future_gap(symbol: str, contract_month: str, target_gap: float, tolerance: float = Query(0.0, ge=0),
     days: int = Query(365, ge=1, le=3650), exit_gap: float = Query(0.0), max_holding_days: int = Query(30, ge=1, le=3650),
     charges_per_trade: float = Query(0.0, ge=0), funding_cost_per_trade: float = Query(0.0, ge=0), db: Session = Depends(get_db)):
-    end = datetime.utcnow()
+    end = _history_now()
     points = read_history(db, symbol, contract_month, end - timedelta(days=days), end)
     matches = find_historical_gap_matches(points, target_gap, tolerance, contract_month)
     outcomes = analyze_historical_gap_outcomes(points, target_gap=target_gap, tolerance=tolerance,
@@ -118,7 +160,7 @@ def query_cash_future_gap(symbol: str, contract_month: str, target_gap: float, t
 
 @router.get("/cash-future/graph")
 def cash_future_graph(symbol: str, contract_month: str, days: int = Query(30, ge=1, le=3650), db: Session = Depends(get_db)):
-    end = datetime.utcnow()
+    end = _history_now()
     points = read_history(db, symbol, contract_month, end - timedelta(days=days), end)
     return {"status": "success", "scanner": "cash-future", "series": build_graph_series(points, contract_month)}
 
@@ -127,7 +169,7 @@ def cash_future_graph(symbol: str, contract_month: str, days: int = Query(30, ge
 def cash_future_backtest(symbol: str, contract_month: str = Query(...), days: int = Query(365, ge=1, le=3650),
     min_entry_gap: float = Query(0.0), exit_gap: float = Query(0.0), charges_per_trade: float = Query(0.0, ge=0),
     funding_cost_per_trade: float = Query(0.0, ge=0), max_holding_days: int = Query(30, ge=1, le=3650), db: Session = Depends(get_db)):
-    end = datetime.utcnow()
+    end = _history_now()
     start = end - timedelta(days=days)
     points = read_history(db, symbol, contract_month, start, end)
     if not points:
