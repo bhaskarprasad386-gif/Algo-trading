@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from .nse_session_calendars import nse_session_windows
+from .nse_session_calendars import (
+    NSE_EQUITY_TRADING_HOLIDAYS_2026,
+    nse_session_windows,
+)
 from .session_gap_planner import SessionWindow
 
 
