@@ -46,6 +46,24 @@ def test_dynamic_queue_state_is_checkpoint_serializable():
     assert restored.market_state()["open_orders"][0]["dynamic_queue_ahead"] == 3
 
 
+def test_restore_market_state_recreates_open_order_lifecycle():
+    engine = EventBacktestEngine(execution=ExecutionSimulator())
+    order = SimOrder("restore-life", "NIFTY", ExecutionSide.BUY, 2, order_type=OrderType.LIMIT, limit_price=100.0, queue_ahead_quantity=3, submitted_at_ns=1)
+    engine._lifecycle(order, 1)
+    engine._open_orders[order.order_id] = order
+    engine._dynamic_queue_ahead[order.order_id] = 2
+    engine._queue_lifecycles[order.order_id] = __import__("app.backtesting.queue_lifecycle", fromlist=["QueueLifecycleState"]).QueueLifecycleState(2, 1, True)
+    state = engine.market_state()
+
+    restored = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(initial_cash=1_000_000))
+    restored.restore_market_state(state)
+
+    assert restored.open_orders[order.order_id].order_id == order.order_id
+    assert restored.order_states[order.order_id].status.value == "ACCEPTED"
+    assert restored.order_states[order.order_id].remaining_quantity == order.quantity
+    assert restored.queue_states[order.order_id].queue_ahead_quantity == 2
+
+
 def test_partial_fill_preserves_source_backed_dynamic_queue():
     engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(initial_cash=1_000_000))
     order = SimOrder("dyn-4", "NIFTY", ExecutionSide.BUY, 4, order_type=OrderType.LIMIT, limit_price=100.0, queue_ahead_quantity=8)
