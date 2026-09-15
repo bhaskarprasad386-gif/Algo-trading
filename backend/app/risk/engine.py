@@ -68,7 +68,10 @@ class RiskEngine:
         position_after = projected_position if projected_position is not None else current_position + quantity
         if abs(position_after) > self.limits.max_position_quantity:
             return False, "position limit exceeded"
-        if realized_pnl <= -self.limits.max_loss:
+        # Use the worst known P&L so callers cannot bypass the engine's
+        # internally tracked loss by supplying a less-negative external value.
+        effective_realized_pnl = min(self._realized_pnl, float(realized_pnl))
+        if effective_realized_pnl <= -self.limits.max_loss:
             return False, "maximum loss limit reached"
         return True, "risk checks passed"
 
