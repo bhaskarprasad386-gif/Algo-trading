@@ -33,6 +33,11 @@ class HistoricalCatalogEventReplay:
     def __init__(self, catalog: HistoricalCatalog) -> None:
         self.catalog = catalog
 
+    @staticmethod
+    def _data_resolution(legs: tuple[CatalogReplayLeg, ...]) -> str:
+        timeframes = tuple(dict.fromkeys(leg.timeframe for leg in legs))
+        return timeframes[0] if len(timeframes) == 1 else "mixed"
+
     def events(
         self,
         legs: tuple[CatalogReplayLeg, ...],
@@ -48,6 +53,7 @@ class HistoricalCatalogEventReplay:
         if len({leg.event_key for leg in legs}) != len(legs):
             raise ValueError("replay event keys must be unique")
 
+        data_resolution = self._data_resolution(legs)
         streams: dict[str, tuple[HistoricalRecord, ...]] = {}
         for leg in legs:
             streams[leg.event_key] = tuple(
@@ -79,7 +85,7 @@ class HistoricalCatalogEventReplay:
                     continue
                 yield {
                     "timestamp_ns": timestamp_ns,
-                    "data_resolution": legs[0].timeframe,
+                    "data_resolution": data_resolution,
                     **{
                         leg.event_key: by_leg[leg.event_key][timestamp_ns].payload
                         for leg in legs
@@ -89,7 +95,7 @@ class HistoricalCatalogEventReplay:
                 continue
             yield {
                 "timestamp_ns": timestamp_ns,
-                "data_resolution": legs[0].timeframe,
+                "data_resolution": data_resolution,
                 **{
                     leg.event_key: by_leg[leg.event_key][timestamp_ns].payload
                     for leg in legs
