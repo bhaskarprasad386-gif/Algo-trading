@@ -76,3 +76,11 @@ def test_liquidity_uses_real_catalog_fields():
     ]
     selected = ArbitrageUniversePolicy.liquid(contracts, min_volume=100, min_oi=1000, max_spread_pct=5)
     assert [c.symbol for c in selected] == ["LIQ"]
+
+
+def test_liquidity_rejects_zero_bid_and_ask_quotes():
+    zero_quote = ArbitrageContract(
+        "NSE", "EQUITY_FNO", "ZERO", 20260924,
+        volume=1000, oi=5000, bid=0.0, ask=0.0,
+    )
+    assert ArbitrageUniversePolicy.liquid([zero_quote]) == ()
