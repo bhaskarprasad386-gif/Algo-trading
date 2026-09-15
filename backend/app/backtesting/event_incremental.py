@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from math import sqrt
+from math import isfinite, sqrt
 from typing import Callable
 
 from app.backtesting.engine import BacktestConfig, BacktestResult, BacktestTrade, EventContext, EventStrategy, _build_trade
@@ -50,6 +50,8 @@ def run_events_incremental(
     previous_key: tuple[int, int] | None = None
 
     for record in events:
+        if record.timestamp_ns < 0:
+            raise ValueError("event timestamp_ns cannot be negative")
         sequence_key = record.sequence if record.sequence is not None else -1
         key = (record.timestamp_ns, sequence_key)
         if previous_key is not None and key < previous_key:
@@ -66,6 +68,8 @@ def run_events_incremental(
         )
         decision = strategy(context)
         action = decision.action.upper() if hasattr(decision, "action") else str(decision or "NONE").upper()
+        if action not in {"BUY", "SELL", "HOLD", "NONE"}:
+            raise ValueError("event strategy must return BUY, SELL, HOLD, or NONE")
         if action in {"HOLD", "NONE"}:
             continue
         signal_price = decision.price if hasattr(decision, "price") else None
@@ -75,8 +79,9 @@ def run_events_incremental(
             if not isinstance(raw_price, (int, float)) or isinstance(raw_price, bool):
                 raise ValueError(f"event payload must contain numeric {price_field!r} or signal price")
             price = float(raw_price)
-        if price <= 0:
-            raise ValueError("event execution price must be positive")
+        if not isfinite(float(price)) or float(price) <= 0:
+            raise ValueError("event execution price must be finite and positive")
+        price = float(price)
 
         if open_trade is None and action == "BUY":
             open_trade = (record.timestamp_ns, price * (1.0 + engine_config.slippage_rate))
