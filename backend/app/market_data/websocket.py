@@ -41,7 +41,8 @@ class MarketDataWebSocket:
         socket = SmartWebSocketV2(auth_token, self.auth.api_key, self.auth.client_id, feed_token)
 
         def handle_open(wsapp):
-            self._connected = True
+            with self._lock:
+                self._connected = True
             app_logger.info("Angel One WebSocket connected")
             if self.exchange_type is not None and self.tokens:
                 socket.subscribe(self.correlation_id, self.mode, [{"exchangeType": self.exchange_type, "tokens": self.tokens}])
@@ -51,11 +52,13 @@ class MarketDataWebSocket:
                 self.on_data(message)
 
         def handle_error(wsapp, error):
-            self._connected = False
+            with self._lock:
+                self._connected = False
             app_logger.error(f"Angel One WebSocket error: {error}")
 
         def handle_close(wsapp):
-            self._connected = False
+            with self._lock:
+                self._connected = False
             app_logger.warning("Angel One WebSocket connection closed")
 
         socket.on_open = handle_open
@@ -90,15 +93,17 @@ class MarketDataWebSocket:
             self._stopping = False
         last_error = None
         for attempt in range(reconnect_attempts + 1):
-            if self._stopping:
-                return
+            with self._lock:
+                if self._stopping:
+                    return
             try:
                 self.websocket = self._build_socket()
                 self.websocket.connect()
                 return
             except Exception as exc:
                 last_error = exc
-                self._connected = False
+                with self._lock:
+                    self._connected = False
                 app_logger.error(f"WebSocket connection attempt {attempt + 1} failed: {exc}")
                 if attempt < reconnect_attempts:
                     time.sleep(reconnect_delay_seconds * (attempt + 1))
@@ -119,8 +124,12 @@ class MarketDataWebSocket:
                 self.mode = mode
             socket = self.websocket
             exchange_type = self.exchange_type
-        if socket and self._connected and exchange_type is not None:
-            socket.subscribe(self.correlation_id, self.mode, [{"exchangeType": exchange_type, "tokens": self.tokens}])
+            connected = self._connected
+            correlation_id = self.correlation_id
+            current_mode = self.mode
+            current_tokens = list(self.tokens)
+        if socket and connected and exchange_type is not None:
+            socket.subscribe(correlation_id, current_mode, [{"exchangeType": exchange_type, "tokens": current_tokens}])
 
     def unsubscribe(self, tokens: list[str]):
         """Unsubscribe tokens and remove them from the remembered set."""
@@ -128,11 +137,15 @@ class MarketDataWebSocket:
         if not normalized:
             return
         with self._lock:
-            self.tokens = [token for token in self.tokens if token not in set(normalized)]
+            normalized_set = set(normalized)
+            self.tokens = [token for token in self.tokens if token not in normalized_set]
             socket = self.websocket
             exchange_type = self.exchange_type
-        if socket and self._connected and exchange_type is not None:
-            socket.unsubscribe(self.correlation_id, self.mode, [{"exchangeType": exchange_type, "tokens": normalized}])
+            connected = self._connected
+            correlation_id = self.correlation_id
+            current_mode = self.mode
+        if socket and connected and exchange_type is not None:
+            socket.unsubscribe(correlation_id, current_mode, [{"exchangeType": exchange_type, "tokens": normalized}])
 
     def close(self):
         """Stop the socket and disable reconnect/start attempts."""
