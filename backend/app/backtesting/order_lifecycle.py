@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
+from math import isfinite
 from typing import Mapping
 
 from app.backtesting.execution import ExecutionSide, OrderType, SimFill, SimOrder, TimeInForce
@@ -219,7 +220,7 @@ class OrderLifecycle:
             if event.filled_quantity > order.quantity or event.remaining_quantity != order.quantity - event.filled_quantity:
                 raise ValueError("invalid lifecycle event quantities")
             previous_timestamp = event.timestamp_ns
-        if not average_fill_price >= 0:
+        if not isfinite(average_fill_price) or average_fill_price < 0:
             raise ValueError("invalid lifecycle average fill price")
         lifecycle.state = OrderState(
             order=order, status=status,
