@@ -185,10 +185,7 @@ def resume_cash_future_strategy(
 
         unrealized = 0.0
         if entry is not None:
-            try:
-                unrealized = _trade_gross_profit(entry, point, config)
-            except ValueError:
-                unrealized = 0.0
+            unrealized = _trade_gross_profit(entry, point, config)
         ledger.append(LedgerRecord(run_id, "equity", int(point.timestamp.timestamp() * 1_000_000_000), {
             "timestamp": point.timestamp.isoformat(),
             "equity": float(capital_ledger.realized_capital) + unrealized,
@@ -264,7 +261,10 @@ def _deserialize_entry(payload: Mapping[str, Any] | None, *, selected_contract: 
             "net_profit": float(payload.get("net_profit", 0.0)),
             "roi_pct": float(payload.get("roi_pct", 0.0)),
         }
-        lot_size = int(payload["lot_size"])
+        lot_raw = payload["lot_size"]
+        if isinstance(lot_raw, bool) or not isinstance(lot_raw, int):
+            raise ValueError("lot_size must be a positive integer")
+        lot_size = lot_raw
     except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError("unsafe Cash-Future resume: open_entry contains invalid values") from exc
     if str(payload["contract_month"]) != selected_contract:
