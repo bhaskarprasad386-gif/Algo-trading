@@ -10,7 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
-from .arbitrage_backtester import BoxSpreadBacktester, FutureQuote, OptionQuote, SyntheticCashCarryBacktester
+from .arbitrage_backtester import (
+    BoxSpreadBacktester, FutureQuote, LiquidityPolicy, OptionQuote,
+    SyntheticCashCarryBacktester,
+)
 from .calendar_spread import CalendarQuote, CalendarSpreadBacktester
 from .historical_arbitrage_runner import ExitExecution, OpenPosition
 
@@ -52,6 +55,15 @@ def _required(event: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     return value
 
 
+def _liquidity(event: Mapping[str, Any]) -> LiquidityPolicy | None:
+    value = event.get("liquidity")
+    if value is None:
+        return None
+    if not isinstance(value, LiquidityPolicy):
+        raise ValueError("liquidity must be a LiquidityPolicy")
+    return value
+
+
 class BoxSpreadStrategyAdapter:
     """Long/reverse box lifecycle using executable bid/ask quotes."""
 
@@ -62,7 +74,10 @@ class BoxSpreadStrategyAdapter:
 
     def entry(self, event: Mapping[str, Any]) -> Iterable[OpenPosition]:
         low = _option(_required(event, "low")); high = _option(_required(event, "high"))
-        opportunity = BoxSpreadBacktester.evaluate(low, high, direction=self.direction, fees_per_unit=0.0)
+        opportunity = BoxSpreadBacktester.evaluate(
+            low, high, direction=self.direction, fees_per_unit=0.0,
+            liquidity=_liquidity(event),
+        )
         if opportunity is None: return ()
         trade_id = str(event.get("trade_id", f"BOX:{low.underlying}:{low.expiry}:{low.timestamp_ns}:{low.strike}:{high.strike}"))
         if self.direction == "LONG":
@@ -72,16 +87,18 @@ class BoxSpreadStrategyAdapter:
         return (OpenPosition(trade_id, low.timestamp_ns, f"{low.underlying}:BOX", self.direction, low.lot_size,
             entry_price, contract=f"BOX:{low.strike}:{high.strike}", expiry=str(low.expiry),
             strike=low.strike, leg="BOX", data_resolution=str(event.get("data_resolution", "")),
-            metadata={"strategy": "BOX", "high_strike": high.strike}),)
+            metadata={"strategy": "BOX", "high_strike": high.strike},
+            entry_fees=self.fees_per_unit * low.lot_size),)
 
     def exit(self, position: OpenPosition, event: Mapping[str, Any]) -> ExitExecution | None:
         low = _option(_required(event, "low")); high = _option(_required(event, "high"))
         reverse = "SHORT" if self.direction == "LONG" else "LONG"
-        opportunity = BoxSpreadBacktester.evaluate(low, high, direction=reverse, fees_per_unit=0.0)
+        opportunity = BoxSpreadBacktester.evaluate(low, high, direction=reverse, fees_per_unit=0.0,
+            liquidity=_liquidity(event))
         if opportunity is None: return None
         return ExitExecution(opportunity.timestamp_ns, opportunity.executable_edge,
             position.entry_price + opportunity.executable_edge,
-            fees=2.0 * self.fees_per_unit * position.quantity,
+            fees=self.fees_per_unit * position.quantity,
             metadata={"strategy": "BOX", "close_direction": reverse})
 
 
@@ -98,23 +115,26 @@ class SyntheticCashCarryStrategyAdapter:
     def entry(self, event: Mapping[str, Any]) -> Iterable[OpenPosition]:
         option = _option(_required(event, "option")); future = _future(_required(event, "future"))
         opportunity = SyntheticCashCarryBacktester.evaluate(option, future, rate=self.rate,
-            time_to_expiry_years=self.time_to_expiry_years, fees_per_unit=0.0, direction=self.direction)
+            time_to_expiry_years=self.time_to_expiry_years, fees_per_unit=0.0,
+            direction=self.direction, liquidity=_liquidity(event))
         if opportunity is None: return ()
         trade_id = str(event.get("trade_id", f"SYN:{future.underlying}:{future.expiry}:{future.timestamp_ns}:{option.strike}"))
         return (OpenPosition(trade_id, future.timestamp_ns, f"{future.underlying}:SYNTHETIC", self.direction,
             future.lot_size, opportunity.executable_edge, contract=f"SYNTHETIC:{option.strike}",
             expiry=str(future.expiry), strike=option.strike, leg="SYNTHETIC_CASH_CARRY",
-            data_resolution=str(event.get("data_resolution", "")), metadata={"strategy": "SYNTHETIC_CASH_CARRY"}),)
+            data_resolution=str(event.get("data_resolution", "")), metadata={"strategy": "SYNTHETIC_CASH_CARRY"},
+            entry_fees=self.fees_per_unit * future.lot_size),)
 
     def exit(self, position: OpenPosition, event: Mapping[str, Any]) -> ExitExecution | None:
         option = _option(_required(event, "option")); future = _future(_required(event, "future"))
         reverse = "SHORT" if self.direction == "LONG" else "LONG"
         opportunity = SyntheticCashCarryBacktester.evaluate(option, future, rate=self.rate,
-            time_to_expiry_years=self.time_to_expiry_years, fees_per_unit=0.0, direction=reverse)
+            time_to_expiry_years=self.time_to_expiry_years, fees_per_unit=0.0,
+            direction=reverse, liquidity=_liquidity(event))
         if opportunity is None: return None
         return ExitExecution(opportunity.timestamp_ns, opportunity.executable_edge,
             position.entry_price + opportunity.executable_edge,
-            fees=2.0 * self.fees_per_unit * position.quantity,
+            fees=self.fees_per_unit * position.quantity,
             metadata={"strategy": "SYNTHETIC_CASH_CARRY", "close_direction": reverse})
 
 
@@ -136,11 +156,12 @@ class CashFutureStrategyAdapter:
 
     def entry(self, event: Mapping[str, Any]) -> Iterable[OpenPosition]:
         q = _cash_future(_required(event, "cash_future")); edge = self._edge(q, self.direction)
-        if edge <= 0: return ()
+        if edge <= self.fees_per_unit: return ()
         trade_id = str(event.get("trade_id", f"CF:{q.underlying}:{q.expiry}:{q.timestamp_ns}"))
         return (OpenPosition(trade_id, q.timestamp_ns, f"{q.underlying}:CASH_FUTURE", self.direction, q.lot_size,
             edge, contract=f"CASH-FUTURE:{q.expiry}", expiry=str(q.expiry), leg="CASH_FUTURE",
-            data_resolution=str(event.get("data_resolution", "")), metadata={"strategy": "CASH_CARRY"}),)
+            data_resolution=str(event.get("data_resolution", "")), metadata={"strategy": "CASH_CARRY"},
+            entry_fees=self.fees_per_unit * q.lot_size),)
 
     def exit(self, position: OpenPosition, event: Mapping[str, Any]) -> ExitExecution | None:
         q = _cash_future(_required(event, "cash_future"))
@@ -148,7 +169,7 @@ class CashFutureStrategyAdapter:
         edge = self._edge(q, reverse)
         if edge <= 0: return None
         return ExitExecution(q.timestamp_ns, edge, position.entry_price + edge,
-            fees=2.0 * self.fees_per_unit * position.quantity,
+            fees=self.fees_per_unit * position.quantity,
             metadata={"strategy": "CASH_CARRY", "close_direction": reverse})
 
 
@@ -169,7 +190,7 @@ class CalendarSpreadStrategyAdapter:
             opportunity.executable_edge, contract=f"CALENDAR:{near.expiry}:{far.expiry}", expiry=str(near.expiry),
             strike=near.strike, leg="CALENDAR", data_resolution=str(event.get("data_resolution", "")),
             metadata={"strategy": "CALENDAR", "near_expiry": near.expiry, "far_expiry": far.expiry,
-                      "option_type": near.option_type}),)
+                      "option_type": near.option_type}, entry_fees=self.fees_per_unit * near.lot_size),)
 
     def exit(self, position: OpenPosition, event: Mapping[str, Any]) -> ExitExecution | None:
         near = _calendar(_required(event, "near")); far = _calendar(_required(event, "far"))
@@ -178,6 +199,6 @@ class CalendarSpreadStrategyAdapter:
         if opportunity is None: return None
         return ExitExecution(opportunity.timestamp_ns, opportunity.executable_edge,
             position.entry_price + opportunity.executable_edge,
-            fees=2.0 * self.fees_per_unit * position.quantity,
+            fees=self.fees_per_unit * position.quantity,
             metadata={"strategy": "CALENDAR", "close_direction": reverse,
                       "near_expiry": near.expiry, "far_expiry": far.expiry})
