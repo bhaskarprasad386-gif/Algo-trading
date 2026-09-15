@@ -119,6 +119,14 @@ class BacktestEngine:
             context = {key: float(value) for key, value in candle.items() if _is_number(value)}
             if open_trade is None and entry_strategy.evaluate(context):
                 open_trade = (timestamp, close * (1.0 + self.config.slippage_rate))
+            elif open_trade is not None:
+                intrabar_low = candle.get("low")
+                if _is_number(intrabar_low):
+                    adverse_price = float(intrabar_low) * (1.0 - self.config.slippage_rate)
+                    marked_capital = capital + (adverse_price - open_trade[1]) * self.config.quantity
+                    peak_capital = max(peak_capital, capital)
+                    if marked_capital < capital:
+                        max_drawdown = max(max_drawdown, (capital - marked_capital) / capital)
             elif open_trade is not None and exit_strategy.evaluate(context):
                 entry_timestamp, entry_price = open_trade
                 exit_price = close * (1.0 - self.config.slippage_rate)
