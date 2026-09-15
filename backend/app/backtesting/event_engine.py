@@ -193,7 +193,6 @@ class EventBacktestEngine:
             if reference is None:
                 raise RiskViolation("replacement order has no reference price")
             reservation = effective.quantity * reference * self.portfolio.risk_config.initial_margin_rate
-            old_reserved = self._reserved_margin.get(order_id, 0.0)
             self.portfolio.replace_margin_reservation(order_id, effective.order_id, reservation)
             self._reserved_margin.pop(order_id, None)
             self._reserved_margin[effective.order_id] = reservation
@@ -326,13 +325,17 @@ class EventBacktestEngine:
         for raw_index, raw_event in enumerate(events):
             seen += 1; timestamp_ns = raw_event.timestamp_ns if self.config.timestamp_unit == "ns" else self.config.to_ns(raw_event.timestamp_ns); event = raw_event if timestamp_ns == raw_event.timestamp_ns else MarketEvent(timestamp_ns, raw_event.instrument, raw_event.event_type, raw_event.payload, raw_event.sequence, raw_event.source)
             if self.config.include_event_types is not None and event.event_type not in self.config.include_event_types: continue
-            if raw_index < start_event_index: continue
             sequence_key = event.sequence if event.sequence is not None else -1; source_key = event.source or ""; key = (event.timestamp_ns, sequence_key, source_key, event.event_type.value)
             if previous_key is not None and key < previous_key: raise ValueError("events must be ordered by timestamp, sequence, source, and type")
             previous_key = key
+            if raw_index < start_event_index:
+                history.append(event)
+                self._update_market_state(event)
+                last = event.timestamp_ns
+                continue
             if not started:
                 starter = getattr(strategy, "on_start", None)
-                if callable(starter): starter(StrategyContext(event.timestamp_ns, tuple(), dict(context_state)))
+                if callable(starter): starter(StrategyContext(event.timestamp_ns, tuple(history), dict(context_state)))
                 started = True
             first = event.timestamp_ns if first is None else first; last = event.timestamp_ns; self._update_market_state(event); fill_count += len(self._try_execute_orders(tuple(self._open_orders.values()), event))
             decision = None; handler = getattr(strategy, "on_event", None)
