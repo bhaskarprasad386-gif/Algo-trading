@@ -45,7 +45,7 @@ def ordered_strike_positions(contracts: Iterable[ArbitrageContract], *, atm: flo
     """Return actual chain positions around the supplied ATM, not rupee gaps."""
     strikes = _option_strikes(contracts)
     below = sorted((s for s in strikes if s < atm), reverse=True)
-    above = sorted(s for s in strikes if s > atm)
+    above = sorted((s for s in strikes if s > atm))
     result: list[StrikePosition] = []
     for position, strike in enumerate(below, 1):
         result.append(StrikePosition(strike, position, "BELOW_ATM"))
@@ -109,12 +109,9 @@ class ArbitrageUniversePolicy:
         for c in contracts:
             if not c.supported or c.volume < min_volume or c.oi < min_oi:
                 continue
-            if c.bid < 0 or c.ask < c.bid:
+            if c.bid <= 0 or c.ask <= 0 or c.ask < c.bid:
                 continue
-            if c.bid == 0:
-                if c.ask != 0:
-                    continue
-            elif ((c.ask - c.bid) / c.bid) * 100.0 > max_spread_pct:
+            if ((c.ask - c.bid) / c.bid) * 100.0 > max_spread_pct:
                 continue
             result.append(c)
         return tuple(result)
