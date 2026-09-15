@@ -128,14 +128,14 @@ class BacktestEngine:
                     if marked_capital < capital:
                         max_drawdown = max(max_drawdown, (capital - marked_capital) / capital)
                 if exit_strategy.evaluate(context):
-                entry_timestamp, entry_price = open_trade
-                exit_price = close * (1.0 - self.config.slippage_rate)
-                trade = _build_trade(self.config, entry_timestamp, entry_price, timestamp, exit_price)
-                capital += trade.net_pnl
-                peak_capital = max(peak_capital, capital)
-                max_drawdown = max(max_drawdown, (peak_capital - capital) / peak_capital)
-                trades.append(trade)
-                open_trade = None
+                    entry_timestamp, entry_price = open_trade
+                    exit_price = close * (1.0 - self.config.slippage_rate)
+                    trade = _build_trade(self.config, entry_timestamp, entry_price, timestamp, exit_price)
+                    capital += trade.net_pnl
+                    peak_capital = max(peak_capital, capital)
+                    max_drawdown = max(max_drawdown, (peak_capital - capital) / peak_capital)
+                    trades.append(trade)
+                    open_trade = None
         if open_trade is not None and last_close is not None and last_timestamp is not None:
             unrealized_pnl = _calculate_unrealized_pnl(self.config, open_trade[1], last_close)
             final_capital = capital + unrealized_pnl
