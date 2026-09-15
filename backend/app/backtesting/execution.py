@@ -329,13 +329,19 @@ class ExecutionSimulator:
         self,
         legs: Iterable[tuple[SimOrder, OrderBook, int]],
     ) -> AtomicExecutionResult:
+        legs = tuple(legs)
         leg_results = tuple(
             self.execute_depth(order, book, timestamp_ns)
             for order, book, timestamp_ns in legs
         )
         if not leg_results:
             return AtomicExecutionResult((), (), True, "atomic transaction has no legs")
-        if any(result.rejected or result.remaining_quantity != 0 for result in leg_results):
+        if any(
+            result.rejected
+            or result.remaining_quantity != 0
+            or (order.time_in_force == TimeInForce.IOC and sum(fill.quantity for fill in result.fills) < order.quantity)
+            for (order, _, _), result in zip(legs, leg_results)
+        ):
             return AtomicExecutionResult(
                 (),
                 leg_results,
