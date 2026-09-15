@@ -25,6 +25,8 @@ class PaperBacktestConfig:
             value = float(getattr(self, name))
             if not math.isfinite(value) or value < 0:
                 raise ValueError(f"{name} must be finite and non-negative")
+        if self.starting_capital <= 0:
+            raise ValueError("starting_capital must be finite and positive")
         if self.max_holding_days <= 0:
             raise ValueError("max_holding_days must be positive")
         if self.future_selection.upper() not in {"CURRENT", "NEAR", "BOTH"}:
