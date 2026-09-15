@@ -126,10 +126,10 @@ class BoxSpreadBacktester:
             raise ValueError("fees_per_unit must be non-negative")
         width = high.strike - low.strike
         if direction == "LONG":
-            debit = low.call_ask + low.put_ask - high.call_bid - high.put_bid
+            debit = low.call_ask + high.put_ask - high.call_bid - low.put_bid
             edge = width - debit - fees_per_unit
         else:
-            credit = low.call_bid + low.put_bid - high.call_ask - high.put_ask
+            credit = low.call_bid + high.put_bid - high.call_ask - low.put_ask
             edge = credit - width - fees_per_unit
         if edge <= 0:
             return None
