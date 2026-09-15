@@ -1,7 +1,7 @@
 import hashlib
 import re
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -18,6 +18,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 PAPER_STARTING_BALANCE = 10_000_000.0
 MOBILE_RE = re.compile(r"^\+?[1-9]\d{9,14}$")
+EMAIL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
 PASSWORD_RESET_TTL_MINUTES = 15
 GENERIC_RESET_MESSAGE = "If the account exists, reset instructions will be sent to the registered contact."
 
@@ -49,8 +50,11 @@ class TokenResponse(BaseModel):
 
 
 def _valid_email(email: str) -> bool:
-    value = email.strip().lower()
-    return "@" in value and "." in value.rsplit("@", 1)[-1]
+    return bool(EMAIL_RE.fullmatch(email.strip()))
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _normalize_mobile(mobile: str) -> str:
@@ -104,7 +108,7 @@ def _hash_reset_token(token: str) -> str:
 
 
 def _create_reset_token(db: Session, user: User, now: datetime | None = None) -> str:
-    now = now or datetime.utcnow()
+    now = now or _utc_now()
     db.query(PasswordResetToken).filter(
         PasswordResetToken.user_id == user.id,
         PasswordResetToken.used_at.is_(None),
@@ -190,7 +194,7 @@ def confirm_password_reset(payload: PasswordResetConfirmRequest, db: Session = D
     if len(payload.new_password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     token_hash = _hash_reset_token(payload.token.strip())
-    now = datetime.utcnow()
+    now = _utc_now()
     reset = db.query(PasswordResetToken).filter(PasswordResetToken.token_hash == token_hash).first()
     if not reset or reset.used_at is not None or reset.expires_at <= now:
         raise HTTPException(status_code=400, detail="Invalid or expired reset token")
