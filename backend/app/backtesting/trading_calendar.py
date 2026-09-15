@@ -8,12 +8,16 @@ backtesting engine to a particular venue or year.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
+from zoneinfo import ZoneInfo
+
+
+MARKET_TZ = ZoneInfo("Asia/Kolkata")
 
 
 @dataclass(frozen=True)
 class TradingSession:
-    """One continuous UTC session window identified by its trading date."""
+    """One continuous session window identified by its trading date."""
 
     trading_date: date
     start_ns: int
@@ -22,11 +26,16 @@ class TradingSession:
 
 @dataclass(frozen=True)
 class TradingCalendar:
-    """Calendar rules independent of instrument or data cadence."""
+    """Calendar rules independent of instrument or data cadence.
+
+    The default session times are NSE-style 09:15-15:30 and therefore use
+    Asia/Kolkata. Other venues/callers can provide an explicit timezone.
+    """
 
     session_open: time = time(9, 15)
     session_close: time = time(15, 30)
     closed_dates: frozenset[date] = frozenset()
+    session_timezone: tzinfo = MARKET_TZ
 
     def is_trading_day(self, trading_date: date) -> bool:
         """Return false for weekends and explicitly closed exchange dates."""
@@ -36,8 +45,8 @@ class TradingCalendar:
         """Return the session for a trading day, or None when the day is closed."""
         if not self.is_trading_day(trading_date):
             return None
-        start = datetime.combine(trading_date, self.session_open, tzinfo=timezone.utc)
-        end = datetime.combine(trading_date, self.session_close, tzinfo=timezone.utc)
+        start = datetime.combine(trading_date, self.session_open, tzinfo=self.session_timezone)
+        end = datetime.combine(trading_date, self.session_close, tzinfo=self.session_timezone)
         return TradingSession(trading_date, _to_ns(start), _to_ns(end))
 
     def sessions_between(self, start_date: date, end_date: date) -> tuple[TradingSession, ...]:
