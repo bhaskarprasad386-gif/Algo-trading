@@ -83,7 +83,12 @@ class ContractMasterCatalog:
 
     def upsert(self, records: Iterable[ContractRecord]) -> int:
         records = tuple(records)
-        snapshot = next((r.snapshot_date for r in records if r.snapshot_date), None) or date.today()
+        if not records:
+            return self.upsert_snapshot(date.today(), records)
+        snapshot_dates = {r.snapshot_date for r in records if r.snapshot_date is not None}
+        if len(snapshot_dates) > 1:
+            raise ValueError("upsert records must belong to one snapshot_date")
+        snapshot = next(iter(snapshot_dates), None) or date.today()
         return self.upsert_snapshot(snapshot, records)
 
     def snapshot_dates(self) -> tuple[date, ...]:
