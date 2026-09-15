@@ -323,13 +323,23 @@ def _calculate_cagr(trades: list[BacktestTrade], initial_capital: float, final_c
 
 
 def _calculate_cagr_from_timestamps(start: object | None, end: object | None, initial_capital: float, final_capital: float) -> float:
-    if start is None or end is None or final_capital <= 0:
+    if start is None or end is None or final_capital <= 0 or initial_capital <= 0:
         return 0.0
-    if not isinstance(start, (datetime, date)) or not isinstance(end, (datetime, date)):
+    if isinstance(start, datetime) or isinstance(end, datetime):
+        if not isinstance(start, datetime) or not isinstance(end, datetime):
+            return 0.0
+        years = (end - start).total_seconds() / (365.25 * 24 * 60 * 60)
+    elif isinstance(start, date) or isinstance(end, date):
+        if not isinstance(start, date) or not isinstance(end, date):
+            return 0.0
+        years = (end - start).days / 365.25
+    elif isinstance(start, (int, float)) and not isinstance(start, bool) and isinstance(end, (int, float)) and not isinstance(end, bool):
+        if not isfinite(float(start)) or not isfinite(float(end)):
+            return 0.0
+        elapsed_ns = float(end) - float(start)
+        years = elapsed_ns / (365.25 * 24 * 60 * 60 * 1_000_000_000)
+    else:
         return 0.0
-    if isinstance(start, datetime) != isinstance(end, datetime):
-        return 0.0
-    years = (end - start).total_seconds() / (365.25 * 24 * 60 * 60) if isinstance(start, datetime) else (end - start).days / 365.25
     return (final_capital / initial_capital) ** (1.0 / years) - 1.0 if years > 0 else 0.0
 
 
