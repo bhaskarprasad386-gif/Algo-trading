@@ -198,6 +198,62 @@ class Portfolio:
             if projected_drawdown > cfg.max_drawdown + 1e-9:
                 raise RiskViolation("max drawdown exceeded")
 
+    def _validate_atomic_fills(self, fills: tuple[SimFill, ...], marks: dict[str, float]) -> None:
+        cfg = self.risk_config
+        projected_qty = {instrument: position.quantity for instrument, position in self._positions.items()}
+        projected_marks = dict(marks)
+        cash_delta = 0.0
+        batch_order_ids: set[str] = set()
+        for fill in fills:
+            if fill.quantity <= 0 or not math.isfinite(float(fill.price)) or fill.price <= 0:
+                raise ValueError("fill quantity and price must be finite and positive")
+            if not math.isfinite(float(fill.fee)) or fill.fee < 0:
+                raise ValueError("fill fee must be finite and non-negative")
+            signed = fill.quantity if fill.side == ExecutionSide.BUY else -fill.quantity
+            projected_qty[fill.instrument] = projected_qty.get(fill.instrument, 0) + signed
+            projected_marks.setdefault(fill.instrument, fill.price)
+            cash_delta += signed * fill.price + fill.fee
+            batch_order_ids.add(fill.order_id)
+
+        if not fills:
+            return
+        for instrument, quantity in projected_qty.items():
+            if cfg.max_position_quantity is not None and abs(quantity) > cfg.max_position_quantity:
+                raise RiskViolation("max position quantity exceeded")
+
+        gross = net = 0.0
+        for instrument, quantity in projected_qty.items():
+            if quantity == 0:
+                continue
+            mark = projected_marks.get(instrument)
+            if mark is None:
+                position = self._positions.get(instrument)
+                mark = position.average_price if position is not None else None
+            if mark is None or not math.isfinite(float(mark)) or mark <= 0:
+                raise ValueError(f"mark must be finite and positive for {instrument}")
+            notional = quantity * mark
+            gross += abs(notional)
+            net += notional
+
+        projected_equity = self.cash - cash_delta + net
+        if not math.isfinite(projected_equity):
+            raise ValueError("atomic projected equity must be finite")
+        if cfg.max_gross_notional is not None and gross > cfg.max_gross_notional + 1e-9:
+            raise RiskViolation("max gross notional exceeded")
+        if cfg.max_net_notional is not None and abs(net) > cfg.max_net_notional + 1e-9:
+            raise RiskViolation("max net notional exceeded")
+        batch_reservation = sum(self._reserved_margin.get(order_id, 0.0) for order_id in batch_order_ids)
+        other_reservations = max(0.0, self.reserved_margin - batch_reservation)
+        projected_margin = gross * cfg.initial_margin_rate
+        if projected_margin > projected_equity - other_reservations + 1e-9:
+            raise RiskViolation("insufficient available margin")
+        if cfg.max_leverage is not None and projected_equity > 0 and gross / projected_equity > cfg.max_leverage + 1e-9:
+            raise RiskViolation("max leverage exceeded")
+        if cfg.max_drawdown is not None:
+            projected_drawdown = max(0.0, self._peak_equity - projected_equity)
+            if projected_drawdown > cfg.max_drawdown + 1e-9:
+                raise RiskViolation("max drawdown exceeded")
+
     def validate_mark_to_market(self, marks: dict[str, float] | None = None) -> PortfolioSnapshot:
         """Validate current marked equity/exposure without mutating portfolio state."""
         snapshot = self.snapshot(marks)
@@ -215,7 +271,8 @@ class Portfolio:
         return snapshot
 
     def apply_fill(self, fill: SimFill, marks: dict[str, float] | None = None) -> Position:
-        self.validate_fill(fill, marks)
+        if not getattr(self, "_atomic_applying", False):
+            self.validate_fill(fill, marks)
         old = self._positions.get(fill.instrument, Position(fill.instrument))
         signed = fill.quantity if fill.side == ExecutionSide.BUY else -fill.quantity
         old_qty = old.quantity
@@ -252,10 +309,13 @@ class Portfolio:
         return position
 
     def apply_fills_atomic(self, fills: Iterable[SimFill], marks: dict[str, float] | None = None) -> PortfolioSnapshot:
-        """Apply a multi-leg fill batch atomically; risk failure rolls back all legs."""
+        """Apply a multi-leg fill batch atomically; validate risk against the final batch state."""
         fills = tuple(fills)
+        marks = dict(marks or {})
         state = (self.cash, dict(self._positions), self._realized_pnl, self._fees, self._peak_equity, dict(self._reserved_margin), list(self._trades))
         try:
+            self._validate_atomic_fills(fills, marks)
+            self._atomic_applying = True
             for fill in fills:
                 self.apply_fill(fill, marks)
         except Exception:
@@ -264,6 +324,8 @@ class Portfolio:
             self._reserved_margin = reserved
             self._trades = trades
             raise
+        finally:
+            self._atomic_applying = False
         return self.snapshot(marks)
 
     def forced_liquidation(self, fills: Iterable[SimFill], marks: dict[str, float] | None = None) -> PortfolioSnapshot:
