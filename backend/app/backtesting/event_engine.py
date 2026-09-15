@@ -185,11 +185,24 @@ class EventBacktestEngine:
         if lifecycle is None or old is None: raise KeyError(f"open order not found: {order_id}")
         if replacement.order_id == order_id: raise ValueError("replacement must use a new order_id")
         effective = self._submit_effective_order(replacement, MarketEvent(timestamp_ns, replacement.instrument, EventType.CUSTOM, {}, None, None))
+        if self.portfolio is not None and not order_reduces_position_risk(self.portfolio, effective):
+            observed = self._latest_events.get(effective.instrument)
+            reference = self._order_reference_price(effective, observed) if observed is not None else None
+            if reference is None:
+                raise RiskViolation("replacement order has no reference price")
+            reservation = effective.quantity * reference * self.portfolio.risk_config.initial_margin_rate
+            old_reserved = self._reserved_margin.get(order_id, 0.0)
+            self.portfolio.replace_margin_reservation(order_id, effective.order_id, reservation)
+            self._reserved_margin.pop(order_id, None)
+            self._reserved_margin[effective.order_id] = reservation
+        else:
+            self._reserved_margin.pop(order_id, None)
+            if self.portfolio is not None:
+                self.portfolio.release_margin(order_id)
         lifecycle.replace(effective, timestamp_ns)
         prior_queue = self._queue_lifecycles.get(order_id, QueueLifecycleState(self._dynamic_queue_ahead.get(order_id, old.queue_ahead_quantity)))
         self._queue_lifecycles[order_id] = prior_queue.cancel()
-        if self.portfolio is not None: self.portfolio.release_margin(order_id)
-        self._reserved_margin.pop(order_id, None); self._open_orders.pop(order_id, None); self._dynamic_queue_ahead.pop(order_id, None)
+        self._open_orders.pop(order_id, None); self._dynamic_queue_ahead.pop(order_id, None)
         new_lifecycle = OrderLifecycle(effective); new_lifecycle.accept(timestamp_ns); self._order_lifecycles[effective.order_id] = new_lifecycle
         queue = effective.queue_ahead_quantity if queue_ahead_quantity is None else queue_ahead_quantity
         if queue < 0: raise ValueError("queue_ahead_quantity cannot be negative")
