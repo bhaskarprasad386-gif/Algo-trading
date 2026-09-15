@@ -42,6 +42,20 @@ def _number(value: Any, default: float | int = 0):
     return numeric
 
 
+def _positive_integer(value: Any, name: str) -> int:
+    numeric = _number(value, 0)
+    if not numeric.is_integer() or numeric <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return int(numeric)
+
+
+def _non_negative_integer(value: Any, name: str) -> int:
+    numeric = _number(value, 0)
+    if not numeric.is_integer() or numeric < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return int(numeric)
+
+
 def _quote_side(value: Any) -> float | None:
     if value is None or value == "":
         return None
@@ -105,7 +119,7 @@ def _full_quote(response: dict) -> dict[str, Any]:
         timestamp = _quote_timestamp(item.get(key))
         if timestamp is not None:
             break
-    return {"ltp": _number(item.get("ltp")), "volume": int(_number(item.get("tradeVolume"))), "oi": int(_number(item.get("opnInterest"))), "bid": bid, "ask": ask, "quote_timestamp": timestamp}
+    return {"ltp": _number(item.get("ltp")), "volume": _non_negative_integer(item.get("tradeVolume"), "tradeVolume"), "oi": _non_negative_integer(item.get("opnInterest"), "opnInterest"), "bid": bid, "ask": ask, "quote_timestamp": timestamp}
 
 
 def _margin_required(response: dict) -> float:
@@ -143,7 +157,7 @@ class CashFutureHistoryCollector:
             name = str(item.get("name", "")).strip().upper()
             tradingsymbol = str(item.get("symbol", "")).strip().upper()
             token = str(item.get("token") or "").strip()
-            lot_size = int(_number(item.get("lotsize") or item.get("lotSize"), 0))
+            lot_size = _positive_integer(item.get("lotsize") or item.get("lotSize"), "lot size")
             if name != symbol or not tradingsymbol:
                 continue
             exp = _expiry(item.get("expiry"))
@@ -213,9 +227,7 @@ class CashFutureHistoryCollector:
                 future_ltp = market_quote["ltp"]
                 if not math.isfinite(future_ltp) or future_ltp <= 0:
                     raise ValueError(f"invalid future LTP for {future_symbol}")
-                lot_size = int(_number(future.get("lotsize") or future.get("lotSize"), 0))
-                if lot_size <= 0:
-                    raise ValueError(f"invalid lot size for {future_symbol}")
+                lot_size = _positive_integer(future.get("lotsize") or future.get("lotSize"), "lot size")
                 margin = self._future_margin(future, future_ltp, lot_size)
                 observation_time = max(cash_quote["quote_timestamp"], market_quote["quote_timestamp"]).replace(microsecond=0)
                 future_quote = FutureQuote(symbol=future_symbol, contract_month=label, ltp=future_ltp, lot_size=lot_size, margin_required=margin, volume=market_quote["volume"], oi=market_quote["oi"], bid=market_quote["bid"], ask=market_quote["ask"], expiry=_expiry(future.get("expiry")))
