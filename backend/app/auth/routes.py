@@ -7,11 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session as DBSession
+from jose import JWTError, jwt
 
 from app.core.database import get_db
-from app.core.security import create_access_token, get_password_hash, verify_password
-from app.models import PasswordResetToken, TradingAccount, User
+from app.core.security import ALGORITHM, create_access_token, get_password_hash, verify_password
+from app.models import PasswordResetToken, Session as UserSession, TradingAccount, User
 
 router = APIRouter(prefix="/api/v1/auth", tags=["User Authentication"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -70,12 +71,42 @@ def _placeholder_email(mobile: str) -> str:
     return f"mobile-{mobile.lstrip('+')}@accounts.local"
 
 
-def _issue_token(user: User) -> TokenResponse:
+def _issue_token(db: DBSession, user: User, *, device_info: str | None = None) -> TokenResponse:
     token = create_access_token({"sub": str(user.id), "email": user.email})
+    payload = jwt.decode(token, options={"verify_signature": False})
+    expires_at = datetime.fromtimestamp(int(payload["exp"]), tz=timezone.utc).replace(tzinfo=None)
+    db.add(UserSession(
+        user_id=user.id,
+        access_token=token,
+        device_info=device_info,
+        is_active=True,
+        expires_at=expires_at,
+    ))
+    db.commit()
     return TokenResponse(access_token=token)
 
 
-def _ensure_account(db: Session, user: User) -> TradingAccount:
+def _token_user_id(token: str) -> int:
+    from app.core.config import settings
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = int(payload.get("sub", "0"))
+    except (JWTError, TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    if user_id <= 0:
+        raise HTTPException(status_code=401, detail="Invalid authenticated user")
+    return user_id
+
+
+def _require_active_token(db: DBSession, token: str) -> int:
+    user_id = _token_user_id(token)
+    session = db.query(UserSession).filter(UserSession.access_token == token).first()
+    if session is not None and not session.is_active:
+        raise HTTPException(status_code=401, detail="Token has been logged out")
+    return user_id
+
+
+def _ensure_account(db: DBSession, user: User) -> TradingAccount:
     account = db.query(TradingAccount).filter(TradingAccount.user_id == user.id).first()
     if account:
         return account
@@ -90,7 +121,7 @@ def _ensure_account(db: Session, user: User) -> TradingAccount:
     return account
 
 
-def _find_user(db: Session, identifier: str) -> User | None:
+def _find_user(db: DBSession, identifier: str) -> User | None:
     value = identifier.strip()
     if not value:
         return None
@@ -107,7 +138,7 @@ def _hash_reset_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def _create_reset_token(db: Session, user: User, now: datetime | None = None) -> str:
+def _create_reset_token(db: DBSession, user: User, now: datetime | None = None) -> str:
     now = now or _utc_now()
     db.query(PasswordResetToken).filter(
         PasswordResetToken.user_id == user.id,
@@ -126,7 +157,7 @@ def _create_reset_token(db: Session, user: User, now: datetime | None = None) ->
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+def register(payload: RegisterRequest, db: DBSession = Depends(get_db)):
     email = payload.email.strip().lower() if payload.email else None
     mobile = _normalize_mobile(payload.mobile_number) if payload.mobile_number else None
 
@@ -157,11 +188,11 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=409, detail="Email or mobile number already registered") from exc
     db.refresh(user)
-    return _issue_token(user)
+    return _issue_token(db, user, device_info="web")
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, db: DBSession = Depends(get_db)):
     identifier = payload.identifier.strip()
     if not identifier:
         raise HTTPException(status_code=400, detail="Email or mobile number is required")
@@ -177,11 +208,11 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid email/mobile or password")
     _ensure_account(db, user)
     db.commit()
-    return _issue_token(user)
+    return _issue_token(db, user, device_info="web")
 
 
 @router.post("/password-reset/request")
-def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db)):
+def request_password_reset(payload: PasswordResetRequest, db: DBSession = Depends(get_db)):
     user = _find_user(db, payload.identifier)
     if user and user.is_active:
         _create_reset_token(db, user)
@@ -190,7 +221,7 @@ def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(
 
 
 @router.post("/password-reset/confirm")
-def confirm_password_reset(payload: PasswordResetConfirmRequest, db: Session = Depends(get_db)):
+def confirm_password_reset(payload: PasswordResetConfirmRequest, db: DBSession = Depends(get_db)):
     if len(payload.new_password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     token_hash = _hash_reset_token(payload.token.strip())
@@ -210,17 +241,8 @@ def confirm_password_reset(payload: PasswordResetConfirmRequest, db: Session = D
 
 
 @router.get("/me")
-def me(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    from jose import JWTError, jwt
-    from app.core.security import ALGORITHM
-    from app.core.config import settings
-
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = int(payload.get("sub", "0"))
-    except (JWTError, TypeError, ValueError):
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
+def me(token: str = Depends(oauth2_scheme), db: DBSession = Depends(get_db)):
+    user_id = _require_active_token(db, token)
     user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found or inactive")
@@ -242,5 +264,17 @@ def me(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
 
 
 @router.post("/logout")
-def logout(token: str = Depends(oauth2_scheme)):
+def logout(token: str = Depends(oauth2_scheme), db: DBSession = Depends(get_db)):
+    user_id = _token_user_id(token)
+    session = db.query(UserSession).filter(UserSession.access_token == token).first()
+    if session is None:
+        session = UserSession(
+            user_id=user_id,
+            access_token=token,
+            is_active=False,
+        )
+        db.add(session)
+    else:
+        session.is_active = False
+    db.commit()
     return {"status": "logged_out"}
