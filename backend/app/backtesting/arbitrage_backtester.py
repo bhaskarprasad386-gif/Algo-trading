@@ -97,6 +97,11 @@ def _validate_option_quote(quote: OptionQuote) -> None:
         raise ValueError("option lot_size must be positive")
 
 
+def _validate_direction(direction: str) -> None:
+    if direction not in ("LONG", "SHORT"):
+        raise ValueError("direction must be LONG or SHORT")
+
+
 class BoxSpreadBacktester:
     """Evaluate executable long/reverse boxes at one timestamp."""
 
@@ -104,6 +109,7 @@ class BoxSpreadBacktester:
     def evaluate(low: OptionQuote, high: OptionQuote, *,
                  direction: Literal["LONG", "SHORT"] = "LONG",
                  fees_per_unit: float = 0.0) -> ArbitrageOpportunity | None:
+        _validate_direction(direction)
         _validate_option_quote(low)
         _validate_option_quote(high)
         if low.underlying != high.underlying or low.expiry != high.expiry:
@@ -140,6 +146,7 @@ class SyntheticCashCarryBacktester:
                  time_to_expiry_years: float, fees_per_unit: float = 0.0,
                  direction: Literal["LONG", "SHORT"] = "LONG",
                  liquidity: LiquidityPolicy | None = None) -> ArbitrageOpportunity | None:
+        _validate_direction(direction)
         _validate_option_quote(option)
         if not isfinite(float(future.bid)) or not isfinite(float(future.ask)):
             raise ValueError("future prices must be finite")
