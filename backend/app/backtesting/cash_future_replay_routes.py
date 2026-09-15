@@ -17,13 +17,18 @@ REPLAY_TIMEFRAMES = ("1s", "1m", "5m", "15m", "30m")
 router = APIRouter(tags=["Cash-Future Backtesting"])
 
 
-def _available_replay_intervals(points) -> list[str]:
-    """Expose only intervals supported by the requested source cadence; never claim fake 1s data."""
-    deltas = [
-        int((current.timestamp - previous.timestamp).total_seconds())
+def _replay_deltas(points) -> list[float]:
+    """Return positive source intervals without truncating sub-second cadence."""
+    return [
+        (current.timestamp - previous.timestamp).total_seconds()
         for previous, current in zip(points, points[1:])
         if current.timestamp > previous.timestamp
     ]
+
+
+def _available_replay_intervals(points) -> list[str]:
+    """Expose only intervals supported by the requested source cadence; never claim fake 1s data."""
+    deltas = _replay_deltas(points)
     min_delta = min(deltas) if deltas else None
     if min_delta is None:
         return ["1m", "5m", "15m", "30m"]
@@ -74,11 +79,7 @@ def cash_future_replay(
         raise HTTPException(status_code=404, detail="no paired Cash-Future history found for the requested date/symbol")
 
     points.sort(key=lambda point: point.timestamp)
-    deltas = [
-        int((current.timestamp - previous.timestamp).total_seconds())
-        for previous, current in zip(points, points[1:])
-        if current.timestamp > previous.timestamp
-    ]
+    deltas = _replay_deltas(points)
     min_delta = min(deltas) if deltas else None
     available = _available_replay_intervals(points)
 
