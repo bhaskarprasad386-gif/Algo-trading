@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import exp
+from math import exp, isfinite
 from typing import Literal
 
 ArbitrageKind = Literal["BOX", "SYNTHETIC_CASH_CARRY", "CASH_CARRY"]
@@ -85,6 +85,18 @@ class ArbitrageOpportunity:
     width_or_notional: float
 
 
+def _validate_option_quote(quote: OptionQuote) -> None:
+    values = (quote.strike, quote.call_bid, quote.call_ask, quote.put_bid, quote.put_ask)
+    if not all(isfinite(float(value)) for value in values):
+        raise ValueError("option prices and strike must be finite")
+    if quote.call_bid < 0 or quote.put_bid < 0:
+        raise ValueError("option bid prices must be non-negative")
+    if quote.call_ask < quote.call_bid or quote.put_ask < quote.put_bid:
+        raise ValueError("option ask prices must be at least bid prices")
+    if quote.lot_size <= 0:
+        raise ValueError("option lot_size must be positive")
+
+
 class BoxSpreadBacktester:
     """Evaluate executable long/reverse boxes at one timestamp."""
 
@@ -92,8 +104,12 @@ class BoxSpreadBacktester:
     def evaluate(low: OptionQuote, high: OptionQuote, *,
                  direction: Literal["LONG", "SHORT"] = "LONG",
                  fees_per_unit: float = 0.0) -> ArbitrageOpportunity | None:
+        _validate_option_quote(low)
+        _validate_option_quote(high)
         if low.underlying != high.underlying or low.expiry != high.expiry:
             raise ValueError("box legs must share underlying and expiry")
+        if low.instrument_class != high.instrument_class:
+            raise ValueError("box legs must share instrument class")
         if not low.strike < high.strike:
             raise ValueError("low strike must be below high strike")
         if low.timestamp_ns != high.timestamp_ns:
@@ -124,8 +140,17 @@ class SyntheticCashCarryBacktester:
                  time_to_expiry_years: float, fees_per_unit: float = 0.0,
                  direction: Literal["LONG", "SHORT"] = "LONG",
                  liquidity: LiquidityPolicy | None = None) -> ArbitrageOpportunity | None:
+        _validate_option_quote(option)
+        if not isfinite(float(future.bid)) or not isfinite(float(future.ask)):
+            raise ValueError("future prices must be finite")
+        if future.bid < 0 or future.ask < future.bid:
+            raise ValueError("future ask price must be at least bid price and bids must be non-negative")
+        if future.lot_size <= 0:
+            raise ValueError("future lot_size must be positive")
         if option.underlying != future.underlying or option.expiry != future.expiry:
             raise ValueError("synthetic legs must share underlying and expiry")
+        if option.instrument_class != future.instrument_class:
+            raise ValueError("synthetic legs must share instrument class")
         if option.timestamp_ns != future.timestamp_ns:
             raise ValueError("synthetic legs must share timestamp")
         if option.lot_size != future.lot_size:
