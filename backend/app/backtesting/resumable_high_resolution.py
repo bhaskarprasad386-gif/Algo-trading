@@ -35,7 +35,10 @@ class ResumableHighResolutionRunner:
     def _fill(signal: Any, event: MarketEvent) -> ExecutionFill | None:
         if signal is None: return None
         side = str(getattr(signal, "side", signal.get("side") if isinstance(signal, dict) else "")).upper()
-        quantity = int(getattr(signal, "quantity", signal.get("quantity") if isinstance(signal, dict) else 0))
+        raw_quantity = getattr(signal, "quantity", signal.get("quantity") if isinstance(signal, dict) else 0)
+        if isinstance(raw_quantity, bool) or not isinstance(raw_quantity, int):
+            raise ValueError("invalid strategy signal quantity")
+        quantity = raw_quantity
         if side not in {"BUY", "SELL"} or quantity <= 0: raise ValueError("invalid strategy signal")
         price = float(event.context.get("price", 0))
         if price <= 0: raise ValueError("execution price must be positive")
@@ -59,6 +62,8 @@ class ResumableHighResolutionRunner:
         processed = 0 if checkpoint is None else checkpoint.processed_events
         if checkpoint is not None: self._restore(strategy, checkpoint.state)
         signals = 0
+        if checkpoint is not None:
+            signals = int(checkpoint.state.get("signals", 0)) if isinstance(checkpoint.state, dict) else 0
         batch_events = 0
         pending_trades: list[Any] = []
         batch_positions = self.positions.snapshot_state()
@@ -83,7 +88,7 @@ class ResumableHighResolutionRunner:
                 latest_checkpoint = ReplayCheckpoint(
                     self.run_id, event.timestamp_ns, event.sequence, processed,
                     self.positions.net_pnl,
-                    {"strategy": self._strategy_state(strategy), "positions": self.positions.snapshot_state()},
+                    {"strategy": self._strategy_state(strategy), "positions": self.positions.snapshot_state(), "signals": signals},
                 )
                 if batch_events >= self.batch_size:
                     self.store.save_checkpoint(latest_checkpoint)

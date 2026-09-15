@@ -36,7 +36,10 @@ class HighResolutionStreamingRunner:
         if signal is None:
             return None
         side = str(getattr(signal, "side", signal.get("side") if isinstance(signal, dict) else "")).upper()
-        quantity = int(getattr(signal, "quantity", signal.get("quantity") if isinstance(signal, dict) else 0))
+        raw_quantity = getattr(signal, "quantity", signal.get("quantity") if isinstance(signal, dict) else 0)
+        if isinstance(raw_quantity, bool) or not isinstance(raw_quantity, int):
+            raise ValueError("invalid strategy signal quantity")
+        quantity = raw_quantity
         if side not in {"BUY", "SELL"} or quantity <= 0:
             raise ValueError("invalid strategy signal")
         price_value = event.context.get("price")

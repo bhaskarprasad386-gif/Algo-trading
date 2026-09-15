@@ -161,11 +161,24 @@ class BacktestEngine:
             if record.timestamp_ns < 0:
                 raise ValueError("event timestamp_ns cannot be negative")
             key = (record.timestamp_ns, record.sequence if record.sequence is not None else -1)
-            if previous_key is not None and key < previous_key:
-                raise ValueError("events must be ordered by timestamp_ns and sequence")
+            if previous_key is not None and key <= previous_key:
+                raise ValueError("events must be strictly ordered by timestamp_ns and sequence; duplicate event identity is not allowed")
             previous_key = key
             signal = _normalize_event_signal(strategy(EventContext(record.timestamp_ns, record.sequence, record.source, record.instrument, record.payload, record)))
             if signal.action in {"HOLD", "NONE"}:
+                raw_price = record.payload.get(price_field)
+                if not _is_number(raw_price):
+                    raise ValueError(f"event payload must contain numeric {price_field!r} or signal price")
+                mark_price = float(raw_price)
+                if not isfinite(mark_price) or mark_price <= 0:
+                    raise ValueError("event mark price must be finite and positive")
+                last_price = mark_price
+                last_timestamp = record.timestamp_ns
+                if open_trade is not None:
+                    marked_capital = capital + (mark_price * (1.0 - self.config.slippage_rate) - open_trade[1]) * self.config.quantity
+                    peak_capital = max(peak_capital, capital)
+                    if marked_capital < peak_capital:
+                        max_drawdown = max(max_drawdown, (peak_capital - marked_capital) / peak_capital)
                 continue
             price = signal.price
             if price is None:

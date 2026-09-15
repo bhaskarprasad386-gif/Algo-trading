@@ -55,6 +55,8 @@ class RestartableHighResolutionRunner:
         resume_key = None if checkpoint is None else (checkpoint.timestamp_ns, checkpoint.sequence)
         processed = 0 if checkpoint is None else checkpoint.processed_events
         signals = 0
+        if checkpoint is not None:
+            signals = int(checkpoint.state.get("signals", 0)) if isinstance(checkpoint.state, dict) else 0
         for event in ordered_events(events):
             key = (event.timestamp_ns, event.sequence)
             if resume_key is not None and key <= resume_key:
@@ -65,7 +67,10 @@ class RestartableHighResolutionRunner:
             signal = strategy.on_event(event)
             if signal is not None:
                 side = str(getattr(signal, "side", signal.get("side") if isinstance(signal, dict) else "")).upper()
-                quantity = int(getattr(signal, "quantity", signal.get("quantity") if isinstance(signal, dict) else 0))
+                raw_quantity = getattr(signal, "quantity", signal.get("quantity") if isinstance(signal, dict) else 0)
+        if isinstance(raw_quantity, bool) or not isinstance(raw_quantity, int):
+            raise ValueError("invalid strategy signal quantity")
+        quantity = raw_quantity
                 if side not in {"BUY", "SELL"} or quantity <= 0:
                     raise ValueError("invalid strategy signal")
                 price = float(event.context.get("price", 0))
@@ -75,5 +80,5 @@ class RestartableHighResolutionRunner:
                 signals += 1
             self.checkpoints.save(ReplayCheckpoint(
                 self.run_id, event.timestamp_ns, event.sequence,
-                processed, self.positions.net_pnl, self._snapshot(strategy)))
+                processed, self.positions.net_pnl, {**self._snapshot(strategy), "signals": signals}))
         return ResumeResult(processed, signals, self.positions.net_pnl, resume_key)

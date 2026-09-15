@@ -301,8 +301,12 @@ class ExecutionSimulator:
         queue_ahead = order.queue_ahead_quantity
         consumed_by_price: dict[float, int] = {}
         fills: list[SimFill] = []
+        previous_timestamp_ns: int | None = None
         for timestamp_ns, book, evidence in updates:
             timestamp_ns = self._timestamp(timestamp_ns, "timestamp_ns")
+            if previous_timestamp_ns is not None and timestamp_ns <= previous_timestamp_ns:
+                raise ValueError("depth updates must be strictly ordered by timestamp_ns")
+            previous_timestamp_ns = timestamp_ns
             if remaining <= 0:
                 break
             levels = self._executable_levels(order, book)
