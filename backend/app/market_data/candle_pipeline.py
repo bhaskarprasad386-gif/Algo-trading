@@ -22,9 +22,22 @@ class CandlePipeline:
             price = float(value)
         except (TypeError, ValueError):
             raise ValueError("tick requires numeric ltp") from None
-        if price < 0:
-            raise ValueError("tick ltp must be non-negative")
+        if price <= 0:
+            raise ValueError("tick ltp must be positive")
         return price
+
+    @staticmethod
+    def _volume(tick: dict[str, Any]) -> float:
+        value = tick.get("volume")
+        if value is None:
+            return 0.0
+        try:
+            volume = float(value)
+        except (TypeError, ValueError):
+            raise ValueError("tick volume must be numeric") from None
+        if volume < 0 or volume != volume or volume in (float("inf"), float("-inf")):
+            raise ValueError("tick volume must be finite and non-negative")
+        return volume
 
     @staticmethod
     def _timestamp(tick: dict[str, Any]) -> datetime:
@@ -43,8 +56,7 @@ class CandlePipeline:
         if not symbol:
             return None
         builder = self._builders.setdefault(symbol, CandleBuilder(self.interval_seconds))
-        volume = float(tick.get("volume") or 0.0)
-        return builder.update(self._price(tick), volume, self._timestamp(tick))
+        return builder.update(self._price(tick), self._volume(tick), self._timestamp(tick))
 
     def current(self, symbol: str) -> Candle | None:
         builder = self._builders.get(symbol)
