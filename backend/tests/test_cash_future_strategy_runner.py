@@ -79,6 +79,21 @@ def test_strategy_persists_metadata_signals_trades_and_equity():
     ledger.close()
 
 
+def test_strategy_final_capital_marks_open_position_to_last_observation():
+    now = datetime(2026, 9, 2, 10, 0)
+    result = run_cash_future_strategy(
+        [point(now, 10), point(now + timedelta(hours=1), 7)],
+        lambda current, history: "BUY",
+        strategy_id="open-mtm",
+    )
+    assert result.trades == ()
+    assert result.final_unrealized_pnl == 300.0
+    assert result.final_capital == 100000300.0
+    assert result.net_profit == 300.0
+    assert result.equity_curve[-1]["equity"] == result.final_capital
+    assert result.equity_curve[-1]["unrealized_pnl"] == result.final_unrealized_pnl
+
+
 def test_strategy_blocks_entry_when_margin_exceeds_available_capital():
     now = datetime(2026, 9, 2, 10, 0)
     result = run_cash_future_strategy(

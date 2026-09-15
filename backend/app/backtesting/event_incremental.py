@@ -9,7 +9,6 @@ from typing import Callable
 from app.backtesting.engine import BacktestConfig, BacktestResult, BacktestTrade, EventContext, EventStrategy, _build_trade
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 
-
 PersistTradeChunk = Callable[[tuple[BacktestTrade, ...], int], object]
 
 
@@ -22,12 +21,7 @@ def run_events_incremental(
     chunk_size: int = 500,
     price_field: str = "price",
 ) -> BacktestResult:
-    """Run events incrementally and persist completed trades in bounded chunks.
-
-    The event iterable is consumed once. Only the currently open trade and the
-    current trade chunk remain in memory; the complete event stream and trade
-    ledger are never materialized by this runner.
-    """
+    """Run events incrementally and persist completed trades in bounded chunks."""
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive")
     if not price_field.strip():
@@ -56,8 +50,8 @@ def run_events_incremental(
             raise ValueError("event timestamp_ns cannot be negative")
         sequence_key = record.sequence if record.sequence is not None else -1
         key = (record.timestamp_ns, sequence_key)
-        if previous_key is not None and key < previous_key:
-            raise ValueError("events must be ordered by timestamp_ns and sequence")
+        if previous_key is not None and key <= previous_key:
+            raise ValueError("events must be strictly ordered by timestamp_ns and sequence; duplicate event identity is not allowed")
         previous_key = key
 
         context = EventContext(
@@ -72,20 +66,28 @@ def run_events_incremental(
         action = decision.action.upper() if hasattr(decision, "action") else str(decision or "NONE").upper()
         if action not in {"BUY", "SELL", "HOLD", "NONE"}:
             raise ValueError("event strategy must return BUY, SELL, HOLD, or NONE")
-        if action in {"HOLD", "NONE"}:
-            continue
+
         signal_price = decision.price if hasattr(decision, "price") else None
+        raw_price = record.payload.get(price_field)
+        if signal_price is None and isinstance(raw_price, (int, float)) and not isinstance(raw_price, bool):
+            signal_price = float(raw_price)
+        if signal_price is not None:
+            if not isfinite(float(signal_price)) or float(signal_price) <= 0:
+                raise ValueError("event execution/mark price must be finite and positive")
+            last_price = float(signal_price)
+            last_timestamp = record.timestamp_ns
+
+        if action in {"HOLD", "NONE"}:
+            if open_trade is not None and last_price is not None:
+                marked_capital = capital + (last_price * (1.0 - engine_config.slippage_rate) - open_trade[1]) * engine_config.quantity
+                peak_capital = max(peak_capital, capital)
+                if marked_capital < peak_capital:
+                    max_drawdown = max(max_drawdown, (peak_capital - marked_capital) / peak_capital)
+            continue
+
         price = signal_price
         if price is None:
-            raw_price = record.payload.get(price_field)
-            if not isinstance(raw_price, (int, float)) or isinstance(raw_price, bool):
-                raise ValueError(f"event payload must contain numeric {price_field!r} or signal price")
-            price = float(raw_price)
-        if not isfinite(float(price)) or float(price) <= 0:
-            raise ValueError("event execution price must be finite and positive")
-        price = float(price)
-        last_price = price
-        last_timestamp = record.timestamp_ns
+            raise ValueError(f"event payload must contain numeric {price_field!r} or signal price")
 
         if open_trade is None and action == "BUY":
             open_trade = (record.timestamp_ns, price * (1.0 + engine_config.slippage_rate))
@@ -111,6 +113,12 @@ def run_events_incremental(
                 chunk_index += 1
                 chunk.clear()
             open_trade = None
+
+        if open_trade is not None and last_price is not None:
+            marked_capital = capital + (last_price * (1.0 - engine_config.slippage_rate) - open_trade[1]) * engine_config.quantity
+            peak_capital = max(peak_capital, capital)
+            if marked_capital < peak_capital:
+                max_drawdown = max(max_drawdown, (peak_capital - marked_capital) / peak_capital)
 
     if chunk:
         persist_chunk(tuple(chunk), chunk_index)

@@ -1,4 +1,5 @@
 import requests
+from threading import Lock
 from typing import Any, Dict, List, Optional
 
 from app.core.exceptions import TradingAppException
@@ -16,30 +17,34 @@ class InstrumentMaster:
     def __init__(self):
         self.instruments: List[Dict[str, Any]] = []
         self._loaded = False
+        self._lock = Lock()
 
     def download(self) -> List[Dict[str, Any]]:
         """Download the latest Angel One instrument master."""
-        try:
-            response = requests.get(self.MASTER_URL, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            if not isinstance(data, list):
-                raise TradingAppException(
-                    "InvalidInstrumentMaster",
-                    "Angel One instrument master format is invalid.",
-                    502,
+        with self._lock:
+            if self._loaded:
+                return self.instruments
+            try:
+                response = requests.get(self.MASTER_URL, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+                if not isinstance(data, list):
+                    raise TradingAppException(
+                        "InvalidInstrumentMaster",
+                        "Angel One instrument master format is invalid.",
+                        502,
+                    )
+                self.instruments = data
+                self._loaded = True
+                app_logger.info(
+                    f"Loaded {len(self.instruments)} instruments from Angel One instrument master"
                 )
-            self.instruments = data
-            self._loaded = True
-            app_logger.info(
-                f"Loaded {len(self.instruments)} instruments from Angel One instrument master"
-            )
-            return self.instruments
-        except TradingAppException:
-            raise
-        except Exception as e:
-            app_logger.error(f"Failed to download instrument master: {str(e)}")
-            raise TradingAppException("InstrumentMasterDownloadError", str(e), 502)
+                return self.instruments
+            except TradingAppException:
+                raise
+            except Exception as e:
+                app_logger.error(f"Failed to download instrument master: {str(e)}")
+                raise TradingAppException("InstrumentMasterDownloadError", str(e), 502)
 
     def search(
         self,

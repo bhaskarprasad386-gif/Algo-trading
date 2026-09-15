@@ -49,9 +49,7 @@ def resume_cash_future_strategy(
     restore = getattr(strategy, "restore_checkpoint_state", None)
     has_strategy_state = checkpoint.strategy_state is not None
     if has_strategy_state and restore is None:
-        raise ValueError(
-            "unsafe Cash-Future resume: checkpoint contains strategy state but strategy cannot restore it"
-        )
+        raise ValueError("unsafe Cash-Future resume: checkpoint contains strategy state but strategy cannot restore it")
     if restore is not None:
         if checkpoint.strategy_state is None:
             raise ValueError("unsafe Cash-Future resume: strategy state is unavailable")
@@ -65,10 +63,7 @@ def resume_cash_future_strategy(
     if not isfinite(initial_capital) or initial_capital < 0:
         raise ValueError("unsafe Cash-Future resume: stored initial_capital is invalid")
     if config.initial_capital != initial_capital:
-        raise ValueError(
-            "unsafe Cash-Future resume: initial_capital mismatch "
-            f"(stored={initial_capital!r}, requested={config.initial_capital!r})"
-        )
+        raise ValueError("unsafe Cash-Future resume: initial_capital mismatch " f"(stored={initial_capital!r}, requested={config.initial_capital!r})")
 
     selected_contract = checkpoint.selected_contract or config.contract_month
     if selected_contract is None:
@@ -133,12 +128,7 @@ def resume_cash_future_strategy(
             elif capital_ledger.reserve(point.margin_required):
                 entry = point
             else:
-                signal_record.update({
-                    "execution_status": "blocked",
-                    "blocked_reason": "insufficient_available_capital",
-                    "required_margin": max(float(point.margin_required), 0.0),
-                    "available_capital": capital_ledger.available_capital,
-                })
+                signal_record.update({"execution_status": "blocked", "blocked_reason": "insufficient_available_capital", "required_margin": max(float(point.margin_required), 0.0), "available_capital": capital_ledger.available_capital})
         elif action == "BUY" and entry is not None:
             capital_ledger.blocked_entries += 1
             signal_record.update({"execution_status": "blocked", "blocked_reason": "position_already_open"})
@@ -158,28 +148,16 @@ def resume_cash_future_strategy(
             capital_ledger.apply_realized_pnl(net)
             capital_ledger.release(entry.margin_required)
             ledger.append(LedgerRecord(run_id, "trade", int(point.timestamp.timestamp() * 1_000_000_000), {
-                "entry_time": entry.timestamp.isoformat(),
-                "exit_time": point.timestamp.isoformat(),
-                "symbol": entry.symbol,
-                "contract_month": entry.contract_month,
-                "lot_size": entry.lot_size,
-                "quantity": entry.lot_size,
-                "entry_cash_price": entry.cash_price,
-                "entry_future_price": entry.future_price,
-                "entry_gap": entry.gap,
-                "exit_cash_price": point.cash_price,
-                "exit_future_price": point.future_price,
-                "exit_gap": point.gap,
-                "gross_profit": gross,
-                "charges": config.charges_per_trade,
-                "funding_cost": config.funding_cost_per_trade,
-                "net_profit": net,
-                "execution_model": config.execution_model,
-                "cash_side": config.cash_side,
-                "future_side": config.future_side,
-                "slippage_per_share": config.slippage_per_share,
-                "exit_reason": exit_reason,
-                "reserved_margin": entry.margin_required,
+                "entry_time": entry.timestamp.isoformat(), "exit_time": point.timestamp.isoformat(),
+                "symbol": entry.symbol, "contract_month": entry.contract_month, "lot_size": entry.lot_size,
+                "quantity": entry.lot_size, "entry_cash_price": entry.cash_price,
+                "entry_future_price": entry.future_price, "entry_gap": entry.gap,
+                "exit_cash_price": point.cash_price, "exit_future_price": point.future_price,
+                "exit_gap": point.gap, "gross_profit": gross, "charges": config.charges_per_trade,
+                "funding_cost": config.funding_cost_per_trade, "net_profit": net,
+                "execution_model": config.execution_model, "cash_side": config.cash_side,
+                "future_side": config.future_side, "slippage_per_share": config.slippage_per_share,
+                "exit_reason": exit_reason, "reserved_margin": entry.margin_required,
             }))
             entry = None
 
@@ -187,37 +165,34 @@ def resume_cash_future_strategy(
         if entry is not None:
             unrealized = _trade_gross_profit(entry, point, config)
         ledger.append(LedgerRecord(run_id, "equity", int(point.timestamp.timestamp() * 1_000_000_000), {
-            "timestamp": point.timestamp.isoformat(),
-            "equity": float(capital_ledger.realized_capital) + unrealized,
-            "realized_capital": float(capital_ledger.realized_capital),
-            "unrealized_pnl": unrealized,
-            "available_capital": capital_ledger.available_capital,
-            "reserved_margin": capital_ledger.reserved_margin,
+            "timestamp": point.timestamp.isoformat(), "equity": float(capital_ledger.realized_capital) + unrealized,
+            "realized_capital": float(capital_ledger.realized_capital), "unrealized_pnl": unrealized,
+            "available_capital": capital_ledger.available_capital, "reserved_margin": capital_ledger.reserved_margin,
         }))
         _maybe_checkpoint(ledger, config, run_id, seen_events, point, selected_contract,
                           capital_ledger, entry, strategy, strategy_id, strategy_version,
                           strategy_hash, data_source_fingerprint)
 
     if not resumed:
-        raise ValueError(
-            "Cash-Future resume source does not contain observations after checkpoint "
-            f"event_index={event_index}"
-        )
+        raise ValueError("Cash-Future resume source does not contain observations after checkpoint " f"event_index={event_index}")
 
     if config.checkpoint_interval is not None and last_processed_point is not None:
-        _write_checkpoint(
-            ledger, run_id, last_processed_event_index, last_processed_point,
-            selected_contract, capital_ledger, entry, strategy, strategy_id,
-            strategy_version, strategy_hash, data_source_fingerprint,
-        )
+        _write_checkpoint(ledger, run_id, last_processed_event_index, last_processed_point,
+                           selected_contract, capital_ledger, entry, strategy, strategy_id,
+                           strategy_version, strategy_hash, data_source_fingerprint)
 
+    final_unrealized = 0.0
+    if entry is not None and last_processed_point is not None:
+        final_unrealized = _trade_gross_profit(entry, last_processed_point, config)
+    final_capital = float(capital_ledger.realized_capital) + final_unrealized
     return CashFutureStrategyRun(
-        strategy_id, strategy_version, initial_capital, float(capital_ledger.realized_capital),
-        float(capital_ledger.realized_capital) - initial_capital,
+        strategy_id, strategy_version, initial_capital, final_capital,
+        final_capital - initial_capital,
         _LedgerPayloadSequence(ledger, run_id, "signal"),
         _LedgerPayloadSequence(ledger, run_id, "trade"),
         _LedgerPayloadSequence(ledger, run_id, "equity"),
-        capital_ledger.available_capital, capital_ledger.reserved_margin, capital_ledger.blocked_entries,
+        capital_ledger.available_capital, capital_ledger.reserved_margin,
+        capital_ledger.blocked_entries, final_unrealized,
     )
 
 
@@ -233,8 +208,7 @@ def _maybe_checkpoint(ledger, config, run_id, event_index, point, selected_contr
 def _deserialize_entry(payload: Mapping[str, Any] | None, *, selected_contract: str) -> CashFutureHistoryPoint | None:
     if payload is None:
         return None
-    required = ("timestamp", "symbol", "contract_month", "cash_price", "future_price",
-                "gap", "gap_pct", "lot_size", "margin_required", "expiry_date")
+    required = ("timestamp", "symbol", "contract_month", "cash_price", "future_price", "gap", "gap_pct", "lot_size", "margin_required", "expiry_date")
     missing = [name for name in required if name not in payload]
     if missing:
         raise ValueError(f"unsafe Cash-Future resume: open_entry missing fields: {missing}")
@@ -256,10 +230,8 @@ def _deserialize_entry(payload: Mapping[str, Any] | None, *, selected_contract: 
             "cash_ask_qty": float(payload["cash_ask_qty"]) if payload.get("cash_ask_qty") is not None else None,
             "future_bid_qty": float(payload["future_bid_qty"]) if payload.get("future_bid_qty") is not None else None,
             "future_ask_qty": float(payload["future_ask_qty"]) if payload.get("future_ask_qty") is not None else None,
-            "charges": float(payload.get("charges", 0.0)),
-            "funding_cost": float(payload.get("funding_cost", 0.0)),
-            "net_profit": float(payload.get("net_profit", 0.0)),
-            "roi_pct": float(payload.get("roi_pct", 0.0)),
+            "charges": float(payload.get("charges", 0.0)), "funding_cost": float(payload.get("funding_cost", 0.0)),
+            "net_profit": float(payload.get("net_profit", 0.0)), "roi_pct": float(payload.get("roi_pct", 0.0)),
         }
         lot_raw = payload["lot_size"]
         if isinstance(lot_raw, bool) or not isinstance(lot_raw, int):

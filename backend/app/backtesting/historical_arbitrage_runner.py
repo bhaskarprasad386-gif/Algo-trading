@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import Any, Callable, Iterable, Mapping
 
 from .backtest_result import BacktestRunWriter
@@ -24,12 +25,15 @@ class OpenPosition:
     leg: str = ""
     data_resolution: str = ""
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    entry_fees: float = 0.0
 
     def __post_init__(self) -> None:
         if not self.trade_id.strip():
             raise ValueError("trade_id is required")
         if self.timestamp_ns < 0 or self.quantity <= 0 or self.entry_price < 0:
             raise ValueError("invalid historical entry")
+        if not isfinite(float(self.entry_fees)) or self.entry_fees < 0:
+            raise ValueError("entry_fees must be finite and non-negative")
 
 
 @dataclass(frozen=True)
@@ -104,7 +108,9 @@ class HistoricalArbitrageRunner:
                         continue
                     if execution.timestamp_ns <= position.timestamp_ns:
                         raise ValueError("exit must occur after entry")
-                    net_pnl = execution.gross_pnl - execution.fees - execution.slippage
+                    net_pnl = (execution.gross_pnl - position.entry_fees
+                               - execution.fees - execution.slippage)
+                    total_fees = position.entry_fees + execution.fees
                     metadata = dict(position.metadata)
                     metadata.update(dict(execution.metadata))
                     metadata.update({
@@ -113,13 +119,14 @@ class HistoricalArbitrageRunner:
                         "pricing_model": "EXECUTABLE_EDGE",
                         "entry_edge": position.entry_price,
                         "exit_edge": execution.exit_price,
+                        "entry_fees": position.entry_fees,
                     })
                     self.writer.ledger.append_trades(self.writer.spec.run_id, [BacktestTrade(
                         trade_id=position.trade_id, sequence=self._sequence,
                         timestamp_ns=execution.timestamp_ns, instrument=position.instrument,
                         side=position.side, quantity=position.quantity,
                         entry_price=position.entry_price, exit_price=execution.exit_price,
-                        gross_pnl=execution.gross_pnl, fees=execution.fees,
+                        gross_pnl=execution.gross_pnl, fees=total_fees,
                         slippage=execution.slippage, net_pnl=net_pnl,
                         contract=position.contract, expiry=position.expiry,
                         strike=position.strike, leg=position.leg,
@@ -139,6 +146,7 @@ class HistoricalArbitrageRunner:
                         "trade_id": position.trade_id, "instrument": position.instrument,
                         "entry_price": position.entry_price, "contract": position.contract,
                         "expiry": position.expiry, "strike": position.strike, "leg": position.leg,
+                        "entry_fees": position.entry_fees,
                     })
                 if equity_selector is not None:
                     point = equity_selector(event, self._realized_pnl)

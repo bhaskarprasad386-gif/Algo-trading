@@ -123,3 +123,55 @@ def test_failed_event_rolls_back_dedup_trade_and_checkpoint(tmp_path):
         "SELECT COUNT(*) FROM atomic_replay_events WHERE run_id='run-3'"
     ).fetchone()[0] == 1
     conn.close()
+
+
+def test_external_ledger_failure_does_not_rollback_committed_atomic_batch(tmp_path):
+    db = tmp_path / "projection-failure.db"
+    conn = sqlite3.connect(db)
+    ledger = BacktestLedger(str(tmp_path / "trades.db"))
+    ledger.start_run("run-4", "strategy", "1", 1000)
+
+    class FailingWriter(HighResolutionLedgerWriter):
+        def reconcile_atomic(self, atomic_store):
+            raise RuntimeError("simulated ledger projection failure")
+
+    runner = ResumableHighResolutionRunner(conn, "run-4", batch_size=1)
+    try:
+        runner.run([
+            MarketEvent(10, "NIFTY", data=(("price", 100.0),)),
+            MarketEvent(20, "NIFTY", data=(("price", 103.0),)),
+        ], BuyThenSell(), FailingWriter(ledger, "run-4"))
+    except RuntimeError as exc:
+        assert str(exc) == "simulated ledger projection failure"
+    else:
+        raise AssertionError("expected projection failure")
+
+    atomic = AtomicReplayStore(conn)
+    checkpoint = atomic.load_checkpoint("run-4")
+    assert checkpoint is not None
+    assert checkpoint.processed_events == 2
+    assert len(atomic.trades("run-4")) == 1
+    assert ledger.record_count("run-4", "high_resolution_trade") == 0
+    conn.close()
+    ledger.close()
+
+
+def test_external_ledger_reconciliation_recovers_committed_trade_without_duplicate(tmp_path):
+    db = tmp_path / "projection-recovery.db"
+    conn = sqlite3.connect(db)
+    ledger = BacktestLedger(str(tmp_path / "trades.db"))
+    ledger.start_run("run-5", "strategy", "1", 1000)
+
+    first = ResumableHighResolutionRunner(conn, "run-5")
+    result = first.run([
+        MarketEvent(10, "NIFTY", data=(("price", 100.0),)),
+        MarketEvent(20, "NIFTY", data=(("price", 103.0),)),
+    ], BuyThenSell())
+    assert result.trades_closed == 1
+
+    writer = HighResolutionLedgerWriter(ledger, "run-5")
+    assert writer.reconcile_atomic(first.store) == 1
+    assert writer.reconcile_atomic(first.store) == 0
+    assert ledger.record_count("run-5", "high_resolution_trade") == 1
+    conn.close()
+    ledger.close()

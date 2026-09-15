@@ -346,8 +346,8 @@ class EventBacktestEngine:
         for raw_index, raw_event in enumerate(events):
             seen += 1; timestamp_ns = raw_event.timestamp_ns if self.config.timestamp_unit == "ns" else self.config.to_ns(raw_event.timestamp_ns); event = raw_event if timestamp_ns == raw_event.timestamp_ns else MarketEvent(timestamp_ns, raw_event.instrument, raw_event.event_type, raw_event.payload, raw_event.sequence, raw_event.source)
             if self.config.include_event_types is not None and event.event_type not in self.config.include_event_types: continue
-            sequence_key = event.sequence if event.sequence is not None else -1; source_key = event.source or ""; key = (event.timestamp_ns, sequence_key, source_key, event.event_type.value)
-            if previous_key is not None and key < previous_key: raise ValueError("events must be ordered by timestamp, sequence, source, and type")
+            sequence_key = event.sequence if event.sequence is not None else -1; source_key = event.source or ""; key = (event.timestamp_ns, sequence_key, source_key, event.event_type.value, event.instrument)
+            if previous_key is not None and key <= previous_key: raise ValueError("events must be strictly ordered by timestamp, sequence, source, type, and instrument; duplicate event identity is not allowed")
             previous_key = key
             if raw_index < start_event_index:
                 history.append(event)

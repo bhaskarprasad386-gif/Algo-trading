@@ -131,6 +131,7 @@ class CashFutureStrategyRun:
     final_available_capital: float = 0.0
     final_reserved_margin: float = 0.0
     blocked_entry_count: int = 0
+    final_unrealized_pnl: float = 0.0
 
 
 def _builder_gap_profit(entry: CashFutureHistoryPoint, exit_point: CashFutureHistoryPoint, config: CashFutureStrategyConfig) -> float:
@@ -299,7 +300,16 @@ def run_cash_future_strategy(
         result_signals = tuple(signals or ())
         result_trades = tuple(trades or ())
         result_equity = tuple(equity_curve or ())
-    return CashFutureStrategyRun(strategy_id, strategy_version, config.initial_capital, float(capital_ledger.realized_capital), float(capital_ledger.realized_capital) - config.initial_capital, result_signals, result_trades, result_equity, capital_ledger.available_capital, capital_ledger.reserved_margin, capital_ledger.blocked_entries)
+    final_unrealized = 0.0
+    if entry is not None and last_point is not None:
+        final_unrealized = _trade_gross_profit(entry, last_point, config)
+    final_capital = float(capital_ledger.realized_capital) + final_unrealized
+    return CashFutureStrategyRun(
+        strategy_id, strategy_version, config.initial_capital, final_capital,
+        final_capital - config.initial_capital, result_signals, result_trades,
+        result_equity, capital_ledger.available_capital, capital_ledger.reserved_margin,
+        capital_ledger.blocked_entries, final_unrealized,
+    )
 
 
 def _maybe_checkpoint(ledger, config: CashFutureStrategyConfig, run_id: str | None, event_index: int, point: CashFutureHistoryPoint, selected_contract: str | None, capital_ledger: CashFutureCapitalLedger, entry: CashFutureHistoryPoint | None, strategy, strategy_id: str, strategy_version: str, strategy_hash: str | None, data_source_fingerprint: str | None) -> None:

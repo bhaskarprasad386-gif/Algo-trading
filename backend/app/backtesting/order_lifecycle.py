@@ -61,7 +61,7 @@ class OrderLifecycle:
         self.state = OrderState(order=order, status=OrderStatus.SUBMITTED, time_in_force=tif)
 
     def _transition(self, status: OrderStatus, timestamp_ns: int, *, reason: str | None = None, replacement_order_id: str | None = None) -> OrderState:
-        if timestamp_ns < self.state.order.submitted_at_ns:
+        if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int) or timestamp_ns < self.state.order.submitted_at_ns:
             raise ValueError("lifecycle timestamp cannot precede order submission")
         if self.state.terminal:
             raise ValueError("terminal order cannot transition")
@@ -161,7 +161,7 @@ class OrderLifecycle:
 
     @classmethod
     def restore_state(cls, raw: Mapping[str, object]) -> "OrderLifecycle":
-        """Restore a lifecycle previously produced by export_state()."""
+        """Restore a lifecycle previously produced by export_state(), validating event/state consistency."""
         if not isinstance(raw, Mapping):
             raise ValueError("invalid lifecycle state")
 
@@ -172,7 +172,7 @@ class OrderLifecycle:
                 raise ValueError(f"invalid lifecycle {name}")
             return value
 
-        order_raw = raw["order"]
+        order_raw = raw.get("order")
         if not isinstance(order_raw, Mapping):
             raise ValueError("invalid lifecycle order state")
         order = SimOrder(
@@ -203,6 +203,8 @@ class OrderLifecycle:
         filled_quantity = strict_int(raw.get("filled_quantity", 0), "filled quantity", nonnegative=True)
         average_fill_price = float(raw.get("average_fill_price", 0.0))
         time_in_force = TimeInForce(str(raw.get("time_in_force", order.time_in_force.value)))
+        if time_in_force != order.time_in_force:
+            raise ValueError("lifecycle time_in_force does not match order")
         if filled_quantity > order.quantity:
             raise ValueError("invalid lifecycle filled quantity")
         if status == OrderStatus.FILLED and filled_quantity != order.quantity:
@@ -220,8 +222,24 @@ class OrderLifecycle:
             if event.filled_quantity > order.quantity or event.remaining_quantity != order.quantity - event.filled_quantity:
                 raise ValueError("invalid lifecycle event quantities")
             previous_timestamp = event.timestamp_ns
+        if events:
+            last = events[-1]
+            if last.status != status:
+                raise ValueError("lifecycle status does not match final event")
+            if last.filled_quantity != filled_quantity or last.remaining_quantity != order.quantity - filled_quantity:
+                raise ValueError("lifecycle quantities do not match final event")
+            if status == OrderStatus.SUBMITTED:
+                raise ValueError("SUBMITTED lifecycle cannot have events")
+        elif status != OrderStatus.SUBMITTED:
+            raise ValueError("non-SUBMITTED lifecycle must contain event history")
         if not isfinite(average_fill_price) or average_fill_price < 0:
             raise ValueError("invalid lifecycle average fill price")
+        if filled_quantity == 0 and average_fill_price != 0:
+            raise ValueError("empty lifecycle cannot have an average fill price")
+        if filled_quantity > 0 and average_fill_price <= 0:
+            raise ValueError("filled lifecycle must have a positive average fill price")
+        if status == OrderStatus.REJECTED and not isinstance(raw.get("reject_reason"), str):
+            raise ValueError("REJECTED lifecycle must contain reject_reason")
         lifecycle.state = OrderState(
             order=order, status=status,
             filled_quantity=filled_quantity,

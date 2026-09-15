@@ -21,6 +21,8 @@ class OptionQuote:
     put_ask: float
     lot_size: int = 1
     instrument_class: Literal["STOCK", "INDEX"] = "STOCK"
+    volume: int = 0
+    oi: int = 0
 
 
 @dataclass(frozen=True)
@@ -44,10 +46,20 @@ class LiquidityPolicy:
     min_future_volume: int = 0
     min_future_oi: int = 0
 
+    def __post_init__(self) -> None:
+        if self.min_option_volume < 0 or self.min_option_oi < 0:
+            raise ValueError("option liquidity thresholds cannot be negative")
+        if self.min_future_volume < 0 or self.min_future_oi < 0:
+            raise ValueError("future liquidity thresholds cannot be negative")
+        if not isfinite(float(self.max_spread_pct)) or self.max_spread_pct < 0:
+            raise ValueError("max_spread_pct must be finite and non-negative")
+
     @staticmethod
     def _accepts_quote(*, volume: int, oi: int, bid: float, ask: float,
                        min_volume: int, min_oi: int, max_spread_pct: float) -> bool:
         if volume < min_volume or oi < min_oi:
+            return False
+        if not all(isfinite(float(value)) for value in (bid, ask)):
             return False
         if bid < 0 or ask < bid:
             return False
@@ -61,6 +73,14 @@ class LiquidityPolicy:
             min_volume=self.min_option_volume, min_oi=self.min_option_oi,
             max_spread_pct=self.max_spread_pct,
         )
+
+    def accepts_option(self, option: OptionQuote) -> bool:
+        quotes = (
+            (option.call_bid, option.call_ask),
+            (option.put_bid, option.put_ask),
+        )
+        return all(self.accepts(volume=option.volume, oi=option.oi, bid=bid, ask=ask)
+                   for bid, ask in quotes)
 
     def accepts_future(self, future: FutureQuote) -> bool:
         return self._accepts_quote(
@@ -95,6 +115,8 @@ def _validate_option_quote(quote: OptionQuote) -> None:
         raise ValueError("option ask prices must be at least bid prices")
     if quote.lot_size <= 0:
         raise ValueError("option lot_size must be positive")
+    if quote.volume < 0 or quote.oi < 0:
+        raise ValueError("option volume and oi must be non-negative")
 
 
 def _validate_direction(direction: str) -> None:
@@ -108,7 +130,8 @@ class BoxSpreadBacktester:
     @staticmethod
     def evaluate(low: OptionQuote, high: OptionQuote, *,
                  direction: Literal["LONG", "SHORT"] = "LONG",
-                 fees_per_unit: float = 0.0) -> ArbitrageOpportunity | None:
+                 fees_per_unit: float = 0.0,
+                 liquidity: LiquidityPolicy | None = None) -> ArbitrageOpportunity | None:
         _validate_direction(direction)
         _validate_option_quote(low)
         _validate_option_quote(high)
@@ -124,6 +147,8 @@ class BoxSpreadBacktester:
             raise ValueError("box legs must share lot size")
         if fees_per_unit < 0:
             raise ValueError("fees_per_unit must be non-negative")
+        if liquidity is not None and (not liquidity.accepts_option(low) or not liquidity.accepts_option(high)):
+            return None
         width = high.strike - low.strike
         if direction == "LONG":
             debit = low.call_ask + low.put_ask - high.call_bid - high.put_bid
@@ -154,6 +179,8 @@ class SyntheticCashCarryBacktester:
             raise ValueError("future ask price must be at least bid price and bids must be non-negative")
         if future.lot_size <= 0:
             raise ValueError("future lot_size must be positive")
+        if future.volume < 0 or future.oi < 0:
+            raise ValueError("future volume and oi must be non-negative")
         if option.underlying != future.underlying or option.expiry != future.expiry:
             raise ValueError("synthetic legs must share underlying and expiry")
         if option.instrument_class != future.instrument_class:
@@ -162,11 +189,13 @@ class SyntheticCashCarryBacktester:
             raise ValueError("synthetic legs must share timestamp")
         if option.lot_size != future.lot_size:
             raise ValueError("synthetic legs must share lot size")
-        if time_to_expiry_years < 0:
-            raise ValueError("time_to_expiry_years must be non-negative")
-        if fees_per_unit < 0:
-            raise ValueError("fees_per_unit must be non-negative")
-        if liquidity is not None and not liquidity.accepts_future(future):
+        if not isfinite(float(time_to_expiry_years)) or time_to_expiry_years < 0:
+            raise ValueError("time_to_expiry_years must be finite and non-negative")
+        if not isfinite(float(rate)):
+            raise ValueError("rate must be finite")
+        if fees_per_unit < 0 or not isfinite(float(fees_per_unit)):
+            raise ValueError("fees_per_unit must be finite and non-negative")
+        if liquidity is not None and (not liquidity.accepts_future(future) or not liquidity.accepts_option(option)):
             return None
 
         carry = exp(rate * time_to_expiry_years)

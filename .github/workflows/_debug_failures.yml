@@ -1,0 +1,20 @@
+name: _debug_failures
+on:
+  push:
+    branches: [fix/batch-45-50]
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      PYTHONPATH: ..
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt && pip install pytest requests
+      - run: python -m pytest -vv tests/test_event_engine.py::test_margin_call_still_allows_risk_reducing_close_order tests/test_event_engine_market_risk.py::test_event_engine_allows_risk_reducing_order_during_margin_breach tests/test_liquidation.py::test_forced_liquidation_executes_long_and_short_positions tests/test_liquidation.py::test_forced_liquidation_partial_fill_does_not_duplicate_on_retry tests/test_order_lifecycle_batch_49.py::test_restore_rejects_state_that_disagrees_with_final_event_status tests/test_order_lifecycle_checkpoint_validation.py::test_restore_accepts_integer_checkpoint_values tests/test_order_lifecycle_restore_invariants.py::test_restore_rejects_filled_state_without_full_quantity tests/test_order_lifecycle_restore_invariants.py::test_restore_rejects_event_with_mismatched_remaining_quantity tests/test_order_lifecycle_restore_validation.py::test_restore_state_rejects_non_finite_average_fill_price tests/test_order_lifecycle_restore_validation.py::test_restore_state_accepts_finite_average_fill_price
