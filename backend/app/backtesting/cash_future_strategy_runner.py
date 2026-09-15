@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Callable, Iterable, Iterator, Mapping, Any
 import json
+import math
 
 from app.backtesting.cash_future_strategy_checkpoint import CashFutureStrategyCheckpoint
 from app.scanner.cash_future_backtest import _executable_spread_profit, _legacy_gap_profit
@@ -32,8 +33,18 @@ class CashFutureStrategyConfig:
     slippage_per_share: float = 0.0
 
     def __post_init__(self) -> None:
+        for value, name in (
+            (self.initial_capital, "initial_capital"),
+            (self.charges_per_trade, "charges_per_trade"),
+            (self.funding_cost_per_trade, "funding_cost_per_trade"),
+            (self.slippage_per_share, "slippage_per_share"),
+        ):
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                raise ValueError(f"{name} must be a finite number")
         if self.initial_capital <= 0:
             raise ValueError("initial_capital must be positive")
+        if self.charges_per_trade < 0 or self.funding_cost_per_trade < 0:
+            raise ValueError("charges_per_trade and funding_cost_per_trade must be non-negative")
         if self.execution_model not in {"gap", "bid_ask"}:
             raise ValueError("execution_model must be 'gap' or 'bid_ask'")
         if self.cash_side not in {"BUY", "SELL"}:
@@ -203,13 +214,13 @@ def run_cash_future_strategy(
         if point.contract_month != selected_contract:
             continue
         event_index += 1
+        if start_date is not None and point_date < start_date:
+            _maybe_checkpoint(ledger, config, run_id, event_index, point, selected_contract, capital_ledger, entry, strategy, strategy_id, strategy_version, strategy_hash, data_source_fingerprint)
+            continue
         last_point = point
         history.append(point)
         visible_history = tuple(history)
         raw_signal = strategy(point, visible_history)
-        if start_date is not None and point_date < start_date:
-            _maybe_checkpoint(ledger, config, run_id, event_index, point, selected_contract, capital_ledger, entry, strategy, strategy_id, strategy_version, strategy_hash, data_source_fingerprint)
-            continue
         action = "NONE" if raw_signal is None else str(raw_signal).upper()
         if action not in {"BUY", "SELL", "HOLD", "NONE"}:
             raise ValueError("Cash-Future strategy must return BUY, SELL, HOLD, or NONE")
@@ -263,10 +274,7 @@ def run_cash_future_strategy(
             entry = None
         unrealized = 0.0
         if entry is not None:
-            try:
-                unrealized = _trade_gross_profit(entry, point, config)
-            except ValueError:
-                unrealized = 0.0
+            unrealized = _trade_gross_profit(entry, point, config)
         equity_record = {
             "timestamp": point.timestamp.isoformat(),
             "equity": float(capital_ledger.realized_capital) + unrealized,
