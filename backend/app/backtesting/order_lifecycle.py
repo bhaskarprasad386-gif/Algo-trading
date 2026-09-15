@@ -161,6 +161,9 @@ class OrderLifecycle:
     @classmethod
     def restore_state(cls, raw: Mapping[str, object]) -> "OrderLifecycle":
         """Restore a lifecycle previously produced by export_state()."""
+        if not isinstance(raw, Mapping):
+            raise ValueError("invalid lifecycle state")
+
         def strict_int(value: object, name: str, *, nonnegative: bool = False) -> int:
             if isinstance(value, bool) or not isinstance(value, int):
                 raise ValueError(f"invalid lifecycle {name}")
@@ -181,8 +184,11 @@ class OrderLifecycle:
             time_in_force=TimeInForce(str(order_raw.get("time_in_force", TimeInForce.DAY.value))),
         )
         lifecycle = cls(order)
+        raw_events = raw.get("events", [])
+        if not isinstance(raw_events, (list, tuple)):
+            raise ValueError("invalid lifecycle events")
         events = []
-        for raw_event in raw.get("events", []):
+        for raw_event in raw_events:
             if not isinstance(raw_event, Mapping):
                 raise ValueError("invalid lifecycle event")
             events.append(LifecycleEvent(
@@ -192,12 +198,35 @@ class OrderLifecycle:
                 remaining_quantity=strict_int(raw_event["remaining_quantity"], "event remaining quantity", nonnegative=True),
                 reason=raw_event.get("reason"), replacement_order_id=raw_event.get("replacement_order_id"),
             ))
+        status = OrderStatus(str(raw["status"]))
+        filled_quantity = strict_int(raw.get("filled_quantity", 0), "filled quantity", nonnegative=True)
+        average_fill_price = float(raw.get("average_fill_price", 0.0))
+        time_in_force = TimeInForce(str(raw.get("time_in_force", order.time_in_force.value)))
+        if filled_quantity > order.quantity:
+            raise ValueError("invalid lifecycle filled quantity")
+        if status == OrderStatus.FILLED and filled_quantity != order.quantity:
+            raise ValueError("FILLED lifecycle must have full quantity")
+        if status == OrderStatus.PARTIALLY_FILLED and not 0 < filled_quantity < order.quantity:
+            raise ValueError("PARTIALLY_FILLED lifecycle must have residual quantity")
+        if status == OrderStatus.SUBMITTED and filled_quantity != 0:
+            raise ValueError("SUBMITTED lifecycle cannot contain fills")
+        previous_timestamp = order.submitted_at_ns
+        for event in events:
+            if event.order_id != order.order_id:
+                raise ValueError("lifecycle event order_id does not match order")
+            if event.timestamp_ns < previous_timestamp:
+                raise ValueError("lifecycle events must be chronological")
+            if event.filled_quantity > order.quantity or event.remaining_quantity != order.quantity - event.filled_quantity:
+                raise ValueError("invalid lifecycle event quantities")
+            previous_timestamp = event.timestamp_ns
+        if not average_fill_price >= 0:
+            raise ValueError("invalid lifecycle average fill price")
         lifecycle.state = OrderState(
-            order=order, status=OrderStatus(str(raw["status"])),
-            filled_quantity=strict_int(raw.get("filled_quantity", 0), "filled quantity", nonnegative=True),
-            average_fill_price=float(raw.get("average_fill_price", 0.0)),
+            order=order, status=status,
+            filled_quantity=filled_quantity,
+            average_fill_price=average_fill_price,
             reject_reason=raw.get("reject_reason"),
-            time_in_force=TimeInForce(str(raw.get("time_in_force", order.time_in_force.value))),
+            time_in_force=time_in_force,
             events=tuple(events),
         )
         return lifecycle
