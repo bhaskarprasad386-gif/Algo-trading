@@ -47,6 +47,8 @@ def run_events_incremental(
     downside_square_sum = 0.0
     first_entry: int | None = None
     last_exit: int | None = None
+    last_price: float | None = None
+    last_timestamp: int | None = None
     previous_key: tuple[int, int] | None = None
 
     for record in events:
@@ -82,6 +84,8 @@ def run_events_incremental(
         if not isfinite(float(price)) or float(price) <= 0:
             raise ValueError("event execution price must be finite and positive")
         price = float(price)
+        last_price = price
+        last_timestamp = record.timestamp_ns
 
         if open_trade is None and action == "BUY":
             open_trade = (record.timestamp_ns, price * (1.0 + engine_config.slippage_rate))
@@ -111,6 +115,17 @@ def run_events_incremental(
     if chunk:
         persist_chunk(tuple(chunk), chunk_index)
 
+    if open_trade is not None and last_price is not None:
+        unrealized_pnl = (last_price * (1.0 - engine_config.slippage_rate) - open_trade[1]) * engine_config.quantity
+        final_capital = capital + unrealized_pnl
+        peak_capital = max(peak_capital, final_capital)
+        max_drawdown = max(max_drawdown, (peak_capital - final_capital) / peak_capital)
+        cagr_end = last_timestamp
+    else:
+        unrealized_pnl = 0.0
+        final_capital = capital
+        cagr_end = last_exit
+
     win_rate = wins / trade_count if trade_count else 0.0
     expectancy = pnl_sum / trade_count if trade_count else 0.0
     mean_return = return_sum / trade_count if trade_count else 0.0
@@ -118,12 +133,12 @@ def run_events_incremental(
     sharpe = mean_return / sqrt(variance) if variance > 0 else 0.0
     downside = sqrt(downside_square_sum / trade_count) if trade_count else 0.0
     sortino = mean_return / downside if downside > 0 else 0.0
-    cagr = _calculate_cagr_from_timestamps(first_entry, last_exit, engine_config.initial_capital, capital)
+    cagr = _calculate_cagr_from_timestamps(first_entry, cagr_end, engine_config.initial_capital, final_capital)
     return BacktestResult(
         initial_capital=engine_config.initial_capital,
-        final_capital=capital,
-        net_pnl=capital - engine_config.initial_capital,
-        total_return=(capital - engine_config.initial_capital) / engine_config.initial_capital,
+        final_capital=final_capital,
+        net_pnl=final_capital - engine_config.initial_capital,
+        total_return=(final_capital - engine_config.initial_capital) / engine_config.initial_capital,
         trades=(),
         win_rate=win_rate,
         expectancy=expectancy,
@@ -131,6 +146,8 @@ def run_events_incremental(
         sortino_ratio=sortino,
         max_drawdown=max_drawdown,
         cagr=cagr,
+        unrealized_pnl=unrealized_pnl,
+        has_open_trade=open_trade is not None,
     )
 
 
