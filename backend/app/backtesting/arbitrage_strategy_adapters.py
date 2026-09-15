@@ -27,6 +27,16 @@ class CashFutureQuote:
     carry_factor: float = 1.0
     instrument_class: str = "STOCK"
 
+    def __post_init__(self) -> None:
+        if isinstance(self.timestamp_ns, bool) or not isinstance(self.timestamp_ns, int) or self.timestamp_ns < 0:
+            raise ValueError("cash-future timestamp_ns must be a non-negative integer")
+        if not self.underlying.strip():
+            raise ValueError("cash-future underlying is required")
+        if isinstance(self.expiry, bool) or not isinstance(self.expiry, int) or self.expiry <= 0:
+            raise ValueError("cash-future expiry must be a positive integer")
+        if isinstance(self.lot_size, bool) or not isinstance(self.lot_size, int) or self.lot_size <= 0:
+            raise ValueError("cash-future lot_size must be a positive integer")
+
 
 def _option(value: Mapping[str, Any]) -> OptionQuote:
     return OptionQuote(**value)
