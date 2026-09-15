@@ -161,6 +161,23 @@ def test_backtest_marks_open_trade_to_last_close():
     assert result.total_return == pytest.approx(0.00015)
 
 
+def test_backtest_tracks_intrabar_drawdown_from_low():
+    entry = Strategy("entry", (StrategyRule("go", threshold_rule("signal", minimum=1)),))
+    exit_ = Strategy("exit", (StrategyRule("stop", threshold_rule("signal", maximum=0)),))
+
+    result = BacktestEngine().run(
+        [
+            {"timestamp": 1, "open": 100, "high": 100, "low": 100, "close": 100, "signal": 1},
+            {"timestamp": 2, "open": 100, "high": 120, "low": 80, "close": 110, "signal": 1},
+            {"timestamp": 3, "open": 110, "high": 110, "low": 110, "close": 110, "signal": 0},
+        ],
+        entry,
+        exit_,
+    )
+
+    assert result.max_drawdown == pytest.approx(20 / 100_000)
+
+
 def test_backtest_cagr_uses_completed_trade_duration():
     entry = Strategy("entry", (StrategyRule("go", threshold_rule("signal", minimum=1)),))
     exit_ = Strategy("exit", (StrategyRule("stop", threshold_rule("signal", maximum=0)),))
