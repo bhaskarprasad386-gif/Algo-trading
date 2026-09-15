@@ -86,6 +86,23 @@ class CashFutureHistoryPoint:
         ):
             if value is not None and not math.isfinite(float(value)):
                 raise ValueError(f"{name} must be finite when provided")
+        for value, name in (
+            (self.cash_bid, "cash_bid"), (self.cash_ask, "cash_ask"),
+            (self.future_bid, "future_bid"), (self.future_ask, "future_ask"),
+        ):
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be positive when provided")
+        if self.cash_bid is not None and self.cash_ask is not None and self.cash_bid > self.cash_ask:
+            raise ValueError("cash_bid cannot exceed cash_ask")
+        if self.future_bid is not None and self.future_ask is not None and self.future_bid > self.future_ask:
+            raise ValueError("future_bid cannot exceed future_ask")
+        for value, name in (
+            (self.cash_bid_qty, "cash_bid_qty"), (self.cash_ask_qty, "cash_ask_qty"),
+            (self.future_bid_qty, "future_bid_qty"), (self.future_ask_qty, "future_ask_qty"),
+            (self.volume, "volume"), (self.oi, "oi"),
+        ):
+            if value is not None and value < 0:
+                raise ValueError(f"{name} must be non-negative when provided")
 
 
 @dataclass(frozen=True)
