@@ -5,7 +5,7 @@ from itertools import groupby
 from operator import attrgetter
 from typing import Iterable
 import math
-from app.scanner.cash_future_history import CashFutureHistoryPoint
+from app.scanner.cash_future_history import CashFutureHistoryPoint, _is_expired
 
 @dataclass(frozen=True)
 class BacktestConfig:
@@ -41,11 +41,11 @@ def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfi
         if seen_symbol is None: seen_symbol=point.symbol
         elif point.symbol != seen_symbol: raise ValueError('backtest input contains multiple symbols; run each symbol separately')
         if entry is None:
-            expiry_day=point.expiry_date is not None and point.timestamp.date()>=point.expiry_date
+            expiry_day=_is_expired(point.timestamp, point.expiry_date)
             if not expiry_day and point.gap>=config.min_entry_gap: entry=point
             equity_curve.append({'timestamp':point.timestamp.isoformat(),'equity':equity}); continue
         holding_days=(point.timestamp-entry.timestamp).total_seconds()/86400.0
-        converged=point.gap<=config.exit_gap; expired=entry.expiry_date is not None and point.timestamp.date()>=entry.expiry_date; timed_out=holding_days>=config.max_holding_days
+        converged=point.gap<=config.exit_gap; expired=_is_expired(point.timestamp, entry.expiry_date); timed_out=holding_days>=config.max_holding_days
         if not (converged or expired or timed_out): equity_curve.append({'timestamp':point.timestamp.isoformat(),'equity':equity}); continue
         gross=_legacy_gap_profit(entry,point) if config.execution_model=='gap' else _executable_spread_profit(entry,point)
         net=gross-config.charges_per_trade-config.funding_cost_per_trade; capital=entry.cash_price*entry.lot_size+entry.margin_required; roi=net/capital*100.0 if capital else 0.0; reason='convergence' if converged else ('expiry' if expired else 'max_holding')
