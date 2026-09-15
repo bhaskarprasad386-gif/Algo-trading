@@ -26,8 +26,10 @@ class BacktestConfig:
             raise ValueError("initial_capital must be positive")
         if self.quantity <= 0:
             raise ValueError("quantity must be positive")
-        if self.slippage_rate < 0 or self.transaction_cost_rate < 0:
-            raise ValueError("cost rates cannot be negative")
+        if self.slippage_rate < 0 or self.slippage_rate >= 1:
+            raise ValueError("slippage_rate must be in [0, 1)")
+        if self.transaction_cost_rate < 0:
+            raise ValueError("transaction_cost_rate cannot be negative")
 
 
 @dataclass(frozen=True)
@@ -97,8 +99,14 @@ class BacktestEngine:
         max_drawdown = 0.0
         open_trade: tuple[object, float] | None = None
         trades: list[BacktestTrade] = []
+        previous_timestamp = None
         for candle in candles:
             timestamp = candle.get("timestamp")
+            if timestamp is None:
+                raise ValueError("candle timestamp is required")
+            if previous_timestamp is not None and timestamp < previous_timestamp:
+                raise ValueError("candles must be ordered by timestamp")
+            previous_timestamp = timestamp
             close = float(candle["close"])
             if not isfinite(close) or close <= 0:
                 raise ValueError("candle close must be finite and positive")
@@ -201,8 +209,14 @@ class BacktestEngine:
         trade_count = wins = 0
         pnl_sum = return_sum = return_square_sum = downside_square_sum = 0.0
         first_entry = last_exit = None
+        previous_timestamp = None
         for candle in candles:
             timestamp = candle.get("timestamp")
+            if timestamp is None:
+                raise ValueError("candle timestamp is required")
+            if previous_timestamp is not None and timestamp < previous_timestamp:
+                raise ValueError("candles must be ordered by timestamp")
+            previous_timestamp = timestamp
             close = float(candle["close"])
             if not isfinite(close) or close <= 0:
                 raise ValueError("candle close must be finite and positive")
