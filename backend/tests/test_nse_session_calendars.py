@@ -32,6 +32,32 @@ def test_2025_equity_holiday_is_excluded():
     assert nse_session_windows(request) == ()
 
 
+def test_2025_muhurat_session_overrides_holiday_for_equity():
+    request = type("R", (), {
+        "timeframe": "1m",
+        "start_ns": _ns(datetime(2025, 10, 21, tzinfo=timezone.utc)),
+        "end_ns": _ns(datetime(2025, 10, 21, 23, 59, tzinfo=timezone.utc)),
+        "instrument": "NSE:3045:SBIN",
+    })()
+    windows = nse_session_windows(request)
+    assert len(windows) == 1
+    assert windows[0].start_ns == _ns(datetime(2025, 10, 21, 8, 15, tzinfo=timezone.utc))
+    assert windows[0].end_ns == _ns(datetime(2025, 10, 21, 9, 15, tzinfo=timezone.utc))
+
+
+def test_2025_muhurat_session_overrides_holiday_for_fno():
+    request = type("R", (), {
+        "timeframe": "1m",
+        "start_ns": _ns(datetime(2025, 10, 21, tzinfo=timezone.utc)),
+        "end_ns": _ns(datetime(2025, 10, 21, 23, 59, tzinfo=timezone.utc)),
+        "instrument": "NFO:101:SBINJAN",
+    })()
+    windows = nse_session_windows(request)
+    assert len(windows) == 1
+    assert windows[0].start_ns == _ns(datetime(2025, 10, 21, 8, 15, tzinfo=timezone.utc))
+    assert windows[0].end_ns == _ns(datetime(2025, 10, 21, 9, 15, tzinfo=timezone.utc))
+
+
 def test_2025_and_2026_holiday_sets_are_not_mixed():
     holiday_2025 = type("R", (), {
         "timeframe": "1m",
