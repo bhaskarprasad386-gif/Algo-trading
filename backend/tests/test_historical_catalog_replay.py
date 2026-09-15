@@ -56,6 +56,19 @@ def test_catalog_replay_rejects_duplicate_timestamp_per_leg():
         raise AssertionError("duplicate timestamp must be rejected")
 
 
+def test_catalog_replay_reports_mixed_timeframes_explicitly():
+    catalog = HistoricalCatalog()
+    catalog.ingest([
+        HistoricalRecord("test", "A", "1m", 10, {"price": 10}),
+        HistoricalRecord("test", "B", "1s", 10, {"price": 20}),
+    ])
+    events = list(HistoricalCatalogEventReplay(catalog).events((
+        CatalogReplayLeg("minute", "test", "A", "1m"),
+        CatalogReplayLeg("second", "test", "B", "1s"),
+    ), start_ns=10, end_ns=10))
+    assert events[0]["data_resolution"] == "mixed"
+
+
 def test_catalog_to_ledger_e2e_cash_future(tmp_path):
     catalog = HistoricalCatalog()
     catalog.ingest([
