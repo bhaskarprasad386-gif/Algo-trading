@@ -9,13 +9,22 @@ from .nse_2025_holidays import NSE_EQUITY_TRADING_HOLIDAYS_2025, NSE_FNO_TRADING
 from .nse_2026_holidays import NSE_EQUITY_TRADING_HOLIDAYS_2026, NSE_FNO_TRADING_HOLIDAYS_2026
 
 
+SUPPORTED_YEARS = frozenset({2025, 2026})
+
+
+def supported_years() -> frozenset[int]:
+    """Return the NSE holiday-calendar years currently bundled with the engine."""
+    return SUPPORTED_YEARS
+
+
 def _calendar_for_year(exchange: str, year: int) -> MarketSessionCalendar:
     if year == 2025:
         equity_holidays, fno_holidays = NSE_EQUITY_TRADING_HOLIDAYS_2025, NSE_FNO_TRADING_HOLIDAYS_2025
     elif year == 2026:
         equity_holidays, fno_holidays = NSE_EQUITY_TRADING_HOLIDAYS_2026, NSE_FNO_TRADING_HOLIDAYS_2026
     else:
-        raise ValueError(f"unsupported NSE calendar year: {year}")
+        supported = ", ".join(str(value) for value in sorted(SUPPORTED_YEARS))
+        raise ValueError(f"unsupported NSE calendar year: {year}; bundled years: {supported}")
     if exchange == "NSE":
         return MarketSessionCalendar(holidays=equity_holidays, weekday_start=time(9, 15), weekday_end=time(15, 29))
     if exchange == "NFO":
