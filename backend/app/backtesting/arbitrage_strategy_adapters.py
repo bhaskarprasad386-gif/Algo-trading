@@ -1,13 +1,9 @@
-"""Historical adapters for the four executable arbitrage strategy families.
-
-Adapters consume real normalized quote payloads and plug directly into
-HistoricalArbitrageRunner. They never synthesize an exit: a position closes
-only when a later event contains an executable reverse transaction.
-"""
+"""Historical adapters for the four executable arbitrage strategy families."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any, Iterable, Mapping
 
 from .arbitrage_backtester import (
@@ -64,20 +60,22 @@ def _liquidity(event: Mapping[str, Any]) -> LiquidityPolicy | None:
     return value
 
 
-class BoxSpreadStrategyAdapter:
-    """Long/reverse box lifecycle using executable bid/ask quotes."""
+def _fee(value: float) -> float:
+    if not isfinite(float(value)) or value < 0:
+        raise ValueError("fees_per_unit must be finite and non-negative")
+    return float(value)
 
+
+class BoxSpreadStrategyAdapter:
     def __init__(self, *, direction: str = "LONG", fees_per_unit: float = 0.0) -> None:
-        if direction not in {"LONG", "SHORT"} or fees_per_unit < 0:
+        if direction not in {"LONG", "SHORT"}:
             raise ValueError("invalid box adapter configuration")
-        self.direction = direction; self.fees_per_unit = fees_per_unit
+        self.direction = direction; self.fees_per_unit = _fee(fees_per_unit)
 
     def entry(self, event: Mapping[str, Any]) -> Iterable[OpenPosition]:
         low = _option(_required(event, "low")); high = _option(_required(event, "high"))
-        opportunity = BoxSpreadBacktester.evaluate(
-            low, high, direction=self.direction, fees_per_unit=0.0,
-            liquidity=_liquidity(event),
-        )
+        opportunity = BoxSpreadBacktester.evaluate(low, high, direction=self.direction, fees_per_unit=0.0,
+            liquidity=_liquidity(event))
         if opportunity is None: return ()
         trade_id = str(event.get("trade_id", f"BOX:{low.underlying}:{low.expiry}:{low.timestamp_ns}:{low.strike}:{high.strike}"))
         if self.direction == "LONG":
@@ -85,8 +83,8 @@ class BoxSpreadStrategyAdapter:
         else:
             entry_price = high.call_ask + high.put_ask - low.call_bid - low.put_bid
         return (OpenPosition(trade_id, low.timestamp_ns, f"{low.underlying}:BOX", self.direction, low.lot_size,
-            entry_price, contract=f"BOX:{low.strike}:{high.strike}", expiry=str(low.expiry),
-            strike=low.strike, leg="BOX", data_resolution=str(event.get("data_resolution", "")),
+            entry_price, contract=f"BOX:{low.strike}:{high.strike}", expiry=str(low.expiry), strike=low.strike,
+            leg="BOX", data_resolution=str(event.get("data_resolution", "")),
             metadata={"strategy": "BOX", "high_strike": high.strike},
             entry_fees=self.fees_per_unit * low.lot_size),)
 
@@ -103,14 +101,14 @@ class BoxSpreadStrategyAdapter:
 
 
 class SyntheticCashCarryStrategyAdapter:
-    """Synthetic-vs-future lifecycle; reverse side is required to close."""
-
     def __init__(self, *, direction: str = "LONG", rate: float = 0.0,
                  time_to_expiry_years: float = 0.0, fees_per_unit: float = 0.0) -> None:
-        if direction not in {"LONG", "SHORT"} or time_to_expiry_years < 0 or fees_per_unit < 0:
+        if direction not in {"LONG", "SHORT"} or not isfinite(float(rate)):
             raise ValueError("invalid synthetic adapter configuration")
-        self.direction = direction; self.rate = rate
-        self.time_to_expiry_years = time_to_expiry_years; self.fees_per_unit = fees_per_unit
+        if not isfinite(float(time_to_expiry_years)) or time_to_expiry_years < 0:
+            raise ValueError("time_to_expiry_years must be finite and non-negative")
+        self.direction = direction; self.rate = float(rate)
+        self.time_to_expiry_years = float(time_to_expiry_years); self.fees_per_unit = _fee(fees_per_unit)
 
     def entry(self, event: Mapping[str, Any]) -> Iterable[OpenPosition]:
         option = _option(_required(event, "option")); future = _future(_required(event, "future"))
@@ -139,20 +137,21 @@ class SyntheticCashCarryStrategyAdapter:
 
 
 class CashFutureStrategyAdapter:
-    """Cash-and-carry lifecycle using real spot/future bid/ask quotes."""
-
     def __init__(self, *, direction: str = "LONG_CASH_SHORT_FUTURE", fees_per_unit: float = 0.0) -> None:
-        if direction not in {"LONG_CASH_SHORT_FUTURE", "SHORT_CASH_LONG_FUTURE"} or fees_per_unit < 0:
+        if direction not in {"LONG_CASH_SHORT_FUTURE", "SHORT_CASH_LONG_FUTURE"}:
             raise ValueError("invalid cash-future adapter configuration")
-        self.direction = direction; self.fees_per_unit = fees_per_unit
+        self.direction = direction; self.fees_per_unit = _fee(fees_per_unit)
 
     @staticmethod
     def _edge(q: CashFutureQuote, direction: str) -> float:
-        if q.carry_factor <= 0: raise ValueError("carry_factor must be positive")
+        values = (q.spot_bid, q.spot_ask, q.future_bid, q.future_ask, q.carry_factor)
+        if not all(isfinite(float(value)) for value in values) or q.carry_factor <= 0:
+            raise ValueError("cash/future quote values must be finite and valid")
         if q.spot_bid < 0 or q.spot_ask < q.spot_bid or q.future_bid < 0 or q.future_ask < q.future_bid:
             raise ValueError("invalid cash/future quote")
         if direction == "LONG_CASH_SHORT_FUTURE": return q.future_bid - q.spot_ask * q.carry_factor
-        return q.spot_bid * q.carry_factor - q.future_ask
+        if direction == "SHORT_CASH_LONG_FUTURE": return q.spot_bid * q.carry_factor - q.future_ask
+        raise ValueError("invalid cash-future direction")
 
     def entry(self, event: Mapping[str, Any]) -> Iterable[OpenPosition]:
         q = _cash_future(_required(event, "cash_future")); edge = self._edge(q, self.direction)
@@ -174,12 +173,10 @@ class CashFutureStrategyAdapter:
 
 
 class CalendarSpreadStrategyAdapter:
-    """Near/far expiry lifecycle; both expiries remain explicit."""
-
     def __init__(self, *, direction: str = "LONG_NEAR_SHORT_FAR", fees_per_unit: float = 0.0) -> None:
-        if direction not in {"LONG_NEAR_SHORT_FAR", "SHORT_NEAR_LONG_FAR"} or fees_per_unit < 0:
+        if direction not in {"LONG_NEAR_SHORT_FAR", "SHORT_NEAR_LONG_FAR"}:
             raise ValueError("invalid calendar adapter configuration")
-        self.direction = direction; self.fees_per_unit = fees_per_unit
+        self.direction = direction; self.fees_per_unit = _fee(fees_per_unit)
 
     def entry(self, event: Mapping[str, Any]) -> Iterable[OpenPosition]:
         near = _calendar(_required(event, "near")); far = _calendar(_required(event, "far"))
