@@ -161,16 +161,23 @@ class OrderLifecycle:
     @classmethod
     def restore_state(cls, raw: Mapping[str, object]) -> "OrderLifecycle":
         """Restore a lifecycle previously produced by export_state()."""
+        def strict_int(value: object, name: str, *, nonnegative: bool = False) -> int:
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"invalid lifecycle {name}")
+            if nonnegative and value < 0:
+                raise ValueError(f"invalid lifecycle {name}")
+            return value
+
         order_raw = raw["order"]
         if not isinstance(order_raw, Mapping):
             raise ValueError("invalid lifecycle order state")
         order = SimOrder(
             order_id=str(order_raw["order_id"]), instrument=str(order_raw["instrument"]),
-            side=ExecutionSide(str(order_raw["side"])), quantity=int(order_raw["quantity"]),
+            side=ExecutionSide(str(order_raw["side"])), quantity=strict_int(order_raw["quantity"], "order quantity"),
             order_type=OrderType(str(order_raw.get("order_type", OrderType.MARKET.value))),
             limit_price=order_raw.get("limit_price"), stop_price=order_raw.get("stop_price"),
-            submitted_at_ns=int(order_raw.get("submitted_at_ns", 0)),
-            queue_ahead_quantity=int(order_raw.get("queue_ahead_quantity", 0)),
+            submitted_at_ns=strict_int(order_raw.get("submitted_at_ns", 0), "submission timestamp", nonnegative=True),
+            queue_ahead_quantity=strict_int(order_raw.get("queue_ahead_quantity", 0), "queue quantity", nonnegative=True),
             time_in_force=TimeInForce(str(order_raw.get("time_in_force", TimeInForce.DAY.value))),
         )
         lifecycle = cls(order)
@@ -180,13 +187,14 @@ class OrderLifecycle:
                 raise ValueError("invalid lifecycle event")
             events.append(LifecycleEvent(
                 order_id=str(raw_event["order_id"]), status=OrderStatus(str(raw_event["status"])),
-                timestamp_ns=int(raw_event["timestamp_ns"]), filled_quantity=int(raw_event["filled_quantity"]),
-                remaining_quantity=int(raw_event["remaining_quantity"]), reason=raw_event.get("reason"),
-                replacement_order_id=raw_event.get("replacement_order_id"),
+                timestamp_ns=strict_int(raw_event["timestamp_ns"], "event timestamp", nonnegative=True),
+                filled_quantity=strict_int(raw_event["filled_quantity"], "event filled quantity", nonnegative=True),
+                remaining_quantity=strict_int(raw_event["remaining_quantity"], "event remaining quantity", nonnegative=True),
+                reason=raw_event.get("reason"), replacement_order_id=raw_event.get("replacement_order_id"),
             ))
         lifecycle.state = OrderState(
             order=order, status=OrderStatus(str(raw["status"])),
-            filled_quantity=int(raw.get("filled_quantity", 0)),
+            filled_quantity=strict_int(raw.get("filled_quantity", 0), "filled quantity", nonnegative=True),
             average_fill_price=float(raw.get("average_fill_price", 0.0)),
             reject_reason=raw.get("reject_reason"),
             time_in_force=TimeInForce(str(raw.get("time_in_force", order.time_in_force.value))),
