@@ -11,6 +11,7 @@ from app.backtesting.nse_session_calendar import (
 def _request(instrument):
     return type("R", (), {
         "instrument": instrument,
+        "timeframe": "1min",
         "start_ns": int(datetime(2026, 1, 15, tzinfo=timezone.utc).timestamp() * 1_000_000_000),
         "end_ns": int(datetime(2026, 1, 16, tzinfo=timezone.utc).timestamp() * 1_000_000_000),
     })()
