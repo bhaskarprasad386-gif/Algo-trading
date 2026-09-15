@@ -36,7 +36,13 @@ class CashFutureObservation:
 
 
 @dataclass(frozen=True)
-class CashFutureTrade:
+class CashFutureBasisTrade:
+    """Trade result for the observation-based basis backtester.
+
+    The P&L module owns the public ``CashFutureTrade`` execution model;
+    this distinct name prevents callers from accidentally mixing the two
+    incompatible record shapes.
+    """
     entry_timestamp_ns: int
     exit_timestamp_ns: int
     entry_cash: float
@@ -50,7 +56,7 @@ class CashFutureTrade:
 @dataclass(frozen=True)
 class CashFutureBacktestResult:
     observations: int
-    trades: tuple[CashFutureTrade, ...]
+    trades: tuple[CashFutureBasisTrade, ...]
     initial_capital: float
     final_capital: float
     net_pnl: float
@@ -91,7 +97,7 @@ def backtest_cash_future_basis(
 
     rows = tuple(observations)
     open_position: CashFutureObservation | None = None
-    trades: list[CashFutureTrade] = []
+    trades: list[CashFutureBasisTrade] = []
     capital = initial_capital
     peak = capital
     max_drawdown = 0.0
@@ -103,8 +109,6 @@ def backtest_cash_future_basis(
                 open_position = row
             continue
 
-        # A position must never be closed by the same timestamp that opened it.
-        # A contract rollover must also never manufacture a synthetic trade.
         if row.timestamp_ns <= open_position.timestamp_ns:
             continue
         if open_position.contract_token and row.contract_token and open_position.contract_token != row.contract_token:
@@ -120,7 +124,7 @@ def backtest_cash_future_basis(
             gross = ((entry.future_price - row.future_price) + (row.cash_price - entry.cash_price)) * entry.lot_size
         else:
             gross = ((row.future_price - entry.future_price) + (entry.cash_price - row.cash_price)) * entry.lot_size
-        trades.append(CashFutureTrade(entry.timestamp_ns, row.timestamp_ns, entry.cash_price, entry.future_price, row.cash_price, row.future_price, entry.lot_size, gross))
+        trades.append(CashFutureBasisTrade(entry.timestamp_ns, row.timestamp_ns, entry.cash_price, entry.future_price, row.cash_price, row.future_price, entry.lot_size, gross))
         capital += gross
         peak = max(peak, capital)
         max_drawdown = max(max_drawdown, (peak - capital) / peak)
@@ -129,4 +133,4 @@ def backtest_cash_future_basis(
     return CashFutureBacktestResult(len(rows), tuple(trades), initial_capital, capital, capital - initial_capital, max_drawdown)
 
 
-__all__ = ["CashFutureObservation", "CashFutureTrade", "CashFutureBacktestResult", "build_cash_future_observations", "backtest_cash_future_basis"]
+__all__ = ["CashFutureObservation", "CashFutureBasisTrade", "CashFutureBacktestResult", "build_cash_future_observations", "backtest_cash_future_basis"]
