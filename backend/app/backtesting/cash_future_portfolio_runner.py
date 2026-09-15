@@ -76,6 +76,8 @@ def _close_position(
 ) -> dict[str, Any] | None:
     """Close a position only against a genuine observation from its own contract."""
     entry, quantity = entries[key]
+    if not math.isfinite(float(quantity)) or quantity <= 0:
+        raise ValueError(f"invalid open quantity for {key}: {quantity}")
     fill_quantity, liquidity_source = _historical_fill_capacity(
         point, side="exit", requested_quantity=quantity, execution_model=execution_model
     )
