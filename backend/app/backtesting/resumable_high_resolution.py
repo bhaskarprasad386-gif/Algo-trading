@@ -61,11 +61,10 @@ class ResumableHighResolutionRunner:
         resume_key = None if checkpoint is None else (checkpoint.timestamp_ns, checkpoint.sequence)
         processed = 0 if checkpoint is None else checkpoint.processed_events
         if checkpoint is not None: self._restore(strategy, checkpoint.state)
-        signals = 0
-        if checkpoint is not None:
-            signals = int(checkpoint.state.get("signals", 0)) if isinstance(checkpoint.state, dict) else 0
+        signals = int(checkpoint.state.get("signals", 0)) if checkpoint is not None and isinstance(checkpoint.state, dict) else 0
+        if ledger_writer is not None:
+            ledger_writer.reconcile_atomic(self.store)
         batch_events = 0
-        pending_trades: list[Any] = []
         batch_positions = self.positions.snapshot_state()
         batch_strategy = self._strategy_state(strategy)
         batch_processed, batch_signals = processed, signals
@@ -84,7 +83,6 @@ class ResumableHighResolutionRunner:
                     trade = self.positions.add(fill)
                     if trade is not None:
                         self.store.append_trade(self.run_id, trade)
-                        pending_trades.append(trade)
                 latest_checkpoint = ReplayCheckpoint(
                     self.run_id, event.timestamp_ns, event.sequence, processed,
                     self.positions.net_pnl,
@@ -93,21 +91,22 @@ class ResumableHighResolutionRunner:
                 if batch_events >= self.batch_size:
                     self.store.save_checkpoint(latest_checkpoint)
                     self.store.commit()
-                    if ledger_writer is not None:
-                        for trade in pending_trades: ledger_writer.append(trade)
-                    pending_trades.clear()
                     resume_key = (event.timestamp_ns, event.sequence)
                     batch_events = 0
                     batch_positions = self.positions.snapshot_state()
                     batch_strategy = self._strategy_state(strategy)
                     batch_processed, batch_signals = processed, signals
+                    if ledger_writer is not None:
+                        ledger_writer.reconcile_atomic(self.store)
                     self.store.begin()
             if batch_events:
                 self.store.save_checkpoint(latest_checkpoint)
                 self.store.commit()
+                batch_positions = self.positions.snapshot_state()
+                batch_strategy = self._strategy_state(strategy)
+                batch_processed, batch_signals = processed, signals
                 if ledger_writer is not None:
-                    for trade in pending_trades: ledger_writer.append(trade)
-                pending_trades.clear()
+                    ledger_writer.reconcile_atomic(self.store)
             else:
                 self.store.rollback()
         except Exception:
