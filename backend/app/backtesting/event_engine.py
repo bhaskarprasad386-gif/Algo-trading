@@ -156,9 +156,10 @@ class EventBacktestEngine:
         return lifecycle
 
     def _submit_effective_order(self, order: SimOrder, event: MarketEvent) -> SimOrder:
+        submitted_at_ns = max(order.submitted_at_ns, event.timestamp_ns) + self.config.latency_ns
         return SimOrder(order_id=order.order_id, instrument=order.instrument, side=order.side,
             quantity=order.quantity, order_type=order.order_type, limit_price=order.limit_price,
-            stop_price=order.stop_price, submitted_at_ns=max(order.submitted_at_ns, event.timestamp_ns),
+            stop_price=order.stop_price, submitted_at_ns=submitted_at_ns,
             queue_ahead_quantity=order.queue_ahead_quantity, time_in_force=order.time_in_force)
 
     def _execution_order(self, order: SimOrder) -> SimOrder:
@@ -214,6 +215,7 @@ class EventBacktestEngine:
         for order in orders:
             lifecycle = self._order_lifecycles.get(order.order_id)
             if lifecycle is None or lifecycle.state.terminal: continue
+            if event.timestamp_ns < order.submitted_at_ns: continue
             if not self._market_risk_allows_order(order):
                 self._risk_blocks += 1; lifecycle.reject("market risk violation", event.timestamp_ns); self.portfolio.release_margin(order.order_id)
                 self._reserved_margin.pop(order.order_id, None); self._open_orders.pop(order.order_id, None); self._dynamic_queue_ahead.pop(order.order_id, None); self._queue_lifecycles.pop(order.order_id, None); continue
