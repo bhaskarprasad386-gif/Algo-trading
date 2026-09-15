@@ -129,6 +129,24 @@ class Portfolio:
         self._reserved_margin[order_id] = float(amount)
         return float(amount)
 
+    def replace_margin_reservation(self, old_order_id: str, new_order_id: str, amount: float, marks: dict[str, float] | None = None) -> float:
+        """Atomically replace one pending order's margin reservation."""
+        if not old_order_id.strip() or not new_order_id.strip():
+            raise ValueError("order ids are required")
+        if old_order_id == new_order_id:
+            raise ValueError("replacement must use a new order_id")
+        if new_order_id in self._reserved_margin:
+            raise RiskViolation("margin already reserved for replacement order")
+        if not math.isfinite(float(amount)) or amount < 0:
+            raise ValueError("reserved margin must be finite and non-negative")
+        old_amount = self._reserved_margin.get(old_order_id, 0.0)
+        available = self.snapshot(marks).available_margin + old_amount
+        if amount > available + 1e-9:
+            raise RiskViolation("insufficient available margin for replacement order reservation")
+        self._reserved_margin.pop(old_order_id, None)
+        self._reserved_margin[new_order_id] = float(amount)
+        return float(amount)
+
     def release_margin(self, order_id: str, amount: float | None = None) -> float:
         current = self._reserved_margin.get(order_id, 0.0)
         if amount is None:
