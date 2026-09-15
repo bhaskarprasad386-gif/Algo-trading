@@ -77,7 +77,6 @@ class DepthLevel:
 @dataclass(frozen=True)
 class OrderBook:
     """Point-in-time executable order-book snapshot, best level first."""
-
     bids: tuple[DepthLevel, ...] = ()
     asks: tuple[DepthLevel, ...] = ()
 
@@ -95,7 +94,6 @@ class OrderBook:
 @dataclass(frozen=True)
 class QueueEvidence:
     """Observed events that can legitimately advance a resting queue position."""
-
     price: float
     executed_quantity: int = 0
     cancelled_quantity_ahead: int = 0
@@ -143,7 +141,6 @@ class ExecutionResult:
 @dataclass(frozen=True)
 class AtomicExecutionResult:
     """All-or-nothing result for a multi-leg execution attempt."""
-
     fills: tuple[SimFill, ...]
     leg_results: tuple[ExecutionResult, ...]
     rejected: bool = False
@@ -168,7 +165,6 @@ class ExecutionConfig:
 
 class ExecutionSimulator:
     """Execution model supporting point-in-time depth and conservative queueing."""
-
     def __init__(self, config: ExecutionConfig | None = None) -> None:
         self.config = config or ExecutionConfig()
 
@@ -187,6 +183,13 @@ class ExecutionSimulator:
             raise ValueError("stop_price is required for STOP orders")
         return market_price >= order.stop_price if order.side == ExecutionSide.BUY else market_price <= order.stop_price
 
+    def _slippage_price(self, side: ExecutionSide, market_price: float) -> float:
+        direction = 1 if side == ExecutionSide.BUY else -1
+        price = market_price * (1 + direction * self.config.slippage_bps / 10_000)
+        if not math.isfinite(price) or price <= 0:
+            raise ValueError("slippage-adjusted fill price must be finite and positive")
+        return price
+
     def execute(self, order: SimOrder, market_price: float, timestamp_ns: int) -> SimFill:
         if not math.isfinite(float(market_price)) or market_price <= 0:
             raise ValueError("market_price must be finite and greater than zero")
@@ -195,17 +198,14 @@ class ExecutionSimulator:
         if not self._stop_triggered(order, market_price):
             raise ValueError("stop order has not triggered")
         fill_time = timestamp_ns + self.config.latency_ns
-        direction = 1 if order.side == ExecutionSide.BUY else -1
-        price = market_price * (1 + direction * self.config.slippage_bps / 10_000)
-        return SimFill(order.order_id, order.instrument, order.side, order.quantity, price, fill_time,
+        return SimFill(order.order_id, order.instrument, order.side, order.quantity,
+                       self._slippage_price(order.side, market_price), fill_time,
                        order.quantity * self.config.fee_per_unit)
 
     @staticmethod
     def _executable_levels(order: SimOrder, book: OrderBook) -> tuple[DepthLevel, ...]:
         levels = book.asks if order.side == ExecutionSide.BUY else book.bids
-        if order.order_type == OrderType.STOP:
-            return levels
-        if order.order_type != OrderType.LIMIT:
+        if order.order_type == OrderType.STOP or order.order_type != OrderType.LIMIT:
             return levels
         if order.limit_price is None:
             raise ValueError("limit_price is required for LIMIT orders")
@@ -218,139 +218,84 @@ class ExecutionSimulator:
             accepted.append(level)
         return tuple(accepted)
 
-    def execute_depth(
-        self,
-        order: SimOrder,
-        book: OrderBook,
-        timestamp_ns: int,
-        queue_evidence: Iterable[QueueEvidence] = (),
-    ) -> ExecutionResult:
+    def execute_depth(self, order: SimOrder, book: OrderBook, timestamp_ns: int, queue_evidence: Iterable[QueueEvidence] = ()) -> ExecutionResult:
         if timestamp_ns < order.submitted_at_ns:
             raise ValueError("fill timestamp cannot precede order submission")
         if order.order_type == OrderType.STOP:
-            best = (book.asks if order.side == ExecutionSide.BUY else book.bids)
+            best = book.asks if order.side == ExecutionSide.BUY else book.bids
             if not best or not self._stop_triggered(order, best[0].price):
                 return ExecutionResult((), order.quantity, True, "stop order has not triggered")
         levels = self._executable_levels(order, book)
         if not levels:
             return ExecutionResult((), order.quantity, True, "no executable depth")
-
         queue_ahead = order.queue_ahead_quantity
         evidence_by_price: dict[float, int] = {}
         for evidence in queue_evidence:
-            evidence_by_price[evidence.price] = evidence_by_price.get(evidence.price, 0) + (
-                evidence.executed_quantity + evidence.cancelled_quantity_ahead
-            )
-
+            evidence_by_price[evidence.price] = evidence_by_price.get(evidence.price, 0) + evidence.executed_quantity + evidence.cancelled_quantity_ahead
         best_price = levels[0].price
         if queue_ahead > 0:
             queue_ahead = max(0, queue_ahead - evidence_by_price.get(best_price, 0))
             if queue_ahead > 0:
                 return ExecutionResult((), order.quantity, True, "queue ahead not depleted")
-
         executable = sum(level.quantity for level in levels)
         if order.time_in_force == TimeInForce.FOK and executable < order.quantity:
             return ExecutionResult((), order.quantity, True, "insufficient displayed depth for FOK")
         if not self.config.allow_partial_fills and executable < order.quantity:
             return ExecutionResult((), order.quantity, True, "insufficient displayed depth")
-
         remaining = order.quantity
         fills: list[SimFill] = []
         for level in levels:
-            if remaining <= 0:
-                break
-            if level.quantity <= 0:
-                continue
+            if remaining <= 0: break
+            if level.quantity <= 0: continue
             take = min(remaining, level.quantity)
-            fills.append(SimFill(order.order_id, order.instrument, order.side, take, level.price,
+            fills.append(SimFill(order.order_id, order.instrument, order.side, take,
+                                 self._slippage_price(order.side, level.price),
                                  timestamp_ns + self.config.latency_ns, take * self.config.fee_per_unit))
             remaining -= take
-
         if not fills:
             return ExecutionResult((), order.quantity, True, "no executable quantity")
         if order.time_in_force == TimeInForce.FOK and remaining:
             return ExecutionResult((), order.quantity, True, "insufficient displayed depth for FOK")
         return ExecutionResult(tuple(fills), remaining, False, None if remaining == 0 else "partial fill")
 
-    def execute_depth_updates(
-        self,
-        order: SimOrder,
-        updates: Iterable[tuple[int, OrderBook, Iterable[QueueEvidence]]],
-    ) -> ExecutionResult:
-        remaining = order.quantity
-        queue_ahead = order.queue_ahead_quantity
-        consumed_by_price: dict[float, int] = {}
-        fills: list[SimFill] = []
-
+    def execute_depth_updates(self, order: SimOrder, updates: Iterable[tuple[int, OrderBook, Iterable[QueueEvidence]]]) -> ExecutionResult:
+        remaining = order.quantity; queue_ahead = order.queue_ahead_quantity; consumed_by_price: dict[float, int] = {}; fills: list[SimFill] = []
         for timestamp_ns, book, evidence in updates:
-            if remaining <= 0:
-                break
-            if timestamp_ns < order.submitted_at_ns:
-                raise ValueError("fill timestamp cannot precede order submission")
+            if remaining <= 0: break
+            if timestamp_ns < order.submitted_at_ns: raise ValueError("fill timestamp cannot precede order submission")
             levels = self._executable_levels(order, book)
             if order.order_type == OrderType.STOP:
                 best = book.asks if order.side == ExecutionSide.BUY else book.bids
-                if not best or not self._stop_triggered(order, best[0].price):
-                    continue
-            if not levels:
-                continue
-
+                if not best or not self._stop_triggered(order, best[0].price): continue
+            if not levels: continue
             evidence_by_price: dict[float, int] = {}
             for item in evidence:
-                evidence_by_price[item.price] = evidence_by_price.get(item.price, 0) + (
-                    item.executed_quantity + item.cancelled_quantity_ahead
-                )
+                evidence_by_price[item.price] = evidence_by_price.get(item.price, 0) + item.executed_quantity + item.cancelled_quantity_ahead
             if queue_ahead > 0:
                 queue_ahead = max(0, queue_ahead - evidence_by_price.get(levels[0].price, 0))
-                if queue_ahead > 0:
-                    continue
-
+                if queue_ahead > 0: continue
             for level in levels:
-                already_consumed = consumed_by_price.get(level.price, 0)
-                newly_available = max(0, level.quantity - already_consumed)
-                if newly_available <= 0:
-                    continue
+                already_consumed = consumed_by_price.get(level.price, 0); newly_available = max(0, level.quantity - already_consumed)
+                if newly_available <= 0: continue
                 take = min(remaining, newly_available)
-                fills.append(SimFill(order.order_id, order.instrument, order.side, take, level.price,
+                fills.append(SimFill(order.order_id, order.instrument, order.side, take,
+                                     self._slippage_price(order.side, level.price),
                                      timestamp_ns + self.config.latency_ns, take * self.config.fee_per_unit))
-                consumed_by_price[level.price] = already_consumed + take
-                remaining -= take
-                if remaining <= 0:
-                    break
-
-        if not fills:
-            return ExecutionResult((), order.quantity, True, "no executable depth")
-        if order.time_in_force == TimeInForce.FOK and remaining:
-            return ExecutionResult((), order.quantity, True, "insufficient displayed depth for FOK")
-        if order.time_in_force == TimeInForce.IOC and remaining:
-            return ExecutionResult(tuple(fills), 0, False, "IOC remainder cancelled")
+                consumed_by_price[level.price] = already_consumed + take; remaining -= take
+                if remaining <= 0: break
+        if not fills: return ExecutionResult((), order.quantity, True, "no executable depth")
+        if order.time_in_force == TimeInForce.FOK and remaining: return ExecutionResult((), order.quantity, True, "insufficient displayed depth for FOK")
+        if order.time_in_force == TimeInForce.IOC and remaining: return ExecutionResult(tuple(fills), 0, False, "IOC remainder cancelled")
         return ExecutionResult(tuple(fills), remaining, False, None if remaining == 0 else "partial fill")
 
     def execute_many(self, orders: Iterable[tuple[SimOrder, float, int]]) -> tuple[SimFill, ...]:
         return tuple(self.execute(order, price, timestamp_ns) for order, price, timestamp_ns in orders)
 
-    def execute_many_atomic(
-        self,
-        legs: Iterable[tuple[SimOrder, OrderBook, int]],
-    ) -> AtomicExecutionResult:
+    def execute_many_atomic(self, legs: Iterable[tuple[SimOrder, OrderBook, int]]) -> AtomicExecutionResult:
         legs = tuple(legs)
-        leg_results = tuple(
-            self.execute_depth(order, book, timestamp_ns)
-            for order, book, timestamp_ns in legs
-        )
-        if not leg_results:
-            return AtomicExecutionResult((), (), True, "atomic transaction has no legs")
-        if any(
-            result.rejected
-            or result.remaining_quantity != 0
-            or (order.time_in_force == TimeInForce.IOC and sum(fill.quantity for fill in result.fills) < order.quantity)
-            for (order, _, _), result in zip(legs, leg_results)
-        ):
-            return AtomicExecutionResult(
-                (),
-                leg_results,
-                True,
-                "atomic rollback: one or more legs did not fully execute",
-            )
+        leg_results = tuple(self.execute_depth(order, book, timestamp_ns) for order, book, timestamp_ns in legs)
+        if not leg_results: return AtomicExecutionResult((), (), True, "atomic transaction has no legs")
+        if any(result.rejected or result.remaining_quantity != 0 or (order.time_in_force == TimeInForce.IOC and sum(fill.quantity for fill in result.fills) < order.quantity) for (order, _, _), result in zip(legs, leg_results)):
+            return AtomicExecutionResult((), leg_results, True, "atomic rollback: one or more legs did not fully execute")
         fills = tuple(fill for result in leg_results for fill in result.fills)
         return AtomicExecutionResult(fills, leg_results, False, None)
