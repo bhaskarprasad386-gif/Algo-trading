@@ -35,4 +35,8 @@ def test_invalid_inputs_are_rejected():
     with pytest.raises(ValueError):
         calculate_dynamic_quantity(100, 99, 2, 15, lot_size=0, config=CONFIG)
     with pytest.raises(ValueError):
+        calculate_dynamic_quantity(100, 99, 2, 15, lot_size=True, config=CONFIG)
+    with pytest.raises(ValueError):
+        calculate_dynamic_quantity(100, 99, 2, 15, lot_size=1.0, config=CONFIG)
+    with pytest.raises(ValueError):
         PositionSizingConfig(risk_amount=0)
