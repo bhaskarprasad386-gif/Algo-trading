@@ -179,3 +179,43 @@ class Position(Base):
 
 class BacktestJob(Base):
     __tablename__ = "backtest_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    job_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), index=True, default="queued")
+    symbol: Mapped[str] = mapped_column(String(128), index=True)
+    contract_month: Mapped[str] = mapped_column(String(64), index=True)
+    requested_days: Mapped[int] = mapped_column(Integer)
+    progress_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    symbols_processed: Mapped[int] = mapped_column(Integer, default=0)
+    symbols_total: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class BacktestJobResultChunk(Base):
+    """Durable per-symbol result chunks for large background backtests."""
+
+    __tablename__ = "backtest_job_result_chunks"
+    __table_args__ = (
+        Index("uq_backtest_job_result_chunk", "job_id", "sequence", unique=True),
+        Index("ix_backtest_job_result_chunks_job", "job_id", "sequence"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    job_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    symbol: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    result_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class SystemLog(Base):
+    __tablename__ = "system_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    level: Mapped[str] = mapped_column(String(16), index=True)
+    message: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
