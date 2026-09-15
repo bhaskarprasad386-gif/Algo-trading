@@ -352,7 +352,7 @@ class Portfolio:
             if after.equity + 1e-9 < after.maintenance_margin:
                 raise RiskViolation("forced liquidation did not restore maintenance margin")
         except Exception:
-            self.cash, positions, self._positions, self._realized_pnl, self._fees, self._peak_equity, reserved, trades = (self.cash, dict(self._positions), self._positions, self._realized_pnl, self._fees, self._peak_equity, dict(self._reserved_margin), list(self._trades))
+            self.cash, positions, self._realized_pnl, self._fees, self._peak_equity, reserved, trades = state
             self._positions = positions
             self._reserved_margin = reserved
             self._trades = trades
