@@ -127,7 +127,7 @@ class BacktestEngine:
                     peak_capital = max(peak_capital, capital)
                     if marked_capital < capital:
                         max_drawdown = max(max_drawdown, (capital - marked_capital) / capital)
-            elif open_trade is not None and exit_strategy.evaluate(context):
+                if exit_strategy.evaluate(context):
                 entry_timestamp, entry_price = open_trade
                 exit_price = close * (1.0 - self.config.slippage_rate)
                 trade = _build_trade(self.config, entry_timestamp, entry_price, timestamp, exit_price)
