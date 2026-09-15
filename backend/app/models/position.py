@@ -1,6 +1,12 @@
+from datetime import datetime, timezone
+
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean
-from datetime import datetime
+
 from app.core.database import Base
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Position(Base):
@@ -23,5 +29,5 @@ class Position(Base):
     is_paper = Column(Boolean, default=True)
     is_open = Column(Boolean, default=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
