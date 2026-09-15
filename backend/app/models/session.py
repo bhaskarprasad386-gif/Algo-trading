@@ -1,6 +1,12 @@
+from datetime import datetime, timezone
+
 from sqlalchemy import Column, Integer, String, DateTime, Boolean
-from datetime import datetime
+
 from app.core.database import Base
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Session(Base):
@@ -13,4 +19,4 @@ class Session(Base):
     device_info = Column(String, nullable=True)  # android / web
     is_active = Column(Boolean, default=True)
     expires_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
