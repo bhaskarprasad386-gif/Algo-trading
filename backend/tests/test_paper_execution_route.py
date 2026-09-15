@@ -126,3 +126,32 @@ def test_cash_future_scanner_bridge_requires_authentication():
         json={"symbol": "RELIANCE", "cash_price": 2500.0, "quantity": 2},
     )
     assert response.status_code == 401
+
+
+def test_paper_short_reversal_deducts_cost_of_remaining_long():
+    client, headers = _client_and_headers()
+    starting_balance = client.get("/api/v1/auth/me", headers=headers).json()["account"]["virtual_balance"]
+
+    short_response = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "REVERSAL", "transaction_type": "SELL", "price": 100.0, "quantity": 5},
+    )
+    assert short_response.status_code == 200
+    assert short_response.json()["virtual_balance"] == starting_balance - 500.0
+
+    reversal_response = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "REVERSAL", "transaction_type": "BUY", "price": 90.0, "quantity": 8},
+    )
+    assert reversal_response.status_code == 200
+    data = reversal_response.json()
+
+    # Cover 5 shorts: release 500 margin and realize +50 P&L.
+    # Open the remaining 3-long reversal at 90: deduct 270 from cash.
+    assert data["realized_pnl"] == 50.0
+    assert data["virtual_balance"] == starting_balance - 220.0
+    assert data["position"]["symbol"] == "REVERSAL"
+    assert data["position"]["quantity"] == 3.0
+    assert data["position"]["entry_price"] == 90.0
