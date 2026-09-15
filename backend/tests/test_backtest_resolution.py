@@ -47,3 +47,30 @@ def test_requires_complete_genuine_coverage():
         assert "complete genuine resolution" in str(exc)
     else:
         raise AssertionError("expected incomplete coverage to reject the run")
+
+
+def test_ignores_finer_resolution_that_does_not_cover_requested_range():
+    result = choose_finest_genuine_resolution(
+        [
+            ResolutionCoverage("ms", True, 0, 50, "milliseconds"),
+            ResolutionCoverage("m", True, 0, 100, "minutes"),
+        ],
+        requested_start_ns=0,
+        requested_end_ns=100,
+    )
+    assert result.resolution == "m"
+    assert result.start_ns == 0
+    assert result.end_ns == 100
+
+
+def test_rejects_requested_range_without_full_coverage():
+    try:
+        choose_finest_genuine_resolution(
+            [ResolutionCoverage("ms", True, 10, 50, "milliseconds")],
+            requested_start_ns=0,
+            requested_end_ns=100,
+        )
+    except ValueError as exc:
+        assert "covers the requested range" in str(exc)
+    else:
+        raise AssertionError("expected uncovered requested range to reject the run")
