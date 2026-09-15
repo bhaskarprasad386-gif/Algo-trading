@@ -5,8 +5,16 @@ from __future__ import annotations
 from datetime import datetime, time, timezone
 
 from .market_session_calendar import MarketSessionCalendar
-from .nse_2025_holidays import NSE_EQUITY_TRADING_HOLIDAYS_2025, NSE_FNO_TRADING_HOLIDAYS_2025
-from .nse_2026_holidays import NSE_EQUITY_TRADING_HOLIDAYS_2026, NSE_FNO_TRADING_HOLIDAYS_2026
+from .nse_2025_holidays import (
+    NSE_EQUITY_TRADING_HOLIDAYS_2025,
+    NSE_FNO_TRADING_HOLIDAYS_2025,
+    NSE_MUHURAT_TRADING_DATES_2025,
+)
+from .nse_2026_holidays import (
+    NSE_EQUITY_TRADING_HOLIDAYS_2026,
+    NSE_FNO_TRADING_HOLIDAYS_2026,
+    NSE_MUHURAT_TRADING_DATES_2026,
+)
 
 
 SUPPORTED_YEARS = frozenset({2025, 2026})
@@ -20,15 +28,46 @@ def supported_years() -> frozenset[int]:
 def _calendar_for_year(exchange: str, year: int) -> MarketSessionCalendar:
     if year == 2025:
         equity_holidays, fno_holidays = NSE_EQUITY_TRADING_HOLIDAYS_2025, NSE_FNO_TRADING_HOLIDAYS_2025
+        # NSE circular NSE/CMTR/70319 and NSE/FAOP/70320 define the 2025
+        # Muhurat normal-market session as 13:45-14:45 IST. The date remains
+        # in the ordinary holiday set, so this explicit special session must
+        # override that holiday when generating completeness windows.
+        muhurat_dates = NSE_MUHURAT_TRADING_DATES_2025
+        muhurat_session = (time(13, 45), time(14, 45))
     elif year == 2026:
         equity_holidays, fno_holidays = NSE_EQUITY_TRADING_HOLIDAYS_2026, NSE_FNO_TRADING_HOLIDAYS_2026
+        # NSE has announced the 2026 Muhurat date, but its exact session
+        # timing has not yet been published. Keep it fail-closed rather than
+        # inventing a completeness window.
+        muhurat_dates = NSE_MUHURAT_TRADING_DATES_2026
+        muhurat_session = None
     else:
         supported = ", ".join(str(value) for value in sorted(SUPPORTED_YEARS))
         raise ValueError(f"unsupported NSE calendar year: {year}; bundled years: {supported}")
     if exchange == "NSE":
-        return MarketSessionCalendar(holidays=equity_holidays, weekday_start=time(9, 15), weekday_end=time(15, 29))
+        special_sessions = (
+            {day: muhurat_session for day in muhurat_dates}
+            if muhurat_session is not None
+            else {}
+        )
+        return MarketSessionCalendar(
+            holidays=equity_holidays,
+            weekday_start=time(9, 15),
+            weekday_end=time(15, 29),
+            special_sessions=special_sessions,
+        )
     if exchange == "NFO":
-        return MarketSessionCalendar(holidays=fno_holidays, weekday_start=time(9, 15), weekday_end=time(15, 39))
+        special_sessions = (
+            {day: muhurat_session for day in muhurat_dates}
+            if muhurat_session is not None
+            else {}
+        )
+        return MarketSessionCalendar(
+            holidays=fno_holidays,
+            weekday_start=time(9, 15),
+            weekday_end=time(15, 39),
+            special_sessions=special_sessions,
+        )
     raise ValueError(f"unsupported NSE instrument exchange: {exchange}")
 
 
