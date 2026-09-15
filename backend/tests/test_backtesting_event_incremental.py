@@ -85,3 +85,16 @@ def test_event_incremental_rejects_unordered_events_before_persisting():
         raise AssertionError("expected unordered event validation")
 
     assert persisted == []
+
+
+def test_event_incremental_marks_open_trade_to_market_at_end():
+    events = [_event(0, 1, 100.0), _event(1_000_000_000, 2, 110.0)]
+    result = run_events_incremental(
+        BacktestConfig(initial_capital=10_000.0),
+        events,
+        lambda event: EventSignal("BUY") if event.sequence == 1 else EventSignal("HOLD"),
+        persist_chunk=lambda chunk, index: None,
+    )
+    assert result.has_open_trade is True
+    assert result.unrealized_pnl == 10.0
+    assert result.final_capital == 10_010.0
