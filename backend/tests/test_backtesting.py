@@ -130,12 +130,35 @@ def test_backtest_without_completed_trade_has_zero_pnl():
 
     assert result.trades == ()
     assert result.net_pnl == 0
+    assert result.unrealized_pnl == 0
+    assert result.has_open_trade is True
     assert result.win_rate == 0
     assert result.expectancy == 0
     assert result.sharpe_ratio == 0
     assert result.sortino_ratio == 0
     assert result.max_drawdown == 0
     assert result.cagr == 0
+
+
+def test_backtest_marks_open_trade_to_last_close():
+    entry = Strategy("entry", (StrategyRule("go", threshold_rule("signal", minimum=1)),))
+    exit_ = Strategy("exit", (StrategyRule("stop", threshold_rule("signal", maximum=0)),))
+
+    result = BacktestEngine().run(
+        [
+            {"timestamp": 1, "close": 100, "signal": 1},
+            {"timestamp": 2, "close": 115, "signal": 1},
+        ],
+        entry,
+        exit_,
+    )
+
+    assert result.trades == ()
+    assert result.has_open_trade is True
+    assert result.unrealized_pnl == pytest.approx(15.0)
+    assert result.final_capital == pytest.approx(100_015.0)
+    assert result.net_pnl == pytest.approx(15.0)
+    assert result.total_return == pytest.approx(0.00015)
 
 
 def test_backtest_cagr_uses_completed_trade_duration():
