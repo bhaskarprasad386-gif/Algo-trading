@@ -1,4 +1,4 @@
-from pydantic import ConfigDict
+from pydantic import ConfigDict, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -39,6 +39,13 @@ class Settings(BaseSettings):
 
     # Durable historical strategy-run ledger
     BACKTEST_LEDGER_DB: str = "./backtest_strategy_ledger.sqlite3"
+
+    @model_validator(mode="after")
+    def validate_security_config(self):
+        if self.environment.strip().lower() != "development":
+            if len(self.SECRET_KEY) < 32:
+                raise ValueError("SECRET_KEY must be set and at least 32 characters in non-development environments")
+        return self
 
     model_config = ConfigDict(
         env_file=".env",
