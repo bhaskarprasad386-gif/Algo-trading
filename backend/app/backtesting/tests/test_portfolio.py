@@ -80,6 +80,13 @@ def test_max_position_and_notional_limits_are_enforced():
         p.apply_fill(fill("b2", "X", ExecutionSide.BUY, 1, 100))
 
 
+def test_risk_config_max_position_quantity_must_be_positive_integer():
+    for value in (0, -1, 1.5, True, False, "10"):
+        with pytest.raises(ValueError, match="max_position_quantity"):
+            RiskConfig(max_position_quantity=value)
+    assert RiskConfig(max_position_quantity=10).max_position_quantity == 10
+
+
 def test_leverage_limit_is_enforced():
     p = Portfolio(10_000, RiskConfig(initial_margin_rate=0.1, max_leverage=2.0))
     with pytest.raises(RiskViolation, match="max leverage"):
