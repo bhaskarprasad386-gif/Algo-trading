@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from app.market_data.candle_pipeline import CandlePipeline
 
 
@@ -23,3 +25,21 @@ def test_pipeline_keeps_symbols_independent():
 
     assert pipeline.current("AAA").close == 10
     assert pipeline.current("BBB").close == 20
+
+
+def test_pipeline_rejects_negative_non_finite_and_non_numeric_volume():
+    pipeline = CandlePipeline()
+    t0 = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+
+    for volume in (-1, float("nan"), float("inf"), "bad"):
+        with pytest.raises(ValueError, match="volume"):
+            pipeline.update({"symbol": "NIFTY", "ltp": 100, "volume": volume, "timestamp": t0})
+
+
+def test_pipeline_rejects_non_positive_ltp():
+    pipeline = CandlePipeline()
+    t0 = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+
+    for ltp in (0, -1, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="ltp"):
+            pipeline.update({"symbol": "NIFTY", "ltp": ltp, "timestamp": t0})
