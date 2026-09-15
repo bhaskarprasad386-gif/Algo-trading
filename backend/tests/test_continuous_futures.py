@@ -1,5 +1,7 @@
 from datetime import date
 
+import pytest
+
 from app.backtesting.continuous_futures import build_continuous_futures_series
 from app.backtesting.fno_rollover import FNORolloverWindow
 from app.backtesting.historical_catalog import HistoricalRecord
@@ -47,3 +49,10 @@ def test_continuous_series_excludes_records_outside_contract_window():
 
     assert [item.record.payload["close"] for item in series] == [100.0]
     assert [item.contract_token for item in series] == ["JAN"]
+
+
+def test_continuous_series_rejects_overlapping_windows():
+    first = FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 28), date(2026, 1, 30))
+    second = FNORolloverWindow("ABC", "STOCK_FUTURE", "FEB", date(2026, 1, 30), date(2026, 2, 2))
+    with pytest.raises(ValueError, match="overlapping continuous futures windows"):
+        build_continuous_futures_series((first, second), {"JAN": (), "FEB": ()})
