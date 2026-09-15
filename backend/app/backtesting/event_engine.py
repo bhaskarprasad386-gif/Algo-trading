@@ -185,6 +185,8 @@ class EventBacktestEngine:
         if lifecycle is None or old is None: raise KeyError(f"open order not found: {order_id}")
         if replacement.order_id == order_id: raise ValueError("replacement must use a new order_id")
         effective = self._submit_effective_order(replacement, MarketEvent(timestamp_ns, replacement.instrument, EventType.CUSTOM, {}, None, None))
+        queue = effective.queue_ahead_quantity if queue_ahead_quantity is None else queue_ahead_quantity
+        if queue < 0: raise ValueError("queue_ahead_quantity cannot be negative")
         if self.portfolio is not None and not order_reduces_position_risk(self.portfolio, effective):
             observed = self._latest_events.get(effective.instrument)
             reference = self._order_reference_price(effective, observed) if observed is not None else None
@@ -204,8 +206,6 @@ class EventBacktestEngine:
         self._queue_lifecycles[order_id] = prior_queue.cancel()
         self._open_orders.pop(order_id, None); self._dynamic_queue_ahead.pop(order_id, None)
         new_lifecycle = OrderLifecycle(effective); new_lifecycle.accept(timestamp_ns); self._order_lifecycles[effective.order_id] = new_lifecycle
-        queue = effective.queue_ahead_quantity if queue_ahead_quantity is None else queue_ahead_quantity
-        if queue < 0: raise ValueError("queue_ahead_quantity cannot be negative")
         self._queue_lifecycles[effective.order_id] = prior_queue.reinsert(queue); self._dynamic_queue_ahead[effective.order_id] = queue; self._open_orders[effective.order_id] = effective
         return effective
 
