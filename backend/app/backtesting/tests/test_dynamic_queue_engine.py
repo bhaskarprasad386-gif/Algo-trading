@@ -92,3 +92,26 @@ def test_replace_order_reinserts_with_new_queue_generation():
     assert engine.queue_states[effective.order_id].resting is True
     assert engine.queue_states[effective.order_id].generation == 1
     assert engine.queue_states[effective.order_id].queue_ahead_quantity == 12
+
+
+def test_replace_order_negative_queue_is_atomic():
+    engine = EventBacktestEngine(execution=ExecutionSimulator())
+    old = SimOrder("atomic-old", "NIFTY", ExecutionSide.BUY, 4, order_type=OrderType.LIMIT, limit_price=100.0, queue_ahead_quantity=8)
+    engine._lifecycle(old, 1)
+    engine._open_orders[old.order_id] = old
+    engine._queue_lifecycles[old.order_id] = __import__("app.backtesting.queue_lifecycle", fromlist=["QueueLifecycleState"]).QueueLifecycleState(3)
+    engine._dynamic_queue_ahead[old.order_id] = 3
+    before_state = engine.order_states[old.order_id]
+    before_queue = engine.queue_states[old.order_id]
+    replacement = SimOrder("atomic-new", "NIFTY", ExecutionSide.BUY, 4, order_type=OrderType.LIMIT, limit_price=100.0, queue_ahead_quantity=12)
+
+    import pytest
+    with pytest.raises(ValueError, match="queue_ahead_quantity cannot be negative"):
+        engine.replace_order(old.order_id, replacement, 2, queue_ahead_quantity=-1)
+
+    assert engine.open_orders[old.order_id] is old
+    assert replacement.order_id not in engine.open_orders
+    assert engine.order_states[old.order_id] == before_state
+    assert engine.queue_states[old.order_id] == before_queue
+    assert replacement.order_id not in engine.order_states
+    assert engine._dynamic_queue_ahead[old.order_id] == 3
