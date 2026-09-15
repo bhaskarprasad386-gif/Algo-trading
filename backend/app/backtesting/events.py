@@ -13,28 +13,28 @@ class EventType(str, Enum):
     CUSTOM = "custom"
 
 
+@dataclass(frozen=True)
 class MarketEvent:
     """Immutable source observation; timestamp is always normalized to epoch ns."""
 
-    def __init__(self, timestamp_ns: int, instrument: str, event_type: EventType,
-                 payload: Mapping[str, Any] | None = None, sequence: int | None = None,
-                 source: str | None = None) -> None:
-        if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int):
+    timestamp_ns: int
+    instrument: str
+    event_type: EventType
+    payload: Mapping[str, Any] = field(default_factory=dict)
+    sequence: int | None = None
+    source: str | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.timestamp_ns, bool) or not isinstance(self.timestamp_ns, int):
             raise TypeError("timestamp_ns must be an integer")
-        if timestamp_ns < 0:
+        if self.timestamp_ns < 0:
             raise ValueError("timestamp_ns cannot be negative")
-        if not instrument.strip():
+        if not self.instrument.strip():
             raise ValueError("instrument is required")
-        if sequence is not None and (isinstance(sequence, bool) or not isinstance(sequence, int)):
+        if self.sequence is not None and (isinstance(self.sequence, bool) or not isinstance(self.sequence, int)):
             raise TypeError("sequence must be an integer")
-        if sequence is not None and sequence < 0:
+        if self.sequence is not None and self.sequence < 0:
             raise ValueError("sequence cannot be negative")
-        self.timestamp_ns = timestamp_ns
-        self.instrument = instrument
-        self.event_type = event_type
-        self.payload = {} if payload is None else payload
-        self.sequence = sequence
-        self.source = source
 
 
 @dataclass(frozen=True)
