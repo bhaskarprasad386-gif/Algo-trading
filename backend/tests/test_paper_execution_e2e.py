@@ -98,3 +98,31 @@ def test_cash_future_scanner_opportunity_enters_paper_and_preserves_metadata():
     assert position["status"] == "active"
     assert position["position"]["symbol"] == "ABC"
     assert position["position"]["entry_price"] == 100.0
+
+
+def test_paper_short_reversal_deducts_remaining_long_cost():
+    db = _session()
+    user = _paper_user(db)
+
+    opened = paper_order(
+        PaperOrderRequest(symbol="REV", transaction_type="SELL", price=100.0, quantity=5.0),
+        user_id=user.id,
+        db=db,
+    )
+    assert opened["virtual_balance"] == 999_500.0
+    assert opened["position"]["quantity"] == -5.0
+
+    reversal = paper_order(
+        PaperOrderRequest(symbol="REV", transaction_type="BUY", price=90.0, quantity=8.0),
+        user_id=user.id,
+        db=db,
+    )
+
+    assert reversal["status"] == "success"
+    assert reversal["position"]["quantity"] == 3.0
+    assert reversal["position"]["entry_price"] == 90.0
+    assert reversal["realized_pnl"] == 50.0
+    assert reversal["virtual_balance"] == 999_180.0
+
+    position = paper_position(user_id=user.id, db=db)
+    assert position["position"]["quantity"] == 3.0
