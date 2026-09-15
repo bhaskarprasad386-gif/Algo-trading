@@ -1,11 +1,14 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String
 
 from app.core.database import Base
 
-
 PAPER_STARTING_BALANCE = 10_000_000.0
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class TradingAccount(Base):
@@ -17,5 +20,5 @@ class TradingAccount(Base):
     virtual_balance = Column(Float, nullable=False, default=PAPER_STARTING_BALANCE)
     realized_pnl = Column(Float, nullable=False, default=0.0)
     is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
