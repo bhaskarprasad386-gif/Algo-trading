@@ -124,8 +124,27 @@ class EventBacktestEngine:
             self._apply_queue_evidence(event)
 
     def _current_marks(self) -> dict[str, float]:
-        return {instrument: price for instrument, event in self._latest_events.items()
-                if (price := self._event_price(event, None)) is not None and price > 0}
+        marks: dict[str, float] = {}
+        for instrument, event in self._latest_events.items():
+            price = self._event_price(event, None)
+            if price is not None and price > 0:
+                marks[instrument] = price
+                continue
+            book_state = self._latest_books.get(instrument)
+            if book_state is None or book_state[0] != event.timestamp_ns:
+                continue
+            bids, asks = book_state[1].bids, book_state[1].asks
+            if bids and asks:
+                price = (bids[0].price + asks[0].price) / 2.0
+            elif bids:
+                price = bids[0].price
+            elif asks:
+                price = asks[0].price
+            else:
+                continue
+            if price > 0:
+                marks[instrument] = price
+        return marks
 
     def _market_risk_allows_order(self, order: SimOrder) -> bool:
         """Allow risk-reducing orders to unwind exposure even while hard limits are breached."""
