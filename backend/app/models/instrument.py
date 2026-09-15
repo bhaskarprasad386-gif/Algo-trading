@@ -1,6 +1,12 @@
+from datetime import datetime, timezone
+
 from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime
-from datetime import datetime
+
 from app.core.database import Base
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Instrument(Base):
@@ -18,4 +24,4 @@ class Instrument(Base):
     expiry = Column(String, nullable=True)
     strike = Column(Float, nullable=True)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
