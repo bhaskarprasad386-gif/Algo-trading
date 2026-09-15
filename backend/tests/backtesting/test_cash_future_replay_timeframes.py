@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.backtesting.cash_future_replay_routes import _available_replay_intervals
 from app.scanner.cash_future_history import CashFutureHistoryPoint
@@ -30,3 +30,12 @@ def test_replay_intervals_expose_one_second_only_for_one_second_data():
 
 def test_replay_intervals_have_safe_default_for_single_observation():
     assert _available_replay_intervals([_point(0)]) == ["1m", "5m", "15m", "30m"]
+
+
+def test_replay_intervals_preserve_sub_second_source_cadence():
+    base = datetime.fromtimestamp(0, tz=timezone.utc)
+    points = [
+        CashFutureHistoryPoint(base, "AAA", "2026-01", 100.0, 112.0, 12.0, 12.0, 100, 125000.0),
+        CashFutureHistoryPoint(base + timedelta(milliseconds=500), "AAA", "2026-01", 100.0, 112.0, 12.0, 12.0, 100, 125000.0),
+    ]
+    assert _available_replay_intervals(points) == ["1s", "1m", "5m", "15m", "30m"]
