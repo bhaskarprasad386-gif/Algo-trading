@@ -60,13 +60,14 @@ def streaming_events(events: Iterable[MarketEvent]) -> Iterable[MarketEvent]:
         identity = (event.timestamp_ns, event.sequence)
         if previous_key is not None and identity < previous_key:
             raise ValueError("stream is not deterministically ordered")
-        # Equal identities are intentionally allowed here. Durable replay deduplication
-        # belongs to the runner/store, which can discard duplicate source delivery safely.
         previous_key = identity
         yield event
 
 
 def validate_source_resolution(events: Iterable[MarketEvent], minimum_timestamp_delta_ns: int) -> None:
+    """Require observed same-instrument spacing at or below the requested resolution."""
+    if isinstance(minimum_timestamp_delta_ns, bool) or not isinstance(minimum_timestamp_delta_ns, int):
+        raise TypeError("minimum_timestamp_delta_ns must be an integer")
     if minimum_timestamp_delta_ns <= 0:
         raise ValueError("minimum_timestamp_delta_ns must be positive")
     ordered = ordered_events(events)
@@ -74,11 +75,10 @@ def validate_source_resolution(events: Iterable[MarketEvent], minimum_timestamp_
         if (
             previous.instrument == current.instrument
             and current.timestamp_ns > previous.timestamp_ns
-            and current.timestamp_ns - previous.timestamp_ns < minimum_timestamp_delta_ns
+            and current.timestamp_ns - previous.timestamp_ns <= minimum_timestamp_delta_ns
         ):
             return
-    if ordered and minimum_timestamp_delta_ns < 1_000:
-        raise ValueError("source data does not prove the requested finer resolution")
+    raise ValueError("source data does not prove the requested timestamp resolution")
 
 
 def replay(events: Iterable[MarketEvent], strategy: EventStrategy) -> list[dict[str, Any]]:
