@@ -21,6 +21,26 @@ def test_long_box_profit_when_executable_debit_is_below_width():
     assert round(opp.edge_per_lot, 6) == 8.0
 
 
+def test_short_box_uses_high_put_bid_and_low_put_ask():
+    low = option(strike=100, cb=10, ca=11, pb=1, pa=2)
+    high = option(strike=110, cb=1, ca=2, pb=8, pa=9)
+    opp = BoxSpreadBacktester.evaluate(low, high, direction="SHORT")
+    assert opp is not None
+    # credit = low call bid + high put bid - high call ask - low put ask
+    assert opp.executable_edge == 5
+    assert opp.edge_per_lot == 50
+
+
+def test_long_box_uses_high_put_ask_and_low_put_bid():
+    low = option(strike=100, cb=10, ca=11, pb=1, pa=2)
+    high = option(strike=110, cb=1, ca=2, pb=8, pa=9)
+    opp = BoxSpreadBacktester.evaluate(low, high, direction="LONG")
+    assert opp is not None
+    # debit = low call ask + high put ask - high call bid - low put bid
+    assert opp.executable_edge == 6
+    assert opp.edge_per_lot == 60
+
+
 def test_box_rejects_mismatched_expiry():
     low = option()
     high = OptionQuote(1, "ABC", 20270131, 110, 4, 5, 1, 2, 10)
@@ -77,7 +97,7 @@ def test_synthetic_cash_carry_rejects_invalid_option_quotes():
     except ValueError as exc:
         assert "finite" in str(exc)
     else:
-        raise AssertionError("expected non-finite quote rejection")
+        raise AssertionError("expected non-finite option quote rejection")
 
 
 def test_synthetic_cash_carry_rejects_mismatched_instrument_class():
