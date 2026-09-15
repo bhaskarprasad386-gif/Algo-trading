@@ -58,10 +58,29 @@ class BacktestResolution:
             raise ValueError("invalid resolution coverage window")
 
 
-def choose_finest_genuine_resolution(coverage: Iterable[ResolutionCoverage]) -> BacktestResolution:
-    """Choose ms, then s, then m, then h, but only when coverage is complete."""
+def choose_finest_genuine_resolution(
+    coverage: Iterable[ResolutionCoverage],
+    *,
+    requested_start_ns: int | None = None,
+    requested_end_ns: int | None = None,
+) -> BacktestResolution:
+    """Choose the finest complete resolution that covers the requested range."""
+    if (requested_start_ns is None) != (requested_end_ns is None):
+        raise ValueError("requested_start_ns and requested_end_ns must be provided together")
+    if requested_start_ns is not None:
+        _validate_ns(requested_start_ns, "requested start")
+        _validate_ns(requested_end_ns, "requested end")
+        if requested_end_ns < requested_start_ns:
+            raise ValueError("requested end must be >= requested start")
+
     candidates = [item for item in coverage if item.complete]
+    if requested_start_ns is not None and requested_end_ns is not None:
+        candidates = [
+            item
+            for item in candidates
+            if item.start_ns <= requested_start_ns and item.end_ns >= requested_end_ns
+        ]
     if not candidates:
-        raise ValueError("no complete genuine resolution is available")
+        raise ValueError("no complete genuine resolution covers the requested range")
     chosen = min(candidates, key=lambda item: _RESOLUTION_RANK[item.resolution])
     return BacktestResolution(chosen.resolution, chosen.source, chosen.start_ns, chosen.end_ns)
