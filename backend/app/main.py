@@ -41,10 +41,18 @@ from app.backtesting.cash_future_strategy_routes import router as cash_future_st
 run_schema_migrations()
 Base.metadata.create_all(bind=engine)
 
+# Reuse one process-local instrument-master manager for all dashboard/API WebSockets.
+# Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
+instrument_master = InstrumentMaster()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _history_collector_task, _contract_master_sync_task
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
+    # Recovery is intentionally deferred until application startup so the schema
+    # migration module has no dependency on scanner/backtest job modules.
+    from app.scanner.backtest_jobs import recover_interrupted_jobs
+    recover_interrupted_jobs()
     if settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
         _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
     if _collector_enabled() and _history_collector_task is None:
@@ -141,8 +149,11 @@ def dashboard():
   section.className='card'; section.style.marginTop='15px'; section.style.borderLeftColor='#22c55e';
   section.innerHTML='<h3>Cash–Future Opportunities</h3><div id="cf-summary" style="font-size:12px;color:#94a3b8">Scanning backend…</div><div style="overflow-x:auto;margin-top:10px"><table id="cf-table" style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th align="left">Symbol</th><th>Cash</th><th>Future</th><th>Gap</th><th>Margin</th><th>Net</th><th>ROI</th></tr></thead><tbody></tbody></table></div>';
   const pnl=document.querySelector('.card[style*="border-left-color:#facc15"]');
-  (pnl?.parentNode||document.querySelector('.container')).insertBefore(section,pnl||null);
+  const container=document.querySelector('.container');
+  if(!container){return;}
+  (pnl?.parentNode||container).insertBefore(section,pnl||null);
   const summary=document.getElementById('cf-summary'),tbody=document.querySelector('#cf-table tbody');
+  if(!summary||!tbody){return;}
   async function scan(){
     try{
       summary.textContent='Scanning backend Cash-Future opportunities…';
@@ -157,7 +168,11 @@ def dashboard():
       });
       summary.textContent=`Backend connected • ${p.scanned_observations??0} scanned • ${p.opportunity_count??rows.length} executable opportunities`;
       const best=rows[0];
-      if(best){spread.innerHTML=`Arbitrage: <strong>${best.symbol} • Gap ₹${Number(best.gap??0).toFixed(2)} • Net ₹${Number(best.net_profit??0).toFixed(2)}</strong>`;live.textContent=Number(best.cash_ltp??0).toFixed(2);liveStatus.textContent=`Cash price from Cash-Future scanner • ${best.symbol}`;}
+      if(best){
+        if(spread) spread.innerHTML=`Arbitrage: <strong>${best.symbol} • Gap ₹${Number(best.gap??0).toFixed(2)} • Net ₹${Number(best.net_profit??0).toFixed(2)}</strong>`;
+        if(live) live.textContent=Number(best.cash_ltp??0).toFixed(2);
+        if(liveStatus) liveStatus.textContent=`Cash price from Cash-Future scanner • ${best.symbol}`;
+      }
       if(log){log.innerHTML+=`<br>[${new Date().toLocaleTimeString()}] Cash-Future scan: ${rows.length} executable.`; log.scrollTop=log.scrollHeight;}
     }catch(e){summary.textContent=`Scanner unavailable: ${e.message}`;}
   }
@@ -187,7 +202,7 @@ async def market_data_websocket(websocket: WebSocket, symbol: str):
     await websocket.accept()
     client = MarketDataWebSocket()
     try:
-        instrument = InstrumentMaster().get_instrument(symbol.strip().upper(), "NSE")
+        instrument = instrument_master.get_instrument(symbol.strip().upper(), "NSE")
         if not instrument:
             await websocket.send_json({"status": "error", "detail": f"Instrument not found: NSE {symbol.strip().upper()}"})
             return
