@@ -7,6 +7,7 @@ Live broker execution remains disabled behind the broker safety layer.
 
 from __future__ import annotations
 
+import hashlib
 import math
 import uuid
 
@@ -23,7 +24,7 @@ from app.execution.dual_engine import DualExecutionEngine, ExecutionConfig, Exec
 from app.execution.fill_accounting import ExecutedFill, FillAccountingState, apply_executed_fill
 from app.execution.payoff import PayoffLeg, payoff_summary
 from app.execution.strategy_legs import StrategyLegInput, build_cash_future_strategy, build_strategy_legs
-from app.models import Order, Position, TradingAccount
+from app.models import Order, Position, Session as UserSession, TradingAccount
 
 router = APIRouter(prefix="/api/v1/execution", tags=["Execution"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -102,7 +103,7 @@ class CashFuturePayoffRequest(BaseModel):
     multiplier: float = Field(1.0, gt=0)
 
 
-def current_user_id(token: str = Depends(oauth2_scheme)) -> int:
+def current_user_id(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> int:
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
         user_id = int(payload.get("sub", "0"))
@@ -110,6 +111,13 @@ def current_user_id(token: str = Depends(oauth2_scheme)) -> int:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     if user_id <= 0:
         raise HTTPException(status_code=401, detail="Invalid authenticated user")
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    session = db.query(UserSession).filter(
+        UserSession.user_id == user_id,
+        UserSession.token_hash == token_hash,
+    ).first()
+    if session is None:
+        raise HTTPException(status_code=401, detail="Session is invalid or logged out")
     return user_id
 
 
@@ -222,9 +230,13 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
             accounting_state, pnl = _accounting_after_fill(side="BUY", price=fill.price, quantity=quantity, current_quantity=float(active.quantity), current_average_price=float(active.average_price), current_realized_pnl=account.realized_pnl)
             closed_qty = min(short_qty, quantity)
             margin_released = _buy_cost(active.average_price, closed_qty)
-            account.virtual_balance = round(account.virtual_balance + margin_released + pnl, 8)
-            account.realized_pnl = accounting_state.realized_pnl
+            cash_after_close = round(account.virtual_balance + margin_released + pnl, 8)
             remaining_qty = int(accounting_state.quantity)
+            remaining_cost = _buy_cost(fill.price, remaining_qty) if remaining_qty > 0 else 0.0
+            if cash_after_close < remaining_cost:
+                raise HTTPException(status_code=400, detail="Insufficient paper balance for reversal long position")
+            account.virtual_balance = round(cash_after_close - remaining_cost, 8)
+            account.realized_pnl = accounting_state.realized_pnl
             if remaining_qty == 0:
                 db.delete(active)
                 remaining = None
@@ -248,7 +260,6 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
             pnl = 0.0
     else:
         if active is None:
-            # Opening a short position reserves entry notional as paper margin.
             margin = _buy_cost(request.price, quantity)
             if account.virtual_balance < margin:
                 raise HTTPException(status_code=400, detail="Insufficient paper balance for short margin")
