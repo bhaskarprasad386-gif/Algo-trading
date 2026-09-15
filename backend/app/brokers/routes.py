@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -47,9 +48,9 @@ def current_user_id(token: str = Depends(oauth2_scheme), db: Session = Depends(g
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     if user_id <= 0:
         raise HTTPException(status_code=401, detail="Invalid authenticated user")
-    session = db.query(UserSession).filter(UserSession.access_token == token).first()
-    if session is not None and not session.is_active:
-        raise HTTPException(status_code=401, detail="Token has been logged out")
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    if db.query(UserSession.id).filter(UserSession.token_hash == token_hash).first() is None:
+        raise HTTPException(status_code=401, detail="Token has been logged out or is not an active session")
     return user_id
 
 
