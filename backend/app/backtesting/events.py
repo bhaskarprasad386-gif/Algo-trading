@@ -13,24 +13,28 @@ class EventType(str, Enum):
     CUSTOM = "custom"
 
 
-@dataclass(frozen=True)
 class MarketEvent:
     """Immutable source observation; timestamp is always normalized to epoch ns."""
 
-    timestamp_ns: int
-    instrument: str
-    event_type: EventType
-    payload: Mapping[str, Any] = field(default_factory=dict)
-    sequence: int | None = None
-    source: str | None = None
-
-    def __post_init__(self) -> None:
-        if self.timestamp_ns < 0:
+    def __init__(self, timestamp_ns: int, instrument: str, event_type: EventType,
+                 payload: Mapping[str, Any] | None = None, sequence: int | None = None,
+                 source: str | None = None) -> None:
+        if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int):
+            raise TypeError("timestamp_ns must be an integer")
+        if timestamp_ns < 0:
             raise ValueError("timestamp_ns cannot be negative")
-        if not self.instrument.strip():
+        if not instrument.strip():
             raise ValueError("instrument is required")
-        if self.sequence is not None and self.sequence < 0:
+        if sequence is not None and (isinstance(sequence, bool) or not isinstance(sequence, int)):
+            raise TypeError("sequence must be an integer")
+        if sequence is not None and sequence < 0:
             raise ValueError("sequence cannot be negative")
+        self.timestamp_ns = timestamp_ns
+        self.instrument = instrument
+        self.event_type = event_type
+        self.payload = {} if payload is None else payload
+        self.sequence = sequence
+        self.source = source
 
 
 @dataclass(frozen=True)
@@ -45,12 +49,19 @@ class EventReplayConfig:
     def __post_init__(self) -> None:
         if self.timestamp_unit not in {"ns", "us", "ms", "s", "m", "h", "d"}:
             raise ValueError("timestamp_unit must be ns, us, ms, s, m, h, or d")
+        if isinstance(self.latency_ns, bool) or not isinstance(self.latency_ns, int):
+            raise TypeError("latency_ns must be an integer")
         if self.latency_ns < 0:
             raise ValueError("latency_ns cannot be negative")
-        if self.replay_step_ns is not None and self.replay_step_ns <= 0:
-            raise ValueError("replay_step_ns must be positive")
+        if self.replay_step_ns is not None:
+            if isinstance(self.replay_step_ns, bool) or not isinstance(self.replay_step_ns, int):
+                raise TypeError("replay_step_ns must be an integer")
+            if self.replay_step_ns <= 0:
+                raise ValueError("replay_step_ns must be positive")
 
     def to_ns(self, timestamp: int) -> int:
+        if isinstance(timestamp, bool) or not isinstance(timestamp, int):
+            raise TypeError("timestamp must be an integer")
         multipliers = {
             "ns": 1,
             "us": 1_000,
@@ -60,7 +71,7 @@ class EventReplayConfig:
             "h": 3_600_000_000_000,
             "d": 86_400_000_000_000,
         }
-        return int(timestamp) * multipliers[self.timestamp_unit]
+        return timestamp * multipliers[self.timestamp_unit]
 
     def normalize_timestamp(self, timestamp: int) -> int:
         return self.to_ns(timestamp)
