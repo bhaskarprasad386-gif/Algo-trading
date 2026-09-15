@@ -1,6 +1,8 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
 from jose import jwt
 from passlib.context import CryptContext
+
 from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt_sha256", "bcrypt"], deprecated="auto")
@@ -22,7 +24,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
         raise RuntimeError("SECRET_KEY must be configured before creating access tokens")
 
     to_encode = data.copy()
-    expire = datetime.utcnow() + (
+    expire = datetime.now(timezone.utc) + (
         expires_delta if expires_delta else timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
     to_encode.update({"exp": expire})
