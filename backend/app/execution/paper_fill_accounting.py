@@ -17,6 +17,7 @@ def account_paper_fill(
     current_quantity: float,
     current_average_price: float,
     current_realized_pnl: float = 0.0,
+    fill_id: str = "",
 ) -> tuple[FillAccountingState, float]:
     """Apply one confirmed paper fill and return new state plus realized delta.
 
@@ -30,7 +31,7 @@ def account_paper_fill(
     )
     after = apply_executed_fill(
         before,
-        ExecutedFill(side=side, price=price, quantity=quantity),
+        ExecutedFill(side=side, price=price, quantity=quantity, fill_id=fill_id),
     )
     realized_delta = round(after.realized_pnl - before.realized_pnl, 8)
     return after, realized_delta
