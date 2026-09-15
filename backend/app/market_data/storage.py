@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import math
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -15,13 +16,18 @@ class TickStorage:
         self.db = db
 
     @staticmethod
-    def _float(value: Any) -> float | None:
+    def _float(value: Any, *, field: str) -> float | None:
         if value is None:
             return None
+        if isinstance(value, bool):
+            raise ValueError(f"tick {field} must be numeric")
         try:
-            return float(value)
+            parsed = float(value)
         except (TypeError, ValueError):
-            return None
+            raise ValueError(f"tick {field} must be numeric") from None
+        if not math.isfinite(parsed):
+            raise ValueError(f"tick {field} must be finite")
+        return parsed
 
     def save(self, tick: dict[str, Any]) -> Tick:
         token = str(tick.get("token") or "").strip()
@@ -29,11 +35,18 @@ class TickStorage:
         if not token or not symbol:
             raise ValueError("tick requires token and symbol")
 
+        ltp = self._float(tick.get("ltp"), field="ltp")
+        volume = self._float(tick.get("volume"), field="volume")
+        if ltp is not None and ltp <= 0:
+            raise ValueError("tick ltp must be positive")
+        if volume is not None and volume < 0:
+            raise ValueError("tick volume must be non-negative")
+
         row = Tick(
             token=token,
             symbol=symbol,
-            ltp=self._float(tick.get("ltp")),
-            volume=self._float(tick.get("volume")),
+            ltp=ltp,
+            volume=volume,
             received_at=datetime.now(timezone.utc),
         )
         self.db.add(row)
