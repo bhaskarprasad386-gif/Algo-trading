@@ -48,3 +48,15 @@ def test_index_futures_are_not_returned_by_stock_future_resolver():
     with pytest.raises(LookupError):
         catalog.resolve(exchange="NFO", underlying="NIFTY", as_of=date(2026, 9, 7), mode="CURRENT")
     catalog.close()
+
+
+def test_upsert_rejects_records_from_multiple_snapshot_dates():
+    catalog = ContractMasterCatalog()
+    records = [
+        ContractRecord("NFO", "ABC26SEP", "101", date(2026, 9, 24), "STOCK_FUTURE", "ABC", 100, date(2026, 9, 7)),
+        ContractRecord("NFO", "ABC26OCT", "102", date(2026, 10, 29), "STOCK_FUTURE", "ABC", 100, date(2026, 9, 8)),
+    ]
+    with pytest.raises(ValueError, match="one snapshot_date"):
+        catalog.upsert(records)
+    assert catalog.snapshot_dates() == ()
+    catalog.close()
