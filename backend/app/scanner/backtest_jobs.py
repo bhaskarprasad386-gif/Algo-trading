@@ -24,6 +24,12 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _history_now() -> datetime:
+    """Return the naive IST timestamp used by the history store."""
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
+
+
 def _new_job_id() -> str:
     import uuid
     return str(uuid.uuid4())
@@ -93,7 +99,7 @@ def _run_job(job_id: str, symbol: str, contract_month: str, days: int, min_entry
     try:
         if _is_cancelled(job_id): return
         _update(db, job_id, status="running", progress_pct=1.0, message="Loading validated history")
-        end = datetime.utcnow(); start = end - timedelta(days=days)
+        end = _history_now(); start = end - timedelta(days=days)
         points = read_history(db, symbol, contract_month, start, end)
         if _is_cancelled(job_id): return
         _update(db, job_id, progress_pct=20.0, message=f"Loaded {len(points)} historical observations")
@@ -175,6 +181,7 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
 
 
 def recover_interrupted_jobs() -> int:
+    """Recover every supported queued/running job after a worker restart."""
     db = SessionLocal(); recovered = 0
     try:
         jobs = db.query(BacktestJob).filter(BacktestJob.status.in_(["queued", "running"])).all()
@@ -185,14 +192,21 @@ def recover_interrupted_jobs() -> int:
                     continue
             if not job.config_json:
                 job.status = "failed"; job.progress_pct = min(job.progress_pct, 99.0)
-                job.message = "Worker interrupted; durable chunks preserved; job configuration unavailable for safe recovery"; job.updated_at = _utcnow(); continue
+                job.message = "Worker interrupted; job configuration unavailable for safe recovery"; job.updated_at = _utcnow(); continue
             try:
                 config = json.loads(job.config_json)
-                if config.get("kind") != "full_fno":
-                    job.status = "failed"; job.progress_pct = min(job.progress_pct, 99.0); job.message = "Worker interrupted; unsupported recovery job configuration"; job.updated_at = _utcnow(); continue
-                selection = str(config["future_selection"]).upper()
-                if selection not in {"CURRENT", "NEAR", "BOTH"}: raise ValueError("invalid persisted future selection")
-                future = _EXECUTOR.submit(_run_full_fno_job, job.job_id, int(config["days"]), float(config["min_entry_gap"]), float(config["exit_gap"]), float(config["charges_per_trade"]), float(config["funding_cost_per_trade"]), int(config["max_holding_days"]), selection)
+                kind = config.get("kind")
+                if kind == "full_fno":
+                    selection = str(config["future_selection"]).upper()
+                    if selection not in {"CURRENT", "NEAR", "BOTH"}: raise ValueError("invalid persisted future selection")
+                    future = _EXECUTOR.submit(_run_full_fno_job, job.job_id, int(config["days"]), float(config["min_entry_gap"]), float(config["exit_gap"]), float(config["charges_per_trade"]), float(config["funding_cost_per_trade"]), int(config["max_holding_days"]), selection)
+                elif kind == "single":
+                    symbol = str(config["symbol"]).strip().upper()
+                    contract_month = str(config["contract_month"]).strip().upper()
+                    if not symbol or not contract_month: raise ValueError("invalid persisted single-job identity")
+                    future = _EXECUTOR.submit(_run_job, job.job_id, symbol, contract_month, int(config["days"]), float(config["min_entry_gap"]), float(config["exit_gap"]), float(config["charges_per_trade"]), float(config["funding_cost_per_trade"]), int(config["max_holding_days"]))
+                else:
+                    raise ValueError("unsupported recovery job configuration")
                 with _LOCK: _FUTURES[job.job_id] = future
                 job.message = "Recovery queued from durable configuration"; job.updated_at = _utcnow(); recovered += 1
             except Exception as exc:
