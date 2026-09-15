@@ -379,10 +379,12 @@ class Portfolio:
                 if not isinstance(raw, Mapping):
                     raise ValueError("invalid portfolio position checkpoint")
                 instrument = str(raw["instrument"])
-                quantity = int(raw["quantity"])
+                quantity = raw["quantity"]
+                if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity == 0:
+                    raise ValueError("invalid portfolio position checkpoint values")
                 average_price = float(raw["average_price"])
                 position_realized = float(raw["realized_pnl"])
-                if not instrument or quantity == 0 or not math.isfinite(average_price) or average_price <= 0 or not math.isfinite(position_realized):
+                if not instrument or not math.isfinite(average_price) or average_price <= 0 or not math.isfinite(position_realized):
                     raise ValueError("invalid portfolio position checkpoint values")
                 positions[instrument] = Position(instrument, quantity, average_price, position_realized)
             reserved = {str(order_id): float(amount) for order_id, amount in raw_reserved.items()}
