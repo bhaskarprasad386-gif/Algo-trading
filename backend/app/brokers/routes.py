@@ -7,14 +7,17 @@ from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from app.brokers.angel_one import AngelOneAdapter
 from app.brokers.connections import broker_connections
 from app.brokers.registry import BrokerRegistry
 from app.brokers.safety import trading_safety
 from app.core.config import settings
+from app.core.database import get_db
 from app.core.logger import app_logger
 from app.core.security import ALGORITHM
+from app.models import Session as UserSession
 
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -36,7 +39,7 @@ class RealTradingEnableRequest(BaseModel):
 _sessions: dict[tuple[int, str], AngelOneAdapter] = {}
 
 
-def current_user_id(token: str = Depends(oauth2_scheme)) -> int:
+def current_user_id(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> int:
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
         user_id = int(payload.get("sub", "0"))
@@ -44,6 +47,9 @@ def current_user_id(token: str = Depends(oauth2_scheme)) -> int:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     if user_id <= 0:
         raise HTTPException(status_code=401, detail="Invalid authenticated user")
+    session = db.query(UserSession).filter(UserSession.access_token == token).first()
+    if session is not None and not session.is_active:
+        raise HTTPException(status_code=401, detail="Token has been logged out")
     return user_id
 
 
@@ -95,8 +101,6 @@ def connect(payload: ConnectRequest, user_id: int = Depends(current_user_id)) ->
     try:
         result = adapter.connect(api_key=payload.api_key, client_code=payload.client_code, password=payload.password, totp_secret=payload.totp_secret)
     except Exception as exc:
-        # Broker SDK errors may contain credential fragments or internal request
-        # details. Log server-side, but never reflect them to the client.
         app_logger.error("Angel One connection failed: %s", exc)
         raise HTTPException(status_code=502, detail="Angel One connection failed") from exc
     old = _sessions.get((user_id, broker))
