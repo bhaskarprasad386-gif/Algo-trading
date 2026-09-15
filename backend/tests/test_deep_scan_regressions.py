@@ -1,11 +1,19 @@
-from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.auth.routes import _issue_token, logout, me
 from app.backtesting.arbitrage_backtester import BoxSpreadBacktester, OptionQuote
 from app.backtesting.backtest_ledger import BacktestTradeLedger
 from app.backtesting.cash_future import CashFutureBasisTrade
 from app.backtesting.cash_future_pnl import CashFutureTrade
 from app.backtesting.cash_future_strategy_runner import run_cash_future_strategy
+from app.backtesting.engine import BacktestTrade
+from app.core.config import settings
+from app.core.database import Base
+from app.models import TradingAccount, User
 from app.risk.engine import RiskEngine, RiskLimits
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
@@ -28,7 +36,7 @@ def test_risk_check_cannot_bypass_internal_loss_with_zero_external_pnl():
 
 def test_backtest_trade_ledger_is_safe_across_threads():
     ledger = BacktestTradeLedger()
-    trade = __import__("app.backtesting.engine", fromlist=["BacktestTrade"]).BacktestTrade(
+    trade = BacktestTrade(
         datetime.now(timezone.utc), datetime.now(timezone.utc), 100, 101, 1, 1, 0, 1
     )
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -71,3 +79,28 @@ def test_cash_future_strategy_trade_quantity_is_lots_not_contract_units():
     assert len(result.trades) == 1
     assert result.trades[0]["lot_size"] == 250
     assert result.trades[0]["quantity"] == 1
+
+
+def test_logout_invalidates_persisted_access_token(monkeypatch):
+    monkeypatch.setattr(settings, "SECRET_KEY", "x" * 40)
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        user = User(email="logout@example.com", hashed_password="unused")
+        db.add(user)
+        db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=10_000_000.0, realized_pnl=0.0))
+        db.commit()
+        token = _issue_token(db, user).access_token
+        assert me(token=token, db=db)["id"] == user.id
+        assert logout(token=token, db=db)["status"] == "logged_out"
+        try:
+            me(token=token, db=db)
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 401
+        else:
+            raise AssertionError("logged-out token remained usable")
+    finally:
+        db.close()
+        engine.dispose()
