@@ -48,3 +48,6 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+if settings.environment.strip().lower() not in {"development", "dev", "test", "testing"} and len(settings.SECRET_KEY.strip()) < 32:
+    raise RuntimeError("SECRET_KEY must be set to at least 32 characters outside development/test environments")
