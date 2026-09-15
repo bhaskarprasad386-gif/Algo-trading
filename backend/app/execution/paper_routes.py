@@ -7,6 +7,7 @@ Live broker execution remains disabled behind the broker safety layer.
 
 from __future__ import annotations
 
+import math
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,7 +20,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import ALGORITHM
 from app.execution.dual_engine import DualExecutionEngine, ExecutionConfig, ExecutionMode, Fill
-from app.execution.fill_accounting import FillAccountingState, apply_executed_fill
+from app.execution.fill_accounting import ExecutedFill, FillAccountingState, apply_executed_fill
 from app.execution.payoff import PayoffLeg, payoff_summary
 from app.execution.strategy_legs import StrategyLegInput, build_cash_future_strategy, build_strategy_legs
 from app.models import Order, Position, TradingAccount
@@ -29,6 +30,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
 class PaperEntryRequest(BaseModel):
+    symbol: str = Field("PAPER", min_length=1, max_length=128)
     price: float = Field(..., gt=0)
     quantity: float = Field(..., gt=0)
     stop_loss_pct: float = Field(0.02, ge=0)
@@ -36,6 +38,7 @@ class PaperEntryRequest(BaseModel):
 
 
 class PaperExitRequest(BaseModel):
+    symbol: str | None = Field(default=None, min_length=1, max_length=128)
     price: float = Field(..., gt=0)
 
 
@@ -125,13 +128,17 @@ def _account(db: Session, user_id: int) -> TradingAccount:
     return account
 
 
-def _position(db: Session, user_id: int) -> Position | None:
-    return (
-        db.query(Position)
-        .filter(Position.user_id == user_id, Position.quantity > 0)
-        .order_by(Position.id.desc())
-        .first()
-    )
+def _position(db: Session, user_id: int, symbol: str | None = None) -> Position | None:
+    query = db.query(Position).filter(Position.user_id == user_id, Position.quantity != 0)
+    if symbol is not None:
+        query = query.filter(Position.symbol == symbol.strip().upper())
+    return query.order_by(Position.id.desc()).first()
+
+
+def _validate_quantity(quantity: float) -> int:
+    if not math.isfinite(float(quantity)) or quantity <= 0 or not float(quantity).is_integer():
+        raise HTTPException(status_code=422, detail="quantity must be a positive integer")
+    return int(quantity)
 
 
 def _buy_cost(price: float, quantity: float) -> float:
@@ -152,11 +159,12 @@ def _position_payload(position: Position | None) -> dict | None:
 
 
 def _create_order(db: Session, *, user_id: int, symbol: str, side: str, price: float, quantity: float, pnl: float = 0.0) -> dict:
+    normalized_quantity = _validate_quantity(quantity)
     order_id = f"PAPER-{user_id}-{uuid.uuid4().hex[:16]}"
     order = Order(
         order_id=order_id,
-        symbol=symbol,
-        quantity=int(quantity) if float(quantity).is_integer() else round(quantity),
+        symbol=symbol.strip().upper(),
+        quantity=normalized_quantity,
         transaction_type=side,
         status="FILLED",
         user_id=user_id,
@@ -165,30 +173,32 @@ def _create_order(db: Session, *, user_id: int, symbol: str, side: str, price: f
     )
     db.add(order)
     db.flush()
-    return {"id": order.order_id, "symbol": order.symbol, "transaction_type": order.transaction_type, "price": price, "quantity": quantity, "status": order.status, "pnl": pnl}
+    return {"id": order.order_id, "symbol": order.symbol, "transaction_type": order.transaction_type, "price": price, "quantity": normalized_quantity, "status": order.status, "pnl": pnl}
 
 
 def _accounting_after_fill(*, side: str, price: float, quantity: float, current_quantity: float, current_average_price: float, current_realized_pnl: float = 0.0) -> tuple[FillAccountingState, float]:
     before = FillAccountingState(quantity=current_quantity, average_price=current_average_price, realized_pnl=current_realized_pnl)
-    after = apply_executed_fill(before, type("ConfirmedFill", (), {"side": side, "price": price, "quantity": quantity})())
+    after = apply_executed_fill(before, ExecutedFill(side=side, price=price, quantity=quantity))
     return after, round(after.realized_pnl - before.realized_pnl, 8)
 
 
 @router.post("/paper/entry")
 def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
-    if _position(db, user_id) is not None:
-        raise HTTPException(status_code=409, detail="A paper position is already active")
+    quantity = _validate_quantity(request.quantity)
+    symbol = request.symbol.strip().upper()
+    if _position(db, user_id, symbol) is not None:
+        raise HTTPException(status_code=409, detail="A paper position is already active for this symbol")
     account = _account(db, user_id)
-    cost = _buy_cost(request.price, request.quantity)
+    cost = _buy_cost(request.price, quantity)
     if account.virtual_balance < cost:
         raise HTTPException(status_code=400, detail="Insufficient paper balance")
     engine = DualExecutionEngine(_paper_fill, config=ExecutionConfig(stop_loss_pct=request.stop_loss_pct, target_pct=request.target_pct))
-    fill = engine.enter(request.price, request.quantity)
+    fill = engine.enter(request.price, quantity)
     state = engine.paper
-    position = Position(user_id=user_id, symbol="PAPER", quantity=int(request.quantity) if request.quantity.is_integer() else round(request.quantity), average_price=state.entry_price, stop_loss=state.stop_loss, target=state.target)
+    position = Position(user_id=user_id, symbol=symbol, quantity=quantity, average_price=state.entry_price, stop_loss=state.stop_loss, target=state.target)
     account.virtual_balance = round(account.virtual_balance - cost, 8)
     db.add(position)
-    order = _create_order(db, user_id=user_id, symbol="PAPER", side="BUY", price=fill.price, quantity=fill.quantity)
+    order = _create_order(db, user_id=user_id, symbol=symbol, side="BUY", price=fill.price, quantity=fill.quantity)
     db.commit()
     return {"status":"success","mode":state.mode.value,"fill":{"price":fill.price,"quantity":fill.quantity},"entry_price":state.entry_price,"stop_loss":state.stop_loss,"target":state.target,"position":_position_payload(position),"order":order,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
 
@@ -198,42 +208,75 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
     side = request.transaction_type.strip().upper()
     if side not in {"BUY", "SELL"}:
         raise HTTPException(status_code=400, detail="transaction_type must be BUY or SELL")
+    quantity = _validate_quantity(request.quantity)
+    symbol = request.symbol.strip().upper()
     account = _account(db, user_id)
-    active = _position(db, user_id)
+    active = _position(db, user_id, symbol)
+
     if side == "BUY":
-        if active is not None:
-            raise HTTPException(status_code=409, detail="A paper position is already active")
-        cost = _buy_cost(request.price, request.quantity)
-        if account.virtual_balance < cost:
-            raise HTTPException(status_code=400, detail="Insufficient paper balance")
-        engine = DualExecutionEngine(_paper_fill, config=ExecutionConfig(stop_loss_pct=request.stop_loss_pct, target_pct=request.target_pct))
-        fill = engine.enter(request.price, request.quantity)
-        state = engine.paper
-        accounting_state, _ = _accounting_after_fill(side="BUY", price=fill.price, quantity=fill.quantity, current_quantity=0, current_average_price=0, current_realized_pnl=account.realized_pnl)
-        active = Position(user_id=user_id, symbol=request.symbol, quantity=int(request.quantity) if request.quantity.is_integer() else round(request.quantity), average_price=accounting_state.average_price, stop_loss=state.stop_loss, target=state.target)
-        db.add(active)
-        account.virtual_balance = round(account.virtual_balance - cost, 8)
-        pnl = 0.0
-        order = _create_order(db, user_id=user_id, symbol=request.symbol, side=side, price=fill.price, quantity=fill.quantity)
-    else:
-        if active is None or active.symbol != request.symbol:
-            raise HTTPException(status_code=409, detail="No matching paper position to sell")
-        if request.quantity > float(active.quantity):
-            raise HTTPException(status_code=400, detail="Sell quantity exceeds active paper position")
-        fill = Fill(price=request.price, quantity=request.quantity)
-        accounting_state, pnl = _accounting_after_fill(side="SELL", price=fill.price, quantity=fill.quantity, current_quantity=float(active.quantity), current_average_price=float(active.average_price), current_realized_pnl=account.realized_pnl)
-        account.virtual_balance = round(account.virtual_balance + _buy_cost(fill.price, fill.quantity), 8)
-        account.realized_pnl = accounting_state.realized_pnl
-        remaining_qty = accounting_state.quantity
-        if remaining_qty <= 0:
-            db.delete(active)
-            remaining = None
+        if active is not None and active.quantity > 0:
+            raise HTTPException(status_code=409, detail="A paper position is already active for this symbol")
+        if active is not None and active.quantity < 0:
+            short_qty = abs(int(active.quantity))
+            fill = Fill(price=request.price, quantity=quantity)
+            accounting_state, pnl = _accounting_after_fill(side="BUY", price=fill.price, quantity=quantity, current_quantity=float(active.quantity), current_average_price=float(active.average_price), current_realized_pnl=account.realized_pnl)
+            closed_qty = min(short_qty, quantity)
+            margin_released = _buy_cost(active.average_price, closed_qty)
+            account.virtual_balance = round(account.virtual_balance + margin_released + pnl, 8)
+            account.realized_pnl = accounting_state.realized_pnl
+            remaining_qty = int(accounting_state.quantity)
+            if remaining_qty == 0:
+                db.delete(active)
+                remaining = None
+            else:
+                active.quantity = remaining_qty
+                active.average_price = accounting_state.average_price
+                remaining = active
+            order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl)
         else:
-            active.quantity = int(remaining_qty) if float(remaining_qty).is_integer() else round(remaining_qty)
-            remaining = active
-        order = _create_order(db, user_id=user_id, symbol=request.symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl)
+            cost = _buy_cost(request.price, quantity)
+            if account.virtual_balance < cost:
+                raise HTTPException(status_code=400, detail="Insufficient paper balance")
+            engine = DualExecutionEngine(_paper_fill, config=ExecutionConfig(stop_loss_pct=request.stop_loss_pct, target_pct=request.target_pct))
+            fill = engine.enter(request.price, quantity)
+            state = engine.paper
+            accounting_state, _ = _accounting_after_fill(side="BUY", price=fill.price, quantity=fill.quantity, current_quantity=0, current_average_price=0, current_realized_pnl=account.realized_pnl)
+            active = Position(user_id=user_id, symbol=symbol, quantity=quantity, average_price=accounting_state.average_price, stop_loss=state.stop_loss, target=state.target)
+            db.add(active)
+            account.virtual_balance = round(account.virtual_balance - cost, 8)
+            order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity)
+            pnl = 0.0
+    else:
+        if active is None:
+            # Opening a short position reserves entry notional as paper margin.
+            margin = _buy_cost(request.price, quantity)
+            if account.virtual_balance < margin:
+                raise HTTPException(status_code=400, detail="Insufficient paper balance for short margin")
+            fill = Fill(price=request.price, quantity=quantity)
+            accounting_state, pnl = _accounting_after_fill(side="SELL", price=fill.price, quantity=quantity, current_quantity=0, current_average_price=0, current_realized_pnl=account.realized_pnl)
+            active = Position(user_id=user_id, symbol=symbol, quantity=-quantity, average_price=accounting_state.average_price, stop_loss=None, target=None)
+            db.add(active)
+            account.virtual_balance = round(account.virtual_balance - margin, 8)
+            order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity)
+        else:
+            if active.quantity <= 0:
+                raise HTTPException(status_code=409, detail="Use BUY to cover the active short position")
+            if quantity > int(active.quantity):
+                raise HTTPException(status_code=400, detail="Sell quantity exceeds active paper position")
+            fill = Fill(price=request.price, quantity=quantity)
+            accounting_state, pnl = _accounting_after_fill(side="SELL", price=fill.price, quantity=quantity, current_quantity=float(active.quantity), current_average_price=float(active.average_price), current_realized_pnl=account.realized_pnl)
+            account.virtual_balance = round(account.virtual_balance + _buy_cost(fill.price, fill.quantity), 8)
+            account.realized_pnl = accounting_state.realized_pnl
+            remaining_qty = int(accounting_state.quantity)
+            if remaining_qty == 0:
+                db.delete(active)
+                remaining = None
+            else:
+                active.quantity = remaining_qty
+                remaining = active
+            order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl)
     db.commit()
-    return {"status":"success","mode":"paper","order":order,"position":_position_payload(remaining if side == "SELL" else active),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+    return {"status":"success","mode":"paper","order":order,"position":_position_payload(remaining if side == "SELL" and active is not None and active.quantity <= 0 else (remaining if side == "SELL" and 'remaining' in locals() else active)),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
 
 
 @router.post("/paper/from-scanner")
@@ -244,9 +287,7 @@ def paper_from_scanner(request: ScannerPaperEntryRequest, user_id: int = Depends
         raise HTTPException(status_code=409, detail="Scanner future price does not exceed cash price")
     if request.net_profit is not None and request.net_profit <= 0:
         raise HTTPException(status_code=409, detail="Scanner opportunity has no positive net profit")
-    active = _position(db, user_id)
-    if active is not None:
-        raise HTTPException(status_code=409, detail="A paper position is already active")
+    _validate_quantity(request.quantity)
     result = paper_order(PaperOrderRequest(symbol=request.symbol, transaction_type="BUY", price=request.cash_price, quantity=request.quantity, stop_loss_pct=request.stop_loss_pct, target_pct=request.target_pct), user_id=user_id, db=db)
     result["source"] = "cash-future-scanner"
     result["scanner_entry_price"] = request.cash_price
@@ -263,8 +304,8 @@ def paper_orders(user_id: int = Depends(current_user_id), db: Session = Depends(
 
 
 @router.get("/paper/position")
-def paper_position(user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
-    position = _position(db, user_id)
+def paper_position(symbol: str | None = None, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
+    position = _position(db, user_id, symbol)
     if position is None:
         return {"status":"flat","position":None,"mark_to_market":None}
     current_ltp = None
@@ -273,12 +314,12 @@ def paper_position(user_id: int = Depends(current_user_id), db: Session = Depend
         try:
             from app.market_data.client import MarketDataClient
             from app.market_data.instruments import InstrumentMaster
-            symbol = position.symbol.strip().upper()
-            instrument = InstrumentMaster().get_instrument(symbol, "NSE")
+            symbol_value = position.symbol.strip().upper()
+            instrument = InstrumentMaster().get_instrument(symbol_value, "NSE")
             if instrument:
                 token = str(instrument.get("token", ""))
                 if token:
-                    response = MarketDataClient().ltp(exchange="NSE", tradingsymbol=symbol, symboltoken=token)
+                    response = MarketDataClient().ltp(exchange="NSE", tradingsymbol=symbol_value, symboltoken=token)
                     data = response.get("data") or {}
                     current_ltp = float(data["ltp"]) if data.get("ltp") is not None else None
         except Exception as exc:
@@ -331,16 +372,24 @@ def paper_payoff_from_cash_future(request: CashFuturePayoffRequest, user_id: int
 @router.post("/paper/exit")
 def paper_exit(request: PaperExitRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     account = _account(db, user_id)
-    position = _position(db, user_id)
+    position = _position(db, user_id, request.symbol)
     if position is None:
         return {"status":"flat","position":None,"pnl":0.0,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
     entry_price = float(position.average_price)
-    quantity = float(position.quantity)
-    fill = Fill(price=request.price, quantity=quantity)
-    accounting_state, pnl = _accounting_after_fill(side="SELL", price=fill.price, quantity=fill.quantity, current_quantity=quantity, current_average_price=entry_price, current_realized_pnl=account.realized_pnl)
-    account.virtual_balance = round(account.virtual_balance + _buy_cost(fill.price, quantity), 8)
-    account.realized_pnl = accounting_state.realized_pnl
-    order = _create_order(db, user_id=user_id, symbol=position.symbol, side="SELL", price=fill.price, quantity=quantity, pnl=pnl)
+    quantity = abs(int(position.quantity))
+    if position.quantity < 0:
+        fill = Fill(price=request.price, quantity=quantity)
+        accounting_state, pnl = _accounting_after_fill(side="BUY", price=fill.price, quantity=quantity, current_quantity=float(position.quantity), current_average_price=entry_price, current_realized_pnl=account.realized_pnl)
+        account.virtual_balance = round(account.virtual_balance + _buy_cost(entry_price, quantity) + pnl, 8)
+        account.realized_pnl = accounting_state.realized_pnl
+        side = "BUY"
+    else:
+        fill = Fill(price=request.price, quantity=quantity)
+        accounting_state, pnl = _accounting_after_fill(side="SELL", price=fill.price, quantity=quantity, current_quantity=float(position.quantity), current_average_price=entry_price, current_realized_pnl=account.realized_pnl)
+        account.virtual_balance = round(account.virtual_balance + _buy_cost(fill.price, quantity), 8)
+        account.realized_pnl = accounting_state.realized_pnl
+        side = "SELL"
+    order = _create_order(db, user_id=user_id, symbol=position.symbol, side=side, price=fill.price, quantity=quantity, pnl=pnl)
     db.delete(position)
     db.commit()
     return {"status":"closed","entry_price":entry_price,"exit_price":request.price,"quantity":quantity,"pnl":pnl,"order":order,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
