@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 import pytest
 
 from app.algo.strategy import Strategy, StrategyRule, threshold_rule
-from app.backtesting.engine import BacktestConfig, BacktestEngine
+from app.backtesting.engine import BacktestConfig, BacktestEngine, EventSignal
+from app.backtesting.historical_catalog import HistoricalRecord
 
 
 def test_backtest_enters_and_exits_on_strategy_rules():
@@ -154,3 +155,19 @@ def test_backtest_cagr_uses_completed_trade_duration():
     )
 
     assert result.cagr == pytest.approx(0.1, rel=3e-3)
+
+
+def test_event_backtest_cagr_supports_nanosecond_timestamps():
+    year_ns = int(365.25 * 24 * 60 * 60 * 1_000_000_000)
+    events = [
+        HistoricalRecord("test", "NFO:123", "tick", 0, {"price": 100.0}, 1),
+        HistoricalRecord("test", "NFO:123", "tick", year_ns, {"price": 200.0}, 2),
+    ]
+    actions = iter(("BUY", "SELL"))
+
+    result = BacktestEngine(BacktestConfig(initial_capital=100.0)).run_events(
+        events, lambda event: EventSignal(next(actions))
+    )
+
+    assert result.net_pnl == pytest.approx(100.0)
+    assert result.cagr == pytest.approx(1.0, rel=1e-9)
