@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import math
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
@@ -33,6 +34,10 @@ def _point_from_rows(
         cash_row.timestamp_ns / 1_000_000_000,
         tz=timezone.utc,
     ).astimezone(IST)
+    margin_raw = future_row.payload.get("margin_required", 0.0)
+    margin_required = float(margin_raw)
+    if not math.isfinite(margin_required) or margin_required < 0:
+        raise ValueError("historical margin_required must be finite and non-negative")
     return CashFutureHistoryPoint(
         timestamp=timestamp,
         symbol=symbol,
@@ -42,7 +47,7 @@ def _point_from_rows(
         gap=gap,
         gap_pct=gap_pct,
         lot_size=future.segment.future.lot_size,
-        margin_required=0.0,
+        margin_required=margin_required,
         volume=(float(future_row.payload["volume"]) if future_row.payload.get("volume") is not None else None),
         oi=(float(future_row.payload["open_interest"]) if future_row.payload.get("open_interest") is not None else None),
         expiry_date=future.segment.future.expiry,
