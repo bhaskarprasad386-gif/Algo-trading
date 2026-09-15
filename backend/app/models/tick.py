@@ -1,9 +1,13 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Tick(Base):
@@ -14,4 +18,4 @@ class Tick(Base):
     symbol: Mapped[str] = mapped_column(String(128), index=True)
     ltp: Mapped[float | None] = mapped_column(Float, nullable=True)
     volume: Mapped[float | None] = mapped_column(Float, nullable=True)
-    received_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
