@@ -1,7 +1,11 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 import math
 from threading import Lock
+from zoneinfo import ZoneInfo
+
+
+IST = ZoneInfo("Asia/Kolkata")
 
 
 @dataclass(frozen=True)
@@ -29,14 +33,14 @@ class RiskEngine:
     def __init__(self, limits: RiskLimits | None = None):
         self.limits = limits or RiskLimits()
         self._orders_today = 0
-        self._day = datetime.now(timezone.utc).date()
+        self._day = datetime.now(IST).date()
         self._positions: dict[str, int] = {}
         self._average_prices: dict[str, float] = {}
         self._realized_pnl = 0.0
         self._lock = Lock()
 
     def _roll_day(self) -> None:
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(IST).date()
         if today != self._day:
             self._day = today
             self._orders_today = 0
