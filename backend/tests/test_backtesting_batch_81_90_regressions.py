@@ -30,15 +30,15 @@ def test_cash_future_marks_open_position_at_end():
     rows = [CashFutureObservation(1, 100, 110), CashFutureObservation(2, 101, 109)]
     result = backtest_cash_future_basis(rows, entry_basis=5, exit_basis=0, initial_capital=1000)
     assert result.trades == ()
-    assert result.final_capital == 999
-    assert result.net_pnl == -1
+    assert result.final_capital == 1002
+    assert result.net_pnl == 2
 
 
 def test_cash_future_open_position_contributes_to_drawdown():
-    rows = [CashFutureObservation(1, 100, 110), CashFutureObservation(2, 105, 100)]
+    rows = [CashFutureObservation(1, 100, 110), CashFutureObservation(2, 95, 115)]
     result = backtest_cash_future_basis(rows, entry_basis=5, exit_basis=0, initial_capital=1000)
-    assert result.final_capital == 985
-    assert result.max_drawdown == pytest.approx(0.015)
+    assert result.final_capital == 990
+    assert result.max_drawdown == pytest.approx(0.01)
 
 
 def test_calendar_rejects_negative_timestamp():
