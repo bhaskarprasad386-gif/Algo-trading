@@ -25,8 +25,8 @@ class ContractRecord:
         for value, name in ((self.exchange, "exchange"), (self.symbol, "symbol"), (self.token, "token"), (self.instrument_type, "instrument_type"), (self.underlying, "underlying")):
             if not str(value).strip():
                 raise ValueError(f"{name} is required")
-        if self.lot_size <= 0:
-            raise ValueError("lot_size must be positive")
+        if type(self.lot_size) is not int or self.lot_size <= 0:
+            raise ValueError("lot_size must be a positive integer")
         if self.tick_size is not None and (not math.isfinite(float(self.tick_size)) or self.tick_size <= 0):
             raise ValueError("tick_size must be finite and positive when supplied")
 
