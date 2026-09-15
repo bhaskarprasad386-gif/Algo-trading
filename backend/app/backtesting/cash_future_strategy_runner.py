@@ -258,7 +258,7 @@ def run_cash_future_strategy(
             trade = {
                 "entry_time": entry.timestamp.isoformat(), "exit_time": point.timestamp.isoformat(),
                 "symbol": entry.symbol, "contract_month": entry.contract_month, "lot_size": entry.lot_size,
-                "quantity": entry.lot_size, "entry_cash_price": entry.cash_price,
+                "quantity": 1, "entry_cash_price": entry.cash_price,
                 "entry_future_price": entry.future_price, "entry_gap": entry.gap,
                 "exit_cash_price": point.cash_price, "exit_future_price": point.future_price,
                 "exit_gap": point.gap, "gross_profit": gross, "charges": config.charges_per_trade,
@@ -348,6 +348,8 @@ def _serialize_entry(entry: CashFutureHistoryPoint | None) -> Mapping[str, Any] 
         "cash_ask": entry.cash_ask, "future_bid": entry.future_bid,
         "future_ask": entry.future_ask, "cash_bid_qty": entry.cash_bid_qty,
         "cash_ask_qty": entry.cash_ask_qty, "future_bid_qty": entry.future_bid_qty,
+        "future_ask_qty": entry.future_ask_qty, "cash_bid_qty": entry.cash_bid_qty,
+        "cash_ask_qty": entry.cash_ask_qty, "future_bid_qty": entry.future_bid_qty,
         "future_ask_qty": entry.future_ask_qty, "charges": entry.charges,
         "funding_cost": entry.funding_cost,
         "net_profit": entry.net_profit, "roi_pct": entry.roi_pct,
@@ -358,8 +360,3 @@ def _serialize_entry(entry: CashFutureHistoryPoint | None) -> Mapping[str, Any] 
 def _point_date(point: CashFutureHistoryPoint) -> date:
     value = point.timestamp
     return value.date() if isinstance(value, datetime) else value
-
-
-def ledger_record(run_id: str, record_type: str, timestamp: datetime, payload: Mapping[str, Any]):
-    from app.backtesting.ledger import LedgerRecord
-    return LedgerRecord(run_id=run_id, record_type=record_type, timestamp_ns=int(timestamp.timestamp() * 1_000_000_000), payload=dict(payload))
