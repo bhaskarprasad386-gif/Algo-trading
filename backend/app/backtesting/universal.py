@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from typing import Any, Iterable, Protocol, Sequence
 
+
 @dataclass(frozen=True, order=True)
 class MarketEvent:
     timestamp_ns: int
@@ -9,28 +10,47 @@ class MarketEvent:
     sequence: int = 0
     event_type: str = "quote"
     data: tuple[tuple[str, Any], ...] = ()
+
     def __post_init__(self) -> None:
-        if self.timestamp_ns < 0: raise ValueError("timestamp_ns must be non-negative")
-        if not self.instrument: raise ValueError("instrument is required")
-        if self.sequence < 0: raise ValueError("sequence must be non-negative")
+        if isinstance(self.timestamp_ns, bool) or not isinstance(self.timestamp_ns, int):
+            raise TypeError("timestamp_ns must be an integer")
+        if self.timestamp_ns < 0:
+            raise ValueError("timestamp_ns must be non-negative")
+        if not self.instrument:
+            raise ValueError("instrument is required")
+        if isinstance(self.sequence, bool) or not isinstance(self.sequence, int):
+            raise TypeError("sequence must be an integer")
+        if self.sequence < 0:
+            raise ValueError("sequence must be non-negative")
+
     @property
-    def context(self) -> dict[str, Any]: return dict(self.data)
+    def context(self) -> dict[str, Any]:
+        return dict(self.data)
+
 
 @dataclass(frozen=True)
 class ReplayConfig:
     step_ns: int = 60_000_000_000
+
     def __post_init__(self) -> None:
-        if self.step_ns <= 0: raise ValueError("step_ns must be positive")
+        if isinstance(self.step_ns, bool) or not isinstance(self.step_ns, int):
+            raise TypeError("step_ns must be an integer")
+        if self.step_ns <= 0:
+            raise ValueError("step_ns must be positive")
+
 
 class EventStrategy(Protocol):
     def on_event(self, event: MarketEvent, history: Sequence[MarketEvent]) -> Iterable[dict[str, Any]]: ...
 
+
 def normalize_event(event: MarketEvent) -> MarketEvent:
-    return MarketEvent(int(event.timestamp_ns), event.instrument, int(event.sequence), event.event_type, tuple(event.data))
+    return MarketEvent(event.timestamp_ns, event.instrument, event.sequence, event.event_type, tuple(event.data))
+
 
 def ordered_events(events: Iterable[MarketEvent]) -> list[MarketEvent]:
     normalized = [normalize_event(event) for event in events]
     return sorted(normalized, key=lambda event: (event.timestamp_ns, event.sequence, event.instrument))
+
 
 def streaming_events(events: Iterable[MarketEvent]) -> Iterable[MarketEvent]:
     """O(1)-event-memory iterator for sources ordered by durable replay identity."""
@@ -45,12 +65,21 @@ def streaming_events(events: Iterable[MarketEvent]) -> Iterable[MarketEvent]:
         previous_key = identity
         yield event
 
+
 def validate_source_resolution(events: Iterable[MarketEvent], minimum_timestamp_delta_ns: int) -> None:
-    if minimum_timestamp_delta_ns <= 0: raise ValueError("minimum_timestamp_delta_ns must be positive")
+    if minimum_timestamp_delta_ns <= 0:
+        raise ValueError("minimum_timestamp_delta_ns must be positive")
     ordered = ordered_events(events)
     for previous, current in zip(ordered, ordered[1:]):
-        if previous.instrument == current.instrument and current.timestamp_ns > previous.timestamp_ns and current.timestamp_ns - previous.timestamp_ns < minimum_timestamp_delta_ns: return
-    if ordered and minimum_timestamp_delta_ns < 1_000: raise ValueError("source data does not prove the requested finer resolution")
+        if (
+            previous.instrument == current.instrument
+            and current.timestamp_ns > previous.timestamp_ns
+            and current.timestamp_ns - previous.timestamp_ns < minimum_timestamp_delta_ns
+        ):
+            return
+    if ordered and minimum_timestamp_delta_ns < 1_000:
+        raise ValueError("source data does not prove the requested finer resolution")
+
 
 def replay(events: Iterable[MarketEvent], strategy: EventStrategy) -> list[dict[str, Any]]:
     history: list[MarketEvent] = []
