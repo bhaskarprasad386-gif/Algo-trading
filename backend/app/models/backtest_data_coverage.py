@@ -1,9 +1,13 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class BacktestDataCoverage(Base):
@@ -34,4 +38,4 @@ class BacktestDataCoverage(Base):
     data_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
     source_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     validated: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
