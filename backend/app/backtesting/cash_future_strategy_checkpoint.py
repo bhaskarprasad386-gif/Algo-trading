@@ -61,7 +61,6 @@ class CashFutureStrategyCheckpoint:
                 raise ValueError(f"checkpoint {field} must be a string or null")
         if payload["selected_contract"] is not None and not isinstance(payload["selected_contract"], str):
             raise ValueError("checkpoint selected_contract must be a string or null")
-        # Checkpoint timestamps accept both ISO date and ISO datetime forms.
         try:
             datetime.fromisoformat(str(payload["last_timestamp"]))
         except (TypeError, ValueError) as exc:
@@ -71,6 +70,10 @@ class CashFutureStrategyCheckpoint:
                 raise ValueError("checkpoint last_timestamp invalid ISO timestamp") from exc
         _validate_number(payload["realized_capital"], "realized_capital")
         _validate_number(payload["reserved_margin"], "reserved_margin")
+        if float(payload["realized_capital"]) < 0:
+            raise ValueError("checkpoint realized_capital cannot be negative")
+        if float(payload["reserved_margin"]) < 0:
+            raise ValueError("checkpoint reserved_margin cannot be negative")
         if not isinstance(payload["blocked_entries"], int) or isinstance(payload["blocked_entries"], bool):
             raise ValueError("checkpoint blocked_entries must be an integer")
         if payload["blocked_entries"] < 0:
@@ -126,6 +129,10 @@ def _validate_number(value: Any, field: str) -> None:
 def _validate_payload_values(payload: Mapping[str, Any]) -> None:
     _validate_number(payload["realized_capital"], "realized_capital")
     _validate_number(payload["reserved_margin"], "reserved_margin")
+    if float(payload["realized_capital"]) < 0:
+        raise ValueError("checkpoint realized_capital cannot be negative")
+    if float(payload["reserved_margin"]) < 0:
+        raise ValueError("checkpoint reserved_margin cannot be negative")
     if payload["blocked_entries"] < 0:
         raise ValueError("checkpoint blocked_entries cannot be negative")
     if payload.get("open_entry") is not None:
