@@ -70,8 +70,6 @@ class CashFutureStrategyCheckpoint:
                 raise ValueError("checkpoint last_timestamp invalid ISO timestamp") from exc
         _validate_number(payload["realized_capital"], "realized_capital")
         _validate_number(payload["reserved_margin"], "reserved_margin")
-        if float(payload["realized_capital"]) < 0:
-            raise ValueError("checkpoint realized_capital cannot be negative")
         if float(payload["reserved_margin"]) < 0:
             raise ValueError("checkpoint reserved_margin cannot be negative")
         if not isinstance(payload["blocked_entries"], int) or isinstance(payload["blocked_entries"], bool):
@@ -129,8 +127,6 @@ def _validate_number(value: Any, field: str) -> None:
 def _validate_payload_values(payload: Mapping[str, Any]) -> None:
     _validate_number(payload["realized_capital"], "realized_capital")
     _validate_number(payload["reserved_margin"], "reserved_margin")
-    if float(payload["realized_capital"]) < 0:
-        raise ValueError("checkpoint realized_capital cannot be negative")
     if float(payload["reserved_margin"]) < 0:
         raise ValueError("checkpoint reserved_margin cannot be negative")
     if payload["blocked_entries"] < 0:
