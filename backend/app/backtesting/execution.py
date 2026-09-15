@@ -42,12 +42,12 @@ class SimOrder:
             raise ValueError("order_id and instrument are required")
         if not isinstance(self.side, ExecutionSide) or not isinstance(self.order_type, OrderType):
             raise ValueError("invalid order side or order type")
-        if self.quantity <= 0:
-            raise ValueError("quantity must be greater than zero")
+        if not isinstance(self.quantity, int) or isinstance(self.quantity, bool) or self.quantity <= 0:
+            raise ValueError("quantity must be a positive integer")
         if self.submitted_at_ns < 0:
             raise ValueError("submitted_at_ns cannot be negative")
-        if self.queue_ahead_quantity < 0:
-            raise ValueError("queue_ahead_quantity cannot be negative")
+        if not isinstance(self.queue_ahead_quantity, int) or isinstance(self.queue_ahead_quantity, bool) or self.queue_ahead_quantity < 0:
+            raise ValueError("queue_ahead_quantity must be a non-negative integer")
         if not isinstance(self.time_in_force, TimeInForce):
             raise ValueError("invalid time_in_force")
         if self.order_type == OrderType.LIMIT:
@@ -68,7 +68,9 @@ class DepthLevel:
     quantity: int
 
     def __post_init__(self) -> None:
-        if not math.isfinite(float(self.price)) or self.price <= 0 or self.quantity < 0:
+        if not isinstance(self.quantity, int) or isinstance(self.quantity, bool) or self.quantity < 0:
+            raise ValueError("depth quantity must be a non-negative integer")
+        if not math.isfinite(float(self.price)) or self.price <= 0:
             raise ValueError("depth price must be finite and positive and quantity non-negative")
 
 
@@ -101,8 +103,10 @@ class QueueEvidence:
     def __post_init__(self) -> None:
         if not math.isfinite(float(self.price)) or self.price <= 0:
             raise ValueError("queue evidence price must be finite and positive")
-        if self.executed_quantity < 0 or self.cancelled_quantity_ahead < 0:
-            raise ValueError("queue evidence quantities cannot be negative")
+        if not isinstance(self.executed_quantity, int) or isinstance(self.executed_quantity, bool) or self.executed_quantity < 0:
+            raise ValueError("executed_quantity must be a non-negative integer")
+        if not isinstance(self.cancelled_quantity_ahead, int) or isinstance(self.cancelled_quantity_ahead, bool) or self.cancelled_quantity_ahead < 0:
+            raise ValueError("cancelled_quantity_ahead must be a non-negative integer")
 
 
 @dataclass(frozen=True)
@@ -120,8 +124,8 @@ class SimFill:
             raise ValueError("fill order_id and instrument are required")
         if not isinstance(self.side, ExecutionSide):
             raise ValueError("invalid fill side")
-        if self.quantity <= 0:
-            raise ValueError("fill quantity must be greater than zero")
+        if not isinstance(self.quantity, int) or isinstance(self.quantity, bool) or self.quantity <= 0:
+            raise ValueError("fill quantity must be a positive integer")
         if not math.isfinite(float(self.price)) or self.price <= 0:
             raise ValueError("fill price must be finite and positive")
         if self.filled_at_ns < 0 or not math.isfinite(float(self.fee)) or self.fee < 0:
@@ -170,8 +174,8 @@ class ExecutionSimulator:
 
     @staticmethod
     def advance_queue_ahead(queue_ahead_quantity: int, evidence: QueueEvidence) -> int:
-        if queue_ahead_quantity < 0:
-            raise ValueError("queue_ahead_quantity cannot be negative")
+        if not isinstance(queue_ahead_quantity, int) or isinstance(queue_ahead_quantity, bool) or queue_ahead_quantity < 0:
+            raise ValueError("queue_ahead_quantity must be a non-negative integer")
         consumed = evidence.executed_quantity + evidence.cancelled_quantity_ahead
         return max(0, queue_ahead_quantity - consumed)
 
