@@ -1,4 +1,5 @@
 import requests
+from threading import Lock
 from typing import Any, Dict, List, Optional
 
 from app.core.exceptions import TradingAppException
@@ -6,40 +7,62 @@ from app.core.logger import app_logger
 
 
 class InstrumentMaster:
-    """Angel One instrument master manager."""
+    """Angel One instrument master manager with process-wide lazy caching."""
 
     MASTER_URL = (
         "https://margincalculator.angelbroking.com/"
         "OpenAPI_File/files/OpenAPIScripMaster.json"
     )
+    _cache_lock = Lock()
+    _cached_instruments: Optional[List[Dict[str, Any]]] = None
 
     def __init__(self):
+        # Each instance remains a cheap view over the process-wide snapshot.
+        # This avoids a download for every WebSocket client while preserving
+        # the existing constructor/API used by tests and other callers.
         self.instruments: List[Dict[str, Any]] = []
         self._loaded = False
+        cached = self._get_cached_snapshot()
+        if cached is not None:
+            self.instruments = cached
+            self._loaded = True
+
+    @classmethod
+    def _get_cached_snapshot(cls) -> Optional[List[Dict[str, Any]]]:
+        with cls._cache_lock:
+            if cls._cached_instruments is None:
+                return None
+            return cls._cached_instruments
 
     def download(self) -> List[Dict[str, Any]]:
-        """Download the latest Angel One instrument master."""
-        try:
-            response = requests.get(self.MASTER_URL, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            if not isinstance(data, list):
-                raise TradingAppException(
-                    "InvalidInstrumentMaster",
-                    "Angel One instrument master format is invalid.",
-                    502,
+        """Download the latest Angel One instrument master once per process."""
+        with self._cache_lock:
+            if self._cached_instruments is not None:
+                self.instruments = self._cached_instruments
+                self._loaded = True
+                return self.instruments
+            try:
+                response = requests.get(self.MASTER_URL, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+                if not isinstance(data, list):
+                    raise TradingAppException(
+                        "InvalidInstrumentMaster",
+                        "Angel One instrument master format is invalid.",
+                        502,
+                    )
+                self.__class__._cached_instruments = data
+                self.instruments = data
+                self._loaded = True
+                app_logger.info(
+                    f"Loaded {len(self.instruments)} instruments from Angel One instrument master"
                 )
-            self.instruments = data
-            self._loaded = True
-            app_logger.info(
-                f"Loaded {len(self.instruments)} instruments from Angel One instrument master"
-            )
-            return self.instruments
-        except TradingAppException:
-            raise
-        except Exception as e:
-            app_logger.error(f"Failed to download instrument master: {str(e)}")
-            raise TradingAppException("InstrumentMasterDownloadError", str(e), 502)
+                return self.instruments
+            except TradingAppException:
+                raise
+            except Exception as e:
+                app_logger.error(f"Failed to download instrument master: {str(e)}")
+                raise TradingAppException("InstrumentMasterDownloadError", str(e), 502)
 
     def search(
         self,
