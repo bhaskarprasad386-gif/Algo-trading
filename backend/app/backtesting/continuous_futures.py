@@ -47,6 +47,21 @@ def _day_end_ns(value: date) -> int:
     return int(datetime.combine(value, time.max, tzinfo=IST).timestamp() * 1_000_000_000)
 
 
+def _validate_windows(windows: tuple[FNORolloverWindow, ...]) -> None:
+    ordered = sorted(windows, key=lambda window: (window.underlying, window.instrument_type, window.start_date, window.end_date, window.contract_token))
+    previous_by_key: dict[tuple[str, str], FNORolloverWindow] = {}
+    for window in ordered:
+        key = (window.underlying, window.instrument_type)
+        previous = previous_by_key.get(key)
+        if previous is not None and window.start_date <= previous.end_date:
+            raise ValueError(
+                f"overlapping continuous futures windows for {window.underlying}/{window.instrument_type}: "
+                f"{previous.start_date.isoformat()}..{previous.end_date.isoformat()} overlaps "
+                f"{window.start_date.isoformat()}..{window.end_date.isoformat()}"
+            )
+        previous_by_key[key] = window
+
+
 def build_continuous_futures_series(
     windows: Iterable[FNORolloverWindow],
     records_by_token: Mapping[str, Iterable[HistoricalRecord]],
@@ -60,6 +75,7 @@ def build_continuous_futures_series(
     windows = tuple(windows)
     if not windows:
         return ()
+    _validate_windows(windows)
 
     output: list[ContinuousFuturesRecord] = []
     for window in windows:
