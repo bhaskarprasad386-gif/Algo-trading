@@ -64,7 +64,7 @@ class EventReplayConfig:
 
     def __post_init__(self) -> None:
         if self.timestamp_unit not in {"ns", "us", "ms", "s", "m", "h", "d"}:
-            raise ValueError("timestamp_unit must be ns, us, ms, s, us, m, h, or d")
+            raise ValueError("timestamp_unit must be ns, us, ms, s, m, h, or d")
         if isinstance(self.latency_ns, bool) or not isinstance(self.latency_ns, int):
             raise TypeError("latency_ns must be an integer")
         if self.latency_ns < 0:
