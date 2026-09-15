@@ -6,6 +6,21 @@ from dataclasses import dataclass
 from datetime import date, datetime
 import math
 from typing import Iterable
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def _normalize_timestamp(value: datetime) -> datetime:
+    if not isinstance(value, datetime):
+        raise ValueError("timestamp must be a datetime")
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value
+    return value.astimezone(IST).replace(tzinfo=None)
+
+
+def _consistent(actual: float, expected: float) -> bool:
+    return math.isclose(actual, expected, rel_tol=1e-9, abs_tol=1e-9)
 
 
 @dataclass(frozen=True)
@@ -36,8 +51,7 @@ class CashFutureHistoryPoint:
     expiry_date: date | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.timestamp, datetime):
-            raise ValueError("timestamp must be a datetime")
+        object.__setattr__(self, "timestamp", _normalize_timestamp(self.timestamp))
         if not self.symbol or not self.contract_month:
             raise ValueError("symbol and contract_month are required")
         for value, name in (
@@ -51,10 +65,18 @@ class CashFutureHistoryPoint:
                 raise ValueError(f"{name} must be finite")
         if self.cash_price <= 0 or self.future_price <= 0:
             raise ValueError("cash_price and future_price must be positive")
-        if self.lot_size <= 0:
-            raise ValueError("lot_size must be positive")
+        if type(self.lot_size) is not int or self.lot_size <= 0:
+            raise ValueError("lot_size must be a positive integer")
         if self.margin_required < 0 or self.charges < 0 or self.funding_cost < 0:
             raise ValueError("margin_required, charges and funding_cost must be non-negative")
+        expected_gap = self.future_price - self.cash_price
+        expected_gap_pct = expected_gap / self.cash_price * 100.0
+        if not _consistent(self.gap, expected_gap):
+            raise ValueError("gap must equal future_price - cash_price")
+        if not _consistent(self.gap_pct, expected_gap_pct):
+            raise ValueError("gap_pct must equal gap / cash_price * 100")
+        if self.expiry_date is not None and self.expiry_date < self.timestamp.date():
+            raise ValueError("expiry_date cannot precede observation date")
         for value, name in (
             (self.volume, "volume"), (self.oi, "oi"), (self.cash_bid, "cash_bid"),
             (self.cash_ask, "cash_ask"), (self.future_bid, "future_bid"),
@@ -129,6 +151,12 @@ def analyze_historical_gap_outcomes(
     outcomes: list[HistoricalGapOutcome] = []
 
     for match in matches:
+        entry_point = next(
+            p for p in ordered
+            if p.timestamp == match.timestamp
+            and p.symbol == match.symbol
+            and p.contract_month == match.contract_month
+        )
         later = [
             p for p in ordered
             if p.symbol == match.symbol
@@ -158,19 +186,8 @@ def analyze_historical_gap_outcomes(
             continue
 
         duration_days = (exit_point.timestamp - match.timestamp).total_seconds() / 86400.0
-        gross = (match.gap - exit_point.gap) * next(
-            p.lot_size for p in later
-            if p.timestamp == exit_point.timestamp
-            and p.symbol == match.symbol
-            and p.contract_month == match.contract_month
-        )
+        gross = (match.gap - exit_point.gap) * entry_point.lot_size
         net = gross - charges_per_trade - funding_cost_per_trade
-        entry_point = next(
-            p for p in ordered
-            if p.timestamp == match.timestamp
-            and p.symbol == match.symbol
-            and p.contract_month == match.contract_month
-        )
         capital = entry_point.cash_price * entry_point.lot_size + entry_point.margin_required
         if not math.isfinite(capital) or capital <= 0:
             raise ValueError("entry capital must be finite and positive")
