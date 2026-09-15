@@ -35,8 +35,9 @@ class RiskConfig:
             value = getattr(self, name)
             if value is not None and (not math.isfinite(float(value)) or value < 0):
                 raise ValueError(f"{name} must be finite and non-negative")
-        if self.max_position_quantity is not None and self.max_position_quantity <= 0:
-            raise ValueError("max_position_quantity must be positive")
+        if self.max_position_quantity is not None:
+            if isinstance(self.max_position_quantity, bool) or not isinstance(self.max_position_quantity, int) or self.max_position_quantity <= 0:
+                raise ValueError("max_position_quantity must be a positive integer")
 
 
 @dataclass(frozen=True)
@@ -351,7 +352,7 @@ class Portfolio:
             if after.equity + 1e-9 < after.maintenance_margin:
                 raise RiskViolation("forced liquidation did not restore maintenance margin")
         except Exception:
-            self.cash, positions, self._realized_pnl, self._fees, self._peak_equity, reserved, trades = state
+            self.cash, positions, self._positions, self._realized_pnl, self._fees, self._peak_equity, reserved, trades = (self.cash, dict(self._positions), self._positions, self._realized_pnl, self._fees, self._peak_equity, dict(self._reserved_margin), list(self._trades))
             self._positions = positions
             self._reserved_margin = reserved
             self._trades = trades
