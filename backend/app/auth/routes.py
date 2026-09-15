@@ -71,17 +71,13 @@ def _placeholder_email(mobile: str) -> str:
     return f"mobile-{mobile.lstrip('+')}@accounts.local"
 
 
+def _hash_session_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def _issue_token(db: DBSession, user: User, *, device_info: str | None = None) -> TokenResponse:
     token = create_access_token({"sub": str(user.id), "email": user.email})
-    payload = jwt.decode(token, options={"verify_signature": False})
-    expires_at = datetime.fromtimestamp(int(payload["exp"]), tz=timezone.utc).replace(tzinfo=None)
-    db.add(UserSession(
-        user_id=user.id,
-        access_token=token,
-        device_info=device_info,
-        is_active=True,
-        expires_at=expires_at,
-    ))
+    db.add(UserSession(user_id=user.id, token_hash=_hash_session_token(token)))
     db.commit()
     return TokenResponse(access_token=token)
 
@@ -100,9 +96,8 @@ def _token_user_id(token: str) -> int:
 
 def _require_active_token(db: DBSession, token: str) -> int:
     user_id = _token_user_id(token)
-    session = db.query(UserSession).filter(UserSession.access_token == token).first()
-    if session is not None and not session.is_active:
-        raise HTTPException(status_code=401, detail="Token has been logged out")
+    if db.query(UserSession.id).filter(UserSession.token_hash == _hash_session_token(token)).first() is None:
+        raise HTTPException(status_code=401, detail="Token has been logged out or is not an active session")
     return user_id
 
 
@@ -110,12 +105,7 @@ def _ensure_account(db: DBSession, user: User) -> TradingAccount:
     account = db.query(TradingAccount).filter(TradingAccount.user_id == user.id).first()
     if account:
         return account
-    account = TradingAccount(
-        user_id=user.id,
-        mode="PAPER",
-        virtual_balance=PAPER_STARTING_BALANCE,
-        realized_pnl=0.0,
-    )
+    account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=PAPER_STARTING_BALANCE, realized_pnl=0.0)
     db.add(account)
     db.flush()
     return account
@@ -140,19 +130,9 @@ def _hash_reset_token(token: str) -> str:
 
 def _create_reset_token(db: DBSession, user: User, now: datetime | None = None) -> str:
     now = now or _utc_now()
-    db.query(PasswordResetToken).filter(
-        PasswordResetToken.user_id == user.id,
-        PasswordResetToken.used_at.is_(None),
-    ).update({PasswordResetToken.used_at: now}, synchronize_session=False)
+    db.query(PasswordResetToken).filter(PasswordResetToken.user_id == user.id, PasswordResetToken.used_at.is_(None)).update({PasswordResetToken.used_at: now}, synchronize_session=False)
     raw_token = secrets.token_urlsafe(32)
-    db.add(
-        PasswordResetToken(
-            user_id=user.id,
-            token_hash=_hash_reset_token(raw_token),
-            expires_at=now + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES),
-            created_at=now,
-        )
-    )
+    db.add(PasswordResetToken(user_id=user.id, token_hash=_hash_reset_token(raw_token), expires_at=now + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES), created_at=now))
     return raw_token
 
 
@@ -160,7 +140,6 @@ def _create_reset_token(db: DBSession, user: User, now: datetime | None = None) 
 def register(payload: RegisterRequest, db: DBSession = Depends(get_db)):
     email = payload.email.strip().lower() if payload.email else None
     mobile = _normalize_mobile(payload.mobile_number) if payload.mobile_number else None
-
     if not email and not mobile:
         raise HTTPException(status_code=400, detail="Email or mobile number is required")
     if email and not _valid_email(email):
@@ -171,14 +150,8 @@ def register(payload: RegisterRequest, db: DBSession = Depends(get_db)):
         raise HTTPException(status_code=409, detail="Email already registered")
     if mobile and db.query(User).filter(User.mobile_number == mobile).first():
         raise HTTPException(status_code=409, detail="Mobile number already registered")
-
     stored_email = email or _placeholder_email(mobile)
-    user = User(
-        email=stored_email,
-        mobile_number=mobile,
-        hashed_password=get_password_hash(payload.password),
-        full_name=payload.full_name.strip() if payload.full_name else None,
-    )
+    user = User(email=stored_email, mobile_number=mobile, hashed_password=get_password_hash(payload.password), full_name=payload.full_name.strip() if payload.full_name else None)
     db.add(user)
     try:
         db.flush()
@@ -196,14 +169,12 @@ def login(payload: LoginRequest, db: DBSession = Depends(get_db)):
     identifier = payload.identifier.strip()
     if not identifier:
         raise HTTPException(status_code=400, detail="Email or mobile number is required")
-
     if "@" in identifier:
         lookup = identifier.lower()
         user = db.query(User).filter(User.email == lookup).first()
     else:
         mobile = _normalize_mobile(identifier)
         user = db.query(User).filter(User.mobile_number == mobile).first()
-
     if not user or not user.is_active or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email/mobile or password")
     _ensure_account(db, user)
@@ -229,11 +200,9 @@ def confirm_password_reset(payload: PasswordResetConfirmRequest, db: DBSession =
     reset = db.query(PasswordResetToken).filter(PasswordResetToken.token_hash == token_hash).first()
     if not reset or reset.used_at is not None or reset.expires_at <= now:
         raise HTTPException(status_code=400, detail="Invalid or expired reset token")
-
     user = db.query(User).filter(User.id == reset.user_id, User.is_active.is_(True)).first()
     if not user:
         raise HTTPException(status_code=400, detail="Invalid or expired reset token")
-
     user.hashed_password = get_password_hash(payload.new_password)
     reset.used_at = now
     db.commit()
@@ -248,33 +217,12 @@ def me(token: str = Depends(oauth2_scheme), db: DBSession = Depends(get_db)):
         raise HTTPException(status_code=401, detail="User not found or inactive")
     account = _ensure_account(db, user)
     db.commit()
-    return {
-        "id": user.id,
-        "email": None if user.email.endswith("@accounts.local") else user.email,
-        "mobile_number": user.mobile_number,
-        "full_name": user.full_name,
-        "account": {
-            "id": account.id,
-            "mode": account.mode,
-            "virtual_balance": account.virtual_balance,
-            "realized_pnl": account.realized_pnl,
-            "is_active": account.is_active,
-        },
-    }
+    return {"id": user.id, "email": None if user.email.endswith("@accounts.local") else user.email, "mobile_number": user.mobile_number, "full_name": user.full_name, "account": {"id": account.id, "mode": account.mode, "virtual_balance": account.virtual_balance, "realized_pnl": account.realized_pnl, "is_active": account.is_active}}
 
 
 @router.post("/logout")
 def logout(token: str = Depends(oauth2_scheme), db: DBSession = Depends(get_db)):
-    user_id = _token_user_id(token)
-    session = db.query(UserSession).filter(UserSession.access_token == token).first()
-    if session is None:
-        session = UserSession(
-            user_id=user_id,
-            access_token=token,
-            is_active=False,
-        )
-        db.add(session)
-    else:
-        session.is_active = False
+    _token_user_id(token)
+    db.query(UserSession).filter(UserSession.token_hash == _hash_session_token(token)).delete(synchronize_session=False)
     db.commit()
     return {"status": "logged_out"}
