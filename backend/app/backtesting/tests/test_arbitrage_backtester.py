@@ -32,6 +32,28 @@ def test_box_rejects_mismatched_expiry():
         raise AssertionError("expected expiry mismatch rejection")
 
 
+def test_box_rejects_invalid_option_quotes():
+    low = option(cb=float("nan"))
+    high = option(strike=110)
+    try:
+        BoxSpreadBacktester.evaluate(low, high)
+    except ValueError as exc:
+        assert "finite" in str(exc)
+    else:
+        raise AssertionError("expected non-finite quote rejection")
+
+
+def test_box_rejects_mismatched_instrument_class():
+    low = option()
+    high = OptionQuote(1, "ABC", 20261231, 110, 4, 5, 1, 2, 10, instrument_class="INDEX")
+    try:
+        BoxSpreadBacktester.evaluate(low, high)
+    except ValueError as exc:
+        assert "instrument class" in str(exc)
+    else:
+        raise AssertionError("expected instrument class mismatch rejection")
+
+
 def test_synthetic_cash_carry_uses_executable_quotes():
     opt = option(strike=100, cb=8, ca=9, pb=6, pa=7)
     fut = FutureQuote(1, "ABC", 20261231, 104, 105, 10)
@@ -45,6 +67,28 @@ def test_synthetic_cash_carry_no_edge_returns_none():
     opt = option(strike=100, cb=8, ca=9, pb=6, pa=7)
     fut = FutureQuote(1, "ABC", 20261231, 102, 103, 10)
     assert SyntheticCashCarryBacktester.evaluate(opt, fut, rate=0.0, time_to_expiry_years=0.5) is None
+
+
+def test_synthetic_cash_carry_rejects_invalid_option_quotes():
+    opt = option(strike=100, cb=8, ca=9, pb=float("nan"), pa=7)
+    fut = FutureQuote(1, "ABC", 20261231, 104, 105, 10)
+    try:
+        SyntheticCashCarryBacktester.evaluate(opt, fut, rate=0.0, time_to_expiry_years=0.5)
+    except ValueError as exc:
+        assert "finite" in str(exc)
+    else:
+        raise AssertionError("expected non-finite quote rejection")
+
+
+def test_synthetic_cash_carry_rejects_mismatched_instrument_class():
+    opt = OptionQuote(1, "ABC", 20261231, 100, 8, 9, 6, 7, 10, instrument_class="INDEX")
+    fut = FutureQuote(1, "ABC", 20261231, 104, 105, 10, instrument_class="STOCK")
+    try:
+        SyntheticCashCarryBacktester.evaluate(opt, fut, rate=0.0, time_to_expiry_years=0.5)
+    except ValueError as exc:
+        assert "instrument class" in str(exc)
+    else:
+        raise AssertionError("expected instrument class mismatch rejection")
 
 
 def test_liquidity_policy_filters_illiquid_quotes():
