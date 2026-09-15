@@ -128,18 +128,24 @@ class DurableEventBacktestEngine:
             for raw in raw_state:
                 if not isinstance(raw, Mapping):
                     raise ValueError("invalid portfolio trade checkpoint entry")
+                quantity = raw["quantity"]
+                if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
+                    raise ValueError("invalid portfolio trade quantity")
+                timestamp_ns = raw["timestamp_ns"]
+                if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int):
+                    raise ValueError("invalid portfolio trade timestamp")
                 trades.append(TradeRecord(
                     order_id=str(raw["order_id"]),
                     instrument=str(raw["instrument"]),
                     side=ExecutionSide(str(raw["side"])),
-                    quantity=int(raw["quantity"]),
+                    quantity=quantity,
                     price=float(raw["price"]),
                     gross_value=float(raw["gross_value"]),
                     fee=float(raw["fee"]),
                     realized_pnl_delta=float(raw["realized_pnl_delta"]),
                     cash_after=float(raw["cash_after"]),
                     equity_after=float(raw["equity_after"]),
-                    timestamp_ns=int(raw["timestamp_ns"]),
+                    timestamp_ns=timestamp_ns,
                 ))
         except (KeyError, TypeError, ValueError, OverflowError) as exc:
             raise ValueError("invalid portfolio trade checkpoint") from exc
