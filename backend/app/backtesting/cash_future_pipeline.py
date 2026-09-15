@@ -172,7 +172,8 @@ class CashFutureBacktestPipeline:
                                 quantity=quantity, charges=charges, contract_lock=lock, contract_leg=normalized)
             instruments = {normalized: future_instrument}
 
-        persisted_trade_count = persisted_gross_pnl = persisted_net_pnl = 0.0
+        persisted_trade_count = 0
+        persisted_gross_pnl = persisted_net_pnl = 0.0
         if self.result_store is not None:
             if not run_id or not run_id.strip():
                 raise ValueError("run_id is required when result_store is configured")
