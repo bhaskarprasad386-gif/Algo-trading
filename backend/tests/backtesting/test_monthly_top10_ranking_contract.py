@@ -58,6 +58,8 @@ def test_monthly_top10_ranks_by_net_profit_not_weighted_gap(monkeypatch):
     response = routes.monthly_gap_top10(2026, 1, "STOCK", None, _Db(rows))
     assert response["ranking_metric"] == "net_profit"
     assert response["data"][0]["symbol"] == "B"
+    assert response["data"][0]["rank"] == 1
+    assert [item["rank"] for item in response["data"]] == list(range(1, len(response["data"]) + 1))
     assert response["data"][0]["net_profit"] == 2000.0
 
 
@@ -70,3 +72,4 @@ def test_monthly_top10_unions_partial_db_with_downloaded_catalog(monkeypatch):
     monkeypatch.setattr(routes, "_cash_future_shorting_payloads", lambda trading_day, symbols, **kwargs: [p for p in payloads if p["symbol"] in symbols])
     response = routes.monthly_gap_top10(2026, 1, "STOCK", None, _Db(rows))
     assert {item["symbol"] for item in response["data"]} == {"A", "B"}
+    assert [item["rank"] for item in response["data"]] == [1, 2]
