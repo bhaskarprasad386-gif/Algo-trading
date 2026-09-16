@@ -35,6 +35,14 @@ def test_loader_rejects_invalid_range(tmp_path):
         CashFutureHistorySelection("NSE:1:ABC", "NFO", "ABC", date(2026, 1, 6), date(2026, 1, 5))
 
 
+def test_loader_fails_closed_when_historical_contract_snapshot_is_missing(tmp_path):
+    data = HistoricalCatalog(str(tmp_path / "data.db")); contracts = ContractMasterCatalog(str(tmp_path / "contracts.db"))
+    contracts.upsert_snapshot(date(2026, 1, 5), [ContractRecord("NFO", "ABC26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 75)])
+    selection = CashFutureHistorySelection("NSE:1:ABC", "NFO", "ABC", date(2026, 1, 2), date(2026, 1, 5))
+    with pytest.raises(LookupError, match="2026-01-02"):
+        tuple(CashFutureHistoricalLoader(data, contracts).iter_points(selection))
+
+
 def test_pairing_does_not_skip_newer_future_when_cash_record_is_from_another_day(tmp_path):
     data = HistoricalCatalog(str(tmp_path / "data.db")); contracts = ContractMasterCatalog(str(tmp_path / "contracts.db"))
     contracts.upsert_snapshot(date(2026, 1, 2), [ContractRecord("NFO", "ABC26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 75)])
