@@ -86,15 +86,21 @@ def enforce_market_risk(portfolio: Portfolio, marks: Mapping[str, float] | None 
     return state
 
 
-def order_reduces_position_risk(portfolio: Portfolio, order: SimOrder) -> bool:
+def order_reduces_position_risk(portfolio: Portfolio, order: SimOrder, marks: Mapping[str, float] | None = None) -> bool:
     """Return whether an order strictly reduces the signed position exposure.
 
     A risk-reducing close is allowed to proceed during a margin call so a caller can
     unwind exposure instead of being trapped by a fail-closed new-risk gate.
     Orders that open, add to, or reverse a position are not considered reducing.
+    Quantity is read from exported position state so classification does not require
+    a marked snapshot; callers that have current marks may still pass them.
     """
-    position = next((p for p in portfolio.snapshot().positions if p.instrument == order.instrument), None)
-    current = position.quantity if position is not None else 0
+    if marks is None:
+        current = next((int(item["quantity"]) for item in portfolio.export_state().get("positions", ())
+                        if item.get("instrument") == order.instrument), 0)
+    else:
+        position = next((p for p in portfolio.snapshot(dict(marks)).positions if p.instrument == order.instrument), None)
+        current = position.quantity if position is not None else 0
     if current == 0:
         return False
     signed = order.quantity if order.side == ExecutionSide.BUY else -order.quantity

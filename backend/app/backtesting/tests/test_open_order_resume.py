@@ -81,8 +81,8 @@ def test_resume_restores_open_order_and_finishes_same_as_uninterrupted(tmp_path)
 
     assert resumed_result.fills == 1
     assert full_result.fills == 2
-    assert resumed_portfolio.snapshot().cash == pytest.approx(full_portfolio.snapshot().cash)
-    assert resumed_portfolio.snapshot().positions == full_portfolio.snapshot().positions
+    assert resumed_result.final_snapshot.cash == pytest.approx(full_result.final_snapshot.cash)
+    assert resumed_result.final_snapshot.positions == full_result.final_snapshot.positions
     assert resumed_portfolio.trades == full_portfolio.trades
     assert resumed.engine.open_orders == {}
     ledger.close()

@@ -260,7 +260,17 @@ class Portfolio:
         batch_reservation = sum(self._reserved_margin.get(order_id, 0.0) for order_id in batch_order_ids)
         other_reservations = max(0.0, self.reserved_margin - batch_reservation)
         projected_margin = gross * cfg.initial_margin_rate
-        if projected_margin > projected_equity - other_reservations + 1e-9:
+        original_qty = {instrument: position.quantity for instrument, position in self._positions.items()}
+        reduces_position_risk = True
+        for instrument in set(original_qty) | set(projected_qty):
+            old_qty = original_qty.get(instrument, 0)
+            new_qty = projected_qty.get(instrument, 0)
+            if old_qty == new_qty:
+                continue
+            if not (old_qty != 0 and abs(new_qty) < abs(old_qty) and (old_qty * new_qty >= 0 or new_qty == 0)):
+                reduces_position_risk = False
+                break
+        if not reduces_position_risk and projected_margin > projected_equity - other_reservations + 1e-9:
             raise RiskViolation("insufficient available margin")
         if cfg.max_leverage is not None and projected_equity > 0 and gross / projected_equity > cfg.max_leverage + 1e-9:
             raise RiskViolation("max leverage exceeded")

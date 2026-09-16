@@ -78,6 +78,22 @@ def test_event_strategy_order_uses_instrument_quote_and_ask_for_buy():
     assert engine.order_states["o1"].status == OrderStatus.FILLED
 
 
+def test_consecutive_buys_snapshot_and_reserve_with_current_quote_marks():
+    class Strategy:
+        strategy_id = "consecutive-buys"; strategy_version = "1"
+        def on_event(self, event, context):
+            return StrategyDecision(action="BUY", orders=(SimOrder(f"o{event.timestamp_ns}", "NIFTY", ExecutionSide.BUY, 1),))
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(100_000))
+    result = engine.run([
+        MarketEvent(1, "NIFTY", EventType.QUOTE, {"bid": 99, "ask": 100}),
+        MarketEvent(2, "NIFTY", EventType.QUOTE, {"bid": 100, "ask": 101}),
+    ], Strategy())
+    assert result.fills == 2
+    assert result.risk_blocks == 0
+    assert result.final_snapshot is not None
+    assert result.final_snapshot.positions[0].quantity == 2
+
+
 def test_risk_blocked_order_does_not_change_portfolio():
     class Strategy:
         strategy_id = "risk-block"; strategy_version = "1"
