@@ -15,17 +15,25 @@ from app.backtesting.engine import EventContext, EventSignal, EventStrategy, _no
 from app.backtesting.execution import ExecutionConfig, ExecutionSide, ExecutionSimulator, SimOrder
 from app.backtesting.portfolio import Portfolio, PortfolioSnapshot, RiskConfig
 from app.backtesting.historical_catalog import HistoricalRecord
+from app.backtesting.statistics import BacktestStatistics, EquityPoint, calculate_statistics
 
 
 @dataclass(frozen=True)
 class UniversalBacktestResult:
-    """Result for the portfolio-backed universal event engine."""
+    """Accounting result with a durable marked-equity time series."""
 
     initial_capital: float
     final_equity: float
     realized_pnl: float
     unrealized_pnl: float
+    net_pnl: float
+    total_return: float
+    sharpe_ratio: float | None
+    sortino_ratio: float | None
+    max_drawdown: float
+    cagr: float | None
     snapshots: tuple[PortfolioSnapshot, ...]
+    equity_curve: tuple[EquityPoint, ...]
     fill_count: int
 
 
@@ -58,6 +66,7 @@ class UniversalEventBacktestEngine:
 
         previous_key: tuple[int, int] | None = None
         snapshots: list[PortfolioSnapshot] = []
+        equity_curve: list[EquityPoint] = []
         last_marks: dict[str, float] = {}
 
         for record in events:
@@ -92,36 +101,43 @@ class UniversalEventBacktestEngine:
                     record,
                 ))
             )
-            if signal.action in {"HOLD", "NONE"}:
-                if last_marks:
-                    snapshots.append(self.portfolio.snapshot(last_marks))
-                continue
+            if signal.action not in {"HOLD", "NONE"}:
+                price = signal.price
+                if price is None:
+                    price = raw_price
+                if price is None or isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
+                    raise ValueError(f"event payload must contain numeric positive {price_field!r} or signal price")
+                last_marks[record.instrument] = float(price)
 
-            price = signal.price
-            if price is None:
-                price = raw_price
-            if price is None or isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
-                raise ValueError(f"event payload must contain numeric positive {price_field!r} or signal price")
-            last_marks[record.instrument] = float(price)
+                side = ExecutionSide.BUY if signal.action == "BUY" else ExecutionSide.SELL
+                order = SimOrder(
+                    order_id=f"event-{record.timestamp_ns}-{record.sequence if record.sequence is not None else 'na'}-{record.instrument}",
+                    instrument=record.instrument,
+                    side=side,
+                    quantity=self.quantity,
+                    submitted_at_ns=record.timestamp_ns,
+                )
+                fill = self.execution.execute(order, float(price), record.timestamp_ns)
+                self.portfolio.apply_fill(fill, last_marks)
 
-            side = ExecutionSide.BUY if signal.action == "BUY" else ExecutionSide.SELL
-            order = SimOrder(
-                order_id=f"event-{record.timestamp_ns}-{record.sequence if record.sequence is not None else 'na'}-{record.instrument}",
-                instrument=record.instrument,
-                side=side,
-                quantity=self.quantity,
-                submitted_at_ns=record.timestamp_ns,
-            )
-            fill = self.execution.execute(order, float(price), record.timestamp_ns)
-            self.portfolio.apply_fill(fill, last_marks)
-            snapshots.append(self.portfolio.snapshot(last_marks))
+            snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
+            snapshots.append(snapshot)
+            equity_curve.append(EquityPoint(record.timestamp_ns, snapshot.equity, snapshot.realized_pnl, snapshot.unrealized_pnl))
 
         final_snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
+        stats: BacktestStatistics = calculate_statistics(equity_curve, self.portfolio.initial_cash)
         return UniversalBacktestResult(
             initial_capital=self.portfolio.initial_cash,
             final_equity=final_snapshot.equity,
             realized_pnl=final_snapshot.realized_pnl,
             unrealized_pnl=final_snapshot.unrealized_pnl,
+            net_pnl=stats.net_pnl,
+            total_return=stats.total_return,
+            sharpe_ratio=stats.sharpe_ratio,
+            sortino_ratio=stats.sortino_ratio,
+            max_drawdown=stats.max_drawdown,
+            cagr=stats.cagr,
             snapshots=tuple(snapshots),
+            equity_curve=tuple(equity_curve),
             fill_count=len(self.portfolio.trades),
         )
