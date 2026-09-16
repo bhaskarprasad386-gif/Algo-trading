@@ -36,13 +36,21 @@ def build_futures_rollover_chain(
     start_date: date,
     end_date: date,
 ) -> tuple[FNORolloverWindow, ...]:
-    """Map each date to the nearest non-expired real contract."""
+    """Map each date to the nearest non-expired real contract.
+
+    Contracts from a future contract-master snapshot are not valid for an
+    earlier replay date; accepting them would introduce look-ahead bias.
+    Records without snapshot metadata remain supported for callers that
+    already resolved their historical universe externally.
+    """
+    if type(start_date) is not date or type(end_date) is not date:
+        raise TypeError("start_date and end_date must be dates")
     if start_date > end_date:
         raise ValueError("start_date cannot exceed end_date")
-    if not underlying.strip() or not instrument_type.strip():
+    if type(underlying) is not str or not underlying.strip() or type(instrument_type) is not str or not instrument_type.strip():
         raise ValueError("underlying and instrument_type are required")
 
-    eligible = tuple(sorted((contract for contract in contracts if contract.underlying == underlying and contract.instrument_type == instrument_type and contract.expiry >= start_date), key=lambda contract: (contract.expiry, contract.token)))
+    eligible = tuple(sorted((contract for contract in contracts if contract.underlying == underlying and contract.instrument_type == instrument_type and contract.expiry >= start_date and (contract.snapshot_date is None or contract.snapshot_date <= start_date)), key=lambda contract: (contract.expiry, contract.token)))
     if not eligible:
         return ()
 
@@ -69,10 +77,10 @@ def validate_futures_rollover_chain(
     instrument_type: str,
 ) -> None:
     """Validate that a built chain has ordered, non-overlapping windows."""
-    windows = tuple(windows)
-    if not underlying.strip() or not instrument_type.strip():
+    if type(underlying) is not str or not underlying.strip() or type(instrument_type) is not str or not instrument_type.strip():
         raise ValueError("underlying and instrument_type are required")
 
+    windows = tuple(windows)
     for index, window in enumerate(windows):
         if window.underlying != underlying or window.instrument_type != instrument_type:
             raise ValueError("rollover window does not match requested contract identity")
