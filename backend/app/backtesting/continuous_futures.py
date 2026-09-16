@@ -83,6 +83,9 @@ def build_continuous_futures_series(
         start_ns = _day_start_ns(window.start_date)
         end_ns = _day_end_ns(window.end_date)
         for record in raw_records:
+            expected_instrument = f"NFO:{window.contract_token}"
+            if record.instrument != expected_instrument:
+                raise ValueError(f"record instrument {record.instrument!r} does not match contract token {window.contract_token!r}")
             if not window.start_date <= _session_date(record.timestamp_ns) <= window.end_date:
                 continue
             if not start_ns <= record.timestamp_ns <= end_ns:
@@ -96,7 +99,7 @@ def build_continuous_futures_series(
                 )
             )
 
-    output.sort(key=lambda item: item.timestamp_ns)
+    output.sort(key=lambda item: (item.timestamp_ns, item.underlying, item.instrument_type, item.contract_token, item.record.instrument, item.record.sequence if item.record.sequence is not None else -1))
     return tuple(output)
 
 
