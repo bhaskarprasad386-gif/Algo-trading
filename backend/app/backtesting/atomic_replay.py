@@ -20,7 +20,8 @@ class AtomicReplayStore:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._db = connection
         was_in_transaction = self._db.in_transaction
-        self._db.execute("PRAGMA journal_mode=WAL")
+        if not was_in_transaction:
+            self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("""CREATE TABLE IF NOT EXISTS atomic_replay_events (
             run_id TEXT NOT NULL, timestamp_ns INTEGER NOT NULL, sequence INTEGER NOT NULL,
             instrument TEXT NOT NULL DEFAULT '', event_type TEXT NOT NULL DEFAULT '',
@@ -106,7 +107,10 @@ class AtomicReplayStore:
             raise ValueError("checkpoint state is invalid JSON") from exc
         if not isinstance(state, dict):
             raise ValueError("checkpoint state must be a dictionary")
-        return ReplayCheckpoint(row[0], row[1], row[2], row[3], row[4], state, row[6], row[7])
+        checkpoint = ReplayCheckpoint(row[0], row[1], row[2], row[3], row[4], state, row[6], row[7])
+        if isinstance(checkpoint.realized_pnl, bool) or not isinstance(checkpoint.realized_pnl, (int, float)) or not math.isfinite(float(checkpoint.realized_pnl)):
+            raise ValueError("checkpoint realized_pnl must be finite")
+        return checkpoint
 
     def save_checkpoint(self, checkpoint: ReplayCheckpoint) -> None:
         if not isinstance(checkpoint.run_id, str) or not checkpoint.run_id.strip():
