@@ -21,8 +21,7 @@ class LiquidityPolicy:
     def _accepts_quote(*,volume:int,oi:int,bid:float,ask:float,min_volume:int,min_oi:int,max_spread_pct:float)->bool:
         if any(isinstance(v,bool) for v in (volume,oi,min_volume,min_oi)): return False
         if volume<min_volume or oi<min_oi or not all(isfinite(float(v)) for v in (bid,ask,max_spread_pct)): return False
-        if bid<0 or ask<bid or max_spread_pct<0: return False
-        if bid==0: return ask==0
+        if bid<=0 or ask<bid or max_spread_pct<0: return False
         return ((ask-bid)/bid)*100.0<=max_spread_pct
     def accepts(self,*,volume:int,oi:int,bid:float,ask:float)->bool:
         return self._accepts_quote(volume=volume,oi=oi,bid=bid,ask=ask,min_volume=self.min_option_volume,min_oi=self.min_option_oi,max_spread_pct=self.max_spread_pct)
@@ -36,18 +35,22 @@ class ArbitrageOpportunity:
 def _validate_option_quote(quote:OptionQuote)->None:
     if isinstance(quote.timestamp_ns,bool) or not isinstance(quote.timestamp_ns,int) or quote.timestamp_ns<0: raise ValueError("option timestamp_ns must be a non-negative integer")
     if not isinstance(quote.underlying,str) or not quote.underlying.strip(): raise ValueError("option underlying is required")
+    if isinstance(quote.expiry,bool) or not isinstance(quote.expiry,int) or quote.expiry<0: raise ValueError("option expiry must be a non-negative integer")
     values=(quote.strike,quote.call_bid,quote.call_ask,quote.put_bid,quote.put_ask)
     if not all(isinstance(v,(int,float)) and not isinstance(v,bool) and isfinite(float(v)) for v in values): raise ValueError("option prices and strike must be finite")
     if quote.strike<=0: raise ValueError("option strike must be positive")
-    if quote.call_bid<0 or quote.put_bid<0 or quote.call_ask<quote.call_bid or quote.put_ask<quote.put_bid: raise ValueError("invalid option bid/ask")
+    if quote.call_bid<0 or quote.put_bid<0 or quote.call_ask<=0 or quote.put_ask<=0 or quote.call_ask<quote.call_bid or quote.put_ask<quote.put_bid: raise ValueError("invalid executable option bid/ask")
+    if quote.instrument_class not in {"STOCK","INDEX"}: raise ValueError("invalid option instrument_class")
     if type(quote.lot_size) is not int or quote.lot_size<=0: raise ValueError("option lot_size must be a positive integer")
     if type(quote.volume) is not int or quote.volume<0 or type(quote.oi) is not int or quote.oi<0: raise ValueError("option volume and oi must be non-negative integers")
 
 def _validate_future_quote(future:FutureQuote)->None:
     if isinstance(future.timestamp_ns,bool) or not isinstance(future.timestamp_ns,int) or future.timestamp_ns<0: raise ValueError("future timestamp_ns must be a non-negative integer")
     if not isinstance(future.underlying,str) or not future.underlying.strip(): raise ValueError("future underlying is required")
+    if isinstance(future.expiry,bool) or not isinstance(future.expiry,int) or future.expiry<0: raise ValueError("future expiry must be a non-negative integer")
     if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not isfinite(float(v)) for v in (future.bid,future.ask)): raise ValueError("future prices must be finite")
-    if future.bid<0 or future.ask<future.bid: raise ValueError("future ask price must be at least bid price and bids must be non-negative")
+    if future.bid<0 or future.ask<=0 or future.ask<future.bid: raise ValueError("future ask price must be positive and at least bid price")
+    if future.instrument_class not in {"STOCK","INDEX"}: raise ValueError("invalid future instrument_class")
     if type(future.lot_size) is not int or future.lot_size<=0: raise ValueError("future lot_size must be a positive integer")
     if type(future.volume) is not int or future.volume<0 or type(future.oi) is not int or future.oi<0: raise ValueError("future volume and oi must be non-negative integers")
 
