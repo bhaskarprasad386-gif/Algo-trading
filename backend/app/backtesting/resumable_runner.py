@@ -50,7 +50,7 @@ def run_resumable_events(
         cursor = checkpoint["cursor"]
         for record in stream:
             replay_chunk.append(record)
-            if _cursor(record) == cursor:
+            if _cursor(record) == cursor or _legacy_cursor(record) == cursor:
                 _run_chunk(engine, replay_chunk, strategy, state, price_field=price_field)
                 found = True
                 break
@@ -108,29 +108,30 @@ def _run_chunk(engine: BacktestEngine, events: Iterable[HistoricalRecord], strat
             raise ValueError("event instrument is required")
         if not isinstance(record.source, str) or not record.source.strip():
             raise ValueError("event source is required")
-        if record.sequence is None:
-            sequence = 0
-        elif isinstance(record.sequence, bool) or not isinstance(record.sequence, int) or record.sequence < 0:
+        sequence = 0 if record.sequence is None else record.sequence
+        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
             raise ValueError("event sequence must be a non-negative integer or None")
-        else:
-            sequence = record.sequence
         key = (record.timestamp_ns, sequence, record.source, record.instrument, record.timeframe)
         if state.previous_key is not None and key < state.previous_key:
             raise ValueError("events must be ordered deterministically")
         state.previous_key = key
-        signal = _normalize_event_signal(EventContext(record.timestamp_ns, record.sequence, record.source, record.instrument, record.payload, record) if False else strategy(EventContext(record.timestamp_ns, record.sequence, record.source, record.instrument, record.payload, record)))
-        price = None
-        if signal.action not in {"HOLD", "NONE"}:
-            price = signal.price
-            if price is None:
-                raw_price = record.payload.get(price_field)
-                if not isinstance(raw_price, (int, float)) or isinstance(raw_price, bool):
-                    raise ValueError(f"event payload must contain numeric {price_field!r} or signal price")
-                price = float(raw_price)
-            if price <= 0:
-                raise ValueError("event price must be positive")
-        if price is not None:
-            state.last_price = price
+
+        signal = _normalize_event_signal(
+            strategy(EventContext(record.timestamp_ns, record.sequence, record.source, record.instrument, record.payload, record))
+        )
+        if signal.action in {"HOLD", "NONE"}:
+            continue
+        price = signal.price
+        if price is None:
+            raw_price = record.payload.get(price_field)
+            if not isinstance(raw_price, (int, float)) or isinstance(raw_price, bool):
+                raise ValueError(f"event payload must contain numeric {price_field!r} or signal price")
+            price = float(raw_price)
+        if isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
+            raise ValueError("event price must be finite and positive")
+        price = float(price)
+        state.last_price = price
+
         if state.open_trade is None and signal.action == "BUY":
             execution_price = _execution_price(engine.config, price, "BUY")
             state.capital -= _ensure_cash_available(engine.config, state.capital, execution_price)
@@ -145,7 +146,8 @@ def _run_chunk(engine: BacktestEngine, events: Iterable[HistoricalRecord], strat
             if state.peak_capital > 0:
                 state.max_drawdown = max(state.max_drawdown, (state.peak_capital - state.capital) / state.peak_capital)
             state.open_trade = None
-        if state.open_trade is not None and price is not None and state.peak_capital > 0:
+
+        if state.open_trade is not None and state.peak_capital > 0:
             equity = state.capital + _calculate_liquidation_pnl(engine.config, state.open_trade[1], price)
             state.peak_capital = max(state.peak_capital, equity)
             state.max_drawdown = max(state.max_drawdown, (state.peak_capital - equity) / state.peak_capital)
@@ -160,3 +162,7 @@ def _empty_result(engine, ledger, run_id):
 
 def _cursor(record: HistoricalRecord) -> str:
     return f"{record.timestamp_ns}:{record.sequence if record.sequence is not None else 0}:{record.source}:{record.instrument}:{record.timeframe}"
+
+
+def _legacy_cursor(record: HistoricalRecord) -> str:
+    return f"{record.timestamp_ns}:{record.sequence if record.sequence is not None else -1}"
