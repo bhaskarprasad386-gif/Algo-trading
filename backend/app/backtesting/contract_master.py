@@ -56,6 +56,12 @@ class ContractMasterCatalog:
     def close(self) -> None:
         self._db.close()
 
+    def __enter__(self) -> "ContractMasterCatalog":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
     @staticmethod
     def _rows(snapshot_date: date, records: Iterable[ContractRecord]) -> list[tuple[object, ...]]:
         return [(snapshot_date.isoformat(), r.exchange, r.symbol, r.token, r.expiry.isoformat(), r.instrument_type, r.underlying, r.lot_size, r.tick_size) for r in records]
