@@ -25,6 +25,8 @@ def resume_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy
     _stored_identity_matches(metadata,config)
     if checkpoint_row is None: raise ValueError("unsafe Cash-Future resume: checkpoint is required")
     checkpoint_time=datetime.fromisoformat(checkpoint.last_timestamp)
+    if checkpoint.selected_contract and config.contract_month and checkpoint.selected_contract!=config.contract_month:
+        raise ValueError("unsafe Cash-Future resume: checkpoint contract does not match requested contract")
     selected_contract=checkpoint.selected_contract or config.contract_month
     if selected_contract is None: raise ValueError("unsafe Cash-Future resume: checkpoint has no selected contract")
     restore=getattr(strategy,"restore_checkpoint_state",None)
@@ -45,7 +47,6 @@ def resume_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy
         if point.contract_month!=selected_contract: raise ValueError("unsafe Cash-Future resume: source contains a different contract month")
         if selected_symbol is None: selected_symbol=point.symbol
         elif point.symbol!=selected_symbol: raise ValueError("unsafe Cash-Future resume: source contains a different symbol")
-        # Rebuild only the requested rolling context through the checkpoint; never execute strategy on replayed events.
         if point.timestamp<=checkpoint_time:
             if config.start_date is None or point_date>=config.start_date: history.append(point)
             continue
