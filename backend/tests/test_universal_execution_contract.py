@@ -73,7 +73,9 @@ def test_ioc_partial_and_fok_insufficient_depth_have_different_terminal_semantic
     ioc = SimOrder("I1", "NSE:SBIN", ExecutionSide.BUY, 50, time_in_force=TimeInForce.IOC)
     ioc_result = simulator.execute_depth(ioc, book, 3_000)
     assert [(f.quantity, f.price) for f in ioc_result.fills] == [(30, 100.0)]
-    assert ioc_result.remaining_quantity == 20
+    assert ioc_result.remaining_quantity == 0
+    assert ioc_result.rejected is False
+    assert ioc_result.reason == "IOC remainder cancelled"
 
     fok = SimOrder("F1", "NSE:SBIN", ExecutionSide.BUY, 50, time_in_force=TimeInForce.FOK)
     fok_result = simulator.execute_depth(fok, book, 3_000)
