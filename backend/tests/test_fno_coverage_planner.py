@@ -1,4 +1,5 @@
 from datetime import date, time
+from time import monotonic
 
 from app.backtesting.contract_master import ContractRecord
 from app.backtesting.fno_acquisition import build_fno_coverage_plan
@@ -37,7 +38,9 @@ def test_coverage_plan_repairs_leading_interior_and_trailing_session_gaps():
     session = calendar.sessions_between(date(2026, 9, 7), date(2026, 9, 7))[0]
     interval = 60 * 1_000_000_000
     catalog.ingest(
-        HistoricalRecord("provider", "101", "1m", session.start_ns + 2 * interval, {"close": 100})
+        [
+            HistoricalRecord("provider", "101", "1m", session.start_ns + 2 * interval, {"close": 100}),
+        ]
     )
 
     plan = make_plan(catalog, calendar, session, interval)
@@ -54,8 +57,10 @@ def test_coverage_plan_does_not_cross_session_boundary():
     sessions = calendar.sessions_between(date(2026, 9, 7), date(2026, 9, 8))
     interval = 60 * 1_000_000_000
     catalog.ingest(
-        HistoricalRecord("provider", "101", "1m", sessions[0].start_ns + 4 * interval, {"close": 100}),
-        HistoricalRecord("provider", "101", "1m", sessions[1].start_ns, {"close": 100}),
+        [
+            HistoricalRecord("provider", "101", "1m", sessions[0].start_ns + 4 * interval, {"close": 100}),
+            HistoricalRecord("provider", "101", "1m", sessions[1].start_ns, {"close": 100}),
+        ]
     )
 
     plan = build_fno_coverage_plan(
@@ -85,12 +90,42 @@ def test_coverage_plan_uses_bounded_chunks_for_missing_session_edges():
     session = calendar.sessions_between(date(2026, 9, 7), date(2026, 9, 7))[0]
     interval = 1
 
-    plan = make_plan(catalog, calendar, session, interval, max_request_ns=2)
+    plan = build_fno_coverage_plan(
+        make_universe(),
+        as_of=date(2026, 9, 7),
+        timeframe="1m",
+        start_ns=session.start_ns,
+        end_ns=session.start_ns + 4,
+        max_request_ns=2,
+        catalog=catalog,
+        source="provider",
+        interval_ns=interval,
+        calendar=calendar,
+        start_date=date(2026, 9, 7),
+        end_date=date(2026, 9, 7),
+    )
 
     assert [(job.start_ns, job.end_ns) for job in plan.jobs] == [
         (session.start_ns, session.start_ns + 1),
         (session.start_ns + 2, session.start_ns + 3),
         (session.start_ns + 4, session.start_ns + 4),
+    ]
+
+
+def test_coverage_plan_interval_ns_1_does_not_enumerate_session_nanoseconds():
+    catalog = HistoricalCatalog()
+    calendar = TradingCalendar(session_open=time(9, 15), session_close=time(9, 20))
+    session = calendar.sessions_between(date(2026, 9, 7), date(2026, 9, 7))[0]
+    span_ns = session.end_ns - session.start_ns
+    assert span_ns == 300_000_000_000
+
+    started = monotonic()
+    plan = make_plan(catalog, calendar, session, interval=1, max_request_ns=span_ns)
+    elapsed = monotonic() - started
+
+    assert elapsed < 1.0
+    assert [(job.start_ns, job.end_ns) for job in plan.jobs] == [
+        (session.start_ns, session.end_ns - 1),
     ]
 
 
