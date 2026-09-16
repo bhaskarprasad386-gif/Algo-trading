@@ -56,16 +56,21 @@ class EventBacktestEngine:
 
     @staticmethod
     def _event_price(event: MarketEvent, side: ExecutionSide | None = None) -> float | None:
+        """Return a strictly typed executable/mark price; never coerce malformed event values."""
         bid, ask = event.payload.get("bid"), event.payload.get("ask")
-        if side == ExecutionSide.BUY and isinstance(ask, (int, float)) and ask > 0:
+
+        def valid(value: object) -> bool:
+            return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+
+        if side == ExecutionSide.BUY and valid(ask):
             return float(ask)
-        if side == ExecutionSide.SELL and isinstance(bid, (int, float)) and bid > 0:
+        if side == ExecutionSide.SELL and valid(bid):
             return float(bid)
         for key in ("price", "ltp", "last", "last_price"):
             value = event.payload.get(key)
-            if isinstance(value, (int, float)) and value > 0:
+            if valid(value):
                 return float(value)
-        if isinstance(bid, (int, float)) and isinstance(ask, (int, float)) and bid > 0 and ask > 0:
+        if valid(bid) and valid(ask):
             return (float(bid) + float(ask)) / 2.0
         return None
 
@@ -90,12 +95,16 @@ class EventBacktestEngine:
                         price, quantity = item
                         if isinstance(price, bool) or isinstance(quantity, bool):
                             raise ValueError("boolean depth field")
-                        level = DepthLevel(float(price), int(quantity))
+                        if not isinstance(price, (int, float)) or not isinstance(quantity, int):
+                            raise TypeError("depth price/quantity types")
+                        level = DepthLevel(price, quantity)
                     elif isinstance(item, Mapping):
                         price, quantity = item["price"], item["quantity"]
                         if isinstance(price, bool) or isinstance(quantity, bool):
                             raise ValueError("boolean depth field")
-                        level = DepthLevel(float(price), int(quantity))
+                        if not isinstance(price, (int, float)) or not isinstance(quantity, int):
+                            raise TypeError("depth price/quantity types")
+                        level = DepthLevel(price, quantity)
                     else:
                         raise ValueError("unsupported depth level")
                 except (KeyError, TypeError, ValueError, OverflowError) as exc:
