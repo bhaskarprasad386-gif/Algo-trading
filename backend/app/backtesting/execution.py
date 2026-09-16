@@ -24,6 +24,18 @@ class TimeInForce(str, Enum):
     FOK = "FOK"
 
 
+def _finite_positive(value: object, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or float(value) <= 0:
+        raise ValueError(f"{name} must be finite and positive")
+    return float(value)
+
+
+def _finite_nonnegative(value: object, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or float(value) < 0:
+        raise ValueError(f"{name} must be finite and non-negative")
+    return float(value)
+
+
 @dataclass(frozen=True)
 class SimOrder:
     order_id: str
@@ -38,26 +50,24 @@ class SimOrder:
     time_in_force: TimeInForce = TimeInForce.DAY
 
     def __post_init__(self) -> None:
-        if not self.order_id.strip() or not self.instrument.strip():
+        if not isinstance(self.order_id, str) or not self.order_id.strip() or not isinstance(self.instrument, str) or not self.instrument.strip():
             raise ValueError("order_id and instrument are required")
         if not isinstance(self.side, ExecutionSide) or not isinstance(self.order_type, OrderType):
             raise ValueError("invalid order side or order type")
         if not isinstance(self.quantity, int) or isinstance(self.quantity, bool) or self.quantity <= 0:
             raise ValueError("quantity must be a positive integer")
-        if self.submitted_at_ns < 0:
-            raise ValueError("submitted_at_ns cannot be negative")
+        if isinstance(self.submitted_at_ns, bool) or not isinstance(self.submitted_at_ns, int) or self.submitted_at_ns < 0:
+            raise ValueError("submitted_at_ns must be a non-negative integer")
         if not isinstance(self.queue_ahead_quantity, int) or isinstance(self.queue_ahead_quantity, bool) or self.queue_ahead_quantity < 0:
             raise ValueError("queue_ahead_quantity must be a non-negative integer")
         if not isinstance(self.time_in_force, TimeInForce):
             raise ValueError("invalid time_in_force")
         if self.order_type == OrderType.LIMIT:
-            if self.limit_price is None or not math.isfinite(float(self.limit_price)) or self.limit_price <= 0:
-                raise ValueError("limit_price must be finite and positive for LIMIT orders")
+            _finite_positive(self.limit_price, "limit_price")
         elif self.limit_price is not None:
             raise ValueError("limit_price is only valid for LIMIT orders")
         if self.order_type == OrderType.STOP:
-            if self.stop_price is None or not math.isfinite(float(self.stop_price)) or self.stop_price <= 0:
-                raise ValueError("stop_price must be finite and positive for STOP orders")
+            _finite_positive(self.stop_price, "stop_price")
         elif self.stop_price is not None:
             raise ValueError("stop_price is only valid for STOP orders")
 
@@ -68,10 +78,9 @@ class DepthLevel:
     quantity: int
 
     def __post_init__(self) -> None:
+        _finite_positive(self.price, "depth price")
         if not isinstance(self.quantity, int) or isinstance(self.quantity, bool) or self.quantity < 0:
             raise ValueError("depth quantity must be a non-negative integer")
-        if not math.isfinite(float(self.price)) or self.price <= 0:
-            raise ValueError("depth price must be finite and positive and quantity non-negative")
 
 
 @dataclass(frozen=True)
@@ -81,6 +90,10 @@ class OrderBook:
     asks: tuple[DepthLevel, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.bids, tuple) or not isinstance(self.asks, tuple):
+            raise TypeError("order-book bids and asks must be tuples")
+        if any(not isinstance(level, DepthLevel) for level in self.bids + self.asks):
+            raise TypeError("order-book levels must be DepthLevel instances")
         bid_prices = tuple(x.price for x in self.bids)
         ask_prices = tuple(x.price for x in self.asks)
         if bid_prices != tuple(sorted(bid_prices, reverse=True)):
@@ -99,8 +112,7 @@ class QueueEvidence:
     cancelled_quantity_ahead: int = 0
 
     def __post_init__(self) -> None:
-        if not math.isfinite(float(self.price)) or self.price <= 0:
-            raise ValueError("queue evidence price must be finite and positive")
+        _finite_positive(self.price, "queue evidence price")
         if not isinstance(self.executed_quantity, int) or isinstance(self.executed_quantity, bool) or self.executed_quantity < 0:
             raise ValueError("executed_quantity must be a non-negative integer")
         if not isinstance(self.cancelled_quantity_ahead, int) or isinstance(self.cancelled_quantity_ahead, bool) or self.cancelled_quantity_ahead < 0:
@@ -118,16 +130,16 @@ class SimFill:
     fee: float = 0.0
 
     def __post_init__(self) -> None:
-        if not self.order_id.strip() or not self.instrument.strip():
+        if not isinstance(self.order_id, str) or not self.order_id.strip() or not isinstance(self.instrument, str) or not self.instrument.strip():
             raise ValueError("fill order_id and instrument are required")
         if not isinstance(self.side, ExecutionSide):
             raise ValueError("invalid fill side")
         if not isinstance(self.quantity, int) or isinstance(self.quantity, bool) or self.quantity <= 0:
             raise ValueError("fill quantity must be a positive integer")
-        if not math.isfinite(float(self.price)) or self.price <= 0:
-            raise ValueError("fill price must be finite and positive")
-        if self.filled_at_ns < 0 or not math.isfinite(float(self.fee)) or self.fee < 0:
-            raise ValueError("fill timestamp/fee is invalid")
+        _finite_positive(self.price, "fill price")
+        if isinstance(self.filled_at_ns, bool) or not isinstance(self.filled_at_ns, int) or self.filled_at_ns < 0:
+            raise ValueError("fill timestamp must be a non-negative integer")
+        _finite_nonnegative(self.fee, "fill fee")
 
 
 @dataclass(frozen=True)
@@ -155,12 +167,14 @@ class ExecutionConfig:
     allow_partial_fills: bool = True
 
     def __post_init__(self) -> None:
-        if not math.isfinite(float(self.slippage_bps)) or self.slippage_bps < 0:
-            raise ValueError("slippage_bps must be finite and non-negative")
+        _finite_nonnegative(self.slippage_bps, "slippage_bps")
         if self.slippage_bps >= 10_000:
             raise ValueError("slippage_bps must be below 10000")
-        if self.latency_ns < 0 or not math.isfinite(float(self.fee_per_unit)) or self.fee_per_unit < 0:
-            raise ValueError("execution costs and latency cannot be negative")
+        if isinstance(self.latency_ns, bool) or not isinstance(self.latency_ns, int) or self.latency_ns < 0:
+            raise ValueError("latency_ns must be a non-negative integer")
+        _finite_nonnegative(self.fee_per_unit, "fee_per_unit")
+        if not isinstance(self.allow_partial_fills, bool):
+            raise TypeError("allow_partial_fills must be boolean")
 
 
 class ExecutionSimulator:
@@ -181,9 +195,11 @@ class ExecutionSimulator:
             return True
         if order.stop_price is None:
             raise ValueError("stop_price is required for STOP orders")
+        _finite_positive(market_price, "market_price")
         return market_price >= order.stop_price if order.side == ExecutionSide.BUY else market_price <= order.stop_price
 
     def _slippage_price(self, side: ExecutionSide, market_price: float) -> float:
+        _finite_positive(market_price, "market_price")
         direction = 1 if side == ExecutionSide.BUY else -1
         price = market_price * (1 + direction * self.config.slippage_bps / 10_000)
         if not math.isfinite(price) or price <= 0:
@@ -191,10 +207,9 @@ class ExecutionSimulator:
         return price
 
     def execute(self, order: SimOrder, market_price: float, timestamp_ns: int) -> SimFill:
-        if not math.isfinite(float(market_price)) or market_price <= 0:
-            raise ValueError("market_price must be finite and greater than zero")
-        if timestamp_ns < order.submitted_at_ns:
-            raise ValueError("fill timestamp cannot precede order submission")
+        _finite_positive(market_price, "market_price")
+        if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int) or timestamp_ns < order.submitted_at_ns:
+            raise ValueError("fill timestamp must be an integer and cannot precede order submission")
         if not self._stop_triggered(order, market_price):
             raise ValueError("stop order has not triggered")
         fill_time = timestamp_ns + self.config.latency_ns
@@ -219,8 +234,8 @@ class ExecutionSimulator:
         return tuple(accepted)
 
     def execute_depth(self, order: SimOrder, book: OrderBook, timestamp_ns: int, queue_evidence: Iterable[QueueEvidence] = ()) -> ExecutionResult:
-        if timestamp_ns < order.submitted_at_ns:
-            raise ValueError("fill timestamp cannot precede order submission")
+        if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int) or timestamp_ns < order.submitted_at_ns:
+            raise ValueError("fill timestamp must be an integer and cannot precede order submission")
         if order.order_type == OrderType.STOP:
             best = book.asks if order.side == ExecutionSide.BUY else book.bids
             if not best or not self._stop_triggered(order, best[0].price):
@@ -245,8 +260,10 @@ class ExecutionSimulator:
         remaining = order.quantity
         fills: list[SimFill] = []
         for level in levels:
-            if remaining <= 0: break
-            if level.quantity <= 0: continue
+            if remaining <= 0:
+                break
+            if level.quantity <= 0:
+                continue
             take = min(remaining, level.quantity)
             fills.append(SimFill(order.order_id, order.instrument, order.side, take,
                                  self._slippage_price(order.side, level.price),
@@ -262,7 +279,8 @@ class ExecutionSimulator:
         remaining = order.quantity; queue_ahead = order.queue_ahead_quantity; consumed_by_price: dict[float, int] = {}; fills: list[SimFill] = []
         for timestamp_ns, book, evidence in updates:
             if remaining <= 0: break
-            if timestamp_ns < order.submitted_at_ns: raise ValueError("fill timestamp cannot precede order submission")
+            if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int) or timestamp_ns < order.submitted_at_ns:
+                raise ValueError("fill timestamp must be an integer and cannot precede order submission")
             levels = self._executable_levels(order, book)
             if order.order_type == OrderType.STOP:
                 best = book.asks if order.side == ExecutionSide.BUY else book.bids
