@@ -47,7 +47,7 @@ def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfi
         if not (converged or expired or timed_out): equity_curve.append({'timestamp':point.timestamp.isoformat(),'equity':equity}); continue
         gross=_legacy_gap_profit(entry,point) if config.execution_model=='gap' else _executable_spread_profit(entry,point)
         net=gross-config.charges_per_trade-config.funding_cost_per_trade; capital=entry.cash_price*entry.lot_size+entry.margin_required; roi=net/capital*100.0 if capital else 0.0; reason='convergence' if converged else ('expiry' if expired else 'max_holding')
-        trades.append({'entry_time':entry.timestamp.isoformat(),'exit_time':point.timestamp.isoformat(),'entry_gap':entry.gap,'exit_gap':point.gap,'lot_size':entry.lot_size,'gross_profit':gross,'charges':config.charges_per_trade,'funding_cost':config.funding_cost_per_trade,'net_profit':net,'roi_pct':roi,'exit_reason':reason,'execution_model':config.execution_model})
+        trades.append({'entry_time':entry.timestamp.isoformat(),'exit_time':point.timestamp.isoformat(),'entry_gap':entry.gap,'exit_gap':point.gap,'lot_size':entry.lot_size,'filled_quantity':entry.lot_size,'gross_profit':gross,'charges':config.charges_per_trade,'funding_cost':config.funding_cost_per_trade,'net_profit':net,'roi_pct':roi,'exit_reason':reason,'execution_model':config.execution_model,'symbol':entry.symbol,'contract_month':entry.contract_month})
         equity+=net; total_capital+=capital; peak=max(peak,equity); max_drawdown=max(max_drawdown,peak-equity); equity_curve.append({'timestamp':point.timestamp.isoformat(),'equity':equity}); entry=None
     wins=sum(1 for t in trades if t['net_profit']>0)
     return {'trade_count':len(trades),'wins':wins,'losses':len(trades)-wins,'win_rate_pct':wins/len(trades)*100.0 if trades else 0.0,'net_profit':equity,'roi_pct':equity/total_capital*100.0 if total_capital else 0.0,'invested_capital':total_capital,'max_drawdown':max_drawdown,'equity_curve':equity_curve,'trades':trades,'open_position':{'entry_time':entry.timestamp.isoformat(),'symbol':entry.symbol,'contract_month':entry.contract_month,'entry_gap':entry.gap,'lot_size':entry.lot_size} if entry is not None else None}
@@ -71,17 +71,18 @@ def run_multi_contract_backtest(points:Iterable[CashFutureHistoryPoint],config:B
     return _aggregate_contract_results(results)
 
 def run_multi_contract_backtest_streaming(points:Iterable[CashFutureHistoryPoint],config:BacktestConfig)->dict:
-    """Backtest interleaved symbols/contracts without requiring contract-contiguous input."""
-    buckets:dict[tuple[str,str],list[CashFutureHistoryPoint]]={}
+    """Process a symbol/contract ordered stream while retaining only one series."""
+    results=[]; current_key=None; current_series=[]; previous_timestamp=None; seen_keys=set()
     for point in points:
         if config.contract_month is not None and point.contract_month!=config.contract_month: continue
-        buckets.setdefault((point.contract_month, point.symbol),[]).append(point)
-    results=[]
-    for key in sorted(buckets):
-        series=buckets[key]
-        if any(current.timestamp < previous.timestamp for previous,current in zip(series,series[1:])):
-            raise ValueError('streaming backtest input must be ordered by timestamp within each symbol/contract')
-        results.append(run_backtest(series,config))
+        key=(point.contract_month,point.symbol)
+        if current_key is None: current_key=key
+        elif key!=current_key:
+            results.append(run_backtest(tuple(current_series),config)); seen_keys.add(current_key); current_series=[]; current_key=key; previous_timestamp=None
+            if key in seen_keys: raise ValueError('streaming backtest input must keep each symbol/contract series contiguous')
+        if previous_timestamp is not None and point.timestamp<previous_timestamp: raise ValueError('streaming backtest input must be ordered by timestamp within each symbol/contract')
+        previous_timestamp=point.timestamp; current_series.append(point)
+    if current_series: results.append(run_backtest(tuple(current_series),config))
     return _aggregate_contract_results(results)
 
 __all__=['BacktestConfig','run_backtest','run_multi_contract_backtest','run_multi_contract_backtest_streaming']
