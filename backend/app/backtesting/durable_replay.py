@@ -24,6 +24,12 @@ class DurableEventBacktestEngine:
         self.engine, self.ledger, self.run_id = engine, ledger, run_id
         self.checkpoint_interval = checkpoint_interval
 
+    @staticmethod
+    def _event_key(event: MarketEvent) -> tuple[object, ...]:
+        """Stable source identity used for replay idempotency and provenance."""
+        return (event.timestamp_ns, event.instrument, event.event_type.value,
+                event.sequence, event.source)
+
     def start_run(self, strategy: object, initial_capital: float, *,
                   schema_version: int = LEDGER_SCHEMA_VERSION,
                   data_source_fingerprint: str | None = None) -> None:
@@ -35,12 +41,6 @@ class DurableEventBacktestEngine:
             schema_version=schema_version,
             data_source_fingerprint=data_source_fingerprint,
         )
-
-    @staticmethod
-    def _event_key(event: MarketEvent) -> tuple[object, ...]:
-        """Stable audit identity for one source event; used only for journal idempotency."""
-        return (event.timestamp_ns, event.instrument, event.event_type.value,
-                event.sequence, event.source)
 
     def _journal_strategy(self, strategy: object):
         ledger, run_id = self.ledger, self.run_id
@@ -59,6 +59,11 @@ class DurableEventBacktestEngine:
                 starter = getattr(strategy, "on_start", None)
                 if callable(starter): starter(context)
             def on_event(self, event, context):
+                key = DurableEventBacktestEngine._event_key(event)
+                # Idempotency is an execution guard, not merely a journal guard.
+                # A duplicate source event must never reach strategy side effects.
+                if key in existing_event_keys:
+                    return None
                 handler = getattr(strategy, "on_event", None)
                 if not callable(handler):
                     decision = None
@@ -66,15 +71,20 @@ class DurableEventBacktestEngine:
                     decision = handler(event, context)
                     if decision is not None:
                         if not isinstance(decision, StrategyDecision): raise TypeError("event strategy must return StrategyDecision or None")
-                key = DurableEventBacktestEngine._event_key(event)
-                if key not in existing_event_keys:
-                    ledger.append(LedgerRecord(run_id, "EVENT", event.timestamp_ns,
-                        {"instrument": event.instrument, "event_type": event.event_type.value,
-                         "sequence": event.sequence, "source": event.source}))
-                    existing_event_keys.add(key)
+                ledger.append(LedgerRecord(run_id, "EVENT", event.timestamp_ns,
+                    {"instrument": event.instrument, "event_type": event.event_type.value,
+                     "sequence": event.sequence, "source": event.source}))
+                existing_event_keys.add(key)
                 if decision is not None:
                     ledger.append(LedgerRecord(run_id, "DECISION", event.timestamp_ns,
-                        {"action": decision.action, "orders": len(decision.orders), "metadata": dict(decision.metadata)}))
+                        {"event_identity": {
+                            "timestamp_ns": event.timestamp_ns,
+                            "instrument": event.instrument,
+                            "event_type": event.event_type.value,
+                            "sequence": event.sequence,
+                            "source": event.source,
+                         }, "action": decision.action, "orders": len(decision.orders),
+                         "metadata": dict(decision.metadata)}))
                 return decision
             def on_end(self, context):
                 finisher = getattr(strategy, "on_end", None)
@@ -96,7 +106,10 @@ class DurableEventBacktestEngine:
             if not isinstance(raw, Mapping):
                 raise ValueError("invalid order lifecycle checkpoint entry")
             lifecycle = OrderLifecycle.restore_state(raw)
-            self.engine._order_lifecycles[lifecycle.state.order.order_id] = lifecycle
+            order_id = lifecycle.state.order.order_id
+            if order_id in self.engine._order_lifecycles:
+                raise ValueError(f"duplicate order lifecycle checkpoint: {order_id}")
+            self.engine._order_lifecycles[order_id] = lifecycle
 
     @staticmethod
     def _trade_state(portfolio: Portfolio) -> list[Mapping[str, object]]:
@@ -168,7 +181,9 @@ class DurableEventBacktestEngine:
     def run(self, events: Iterable[MarketEvent], strategy: object, *, state: Mapping[str, object] | None = None,
             resume: bool = False, schema_version: int = LEDGER_SCHEMA_VERSION,
             data_source_fingerprint: str | None = None) -> ReplayStats:
-        source_events = tuple(events)
+        # Keep the source lazy. The previous tuple(events) implementation made
+        # replay memory scale with the entire dataset and defeated durable streaming.
+        source_events = iter(events)
         checkpoint = self.ledger.load_checkpoint(self.run_id) if resume else None
         context_state = dict(state or {})
         start_cursor = 0
@@ -181,6 +196,8 @@ class DurableEventBacktestEngine:
             if checkpoint is None: raise ValueError("no checkpoint available for resume")
             saved = checkpoint.state
             start_cursor = int(saved.get("source_cursor", checkpoint.event_index))
+            if start_cursor < 0:
+                raise ValueError("invalid checkpoint source_cursor")
             saved_portfolio = saved.get("portfolio_state")
             if saved_portfolio is not None and self.engine.portfolio is not None:
                 self.engine.portfolio.restore_state(saved_portfolio)
@@ -194,19 +211,32 @@ class DurableEventBacktestEngine:
             self.ledger.append(LedgerRecord(self.run_id, "RUN_RESUME", checkpoint.timestamp_ns,
                                             {"source_cursor": start_cursor, "event_index": checkpoint.event_index,
                                              "open_orders_restored": sum(not x.state.terminal for x in self.engine._order_lifecycles.values())}))
-        elif source_events:
-            self.ledger.append(LedgerRecord(self.run_id, "RUN_START", source_events[0].timestamp_ns,
-                                            {"event_count": len(source_events)}))
+
+        # Capture only one source event for RUN_START; the rest stays streaming.
+        first_source_event: MarketEvent | None = None
+        if not resume:
+            try:
+                first_source_event = next(source_events)
+            except StopIteration:
+                first_source_event = None
+            if first_source_event is not None:
+                from itertools import chain
+                source_events = chain((first_source_event,), source_events)
+                self.ledger.append(LedgerRecord(self.run_id, "RUN_START", first_source_event.timestamp_ns,
+                                                {"event_count": None, "streaming": True}))
 
         journaled = self._journal_strategy(strategy)
+        last_timestamp_ns = 0
         def checkpoint_callback(source_cursor: int, dispatched: int, extra: Mapping[str, object]) -> None:
-            payload = dict(extra); payload["timestamp_ns"] = source_events[source_cursor - 1].timestamp_ns if source_cursor else 0
+            payload = dict(extra)
+            payload["timestamp_ns"] = last_timestamp_ns
             self._save_checkpoint(source_cursor, dispatched, payload, strategy)
 
         result = self.engine.run(source_events, journaled, state=context_state, start_event_index=start_cursor,
                                  checkpoint_callback=checkpoint_callback, checkpoint_interval=self.checkpoint_interval)
+        final_cursor = result.events_seen
         final_state = {
-            "source_cursor": len(source_events), "events_seen": result.events_seen,
+            "source_cursor": final_cursor, "events_seen": result.events_seen,
             "events_dispatched": result.events_dispatched, "decisions_emitted": result.decisions_emitted,
             "orders_submitted": result.orders_submitted, "fills": result.fills, "risk_blocks": result.risk_blocks,
             "context_state": context_state, "strategy_state": dict(strategy_state(strategy)),
@@ -216,7 +246,7 @@ class DurableEventBacktestEngine:
             "order_lifecycle_state": self._lifecycle_state(),
             "final_snapshot": asdict(result.final_snapshot) if result.final_snapshot is not None else None,
         }
-        self.ledger.checkpoint(Checkpoint(self.run_id, len(source_events), result.last_timestamp_ns or 0, final_state))
+        self.ledger.checkpoint(Checkpoint(self.run_id, final_cursor, result.last_timestamp_ns or 0, final_state))
         self.ledger.append(LedgerRecord(self.run_id, "RUN_END", result.last_timestamp_ns or 0,
                                         {"events_dispatched": result.events_dispatched, "fills": result.fills,
                                          "risk_blocks": result.risk_blocks}))
