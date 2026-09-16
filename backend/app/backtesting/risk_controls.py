@@ -93,8 +93,8 @@ def order_reduces_position_risk(portfolio: Portfolio, order: SimOrder) -> bool:
     unwind exposure instead of being trapped by a fail-closed new-risk gate.
     Orders that open, add to, or reverse a position are not considered reducing.
     """
-    position = next((p for p in portfolio.snapshot().positions if p.instrument == order.instrument), None)
-    current = position.quantity if position is not None else 0
+    current = next((int(item["quantity"]) for item in portfolio.export_state().get("positions", ())
+                    if item.get("instrument") == order.instrument), 0)
     if current == 0:
         return False
     signed = order.quantity if order.side == ExecutionSide.BUY else -order.quantity

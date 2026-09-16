@@ -74,8 +74,9 @@ def test_true_resume_restores_portfolio_strategy_market_state_and_cursor(tmp_pat
     assert len(ledger.records("resume-run", "RUN_RESUME")) == 1 and len(ledger.records("resume-run", "EVENT")) == 4
     full_portfolio = Portfolio(1000); full_ledger = BacktestLedger(); full_ledger.start_run("full-run", "resume", "1", 1000)
     DurableEventBacktestEngine(EventBacktestEngine(execution=ExecutionSimulator(), portfolio=full_portfolio), full_ledger, "full-run").run(events, Strategy())
-    assert resumed_portfolio.snapshot().cash == full_portfolio.snapshot().cash
-    assert resumed_portfolio.snapshot().equity == full_portfolio.snapshot().equity
+    marks = resumed.engine._current_marks()
+    assert resumed_portfolio.snapshot(marks).cash == full_portfolio.snapshot(marks).cash
+    assert resumed_portfolio.snapshot(marks).equity == full_portfolio.snapshot(marks).equity
     assert resumed_portfolio.trades == full_portfolio.trades
     ledger.close(); full_ledger.close()
 

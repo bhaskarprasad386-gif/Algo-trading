@@ -55,6 +55,22 @@ def test_risk_reducing_order_is_allowed_to_unwind_long_position():
     assert order_reduces_position_risk(p, SimOrder("add", "X", ExecutionSide.BUY, 5)) is False
 
 
+def test_risk_reducing_classification_does_not_require_market_marks():
+    p = Portfolio(100_000)
+    p.apply_fill(fill("open", "X", ExecutionSide.BUY, 10, 100))
+    with pytest.raises(ValueError, match="missing market mark"):
+        p.snapshot()
+    assert order_reduces_position_risk(p, SimOrder("close", "X", ExecutionSide.SELL, 10)) is True
+
+
+def test_atomic_risk_reducing_close_is_allowed_when_marked_equity_is_negative():
+    p = Portfolio(100_000, RiskConfig(initial_margin_rate=0.5, maintenance_margin_rate=0.4))
+    p.apply_fill(fill("open", "X", ExecutionSide.BUY, 300, 500))
+    snapshot = p.apply_fills_atomic((fill("close", "X", ExecutionSide.SELL, 300, 100),), {"X": 100.0})
+    assert snapshot.positions == ()
+    assert snapshot.cash == pytest.approx(-20_000.0)
+
+
 def test_risk_reducing_order_is_allowed_to_unwind_short_position():
     p = Portfolio(100_000)
     p.apply_fill(fill("open", "X", ExecutionSide.SELL, 10, 100))
