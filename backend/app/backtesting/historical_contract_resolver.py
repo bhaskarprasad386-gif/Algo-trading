@@ -24,7 +24,8 @@ class HistoricalContractResolver:
         self.catalog = catalog
 
     def resolve_future(self, *, underlying: str, contract_month: str, as_of: date) -> HistoricalFutureSelection:
-        underlying = underlying.strip().upper()
+        underlying = underlying.strip().upper() if isinstance(underlying, str) else underlying
+        contract_month = contract_month.strip() if isinstance(contract_month, str) else contract_month
         if not underlying:
             raise ValueError("underlying is required")
         record = self.catalog.resolve_contract_month(
@@ -34,7 +35,10 @@ class HistoricalContractResolver:
             as_of=as_of,
             instrument_type="STOCK_FUTURE",
         )
-        return HistoricalFutureSelection(underlying, contract_month, record)
+        # Return the same canonical key that was actually resolved, rather
+        # than preserving caller whitespace in the selection metadata.
+        canonical_month = f"{record.expiry.year:04d}-{record.expiry.month:02d}"
+        return HistoricalFutureSelection(underlying, canonical_month, record)
 
     def resolve_future_token(self, *, underlying: str, contract_month: str, as_of: date) -> str:
         return self.resolve_future(underlying=underlying, contract_month=contract_month, as_of=as_of).token
