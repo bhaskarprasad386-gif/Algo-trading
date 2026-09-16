@@ -16,6 +16,8 @@ from app.backtesting.statistics import EquityPoint, calculate_statistics
 class BacktestConfig:
     initial_capital: float = 100_000.0
     quantity: float = 1.0
+    contract_multiplier: float = 1.0
+    currency: str = "INR"
     slippage_rate: float = 0.0
     transaction_cost_rate: float = 0.0
     quantity_step: float | None = None
@@ -26,14 +28,15 @@ class BacktestConfig:
     execution_timing: str = "close"
     enforce_cash: bool = True
     def __post_init__(self) -> None:
-        for name, value in (("initial_capital", self.initial_capital), ("quantity", self.quantity), ("slippage_rate", self.slippage_rate), ("transaction_cost_rate", self.transaction_cost_rate), ("transaction_cost_minimum", self.transaction_cost_minimum)):
+        for name, value in (("initial_capital", self.initial_capital), ("quantity", self.quantity), ("contract_multiplier", self.contract_multiplier), ("slippage_rate", self.slippage_rate), ("transaction_cost_rate", self.transaction_cost_rate), ("transaction_cost_minimum", self.transaction_cost_minimum)):
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(float(value)): raise ValueError(f"{name} must be a finite number")
-        if self.initial_capital <= 0 or self.quantity <= 0: raise ValueError("initial_capital and quantity must be positive")
+        if self.initial_capital <= 0 or self.quantity <= 0 or self.contract_multiplier <= 0: raise ValueError("initial_capital, quantity, and contract_multiplier must be positive")
+        if not isinstance(self.currency, str) or not self.currency.strip(): raise ValueError("currency must be a non-empty string")
         if self.quantity_step is not None and (self.quantity_step <= 0 or not _is_multiple(self.quantity, self.quantity_step)): raise ValueError("invalid quantity_step/quantity")
         if self.tick_size is not None and self.tick_size <= 0: raise ValueError("tick_size must be positive")
         if self.slippage_rate < 0 or self.slippage_rate >= 1: raise ValueError("slippage_rate must be in [0, 1)")
         for name, value in (("entry_slippage_rate", self.entry_slippage_rate), ("exit_slippage_rate", self.exit_slippage_rate)):
-            if value is not None and (value < 0 or value >= 1): raise ValueError(f"{name} must be in [0, 1)")
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(float(value)) or value < 0 or value >= 1): raise ValueError(f"{name} must be a finite number in [0, 1)")
         if self.transaction_cost_rate < 0 or self.transaction_cost_minimum < 0: raise ValueError("transaction costs cannot be negative")
         if self.execution_timing not in {"close", "next_open"}: raise ValueError("invalid execution_timing")
     @property
@@ -151,19 +154,24 @@ class BacktestEngine:
         return self.run_incremental(candles,entry_strategy,exit_strategy,persist_chunk=lambda trades,sequence: ledger.append(run_id,sequence,trades),chunk_size=chunk_size)
     def run_incremental(self,candles,entry_strategy,exit_strategy,*,persist_chunk,chunk_size=500):
         if chunk_size<=0: raise ValueError("chunk_size must be positive")
-        capital=self.config.initial_capital; open_trade=None; trades=[]; curve=[]; previous_timestamp=None; last_close=last_timestamp=None
+        capital=self.config.initial_capital; open_trade=None; trades=[]; curve=[]; previous_timestamp=None; last_close=last_timestamp=None; max_intrabar_drawdown=0.0
         for candle in candles:
             timestamp=_validate_candle(candle,previous_timestamp); previous_timestamp=timestamp; close=float(candle["close"]); last_close,last_timestamp=close,timestamp; context={k:v for k,v in candle.items() if _is_number(v)}
+            peak_before=max((point.equity for point in curve),default=self.config.initial_capital)
             if open_trade is None and entry_strategy.evaluate(context):
-                xp=_execution_price(self.config,close,"BUY"); _ensure_cash_available(self.config,capital,xp); open_trade=(timestamp,xp)
+                xp=_execution_price(self.config,close,"BUY"); _ensure_cash_available(self.config,capital,xp); open_trade=(timestamp,xp,close)
             elif open_trade is not None and exit_strategy.evaluate(context):
-                et,ep=open_trade; xp=_execution_price(self.config,close,"SELL"); tr=_build_trade(self.config,et,ep,timestamp,xp,entry_market_price=close,exit_market_price=close,entry_price_source="bar:close",exit_price_source="bar:close"); capital+=tr.net_pnl; trades.append(tr)
+                et,ep,emp=open_trade; xp=_execution_price(self.config,close,"SELL"); tr=_build_trade(self.config,et,ep,timestamp,xp,entry_market_price=emp,exit_market_price=close,entry_price_source="bar:close",exit_price_source="bar:close"); capital+=tr.net_pnl; trades.append(tr)
                 if len(trades)%chunk_size==0: persist_chunk(tuple(trades[-chunk_size:]),len(trades)//chunk_size-1)
                 open_trade=None
+            if open_trade is not None and "low" in candle:
+                _validate_price_field(candle["low"],"low")
+                low_equity=capital+_calculate_unrealized_pnl(self.config,open_trade[1],float(candle["low"]))
+                if peak_before>0: max_intrabar_drawdown=max(max_intrabar_drawdown,(peak_before-low_equity)/peak_before)
             curve.append(_equity_point(timestamp,capital,open_trade,close,self.config))
         if trades and len(trades)%chunk_size: persist_chunk(tuple(trades[-(len(trades)%chunk_size):]),len(trades)//chunk_size)
         unreal=_calculate_unrealized_pnl(self.config,open_trade[1],last_close) if open_trade is not None and last_close is not None else 0.0
-        return _build_result(self.config.initial_capital,capital+unreal,trades,0.0,unreal,open_trade is not None,curve)
+        return _build_result(self.config.initial_capital,capital+unreal,trades,max_intrabar_drawdown,unreal,open_trade is not None,curve)
 
 def _event_order_key(record):
     sequence=record.sequence if record.sequence is not None else -1
@@ -185,7 +193,9 @@ def _round_price(price,tick_size):
     if tick_size is None:return price
     return float((Decimal(str(price))/Decimal(str(tick_size))).quantize(Decimal("1"),rounding="ROUND_HALF_UP")*Decimal(str(tick_size)))
 def _ensure_cash_available(config,capital,entry_price):
-    if config.enforce_cash and entry_price*config.quantity+max(config.transaction_cost_minimum,entry_price*config.quantity*config.transaction_cost_rate)>capital: raise ValueError("insufficient cash for backtest entry")
+    notional=entry_price*config.quantity*config.contract_multiplier
+    costs=max(config.transaction_cost_minimum,notional*config.transaction_cost_rate)
+    if config.enforce_cash and notional+costs>capital: raise ValueError("insufficient cash for backtest entry")
 def _is_multiple(value,step): return Decimal(str(value))/Decimal(str(step)) == (Decimal(str(value))/Decimal(str(step))).to_integral_value()
 def _timestamp_ns(value):
     if isinstance(value,datetime): return int((value if value.tzinfo else value.replace(tzinfo=timezone.utc)).timestamp()*1e9)
@@ -210,12 +220,12 @@ def _resolve_signal_price(decision,payload,price_field):
     if not _is_number(raw):raise ValueError(f"event payload must contain numeric {price_field!r} or signal price")
     return float(raw),f"payload:{price_field}"
 def _build_trade(config,entry_timestamp,entry_price,exit_timestamp,exit_price,*,entry_market_price=None,exit_market_price=None,entry_price_source=None,exit_price_source=None,entry_event_identity=None,exit_event_identity=None):
-    gross=(exit_price-entry_price)*config.quantity; value=(entry_price+exit_price)*config.quantity; costs=max(config.transaction_cost_minimum,value*config.transaction_cost_rate)
+    gross=(exit_price-entry_price)*config.quantity*config.contract_multiplier; value=(entry_price+exit_price)*config.quantity*config.contract_multiplier; costs=max(config.transaction_cost_minimum,value*config.transaction_cost_rate)
     values=(entry_price,exit_price,gross,value,costs,gross-costs)
     if not all(isfinite(float(value)) for value in values): raise ValueError("backtest trade values must be finite")
     return BacktestTrade(entry_timestamp,exit_timestamp,entry_price,exit_price,config.quantity,gross,costs,gross-costs,entry_market_price,exit_market_price,entry_price_source,exit_price_source,entry_event_identity,exit_event_identity)
 def _calculate_unrealized_pnl(config,entry_price,mark_price):
-    exit_price=_execution_price(config,mark_price,"SELL"); gross=(exit_price-entry_price)*config.quantity; value=(entry_price+exit_price)*config.quantity; costs=max(config.transaction_cost_minimum,value*config.transaction_cost_rate); return gross-costs
+    exit_price=_execution_price(config,mark_price,"SELL"); gross=(exit_price-entry_price)*config.quantity*config.contract_multiplier; value=(entry_price+exit_price)*config.quantity*config.contract_multiplier; costs=max(config.transaction_cost_minimum,value*config.transaction_cost_rate); return gross-costs
 def _build_result(initial_capital,final_capital,trades,max_drawdown=0.0,unrealized_pnl=0.0,has_open_trade=False,equity_curve=()):
     wins=sum(1 for t in trades if t.net_pnl>0); net=final_capital-initial_capital; curve=tuple(equity_curve); stats=calculate_statistics(curve,initial_capital) if curve else None
     return BacktestResult(initial_capital,final_capital,net,net/initial_capital,tuple(trades),wins/len(trades) if trades else 0.0,net/len(trades) if trades else 0.0,stats.sharpe_ratio if stats else None,stats.sortino_ratio if stats else None,max(stats.max_drawdown if stats else 0.0,max_drawdown),stats.cagr if stats else None,unrealized_pnl,has_open_trade,curve)
