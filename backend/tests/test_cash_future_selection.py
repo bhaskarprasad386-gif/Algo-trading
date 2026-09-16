@@ -42,3 +42,8 @@ def test_future_index_is_not_selected_for_stock_strategy():
 def test_invalid_mode_rejected():
     with pytest.raises(ValueError):
         select_cash_future(_catalog(), spot_instrument="NSE:3045:SBIN", underlying="SBIN", replay_date=date(2026, 9, 1), mode="ROLL")
+
+
+def test_non_string_mode_rejected_at_boundary():
+    with pytest.raises(ValueError, match="mode must be CURRENT, NEAR or BOTH"):
+        select_cash_future(_catalog(), spot_instrument="NSE:3045:SBIN", underlying="SBIN", replay_date=date(2026, 9, 1), mode=True)
