@@ -13,7 +13,6 @@ from app.backtesting.strategy import StrategyContext, StrategyDecision, validate
 
 LegacyEventStrategy = Callable[[MarketEvent, Mapping[str, object]], object]
 
-
 @dataclass(frozen=True)
 class ReplayStats:
     events_seen: int
@@ -25,7 +24,6 @@ class ReplayStats:
     fills: int = 0
     risk_blocks: int = 0
     final_snapshot: PortfolioSnapshot | None = None
-
 
 class EventBacktestEngine:
     """Replay source events with point-in-time execution and persistent open orders."""
@@ -74,36 +72,57 @@ class EventBacktestEngine:
     @staticmethod
     def _book_from_event(event: MarketEvent) -> OrderBook | None:
         bids, asks = event.payload.get("bids"), event.payload.get("asks")
-        if not isinstance(bids, (list, tuple)) and not isinstance(asks, (list, tuple)):
+        if bids is None and asks is None:
             return None
-        def levels(raw):
-            if not isinstance(raw, (list, tuple)):
+        for name, raw in (("bids", bids), ("asks", asks)):
+            if raw is not None and not isinstance(raw, (list, tuple)):
+                raise ValueError(f"DEPTH {name} must be a list or tuple")
+
+        def levels(raw, side_name: str):
+            if raw is None:
                 return ()
             out = []
-            for item in raw:
-                if isinstance(item, DepthLevel):
-                    out.append(item)
-                elif isinstance(item, (list, tuple)) and len(item) >= 2:
-                    out.append(DepthLevel(float(item[0]), int(item[1])))
-                elif isinstance(item, Mapping):
-                    out.append(DepthLevel(float(item["price"]), int(item["quantity"])))
+            for index, item in enumerate(raw):
+                try:
+                    if isinstance(item, DepthLevel):
+                        level = item
+                    elif isinstance(item, (list, tuple)) and len(item) == 2:
+                        price, quantity = item
+                        if isinstance(price, bool) or isinstance(quantity, bool):
+                            raise ValueError("boolean depth field")
+                        level = DepthLevel(float(price), int(quantity))
+                    elif isinstance(item, Mapping):
+                        price, quantity = item["price"], item["quantity"]
+                        if isinstance(price, bool) or isinstance(quantity, bool):
+                            raise ValueError("boolean depth field")
+                        level = DepthLevel(float(price), int(quantity))
+                    else:
+                        raise ValueError("unsupported depth level")
+                except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                    raise ValueError(f"invalid DEPTH {side_name}[{index}]") from exc
+                out.append(level)
             return tuple(out)
-        return OrderBook(bids=levels(bids), asks=levels(asks))
+        return OrderBook(bids=levels(bids, "bids"), asks=levels(asks, "asks"))
 
     def _apply_queue_evidence(self, event: MarketEvent) -> None:
         raw = event.payload.get("queue_evidence")
-        if not isinstance(raw, (list, tuple)):
+        if raw is None:
             return
-        for item in raw:
+        if not isinstance(raw, (list, tuple)):
+            raise ValueError("queue_evidence must be a list or tuple")
+        for index, item in enumerate(raw):
             if not isinstance(item, Mapping):
-                continue
+                raise ValueError(f"invalid queue_evidence[{index}]")
             try:
-                price = float(item["price"])
-                evidence = QueueEvidence(price=price,
-                    executed_quantity=int(item.get("executed_quantity", 0)),
-                    cancelled_quantity_ahead=int(item.get("cancelled_quantity_ahead", 0)))
-            except (KeyError, TypeError, ValueError):
-                continue
+                price = item["price"]
+                executed_quantity = item.get("executed_quantity", 0)
+                cancelled_quantity_ahead = item.get("cancelled_quantity_ahead", 0)
+                if isinstance(price, bool) or isinstance(executed_quantity, bool) or isinstance(cancelled_quantity_ahead, bool):
+                    raise ValueError("boolean queue evidence field")
+                evidence = QueueEvidence(price=price, executed_quantity=executed_quantity,
+                    cancelled_quantity_ahead=cancelled_quantity_ahead)
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(f"invalid queue_evidence[{index}]") from exc
             for order_id, order in tuple(self._open_orders.items()):
                 if order.instrument != event.instrument or order.order_type != OrderType.LIMIT or order.limit_price != evidence.price:
                     continue
@@ -131,7 +150,7 @@ class EventBacktestEngine:
                 marks[instrument] = price
                 continue
             book_state = self._latest_books.get(instrument)
-            if book_state is None or book_state[0] != event.timestamp_ns:
+            if book_state is None:
                 continue
             bids, asks = book_state[1].bids, book_state[1].asks
             if bids and asks:
@@ -147,7 +166,6 @@ class EventBacktestEngine:
         return marks
 
     def _market_risk_allows_order(self, order: SimOrder) -> bool:
-        """Allow risk-reducing orders to unwind exposure even while hard limits are breached."""
         if self.portfolio is None:
             return True
         try:
@@ -192,8 +210,7 @@ class EventBacktestEngine:
 
     def cancel_order(self, order_id: str, timestamp_ns: int, reason: str = "cancelled") -> None:
         lifecycle = self._order_lifecycles.get(order_id); order = self._open_orders.get(order_id)
-        if lifecycle is None or order is None:
-            raise KeyError(f"open order not found: {order_id}")
+        if lifecycle is None or order is None: raise KeyError(f"open order not found: {order_id}")
         lifecycle.cancel(timestamp_ns, reason)
         state = self._queue_lifecycles.get(order_id)
         if state is not None: self._queue_lifecycles[order_id] = state.cancel()
@@ -209,17 +226,16 @@ class EventBacktestEngine:
         if queue < 0: raise ValueError("queue_ahead_quantity cannot be negative")
         if self.portfolio is not None and not order_reduces_position_risk(self.portfolio, effective):
             observed = self._latest_events.get(effective.instrument)
+            if observed is not None and observed.timestamp_ns > timestamp_ns:
+                raise RiskViolation("replacement order cannot use future market state")
             reference = self._order_reference_price(effective, observed) if observed is not None else None
-            if reference is None:
-                raise RiskViolation("replacement order has no reference price")
+            if reference is None: raise RiskViolation("replacement order has no reference price")
             reservation = effective.quantity * reference * self.portfolio.risk_config.initial_margin_rate
             self.portfolio.replace_margin_reservation(order_id, effective.order_id, reservation)
-            self._reserved_margin.pop(order_id, None)
-            self._reserved_margin[effective.order_id] = reservation
+            self._reserved_margin.pop(order_id, None); self._reserved_margin[effective.order_id] = reservation
         else:
             self._reserved_margin.pop(order_id, None)
-            if self.portfolio is not None:
-                self.portfolio.release_margin(order_id)
+            if self.portfolio is not None: self.portfolio.release_margin(order_id)
         lifecycle.replace(effective, timestamp_ns)
         prior_queue = self._queue_lifecycles.get(order_id, QueueLifecycleState(self._dynamic_queue_ahead.get(order_id, old.queue_ahead_quantity)))
         self._queue_lifecycles[order_id] = prior_queue.cancel()
@@ -350,10 +366,7 @@ class EventBacktestEngine:
             if previous_key is not None and key < previous_key: raise ValueError("events must be ordered by timestamp, sequence, source, and type")
             previous_key = key
             if raw_index < start_event_index:
-                history.append(event)
-                self._update_market_state(event)
-                last = event.timestamp_ns
-                continue
+                history.append(event); self._update_market_state(event); last = event.timestamp_ns; continue
             if not started:
                 starter = getattr(strategy, "on_start", None)
                 if callable(starter): starter(StrategyContext(event.timestamp_ns, tuple(history), dict(context_state)))
