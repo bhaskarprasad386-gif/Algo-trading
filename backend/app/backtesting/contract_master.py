@@ -104,23 +104,29 @@ class ContractMasterCatalog:
             FROM derivative_contracts WHERE snapshot_date=? ORDER BY instrument_type,underlying,expiry,token""", (snapshot_date.isoformat(),)).fetchall()
         return tuple(ContractRecord(r[0], r[1], r[2], date.fromisoformat(r[3]), r[4], r[5], int(r[6]), snapshot_date, None if r[7] is None else float(r[7])) for r in rows)
 
-    def contracts(self, *, exchange: str, underlying: str, as_of: date, instrument_type: str = "STOCK_FUTURE") -> tuple[ContractRecord, ...]:
+    def contracts(self, *, exchange: str, underlying: str, as_of: date, instrument_type: str = "STOCK_FUTURE", max_snapshot_age_days: int | None = None) -> tuple[ContractRecord, ...]:
         row = self._db.execute("SELECT snapshot_date FROM contract_master_snapshots WHERE snapshot_date<=? ORDER BY snapshot_date DESC LIMIT 1", (as_of.isoformat(),)).fetchone()
         if row is None:
             raise LookupError(f"no historical contract-master snapshot for {as_of.isoformat()}")
         snapshot = row[0]
+        if max_snapshot_age_days is not None:
+            if type(max_snapshot_age_days) is not int or max_snapshot_age_days < 0:
+                raise ValueError("max_snapshot_age_days must be a non-negative integer or None")
+            snapshot_age = (as_of - date.fromisoformat(snapshot)).days
+            if snapshot_age > max_snapshot_age_days:
+                raise LookupError(f"contract-master snapshot {snapshot} is stale for {as_of.isoformat()}")
         rows = self._db.execute("""SELECT exchange,symbol,token,expiry,instrument_type,underlying,lot_size,tick_size
             FROM derivative_contracts WHERE snapshot_date=? AND exchange=? AND underlying=?
             AND instrument_type=? AND expiry>=? ORDER BY expiry""", (snapshot, exchange, underlying, instrument_type, as_of.isoformat())).fetchall()
         return tuple(ContractRecord(r[0], r[1], r[2], date.fromisoformat(r[3]), r[4], r[5], int(r[6]), date.fromisoformat(snapshot), None if r[7] is None else float(r[7])) for r in rows)
 
-    def resolve(self, *, exchange: str, underlying: str, as_of: date, mode: str) -> ContractRecord:
+    def resolve(self, *, exchange: str, underlying: str, as_of: date, mode: str, max_snapshot_age_days: int | None = None) -> ContractRecord:
         if not isinstance(mode, str):
             raise ValueError("mode must be CURRENT or NEAR")
         mode = mode.strip().upper()
         if mode not in {"CURRENT", "NEAR"}:
             raise ValueError("mode must be CURRENT or NEAR")
-        contracts = self.contracts(exchange=exchange, underlying=underlying, as_of=as_of)
+        contracts = self.contracts(exchange=exchange, underlying=underlying, as_of=as_of, max_snapshot_age_days=max_snapshot_age_days)
         if not contracts:
             raise LookupError(f"no historical stock futures contract for {underlying} on {as_of.isoformat()}")
         return contracts[0] if mode == "CURRENT" else (contracts[1] if len(contracts) > 1 else contracts[0])
