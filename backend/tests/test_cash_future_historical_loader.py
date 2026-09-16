@@ -1,5 +1,7 @@
 from datetime import date, datetime, timezone
 
+import pytest
+
 from app.backtesting.cash_future_historical_loader import (
     CashFutureHistoricalLoader,
     CashFutureHistorySelection,
@@ -36,11 +38,7 @@ def test_loader_rejects_invalid_range(tmp_path):
 def test_pairing_does_not_skip_newer_future_when_cash_record_is_from_another_day(tmp_path):
     data = HistoricalCatalog(str(tmp_path / "data.db")); contracts = ContractMasterCatalog(str(tmp_path / "contracts.db"))
     contracts.upsert_snapshot(date(2026, 1, 2), [ContractRecord("NFO", "ABC26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 75)])
-    data.ingest([
-        HistoricalRecord("x", "cash", "1m", _ns("2026-01-05T03:45:00"), {"close": 100}),
-        HistoricalRecord("x", "cash", "1m", _ns("2026-01-05T03:46:00"), {"close": 101}),
-        HistoricalRecord("x", "future", "1m", _ns("2026-01-06T03:45:00"), {"close": 102}),
-    ])
+    data.ingest([HistoricalRecord("x", "cash", "1m", _ns("2026-01-05T03:45:00"), {"close": 100}), HistoricalRecord("x", "cash", "1m", _ns("2026-01-05T03:46:00"), {"close": 101}), HistoricalRecord("x", "future", "1m", _ns("2026-01-06T03:45:00"), {"close": 102})])
     from app.backtesting.cash_future_historical_loader import _merge_pair
     contract = ContractRecord("NFO", "ABC26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 75)
     result = list(_merge_pair(iter(data.iter_records(source="x", instrument="cash", timeframe="1m", start_ns=0, end_ns=10**20)), iter(data.iter_records(source="x", instrument="future", timeframe="1m", start_ns=0, end_ns=10**20)), symbol="ABC", contract=contract))
