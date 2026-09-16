@@ -39,8 +39,8 @@ def run_events_incremental(
     chunk_size: int = 500,
     price_field: str = "price",
 ) -> BacktestResult:
-    if chunk_size <= 0:
-        raise ValueError("chunk_size must be positive")
+    if type(chunk_size) is not int or chunk_size <= 0:
+        raise ValueError("chunk_size must be a positive integer")
     if not isinstance(price_field, str) or not price_field.strip():
         raise ValueError("price_field is required")
 
@@ -58,15 +58,11 @@ def run_events_incremental(
     previous_key = None
     previous_equity = engine_config.initial_capital
     previous_timestamp = None
-    seen_identities = set()
 
     for record in events:
         if not isinstance(record.timestamp_ns, int) or isinstance(record.timestamp_ns, bool) or record.timestamp_ns < 0:
             raise ValueError("event timestamp_ns must be a non-negative integer")
         identity = record.identity()
-        if identity in seen_identities:
-            raise ValueError("duplicate event identity")
-        seen_identities.add(identity)
         key = _event_order_key(record)
         if previous_key is not None and key <= previous_key:
             raise ValueError("events must be strictly ordered by timestamp, sequence, and stream identity")
@@ -86,10 +82,10 @@ def run_events_incremental(
             raw_price = record.payload.get(price_field)
             if raw_price is None and action in {"HOLD", "NONE"}:
                 continue
-            if not isinstance(raw_price, (int, float)) or isinstance(raw_price, bool):
-                raise ValueError(f"event payload must contain numeric {price_field!r} or signal price")
+            if not isinstance(raw_price, (int, float)) or isinstance(raw_price, bool) or not isfinite(float(raw_price)):
+                raise ValueError(f"event payload must contain finite numeric {price_field!r} or signal price")
             price = float(raw_price)
-        if isinstance(price, bool) or not isfinite(float(price)) or float(price) <= 0:
+        if isinstance(price, bool) or not isinstance(price, (int, float)) or not isfinite(float(price)) or float(price) <= 0:
             raise ValueError("event execution price must be finite and positive")
         price = float(price)
         last_price = price
