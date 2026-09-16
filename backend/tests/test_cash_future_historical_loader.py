@@ -45,7 +45,6 @@ def test_loader_fails_closed_when_historical_contract_snapshot_is_missing(tmp_pa
 
 def test_pairing_does_not_skip_newer_future_when_cash_record_is_from_another_day(tmp_path):
     data = HistoricalCatalog(str(tmp_path / "data.db")); contracts = ContractMasterCatalog(str(tmp_path / "contracts.db"))
-    contracts.upsert_snapshot(date(2026, 1, 2), [ContractRecord("NFO", "ABC26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 75)])
     data.ingest([HistoricalRecord("x", "cash", "1m", _ns("2026-01-05T03:45:00"), {"close": 100}), HistoricalRecord("x", "cash", "1m", _ns("2026-01-05T03:46:00"), {"close": 101}), HistoricalRecord("x", "future", "1m", _ns("2026-01-06T03:45:00"), {"close": 102})])
     from app.backtesting.cash_future_historical_loader import _merge_pair
     contract = ContractRecord("NFO", "ABC26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 75)
@@ -55,7 +54,6 @@ def test_pairing_does_not_skip_newer_future_when_cash_record_is_from_another_day
 
 def test_loader_selection_does_not_store_request_state_between_iterators(tmp_path):
     data = HistoricalCatalog(str(tmp_path / "data.db")); contracts = ContractMasterCatalog(str(tmp_path / "contracts.db"))
-    contracts.upsert_snapshot(date(2026, 1, 2), [ContractRecord("NFO", "ABC26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 75)])
     loader = CashFutureHistoricalLoader(data, contracts)
     first = loader.iter_points(CashFutureHistorySelection("NSE:1:ABC", "NFO", "ABC", date(2026, 1, 5), date(2026, 1, 5)))
     second = loader.iter_points(CashFutureHistorySelection("NSE:2:ABC", "NFO", "ABC", date(2026, 1, 5), date(2026, 1, 5)))
@@ -69,9 +67,7 @@ def test_loader_splits_same_token_when_historical_snapshot_changes_lot_size(tmp_
     contracts.upsert_snapshot(date(2026, 1, 5), [ContractRecord("NFO", "ABC26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 100)])
     loader = CashFutureHistoricalLoader(data, contracts)
     segments = loader._contracts_by_segment(CashFutureHistorySelection("NSE:1:ABC", "NFO", "ABC", date(2026, 1, 5), date(2026, 1, 6)))
-    assert [(start, end, contract.token, contract.lot_size) for start, end, contract in segments] == [
-        (date(2026, 1, 5), date(2026, 1, 6), "101", 100),
-    ]
+    assert [(start, end, contract.token, contract.lot_size) for start, end, contract in segments] == [(date(2026, 1, 5), date(2026, 1, 6), "101", 100)]
 
 
 def test_loader_preserves_point_in_time_terms_when_same_token_metadata_changes(tmp_path):
@@ -81,7 +77,13 @@ def test_loader_preserves_point_in_time_terms_when_same_token_metadata_changes(t
     loader = CashFutureHistoricalLoader(HistoricalCatalog(str(tmp_path / "data.db")), contracts)
     selection = CashFutureHistorySelection("NSE:1:ABC", "NFO", "ABC", date(2026, 1, 2), date(2026, 1, 6))
     segments = loader._contracts_by_segment(selection)
-    assert [(start, end, contract.lot_size) for start, end, contract in segments] == [
-        (date(2026, 1, 2), date(2026, 1, 2), 75),
-        (date(2026, 1, 5), date(2026, 1, 6), 100),
-    ]
+    assert [(start, end, contract.lot_size) for start, end, contract in segments] == [(date(2026, 1, 2), date(2026, 1, 2), 75), (date(2026, 1, 5), date(2026, 1, 6), 100)]
+
+
+def test_loader_rejects_non_finite_close_prices(tmp_path):
+    data = HistoricalCatalog(str(tmp_path / "data.db")); contracts = ContractMasterCatalog(str(tmp_path / "contracts.db"))
+    contracts.upsert_snapshot(date(2026, 1, 5), [ContractRecord("NFO", "ABC26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 75)])
+    data.ingest([HistoricalRecord("angelone", "NSE:1:ABC", "1m", _ns("2026-01-05T03:45:00"), {"close": float("inf")}), HistoricalRecord("angelone", "NFO:101:ABC26JANFUT", "1m", _ns("2026-01-05T03:45:00"), {"close": 101.0})])
+    selection = CashFutureHistorySelection("NSE:1:ABC", "NFO", "ABC", date(2026, 1, 5), date(2026, 1, 5))
+    with pytest.raises(ValueError, match="finite and positive"):
+        tuple(CashFutureHistoricalLoader(data, contracts).iter_points(selection))
