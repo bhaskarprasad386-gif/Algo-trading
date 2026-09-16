@@ -1,5 +1,6 @@
 """Universal strategy-agnostic event replay primitives."""
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any, Iterable, Protocol, Sequence
 
 
@@ -16,12 +17,19 @@ class MarketEvent:
             raise TypeError("timestamp_ns must be an integer")
         if self.timestamp_ns < 0:
             raise ValueError("timestamp_ns must be non-negative")
-        if not self.instrument:
+        if not isinstance(self.instrument, str) or not self.instrument.strip():
             raise ValueError("instrument is required")
         if isinstance(self.sequence, bool) or not isinstance(self.sequence, int):
             raise TypeError("sequence must be an integer")
         if self.sequence < 0:
             raise ValueError("sequence must be non-negative")
+        if not isinstance(self.event_type, str) or not self.event_type.strip():
+            raise ValueError("event_type is required")
+        if not isinstance(self.data, tuple):
+            raise TypeError("data must be a tuple of key/value pairs")
+        for item in self.data:
+            if not isinstance(item, tuple) or len(item) != 2 or not isinstance(item[0], str):
+                raise TypeError("data entries must be (string_key, value) tuples")
 
     @property
     def context(self) -> dict[str, Any]:
@@ -44,12 +52,17 @@ class EventStrategy(Protocol):
 
 
 def normalize_event(event: MarketEvent) -> MarketEvent:
-    return MarketEvent(event.timestamp_ns, event.instrument, event.sequence, event.event_type, tuple(event.data))
+    return MarketEvent(event.timestamp_ns, event.instrument.strip(), event.sequence, event.event_type.strip(), tuple(event.data))
+
+
+def _event_key(event: MarketEvent) -> tuple[object, ...]:
+    """Build a deterministic total ordering for simultaneous events."""
+    return (event.timestamp_ns, event.sequence, event.instrument, event.event_type, repr(event.data))
 
 
 def ordered_events(events: Iterable[MarketEvent]) -> list[MarketEvent]:
     normalized = [normalize_event(event) for event in events]
-    return sorted(normalized, key=lambda event: (event.timestamp_ns, event.sequence, event.instrument))
+    return sorted(normalized, key=_event_key)
 
 
 def streaming_events(events: Iterable[MarketEvent]) -> Iterable[MarketEvent]:
@@ -57,27 +70,27 @@ def streaming_events(events: Iterable[MarketEvent]) -> Iterable[MarketEvent]:
     previous_key = None
     for source_event in events:
         event = normalize_event(source_event)
-        identity = (event.timestamp_ns, event.sequence)
-        if previous_key is not None and identity < previous_key:
+        key = _event_key(event)
+        if previous_key is not None and key < previous_key:
             raise ValueError("stream is not deterministically ordered")
-        previous_key = identity
+        previous_key = key
         yield event
 
 
 def validate_source_resolution(events: Iterable[MarketEvent], minimum_timestamp_delta_ns: int) -> None:
-    """Require observed same-instrument spacing at or below the requested resolution."""
+    """Require one observed same-instrument interval at or below the requested resolution."""
     if isinstance(minimum_timestamp_delta_ns, bool) or not isinstance(minimum_timestamp_delta_ns, int):
         raise TypeError("minimum_timestamp_delta_ns must be an integer")
     if minimum_timestamp_delta_ns <= 0:
         raise ValueError("minimum_timestamp_delta_ns must be positive")
-    ordered = ordered_events(events)
-    for previous, current in zip(ordered, ordered[1:]):
-        if (
-            previous.instrument == current.instrument
-            and current.timestamp_ns > previous.timestamp_ns
-            and current.timestamp_ns - previous.timestamp_ns <= minimum_timestamp_delta_ns
-        ):
-            return
+    previous_by_instrument: dict[str, int] = {}
+    for source_event in streaming_events(events):
+        previous = previous_by_instrument.get(source_event.instrument)
+        if previous is not None:
+            delta = source_event.timestamp_ns - previous
+            if 0 < delta <= minimum_timestamp_delta_ns:
+                return
+        previous_by_instrument[source_event.instrument] = source_event.timestamp_ns
     raise ValueError("source data does not prove the requested timestamp resolution")
 
 
