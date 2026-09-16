@@ -27,11 +27,13 @@ class CashFutureHistorySelection:
     mode: str = "CURRENT"
     source: str = "angelone"
     def __post_init__(self) -> None:
-        if not self.spot_instrument.strip(): raise ValueError("spot_instrument is required")
-        if not self.exchange.strip() or not self.underlying.strip(): raise ValueError("exchange and underlying are required")
+        if not isinstance(self.spot_instrument, str) or not self.spot_instrument.strip(): raise ValueError("spot_instrument is required")
+        if not isinstance(self.exchange, str) or not self.exchange.strip() or not isinstance(self.underlying, str) or not self.underlying.strip(): raise ValueError("exchange and underlying are required")
+        if type(self.start_date) is not date or type(self.end_date) is not date: raise TypeError("start_date and end_date must be dates")
         if self.end_date < self.start_date: raise ValueError("end_date cannot be before start_date")
-        if self.mode.upper() not in {"CURRENT", "NEAR"}: raise ValueError("mode must be CURRENT or NEAR")
-        if not self.source.strip() or not self.timeframe.strip(): raise ValueError("source and timeframe are required")
+        if not isinstance(self.mode, str) or self.mode.upper() not in {"CURRENT", "NEAR"}: raise ValueError("mode must be CURRENT or NEAR")
+        if not isinstance(self.source, str) or not self.source.strip() or not isinstance(self.timeframe, str) or not self.timeframe.strip(): raise ValueError("source and timeframe are required")
+        if self.contract_month is not None and not isinstance(self.contract_month, str): raise ValueError("contract_month must be YYYY-MM")
 
 def _ns(dt: datetime) -> int:
     if dt.tzinfo is None: dt = dt.replace(tzinfo=MARKET_TZ)
@@ -87,9 +89,14 @@ def _merge_pair(cash_records:Iterator[HistoricalRecord],future_records:Iterator[
             else: future=next(future_records,None)
             continue
         timestamp_ns=max(cash.timestamp_ns,future.timestamp_ns)
-        if not _in_nse_session(timestamp_ns) or _datetime_from_ns(cash.timestamp_ns).date()!=_datetime_from_ns(future.timestamp_ns).date():
-            if cash.timestamp_ns<=future.timestamp_ns: cash=next(cash_records,None)
-            if future.timestamp_ns<=timestamp_ns: future=next(future_records,None)
+        cash_date=_datetime_from_ns(cash.timestamp_ns).date(); future_date=_datetime_from_ns(future.timestamp_ns).date()
+        if cash_date!=future_date:
+            if cash.timestamp_ns < future.timestamp_ns: cash=next(cash_records,None)
+            else: future=next(future_records,None)
+            continue
+        if not _in_nse_session(timestamp_ns):
+            if cash.timestamp_ns <= timestamp_ns: cash=next(cash_records,None)
+            if future.timestamp_ns <= timestamp_ns: future=next(future_records,None)
             continue
         cash_payload=dict(cash.payload); future_payload=dict(future.payload); cash_price=_record_price(cash); future_price=_record_price(future)
         gap=future_price-cash_price; gap_pct=gap/cash_price*100.0
@@ -107,7 +114,7 @@ class CashFutureHistoricalLoader:
             if current.weekday()<5:
                 try:
                     def resolve(exchange:str):
-                        if selection.contract_month: return self.contract_catalog.resolve_contract_month(exchange=exchange,underlying=selection.underlying.upper(),contract_month=selection.contract_month,as_of=current)
+                        if selection.contract_month: return self.contract_catalog.resolve_contract_month(exchange=exchange,underlying=selection.underlying.upper(),contract_month=selection.contract_month.strip(),as_of=current)
                         return self.contract_catalog.resolve(exchange=exchange,underlying=selection.underlying.upper(),as_of=current,mode=selection.mode)
                     try: contract=resolve(selection.exchange)
                     except LookupError:
@@ -120,16 +127,14 @@ class CashFutureHistoricalLoader:
         for _,grouped in groupby(days,key=lambda item:item[1].token):
             block=list(grouped); segments.append((block[0][0],block[-1][0],block[0][1]))
         return tuple(segments)
-    def _resolve_spot_instrument(self,symbol:str,start_ns:int,end_ns:int)->str:
-        requested=self._selection_spot_instrument
+    def _resolve_spot_instrument(self,symbol:str,start_ns:int,end_ns:int,requested:str,source:str,timeframe:str)->str:
         if ":" in requested: return requested
-        exact=[instrument for instrument in self.catalog.instruments(source=self._selection_source,timeframe=self._selection_timeframe,start_ns=start_ns,end_ns=end_ns,prefix="NSE:") if instrument.rsplit(":",1)[-1].upper()==symbol.upper()]
+        exact=[instrument for instrument in self.catalog.instruments(source=source,timeframe=timeframe,start_ns=start_ns,end_ns=end_ns,prefix="NSE:") if instrument.rsplit(":",1)[-1].upper()==symbol.upper()]
         return exact[0] if exact else requested
     def iter_points(self,selection:CashFutureHistorySelection)->Iterable[CashFutureHistoryPoint]:
-        self._selection_spot_instrument=selection.spot_instrument; self._selection_source=selection.source; self._selection_timeframe=selection.timeframe
         for segment_start,segment_end,contract in self._contracts_by_segment(selection):
             start_ns,_=_market_bounds(segment_start); _,end_ns=_market_bounds(segment_end)
-            cash_instrument=self._resolve_spot_instrument(selection.underlying.upper(),start_ns,end_ns)
+            cash_instrument=self._resolve_spot_instrument(selection.underlying.upper(),start_ns,end_ns,selection.spot_instrument,selection.source,selection.timeframe)
             cash_iter=self.catalog.iter_records(source=selection.source,instrument=cash_instrument,timeframe=selection.timeframe,start_ns=start_ns,end_ns=end_ns)
             future_iter=self.catalog.iter_records(source=selection.source,instrument=f"{contract.exchange}:{contract.token}:{contract.symbol}",timeframe=selection.timeframe,start_ns=start_ns,end_ns=end_ns)
             yield from _merge_pair(cash_iter,future_iter,symbol=selection.underlying.upper(),contract=contract)
