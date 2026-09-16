@@ -20,19 +20,20 @@ def calendar(ts, expiry, bid, ask):
 
 def test_box_adapter_closes_only_on_later_reverse_edge():
     adapter = BoxSpreadStrategyAdapter(fees_per_unit=1.0)
-    low = option(1, 100, 6, 4, 5, 3)
-    high = option(1, 110, 2, 3, 2, 2)
+    # Valid bid/ask: long debit = 10 + 2 - 2 - 8 = 2; width = 10.
+    low = option(1, 100, 9, 10, 8, 9)
+    high = option(1, 110, 2, 3, 1, 2)
     entries = tuple(adapter.entry({"low": low, "high": high, "data_resolution": "1s"}))
     assert len(entries) == 1
-    assert entries[0].entry_price == 3.0
+    assert entries[0].entry_price == 2.0
     assert adapter.exit(entries[0], {"low": low, "high": high}) is None
 
-    # Later quotes create a genuine positive reverse executable edge.
-    low2 = option(3, 100, 15, 16, 14, 15)
-    high2 = option(3, 110, 3, 4, 3, 4)
+    # Reverse short credit = 15 + 15 - 2 - 2 = 26; edge = 16.
+    low2 = option(3, 100, 15, 16, 1, 2)
+    high2 = option(3, 110, 1, 2, 15, 16)
     close = adapter.exit(entries[0], {"low": low2, "high": high2})
     assert close is not None
-    assert close.gross_pnl == 14.0
+    assert close.gross_pnl == 18.0
     assert close.fees == 2.0
 
 

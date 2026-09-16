@@ -22,8 +22,9 @@ def test_short_box_uses_high_put_bid_and_ask():
     low = OptionQuote(1, "NIFTY", 20260924, 100, 20, 21, 20, 21, 1, "INDEX")
     high = OptionQuote(1, "NIFTY", 20260924, 110, 10, 11, 10, 11, 1, "INDEX")
     result = BoxSpreadBacktester.evaluate(low, high, direction="SHORT")
-    assert result is not None
-    assert result.executable_edge == 8
+    # credit = low call bid + high put bid - high call ask - low put ask
+    # = 20 + 10 - 11 - 21 = -2; width = 10; no executable short box
+    assert result is None
 
 
 def test_risk_check_cannot_bypass_internal_loss_with_zero_external_pnl():
