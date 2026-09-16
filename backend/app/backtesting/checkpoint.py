@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 import sqlite3
 from typing import Any
 
@@ -34,13 +35,24 @@ class CheckpointStore:
         )
         self.connection.commit()
 
-    def save(self, checkpoint: ReplayCheckpoint) -> None:
-        if not checkpoint.run_id.strip():
+    @staticmethod
+    def _validate(checkpoint: ReplayCheckpoint) -> None:
+        if not isinstance(checkpoint.run_id, str) or not checkpoint.run_id.strip():
             raise ValueError("run_id is required")
-        if checkpoint.timestamp_ns < 0 or checkpoint.sequence < 0:
-            raise ValueError("checkpoint ordering values must be non-negative")
-        if checkpoint.processed_events < 0:
-            raise ValueError("processed_events must be non-negative")
+        for name, value in (("timestamp_ns", checkpoint.timestamp_ns), ("sequence", checkpoint.sequence), ("processed_events", checkpoint.processed_events)):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        if isinstance(checkpoint.realized_pnl, bool) or not isinstance(checkpoint.realized_pnl, (int, float)) or not math.isfinite(float(checkpoint.realized_pnl)):
+            raise ValueError("realized_pnl must be finite")
+        if not isinstance(checkpoint.state, dict):
+            raise ValueError("checkpoint state must be a dictionary")
+        try:
+            json.dumps(checkpoint.state, sort_keys=True, separators=(",", ":"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("checkpoint state must be JSON serializable") from exc
+
+    def save(self, checkpoint: ReplayCheckpoint) -> None:
+        self._validate(checkpoint)
         self.connection.execute(
             """INSERT INTO backtest_checkpoints
                (run_id,timestamp_ns,sequence,processed_events,realized_pnl,state_json)
@@ -52,20 +64,30 @@ class CheckpointStore:
                  realized_pnl=excluded.realized_pnl,
                  state_json=excluded.state_json""",
             (checkpoint.run_id, checkpoint.timestamp_ns, checkpoint.sequence,
-             checkpoint.processed_events, checkpoint.realized_pnl,
+             checkpoint.processed_events, float(checkpoint.realized_pnl),
              json.dumps(checkpoint.state, sort_keys=True, separators=(",", ":"))),
         )
         self.connection.commit()
 
     def load(self, run_id: str) -> ReplayCheckpoint | None:
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise ValueError("run_id is required")
         row = self.connection.execute(
             "SELECT run_id,timestamp_ns,sequence,processed_events,realized_pnl,state_json "
             "FROM backtest_checkpoints WHERE run_id=?", (run_id,)
         ).fetchone()
         if row is None:
             return None
-        return ReplayCheckpoint(row[0], row[1], row[2], row[3], row[4], json.loads(row[5]))
+        try:
+            state = json.loads(row[5])
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("checkpoint state is invalid JSON") from exc
+        checkpoint = ReplayCheckpoint(row[0], row[1], row[2], row[3], row[4], state)
+        self._validate(checkpoint)
+        return checkpoint
 
     def clear(self, run_id: str) -> None:
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise ValueError("run_id is required")
         self.connection.execute("DELETE FROM backtest_checkpoints WHERE run_id=?", (run_id,))
         self.connection.commit()
