@@ -19,6 +19,7 @@ class AtomicReplayStore:
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._db = connection
+        was_in_transaction = self._db.in_transaction
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.executescript("""
             CREATE TABLE IF NOT EXISTS atomic_replay_events (
@@ -39,22 +40,29 @@ class AtomicReplayStore:
             );
         """)
         event_columns = {row[1] for row in self._db.execute("PRAGMA table_info(atomic_replay_events)")}
-        if event_columns and "instrument" not in event_columns:
+        if event_columns and ("instrument" not in event_columns or "event_type" not in event_columns):
             self._db.execute("ALTER TABLE atomic_replay_events RENAME TO atomic_replay_events_legacy")
             self._db.execute("""CREATE TABLE atomic_replay_events (
                 run_id TEXT NOT NULL, timestamp_ns INTEGER NOT NULL, sequence INTEGER NOT NULL,
                 instrument TEXT NOT NULL, event_type TEXT NOT NULL,
                 PRIMARY KEY (run_id, timestamp_ns, sequence, instrument, event_type)
             )""")
-            self._db.execute("""INSERT OR IGNORE INTO atomic_replay_events
-                SELECT run_id,timestamp_ns,sequence,?,? FROM atomic_replay_events_legacy""",
-                (_LEGACY_INSTRUMENT, _LEGACY_EVENT_TYPE))
+            legacy_instrument = "instrument" if "instrument" in event_columns else None
+            legacy_type = "event_type" if "event_type" in event_columns else None
+            select_instrument = "instrument" if legacy_instrument else "?"
+            select_type = "event_type" if legacy_type else "?"
+            params = tuple(v for v in (_LEGACY_INSTRUMENT if not legacy_instrument else None, _LEGACY_EVENT_TYPE if not legacy_type else None) if v is not None)
+            self._db.execute(
+                f"INSERT OR IGNORE INTO atomic_replay_events SELECT run_id,timestamp_ns,sequence,{select_instrument},{select_type} FROM atomic_replay_events_legacy",
+                params,
+            )
         checkpoint_columns = {row[1] for row in self._db.execute("PRAGMA table_info(atomic_replay_checkpoints)")}
         if checkpoint_columns and "instrument" not in checkpoint_columns:
             self._db.execute("ALTER TABLE atomic_replay_checkpoints ADD COLUMN instrument TEXT NOT NULL DEFAULT ''")
         if checkpoint_columns and "event_type" not in checkpoint_columns:
             self._db.execute("ALTER TABLE atomic_replay_checkpoints ADD COLUMN event_type TEXT NOT NULL DEFAULT ''")
-        self._db.commit()
+        if not was_in_transaction:
+            self._db.commit()
 
     def begin(self) -> None:
         if self._db.in_transaction:
@@ -92,8 +100,14 @@ class AtomicReplayStore:
         ).fetchone()
         if row is None:
             return None
-        state = json.loads(row[5])
-        return ReplayCheckpoint(row[0], row[1], row[2], row[3], row[4], state, row[6], row[7])
+        try:
+            state = json.loads(row[5])
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("checkpoint state is invalid JSON") from exc
+        checkpoint = ReplayCheckpoint(row[0], row[1], row[2], row[3], row[4], state, row[6], row[7])
+        if not isinstance(state, dict):
+            raise ValueError("checkpoint state must be a dictionary")
+        return checkpoint
 
     def save_checkpoint(self, checkpoint: ReplayCheckpoint) -> None:
         if not isinstance(checkpoint.run_id, str) or not checkpoint.run_id.strip():
@@ -104,6 +118,12 @@ class AtomicReplayStore:
             raise ValueError("checkpoint realized_pnl must be finite")
         if not isinstance(checkpoint.state, dict):
             raise ValueError("checkpoint state must be a dictionary")
+        if not isinstance(checkpoint.instrument, str) or not isinstance(checkpoint.event_type, str):
+            raise ValueError("checkpoint instrument and event_type must be strings")
+        try:
+            state_json = json.dumps(checkpoint.state, sort_keys=True, separators=(",", ":"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("checkpoint state must be JSON serializable") from exc
         existing = self._db.execute(
             "SELECT timestamp_ns,sequence,processed_events,instrument,event_type FROM atomic_replay_checkpoints WHERE run_id=?",
             (checkpoint.run_id,),
@@ -121,8 +141,7 @@ class AtomicReplayStore:
             processed_events=excluded.processed_events, realized_pnl=excluded.realized_pnl,
             state_json=excluded.state_json, instrument=excluded.instrument, event_type=excluded.event_type""",
             (checkpoint.run_id, checkpoint.timestamp_ns, checkpoint.sequence, checkpoint.processed_events,
-             float(checkpoint.realized_pnl), json.dumps(checkpoint.state, sort_keys=True, separators=(",", ":")),
-             checkpoint.instrument, checkpoint.event_type),
+             float(checkpoint.realized_pnl), state_json, checkpoint.instrument, checkpoint.event_type),
         )
 
     def append_trade(self, run_id: str, trade: HighResolutionTrade) -> None:
@@ -131,6 +150,9 @@ class AtomicReplayStore:
         if not isinstance(trade, HighResolutionTrade):
             raise TypeError("trade must be HighResolutionTrade")
         payload = asdict(trade)
+        values = (payload["quantity"], payload["entry_timestamp_ns"], payload["exit_timestamp_ns"], payload["entry_price"], payload["exit_price"], payload["gross_pnl"], payload["fees"], trade.net_pnl)
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(float(v)) for v in values):
+            raise ValueError("trade contains non-finite numeric values")
         self._db.execute(
             "INSERT INTO atomic_replay_trades "
             "(run_id,instrument,quantity,entry_timestamp_ns,exit_timestamp_ns,entry_price,exit_price,gross_pnl,fees,net_pnl) VALUES(?,?,?,?,?,?,?,?,?,?)",
