@@ -30,7 +30,9 @@ def select_cash_future(
     must keep the returned identity fixed for an open position until settlement;
     no silent rollover is performed here.
     """
-    normalized = mode.upper()
+    if type(mode) is not str:
+        raise ValueError("mode must be CURRENT, NEAR or BOTH")
+    normalized = mode.strip().upper()
     if normalized not in {"CURRENT", "NEAR", "BOTH"}:
         raise ValueError("mode must be CURRENT, NEAR or BOTH")
     modes = ("CURRENT", "NEAR") if normalized == "BOTH" else (normalized,)
