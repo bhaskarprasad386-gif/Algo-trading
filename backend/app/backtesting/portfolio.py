@@ -386,32 +386,47 @@ class Portfolio:
         if not isinstance(state, Mapping):
             raise ValueError("invalid portfolio checkpoint")
         try:
+            numeric_state = ("cash", "realized_pnl", "fees", "peak_equity")
+            for key in numeric_state:
+                value = state[key]
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                    raise ValueError("portfolio checkpoint contains invalid numeric values")
             cash = float(state["cash"])
             realized_pnl = float(state["realized_pnl"])
             fees = float(state["fees"])
             peak_equity = float(state["peak_equity"])
             raw_positions = state.get("positions", [])
             raw_reserved = state.get("reserved_margin", {})
-            if not all(math.isfinite(v) for v in (cash, realized_pnl, fees, peak_equity)):
-                raise ValueError("portfolio checkpoint contains non-finite values")
             if not isinstance(raw_positions, (list, tuple)) or not isinstance(raw_reserved, Mapping):
                 raise ValueError("invalid portfolio checkpoint collections")
             positions: dict[str, Position] = {}
             for raw in raw_positions:
                 if not isinstance(raw, Mapping):
                     raise ValueError("invalid portfolio position checkpoint")
-                instrument = str(raw["instrument"])
-                quantity = raw["quantity"]
+                instrument = raw.get("instrument")
+                quantity = raw.get("quantity")
+                if not isinstance(instrument, str) or not instrument.strip():
+                    raise ValueError("invalid portfolio position checkpoint values")
+                if instrument in positions:
+                    raise ValueError("duplicate portfolio position checkpoint")
                 if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity == 0:
                     raise ValueError("invalid portfolio position checkpoint values")
-                average_price = float(raw["average_price"])
-                position_realized = float(raw["realized_pnl"])
-                if not instrument or not math.isfinite(average_price) or average_price <= 0 or not math.isfinite(position_realized):
+                average_price = raw["average_price"]
+                position_realized = raw["realized_pnl"]
+                if isinstance(average_price, bool) or not isinstance(average_price, (int, float)) or not math.isfinite(float(average_price)) or float(average_price) <= 0:
                     raise ValueError("invalid portfolio position checkpoint values")
-                positions[instrument] = Position(instrument, quantity, average_price, position_realized)
-            reserved = {str(order_id): float(amount) for order_id, amount in raw_reserved.items()}
-            if any(not order_id or not math.isfinite(amount) or amount < 0 for order_id, amount in reserved.items()):
-                raise ValueError("invalid reserved margin checkpoint")
+                if isinstance(position_realized, bool) or not isinstance(position_realized, (int, float)) or not math.isfinite(float(position_realized)):
+                    raise ValueError("invalid portfolio position checkpoint values")
+                positions[instrument] = Position(instrument, quantity, float(average_price), float(position_realized))
+            reserved: dict[str, float] = {}
+            for order_id, amount in raw_reserved.items():
+                if not isinstance(order_id, str) or not order_id.strip():
+                    raise ValueError("invalid reserved margin checkpoint")
+                if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not math.isfinite(float(amount)) or float(amount) < 0:
+                    raise ValueError("invalid reserved margin checkpoint")
+                if order_id in reserved:
+                    raise ValueError("duplicate reserved margin checkpoint")
+                reserved[order_id] = float(amount)
             if cash < 0 or fees < 0 or peak_equity < 0:
                 raise ValueError("invalid portfolio checkpoint values")
         except (KeyError, TypeError, ValueError, OverflowError) as exc:
