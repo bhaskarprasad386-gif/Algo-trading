@@ -160,9 +160,9 @@ def find_historical_gap_matches(points: Iterable[CashFutureHistoryPoint], target
 
 
 def analyze_historical_gap_outcomes(points: Iterable[CashFutureHistoryPoint], target_gap: float, tolerance: float = 0.0, contract_month: str | None = None, exit_gap: float = 0.0, max_holding_days: int = 30, charges_per_trade: float = 0.0, funding_cost_per_trade: float = 0.0) -> list[HistoricalGapOutcome]:
-    """Find prior gap occurrences and measure the first subsequent exit."""
-    if max_holding_days <= 0:
-        raise ValueError("max_holding_days must be positive")
+    """Find prior gap occurrences and measure the first subsequent exit within the holding limit."""
+    if isinstance(max_holding_days, bool) or not isinstance(max_holding_days, int) or max_holding_days <= 0:
+        raise ValueError("max_holding_days must be a positive integer")
     if not math.isfinite(float(charges_per_trade)) or not math.isfinite(float(funding_cost_per_trade)):
         raise ValueError("charges_per_trade and funding_cost_per_trade must be finite")
     if charges_per_trade < 0 or funding_cost_per_trade < 0:
@@ -179,6 +179,8 @@ def analyze_historical_gap_outcomes(points: Iterable[CashFutureHistoryPoint], ta
         exit_reason = None
         for point in later:
             holding_days = (point.timestamp - match.timestamp).total_seconds() / 86400.0
+            if holding_days > max_holding_days:
+                break
             expired = _is_expired(point.timestamp, point.expiry_date)
             if point.gap <= exit_gap:
                 exit_point = point; exit_reason = "convergence"; break
