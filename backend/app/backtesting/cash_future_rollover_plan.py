@@ -32,27 +32,42 @@ def build_rollover_segments(
     invents an expired token or silently substitutes today's contract. When session_days
     is supplied, weekends/holidays outside those sessions are not treated as data days.
     """
+    if type(start) is not date or type(end) is not date:
+        raise TypeError("start and end must be dates")
+    if not isinstance(exchange, str) or not exchange.strip():
+        raise ValueError("exchange is required")
+    if not isinstance(underlying, str) or not underlying.strip():
+        raise ValueError("underlying is required")
+    if not isinstance(mode, str):
+        raise ValueError("mode must be CURRENT or NEAR")
     if end < start:
         raise ValueError("end must not precede start")
-    mode = mode.upper()
+    mode = mode.strip().upper()
     if mode not in {"CURRENT", "NEAR"}:
         raise ValueError("mode must be CURRENT or NEAR")
 
-    days = tuple(sorted({day for day in (session_days or ()) if start <= day <= end}))
     if session_days is None:
-        days = tuple(start + timedelta(days=i) for i in range((end - start).days + 1))
+        # A calendar-day range must not manufacture weekend trading sessions. Explicit
+        # session_days remains the escape hatch for an exchange-specific holiday calendar.
+        days = tuple(
+            start + timedelta(days=i)
+            for i in range((end - start).days + 1)
+            if (start + timedelta(days=i)).weekday() < 5
+        )
+    else:
+        days = tuple(sorted({day for day in session_days if start <= day <= end}))
     if not days:
         return ()
 
     segments: list[CashFutureSegment] = []
     for current_day in days:
-        contract = catalog.resolve(exchange=exchange, underlying=underlying, as_of=current_day, mode=mode)
-        same_contract = bool(segments) and segments[-1].future.token == contract.token
+        contract = catalog.resolve(exchange=exchange.strip(), underlying=underlying.strip().upper(), as_of=current_day, mode=mode)
+        same_contract = bool(segments) and segments[-1].future == contract
         # With an explicit session calendar, adjacent entries in `days` are adjacent
         # trading sessions even when a weekend/holiday lies between their calendar dates.
         # Keep one segment for the same contract instead of creating duplicate download
-        # requests for the same token. Without an explicit calendar, retain the legacy
-        # calendar-day contiguity rule.
+        # requests for the same token. Without an explicit calendar, retain calendar-day
+        # contiguity for the generated weekday sequence.
         contiguous = (
             same_contract
             and (
