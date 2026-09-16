@@ -1,8 +1,6 @@
 """Deterministic Cash-Future convergence backtest."""
 from __future__ import annotations
 from dataclasses import dataclass
-from itertools import groupby
-from operator import attrgetter
 from typing import Iterable
 import math
 from app.scanner.cash_future_history import CashFutureHistoryPoint, _is_expired
@@ -55,29 +53,35 @@ def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfi
     return {'trade_count':len(trades),'wins':wins,'losses':len(trades)-wins,'win_rate_pct':wins/len(trades)*100.0 if trades else 0.0,'net_profit':equity,'roi_pct':equity/total_capital*100.0 if total_capital else 0.0,'invested_capital':total_capital,'max_drawdown':max_drawdown,'equity_curve':equity_curve,'trades':trades,'open_position':{'entry_time':entry.timestamp.isoformat(),'symbol':entry.symbol,'contract_month':entry.contract_month,'entry_gap':entry.gap,'lot_size':entry.lot_size} if entry is not None else None}
 
 def _aggregate_contract_results(results:list[dict])->dict:
-    trades=[trade for result in results for trade in result['trades']]; trades.sort(key=lambda trade:trade['entry_time']); wins=sum(1 for trade in trades if trade['net_profit']>0); net_profit=sum(trade['net_profit'] for trade in trades); invested_capital=sum(result['invested_capital'] for result in results); equity=0.0; running_peak=0.0; max_drawdown=0.0; equity_curve=[]
+    trades=[trade for result in results for trade in result['trades']]; trades.sort(key=lambda trade:(trade['entry_time'],trade.get('symbol',''),trade.get('contract_month',''))); wins=sum(1 for trade in trades if trade['net_profit']>0); net_profit=sum(trade['net_profit'] for trade in trades); invested_capital=sum(result['invested_capital'] for result in results); equity=0.0; running_peak=0.0; max_drawdown=0.0; equity_curve=[]
     if trades: equity_curve.append({'timestamp':trades[0]['entry_time'],'equity':0.0})
     for trade in trades:
         equity+=trade['net_profit']; running_peak=max(running_peak,equity); max_drawdown=max(max_drawdown,running_peak-equity); equity_curve.append({'timestamp':trade['exit_time'],'equity':equity})
     open_positions=[result['open_position'] for result in results if result.get('open_position') is not None]
-    return {'contract_count':len(results),'trade_count':len(trades),'wins':wins,'losses':len(trades)-wins,'win_rate_pct':wins/len(trades)*100.0 if trades else 0.0,'net_profit':net_profit,'roi_pct':net_profit/invested_capital*100.0 if invested_capital else 0.0,'invested_capital':invested_capital,'max_drawdown':max_drawdown,'equity_curve':equity_curve,'trades':trades,'open_positions':open_positions,'per_contract':results}
+    contract_keys={(result.get('open_position') or {}).get('contract_month') for result in results if result.get('open_position') is not None}
+    contract_keys.update(trade.get('contract_month') for trade in trades if trade.get('contract_month') is not None)
+    return {'contract_count':len(contract_keys) if contract_keys else len(results),'trade_count':len(trades),'wins':wins,'losses':len(trades)-wins,'win_rate_pct':wins/len(trades)*100.0 if trades else 0.0,'net_profit':net_profit,'roi_pct':net_profit/invested_capital*100.0 if invested_capital else 0.0,'invested_capital':invested_capital,'max_drawdown':max_drawdown,'equity_curve':equity_curve,'trades':trades,'open_positions':open_positions,'per_contract':results}
 
 def run_multi_contract_backtest(points:Iterable[CashFutureHistoryPoint],config:BacktestConfig)->dict:
-    grouped={}
+    grouped:dict[tuple[str,str],list[CashFutureHistoryPoint]]={}
     for point in points:
         if config.contract_month is not None and point.contract_month!=config.contract_month: continue
-        grouped.setdefault(point.contract_month,[]).append(point)
-    return _aggregate_contract_results([run_backtest(grouped[contract],config) for contract in sorted(grouped)])
+        grouped.setdefault((point.contract_month, point.symbol),[]).append(point)
+    results=[run_backtest(grouped[key],config) for key in sorted(grouped)]
+    return _aggregate_contract_results(results)
 
 def run_multi_contract_backtest_streaming(points:Iterable[CashFutureHistoryPoint],config:BacktestConfig)->dict:
-    filtered=(point for point in points if config.contract_month is None or point.contract_month==config.contract_month); results=[]; last_contract=None; last_timestamp=None
-    for contract_month, contract_points in groupby(filtered,key=attrgetter('contract_month')):
-        if last_contract is not None and contract_month<last_contract: raise ValueError('streaming backtest input must be ordered by contract_month')
-        current_points=[]
-        for point in contract_points:
-            if last_contract==contract_month and last_timestamp is not None and point.timestamp<last_timestamp: raise ValueError('streaming backtest input must be ordered by timestamp')
-            current_points.append(point); last_timestamp=point.timestamp
-        results.append(run_backtest(current_points,config)); last_contract=contract_month
+    """Backtest interleaved symbols/contracts without requiring contract-contiguous input."""
+    buckets:dict[tuple[str,str],list[CashFutureHistoryPoint]]={}
+    for point in points:
+        if config.contract_month is not None and point.contract_month!=config.contract_month: continue
+        buckets.setdefault((point.contract_month, point.symbol),[]).append(point)
+    results=[]
+    for key in sorted(buckets):
+        series=buckets[key]
+        if any(current.timestamp < previous.timestamp for previous,current in zip(series,series[1:])):
+            raise ValueError('streaming backtest input must be ordered by timestamp within each symbol/contract')
+        results.append(run_backtest(series,config))
     return _aggregate_contract_results(results)
 
 __all__=['BacktestConfig','run_backtest','run_multi_contract_backtest','run_multi_contract_backtest_streaming']
