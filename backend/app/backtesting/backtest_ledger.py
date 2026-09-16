@@ -49,23 +49,15 @@ class BacktestTradeLedger:
         with self._lock:
             if not isinstance(run_id, str) or not run_id.strip():
                 raise ValueError("run_id is required")
-            values = (
-                self._finite(result.initial_capital, "initial_capital"), self._finite(result.final_capital, "final_capital"),
-                self._finite(result.net_pnl, "net_pnl"), self._finite(result.total_return, "total_return"),
-                self._finite(result.win_rate, "win_rate"), self._finite(result.expectancy, "expectancy"),
-                result.sharpe_ratio, result.sortino_ratio, self._finite(result.max_drawdown, "max_drawdown"), result.cagr,
-            )
+            values = (self._finite(result.initial_capital, "initial_capital"), self._finite(result.final_capital, "final_capital"), self._finite(result.net_pnl, "net_pnl"), self._finite(result.total_return, "total_return"), self._finite(result.win_rate, "win_rate"), self._finite(result.expectancy, "expectancy"), result.sharpe_ratio, result.sortino_ratio, self._finite(result.max_drawdown, "max_drawdown"), result.cagr)
             for name, value in (("sharpe_ratio", values[6]), ("sortino_ratio", values[7]), ("cagr", values[9])):
                 if value is not None:
                     self._finite(value, name)
-            self._db.execute(
-                """INSERT INTO backtest_runs VALUES (?,?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(run_id) DO UPDATE SET initial_capital=excluded.initial_capital,
-                final_capital=excluded.final_capital, net_pnl=excluded.net_pnl,
-                total_return=excluded.total_return, win_rate=excluded.win_rate,
-                expectancy=excluded.expectancy, sharpe_ratio=excluded.sharpe_ratio,
-                sortino_ratio=excluded.sortino_ratio, max_drawdown=excluded.max_drawdown,
-                cagr=excluded.cagr""", (run_id, *values))
+            self._db.execute("""INSERT INTO backtest_runs VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(run_id) DO UPDATE SET initial_capital=excluded.initial_capital, final_capital=excluded.final_capital,
+                net_pnl=excluded.net_pnl, total_return=excluded.total_return, win_rate=excluded.win_rate,
+                expectancy=excluded.expectancy, sharpe_ratio=excluded.sharpe_ratio, sortino_ratio=excluded.sortino_ratio,
+                max_drawdown=excluded.max_drawdown, cagr=excluded.cagr""", (run_id, *values))
             self._db.commit()
 
     def run_ids(self) -> tuple[str, ...]:
@@ -89,10 +81,8 @@ class BacktestTradeLedger:
             current = self._db.execute("SELECT cursor,trade_count FROM backtest_checkpoints WHERE run_id=?", (run_id,)).fetchone()
             if current is not None and trade_count < int(current[1]):
                 raise ValueError("checkpoint trade_count cannot move backwards")
-            self._db.execute(
-                """INSERT INTO backtest_checkpoints(run_id,cursor,trade_count) VALUES(?,?,?)
-                ON CONFLICT(run_id) DO UPDATE SET cursor=excluded.cursor, trade_count=excluded.trade_count""",
-                (run_id, cursor, trade_count))
+            self._db.execute("""INSERT INTO backtest_checkpoints(run_id,cursor,trade_count) VALUES(?,?,?)
+                ON CONFLICT(run_id) DO UPDATE SET cursor=excluded.cursor, trade_count=excluded.trade_count""", (run_id, cursor, trade_count))
             self._db.commit()
 
     def checkpoint(self, run_id: str) -> dict[str, object] | None:
@@ -118,15 +108,7 @@ class BacktestTradeLedger:
 
     @staticmethod
     def _metadata(trade: BacktestTrade) -> str:
-        value = {
-            "entry_market_price": trade.entry_market_price, "exit_market_price": trade.exit_market_price,
-            "entry_price_source": trade.entry_price_source, "exit_price_source": trade.exit_price_source,
-            "entry_event_identity": trade.entry_event_identity, "exit_event_identity": trade.exit_event_identity,
-        }
-        try:
-            return json.dumps(value, sort_keys=True, default=str)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("trade provenance is not JSON serializable") from exc
+        return json.dumps({"entry_market_price": trade.entry_market_price, "exit_market_price": trade.exit_market_price, "entry_price_source": trade.entry_price_source, "exit_price_source": trade.exit_price_source, "entry_event_identity": trade.entry_event_identity, "exit_event_identity": trade.exit_event_identity}, sort_keys=True, default=str)
 
     def append(self, run_id: str, sequence: int, trades: Iterable[BacktestTrade]) -> int:
         with self._lock:
@@ -139,14 +121,13 @@ class BacktestTradeLedger:
                 rows.append((run_id, sequence + offset, json.dumps(trade.entry_timestamp, default=str), json.dumps(trade.exit_timestamp, default=str), trade.entry_price, trade.exit_price, trade.quantity, trade.gross_pnl, trade.costs, trade.net_pnl, self._metadata(trade)))
             if not rows:
                 return 0
-            existing = self._db.execute(
-                "SELECT sequence FROM backtest_trades WHERE run_id=? AND sequence BETWEEN ? AND ?",
-                (run_id, sequence, sequence + len(rows) - 1)).fetchone()
-            if existing is not None:
-                raise ValueError(f"trade sequence already exists: {existing[0]}")
+            existing = self._db.execute("SELECT sequence,entry_timestamp_json,exit_timestamp_json,entry_price,exit_price,quantity,gross_pnl,costs,net_pnl,metadata_json FROM backtest_trades WHERE run_id=? AND sequence BETWEEN ? AND ? ORDER BY sequence", (run_id, sequence, sequence + len(rows) - 1)).fetchall()
+            if existing:
+                if len(existing) != len(rows) or any(tuple(row) != tuple(new[1:]) for row, new in zip(existing, rows)):
+                    raise ValueError(f"trade sequence already exists: {existing[0][0]}")
+                return len(rows)
             try:
-                self._db.executemany(
-                    """INSERT INTO backtest_trades
+                self._db.executemany("""INSERT INTO backtest_trades
                     (run_id,sequence,entry_timestamp_json,exit_timestamp_json,entry_price,exit_price,quantity,gross_pnl,costs,net_pnl,metadata_json)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?)""", rows)
                 self._db.commit()
@@ -172,17 +153,11 @@ class BacktestTradeLedger:
 
     def trades(self, run_id: str) -> tuple[BacktestTrade, ...]:
         with self._lock:
-            rows = self._db.execute(
-                """SELECT entry_timestamp_json,exit_timestamp_json,entry_price,exit_price,quantity,gross_pnl,costs,net_pnl,metadata_json
-                FROM backtest_trades WHERE run_id=? ORDER BY sequence""", (run_id,)).fetchall()
+            rows = self._db.execute("""SELECT entry_timestamp_json,exit_timestamp_json,entry_price,exit_price,quantity,gross_pnl,costs,net_pnl,metadata_json FROM backtest_trades WHERE run_id=? ORDER BY sequence""", (run_id,)).fetchall()
             result = []
             for row in rows:
                 metadata = json.loads(row[8])
-                result.append(BacktestTrade(json.loads(row[0]), json.loads(row[1]), *row[2:8],
-                    metadata.get("entry_market_price"), metadata.get("exit_market_price"),
-                    metadata.get("entry_price_source"), metadata.get("exit_price_source"),
-                    tuple(metadata["entry_event_identity"]) if metadata.get("entry_event_identity") is not None else None,
-                    tuple(metadata["exit_event_identity"]) if metadata.get("exit_event_identity") is not None else None))
+                result.append(BacktestTrade(json.loads(row[0]), json.loads(row[1]), *row[2:8], metadata.get("entry_market_price"), metadata.get("exit_market_price"), metadata.get("entry_price_source"), metadata.get("exit_price_source"), tuple(metadata["entry_event_identity"]) if metadata.get("entry_event_identity") is not None else None, tuple(metadata["exit_event_identity"]) if metadata.get("exit_event_identity") is not None else None))
             return tuple(result)
 
     def __enter__(self) -> "BacktestTradeLedger":
