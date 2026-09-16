@@ -77,29 +77,33 @@ EventStrategy=Callable[[EventContext],EventSignal|str|None]
 class BacktestEngine:
     def __init__(self,config=None): self.config=config or BacktestConfig()
     def run(self,candles,entry_strategy,exit_strategy):
-        capital=self.config.initial_capital; open_trade=None; trades=[]; curve=[]; previous_timestamp=None; pending_action=None; pending_timestamp=None; last_timestamp=None; last_close=None
+        capital=self.config.initial_capital; open_trade=None; trades=[]; curve=[]; previous_timestamp=None; pending_action=None; pending_timestamp=None; last_timestamp=None; last_close=None; max_intrabar_drawdown=0.0
         for candle in candles:
             timestamp=_validate_candle(candle,previous_timestamp); previous_timestamp=timestamp; last_timestamp=timestamp; last_close=float(candle["close"]); context={k:v for k,v in candle.items() if _is_number(v)}
+            peak_before=max((point.equity for point in curve),default=self.config.initial_capital)
             if self.config.execution_timing=="close":
                 if open_trade is None and entry_strategy.evaluate(context):
-                    execution_price=_execution_price(self.config,last_close,"BUY"); _ensure_cash_available(self.config,capital,execution_price); open_trade=(timestamp,execution_price)
+                    execution_price=_execution_price(self.config,last_close,"BUY"); _ensure_cash_available(self.config,capital,execution_price); open_trade=(timestamp,execution_price,last_close)
                 elif open_trade is not None and exit_strategy.evaluate(context):
-                    et,ep=open_trade; xp=_execution_price(self.config,last_close,"SELL"); tr=_build_trade(self.config,et,ep,timestamp,xp,entry_market_price=ep,exit_market_price=last_close,entry_price_source="bar:close",exit_price_source="bar:close"); capital+=tr.net_pnl; trades.append(tr); open_trade=None
+                    et,ep,emp=open_trade; xp=_execution_price(self.config,last_close,"SELL"); tr=_build_trade(self.config,et,ep,timestamp,xp,entry_market_price=emp,exit_market_price=last_close,entry_price_source="bar:close",exit_price_source="bar:close"); capital+=tr.net_pnl; trades.append(tr); open_trade=None
             else:
                 if pending_action is not None:
                     if "open" not in candle: raise ValueError("next_open execution requires candle open")
-                    op=float(candle["open"])
+                    op=float(candle["open"]); _validate_price_field(op,"open")
                     if pending_action=="BUY" and open_trade is None:
-                        xp=_execution_price(self.config,op,"BUY"); _ensure_cash_available(self.config,capital,xp); open_trade=(pending_timestamp,xp)
+                        xp=_execution_price(self.config,op,"BUY"); _ensure_cash_available(self.config,capital,xp); open_trade=(pending_timestamp,xp,op)
                     elif pending_action=="SELL" and open_trade is not None:
-                        et,ep=open_trade; xp=_execution_price(self.config,op,"SELL"); tr=_build_trade(self.config,et,ep,timestamp,xp,exit_market_price=op,exit_price_source="bar:open"); capital+=tr.net_pnl; trades.append(tr); open_trade=None
+                        et,ep,emp=open_trade; xp=_execution_price(self.config,op,"SELL"); tr=_build_trade(self.config,et,ep,timestamp,xp,entry_market_price=emp,exit_market_price=op,entry_price_source="bar:open",exit_price_source="bar:open"); capital+=tr.net_pnl; trades.append(tr); open_trade=None
                     pending_action=pending_timestamp=None
                 signal="SELL" if open_trade is not None and exit_strategy.evaluate(context) else "BUY" if open_trade is None and entry_strategy.evaluate(context) else None
                 if signal: pending_action,pending_timestamp=signal,timestamp
+            if open_trade is not None and "low" in candle:
+                _validate_price_field(candle["low"],"low")
+                low_equity=capital+_calculate_unrealized_pnl(self.config,open_trade[1],float(candle["low"]))
+                if peak_before>0: max_intrabar_drawdown=max(max_intrabar_drawdown,(peak_before-low_equity)/peak_before)
             curve.append(_equity_point(timestamp,capital,open_trade,last_close,self.config))
-            if open_trade is not None and "low" in candle: _validate_price_field(candle["low"],"low")
         unreal=_calculate_unrealized_pnl(self.config,open_trade[1],last_close) if open_trade is not None and last_close is not None else 0.0
-        return _build_result(self.config.initial_capital,capital+unreal,trades,0.0,unreal,open_trade is not None,curve)
+        return _build_result(self.config.initial_capital,capital+unreal,trades,max_intrabar_drawdown,unreal,open_trade is not None,curve)
 
     def run_events(self,events,strategy,*,price_field="price"):
         if not isinstance(price_field,str) or not price_field.strip(): raise ValueError("price_field is required")
@@ -192,10 +196,9 @@ def _equity_point(timestamp,capital,open_trade,mark_price,config):
     unreal=_calculate_unrealized_pnl(config,open_trade[1],mark_price) if open_trade is not None else 0.0
     return EquityPoint(_timestamp_ns(timestamp),capital+unreal,capital-config.initial_capital,unreal)
 def _continuous_record_to_candle(item):
-    candle=dict(item.payload); candle["timestamp"]=item.timestamp_ns; candle["contract_token"]=item.contract_token; return candle
+    candle=dict(item.payload); candle["timestamp"]=item.timestamp; return candle
 def _continuous_record_to_event(item):
-    payload=dict(item.payload); payload["contract_token"]=item.contract_token; payload["continuous_underlying"]=item.underlying; payload["instrument_type"]=item.instrument_type
-    return HistoricalRecord(source=item.record.source,instrument=item.record.instrument,timeframe=item.record.timeframe,timestamp_ns=item.timestamp_ns,payload=payload,sequence=item.record.sequence)
+    return HistoricalRecord("continuous_futures",item.symbol,item.timeframe,_timestamp_ns(item.timestamp),item.payload,0)
 def _normalize_event_signal(decision):
     if decision is None:return EventSignal("NONE")
     if isinstance(decision,EventSignal):return EventSignal(decision.action.strip().upper(),decision.price)
