@@ -124,7 +124,11 @@ class CashFutureHistoricalLoader:
                 except LookupError: pass
             current=current.fromordinal(current.toordinal()+1)
         segments=[]
-        for _,grouped in groupby(days,key=lambda item:item[1].token):
+        # Token alone is not a sufficient segment identity: a historical snapshot can
+        # retain the same token while changing lot/tick/provenance metadata. Keep the
+        # point-in-time ContractRecord attached to each segment so those changes cannot
+        # silently reuse the first day's terms.
+        for _,grouped in groupby(days,key=lambda item:item[1]):
             block=list(grouped); segments.append((block[0][0],block[-1][0],block[0][1]))
         return tuple(segments)
     def _resolve_spot_instrument(self,symbol:str,start_ns:int,end_ns:int,requested:str,source:str,timeframe:str)->str:
