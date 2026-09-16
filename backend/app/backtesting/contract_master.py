@@ -135,7 +135,7 @@ class ContractMasterCatalog:
                 raise LookupError(f"contract-master snapshot {snapshot} is stale for {as_of.isoformat()}")
         rows = self._db.execute("""SELECT exchange,symbol,token,expiry,instrument_type,underlying,lot_size,tick_size
             FROM derivative_contracts WHERE snapshot_date=? AND exchange=? AND underlying=?
-            AND instrument_type=? AND expiry>=? ORDER BY expiry""", (snapshot, exchange, underlying, instrument_type, as_of.isoformat())).fetchall()
+            AND instrument_type=? AND expiry>=? ORDER BY expiry, token, symbol""", (snapshot, exchange, underlying, instrument_type, as_of.isoformat())).fetchall()
         return tuple(ContractRecord(r[0], r[1], r[2], date.fromisoformat(r[3]), r[4], r[5], int(r[6]), date.fromisoformat(snapshot), None if r[7] is None else float(r[7])) for r in rows)
 
     def resolve(self, *, exchange: str, underlying: str, as_of: date, mode: str, max_snapshot_age_days: int | None = None) -> ContractRecord:
@@ -151,12 +151,16 @@ class ContractMasterCatalog:
 
     def resolve_contract_month(self, *, exchange: str, underlying: str, contract_month: str, as_of: date, instrument_type: str = "STOCK_FUTURE", max_snapshot_age_days: int | None = None) -> ContractRecord:
         """Resolve the exact historical futures contract for a YYYY-MM expiry month without returning an expired contract."""
+        if type(contract_month) is not str:
+            raise ValueError("contract_month must be YYYY-MM")
+        contract_month = contract_month.strip()
+        if len(contract_month) != 7 or contract_month[4] != "-" or not contract_month[:4].isdigit() or not contract_month[5:].isdigit():
+            raise ValueError("contract_month must be YYYY-MM")
         try:
-            year_text, month_text = contract_month.strip().split("-", 1)
-            year, month = int(year_text), int(month_text)
+            year, month = int(contract_month[:4]), int(contract_month[5:])
             target = date(year, month, 1)
             next_month = date(year + (1 if month == 12 else 0), 1 if month == 12 else month + 1, 1)
-        except (AttributeError, TypeError, ValueError):
+        except ValueError:
             raise ValueError("contract_month must be YYYY-MM") from None
         if max_snapshot_age_days is not None and (type(max_snapshot_age_days) is not int or max_snapshot_age_days < 0):
             raise ValueError("max_snapshot_age_days must be a non-negative integer or None")
@@ -168,7 +172,7 @@ class ContractMasterCatalog:
             raise LookupError(f"contract-master snapshot {snapshot} is stale for {as_of.isoformat()}")
         rows = self._db.execute("""SELECT exchange,symbol,token,expiry,instrument_type,underlying,lot_size,tick_size
             FROM derivative_contracts WHERE snapshot_date=? AND exchange=? AND underlying=?
-            AND instrument_type=? AND expiry>=? AND expiry>=? AND expiry<? ORDER BY expiry""", (
+            AND instrument_type=? AND expiry>=? AND expiry>=? AND expiry<? ORDER BY expiry, token, symbol""", (
                 snapshot, exchange, underlying, instrument_type, as_of.isoformat(), target.isoformat(), next_month.isoformat()
             )).fetchall()
         if not rows:
