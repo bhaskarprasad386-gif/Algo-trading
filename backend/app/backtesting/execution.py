@@ -277,6 +277,8 @@ class ExecutionSimulator:
             return ExecutionResult((), order.quantity, True, "no executable quantity")
         if order.time_in_force == TimeInForce.FOK and remaining:
             return ExecutionResult((), order.quantity, True, "insufficient displayed depth for FOK")
+        if order.time_in_force == TimeInForce.IOC and remaining:
+            return ExecutionResult(tuple(fills), 0, False, "IOC remainder cancelled")
         return ExecutionResult(tuple(fills), remaining, False, None if remaining == 0 else "partial fill")
 
     def execute_depth_updates(self, order: SimOrder, updates: Iterable[tuple[int, OrderBook, Iterable[QueueEvidence]]]) -> ExecutionResult:

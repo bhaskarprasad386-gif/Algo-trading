@@ -37,4 +37,22 @@ def test_atomic_execution_rejects_partial_ioc_leg():
     assert result.fills == ()
     assert result.leg_results[0].fills[0].quantity == 5
     assert result.leg_results[0].remaining_quantity == 0
+    assert result.leg_results[0].reason == "IOC remainder cancelled"
     assert result.reason == "atomic rollback: one or more legs did not fully execute"
+
+
+def test_execute_depth_cancels_ioc_remainder_instead_of_leaving_it_resting():
+    simulator = ExecutionSimulator()
+    order = SimOrder(
+        "ioc",
+        "NIFTY",
+        ExecutionSide.BUY,
+        10,
+        time_in_force=TimeInForce.IOC,
+    )
+    result = simulator.execute_depth(order, OrderBook(asks=(DepthLevel(100.0, 5),)), 1)
+
+    assert result.rejected is False
+    assert result.fills[0].quantity == 5
+    assert result.remaining_quantity == 0
+    assert result.reason == "IOC remainder cancelled"
