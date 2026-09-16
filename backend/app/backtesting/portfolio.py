@@ -23,17 +23,17 @@ class RiskConfig:
     max_drawdown: float | None = None
 
     def __post_init__(self) -> None:
-        if not math.isfinite(float(self.initial_margin_rate)) or not 0 < self.initial_margin_rate <= 1:
+        if isinstance(self.initial_margin_rate, bool) or not isinstance(self.initial_margin_rate, (int, float)) or not math.isfinite(float(self.initial_margin_rate)) or not 0 < self.initial_margin_rate <= 1:
             raise ValueError("initial_margin_rate must be finite and in (0, 1]")
         maintenance = self.initial_margin_rate if self.maintenance_margin_rate is None else self.maintenance_margin_rate
-        if not math.isfinite(float(maintenance)) or not 0 < maintenance <= 1:
+        if isinstance(maintenance, bool) or not isinstance(maintenance, (int, float)) or not math.isfinite(float(maintenance)) or not 0 < maintenance <= 1:
             raise ValueError("maintenance_margin_rate must be finite and in (0, 1]")
         if maintenance > self.initial_margin_rate:
             raise ValueError("maintenance_margin_rate cannot exceed initial_margin_rate")
         object.__setattr__(self, "maintenance_margin_rate", maintenance)
         for name in ("max_gross_notional", "max_net_notional", "max_leverage", "max_drawdown"):
             value = getattr(self, name)
-            if value is not None and (not math.isfinite(float(value)) or value < 0):
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or value < 0):
                 raise ValueError(f"{name} must be finite and non-negative")
         if self.max_position_quantity is not None:
             if isinstance(self.max_position_quantity, bool) or not isinstance(self.max_position_quantity, int) or self.max_position_quantity <= 0:
@@ -97,7 +97,7 @@ class Portfolio:
     """Deterministic capital, margin, risk and P&L accounting."""
 
     def __init__(self, initial_cash: float = DEFAULT_PAPER_CAPITAL, risk_config: RiskConfig | None = None) -> None:
-        if not math.isfinite(float(initial_cash)) or initial_cash < 0:
+        if isinstance(initial_cash, bool) or not isinstance(initial_cash, (int, float)) or not math.isfinite(float(initial_cash)) or initial_cash < 0:
             raise ValueError("initial_cash must be finite and non-negative")
         self.initial_cash = float(initial_cash)
         self.cash = float(initial_cash)
@@ -362,9 +362,13 @@ class Portfolio:
             new_qty = old.quantity + signed
             if abs(new_qty) >= abs(old.quantity) or (old.quantity * new_qty < 0 and new_qty != 0):
                 raise RiskViolation("forced liquidation cannot increase or reverse exposure")
+
         state = (self.cash, dict(self._positions), self._realized_pnl, self._fees, self._peak_equity, dict(self._reserved_margin), list(self._trades))
         try:
-            after = self.apply_fills_atomic(fills, marks)
+            self._atomic_applying = True
+            for fill in fills:
+                self.apply_fill(fill, marks)
+            after = self.snapshot(marks)
             if after.equity + 1e-9 < after.maintenance_margin:
                 raise RiskViolation("forced liquidation did not restore maintenance margin")
         except Exception:
@@ -373,6 +377,8 @@ class Portfolio:
             self._reserved_margin = reserved
             self._trades = trades
             raise
+        finally:
+            self._atomic_applying = False
         return after
 
     def restore_state(self, state: Mapping[str, Any]) -> None:
