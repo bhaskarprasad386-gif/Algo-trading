@@ -65,13 +65,12 @@ def _validate_windows(windows: tuple[FNORolloverWindow, ...]) -> None:
 def build_continuous_futures_series(
     windows: Iterable[FNORolloverWindow],
     records_by_token: Mapping[str, Iterable[HistoricalRecord]],
+    *,
+    instrument_prefix: str = "NFO:",
 ) -> tuple[ContinuousFuturesRecord, ...]:
-    """Project raw contract records through expiry-driven rollover windows.
-
-    Only records belonging to a window's real contract and date range are
-    emitted. Missing records remain missing, so no artificial rollover candle
-    or synthetic bridge is introduced. Records are returned in timestamp order.
-    """
+    """Project raw contract records through expiry-driven rollover windows."""
+    if type(instrument_prefix) is not str or not instrument_prefix:
+        raise ValueError("instrument_prefix must be a non-empty string")
     windows = tuple(windows)
     if not windows:
         return ()
@@ -82,22 +81,15 @@ def build_continuous_futures_series(
         raw_records = records_by_token.get(window.contract_token, ())
         start_ns = _day_start_ns(window.start_date)
         end_ns = _day_end_ns(window.end_date)
+        expected_instrument = f"{instrument_prefix}{window.contract_token}"
         for record in raw_records:
-            expected_instrument = f"NFO:{window.contract_token}"
             if record.instrument != expected_instrument:
                 raise ValueError(f"record instrument {record.instrument!r} does not match contract token {window.contract_token!r}")
             if not window.start_date <= _session_date(record.timestamp_ns) <= window.end_date:
                 continue
             if not start_ns <= record.timestamp_ns <= end_ns:
                 continue
-            output.append(
-                ContinuousFuturesRecord(
-                    underlying=window.underlying,
-                    instrument_type=window.instrument_type,
-                    contract_token=window.contract_token,
-                    record=record,
-                )
-            )
+            output.append(ContinuousFuturesRecord(window.underlying, window.instrument_type, window.contract_token, record))
 
     output.sort(key=lambda item: (item.timestamp_ns, item.underlying, item.instrument_type, item.contract_token, item.record.instrument, item.record.sequence if item.record.sequence is not None else -1))
     return tuple(output)
@@ -114,17 +106,8 @@ def build_continuous_futures_series_from_catalog(
     """Build a continuous series directly from durable historical catalog data."""
     windows = tuple(windows)
     tokens = tuple(dict.fromkeys(window.contract_token for window in windows))
-    records_by_token = catalog.records_by_contract_tokens(
-        source=source,
-        contract_tokens=tokens,
-        timeframe=timeframe,
-        instrument_prefix=instrument_prefix,
-    )
-    return build_continuous_futures_series(windows, records_by_token)
+    records_by_token = catalog.records_by_contract_tokens(source=source, contract_tokens=tokens, timeframe=timeframe, instrument_prefix=instrument_prefix)
+    return build_continuous_futures_series(windows, records_by_token, instrument_prefix=instrument_prefix)
 
 
-__all__ = [
-    "ContinuousFuturesRecord",
-    "build_continuous_futures_series",
-    "build_continuous_futures_series_from_catalog",
-]
+__all__ = ["ContinuousFuturesRecord", "build_continuous_futures_series", "build_continuous_futures_series_from_catalog"]
