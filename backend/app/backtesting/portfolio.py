@@ -47,6 +47,18 @@ class Position:
     average_price: float = 0.0
     realized_pnl: float = 0.0
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.instrument, str) or not self.instrument.strip():
+            raise ValueError("instrument is required")
+        if isinstance(self.quantity, bool) or not isinstance(self.quantity, int):
+            raise ValueError("quantity must be an integer")
+        if not math.isfinite(float(self.average_price)) or self.average_price < 0:
+            raise ValueError("average_price must be finite and non-negative")
+        if self.quantity != 0 and self.average_price <= 0:
+            raise ValueError("average_price must be positive for an open position")
+        if not math.isfinite(float(self.realized_pnl)):
+            raise ValueError("realized_pnl must be finite")
+
 
 @dataclass(frozen=True)
 class TradeRecord:
@@ -108,7 +120,9 @@ class Portfolio:
     def _metrics(self, marks: dict[str, float]) -> tuple[float, float, float, float]:
         gross = net = unrealized = 0.0
         for p in self._positions.values():
-            mark = marks.get(p.instrument, p.average_price)
+            if p.instrument not in marks:
+                raise ValueError(f"missing market mark for {p.instrument}")
+            mark = marks[p.instrument]
             if not math.isfinite(float(mark)) or mark <= 0:
                 raise ValueError(f"mark must be finite and positive for {p.instrument}")
             notional = p.quantity * mark
@@ -304,7 +318,9 @@ class Portfolio:
             self._positions.pop(fill.instrument, None)
         else:
             self._positions[fill.instrument] = position
-        snapshot = self.snapshot(marks)
+        snapshot_marks = dict(marks or {})
+        snapshot_marks.setdefault(fill.instrument, fill.price)
+        snapshot = self.snapshot(snapshot_marks)
         self._peak_equity = max(self._peak_equity, snapshot.equity)
         self._trades.append(TradeRecord(fill.order_id, fill.instrument, fill.side, fill.quantity, fill.price, fill.quantity * fill.price, fill.fee, realized_delta, self.cash, snapshot.equity, fill.filled_at_ns))
         return position
