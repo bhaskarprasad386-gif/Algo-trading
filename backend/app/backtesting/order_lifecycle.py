@@ -172,6 +172,14 @@ class OrderLifecycle:
                 raise ValueError(f"invalid lifecycle {name}")
             return value
 
+        def strict_float(value: object, name: str, *, nonnegative: bool = False) -> float:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"invalid lifecycle {name}")
+            result = float(value)
+            if not isfinite(result) or (nonnegative and result < 0):
+                raise ValueError(f"invalid lifecycle {name}")
+            return result
+
         order_raw = raw.get("order")
         if not isinstance(order_raw, Mapping):
             raise ValueError("invalid lifecycle order state")
@@ -188,7 +196,7 @@ class OrderLifecycle:
 
         status = OrderStatus(str(raw["status"]))
         filled_quantity = strict_int(raw.get("filled_quantity", 0), "filled quantity", nonnegative=True)
-        average_fill_price = float(raw.get("average_fill_price", 0.0))
+        average_fill_price = strict_float(raw.get("average_fill_price", 0.0), "average fill price", nonnegative=True)
         time_in_force = TimeInForce(str(raw.get("time_in_force", order.time_in_force.value)))
         if filled_quantity > order.quantity:
             raise ValueError("invalid lifecycle filled quantity")
@@ -201,10 +209,8 @@ class OrderLifecycle:
         if status == OrderStatus.REJECTED and not isinstance(raw.get("reject_reason"), str):
             raise ValueError("REJECTED lifecycle requires reject_reason")
         if status in {OrderStatus.ACCEPTED, OrderStatus.PARTIALLY_FILLED, OrderStatus.FILLED} and filled_quantity > 0:
-            if not isfinite(average_fill_price) or average_fill_price <= 0:
+            if average_fill_price <= 0:
                 raise ValueError("filled lifecycle requires positive average fill price")
-        elif not isfinite(average_fill_price) or average_fill_price < 0:
-            raise ValueError("invalid lifecycle average fill price")
 
         previous_timestamp = order.submitted_at_ns
         previous_filled = 0
@@ -233,7 +239,7 @@ class OrderLifecycle:
                 raise ValueError("PARTIALLY_FILLED event must have residual quantity")
             if event.status == OrderStatus.FILLED and event.filled_quantity != order.quantity:
                 raise ValueError("FILLED event must have full quantity")
-            if event.status in {OrderStatus.CANCELLED, OrderStatus.EXPIRED, OrderStatus.REJECTED, OrderStatus.REPLACED} and event.status == OrderStatus.REJECTED and not event.reason:
+            if event.status == OrderStatus.REJECTED and not event.reason:
                 raise ValueError("REJECTED lifecycle event requires reason")
             if event.status == OrderStatus.REPLACED and not event.replacement_order_id:
                 raise ValueError("REPLACED lifecycle event requires replacement order id")
