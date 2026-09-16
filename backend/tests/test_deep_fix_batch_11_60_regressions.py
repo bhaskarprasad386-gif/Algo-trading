@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -8,9 +8,9 @@ from app.backtesting.cash_future_strategy_runner import CashFutureStrategyConfig
 from app.scanner.cash_future_history import CashFutureHistoryPoint, analyze_historical_gap_outcomes
 
 
-def cf_point(gap: float, minute: int, *, symbol: str = "SBIN", contract: str = "2026-01") -> CashFutureHistoryPoint:
+def cf_point(gap: float, minute: int, *, symbol: str = "SBIN", contract: str = "2026-01", timestamp: datetime | None = None) -> CashFutureHistoryPoint:
     return CashFutureHistoryPoint(
-        timestamp=datetime(2026, 1, 2, 9, minute, tzinfo=timezone.utc),
+        timestamp=timestamp or datetime(2026, 1, 2, 9, minute, tzinfo=timezone.utc),
         symbol=symbol,
         contract_month=contract,
         cash_price=100.0,
@@ -28,7 +28,12 @@ def chain(strike: float, *, expiry: int = 20261001, timestamp: int = 1, venue: s
 
 
 def test_historical_gap_does_not_exit_after_max_holding_deadline():
-    points = [cf_point(5, 15), cf_point(4, 16), cf_point(-1, 15 + 24 * 30)]
+    entry_time = datetime(2026, 1, 2, 9, 15, tzinfo=timezone.utc)
+    points = [
+        cf_point(5, 15, timestamp=entry_time),
+        cf_point(4, 16, timestamp=entry_time + timedelta(minutes=1)),
+        cf_point(-1, 16, timestamp=entry_time + timedelta(days=2)),
+    ]
     outcomes = analyze_historical_gap_outcomes(points, target_gap=5, max_holding_days=1)
     assert outcomes[0].exit_timestamp is None
 
