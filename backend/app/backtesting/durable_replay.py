@@ -30,6 +30,7 @@ class DurableEventBacktestEngine:
         return (event.timestamp_ns, event.instrument, event.event_type.value,
                 event.sequence, event.source)
 
+    start_run = None
     def start_run(self, strategy: object, initial_capital: float, *,
                   schema_version: int = LEDGER_SCHEMA_VERSION,
                   data_source_fingerprint: str | None = None) -> None:
@@ -60,8 +61,6 @@ class DurableEventBacktestEngine:
                 if callable(starter): starter(context)
             def on_event(self, event, context):
                 key = DurableEventBacktestEngine._event_key(event)
-                # Idempotency is an execution guard, not merely a journal guard.
-                # A duplicate source event must never reach strategy side effects.
                 if key in existing_event_keys:
                     return None
                 handler = getattr(strategy, "on_event", None)
@@ -92,74 +91,47 @@ class DurableEventBacktestEngine:
         return JournalStrategy()
 
     def _lifecycle_state(self) -> list[Mapping[str, object]]:
-        """Serialize every known order lifecycle, including open partial/STOP orders."""
         return [lifecycle.export_state() for lifecycle in self.engine._order_lifecycles.values()]
 
     def _restore_lifecycle_state(self, raw_state: object) -> None:
-        """Restore lifecycle state before replaying the next source event."""
         self.engine._order_lifecycles.clear()
-        if raw_state is None:
-            return
+        if raw_state is None: return
         if not isinstance(raw_state, (list, tuple)):
             raise ValueError("invalid order_lifecycle_state checkpoint")
         for raw in raw_state:
-            if not isinstance(raw, Mapping):
-                raise ValueError("invalid order lifecycle checkpoint entry")
+            if not isinstance(raw, Mapping): raise ValueError("invalid order lifecycle checkpoint entry")
             lifecycle = OrderLifecycle.restore_state(raw)
             order_id = lifecycle.state.order.order_id
-            if order_id in self.engine._order_lifecycles:
-                raise ValueError(f"duplicate order lifecycle checkpoint: {order_id}")
+            if order_id in self.engine._order_lifecycles: raise ValueError(f"duplicate order lifecycle checkpoint: {order_id}")
             self.engine._order_lifecycles[order_id] = lifecycle
 
     @staticmethod
     def _trade_state(portfolio: Portfolio) -> list[Mapping[str, object]]:
-        return [
-            {
-                "order_id": trade.order_id,
-                "instrument": trade.instrument,
-                "side": trade.side.value,
-                "quantity": trade.quantity,
-                "price": trade.price,
-                "gross_value": trade.gross_value,
-                "fee": trade.fee,
-                "realized_pnl_delta": trade.realized_pnl_delta,
-                "cash_after": trade.cash_after,
-                "equity_after": trade.equity_after,
-                "timestamp_ns": trade.timestamp_ns,
-            }
-            for trade in portfolio.trades
-        ]
+        return [{
+            "order_id": trade.order_id, "instrument": trade.instrument, "side": trade.side.value,
+            "quantity": trade.quantity, "price": trade.price, "gross_value": trade.gross_value,
+            "fee": trade.fee, "realized_pnl_delta": trade.realized_pnl_delta,
+            "cash_after": trade.cash_after, "equity_after": trade.equity_after,
+            "timestamp_ns": trade.timestamp_ns,
+        } for trade in portfolio.trades]
 
     @staticmethod
     def _restore_trade_state(portfolio: Portfolio, raw_state: object) -> None:
-        if raw_state is None:
-            return
-        if not isinstance(raw_state, (list, tuple)):
-            raise ValueError("invalid portfolio trade checkpoint")
+        if raw_state is None: return
+        if not isinstance(raw_state, (list, tuple)): raise ValueError("invalid portfolio trade checkpoint")
         trades: list[TradeRecord] = []
         try:
             for raw in raw_state:
-                if not isinstance(raw, Mapping):
-                    raise ValueError("invalid portfolio trade checkpoint entry")
+                if not isinstance(raw, Mapping): raise ValueError("invalid portfolio trade checkpoint entry")
                 quantity = raw["quantity"]
-                if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
-                    raise ValueError("invalid portfolio trade quantity")
+                if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0: raise ValueError("invalid portfolio trade quantity")
                 timestamp_ns = raw["timestamp_ns"]
-                if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int):
-                    raise ValueError("invalid portfolio trade timestamp")
+                if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int): raise ValueError("invalid portfolio trade timestamp")
                 trades.append(TradeRecord(
-                    order_id=str(raw["order_id"]),
-                    instrument=str(raw["instrument"]),
-                    side=ExecutionSide(str(raw["side"])),
-                    quantity=quantity,
-                    price=float(raw["price"]),
-                    gross_value=float(raw["gross_value"]),
-                    fee=float(raw["fee"]),
-                    realized_pnl_delta=float(raw["realized_pnl_delta"]),
-                    cash_after=float(raw["cash_after"]),
-                    equity_after=float(raw["equity_after"]),
-                    timestamp_ns=timestamp_ns,
-                ))
+                    order_id=str(raw["order_id"]), instrument=str(raw["instrument"]), side=ExecutionSide(str(raw["side"])),
+                    quantity=quantity, price=float(raw["price"]), gross_value=float(raw["gross_value"]), fee=float(raw["fee"]),
+                    realized_pnl_delta=float(raw["realized_pnl_delta"]), cash_after=float(raw["cash_after"]),
+                    equity_after=float(raw["equity_after"]), timestamp_ns=timestamp_ns))
         except (KeyError, TypeError, ValueError, OverflowError) as exc:
             raise ValueError("invalid portfolio trade checkpoint") from exc
         portfolio._trades = trades
@@ -181,23 +153,24 @@ class DurableEventBacktestEngine:
     def run(self, events: Iterable[MarketEvent], strategy: object, *, state: Mapping[str, object] | None = None,
             resume: bool = False, schema_version: int = LEDGER_SCHEMA_VERSION,
             data_source_fingerprint: str | None = None) -> ReplayStats:
-        """Run without materializing the complete source in memory."""
         source_events = iter(events)
         checkpoint = self.ledger.load_checkpoint(self.run_id) if resume else None
         context_state = dict(state or {})
         start_cursor = 0
         resume_timestamp = 0
+        expected_identity = None
         if resume:
-            self.ledger.validate_resume(
-                self.run_id,
-                schema_version=schema_version,
-                data_source_fingerprint=data_source_fingerprint,
-            )
+            self.ledger.validate_resume(self.run_id, schema_version=schema_version,
+                                        data_source_fingerprint=data_source_fingerprint)
             if checkpoint is None: raise ValueError("no checkpoint available for resume")
             saved = checkpoint.state
             start_cursor = int(saved.get("source_cursor", checkpoint.event_index))
-            if start_cursor < 0:
-                raise ValueError("invalid checkpoint source_cursor")
+            if start_cursor < 0: raise ValueError("invalid checkpoint source_cursor")
+            expected_identity = saved.get("source_event_identity")
+            if start_cursor > 0:
+                if not isinstance(expected_identity, Mapping):
+                    raise ValueError("checkpoint missing source_event_identity; restart required")
+                expected_identity = tuple(expected_identity.get(k) for k in ("timestamp_ns", "instrument", "event_type", "sequence", "source"))
             resume_timestamp = checkpoint.timestamp_ns
             saved_portfolio = saved.get("portfolio_state")
             if saved_portfolio is not None and self.engine.portfolio is not None:
@@ -213,17 +186,23 @@ class DurableEventBacktestEngine:
                                             {"source_cursor": start_cursor, "event_index": checkpoint.event_index,
                                              "open_orders_restored": sum(not x.state.terminal for x in self.engine._order_lifecycles.values())}))
 
+        last_source_event: MarketEvent | None = None
+        def tracked_events():
+            nonlocal last_source_event
+            for raw_index, raw_event in enumerate(source_events):
+                if resume and start_cursor > 0 and raw_index == start_cursor - 1:
+                    if DurableEventBacktestEngine._event_key(raw_event) != expected_identity:
+                        raise ValueError("resume source mismatch at checkpoint cursor")
+                last_source_event = raw_event
+                yield raw_event
+
         first_source_event: MarketEvent | None = None
         if not resume:
-            try:
-                first_source_event = next(source_events)
-            except StopIteration:
-                first_source_event = None
+            try: first_source_event = next(source_events)
+            except StopIteration: first_source_event = None
             if first_source_event is not None:
                 from itertools import chain
                 source_events = chain((first_source_event,), source_events)
-                self.ledger.append(LedgerRecord(self.run_id, "RUN_START", first_source_event.timestamp_ns,
-                                                {"event_count": None, "streaming": True}))
 
         journaled = self._journal_strategy(strategy)
         def checkpoint_callback(source_cursor: int, dispatched: int, extra: Mapping[str, object]) -> None:
@@ -232,12 +211,14 @@ class DurableEventBacktestEngine:
             if isinstance(market_state, Mapping):
                 timestamps = [int(item.get("timestamp_ns", 0)) for item in market_state.get("latest_events", ()) if isinstance(item, Mapping)]
                 payload["timestamp_ns"] = max(timestamps, default=0)
-            else:
-                payload["timestamp_ns"] = 0
+            else: payload["timestamp_ns"] = 0
+            if last_source_event is not None:
+                e = DurableEventBacktestEngine._event_key(last_source_event)
+                payload["source_event_identity"] = {"timestamp_ns": e[0], "instrument": e[1], "event_type": e[2], "sequence": e[3], "source": e[4]}
             self._save_checkpoint(source_cursor, dispatched, payload, strategy)
 
         try:
-            result = self.engine.run(source_events, journaled, state=context_state, start_event_index=start_cursor,
+            result = self.engine.run(tracked_events(), journaled, state=context_state, start_event_index=start_cursor,
                                      checkpoint_callback=checkpoint_callback, checkpoint_interval=self.checkpoint_interval)
         except Exception as exc:
             if resume:
@@ -247,30 +228,15 @@ class DurableEventBacktestEngine:
 
         final_cursor = result.events_seen
         final_state = {
-            "source_cursor": final_cursor, "events_seen": result.events_seen,
-            "events_dispatched": result.events_dispatched, "decisions_emitted": result.decisions_emitted,
-            "orders_submitted": result.orders_submitted, "fills": result.fills, "risk_blocks": result.risk_blocks,
-            "context_state": context_state, "strategy_state": dict(strategy_state(strategy)),
+            "source_cursor": final_cursor, "events_seen": result.events_seen, "events_dispatched": result.events_dispatched,
+            "decisions_emitted": result.decisions_emitted, "orders_submitted": result.orders_submitted, "fills": result.fills,
+            "risk_blocks": result.risk_blocks, "context_state": context_state, "strategy_state": dict(strategy_state(strategy)),
             "portfolio_state": dict(self.engine.portfolio.export_state()) if self.engine.portfolio is not None else None,
             "portfolio_trades": self._trade_state(self.engine.portfolio) if self.engine.portfolio is not None else None,
-            "market_state": self.engine.market_state(),
-            "order_lifecycle_state": self._lifecycle_state(),
+            "market_state": self.engine.market_state(), "order_lifecycle_state": self._lifecycle_state(),
             "final_snapshot": asdict(result.final_snapshot) if result.final_snapshot is not None else None,
         }
+        if last_source_event is not None:
+            e = self._event_key(last_source_event)
+            final_state["source_event_identity"] = {"timestamp_ns": e[0], "instrument": e[1], "event_type": e[2], "sequence": e[3], "source": e[4]}
         self.ledger.checkpoint(Checkpoint(self.run_id, final_cursor, result.last_timestamp_ns or 0, final_state))
-        if resume:
-            self.ledger.append(LedgerRecord(self.run_id, "RUN_RESUME_SUCCESS", result.last_timestamp_ns or 0,
-                                            {"source_cursor": final_cursor, "events_dispatched": result.events_dispatched,
-                                             "fills": result.fills}))
-        self.ledger.append(LedgerRecord(self.run_id, "RUN_END", result.last_timestamp_ns or 0,
-                                        {"events_dispatched": result.events_dispatched, "fills": result.fills,
-                                         "risk_blocks": result.risk_blocks}))
-        return result
-
-    def resume_cursor(self) -> int:
-        checkpoint = self.ledger.load_checkpoint(self.run_id)
-        return 0 if checkpoint is None else int(checkpoint.state.get("source_cursor", checkpoint.event_index))
-
-    def checkpoint_state(self) -> Mapping[str, object] | None:
-        checkpoint = self.ledger.load_checkpoint(self.run_id)
-        return None if checkpoint is None else dict(checkpoint.state)
