@@ -62,20 +62,25 @@ def _missing_session_timestamps(
     if first > last or first >= session_end_ns:
         return ()
     last = min(last, session_end_ns - interval_ns)
+    if first > last:
+        return ()
 
-    observed_set = set(observed)
+    # Walk observed grid timestamps instead of range(first, last, interval_ns).
+    # interval_ns is nanoseconds, so a 5-minute session with interval_ns=1 would
+    # otherwise enumerate 3e11 steps and hang.
+    aligned = sorted({
+        timestamp
+        for timestamp in observed
+        if first <= timestamp <= last and (timestamp - session_start_ns) % interval_ns == 0
+    })
     ranges: list[tuple[int, int]] = []
-    cursor: int | None = None
-    for timestamp in range(first, last + 1, interval_ns):
-        if timestamp in observed_set:
-            if cursor is not None:
-                ranges.append((cursor, timestamp - interval_ns))
-                cursor = None
-            continue
-        if cursor is None:
-            cursor = timestamp
-    if cursor is not None:
-        ranges.append((cursor, last))
+    expected = first
+    for timestamp in aligned:
+        if timestamp > expected:
+            ranges.append((expected, timestamp - interval_ns))
+        expected = timestamp + interval_ns
+    if expected <= last:
+        ranges.append((expected, last))
     return tuple(ranges)
 
 
