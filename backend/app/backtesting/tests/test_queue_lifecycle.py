@@ -38,3 +38,12 @@ def test_queue_lifecycle_rejects_negative_values():
         QueueLifecycleState(1).advance(
             QueueEvidence(price=100.0, executed_quantity=-1)
         )
+
+
+def test_queue_lifecycle_rejects_boolean_integer_fields():
+    with pytest.raises(ValueError):
+        QueueLifecycleState(True)
+    with pytest.raises(ValueError):
+        QueueLifecycleState(1, generation=True)
+    with pytest.raises(TypeError):
+        QueueLifecycleState(1, resting=1)
