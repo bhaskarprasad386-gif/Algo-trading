@@ -133,14 +133,17 @@ class HighResolutionPositionLedger:
         for instrument, raw in open_state.items():
             if not isinstance(instrument, str) or not instrument.strip() or not isinstance(raw, dict):
                 raise ValueError("invalid position checkpoint")
+            normalized = instrument.strip()
+            if normalized in restored:
+                raise ValueError("duplicate normalized instrument in position checkpoint")
             if raw.get("side") != "BUY":
                 raise ValueError("only BUY-open positions are supported")
             quantity = raw.get("quantity")
             timestamp_ns = raw.get("timestamp_ns")
             if type(quantity) is not int or type(timestamp_ns) is not int:
                 raise ValueError("position checkpoint types are invalid")
-            fill = ExecutionFill("BUY", instrument.strip(), quantity, raw.get("price"), timestamp_ns)
-            restored[instrument.strip()] = fill
+            fill = ExecutionFill("BUY", normalized, quantity, raw.get("price"), timestamp_ns)
+            restored[normalized] = fill
         self._open = restored
         self._net_pnl = float(net_pnl)
         self._closed_trades = closed_trades
