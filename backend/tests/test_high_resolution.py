@@ -1,4 +1,5 @@
 from app.backtesting.high_resolution import EventDataSpec, event_identity, is_event_timeframe, validate_event_payload
+import pytest
 
 
 def test_event_timeframe_is_non_cadenced():
@@ -9,6 +10,13 @@ def test_event_timeframe_is_non_cadenced():
 
 def test_event_identity_preserves_same_timestamp_sequence():
     assert event_identity(timestamp_ns=1_000, sequence=2) == (1_000, 2)
+
+
+def test_event_identity_rejects_boolean_timestamp_and_sequence():
+    with pytest.raises(ValueError):
+        event_identity(timestamp_ns=True)
+    with pytest.raises(ValueError):
+        event_identity(timestamp_ns=1_000, sequence=False)
 
 
 def test_event_spec_uses_nanosecond_storage_precision():
