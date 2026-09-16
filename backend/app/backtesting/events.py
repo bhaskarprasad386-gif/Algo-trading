@@ -43,6 +43,26 @@ class MarketEvent:
         if not isinstance(self.payload, Mapping):
             raise TypeError("payload must be a mapping")
         if self.event_type == EventType.DEPTH:
+            for book_name in ("bids", "asks"):
+                levels = self.payload.get(book_name)
+                if levels is None:
+                    continue
+                if not isinstance(levels, (list, tuple)):
+                    raise TypeError(f"{book_name} must be a sequence")
+                for item in levels:
+                    if isinstance(item, Mapping):
+                        price, quantity = item.get("price"), item.get("quantity")
+                    elif isinstance(item, (list, tuple)) and len(item) == 2:
+                        price, quantity = item
+                    else:
+                        continue
+                    if isinstance(price, bool) or not isinstance(price, (int, float)) or not isfinite(float(price)) or price <= 0:
+                        raise ValueError(f"{book_name} price must be finite and positive")
+                    if isinstance(quantity, bool) or not isinstance(quantity, int):
+                        raise TypeError(f"{book_name} quantity must be an integer")
+                    if quantity < 0:
+                        raise ValueError(f"{book_name} quantity must be non-negative")
+
             evidence = self.payload.get("queue_evidence")
             if evidence is not None:
                 if not isinstance(evidence, (list, tuple)):
