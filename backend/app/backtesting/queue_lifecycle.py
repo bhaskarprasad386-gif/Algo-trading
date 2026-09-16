@@ -14,10 +14,20 @@ class QueueLifecycleState:
     resting: bool = True
 
     def __post_init__(self) -> None:
-        if self.queue_ahead_quantity < 0:
-            raise ValueError("queue_ahead_quantity cannot be negative")
-        if self.generation < 0:
-            raise ValueError("generation cannot be negative")
+        if (
+            isinstance(self.queue_ahead_quantity, bool)
+            or not isinstance(self.queue_ahead_quantity, int)
+            or self.queue_ahead_quantity < 0
+        ):
+            raise ValueError("queue_ahead_quantity must be a non-negative integer")
+        if (
+            isinstance(self.generation, bool)
+            or not isinstance(self.generation, int)
+            or self.generation < 0
+        ):
+            raise ValueError("generation must be a non-negative integer")
+        if not isinstance(self.resting, bool):
+            raise TypeError("resting must be boolean")
 
     def advance(self, evidence: QueueEvidence) -> "QueueLifecycleState":
         """Consume explicit execution/cancellation evidence while resting."""
