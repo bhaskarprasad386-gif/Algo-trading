@@ -33,6 +33,12 @@ def test_restore_state_rejects_non_finite_average_fill_price():
             OrderLifecycle.restore_state(_state(value))
 
 
+def test_restore_state_rejects_non_numeric_average_fill_price():
+    for value in ("100.0", "nan", "inf", None):
+        with pytest.raises(ValueError, match="invalid lifecycle average fill price"):
+            OrderLifecycle.restore_state(_state(value))
+
+
 def test_restore_state_accepts_finite_average_fill_price():
     lifecycle = OrderLifecycle.restore_state(_state(100.0))
     assert lifecycle.state.status is OrderStatus.FILLED
