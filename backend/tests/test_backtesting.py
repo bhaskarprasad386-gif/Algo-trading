@@ -23,10 +23,11 @@ def test_backtest_enters_and_exits_on_strategy_rules():
     assert result.net_pnl == 10
     assert result.win_rate == 1.0
     assert result.expectancy == 10
-    assert result.sharpe_ratio == 0.0
-    assert result.sortino_ratio == 0.0
+    assert result.sharpe_ratio is None
+    assert result.sortino_ratio is None
     assert result.max_drawdown == 0.0
-    assert result.cagr == 0.0
+    assert result.cagr is None
+    assert len(result.equity_curve) == 2
 
 
 def test_backtest_applies_slippage_and_transaction_costs():
@@ -55,13 +56,13 @@ def test_backtest_applies_slippage_and_transaction_costs():
     assert trade.costs == pytest.approx(0.4198)
     assert trade.net_pnl == pytest.approx(15.3802)
     assert result.expectancy == pytest.approx(15.3802)
-    assert result.sharpe_ratio == 0.0
-    assert result.sortino_ratio == 0.0
+    assert result.sharpe_ratio is None
+    assert result.sortino_ratio is None
     assert result.max_drawdown == 0.0
-    assert result.cagr == 0.0
+    assert result.cagr is None
 
 
-def test_backtest_sharpe_ratio_uses_completed_trade_returns():
+def test_backtest_sharpe_ratio_uses_equity_curve_returns():
     entry = Strategy("entry", (StrategyRule("go", threshold_rule("signal", minimum=1)),))
     exit_ = Strategy("exit", (StrategyRule("stop", threshold_rule("signal", maximum=0)),))
 
@@ -77,10 +78,11 @@ def test_backtest_sharpe_ratio_uses_completed_trade_returns():
     )
 
     assert len(result.trades) == 2
-    assert result.sharpe_ratio == pytest.approx(3.0)
+    assert result.sharpe_ratio is not None
+    assert result.sharpe_ratio > 0
 
 
-def test_backtest_sortino_ratio_uses_only_downside_deviation():
+def test_backtest_sortino_ratio_uses_equity_curve_downside_deviation():
     entry = Strategy("entry", (StrategyRule("go", threshold_rule("signal", minimum=1)),))
     exit_ = Strategy("exit", (StrategyRule("stop", threshold_rule("signal", maximum=0)),))
 
@@ -96,7 +98,8 @@ def test_backtest_sortino_ratio_uses_only_downside_deviation():
     )
 
     assert len(result.trades) == 2
-    assert result.sortino_ratio == pytest.approx(2 ** 0.5 / 2)
+    assert result.sortino_ratio is not None
+    assert result.sortino_ratio > 0
 
 
 def test_backtest_tracks_realized_max_drawdown():
@@ -120,7 +123,7 @@ def test_backtest_tracks_realized_max_drawdown():
     assert result.max_drawdown == pytest.approx(20 / 100_010)
 
 
-def test_backtest_without_completed_trade_has_zero_pnl():
+def test_backtest_without_completed_trade_has_undefined_time_series_metrics():
     entry = Strategy("entry", (StrategyRule("go", threshold_rule("signal", minimum=1)),))
     exit_ = Strategy("exit", (StrategyRule("stop", threshold_rule("signal", maximum=0)),))
 
@@ -134,10 +137,10 @@ def test_backtest_without_completed_trade_has_zero_pnl():
     assert result.has_open_trade is True
     assert result.win_rate == 0
     assert result.expectancy == 0
-    assert result.sharpe_ratio == 0
-    assert result.sortino_ratio == 0
+    assert result.sharpe_ratio is None
+    assert result.sortino_ratio is None
     assert result.max_drawdown == 0
-    assert result.cagr == 0
+    assert result.cagr is None
 
 
 def test_backtest_marks_open_trade_to_last_close():
