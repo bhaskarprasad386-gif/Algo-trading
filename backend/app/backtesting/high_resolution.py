@@ -19,7 +19,7 @@ class EventDataSpec:
     ordered_by_sequence: bool = True
 
     def __post_init__(self) -> None:
-        if not self.timeframe.strip():
+        if not isinstance(self.timeframe, str) or not self.timeframe.strip():
             raise ValueError("timeframe is required")
         if self.timestamp_unit != "ns":
             raise ValueError("timestamp_unit must be 'ns'")
@@ -27,15 +27,15 @@ class EventDataSpec:
 
 def is_event_timeframe(timeframe: str) -> bool:
     """Return True for non-cadenced market-event timeframes."""
-    return timeframe.strip().lower() in {"tick", "ticks", "event", "events", "orderbook", "order_book"}
+    return isinstance(timeframe, str) and timeframe.strip().lower() in {"tick", "ticks", "event", "events", "orderbook", "order_book"}
 
 
 def event_identity(*, timestamp_ns: int, sequence: int | None = None) -> tuple[int, int | None]:
     """Return the stable identity components for same-timestamp events."""
-    if timestamp_ns < 0:
-        raise ValueError("timestamp_ns cannot be negative")
-    if sequence is not None and sequence < 0:
-        raise ValueError("sequence cannot be negative")
+    if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int) or timestamp_ns < 0:
+        raise ValueError("timestamp_ns must be a non-negative integer")
+    if sequence is not None and (isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0):
+        raise ValueError("sequence must be a non-negative integer when provided")
     return timestamp_ns, sequence
 
 
