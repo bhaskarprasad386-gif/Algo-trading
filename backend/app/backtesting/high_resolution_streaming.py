@@ -7,7 +7,7 @@ from typing import Any, Iterable, Protocol
 
 from app.backtesting.high_resolution_ledger import HighResolutionLedgerWriter
 from app.backtesting.high_resolution_pnl import ExecutionFill, HighResolutionPositionLedger
-from app.backtesting.universal import MarketEvent, ordered_events
+from app.backtesting.universal import MarketEvent, streaming_events
 
 
 class StreamingStrategy(Protocol):
@@ -26,26 +26,31 @@ class StreamingBacktestResult:
 
 
 class HighResolutionStreamingRunner:
-    """Replay supplied events without materializing event or trade history."""
+    """Replay an already ordered event stream without materializing history."""
 
     def __init__(self, position_ledger: HighResolutionPositionLedger | None = None) -> None:
         self.positions = position_ledger or HighResolutionPositionLedger()
 
     @staticmethod
-    def _fill_from_signal(signal: Any, event: MarketEvent) -> ExecutionFill | None:
+    def _signal_value(signal: Any, name: str, default: Any = None) -> Any:
+        if isinstance(signal, dict):
+            return signal.get(name, default)
+        return getattr(signal, name, default)
+
+    @classmethod
+    def _fill_from_signal(cls, signal: Any, event: MarketEvent) -> ExecutionFill | None:
         if signal is None:
             return None
-        side = str(getattr(signal, "side", signal.get("side") if isinstance(signal, dict) else "")).upper()
-        quantity = int(getattr(signal, "quantity", signal.get("quantity") if isinstance(signal, dict) else 0))
-        if side not in {"BUY", "SELL"} or quantity <= 0:
+        side = str(cls._signal_value(signal, "side", "")).upper()
+        quantity = cls._signal_value(signal, "quantity", 0)
+        if type(quantity) is not int or quantity <= 0 or side not in {"BUY", "SELL"}:
             raise ValueError("invalid strategy signal")
-        price_value = event.context.get("price")
+        price_value = cls._signal_value(signal, "price", None)
         if price_value is None:
-            raise ValueError("execution price is required")
-        price = float(price_value)
-        if price <= 0:
-            raise ValueError("execution price must be positive")
-        return ExecutionFill(side, event.instrument, quantity, price, event.timestamp_ns)
+            price_value = event.context.get("price")
+        if isinstance(price_value, bool) or not isinstance(price_value, (int, float)) or price_value <= 0:
+            raise ValueError("execution price must be finite and positive")
+        return ExecutionFill(side, event.instrument, quantity, float(price_value), event.timestamp_ns)
 
     def run(
         self,
@@ -55,7 +60,7 @@ class HighResolutionStreamingRunner:
     ) -> StreamingBacktestResult:
         processed = 0
         signals = 0
-        for event in ordered_events(events):
+        for event in streaming_events(events):
             processed += 1
             signal = strategy.on_event(event)
             fill = self._fill_from_signal(signal, event)
