@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import sqlite3
 from typing import Any, Iterable, Protocol
 
@@ -44,20 +45,20 @@ class ResumableHighResolutionRunner:
         if signal is None:
             return None
         if isinstance(signal, dict):
-            side = str(signal.get("side", "")).upper()
+            side = str(signal.get("side", "")).strip().upper()
             quantity = signal.get("quantity", 0)
             price_value = signal.get("price")
         else:
-            side = str(getattr(signal, "side", "")).upper()
+            side = str(getattr(signal, "side", "")).strip().upper()
             quantity = getattr(signal, "quantity", 0)
             price_value = getattr(signal, "price", None)
         if side not in {"BUY", "SELL"} or type(quantity) is not int or quantity <= 0:
             raise ValueError("invalid strategy signal")
         if price_value is None:
             price_value = event.context.get("price")
-        if isinstance(price_value, bool) or not isinstance(price_value, (int, float)) or price_value <= 0:
+        if isinstance(price_value, bool) or not isinstance(price_value, (int, float)) or not math.isfinite(float(price_value)) or price_value <= 0:
             raise ValueError("execution price must be finite and positive")
-        return ExecutionFill(side, event.instrument, quantity, float(price_value), event.timestamp_ns)
+        return ExecutionFill(side, event.instrument.strip(), quantity, float(price_value), event.timestamp_ns)
 
     @staticmethod
     def _strategy_state(strategy: Any) -> dict[str, Any]:
@@ -67,7 +68,7 @@ class ResumableHighResolutionRunner:
             raise ValueError("strategy snapshot must be a dictionary")
         return dict(value)
 
-    def _restore(self, strategy: Any, state: dict[str, Any]) -> None:
+    def _restore(self, strategy: Any, state: dict[str, Any]) -> int:
         if not isinstance(state, dict):
             raise ValueError("invalid checkpoint state")
         if isinstance(state.get("positions"), dict):
@@ -75,14 +76,18 @@ class ResumableHighResolutionRunner:
         restore = getattr(strategy, "restore_state", None)
         if state.get("strategy") is not None and callable(restore):
             restore(dict(state["strategy"]))
+        signals = state.get("signals_processed", 0)
+        if type(signals) is not int or signals < 0:
+            raise ValueError("invalid checkpoint signal count")
+        return signals
 
     def run(self, events: Iterable[MarketEvent], strategy: ResumableStrategy, ledger_writer: HighResolutionLedgerWriter | None = None) -> ResumableBacktestResult:
         checkpoint = self.store.load_checkpoint(self.run_id)
+        signals = 0
         if checkpoint is not None:
-            self._restore(strategy, checkpoint.state)
+            signals = self._restore(strategy, checkpoint.state)
         resume_key = None if checkpoint is None else (checkpoint.timestamp_ns, checkpoint.sequence, checkpoint.instrument, checkpoint.event_type)
         processed = 0 if checkpoint is None else checkpoint.processed_events
-        signals = 0
         batch_events = 0
         pending_trades: list[Any] = []
         batch_positions = self.positions.snapshot_state()
@@ -114,7 +119,7 @@ class ResumableHighResolutionRunner:
                 latest_checkpoint = ReplayCheckpoint(
                     self.run_id, event.timestamp_ns, event.sequence, processed,
                     self.positions.net_pnl,
-                    {"strategy": self._strategy_state(strategy), "positions": self.positions.snapshot_state()},
+                    {"strategy": self._strategy_state(strategy), "positions": self.positions.snapshot_state(), "signals_processed": signals},
                     event.instrument, event.event_type,
                 )
                 if batch_events >= self.batch_size:
