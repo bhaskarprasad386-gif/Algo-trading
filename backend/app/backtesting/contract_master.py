@@ -86,7 +86,10 @@ class ContractMasterCatalog:
         rows = self._rows(snapshot_date, records)
         now = (fetched_at or datetime.now(timezone.utc)).isoformat(timespec="seconds")
         with self._db:
-            self._db.execute("INSERT INTO contract_master_snapshots(snapshot_date,fetched_at,payload_sha256) VALUES(?,?,?) ON CONFLICT(snapshot_date) DO UPDATE SET fetched_at=excluded.fetched_at,payload_sha256=excluded.payload_sha256", (snapshot_date.isoformat(), now, payload_sha256))
+            if payload_sha256 is None:
+                self._db.execute("INSERT INTO contract_master_snapshots(snapshot_date,fetched_at,payload_sha256) VALUES(?,?,NULL) ON CONFLICT(snapshot_date) DO UPDATE SET fetched_at=excluded.fetched_at", (snapshot_date.isoformat(), now))
+            else:
+                self._db.execute("INSERT INTO contract_master_snapshots(snapshot_date,fetched_at,payload_sha256) VALUES(?,?,?) ON CONFLICT(snapshot_date) DO UPDATE SET fetched_at=excluded.fetched_at,payload_sha256=excluded.payload_sha256", (snapshot_date.isoformat(), now, payload_sha256))
             if rows:
                 self._db.executemany("""INSERT INTO derivative_contracts(snapshot_date,exchange,symbol,token,expiry,instrument_type,underlying,lot_size,tick_size)
                     VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(snapshot_date,exchange,token) DO UPDATE SET symbol=excluded.symbol,expiry=excluded.expiry,instrument_type=excluded.instrument_type,underlying=excluded.underlying,lot_size=excluded.lot_size,tick_size=excluded.tick_size""", rows)
