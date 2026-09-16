@@ -181,12 +181,12 @@ class DurableEventBacktestEngine:
     def run(self, events: Iterable[MarketEvent], strategy: object, *, state: Mapping[str, object] | None = None,
             resume: bool = False, schema_version: int = LEDGER_SCHEMA_VERSION,
             data_source_fingerprint: str | None = None) -> ReplayStats:
-        # Keep the source lazy. The previous tuple(events) implementation made
-        # replay memory scale with the entire dataset and defeated durable streaming.
+        """Run without materializing the complete source in memory."""
         source_events = iter(events)
         checkpoint = self.ledger.load_checkpoint(self.run_id) if resume else None
         context_state = dict(state or {})
         start_cursor = 0
+        resume_timestamp = 0
         if resume:
             self.ledger.validate_resume(
                 self.run_id,
@@ -198,6 +198,7 @@ class DurableEventBacktestEngine:
             start_cursor = int(saved.get("source_cursor", checkpoint.event_index))
             if start_cursor < 0:
                 raise ValueError("invalid checkpoint source_cursor")
+            resume_timestamp = checkpoint.timestamp_ns
             saved_portfolio = saved.get("portfolio_state")
             if saved_portfolio is not None and self.engine.portfolio is not None:
                 self.engine.portfolio.restore_state(saved_portfolio)
@@ -212,7 +213,6 @@ class DurableEventBacktestEngine:
                                             {"source_cursor": start_cursor, "event_index": checkpoint.event_index,
                                              "open_orders_restored": sum(not x.state.terminal for x in self.engine._order_lifecycles.values())}))
 
-        # Capture only one source event for RUN_START; the rest stays streaming.
         first_source_event: MarketEvent | None = None
         if not resume:
             try:
@@ -226,14 +226,25 @@ class DurableEventBacktestEngine:
                                                 {"event_count": None, "streaming": True}))
 
         journaled = self._journal_strategy(strategy)
-        last_timestamp_ns = 0
         def checkpoint_callback(source_cursor: int, dispatched: int, extra: Mapping[str, object]) -> None:
             payload = dict(extra)
-            payload["timestamp_ns"] = last_timestamp_ns
+            market_state = payload.get("market_state")
+            if isinstance(market_state, Mapping):
+                timestamps = [int(item.get("timestamp_ns", 0)) for item in market_state.get("latest_events", ()) if isinstance(item, Mapping)]
+                payload["timestamp_ns"] = max(timestamps, default=0)
+            else:
+                payload["timestamp_ns"] = 0
             self._save_checkpoint(source_cursor, dispatched, payload, strategy)
 
-        result = self.engine.run(source_events, journaled, state=context_state, start_event_index=start_cursor,
-                                 checkpoint_callback=checkpoint_callback, checkpoint_interval=self.checkpoint_interval)
+        try:
+            result = self.engine.run(source_events, journaled, state=context_state, start_event_index=start_cursor,
+                                     checkpoint_callback=checkpoint_callback, checkpoint_interval=self.checkpoint_interval)
+        except Exception as exc:
+            if resume:
+                self.ledger.append(LedgerRecord(self.run_id, "RUN_RESUME_FAILED", resume_timestamp,
+                                                {"source_cursor": start_cursor, "error_type": type(exc).__name__, "error": str(exc)}))
+            raise
+
         final_cursor = result.events_seen
         final_state = {
             "source_cursor": final_cursor, "events_seen": result.events_seen,
@@ -247,6 +258,10 @@ class DurableEventBacktestEngine:
             "final_snapshot": asdict(result.final_snapshot) if result.final_snapshot is not None else None,
         }
         self.ledger.checkpoint(Checkpoint(self.run_id, final_cursor, result.last_timestamp_ns or 0, final_state))
+        if resume:
+            self.ledger.append(LedgerRecord(self.run_id, "RUN_RESUME_SUCCESS", result.last_timestamp_ns or 0,
+                                            {"source_cursor": final_cursor, "events_dispatched": result.events_dispatched,
+                                             "fills": result.fills}))
         self.ledger.append(LedgerRecord(self.run_id, "RUN_END", result.last_timestamp_ns or 0,
                                         {"events_dispatched": result.events_dispatched, "fills": result.fills,
                                          "risk_blocks": result.risk_blocks}))
