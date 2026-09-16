@@ -277,10 +277,14 @@ class ExecutionSimulator:
 
     def execute_depth_updates(self, order: SimOrder, updates: Iterable[tuple[int, OrderBook, Iterable[QueueEvidence]]]) -> ExecutionResult:
         remaining = order.quantity; queue_ahead = order.queue_ahead_quantity; consumed_by_price: dict[float, int] = {}; fills: list[SimFill] = []
+        previous_timestamp_ns: int | None = None
         for timestamp_ns, book, evidence in updates:
             if remaining <= 0: break
             if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int) or timestamp_ns < order.submitted_at_ns:
                 raise ValueError("fill timestamp must be an integer and cannot precede order submission")
+            if previous_timestamp_ns is not None and timestamp_ns < previous_timestamp_ns:
+                raise ValueError("depth update timestamps must be monotonic non-decreasing")
+            previous_timestamp_ns = timestamp_ns
             levels = self._executable_levels(order, book)
             if order.order_type == OrderType.STOP:
                 best = book.asks if order.side == ExecutionSide.BUY else book.bids
@@ -311,8 +315,12 @@ class ExecutionSimulator:
 
     def execute_many_atomic(self, legs: Iterable[tuple[SimOrder, OrderBook, int]]) -> AtomicExecutionResult:
         legs = tuple(legs)
+        if not legs:
+            return AtomicExecutionResult((), (), True, "atomic transaction has no legs")
+        order_ids = tuple(order.order_id for order, _, _ in legs)
+        if len(order_ids) != len(set(order_ids)):
+            return AtomicExecutionResult((), (), True, "atomic transaction contains duplicate order_id")
         leg_results = tuple(self.execute_depth(order, book, timestamp_ns) for order, book, timestamp_ns in legs)
-        if not leg_results: return AtomicExecutionResult((), (), True, "atomic transaction has no legs")
         if any(result.rejected or result.remaining_quantity != 0 or (order.time_in_force == TimeInForce.IOC and sum(fill.quantity for fill in result.fills) < order.quantity) for (order, _, _), result in zip(legs, leg_results)):
             return AtomicExecutionResult((), leg_results, True, "atomic rollback: one or more legs did not fully execute")
         fills = tuple(fill for result in leg_results for fill in result.fills)
