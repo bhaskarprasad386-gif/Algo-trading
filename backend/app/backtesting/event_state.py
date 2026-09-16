@@ -13,4 +13,5 @@ class EventExecutionState:
     peak_capital: float
     max_drawdown: float = 0.0
     open_trade: tuple[object, float] | None = None
-    previous_key: tuple[int, int] | None = None
+    previous_key: tuple[object, ...] | None = None
+    last_price: float | None = None
