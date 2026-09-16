@@ -66,15 +66,11 @@ def calculate_statistics(
     previous_equity = initial_capital
     previous_timestamp = curve[0].timestamp_ns
     for point in curve:
-        if previous_equity <= 0:
-            previous_equity = point.equity
-            previous_timestamp = point.timestamp_ns
-            continue
-        value = point.equity / previous_equity - 1.0
-        if isfinite(value):
-            returns.append(value)
-            elapsed_years = (point.timestamp_ns - previous_timestamp) / (365.25 * 24 * 60 * 60 * 1_000_000_000)
-            if elapsed_years > 0:
+        elapsed_years = (point.timestamp_ns - previous_timestamp) / (365.25 * 24 * 60 * 60 * 1_000_000_000)
+        if previous_equity > 0 and elapsed_years > 0:
+            value = point.equity / previous_equity - 1.0
+            if isfinite(value):
+                returns.append(value)
                 intervals_years.append(elapsed_years)
         previous_equity = point.equity
         previous_timestamp = point.timestamp_ns
