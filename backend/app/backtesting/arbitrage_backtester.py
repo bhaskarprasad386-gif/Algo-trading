@@ -8,7 +8,7 @@ ArbitrageKind = Literal["BOX", "SYNTHETIC_CASH_CARRY", "CASH_CARRY"]
 
 @dataclass(frozen=True)
 class OptionQuote:
-    timestamp_ns:int; underlying:str; expiry:int; strike:float; call_bid:float; call_ask:float; put_bid:float; put_ask:float; lot_size:int=1; instrument_class:Literal["STOCK","INDEX"]="STOCK"
+    timestamp_ns:int; underlying:str; expiry:int; strike:float; call_bid:float; call_ask:float; put_bid:float; put_ask:float; lot_size:int=1; instrument_class:Literal["STOCK","INDEX"]="STOCK"; volume:int=0; oi:int=0
 
 @dataclass(frozen=True)
 class FutureQuote:
@@ -35,16 +35,17 @@ class ArbitrageOpportunity:
 
 def _validate_option_quote(quote:OptionQuote)->None:
     if isinstance(quote.timestamp_ns,bool) or not isinstance(quote.timestamp_ns,int) or quote.timestamp_ns<0: raise ValueError("option timestamp_ns must be a non-negative integer")
-    if not quote.underlying.strip(): raise ValueError("option underlying is required")
+    if not isinstance(quote.underlying,str) or not quote.underlying.strip(): raise ValueError("option underlying is required")
     values=(quote.strike,quote.call_bid,quote.call_ask,quote.put_bid,quote.put_ask)
     if not all(isinstance(v,(int,float)) and not isinstance(v,bool) and isfinite(float(v)) for v in values): raise ValueError("option prices and strike must be finite")
     if quote.strike<=0: raise ValueError("option strike must be positive")
     if quote.call_bid<0 or quote.put_bid<0 or quote.call_ask<quote.call_bid or quote.put_ask<quote.put_bid: raise ValueError("invalid option bid/ask")
     if type(quote.lot_size) is not int or quote.lot_size<=0: raise ValueError("option lot_size must be a positive integer")
+    if type(quote.volume) is not int or quote.volume<0 or type(quote.oi) is not int or quote.oi<0: raise ValueError("option volume and oi must be non-negative integers")
 
 def _validate_future_quote(future:FutureQuote)->None:
     if isinstance(future.timestamp_ns,bool) or not isinstance(future.timestamp_ns,int) or future.timestamp_ns<0: raise ValueError("future timestamp_ns must be a non-negative integer")
-    if not future.underlying.strip(): raise ValueError("future underlying is required")
+    if not isinstance(future.underlying,str) or not future.underlying.strip(): raise ValueError("future underlying is required")
     if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not isfinite(float(v)) for v in (future.bid,future.ask)): raise ValueError("future prices must be finite")
     if future.bid<0 or future.ask<future.bid: raise ValueError("future ask price must be at least bid price and bids must be non-negative")
     if type(future.lot_size) is not int or future.lot_size<=0: raise ValueError("future lot_size must be a positive integer")
@@ -53,15 +54,17 @@ def _validate_future_quote(future:FutureQuote)->None:
 def _validate_direction(direction:str)->None:
     if direction not in ("LONG","SHORT"): raise ValueError("direction must be LONG or SHORT")
 
+def _validate_fees(value:float)->None:
+    if isinstance(value,bool) or not isinstance(value,(int,float)) or not isfinite(float(value)) or value<0: raise ValueError("fees_per_unit must be finite and non-negative")
+
 class BoxSpreadBacktester:
     @staticmethod
     def evaluate(low:OptionQuote,high:OptionQuote,*,direction:Literal["LONG","SHORT"]="LONG",fees_per_unit:float=0.0)->ArbitrageOpportunity|None:
-        _validate_direction(direction); _validate_option_quote(low); _validate_option_quote(high)
+        _validate_direction(direction); _validate_option_quote(low); _validate_option_quote(high); _validate_fees(fees_per_unit)
         if low.underlying!=high.underlying or low.expiry!=high.expiry or low.instrument_class!=high.instrument_class: raise ValueError("box legs must share underlying, expiry and instrument class")
         if not low.strike<high.strike: raise ValueError("low strike must be below high strike")
         if low.timestamp_ns!=high.timestamp_ns: raise ValueError("box legs must share timestamp")
         if low.lot_size!=high.lot_size: raise ValueError("box legs must share lot size")
-        if isinstance(fees_per_unit,bool) or not isfinite(float(fees_per_unit)) or fees_per_unit<0: raise ValueError("fees_per_unit must be finite and non-negative")
         width=high.strike-low.strike
         if direction=="LONG": debit=low.call_ask+high.put_ask-high.call_bid-low.put_bid; edge=width-debit-fees_per_unit
         else: credit=low.call_bid+high.put_bid-high.call_ask-low.put_ask; edge=credit-width-fees_per_unit
@@ -81,8 +84,9 @@ class SyntheticCashCarryBacktester:
         if option.timestamp_ns!=future.timestamp_ns: raise ValueError("synthetic legs must share timestamp")
         if option.lot_size!=future.lot_size: raise ValueError("synthetic legs must share lot size")
         if liquidity is not None:
-            option_liquid=all(liquidity.accepts(volume=0,oi=0,bid=bid,ask=ask) for bid,ask in ((option.call_bid,option.call_ask),(option.put_bid,option.put_ask)))
-            if not option_liquid or not liquidity.accepts_future(future): return None
+            if not liquidity.accepts(volume=option.volume,oi=option.oi,bid=option.call_bid,ask=option.call_ask): return None
+            if not liquidity.accepts(volume=option.volume,oi=option.oi,bid=option.put_bid,ask=option.put_ask): return None
+            if not liquidity.accepts_future(future): return None
         carry=exp(rate*time_to_expiry_years)
         synthetic_buy=option.strike+(option.call_ask-option.put_bid)*carry
         synthetic_sell=option.strike+(option.call_bid-option.put_ask)*carry
