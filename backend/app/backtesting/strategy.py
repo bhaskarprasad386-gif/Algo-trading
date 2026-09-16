@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol
 
 from app.backtesting.events import MarketEvent
+from app.backtesting.execution import SimOrder
 
 
 @dataclass(frozen=True)
@@ -67,7 +68,17 @@ def validate_decision(decision: StrategyDecision | None) -> None:
     """Reject malformed strategy output before execution/ledger integration."""
     if decision is None:
         return
-    if not decision.action.strip():
+    if not isinstance(decision.action, str) or not decision.action.strip():
         raise ValueError("strategy decision action is required")
     if not isinstance(decision.orders, tuple):
         raise ValueError("strategy decision orders must be a tuple")
+    if not isinstance(decision.metadata, Mapping):
+        raise ValueError("strategy decision metadata must be a mapping")
+
+    order_ids: set[str] = set()
+    for index, order in enumerate(decision.orders):
+        if not isinstance(order, SimOrder):
+            raise TypeError(f"strategy decision order[{index}] must be a SimOrder")
+        if order.order_id in order_ids:
+            raise ValueError(f"strategy decision contains duplicate order_id: {order.order_id}")
+        order_ids.add(order.order_id)
