@@ -29,6 +29,19 @@ class LifecycleEvent:
     reason: str | None = None
     replacement_order_id: str | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.order_id, str) or not self.order_id.strip():
+            raise ValueError("lifecycle event order_id is required")
+        if not isinstance(self.status, OrderStatus):
+            raise ValueError("invalid lifecycle event status")
+        if isinstance(self.timestamp_ns, bool) or not isinstance(self.timestamp_ns, int) or self.timestamp_ns < 0:
+            raise ValueError("lifecycle event timestamp must be a non-negative integer")
+        for value, name in ((self.filled_quantity, "filled_quantity"), (self.remaining_quantity, "remaining_quantity")):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        if self.reason is not None and (not isinstance(self.reason, str) or not self.reason.strip()):
+            raise ValueError("lifecycle event reason must be non-empty when provided")
+
 
 @dataclass(frozen=True)
 class OrderState:
@@ -61,6 +74,8 @@ class OrderLifecycle:
         self.state = OrderState(order=order, status=OrderStatus.SUBMITTED, time_in_force=tif)
 
     def _transition(self, status: OrderStatus, timestamp_ns: int, *, reason: str | None = None, replacement_order_id: str | None = None) -> OrderState:
+        if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int):
+            raise ValueError("lifecycle timestamp must be an integer")
         if timestamp_ns < self.state.order.submitted_at_ns:
             raise ValueError("lifecycle timestamp cannot precede order submission")
         if self.state.terminal:
@@ -75,13 +90,15 @@ class OrderLifecycle:
         return self._transition(OrderStatus.ACCEPTED, timestamp_ns)
 
     def reject(self, reason: str, timestamp_ns: int = 0) -> OrderState:
-        if not reason.strip():
+        if not isinstance(reason, str) or not reason.strip():
             raise ValueError("reject reason is required")
         if self.state.status not in {OrderStatus.SUBMITTED, OrderStatus.ACCEPTED}:
             raise ValueError("only SUBMITTED or ACCEPTED orders can be rejected")
         return self._transition(OrderStatus.REJECTED, timestamp_ns, reason=reason)
 
     def cancel(self, timestamp_ns: int = 0, reason: str = "cancelled") -> OrderState:
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("cancel reason is required")
         if self.state.terminal:
             raise ValueError("terminal order cannot be cancelled")
         if self.state.status not in {OrderStatus.ACCEPTED, OrderStatus.PARTIALLY_FILLED}:
@@ -89,6 +106,8 @@ class OrderLifecycle:
         return self._transition(OrderStatus.CANCELLED, timestamp_ns, reason=reason)
 
     def expire(self, timestamp_ns: int = 0, reason: str = "expired") -> OrderState:
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("expire reason is required")
         if self.state.terminal:
             raise ValueError("terminal order cannot expire")
         if self.state.status not in {OrderStatus.ACCEPTED, OrderStatus.PARTIALLY_FILLED}:
@@ -96,6 +115,8 @@ class OrderLifecycle:
         return self._transition(OrderStatus.EXPIRED, timestamp_ns, reason=reason)
 
     def replace(self, replacement: SimOrder, timestamp_ns: int, reason: str = "replaced") -> OrderState:
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("replace reason is required")
         if self.state.status not in {OrderStatus.ACCEPTED, OrderStatus.PARTIALLY_FILLED}:
             raise ValueError("only open orders can be replaced")
         if replacement.instrument != self.state.order.instrument or replacement.side != self.state.order.side:
@@ -211,17 +232,34 @@ class OrderLifecycle:
             raise ValueError("PARTIALLY_FILLED lifecycle must have residual quantity")
         if status == OrderStatus.SUBMITTED and filled_quantity != 0:
             raise ValueError("SUBMITTED lifecycle cannot contain fills")
+        if status == OrderStatus.REJECTED and not isinstance(raw.get("reject_reason"), str):
+            raise ValueError("REJECTED lifecycle requires reject_reason")
+        if status in {OrderStatus.ACCEPTED, OrderStatus.PARTIALLY_FILLED, OrderStatus.FILLED} and filled_quantity > 0:
+            if not isfinite(average_fill_price) or average_fill_price <= 0:
+                raise ValueError("filled lifecycle requires positive average fill price")
+        elif not isfinite(average_fill_price) or average_fill_price < 0:
+            raise ValueError("invalid lifecycle average fill price")
         previous_timestamp = order.submitted_at_ns
-        for event in events:
+        previous_filled = 0
+        for index, event in enumerate(events):
             if event.order_id != order.order_id:
                 raise ValueError("lifecycle event order_id does not match order")
             if event.timestamp_ns < previous_timestamp:
                 raise ValueError("lifecycle events must be chronological")
-            if event.filled_quantity > order.quantity or event.remaining_quantity != order.quantity - event.filled_quantity:
+            if event.filled_quantity < previous_filled or event.filled_quantity > order.quantity:
+                raise ValueError("lifecycle event filled quantities must be monotonic")
+            if event.remaining_quantity != order.quantity - event.filled_quantity:
                 raise ValueError("invalid lifecycle event quantities")
+            if index == 0 and event.status != OrderStatus.ACCEPTED and event.status != OrderStatus.SUBMITTED:
+                raise ValueError("lifecycle must begin with acceptance/submission event")
             previous_timestamp = event.timestamp_ns
-        if not isfinite(average_fill_price) or average_fill_price < 0:
-            raise ValueError("invalid lifecycle average fill price")
+            previous_filled = event.filled_quantity
+        if events and events[-1].status != status:
+            raise ValueError("lifecycle final event must match current status")
+        if events and events[-1].filled_quantity != filled_quantity:
+            raise ValueError("lifecycle final event must match filled quantity")
+        if status == OrderStatus.REPLACED and not events:
+            raise ValueError("REPLACED lifecycle requires a replacement event")
         lifecycle.state = OrderState(
             order=order, status=status,
             filled_quantity=filled_quantity,
@@ -239,8 +277,8 @@ def stop_triggered(order: SimOrder, observed_price: float) -> bool:
         return False
     if order.stop_price is None:
         raise ValueError("stop_price is required for STOP orders")
-    if observed_price <= 0:
-        raise ValueError("observed_price must be greater than zero")
+    if not isfinite(float(observed_price)) or observed_price <= 0:
+        raise ValueError("observed_price must be finite and greater than zero")
     return observed_price >= order.stop_price if order.side == ExecutionSide.BUY else observed_price <= order.stop_price
 
 
