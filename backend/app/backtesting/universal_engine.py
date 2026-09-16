@@ -1,0 +1,127 @@
+"""Portfolio-backed universal event backtesting path.
+
+This module is intentionally separate from the legacy single-position BacktestEngine
+API.  It uses the existing Portfolio and ExecutionSimulator primitives so event
+backtests can hold independent positions per instrument and can represent both
+long and short exposure without duplicating accounting logic.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Iterable
+
+from app.backtesting.engine import EventContext, EventSignal, EventStrategy, _normalize_event_signal
+from app.backtesting.execution import ExecutionConfig, ExecutionSide, ExecutionSimulator, SimOrder
+from app.backtesting.portfolio import Portfolio, PortfolioSnapshot, RiskConfig
+from app.backtesting.historical_catalog import HistoricalRecord
+
+
+@dataclass(frozen=True)
+class UniversalBacktestResult:
+    """Result for the portfolio-backed universal event engine."""
+
+    initial_capital: float
+    final_equity: float
+    realized_pnl: float
+    unrealized_pnl: float
+    snapshots: tuple[PortfolioSnapshot, ...]
+    fill_count: int
+
+
+class UniversalEventBacktestEngine:
+    """Run event strategies against a multi-instrument portfolio.
+
+    BUY and SELL are portfolio orders rather than implicit round-trip markers:
+    BUY can increase a long or reduce a short, while SELL can increase a short
+    or reduce a long.  The instrument comes from EventContext, so positions are
+    isolated by instrument and simultaneous positions are supported.
+    """
+
+    def __init__(
+        self,
+        initial_capital: float,
+        *,
+        risk_config: RiskConfig | None = None,
+        execution_config: ExecutionConfig | None = None,
+        quantity: int = 1,
+    ) -> None:
+        if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
+            raise ValueError("quantity must be a positive integer")
+        self.portfolio = Portfolio(initial_capital, risk_config)
+        self.execution = ExecutionSimulator(execution_config)
+        self.quantity = quantity
+
+    def run(self, events: Iterable[HistoricalRecord], strategy: EventStrategy, *, price_field: str = "price") -> UniversalBacktestResult:
+        if not isinstance(price_field, str) or not price_field.strip():
+            raise ValueError("price_field is required")
+
+        previous_key: tuple[int, int] | None = None
+        snapshots: list[PortfolioSnapshot] = []
+        last_marks: dict[str, float] = {}
+
+        for record in events:
+            if not isinstance(record.timestamp_ns, int) or isinstance(record.timestamp_ns, bool) or record.timestamp_ns < 0:
+                raise ValueError("event timestamp_ns must be a non-negative integer")
+            if not isinstance(record.instrument, str) or not record.instrument.strip():
+                raise ValueError("event instrument is required")
+            if not isinstance(record.source, str) or not record.source.strip():
+                raise ValueError("event source is required")
+            if record.sequence is not None and (not isinstance(record.sequence, int) or isinstance(record.sequence, bool) or record.sequence < 0):
+                raise ValueError("event sequence must be a non-negative integer or None")
+            key = (record.timestamp_ns, record.sequence if record.sequence is not None else -1)
+            if previous_key is not None and key <= previous_key:
+                raise ValueError("events must be strictly ordered by timestamp_ns and sequence")
+            previous_key = key
+
+            raw_price = record.payload.get(price_field)
+            if raw_price is not None:
+                if isinstance(raw_price, bool) or not isinstance(raw_price, (int, float)):
+                    raise ValueError(f"event payload {price_field!r} must be numeric")
+                if raw_price <= 0:
+                    raise ValueError(f"event payload {price_field!r} must be positive")
+                last_marks[record.instrument] = float(raw_price)
+
+            signal = _normalize_event_signal(
+                strategy(EventContext(
+                    record.timestamp_ns,
+                    record.sequence,
+                    record.source,
+                    record.instrument,
+                    record.payload,
+                    record,
+                ))
+            )
+            if signal.action in {"HOLD", "NONE"}:
+                if last_marks:
+                    snapshots.append(self.portfolio.snapshot(last_marks))
+                continue
+
+            price = signal.price
+            if price is None:
+                price = raw_price
+            if price is None or isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
+                raise ValueError(f"event payload must contain numeric positive {price_field!r} or signal price")
+            last_marks[record.instrument] = float(price)
+
+            side = ExecutionSide.BUY if signal.action == "BUY" else ExecutionSide.SELL
+            order = SimOrder(
+                order_id=f"event-{record.timestamp_ns}-{record.sequence if record.sequence is not None else 'na'}-{record.instrument}",
+                instrument=record.instrument,
+                side=side,
+                quantity=self.quantity,
+                submitted_at_ns=record.timestamp_ns,
+            )
+            fill = self.execution.execute(order, float(price), record.timestamp_ns)
+            self.portfolio.apply_fill(fill, last_marks)
+            snapshots.append(self.portfolio.snapshot(last_marks))
+
+        final_snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
+        return UniversalBacktestResult(
+            initial_capital=self.portfolio.initial_cash,
+            final_equity=final_snapshot.equity,
+            realized_pnl=final_snapshot.realized_pnl,
+            unrealized_pnl=final_snapshot.unrealized_pnl,
+            snapshots=tuple(snapshots),
+            fill_count=len(self.portfolio.trades),
+        )
