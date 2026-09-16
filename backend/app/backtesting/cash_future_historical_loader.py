@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from itertools import groupby
+from math import isfinite
 from typing import Iterable, Iterator
 from zoneinfo import ZoneInfo
 
@@ -40,28 +41,30 @@ def _ns(dt: datetime) -> int:
     utc = dt.astimezone(timezone.utc)
     return (utc.toordinal()-date(1970,1,1).toordinal())*86_400_000_000_000 + utc.hour*3_600_000_000_000 + utc.minute*60_000_000_000 + utc.second*1_000_000_000 + utc.microsecond*1_000
 
-def _market_bounds(day: date) -> tuple[int, int]:
-    return _ns(datetime.combine(day,time(9,15),tzinfo=MARKET_TZ)), _ns(datetime.combine(day,time(15,30),tzinfo=MARKET_TZ))
+def _market_bounds(day: date) -> tuple[int, int]: return _ns(datetime.combine(day,time(9,15),tzinfo=MARKET_TZ)), _ns(datetime.combine(day,time(15,30),tzinfo=MARKET_TZ))
 
 def _record_price(record: HistoricalRecord) -> float:
     value=record.payload.get("close")
     if value is None: raise ValueError(f"historical record has no close price: {record.instrument} @ {record.timestamp_ns}")
-    price=float(value)
-    if price<=0: raise ValueError(f"historical close price must be positive: {record.instrument} @ {record.timestamp_ns}")
+    try: price=float(value)
+    except (TypeError,ValueError) as exc: raise ValueError(f"historical close price must be numeric: {record.instrument} @ {record.timestamp_ns}") from exc
+    if not isfinite(price) or price<=0: raise ValueError(f"historical close price must be finite and positive: {record.instrument} @ {record.timestamp_ns}")
     return price
 
 def _optional_price(payload: dict, key: str) -> float | None:
     value=payload.get(key)
     if value is None: return None
-    price=float(value)
-    return price if price>0 else None
+    try: price=float(value)
+    except (TypeError,ValueError): return None
+    return price if isfinite(price) and price>0 else None
 
-def _optional_quantity(payload: dict,*keys:str)->float|None:
+def _optional_quantity(payload:dict,*keys:str)->float|None:
     for key in keys:
         value=payload.get(key)
         if value is not None:
-            quantity=float(value)
-            return quantity if quantity>=0 else None
+            try: quantity=float(value)
+            except (TypeError,ValueError): return None
+            return quantity if isfinite(quantity) and quantity>=0 else None
     return None
 
 def _datetime_from_ns(timestamp_ns:int)->datetime:
@@ -74,11 +77,17 @@ def _in_nse_session(timestamp_ns:int)->bool:
 
 def _payload_volume(payload:dict)->float|None:
     value=payload.get("volume")
-    return None if value is None else float(value)
+    if value is None: return None
+    try: value=float(value)
+    except (TypeError,ValueError): return None
+    return value if isfinite(value) and value>=0 else None
 
 def _payload_oi(payload:dict)->float|None:
     value=payload.get("open_interest",payload.get("oi"))
-    return None if value is None else float(value)
+    if value is None: return None
+    try: value=float(value)
+    except (TypeError,ValueError): return None
+    return value if isfinite(value) and value>=0 else None
 
 def _merge_pair(cash_records:Iterator[HistoricalRecord],future_records:Iterator[HistoricalRecord],*,symbol:str,contract:ContractRecord)->Iterator[CashFutureHistoryPoint]:
     cash=next(cash_records,None); future=next(future_records,None)
@@ -101,13 +110,17 @@ def _merge_pair(cash_records:Iterator[HistoricalRecord],future_records:Iterator[
         cash_payload=dict(cash.payload); future_payload=dict(future.payload); cash_price=_record_price(cash); future_price=_record_price(future)
         gap=future_price-cash_price; gap_pct=gap/cash_price*100.0
         margin=float(future_payload.get("margin_required",future_payload.get("margin",0.0)) or 0.0)
-        yield CashFutureHistoryPoint(timestamp=_datetime_from_ns(timestamp_ns),symbol=symbol,contract_month=f"{contract.expiry.year:04d}-{contract.expiry.month:02d}",cash_price=cash_price,future_price=future_price,gap=gap,gap_pct=gap_pct,lot_size=contract.lot_size,margin_required=max(0.0,margin),volume=_payload_volume(future_payload),oi=_payload_oi(future_payload),cash_bid=_optional_price(cash_payload,"bid"),cash_ask=_optional_price(cash_payload,"ask"),future_bid=_optional_price(future_payload,"bid"),future_ask=_optional_price(future_payload,"ask"),cash_bid_qty=_optional_quantity(cash_payload,"bid_qty","bid_quantity","buy_quantity"),cash_ask_qty=_optional_quantity(cash_payload,"ask_qty","ask_quantity","sell_quantity"),future_bid_qty=_optional_quantity(future_payload,"bid_qty","bid_quantity","buy_quantity"),future_ask_qty=_optional_quantity(future_payload,"ask_qty","ask_quantity","sell_quantity"),charges=float(future_payload.get("charges",0.0) or 0.0),funding_cost=float(future_payload.get("funding_cost",0.0) or 0.0),expiry_date=contract.expiry)
+        if not isfinite(margin): margin=0.0
+        charges=float(future_payload.get("charges",0.0) or 0.0)
+        if not isfinite(charges): charges=0.0
+        funding_cost=float(future_payload.get("funding_cost",0.0) or 0.0)
+        if not isfinite(funding_cost): funding_cost=0.0
+        yield CashFutureHistoryPoint(timestamp=_datetime_from_ns(timestamp_ns),symbol=symbol,contract_month=f"{contract.expiry.year:04d}-{contract.expiry.month:02d}",cash_price=cash_price,future_price=future_price,gap=gap,gap_pct=gap_pct,lot_size=contract.lot_size,margin_required=max(0.0,margin),volume=_payload_volume(future_payload),oi=_payload_oi(future_payload),cash_bid=_optional_price(cash_payload,"bid"),cash_ask=_optional_price(cash_payload,"ask"),future_bid=_optional_price(future_payload,"bid"),future_ask=_optional_price(future_payload,"ask"),cash_bid_qty=_optional_quantity(cash_payload,"bid_qty","bid_quantity","buy_quantity"),cash_ask_qty=_optional_quantity(cash_payload,"ask_qty","ask_quantity","sell_quantity"),future_bid_qty=_optional_quantity(future_payload,"bid_qty","bid_quantity","buy_quantity"),future_ask_qty=_optional_quantity(future_payload,"ask_qty","ask_quantity","sell_quantity"),charges=charges,funding_cost=funding_cost,expiry_date=contract.expiry)
         cash=next(cash_records,None); future=next(future_records,None)
 
 class CashFutureHistoricalLoader:
     """Resolve historical contracts point-in-time and stream matching cash/future bars."""
-    def __init__(self,catalog:HistoricalCatalog,contract_catalog:ContractMasterCatalog)->None:
-        self.catalog=catalog; self.contract_catalog=contract_catalog
+    def __init__(self,catalog:HistoricalCatalog,contract_catalog:ContractMasterCatalog)->None: self.catalog=catalog; self.contract_catalog=contract_catalog
     def _contracts_by_segment(self,selection:CashFutureHistorySelection)->tuple[tuple[date,date,ContractRecord],...]:
         days=[]; current=selection.start_date
         while current<=selection.end_date:
@@ -120,15 +133,10 @@ class CashFutureHistoricalLoader:
                     except LookupError:
                         if selection.exchange.upper()!="NFO": contract=resolve("NFO")
                         else: raise
-                except LookupError as exc:
-                    raise LookupError(f"no historical cash-future contract for {selection.underlying.upper()} on {current.isoformat()}") from exc
+                except LookupError as exc: raise LookupError(f"no historical cash-future contract for {selection.underlying.upper()} on {current.isoformat()}") from exc
                 days.append((current,contract))
             current=current.fromordinal(current.toordinal()+1)
         segments=[]
-        # Token alone is not a sufficient segment identity: a historical snapshot can
-        # retain the same token while changing lot/tick/provenance metadata. Keep the
-        # point-in-time ContractRecord attached to each segment so those changes cannot
-        # silently reuse the first day's terms.
         for _,grouped in groupby(days,key=lambda item:item[1]):
             block=list(grouped); segments.append((block[0][0],block[-1][0],block[0][1]))
         return tuple(segments)
