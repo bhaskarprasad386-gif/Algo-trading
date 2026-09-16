@@ -223,7 +223,17 @@ class DurableEventBacktestEngine:
             e = self._event_key(last_source_event)
             final_state["source_event_identity"] = {"timestamp_ns": e[0], "instrument": e[1], "event_type": e[2], "sequence": e[3], "source": e[4]}
         self.ledger.checkpoint(Checkpoint(self.run_id, final_cursor, result.last_timestamp_ns or 0, final_state))
+        if resume:
+            self.ledger.append(LedgerRecord(self.run_id, "RUN_RESUME_SUCCESS", result.last_timestamp_ns or 0,
+                {"source_cursor": final_cursor, "events_dispatched": result.events_dispatched, "fills": result.fills}))
+        self.ledger.append(LedgerRecord(self.run_id, "RUN_END", result.last_timestamp_ns or 0,
+            {"events_dispatched": result.events_dispatched, "fills": result.fills, "risk_blocks": result.risk_blocks}))
+        return result
 
     def resume_cursor(self) -> int:
         checkpoint = self.ledger.load_checkpoint(self.run_id)
         return 0 if checkpoint is None else int(checkpoint.state.get("source_cursor", checkpoint.event_index))
+
+    def checkpoint_state(self) -> Mapping[str, object] | None:
+        checkpoint = self.ledger.load_checkpoint(self.run_id)
+        return None if checkpoint is None else dict(checkpoint.state)
