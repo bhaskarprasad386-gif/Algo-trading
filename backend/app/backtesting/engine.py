@@ -1,15 +1,16 @@
 """Deterministic backtesting engine for bars and high-resolution events."""
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
-from math import isfinite, sqrt
+from math import isfinite
 from typing import Callable, Iterable, Mapping, Sequence
 
 from app.algo.strategy import Strategy
 from app.backtesting.continuous_futures import ContinuousFuturesRecord, build_continuous_futures_series
 from app.backtesting.fno_rollover import FNORolloverWindow
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
+from app.backtesting.statistics import EquityPoint, calculate_statistics
 
 
 @dataclass(frozen=True)
@@ -48,10 +49,8 @@ class BacktestConfig:
         for name, value in (("entry_slippage_rate", self.entry_slippage_rate), ("exit_slippage_rate", self.exit_slippage_rate)):
             if value is not None and (value < 0 or value >= 1):
                 raise ValueError(f"{name} must be in [0, 1)")
-        if self.transaction_cost_rate < 0:
-            raise ValueError("transaction_cost_rate cannot be negative")
-        if self.transaction_cost_minimum < 0:
-            raise ValueError("transaction_cost_minimum cannot be negative")
+        if self.transaction_cost_rate < 0 or self.transaction_cost_minimum < 0:
+            raise ValueError("transaction costs cannot be negative")
         if self.execution_timing not in {"close", "next_open"}:
             raise ValueError("execution_timing must be 'close' or 'next_open'")
 
@@ -85,12 +84,13 @@ class BacktestResult:
     trades: tuple[BacktestTrade, ...]
     win_rate: float
     expectancy: float
-    sharpe_ratio: float
-    sortino_ratio: float
+    sharpe_ratio: float | None
+    sortino_ratio: float | None
     max_drawdown: float
-    cagr: float
+    cagr: float | None
     unrealized_pnl: float = 0.0
     has_open_trade: bool = False
+    equity_curve: tuple[EquityPoint, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -111,11 +111,8 @@ class EventSignal:
     def __post_init__(self) -> None:
         if not isinstance(self.action, str) or self.action.strip().upper() not in {"BUY", "SELL", "HOLD", "NONE"}:
             raise ValueError("action must be BUY, SELL, HOLD, or NONE")
-        if self.price is not None:
-            if isinstance(self.price, bool) or not isinstance(self.price, (int, float)) or not isfinite(float(self.price)):
-                raise ValueError("signal price must be a finite number")
-            if self.price <= 0:
-                raise ValueError("signal price must be positive")
+        if self.price is not None and (isinstance(self.price, bool) or not isinstance(self.price, (int, float)) or not isfinite(float(self.price)) or self.price <= 0):
+            raise ValueError("signal price must be finite and positive")
 
 
 EventStrategy = Callable[[EventContext], EventSignal | str | None]
@@ -129,22 +126,20 @@ class BacktestEngine:
 
     def run(self, candles: Iterable[Mapping[str, object]], entry_strategy: Strategy, exit_strategy: Strategy) -> BacktestResult:
         capital = self.config.initial_capital
-        peak_capital = capital
-        max_drawdown = 0.0
         open_trade: tuple[object, float] | None = None
         trades: list[BacktestTrade] = []
+        curve: list[EquityPoint] = []
         previous_timestamp = None
-        last_close = None
-        last_timestamp = None
-        pending_action: str | None = None
+        pending_action = None
         pending_timestamp = None
+        last_timestamp = None
         for candle in candles:
             timestamp = _validate_candle(candle, previous_timestamp)
             previous_timestamp = timestamp
             last_timestamp = timestamp
             close = float(candle["close"])
-            last_close = close
             context = {key: value for key, value in candle.items() if _is_number(value)}
+
             if self.config.execution_timing == "next_open" and pending_action is not None:
                 if "open" not in candle:
                     raise ValueError("next_open execution requires candle open")
@@ -158,21 +153,11 @@ class BacktestEngine:
                     exit_price = _execution_price(self.config, open_price, "SELL")
                     trade = _build_trade(self.config, entry_timestamp, entry_price, timestamp, exit_price)
                     capital += trade.net_pnl
-                    peak_capital = max(peak_capital, capital)
-                    max_drawdown = max(max_drawdown, (peak_capital - capital) / peak_capital)
                     trades.append(trade)
                     open_trade = None
                 pending_action = None
                 pending_timestamp = None
-            if open_trade is not None:
-                intrabar_low = candle.get("low")
-                if intrabar_low is not None:
-                    _validate_price_field(intrabar_low, "low")
-                    adverse_price = _execution_price(self.config, float(intrabar_low), "SELL")
-                    marked_capital = capital + (adverse_price - open_trade[1]) * self.config.quantity
-                    peak_capital = max(peak_capital, capital)
-                    if marked_capital < capital:
-                        max_drawdown = max(max_drawdown, (capital - marked_capital) / capital)
+
             if self.config.execution_timing == "close":
                 if open_trade is None and entry_strategy.evaluate(context):
                     execution_price = _execution_price(self.config, close, "BUY")
@@ -183,34 +168,35 @@ class BacktestEngine:
                     exit_price = _execution_price(self.config, close, "SELL")
                     trade = _build_trade(self.config, entry_timestamp, entry_price, timestamp, exit_price)
                     capital += trade.net_pnl
-                    peak_capital = max(peak_capital, capital)
-                    max_drawdown = max(max_drawdown, (peak_capital - capital) / peak_capital)
                     trades.append(trade)
                     open_trade = None
             else:
                 signal = "SELL" if open_trade is not None and exit_strategy.evaluate(context) else "BUY" if open_trade is None and entry_strategy.evaluate(context) else None
-                if signal is not None:
-                    pending_action = signal
-                    pending_timestamp = timestamp
-        if open_trade is not None and last_close is not None and last_timestamp is not None:
-            unrealized_pnl = _calculate_unrealized_pnl(self.config, open_trade[1], last_close)
+                if signal:
+                    pending_action, pending_timestamp = signal, timestamp
+
+            curve.append(_equity_point(timestamp, capital, open_trade, close, self.config))
+            if open_trade is not None and "low" in candle:
+                _validate_price_field(candle["low"], "low")
+
+        if open_trade is not None and last_timestamp is not None:
+            final_mark = float(last_close := close)
+            unrealized_pnl = _calculate_unrealized_pnl(self.config, open_trade[1], final_mark)
             final_capital = capital + unrealized_pnl
-            peak_capital = max(peak_capital, final_capital)
-            max_drawdown = max(max_drawdown, (peak_capital - final_capital) / peak_capital)
         else:
             unrealized_pnl = 0.0
             final_capital = capital
-        return _build_result(self.config.initial_capital, final_capital, trades, max_drawdown, unrealized_pnl, open_trade is not None)
+        result = _build_result(self.config.initial_capital, final_capital, trades, unrealized_pnl, open_trade is not None, curve)
+        return result
 
     def run_events(self, events: Iterable[HistoricalRecord], strategy: EventStrategy, *, price_field: str = "price") -> BacktestResult:
         if not isinstance(price_field, str) or not price_field.strip():
             raise ValueError("price_field is required")
         capital = self.config.initial_capital
-        peak_capital = capital
-        max_drawdown = 0.0
         open_trade: tuple[object, float] | None = None
         trades: list[BacktestTrade] = []
-        previous_key: tuple[int, int] | None = None
+        curve: list[EquityPoint] = []
+        previous_key = None
         last_price = None
         last_timestamp = None
         for record in events:
@@ -237,8 +223,7 @@ class BacktestEngine:
                 price = float(raw_price)
             if not isfinite(price) or price <= 0:
                 raise ValueError("event execution price must be finite and positive")
-            last_price = price
-            last_timestamp = record.timestamp_ns
+            last_price, last_timestamp = price, record.timestamp_ns
             if open_trade is None and signal.action == "BUY":
                 execution_price = _execution_price(self.config, price, "BUY")
                 _ensure_cash_available(self.config, capital, execution_price)
@@ -248,19 +233,15 @@ class BacktestEngine:
                 exit_price = _execution_price(self.config, price, "SELL")
                 trade = _build_trade(self.config, entry_timestamp, entry_price, record.timestamp_ns, exit_price)
                 capital += trade.net_pnl
-                peak_capital = max(peak_capital, capital)
-                max_drawdown = max(max_drawdown, (peak_capital - capital) / peak_capital)
                 trades.append(trade)
                 open_trade = None
+            curve.append(_equity_point(record.timestamp_ns, capital, open_trade, price, self.config))
         if open_trade is not None and last_price is not None and last_timestamp is not None:
             unrealized_pnl = _calculate_unrealized_pnl(self.config, open_trade[1], last_price)
             final_capital = capital + unrealized_pnl
-            peak_capital = max(peak_capital, final_capital)
-            max_drawdown = max(max_drawdown, (peak_capital - final_capital) / peak_capital)
         else:
-            unrealized_pnl = 0.0
-            final_capital = capital
-        return _build_result(self.config.initial_capital, final_capital, trades, max_drawdown, unrealized_pnl, open_trade is not None)
+            unrealized_pnl, final_capital = 0.0, capital
+        return _build_result(self.config.initial_capital, final_capital, trades, unrealized_pnl, open_trade is not None, curve)
 
     def run_catalog_events(self, catalog: HistoricalCatalog, *, source: str, instrument: str, strategy: EventStrategy, timeframe: str = "tick", start_ns: int | None = None, end_ns: int | None = None, price_field: str = "price") -> BacktestResult:
         return self.run_events(catalog.iter_records(source=source, instrument=instrument, timeframe=timeframe, start_ns=start_ns, end_ns=end_ns), strategy, price_field=price_field)
@@ -270,19 +251,15 @@ class BacktestEngine:
         return self.run((_continuous_record_to_candle(item) for item in series), entry_strategy, exit_strategy)
 
     def run_continuous_futures_events_to_ledger(self, windows: Iterable[FNORolloverWindow], records_by_token: Mapping[str, Iterable[HistoricalRecord]], strategy: EventStrategy, *, ledger, run_id: str, price_field: str = "close", chunk_size: int = 500) -> BacktestResult:
-        if not run_id.strip():
-            raise ValueError("run_id is required")
-        if chunk_size <= 0:
-            raise ValueError("chunk_size must be positive")
+        if not run_id.strip(): raise ValueError("run_id is required")
+        if chunk_size <= 0: raise ValueError("chunk_size must be positive")
         from app.backtesting.event_incremental import run_events_incremental
         series = build_continuous_futures_series(windows, records_by_token)
         return run_events_incremental(self.config, (_continuous_record_to_event(item) for item in series), strategy, persist_chunk=lambda trades, sequence: ledger.append(run_id, sequence, trades), chunk_size=chunk_size, price_field=price_field)
 
     def run_events_to_ledger(self, events: Iterable[HistoricalRecord], strategy: EventStrategy, *, ledger, run_id: str, price_field: str = "price", chunk_size: int = 500) -> BacktestResult:
-        if not run_id.strip():
-            raise ValueError("run_id is required")
-        if chunk_size <= 0:
-            raise ValueError("chunk_size must be positive")
+        if not run_id.strip(): raise ValueError("run_id is required")
+        if chunk_size <= 0: raise ValueError("chunk_size must be positive")
         from app.backtesting.event_incremental import run_events_incremental
         return run_events_incremental(self.config, events, strategy, persist_chunk=lambda trades, sequence: ledger.append(run_id, sequence, trades), chunk_size=chunk_size, price_field=price_field)
 
@@ -291,31 +268,22 @@ class BacktestEngine:
         return self.run_events((_continuous_record_to_event(item) for item in series), strategy, price_field=price_field)
 
     def run_incremental_to_ledger(self, candles: Iterable[Mapping[str, object]], entry_strategy: Strategy, exit_strategy: Strategy, *, ledger, run_id: str, chunk_size: int = 500) -> BacktestResult:
-        if not run_id.strip():
-            raise ValueError("run_id is required")
+        if not run_id.strip(): raise ValueError("run_id is required")
         return self.run_incremental(candles, entry_strategy, exit_strategy, persist_chunk=lambda trades, sequence: ledger.append(run_id, sequence, trades), chunk_size=chunk_size)
 
     def run_incremental(self, candles: Iterable[Mapping[str, object]], entry_strategy: Strategy, exit_strategy: Strategy, *, persist_chunk: Callable[[Sequence[BacktestTrade], int], object], chunk_size: int = 500) -> BacktestResult:
-        if chunk_size <= 0:
-            raise ValueError("chunk_size must be positive")
+        if chunk_size <= 0: raise ValueError("chunk_size must be positive")
         capital = self.config.initial_capital
-        peak_capital = capital
-        max_drawdown = 0.0
-        open_trade: tuple[object, float] | None = None
-        chunk: list[BacktestTrade] = []
-        chunk_index = 0
-        trade_count = wins = 0
-        pnl_sum = return_sum = return_square_sum = downside_square_sum = 0.0
-        first_entry = last_exit = None
-        last_close = None
-        last_timestamp = None
+        open_trade = None
+        trades: list[BacktestTrade] = []
+        curve: list[EquityPoint] = []
         previous_timestamp = None
+        last_close = last_timestamp = None
         for candle in candles:
             timestamp = _validate_candle(candle, previous_timestamp)
             previous_timestamp = timestamp
-            last_timestamp = timestamp
             close = float(candle["close"])
-            last_close = close
+            last_close, last_timestamp = close, timestamp
             context = {key: value for key, value in candle.items() if _is_number(value)}
             if open_trade is None and entry_strategy.evaluate(context):
                 execution_price = _execution_price(self.config, close, "BUY")
@@ -326,65 +294,35 @@ class BacktestEngine:
                 exit_price = _execution_price(self.config, close, "SELL")
                 trade = _build_trade(self.config, entry_timestamp, entry_price, timestamp, exit_price)
                 capital += trade.net_pnl
-                peak_capital = max(peak_capital, capital)
-                max_drawdown = max(max_drawdown, (peak_capital - capital) / peak_capital)
-                trade_count += 1
-                wins += int(trade.net_pnl > 0)
-                pnl_sum += trade.net_pnl
-                trade_return = trade.net_pnl / self.config.initial_capital
-                return_sum += trade_return
-                return_square_sum += trade_return * trade_return
-                downside_square_sum += min(trade_return, 0.0) ** 2
-                first_entry = trade.entry_timestamp if first_entry is None else first_entry
-                last_exit = trade.exit_timestamp
-                chunk.append(trade)
-                if len(chunk) >= chunk_size:
-                    persist_chunk(tuple(chunk), chunk_index)
-                    chunk_index += 1
-                    chunk.clear()
+                trades.append(trade)
+                if len(trades) % chunk_size == 0:
+                    persist_chunk(tuple(trades[-chunk_size:]), len(trades) // chunk_size - 1)
                 open_trade = None
-        if chunk:
-            persist_chunk(tuple(chunk), chunk_index)
-        if open_trade is not None and last_close is not None and last_timestamp is not None:
+            curve.append(_equity_point(timestamp, capital, open_trade, close, self.config))
+        if trades and len(trades) % chunk_size:
+            persist_chunk(tuple(trades[-(len(trades) % chunk_size):]), len(trades) // chunk_size)
+        if open_trade is not None and last_close is not None:
             unrealized_pnl = _calculate_unrealized_pnl(self.config, open_trade[1], last_close)
             final_capital = capital + unrealized_pnl
-            peak_capital = max(peak_capital, final_capital)
-            max_drawdown = max(max_drawdown, (peak_capital - final_capital) / peak_capital)
-            if first_entry is None:
-                first_entry = open_trade[0]
-            cagr_end = last_timestamp
         else:
-            unrealized_pnl = 0.0
-            final_capital = capital
-            cagr_end = last_exit
-        mean_return = return_sum / trade_count if trade_count else 0.0
-        variance = max(return_square_sum / trade_count - mean_return * mean_return, 0.0) if trade_count else 0.0
-        downside = sqrt(downside_square_sum / trade_count) if trade_count else 0.0
-        return BacktestResult(self.config.initial_capital, final_capital, final_capital - self.config.initial_capital, (final_capital - self.config.initial_capital) / self.config.initial_capital, (), wins / trade_count if trade_count else 0.0, pnl_sum / trade_count if trade_count else 0.0, mean_return / sqrt(variance) if variance > 0 else 0.0, mean_return / downside if downside > 0 else 0.0, max_drawdown, _calculate_cagr_from_timestamps(first_entry, cagr_end, self.config.initial_capital, final_capital), unrealized_pnl, open_trade is not None)
+            unrealized_pnl, final_capital = 0.0, capital
+        return _build_result(self.config.initial_capital, final_capital, trades, unrealized_pnl, open_trade is not None, curve)
 
 
 def _validate_candle(candle: Mapping[str, object], previous_timestamp: object | None) -> object:
-    if not isinstance(candle, Mapping):
-        raise ValueError("candle must be a mapping")
+    if not isinstance(candle, Mapping): raise ValueError("candle must be a mapping")
     timestamp = candle.get("timestamp")
-    if timestamp is None:
-        raise ValueError("candle timestamp is required")
-    if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float, date, datetime)):
-        raise ValueError("candle timestamp must be an int, float, date, or datetime")
-    if isinstance(timestamp, (int, float)) and not isfinite(float(timestamp)):
-        raise ValueError("candle timestamp must be finite")
+    if timestamp is None: raise ValueError("candle timestamp is required")
+    if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float, date, datetime)): raise ValueError("candle timestamp must be an int, float, date, or datetime")
+    if isinstance(timestamp, (int, float)) and not isfinite(float(timestamp)): raise ValueError("candle timestamp must be finite")
     if previous_timestamp is not None:
         try:
-            if timestamp <= previous_timestamp:
-                raise ValueError("candles must have strictly increasing timestamps")
-        except TypeError as exc:
-            raise ValueError("candle timestamps must use one comparable type") from exc
-    if "close" not in candle:
-        raise ValueError("candle close is required")
+            if timestamp <= previous_timestamp: raise ValueError("candles must have strictly increasing timestamps")
+        except TypeError as exc: raise ValueError("candle timestamps must use one comparable type") from exc
+    if "close" not in candle: raise ValueError("candle close is required")
     _validate_price_field(candle["close"], "close")
     for field in ("open", "high", "low"):
-        if field in candle:
-            _validate_price_field(candle[field], field)
+        if field in candle: _validate_price_field(candle[field], field)
     return timestamp
 
 
@@ -400,27 +338,40 @@ def _execution_price(config: BacktestConfig, market_price: float, side: str) -> 
 
 
 def _round_price(price: float, tick_size: float | None) -> float:
-    if tick_size is None:
-        return price
+    if tick_size is None: return price
     value = (Decimal(str(price)) / Decimal(str(tick_size))).quantize(Decimal("1"), rounding="ROUND_HALF_UP") * Decimal(str(tick_size))
     rounded = float(value)
-    if not isfinite(rounded) or rounded <= 0:
-        raise ValueError("execution price is invalid after tick-size rounding")
+    if not isfinite(rounded) or rounded <= 0: raise ValueError("execution price is invalid after tick-size rounding")
     return rounded
 
 
 def _ensure_cash_available(config: BacktestConfig, capital: float, entry_price: float) -> None:
-    if not config.enforce_cash:
-        return
+    if not config.enforce_cash: return
     entry_value = entry_price * config.quantity
     estimated_cost = max(config.transaction_cost_minimum, entry_value * config.transaction_cost_rate)
-    if not isfinite(entry_value + estimated_cost) or entry_value + estimated_cost > capital:
-        raise ValueError("insufficient cash for backtest entry")
+    if not isfinite(entry_value + estimated_cost) or entry_value + estimated_cost > capital: raise ValueError("insufficient cash for backtest entry")
 
 
 def _is_multiple(value: float, step: float) -> bool:
     quotient = Decimal(str(value)) / Decimal(str(step))
     return quotient == quotient.to_integral_value()
+
+
+def _timestamp_ns(value: object) -> int:
+    if isinstance(value, datetime):
+        if value.tzinfo is None: value = value.replace(tzinfo=timezone.utc)
+        return int(value.timestamp() * 1_000_000_000)
+    if isinstance(value, date):
+        return int(datetime(value.year, value.month, value.day, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(float(value)):
+        return int(value)
+    raise ValueError("timestamp must be date, datetime, or numeric nanoseconds")
+
+
+def _equity_point(timestamp: object, capital: float, open_trade: tuple[object, float] | None, mark_price: float, config: BacktestConfig) -> EquityPoint:
+    unrealized = _calculate_unrealized_pnl(config, open_trade[1], mark_price) if open_trade is not None else 0.0
+    equity = capital + unrealized
+    return EquityPoint(_timestamp_ns(timestamp), equity, capital - config.initial_capital, unrealized)
 
 
 def _continuous_record_to_candle(item: ContinuousFuturesRecord) -> dict[str, object]:
@@ -439,12 +390,9 @@ def _continuous_record_to_event(item: ContinuousFuturesRecord) -> HistoricalReco
 
 
 def _normalize_event_signal(decision: EventSignal | str | None) -> EventSignal:
-    if decision is None:
-        return EventSignal("NONE")
-    if isinstance(decision, EventSignal):
-        return EventSignal(decision.action.strip().upper(), decision.price)
-    if isinstance(decision, str):
-        return EventSignal(decision.strip().upper())
+    if decision is None: return EventSignal("NONE")
+    if isinstance(decision, EventSignal): return EventSignal(decision.action.strip().upper(), decision.price)
+    if isinstance(decision, str): return EventSignal(decision.strip().upper())
     raise TypeError("event strategy must return EventSignal, action string, or None")
 
 
@@ -453,8 +401,7 @@ def _build_trade(config: BacktestConfig, entry_timestamp: object, entry_price: f
     traded_value = (entry_price + exit_price) * config.quantity
     costs = max(config.transaction_cost_minimum, traded_value * config.transaction_cost_rate)
     values = (entry_price, exit_price, gross_pnl, traded_value, costs, gross_pnl - costs)
-    if not all(isfinite(float(value)) for value in values):
-        raise ValueError("backtest trade values must be finite")
+    if not all(isfinite(float(value)) for value in values): raise ValueError("backtest trade values must be finite")
     return BacktestTrade(entry_timestamp, exit_timestamp, entry_price, exit_price, config.quantity, gross_pnl, costs, gross_pnl - costs)
 
 
@@ -464,64 +411,44 @@ def _calculate_unrealized_pnl(config: BacktestConfig, entry_price: float, mark_p
     traded_value = (entry_price + exit_price) * config.quantity
     costs = max(config.transaction_cost_minimum, traded_value * config.transaction_cost_rate)
     unrealized = gross_pnl - costs
-    if not all(isfinite(float(value)) for value in (entry_price, mark_price, exit_price, gross_pnl, costs, unrealized)):
-        raise ValueError("unrealized backtest values must be finite")
+    if not all(isfinite(float(value)) for value in (entry_price, mark_price, exit_price, gross_pnl, costs, unrealized)): raise ValueError("unrealized backtest values must be finite")
     return unrealized
 
 
-def _build_result(initial_capital: float, final_capital: float, trades: list[BacktestTrade], max_drawdown: float, unrealized_pnl: float = 0.0, has_open_trade: bool = False) -> BacktestResult:
+def _build_result(initial_capital: float, final_capital: float, trades: list[BacktestTrade], unrealized_pnl: float = 0.0, has_open_trade: bool = False, equity_curve: Sequence[EquityPoint] = ()) -> BacktestResult:
     wins = sum(1 for trade in trades if trade.net_pnl > 0)
     net_pnl = final_capital - initial_capital
-    return BacktestResult(initial_capital, final_capital, net_pnl, net_pnl / initial_capital, tuple(trades), wins / len(trades) if trades else 0.0, net_pnl / len(trades) if trades else 0.0, _trade_sharpe_ratio(trades, initial_capital), _trade_sortino_ratio(trades, initial_capital), max_drawdown, _calculate_cagr(trades, initial_capital, final_capital), unrealized_pnl, has_open_trade)
+    curve = tuple(equity_curve)
+    if curve and has_open_trade and curve[-1].equity != final_capital:
+        curve = curve + (EquityPoint(curve[-1].timestamp_ns + 1, final_capital, net_pnl - unrealized_pnl, unrealized_pnl),)
+    stats = calculate_statistics(curve, initial_capital) if curve else None
+    return BacktestResult(
+        initial_capital,
+        final_capital,
+        net_pnl,
+        net_pnl / initial_capital,
+        tuple(trades),
+        wins / len(trades) if trades else 0.0,
+        net_pnl / len(trades) if trades else 0.0,
+        stats.sharpe_ratio if stats else None,
+        stats.sortino_ratio if stats else None,
+        stats.max_drawdown if stats else 0.0,
+        stats.cagr if stats else None,
+        unrealized_pnl,
+        has_open_trade,
+        curve,
+    )
 
 
-def _trade_sharpe_ratio(trades: list[BacktestTrade], initial_capital: float) -> float:
-    if len(trades) < 2:
-        return 0.0
-    returns = [trade.net_pnl / initial_capital for trade in trades]
-    mean_return = sum(returns) / len(returns)
-    variance = sum((value - mean_return) ** 2 for value in returns) / len(returns)
-    return mean_return / sqrt(variance) if variance else 0.0
+def _calculate_cagr(trades: list[BacktestTrade], initial_capital: float, final_capital: float) -> float | None:
+    if not trades: return None
+    points = [EquityPoint(_timestamp_ns(trade.exit_timestamp), initial_capital + sum(t.net_pnl for t in trades[:i + 1]), 0.0, 0.0) for i, trade in enumerate(trades)]
+    return calculate_statistics(points, initial_capital).cagr
 
 
-def _trade_sortino_ratio(trades: list[BacktestTrade], initial_capital: float) -> float:
-    if len(trades) < 2:
-        return 0.0
-    returns = [trade.net_pnl / initial_capital for trade in trades]
-    mean_return = sum(returns) / len(returns)
-    downside = sqrt(sum(min(value, 0.0) ** 2 for value in returns) / len(returns))
-    return mean_return / downside if downside else 0.0
-
-
-def _calculate_cagr(trades: list[BacktestTrade], initial_capital: float, final_capital: float) -> float:
-    if not trades or final_capital <= 0:
-        return 0.0
-    start, end = trades[0].entry_timestamp, trades[-1].exit_timestamp
-    if not isinstance(start, (datetime, date)) or not isinstance(end, type(start)):
-        return 0.0
-    years = (end - start).total_seconds() / (365.25 * 24 * 60 * 60) if isinstance(start, datetime) else (end - start).days / 365.25
-    return (final_capital / initial_capital) ** (1.0 / years) - 1.0 if years > 0 else 0.0
-
-
-def _calculate_cagr_from_timestamps(start: object | None, end: object | None, initial_capital: float, final_capital: float) -> float:
-    if start is None or end is None or final_capital <= 0 or initial_capital <= 0:
-        return 0.0
-    if isinstance(start, datetime) or isinstance(end, datetime):
-        if not isinstance(start, datetime) or not isinstance(end, datetime):
-            return 0.0
-        years = (end - start).total_seconds() / (365.25 * 24 * 60 * 60)
-    elif isinstance(start, date) or isinstance(end, date):
-        if not isinstance(start, date) or not isinstance(end, date):
-            return 0.0
-        years = (end - start).days / 365.25
-    elif isinstance(start, (int, float)) and not isinstance(start, bool) and isinstance(end, (int, float)) and not isinstance(end, bool):
-        if not isfinite(float(start)) or not isfinite(float(end)):
-            return 0.0
-        elapsed_ns = float(end) - float(start)
-        years = elapsed_ns / (365.25 * 24 * 60 * 60 * 1_000_000_000)
-    else:
-        return 0.0
-    return (final_capital / initial_capital) ** (1.0 / years) - 1.0 if years > 0 else 0.0
+def _calculate_cagr_from_timestamps(start: object | None, end: object | None, initial_capital: float, final_capital: float) -> float | None:
+    if start is None or end is None: return None
+    return calculate_statistics((EquityPoint(_timestamp_ns(start), initial_capital, 0.0, 0.0), EquityPoint(_timestamp_ns(end), final_capital, final_capital - initial_capital, 0.0)), initial_capital).cagr
 
 
 def _is_number(value: object) -> bool:
