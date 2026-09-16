@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
+from math import isfinite
 from typing import Any, Mapping
 
 
@@ -29,12 +30,16 @@ class MarketEvent:
             raise TypeError("timestamp_ns must be an integer")
         if self.timestamp_ns < 0:
             raise ValueError("timestamp_ns cannot be negative")
-        if not self.instrument.strip():
+        if not isinstance(self.instrument, str) or not self.instrument.strip():
             raise ValueError("instrument is required")
+        if not isinstance(self.event_type, EventType):
+            raise TypeError("event_type must be an EventType")
         if self.sequence is not None and (isinstance(self.sequence, bool) or not isinstance(self.sequence, int)):
             raise TypeError("sequence must be an integer")
         if self.sequence is not None and self.sequence < 0:
             raise ValueError("sequence cannot be negative")
+        if self.source is not None and (not isinstance(self.source, str) or not self.source.strip()):
+            raise ValueError("source must be a non-empty string when provided")
         if not isinstance(self.payload, Mapping):
             raise TypeError("payload must be a mapping")
         if self.event_type == EventType.DEPTH:
@@ -45,6 +50,9 @@ class MarketEvent:
                 for item in evidence:
                     if not isinstance(item, Mapping):
                         raise TypeError("queue evidence entries must be mappings")
+                    price = item.get("price")
+                    if isinstance(price, bool) or not isinstance(price, (int, float)) or not isfinite(float(price)) or price <= 0:
+                        raise ValueError("queue evidence price must be finite and positive")
                     for field_name in ("executed_quantity", "cancelled_quantity_ahead"):
                         value = item.get(field_name, 0)
                         if isinstance(value, bool) or not isinstance(value, int):
@@ -69,6 +77,9 @@ class EventReplayConfig:
             raise TypeError("latency_ns must be an integer")
         if self.latency_ns < 0:
             raise ValueError("latency_ns cannot be negative")
+        if self.include_event_types is not None:
+            if not isinstance(self.include_event_types, frozenset) or any(not isinstance(item, EventType) for item in self.include_event_types):
+                raise TypeError("include_event_types must be a frozenset of EventType values")
         if self.replay_step_ns is not None:
             if isinstance(self.replay_step_ns, bool) or not isinstance(self.replay_step_ns, int):
                 raise TypeError("replay_step_ns must be an integer")
@@ -78,6 +89,8 @@ class EventReplayConfig:
     def to_ns(self, timestamp: int) -> int:
         if isinstance(timestamp, bool) or not isinstance(timestamp, int):
             raise TypeError("timestamp must be an integer")
+        if timestamp < 0:
+            raise ValueError("timestamp must be non-negative")
         multipliers = {"ns": 1, "us": 1_000, "ms": 1_000_000, "s": 1_000_000_000, "m": 60_000_000_000, "h": 3_600_000_000_000, "d": 86_400_000_000_000}
         return timestamp * multipliers[self.timestamp_unit]
 
