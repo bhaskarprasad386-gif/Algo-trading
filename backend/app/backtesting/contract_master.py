@@ -62,7 +62,7 @@ class ContractMasterCatalog:
 
     def upsert_snapshot(self, snapshot_date: date, records: Iterable[ContractRecord], *, payload_sha256: str | None = None, fetched_at: datetime | None = None) -> int:
         rows = self._rows(snapshot_date, records)
-        now = (fetched_at or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+        now = (fetched_at or datetime.now(timezone.utc)).isoformat(timespec="microseconds")
         with self._db:
             self._db.execute("INSERT INTO contract_master_snapshots(snapshot_date,fetched_at,payload_sha256) VALUES(?,?,?) ON CONFLICT(snapshot_date) DO UPDATE SET fetched_at=excluded.fetched_at,payload_sha256=excluded.payload_sha256", (snapshot_date.isoformat(), now, payload_sha256))
             self._db.execute("DELETE FROM derivative_contracts WHERE snapshot_date=?", (snapshot_date.isoformat(),))
@@ -115,7 +115,9 @@ class ContractMasterCatalog:
         return tuple(ContractRecord(r[0], r[1], r[2], date.fromisoformat(r[3]), r[4], r[5], int(r[6]), date.fromisoformat(snapshot), None if r[7] is None else float(r[7])) for r in rows)
 
     def resolve(self, *, exchange: str, underlying: str, as_of: date, mode: str) -> ContractRecord:
-        mode = mode.upper()
+        if not isinstance(mode, str):
+            raise ValueError("mode must be CURRENT or NEAR")
+        mode = mode.strip().upper()
         if mode not in {"CURRENT", "NEAR"}:
             raise ValueError("mode must be CURRENT or NEAR")
         contracts = self.contracts(exchange=exchange, underlying=underlying, as_of=as_of)
