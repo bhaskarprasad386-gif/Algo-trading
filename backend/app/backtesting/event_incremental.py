@@ -20,6 +20,8 @@ from app.backtesting.engine import (
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 
 PersistTradeChunk = Callable[[tuple[BacktestTrade, ...], int], object]
+_SECONDS_PER_YEAR = 365.25 * 24 * 60 * 60
+_NANOSECONDS_PER_YEAR = _SECONDS_PER_YEAR * 1_000_000_000
 
 
 def _event_order_key(record: HistoricalRecord) -> tuple[object, ...]:
@@ -39,9 +41,13 @@ def run_events_incremental(engine_config: BacktestConfig, events, strategy: Even
     chunk = []
     chunk_index = 0
     trade_count = wins = 0
-    pnl_sum = return_sum = return_square_sum = downside_square_sum = 0.0
+    pnl_sum = 0.0
+    returns: list[float] = []
+    intervals_years: list[float] = []
     first_timestamp = last_timestamp = last_price = None
     previous_key = None
+    previous_equity = engine_config.initial_capital
+    previous_timestamp = None
     seen_identities = set()
     for record in events:
         if not isinstance(record.timestamp_ns, int) or isinstance(record.timestamp_ns, bool) or record.timestamp_ns < 0:
@@ -87,10 +93,6 @@ def run_events_incremental(engine_config: BacktestConfig, events, strategy: Even
             trade_count += 1
             wins += int(trade.net_pnl > 0)
             pnl_sum += trade.net_pnl
-            trade_return = trade.net_pnl / engine_config.initial_capital
-            return_sum += trade_return
-            return_square_sum += trade_return * trade_return
-            downside_square_sum += min(trade_return, 0.0) ** 2
             chunk.append(trade)
             if len(chunk) >= chunk_size:
                 persist_chunk(tuple(chunk), chunk_index)
@@ -98,6 +100,14 @@ def run_events_incremental(engine_config: BacktestConfig, events, strategy: Even
                 chunk.clear()
             open_trade = None
         equity = capital + (_calculate_unrealized_pnl(engine_config, open_trade[1], price) if open_trade is not None else 0.0)
+        if previous_timestamp is not None and record.timestamp_ns > previous_timestamp and previous_equity > 0:
+            elapsed_years = (record.timestamp_ns - previous_timestamp) / _NANOSECONDS_PER_YEAR
+            value = equity / previous_equity - 1.0
+            if elapsed_years > 0 and isfinite(value):
+                returns.append(value)
+                intervals_years.append(elapsed_years)
+        previous_equity = equity
+        previous_timestamp = record.timestamp_ns
         peak_equity = max(peak_equity, equity)
         if peak_equity > 0:
             max_drawdown = max(max_drawdown, (peak_equity - equity) / peak_equity)
@@ -111,13 +121,27 @@ def run_events_incremental(engine_config: BacktestConfig, events, strategy: Even
         final_capital = capital
     win_rate = wins / trade_count if trade_count else 0.0
     expectancy = pnl_sum / trade_count if trade_count else 0.0
-    mean_return = return_sum / trade_count if trade_count else 0.0
-    variance = max(return_square_sum / trade_count - mean_return * mean_return, 0.0) if trade_count else 0.0
-    sharpe = mean_return / sqrt(variance) if variance > 0 else 0.0
-    downside = sqrt(downside_square_sum / trade_count) if trade_count else 0.0
-    sortino = mean_return / downside if downside > 0 else 0.0
+    sharpe = _annualized_ratio(returns, intervals_years, downside_only=False)
+    sortino = _annualized_ratio(returns, intervals_years, downside_only=True)
     cagr = _calculate_cagr_from_timestamps(first_timestamp, last_timestamp, engine_config.initial_capital, final_capital)
     return BacktestResult(engine_config.initial_capital, final_capital, final_capital - engine_config.initial_capital, (final_capital - engine_config.initial_capital) / engine_config.initial_capital, (), win_rate, expectancy, sharpe, sortino, max_drawdown, cagr, unrealized_pnl, open_trade is not None)
+
+
+def _annualized_ratio(returns: list[float], intervals_years: list[float], *, downside_only: bool) -> float | None:
+    if len(returns) < 2 or not intervals_years:
+        return None
+    mean = sum(returns) / len(returns)
+    if downside_only:
+        denominator = sqrt(sum(min(value, 0.0) ** 2 for value in returns) / len(returns))
+    else:
+        variance = sum((value - mean) ** 2 for value in returns) / len(returns)
+        denominator = sqrt(variance)
+    if denominator <= 0:
+        return None
+    average_interval_years = sum(intervals_years) / len(intervals_years)
+    if average_interval_years <= 0:
+        return None
+    return mean / denominator * sqrt(1.0 / average_interval_years)
 
 
 def _calculate_cagr_from_timestamps(start: object | None, end: object | None, initial_capital: float, final_capital: float) -> float | None:
@@ -125,13 +149,13 @@ def _calculate_cagr_from_timestamps(start: object | None, end: object | None, in
         return None
     if isinstance(start, datetime) or isinstance(end, datetime):
         if not isinstance(start, datetime) or not isinstance(end, datetime): return None
-        years = (end - start).total_seconds() / (365.25 * 24 * 60 * 60)
+        years = (end - start).total_seconds() / _SECONDS_PER_YEAR
     elif isinstance(start, date) or isinstance(end, date):
         if not isinstance(start, date) or not isinstance(end, date): return None
         years = (end - start).days / 365.25
     elif isinstance(start, (int, float)) and not isinstance(start, bool) and isinstance(end, (int, float)) and not isinstance(end, bool):
         if not isfinite(float(start)) or not isfinite(float(end)): return None
-        years = (float(end) - float(start)) / (365.25 * 24 * 60 * 60 * 1_000_000_000)
+        years = (float(end) - float(start)) / _NANOSECONDS_PER_YEAR
     else:
         return None
     if years <= 0: return None
