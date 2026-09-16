@@ -69,7 +69,11 @@ class ContractMasterCatalog:
 
     @staticmethod
     def _rows(snapshot_date: date, records: Iterable[ContractRecord]) -> list[tuple[object, ...]]:
-        return [(snapshot_date.isoformat(), r.exchange, r.symbol, r.token, r.expiry.isoformat(), r.instrument_type, r.underlying, r.lot_size, r.tick_size) for r in records]
+        rows = [(snapshot_date.isoformat(), r.exchange, r.symbol, r.token, r.expiry.isoformat(), r.instrument_type, r.underlying, r.lot_size, r.tick_size) for r in records]
+        identities = [(row[1], row[3]) for row in rows]
+        if len(identities) != len(set(identities)):
+            raise ValueError("duplicate contract identity (exchange, token) in snapshot")
+        return rows
 
     def upsert_snapshot(self, snapshot_date: date, records: Iterable[ContractRecord], *, payload_sha256: str | None = None, fetched_at: datetime | None = None) -> int:
         rows = self._rows(snapshot_date, records)
@@ -145,7 +149,7 @@ class ContractMasterCatalog:
             raise LookupError(f"no historical stock futures contract for {underlying} on {as_of.isoformat()}")
         return contracts[0] if mode == "CURRENT" else (contracts[1] if len(contracts) > 1 else contracts[0])
 
-    def resolve_contract_month(self, *, exchange: str, underlying: str, contract_month: str, as_of: date, instrument_type: str = "STOCK_FUTURE") -> ContractRecord:
+    def resolve_contract_month(self, *, exchange: str, underlying: str, contract_month: str, as_of: date, instrument_type: str = "STOCK_FUTURE", max_snapshot_age_days: int | None = None) -> ContractRecord:
         """Resolve the exact historical futures contract for a YYYY-MM expiry month without returning an expired contract."""
         try:
             year_text, month_text = contract_month.strip().split("-", 1)
@@ -154,10 +158,14 @@ class ContractMasterCatalog:
             next_month = date(year + (1 if month == 12 else 0), 1 if month == 12 else month + 1, 1)
         except (AttributeError, TypeError, ValueError):
             raise ValueError("contract_month must be YYYY-MM") from None
+        if max_snapshot_age_days is not None and (type(max_snapshot_age_days) is not int or max_snapshot_age_days < 0):
+            raise ValueError("max_snapshot_age_days must be a non-negative integer or None")
         row = self._db.execute("SELECT snapshot_date FROM contract_master_snapshots WHERE snapshot_date<=? ORDER BY snapshot_date DESC LIMIT 1", (as_of.isoformat(),)).fetchone()
         if row is None:
             raise LookupError(f"no historical contract-master snapshot for {as_of.isoformat()}")
         snapshot = row[0]
+        if max_snapshot_age_days is not None and (as_of - date.fromisoformat(snapshot)).days > max_snapshot_age_days:
+            raise LookupError(f"contract-master snapshot {snapshot} is stale for {as_of.isoformat()}")
         rows = self._db.execute("""SELECT exchange,symbol,token,expiry,instrument_type,underlying,lot_size,tick_size
             FROM derivative_contracts WHERE snapshot_date=? AND exchange=? AND underlying=?
             AND instrument_type=? AND expiry>=? AND expiry>=? AND expiry<? ORDER BY expiry""", (
