@@ -110,6 +110,10 @@ class BacktestTradeLedger:
     def _metadata(trade: BacktestTrade) -> str:
         return json.dumps({"entry_market_price": trade.entry_market_price, "exit_market_price": trade.exit_market_price, "entry_price_source": trade.entry_price_source, "exit_price_source": trade.exit_price_source, "entry_event_identity": trade.entry_event_identity, "exit_event_identity": trade.exit_event_identity}, sort_keys=True, default=str)
 
+    @staticmethod
+    def _row_payload(row) -> tuple:
+        return tuple(row)
+
     def append(self, run_id: str, sequence: int, trades: Iterable[BacktestTrade]) -> int:
         with self._lock:
             if not isinstance(run_id, str) or not run_id.strip() or type(sequence) is not int or sequence < 0:
@@ -118,12 +122,14 @@ class BacktestTradeLedger:
             for offset, trade in enumerate(trades):
                 if not isinstance(trade, BacktestTrade):
                     raise TypeError("trades must contain BacktestTrade values")
-                rows.append((run_id, sequence + offset, json.dumps(trade.entry_timestamp, default=str), json.dumps(trade.exit_timestamp, default=str), trade.entry_price, trade.exit_price, trade.quantity, trade.gross_pnl, trade.costs, trade.net_pnl, self._metadata(trade)))
+                rows.append((run_id, sequence + offset, json.dumps(trade.entry_timestamp, default=str), json.dumps(trade.exit_timestamp, default=str), self._finite(trade.entry_price, "entry_price"), self._finite(trade.exit_price, "exit_price"), self._finite(trade.quantity, "quantity"), self._finite(trade.gross_pnl, "gross_pnl"), self._finite(trade.costs, "costs"), self._finite(trade.net_pnl, "net_pnl"), self._metadata(trade)))
             if not rows:
                 return 0
             existing = self._db.execute("SELECT sequence,entry_timestamp_json,exit_timestamp_json,entry_price,exit_price,quantity,gross_pnl,costs,net_pnl,metadata_json FROM backtest_trades WHERE run_id=? AND sequence BETWEEN ? AND ? ORDER BY sequence", (run_id, sequence, sequence + len(rows) - 1)).fetchall()
             if existing:
-                if len(existing) != len(rows) or any(tuple(row) != tuple(new[1:]) for row, new in zip(existing, rows)):
+                expected = [tuple(row[1:]) for row in rows]
+                actual = [tuple(row[1:]) for row in existing]
+                if len(existing) != len(rows) or actual != expected:
                     raise ValueError(f"trade sequence already exists: {existing[0][0]}")
                 return len(rows)
             try:
