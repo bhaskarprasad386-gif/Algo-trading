@@ -96,6 +96,10 @@ class OrderBook:
             raise TypeError("order-book levels must be DepthLevel instances")
         bid_prices = tuple(x.price for x in self.bids)
         ask_prices = tuple(x.price for x in self.asks)
+        if len(bid_prices) != len(set(bid_prices)):
+            raise ValueError("bids cannot contain duplicate price levels")
+        if len(ask_prices) != len(set(ask_prices)):
+            raise ValueError("asks cannot contain duplicate price levels")
         if bid_prices != tuple(sorted(bid_prices, reverse=True)):
             raise ValueError("bids must be ordered best-to-worst")
         if ask_prices != tuple(sorted(ask_prices)):
