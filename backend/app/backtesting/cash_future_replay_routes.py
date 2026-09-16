@@ -10,7 +10,6 @@ from app.backtesting.cash_future_historical_loader import CashFutureHistoricalLo
 from app.backtesting.contract_master import ContractMasterCatalog
 from app.backtesting.historical_catalog import HistoricalCatalog
 from app.core.config import settings
-from app.scanner.cash_future_history import build_graph_series
 
 REPLAY_TIMEFRAMES = ("1s", "1m", "5m", "15m", "30m")
 
@@ -38,6 +37,23 @@ def _available_replay_intervals(points) -> list[str]:
         if min_delta <= seconds:
             available.append(interval)
     return available
+
+
+def _graph_points(points, contract_month: str | None = None) -> list[dict]:
+    """Android Gson expects graph as a JSON array of objects, not parallel arrays."""
+    selected = [point for point in points if contract_month is None or point.contract_month == contract_month]
+    selected.sort(key=lambda point: point.timestamp)
+    return [
+        {
+            "timestamp": point.timestamp.isoformat(),
+            "cash": point.cash_price,
+            "future": point.future_price,
+            "gap": point.gap,
+            "gap_pct": point.gap_pct,
+            "contract_month": point.contract_month,
+        }
+        for point in selected
+    ]
 
 
 @router.get("/replay")
@@ -119,7 +135,7 @@ def cash_future_replay(
         "source_min_interval_seconds": min_delta,
         "available_replay_intervals": available,
         "series": series,
-        "graph": build_graph_series(points, contract_month=contract_month),
+        "graph": _graph_points(points, contract_month=contract_month),
     }
 
 
