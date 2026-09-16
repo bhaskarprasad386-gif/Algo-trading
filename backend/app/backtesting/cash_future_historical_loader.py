@@ -112,16 +112,17 @@ class CashFutureHistoricalLoader:
         days=[]; current=selection.start_date
         while current<=selection.end_date:
             if current.weekday()<5:
+                def resolve(exchange:str):
+                    if selection.contract_month: return self.contract_catalog.resolve_contract_month(exchange=exchange,underlying=selection.underlying.upper(),contract_month=selection.contract_month.strip(),as_of=current)
+                    return self.contract_catalog.resolve(exchange=exchange,underlying=selection.underlying.upper(),as_of=current,mode=selection.mode)
                 try:
-                    def resolve(exchange:str):
-                        if selection.contract_month: return self.contract_catalog.resolve_contract_month(exchange=exchange,underlying=selection.underlying.upper(),contract_month=selection.contract_month.strip(),as_of=current)
-                        return self.contract_catalog.resolve(exchange=exchange,underlying=selection.underlying.upper(),as_of=current,mode=selection.mode)
                     try: contract=resolve(selection.exchange)
                     except LookupError:
                         if selection.exchange.upper()!="NFO": contract=resolve("NFO")
                         else: raise
-                    days.append((current,contract))
-                except LookupError: pass
+                except LookupError as exc:
+                    raise LookupError(f"no historical cash-future contract for {selection.underlying.upper()} on {current.isoformat()}") from exc
+                days.append((current,contract))
             current=current.fromordinal(current.toordinal()+1)
         segments=[]
         # Token alone is not a sufficient segment identity: a historical snapshot can
