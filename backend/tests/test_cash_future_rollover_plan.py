@@ -122,3 +122,43 @@ def test_same_contract_across_non_consecutive_sessions_is_one_continuous_segment
     assert segments[0].future.token == "101"
     assert segments[1].future.token == "102"
     assert segments[0].end < segments[1].start
+
+
+def test_default_calendar_does_not_create_weekend_rollover_sessions():
+    catalog = ContractMasterCatalog()
+    catalog.upsert_snapshot(date(2026, 1, 2), [
+        ContractRecord("NFO", "SBIN26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "SBIN", 750),
+    ])
+    segments = build_rollover_segments(
+        catalog,
+        exchange="NFO",
+        underlying="SBIN",
+        start=date(2026, 1, 2),
+        end=date(2026, 1, 5),
+        mode="CURRENT",
+    )
+    assert [(s.start, s.end, s.future.token) for s in segments] == [
+        (date(2026, 1, 2), date(2026, 1, 5), "101"),
+    ]
+
+
+def test_same_token_metadata_change_creates_new_segment():
+    catalog = ContractMasterCatalog()
+    catalog.upsert_snapshot(date(2026, 1, 1), [
+        ContractRecord("NFO", "SBIN26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "SBIN", 750),
+    ])
+    catalog.upsert_snapshot(date(2026, 1, 5), [
+        ContractRecord("NFO", "SBIN26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "SBIN", 1000),
+    ])
+    segments = build_rollover_segments(
+        catalog,
+        exchange="NFO",
+        underlying="SBIN",
+        start=date(2026, 1, 2),
+        end=date(2026, 1, 6),
+        mode="CURRENT",
+    )
+    assert [(s.start, s.end, s.future.token, s.future.lot_size) for s in segments] == [
+        (date(2026, 1, 2), date(2026, 1, 2), "101", 750),
+        (date(2026, 1, 5), date(2026, 1, 6), "101", 1000),
+    ]
