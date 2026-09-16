@@ -53,3 +53,27 @@ def test_loader_selection_does_not_store_request_state_between_iterators(tmp_pat
     second = loader.iter_points(CashFutureHistorySelection("NSE:2:ABC", "NFO", "ABC", date(2026, 1, 5), date(2026, 1, 5)))
     assert tuple(first) == ()
     assert tuple(second) == ()
+
+
+def test_loader_splits_same_token_when_historical_snapshot_changes_lot_size(tmp_path):
+    data = HistoricalCatalog(str(tmp_path / "data.db")); contracts = ContractMasterCatalog(str(tmp_path / "contracts.db"))
+    contracts.upsert_snapshot(date(2026, 1, 2), [ContractRecord("NFO", "ABC26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 75)])
+    contracts.upsert_snapshot(date(2026, 1, 5), [ContractRecord("NFO", "ABC26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 100)])
+    loader = CashFutureHistoricalLoader(data, contracts)
+    segments = loader._contracts_by_segment(CashFutureHistorySelection("NSE:1:ABC", "NFO", "ABC", date(2026, 1, 5), date(2026, 1, 6)))
+    assert [(start, end, contract.token, contract.lot_size) for start, end, contract in segments] == [
+        (date(2026, 1, 5), date(2026, 1, 6), "101", 100),
+    ]
+
+
+def test_loader_preserves_point_in_time_terms_when_same_token_metadata_changes(tmp_path):
+    contracts = ContractMasterCatalog(str(tmp_path / "contracts.db"))
+    contracts.upsert_snapshot(date(2026, 1, 1), [ContractRecord("NFO", "ABC26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 75)])
+    contracts.upsert_snapshot(date(2026, 1, 5), [ContractRecord("NFO", "ABC26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 100)])
+    loader = CashFutureHistoricalLoader(HistoricalCatalog(str(tmp_path / "data.db")), contracts)
+    selection = CashFutureHistorySelection("NSE:1:ABC", "NFO", "ABC", date(2026, 1, 2), date(2026, 1, 6))
+    segments = loader._contracts_by_segment(selection)
+    assert [(start, end, contract.lot_size) for start, end, contract in segments] == [
+        (date(2026, 1, 2), date(2026, 1, 2), 75),
+        (date(2026, 1, 5), date(2026, 1, 6), 100),
+    ]
