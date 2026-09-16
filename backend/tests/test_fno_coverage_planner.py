@@ -43,7 +43,7 @@ def test_coverage_plan_repairs_leading_interior_and_trailing_session_gaps():
         ]
     )
 
-    plan = make_plan(catalog, calendar, session, interval)
+    plan = make_plan(catalog, calendar, session, interval, max_request_ns=2 * interval)
 
     assert [(job.start_ns, job.end_ns) for job in plan.jobs] == [
         (session.start_ns, session.start_ns + interval),
