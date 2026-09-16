@@ -27,6 +27,21 @@ def test_resolves_exact_expiry_month_instead_of_current_near():
     assert selected.token == "102"
     assert selected.symbol == "ABC26OCT"
     assert selected.lot_size == 100
+    assert selected.contract_month == "2026-10"
+    catalog.close()
+
+
+def test_resolver_canonicalizes_contract_month_metadata():
+    catalog = ContractMasterCatalog()
+    catalog.upsert_snapshot(
+        date(2026, 9, 7),
+        [ContractRecord("NFO", "ABC26OCT", "102", date(2026, 10, 29), "STOCK_FUTURE", "ABC", 100)],
+    )
+    selected = HistoricalContractResolver(catalog).resolve_future(
+        underlying=" ABC ", contract_month=" 2026-10 ", as_of=date(2026, 9, 10)
+    )
+    assert selected.underlying == "ABC"
+    assert selected.contract_month == "2026-10"
     catalog.close()
 
 
