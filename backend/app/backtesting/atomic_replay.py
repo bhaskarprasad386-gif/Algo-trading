@@ -21,24 +21,22 @@ class AtomicReplayStore:
         self._db = connection
         was_in_transaction = self._db.in_transaction
         self._db.execute("PRAGMA journal_mode=WAL")
-        self._db.executescript("""
-            CREATE TABLE IF NOT EXISTS atomic_replay_events (
-                run_id TEXT NOT NULL, timestamp_ns INTEGER NOT NULL, sequence INTEGER NOT NULL,
-                instrument TEXT NOT NULL DEFAULT '', event_type TEXT NOT NULL DEFAULT '',
-                PRIMARY KEY (run_id, timestamp_ns, sequence, instrument, event_type)
-            );
-            CREATE TABLE IF NOT EXISTS atomic_replay_checkpoints (
-                run_id TEXT PRIMARY KEY, timestamp_ns INTEGER NOT NULL, sequence INTEGER NOT NULL,
-                processed_events INTEGER NOT NULL, realized_pnl REAL NOT NULL, state_json TEXT NOT NULL,
-                instrument TEXT NOT NULL DEFAULT '', event_type TEXT NOT NULL DEFAULT ''
-            );
-            CREATE TABLE IF NOT EXISTS atomic_replay_trades (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, instrument TEXT NOT NULL,
-                quantity INTEGER NOT NULL, entry_timestamp_ns INTEGER NOT NULL, exit_timestamp_ns INTEGER NOT NULL,
-                entry_price REAL NOT NULL, exit_price REAL NOT NULL, gross_pnl REAL NOT NULL,
-                fees REAL NOT NULL, net_pnl REAL NOT NULL
-            );
-        """)
+        self._db.execute("""CREATE TABLE IF NOT EXISTS atomic_replay_events (
+            run_id TEXT NOT NULL, timestamp_ns INTEGER NOT NULL, sequence INTEGER NOT NULL,
+            instrument TEXT NOT NULL DEFAULT '', event_type TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (run_id, timestamp_ns, sequence, instrument, event_type)
+        )""")
+        self._db.execute("""CREATE TABLE IF NOT EXISTS atomic_replay_checkpoints (
+            run_id TEXT PRIMARY KEY, timestamp_ns INTEGER NOT NULL, sequence INTEGER NOT NULL,
+            processed_events INTEGER NOT NULL, realized_pnl REAL NOT NULL, state_json TEXT NOT NULL,
+            instrument TEXT NOT NULL DEFAULT '', event_type TEXT NOT NULL DEFAULT ''
+        )""")
+        self._db.execute("""CREATE TABLE IF NOT EXISTS atomic_replay_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, instrument TEXT NOT NULL,
+            quantity INTEGER NOT NULL, entry_timestamp_ns INTEGER NOT NULL, exit_timestamp_ns INTEGER NOT NULL,
+            entry_price REAL NOT NULL, exit_price REAL NOT NULL, gross_pnl REAL NOT NULL,
+            fees REAL NOT NULL, net_pnl REAL NOT NULL
+        )""")
         event_columns = {row[1] for row in self._db.execute("PRAGMA table_info(atomic_replay_events)")}
         if event_columns and ("instrument" not in event_columns or "event_type" not in event_columns):
             self._db.execute("ALTER TABLE atomic_replay_events RENAME TO atomic_replay_events_legacy")
@@ -47,14 +45,16 @@ class AtomicReplayStore:
                 instrument TEXT NOT NULL, event_type TEXT NOT NULL,
                 PRIMARY KEY (run_id, timestamp_ns, sequence, instrument, event_type)
             )""")
-            legacy_instrument = "instrument" if "instrument" in event_columns else None
-            legacy_type = "event_type" if "event_type" in event_columns else None
-            select_instrument = "instrument" if legacy_instrument else "?"
-            select_type = "event_type" if legacy_type else "?"
-            params = tuple(v for v in (_LEGACY_INSTRUMENT if not legacy_instrument else None, _LEGACY_EVENT_TYPE if not legacy_type else None) if v is not None)
+            select_instrument = "instrument" if "instrument" in event_columns else "?"
+            select_type = "event_type" if "event_type" in event_columns else "?"
+            params = []
+            if "instrument" not in event_columns:
+                params.append(_LEGACY_INSTRUMENT)
+            if "event_type" not in event_columns:
+                params.append(_LEGACY_EVENT_TYPE)
             self._db.execute(
                 f"INSERT OR IGNORE INTO atomic_replay_events SELECT run_id,timestamp_ns,sequence,{select_instrument},{select_type} FROM atomic_replay_events_legacy",
-                params,
+                tuple(params),
             )
         checkpoint_columns = {row[1] for row in self._db.execute("PRAGMA table_info(atomic_replay_checkpoints)")}
         if checkpoint_columns and "instrument" not in checkpoint_columns:
@@ -104,10 +104,9 @@ class AtomicReplayStore:
             state = json.loads(row[5])
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
             raise ValueError("checkpoint state is invalid JSON") from exc
-        checkpoint = ReplayCheckpoint(row[0], row[1], row[2], row[3], row[4], state, row[6], row[7])
         if not isinstance(state, dict):
             raise ValueError("checkpoint state must be a dictionary")
-        return checkpoint
+        return ReplayCheckpoint(row[0], row[1], row[2], row[3], row[4], state, row[6], row[7])
 
     def save_checkpoint(self, checkpoint: ReplayCheckpoint) -> None:
         if not isinstance(checkpoint.run_id, str) or not checkpoint.run_id.strip():
