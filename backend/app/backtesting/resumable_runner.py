@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
+from math import isfinite
 
 from app.backtesting.engine import (
     BacktestEngine,
@@ -40,6 +41,14 @@ def run_resumable_events(
         raise ValueError("price_field is required")
 
     checkpoint = ledger.checkpoint(run_id)
+    if checkpoint is not None:
+        stored_count = checkpoint.get("trade_count")
+        if type(stored_count) is not int or stored_count < 0:
+            raise ValueError("persisted checkpoint trade_count is invalid")
+        actual_count = ledger.count(run_id)
+        if actual_count != stored_count:
+            raise ValueError("persisted checkpoint trade_count does not match ledger")
+
     state = EventExecutionState(capital=engine.config.initial_capital, peak_capital=engine.config.initial_capital)
     stream: Iterator[HistoricalRecord] = iter(events)
     resumed = checkpoint is not None
@@ -50,10 +59,12 @@ def run_resumable_events(
         cursor = checkpoint["cursor"]
         for record in stream:
             replay_chunk.append(record)
-            if _cursor(record) == cursor or _legacy_cursor(record) == cursor:
+            if _cursor(record) == cursor:
                 _run_chunk(engine, replay_chunk, strategy, state, price_field=price_field)
                 found = True
                 break
+            if _legacy_cursor(record) == cursor and _cursor(record) != cursor:
+                raise ValueError("legacy checkpoint cursor is ambiguous; restart from a full checkpoint")
             if len(replay_chunk) >= chunk_size:
                 _run_chunk(engine, replay_chunk, strategy, state, price_field=price_field)
                 replay_chunk.clear()
@@ -89,10 +100,14 @@ def run_resumable_events(
     liquidation = 0.0
     if state.open_trade is not None and state.last_price is not None:
         liquidation = _calculate_liquidation_pnl(engine.config, state.open_trade[1], state.last_price)
+    if hasattr(ledger, "trades"):
+        all_trades = tuple(ledger.trades(run_id))
+    else:
+        all_trades = tuple(persisted_trades)
     return _build_result(
         engine.config.initial_capital,
         state.capital + liquidation,
-        persisted_trades,
+        all_trades,
         state.max_drawdown,
         liquidation,
         state.open_trade is not None,
@@ -124,10 +139,10 @@ def _run_chunk(engine: BacktestEngine, events: Iterable[HistoricalRecord], strat
         price = signal.price
         if price is None:
             raw_price = record.payload.get(price_field)
-            if not isinstance(raw_price, (int, float)) or isinstance(raw_price, bool):
-                raise ValueError(f"event payload must contain numeric {price_field!r} or signal price")
+            if isinstance(raw_price, bool) or not isinstance(raw_price, (int, float)) or not isfinite(float(raw_price)):
+                raise ValueError(f"event payload must contain finite numeric {price_field!r} or signal price")
             price = float(raw_price)
-        if isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
+        if isinstance(price, bool) or not isinstance(price, (int, float)) or not isfinite(float(price)) or price <= 0:
             raise ValueError("event price must be finite and positive")
         price = float(price)
         state.last_price = price
@@ -157,7 +172,19 @@ def _run_chunk(engine: BacktestEngine, events: Iterable[HistoricalRecord], strat
 def _empty_result(engine, ledger, run_id):
     pnl = ledger.net_pnl(run_id)
     initial = engine.config.initial_capital
-    return BacktestResult(initial, initial + pnl, pnl, pnl / initial, (), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    return BacktestResult(
+        initial_capital=initial,
+        final_capital=initial + pnl,
+        net_pnl=pnl,
+        total_return=pnl / initial,
+        trades=tuple(ledger.trades(run_id)) if hasattr(ledger, "trades") else (),
+        win_rate=0.0,
+        expectancy=0.0,
+        sharpe_ratio=0.0,
+        sortino_ratio=0.0,
+        max_drawdown=0.0,
+        cagr=0.0,
+    )
 
 
 def _cursor(record: HistoricalRecord) -> str:
