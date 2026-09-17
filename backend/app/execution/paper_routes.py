@@ -233,7 +233,7 @@ def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_
 
 
 @router.post("/paper/order")
-def paper_order(request: PaperOrderRequest, request_context: Request | None = None, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
+def paper_order(request: PaperOrderRequest, request_context: Request = None, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     side = request.transaction_type.strip().upper()
     if side not in {"BUY", "SELL"}:
         raise HTTPException(status_code=400, detail="transaction_type must be BUY or SELL")
@@ -409,7 +409,7 @@ def paper_payoff_from_strategy(request: StrategyPayoffRequest, user_id: int = De
 @router.post("/paper/payoff/from-cash-future")
 def paper_payoff_from_cash_future(request: CashFuturePayoffRequest, user_id: int = Depends(current_user_id)):
     try:
-        legs = build_cash_future_strategy(cash_entry_price=request.cash_entry_price, future_entry_price=request.future_price, quantity=request.quantity, multiplier=request.multiplier)
+        legs = build_cash_future_strategy(cash_entry_price=request.cash_entry_price, future_entry_price=request.future_entry_price, quantity=request.quantity, multiplier=request.multiplier)
         return _analytics_response(request.symbol, user_id, legs, tuple(request.underlying_prices))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
