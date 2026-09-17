@@ -34,15 +34,15 @@ def box_payoff_legs(event: Mapping[str, Any], *, direction: str = "LONG") -> tup
         return (
             _leg("CALL", "BUY", low["call_ask"], 1, strike=low["strike"], multiplier=quantity),
             _leg("CALL", "SELL", high["call_bid"], 1, strike=high["strike"], multiplier=quantity),
-            _leg("PUT", "BUY", low["put_ask"], 1, strike=low["strike"], multiplier=quantity),
-            _leg("PUT", "SELL", high["put_bid"], 1, strike=high["strike"], multiplier=quantity),
+            _leg("PUT", "BUY", high["put_ask"], 1, strike=high["strike"], multiplier=quantity),
+            _leg("PUT", "SELL", low["put_bid"], 1, strike=low["strike"], multiplier=quantity),
         )
     if direction == "SHORT":
         return (
             _leg("CALL", "SELL", low["call_bid"], 1, strike=low["strike"], multiplier=quantity),
             _leg("CALL", "BUY", high["call_ask"], 1, strike=high["strike"], multiplier=quantity),
-            _leg("PUT", "SELL", low["put_bid"], 1, strike=low["strike"], multiplier=quantity),
-            _leg("PUT", "BUY", high["put_ask"], 1, strike=high["strike"], multiplier=quantity),
+            _leg("PUT", "SELL", high["put_bid"], 1, strike=high["strike"], multiplier=quantity),
+            _leg("PUT", "BUY", low["put_ask"], 1, strike=low["strike"], multiplier=quantity),
         )
     raise ValueError("direction must be LONG or SHORT")
 
