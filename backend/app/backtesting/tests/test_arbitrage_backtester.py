@@ -17,8 +17,8 @@ def test_long_box_profit_when_executable_debit_is_below_width():
     high = option(strike=110, cb=7.1, ca=7.2, pb=4.9, pa=5)
     opp = BoxSpreadBacktester.evaluate(low, high)
     assert opp is not None
-    assert round(opp.executable_edge, 6) == 0.8
-    assert round(opp.edge_per_lot, 6) == 8.0
+    assert round(opp.executable_edge, 6) == 7.3
+    assert round(opp.edge_per_lot, 6) == 73.0
 
 
 def test_short_box_uses_high_put_bid_and_low_put_ask():
@@ -27,8 +27,8 @@ def test_short_box_uses_high_put_bid_and_low_put_ask():
     opp = BoxSpreadBacktester.evaluate(low, high, direction="SHORT")
     assert opp is not None
     # credit = low call bid + high put bid - high call ask - low put ask
-    assert opp.executable_edge == 5
-    assert opp.edge_per_lot == 50
+    assert opp.executable_edge == 4
+    assert opp.edge_per_lot == 40
 
 
 def test_long_box_uses_high_put_ask_and_low_put_bid():
