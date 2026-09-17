@@ -98,6 +98,20 @@ def run_schema_migrations() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_expires ON password_reset_tokens (expires_at)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_password_reset_tokens_token_hash ON password_reset_tokens (token_hash)"))
 
+        if "paper_idempotency" not in account_tables:
+            connection.execute(text("""
+                CREATE TABLE paper_idempotency (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    scope VARCHAR(64) NOT NULL,
+                    idempotency_key VARCHAR(128) NOT NULL,
+                    response_json TEXT,
+                    created_at DATETIME
+                )
+            """))
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_paper_idempotency_identity ON paper_idempotency (user_id, scope, idempotency_key)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_paper_idempotency_user ON paper_idempotency (user_id, scope)"))
+
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_mobile_number ON users (mobile_number)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_id ON orders (user_id)"))
