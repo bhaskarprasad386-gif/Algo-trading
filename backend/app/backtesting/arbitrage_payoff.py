@@ -40,13 +40,21 @@ def build_box_payoff(event: Mapping[str, Any], *, direction: str = "LONG") -> St
     high = event["high"]
     if low["underlying"] != high["underlying"] or low["expiry"] != high["expiry"]:
         raise ValueError("box legs must share underlying and expiry")
+    if low["timestamp_ns"] != high["timestamp_ns"]:
+        raise ValueError("box legs must share timestamp")
+    if low.get("instrument_class") != high.get("instrument_class"):
+        raise ValueError("box legs must share instrument class")
     low_strike = float(low["strike"])
     high_strike = float(high["strike"])
     if not math.isfinite(low_strike) or not math.isfinite(high_strike) or not low_strike < high_strike:
         raise ValueError("box strikes must be finite and low strike must be below high strike")
     _validate_quote_prices(low["call_bid"], low["call_ask"], low["put_bid"], low["put_ask"],
                            high["call_bid"], high["call_ask"], high["put_bid"], high["put_ask"])
-    qty = _validate_quantity(low.get("lot_size", 1))
+    low_qty = _validate_quantity(low.get("lot_size", 1))
+    high_qty = _validate_quantity(high.get("lot_size", 1))
+    if low_qty != high_qty:
+        raise ValueError("box legs must share lot size")
+    qty = low_qty
     if direction == "LONG":
         legs = (
             PayoffLeg("CALL", "BUY", low_strike, float(low["call_ask"]), qty),
