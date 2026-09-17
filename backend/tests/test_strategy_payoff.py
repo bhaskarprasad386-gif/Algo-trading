@@ -14,8 +14,8 @@ def test_box_builds_four_real_entry_legs():
     assert [(x.kind, x.side, x.strike, x.entry_price, x.multiplier) for x in legs] == [
         ("CALL", "BUY", 100, 5.0, 50.0),
         ("CALL", "SELL", 110, 1.0, 50.0),
-        ("PUT", "BUY", 100, 6.0, 50.0),
-        ("PUT", "SELL", 110, 11.0, 50.0),
+        ("PUT", "BUY", 110, 12.0, 50.0),
+        ("PUT", "SELL", 100, 5.0, 50.0),
     ]
 
 

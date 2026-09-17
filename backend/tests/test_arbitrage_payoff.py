@@ -5,11 +5,15 @@ from app.backtesting.arbitrage_payoff import (
     build_synthetic_cash_carry_payoff,
 )
 from app.execution.payoff import payoff_at_price
+import pytest
 
 
-def option(ts, strike, cb, ca, pb, pa, expiry=20261231):
-    return {"timestamp_ns": ts, "underlying": "ABC", "expiry": expiry, "strike": strike,
-            "call_bid": cb, "call_ask": ca, "put_bid": pb, "put_ask": pa, "lot_size": 1}
+def option(ts, strike, cb, ca, pb, pa, expiry=20261231, lot_size=1, instrument_class=None):
+    result = {"timestamp_ns": ts, "underlying": "ABC", "expiry": expiry, "strike": strike,
+              "call_bid": cb, "call_ask": ca, "put_bid": pb, "put_ask": pa, "lot_size": lot_size}
+    if instrument_class is not None:
+        result["instrument_class"] = instrument_class
+    return result
 
 
 def test_box_payoff_contains_four_real_entry_legs_and_fixed_expiry_payoff():
@@ -30,6 +34,30 @@ def test_box_payoff_contains_four_real_entry_legs_and_fixed_expiry_payoff():
     assert payoff_at_price(result.legs, 105.0) == 11.0
     assert payoff_at_price(result.legs, 120.0) == 11.0
     assert result.metadata["quote_timestamp_ns"] == 1
+
+
+def test_box_payoff_rejects_mismatched_timestamps():
+    with pytest.raises(ValueError, match="share timestamp"):
+        build_box_payoff({
+            "low": option(1, 100, 6, 4, 5, 3),
+            "high": option(2, 110, 2, 3, 2, 2),
+        })
+
+
+def test_box_payoff_rejects_mismatched_lot_sizes():
+    with pytest.raises(ValueError, match="share lot size"):
+        build_box_payoff({
+            "low": option(1, 100, 6, 4, 5, 3, lot_size=10),
+            "high": option(1, 110, 2, 3, 2, 2, lot_size=20),
+        })
+
+
+def test_box_payoff_rejects_mismatched_instrument_classes():
+    with pytest.raises(ValueError, match="share instrument class"):
+        build_box_payoff({
+            "low": option(1, 100, 6, 4, 5, 3, instrument_class="STOCK"),
+            "high": option(1, 110, 2, 3, 2, 2, instrument_class="INDEX"),
+        })
 
 
 def test_synthetic_payoff_contains_option_pair_and_opposite_future():

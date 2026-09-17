@@ -33,9 +33,9 @@ def _payoff_legs(strategy_id: str, event: Mapping[str, Any], direction: str, qua
         long = direction == "LONG"
         return (
             PayoffLeg("CALL", "BUY" if long else "SELL", float(low["strike"]), float(low["call_ask"] if long else low["call_bid"]), quantity),
-            PayoffLeg("PUT", "BUY" if long else "SELL", float(low["strike"]), float(low["put_ask"] if long else low["put_bid"]), quantity),
+            PayoffLeg("PUT", "BUY" if long else "SELL", float(high["strike"]), float(high["put_ask"] if long else high["put_bid"]), quantity),
             PayoffLeg("CALL", "SELL" if long else "BUY", float(high["strike"]), float(high["call_bid"] if long else high["call_ask"]), quantity),
-            PayoffLeg("PUT", "SELL" if long else "BUY", float(high["strike"]), float(high["put_bid"] if long else high["put_ask"]), quantity),
+            PayoffLeg("PUT", "SELL" if long else "BUY", float(low["strike"]), float(low["put_bid"] if long else low["put_ask"]), quantity),
         )
     if strategy_id == "synthetic-cash-carry":
         option, future = _quote(event, "option"), _quote(event, "future")

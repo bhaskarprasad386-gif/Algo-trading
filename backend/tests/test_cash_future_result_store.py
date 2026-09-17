@@ -9,16 +9,16 @@ from app.backtesting.cash_future_replay import CashFutureBothReplayTrade, CashFu
 from app.backtesting.cash_future_result_store import CashFutureResultStore
 
 
-def _trade(future: str = "FUT"):
+def _trade(future: str = "FUT", lot_size: int = 50):
     result = CashFutureTrade(
         spot_entry=100.0,
         spot_exit=103.0,
         future_entry=105.0,
         future_exit=101.0,
         quantity=1,
-        lot_size=50,
+        lot_size=lot_size,
     )
-    return CashFutureReplayTrade(1, 2, future, 50, 1, result)
+    return CashFutureReplayTrade(1, 2, future, lot_size, 1, result)
 
 
 def test_single_leg_mode_is_preserved_and_duplicate_is_ignored():
@@ -36,17 +36,21 @@ def test_single_leg_mode_is_preserved_and_duplicate_is_ignored():
 def test_both_trade_is_stored_as_combined_result():
     conn = sqlite3.connect(":memory:")
     store = CashFutureResultStore(conn)
-    current = _trade("CURRENT")
-    near = _trade("NEAR")
+    current = _trade("CURRENT", 50)
+    near = _trade("NEAR", 75)
     trade = CashFutureBothReplayTrade(
         1, 2, current.future_instrument, near.future_instrument, 50, 1,
-        current.result, near.result,
+        current.result, near.result, 75,
     )
 
     assert store.append("run", trade, mode="BOTH") is True
     summary = store.summary("run")
     assert summary.trade_count == 1
-    assert summary.gross_pnl == pytest.approx(700.0)
+    assert summary.gross_pnl == pytest.approx(875.0)
+    row = conn.execute(
+        "SELECT lot_size, near_lot_size, gross_pnl FROM cash_future_results"
+    ).fetchone()
+    assert row == pytest.approx((50, 75, 875.0))
 
 
 def test_append_many_is_chunked_and_idempotent():

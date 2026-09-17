@@ -8,10 +8,15 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
+import java.util.UUID
 import java.util.concurrent.TimeUnit
+
+// Paper request idempotency: callers should create one key per user action and reuse it for retries.
+fun newPaperIdempotencyKey(): String = UUID.randomUUID().toString()
 
 data class MarketStatus(val status: String, val message: String)
 data class MarketLtpResponse(val status: Boolean = false, val exchange: String = "", val tradingsymbol: String = "", val symboltoken: String = "", val ltp: Double? = null)
@@ -41,12 +46,11 @@ data class BrokerConnectResponse(val connected: Boolean, val broker: String, val
 data class BrokerStatusResponse(val broker: String, val connected: Boolean, val display_name: String? = null, val real_trading: Boolean = false, val kill_switch: Boolean = true)
 data class SafetyResponse(val real_trading_enabled: Boolean = false, val kill_switch: Boolean = true, val enabled_at: String? = null, val broker_connected: Boolean = false, val live_order_routing: Boolean = false, val message: String? = null)
 data class RealTradingEnableRequest(val confirmation: String)
-
 data class FullFnoJobRequest(val days: Int = 365, val min_entry_gap: Double = 0.0, val exit_gap: Double = 0.0, val charges_per_trade: Double = 0.0, val funding_cost_per_trade: Double = 0.0, val max_holding_days: Int = 30, val future_selection: String = "BOTH")
 data class FullFnoJobAcceptedResponse(val status: String, val universe: String, val future_selection: String, val job: String)
 data class FullFnoJobState(val job_id: String, val status: String, val symbol: String = "", val contract_month: String = "", val requested_days: Int = 0, val progress_pct: Double = 0.0, val symbols_processed: Int = 0, val symbols_total: Int = 0, val result_chunks: Int = 0, val message: String? = null, val result: Map<String, Any?>? = null, val created_at: String? = null, val updated_at: String? = null)
 data class FullFnoJobStatusResponse(val status: String, val job: FullFnoJobState)
-data class FullFnoResultChunk(val sequence: Int, val symbol: String, val result: Map<String, Any?> = emptyMap(), val created_at: String? = null)
+data class FullFnoResultChunk(val sequence: Int, val symbol: String, val contract_month: String? = null, val result: Map<String, Any?> = emptyMap(), val created_at: String? = null)
 data class FullFnoResultsPage(val status: String, val job_id: String, val total: Int = 0, val offset: Int = 0, val limit: Int = 0, val after_sequence: Int? = null, val next_after_sequence: Int? = null, val data: List<FullFnoResultChunk> = emptyList())
 data class FullFnoJobControlResponse(val status: String, val job_id: String, val job_status: String)
 data class FullFnoPurgeResponse(val status: String, val job_id: String, val job_status: String, val deleted_chunks: Int)
@@ -61,48 +65,8 @@ data class MonthlyGraphResponse(val status: String = "", val symbol: String = ""
 data class IntradayReplayPoint(val timestamp: String = "", val open: Double = 0.0, val high: Double = 0.0, val low: Double = 0.0, val volume: Double? = null, val oi: Double? = null, val lot_size: Double = 0.0, val contract_month: String? = null, val instrument_key: String? = null)
 data class CashFutureReplayPoint(val timestamp: String = "", val cash_price: Double = 0.0, val future_price: Double = 0.0, val gap: Double = 0.0, val gap_pct: Double = 0.0, val contract_month: String? = null, val lot_size: Double = 0.0, val margin_required: Double = 0.0, val volume: Double? = null, val oi: Double? = null, val cash_bid: Double? = null, val cash_ask: Double? = null, val future_bid: Double? = null, val future_ask: Double? = null, val charges: Double? = null, val funding_cost: Double? = null)
 data class CashFutureGraphPoint(val timestamp: String = "", val cash: Double = 0.0, val future: Double = 0.0, val gap: Double = 0.0, val gap_pct: Double = 0.0, val contract_month: String? = null)
-
-/** One durable historical backtest trade, mapped directly to graph entry/exit markers. */
-data class CashFutureTradeMarker(
-    val entry_time: String = "",
-    val exit_time: String = "",
-    val symbol: String = "",
-    val contract_month: String = "",
-    val lot_size: Double = 0.0,
-    val quantity: Double = 0.0,
-    val entry_cash_price: Double = 0.0,
-    val entry_future_price: Double = 0.0,
-    val entry_gap: Double = 0.0,
-    val exit_cash_price: Double = 0.0,
-    val exit_future_price: Double = 0.0,
-    val exit_gap: Double = 0.0,
-    val gross_profit: Double = 0.0,
-    val charges: Double = 0.0,
-    val funding_cost: Double = 0.0,
-    val net_profit: Double = 0.0,
-    val execution_model: String = "gap",
-    val exit_reason: String = "",
-    val reserved_margin: Double = 0.0,
-)
-
-data class CashFutureStrategyRunResponse(
-    val status: String = "",
-    val run_id: String = "",
-    val strategy_id: String = "",
-    val strategy_version: String = "1",
-    val initial_capital: Double = 0.0,
-    val final_capital: Double = 0.0,
-    val final_available_capital: Double = 0.0,
-    val final_reserved_margin: Double = 0.0,
-    val blocked_entry_count: Int = 0,
-    val net_profit: Double = 0.0,
-    val signal_count: Int = 0,
-    val trade_count: Int = 0,
-    val signals: List<Map<String, Any?>> = emptyList(),
-    val trades: List<CashFutureTradeMarker> = emptyList(),
-    val equity_curve: List<Map<String, Any?>> = emptyList(),
-)
-
+data class CashFutureTradeMarker(val entry_time: String = "", val exit_time: String = "", val symbol: String = "", val contract_month: String = "", val lot_size: Double = 0.0, val quantity: Double = 0.0, val entry_cash_price: Double = 0.0, val entry_future_price: Double = 0.0, val entry_gap: Double = 0.0, val exit_cash_price: Double = 0.0, val exit_future_price: Double = 0.0, val exit_gap: Double = 0.0, val gross_profit: Double = 0.0, val charges: Double = 0.0, val funding_cost: Double = 0.0, val net_profit: Double = 0.0, val execution_model: String = "gap", val exit_reason: String = "", val reserved_margin: Double = 0.0)
+data class CashFutureStrategyRunResponse(val status: String = "", val run_id: String = "", val strategy_id: String = "", val strategy_version: String = "1", val initial_capital: Double = 0.0, val final_capital: Double = 0.0, val final_available_capital: Double = 0.0, val final_reserved_margin: Double = 0.0, val blocked_entry_count: Int = 0, val net_profit: Double = 0.0, val signal_count: Int = 0, val trade_count: Int = 0, val signals: List<Map<String, Any?>> = emptyList(), val trades: List<CashFutureTradeMarker> = emptyList(), val equity_curve: List<Map<String, Any?>> = emptyList())
 data class CashFutureReplayResponse(val status: String = "", val trading_date: String = "", val symbol: String = "", val contract_month: String? = null, val contracts_seen: List<String> = emptyList(), val mode: String = "CURRENT", val timeframe: String = "1m", val source: String = "", val count: Int = 0, val first_timestamp: String = "", val last_timestamp: String = "", val source_min_interval_seconds: Int? = null, val available_replay_intervals: List<String> = emptyList(), val series: List<CashFutureReplayPoint> = emptyList(), val graph: List<CashFutureGraphPoint> = emptyList())
 data class IntradayReplayResponse(val status: String = "", val trading_date: String = "", val symbol: String = "", val instrument_type: String = "CASH_FUTURE", val source_interval_minutes: Int = 1, val chart_interval_minutes: Int = 15, val count: Int = 0, val series: List<IntradayReplayPoint> = emptyList())
 data class DateGapResponse(val status: String = "", val trading_date: String = "", val mode: String = "shorting", val instrument_type: String = "STOCK", val count: Int = 0, val top: DailyGapCalendarItem? = null, val data: List<DailyGapCalendarItem> = emptyList())
@@ -127,10 +91,10 @@ interface ApiInterface {
     @POST("/api/v1/brokers/safety/enable") suspend fun enableRealTrading(@Body request: RealTradingEnableRequest): SafetyResponse
     @POST("/api/v1/brokers/safety/disable") suspend fun disableRealTrading(): SafetyResponse
     @POST("/api/v1/brokers/safety/kill-switch") suspend fun triggerKillSwitch(): SafetyResponse
-    @POST("/api/v1/execution/paper/entry") suspend fun paperEntry(@Body request: PaperEntryRequest): PaperEntryResponse
-    @POST("/api/v1/execution/paper/from-scanner") suspend fun paperEntryFromScanner(@Body request: ScannerPaperEntryRequest): ScannerPaperEntryResponse
+    @POST("/api/v1/execution/paper/entry") suspend fun paperEntry(@Body request: PaperEntryRequest, @Header("Idempotency-Key") idempotencyKey: String): PaperEntryResponse
+    @POST("/api/v1/execution/paper/from-scanner") suspend fun paperEntryFromScanner(@Body request: ScannerPaperEntryRequest, @Header("Idempotency-Key") idempotencyKey: String): ScannerPaperEntryResponse
     @GET("/api/v1/execution/paper/position") suspend fun paperPosition(): PaperPositionResponse
-    @POST("/api/v1/execution/paper/exit") suspend fun paperExit(@Body request: PaperExitRequest): PaperExitResponse
+    @POST("/api/v1/execution/paper/exit") suspend fun paperExit(@Body request: PaperExitRequest, @Header("Idempotency-Key") idempotencyKey: String): PaperExitResponse
     @GET("/api/v1/execution/paper/orders") suspend fun paperOrders(): PaperOrdersResponse
     @GET("/api/v1/market-data/ltp-by-symbol") suspend fun ltpBySymbol(@Query("tradingsymbol") tradingSymbol: String, @Query("exchange") exchange: String = "NSE"): MarketLtpResponse
     @GET("/api/v1/scanner/cash-future/live/auto") suspend fun cashFutureScan(): CashFutureScanResponse
@@ -164,7 +128,12 @@ object ApiService {
             val path = request.url.encodedPath
             val publicAuthEndpoint = path == "/api/v1/auth/login" || path == "/api/v1/auth/register"
             val token = AppContextHolder.context?.let { getToken(it) }
-            val authenticated = if (publicAuthEndpoint || token.isNullOrBlank()) request else request.newBuilder().addHeader("Authorization", "Bearer $token").build()
+            var builder = request.newBuilder()
+            if (!(publicAuthEndpoint || token.isNullOrBlank())) builder.addHeader("Authorization", "Bearer $token")
+            if (request.method == "POST" && (path == "/api/v1/execution/paper/entry" || path == "/api/v1/execution/paper/from-scanner" || path == "/api/v1/execution/paper/exit") && request.header("Idempotency-Key").isNullOrBlank()) {
+                builder.addHeader("Idempotency-Key", newPaperIdempotencyKey())
+            }
+            val authenticated = builder.build()
             val response = chain.proceed(authenticated)
             if (response.code == 401 && !publicAuthEndpoint) AppContextHolder.context?.let { clearToken(it) }
             response

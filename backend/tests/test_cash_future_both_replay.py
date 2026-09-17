@@ -51,6 +51,30 @@ def test_both_mode_keeps_leg_pnl_separate_and_combined():
     assert result.gross_pnl == 40.0
 
 
+def test_both_mode_uses_independent_current_and_near_lot_sizes():
+    lock = CashFutureContractLock(
+        mode="BOTH", contracts={"CURRENT": "ABC26SEP", "NEAR": "ABC26OCT"}
+    )
+    bars = [
+        CashFutureMultiLegBar(100, 100.0, {"ABC26SEP": 101.0, "ABC26OCT": 102.0}),
+        CashFutureMultiLegBar(200, 101.0, {"ABC26SEP": 100.0, "ABC26OCT": 101.0}),
+    ]
+    result = CashFutureReplayRunner().run_both(
+        bars,
+        entry_timestamps=[100],
+        exit_timestamps=[200],
+        contract_lock=lock,
+        lot_size=10,
+        near_lot_size=20,
+    )[0]
+
+    assert result.current_lot_size == 10
+    assert result.near_lot_size == 20
+    assert result.current_result.gross_pnl == 20.0
+    assert result.near_result.gross_pnl == 40.0
+    assert result.gross_pnl == 60.0
+
+
 def test_both_mode_fails_closed_when_one_synchronized_leg_is_missing():
     lock = CashFutureContractLock(
         mode="BOTH", contracts={"CURRENT": "ABC26SEP", "NEAR": "ABC26OCT"}
