@@ -11,7 +11,7 @@ import hashlib
 import math
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
@@ -22,6 +22,7 @@ from app.core.database import get_db
 from app.core.security import ALGORITHM
 from app.execution.dual_engine import DualExecutionEngine, ExecutionConfig, ExecutionMode, Fill
 from app.execution.fill_accounting import ExecutedFill, FillAccountingState, apply_executed_fill
+from app.execution.paper_idempotency import claim, complete, request_fingerprint
 from app.execution.payoff import PayoffLeg, payoff_summary
 from app.execution.strategy_legs import StrategyLegInput, build_cash_future_strategy, build_strategy_legs
 from app.models import Order, Position, Session as UserSession, TradingAccount
@@ -190,6 +191,26 @@ def _accounting_after_fill(*, side: str, price: float, quantity: float, current_
     return after, round(after.realized_pnl - before.realized_pnl, 8)
 
 
+def _paper_order_idempotency(request: Request | None, db: Session, user_id: int, payload: dict):
+    if request is None:
+        return None
+    key = request.headers.get("Idempotency-Key")
+    if not key:
+        raise HTTPException(status_code=400, detail="Idempotency-Key header is required")
+    try:
+        return claim(
+            db,
+            user_id=user_id,
+            scope="paper/order",
+            key=key,
+            request_hash=request_fingerprint(payload),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
 @router.post("/paper/entry")
 def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     quantity = _validate_quantity(request.quantity)
@@ -212,12 +233,23 @@ def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_
 
 
 @router.post("/paper/order")
-def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
+def paper_order(request: PaperOrderRequest, request_context: Request | None = None, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     side = request.transaction_type.strip().upper()
     if side not in {"BUY", "SELL"}:
         raise HTTPException(status_code=400, detail="transaction_type must be BUY or SELL")
     quantity = _validate_quantity(request.quantity)
     symbol = request.symbol.strip().upper()
+    idempotency_payload = {
+        "symbol": symbol,
+        "transaction_type": side,
+        "price": request.price,
+        "quantity": quantity,
+        "stop_loss_pct": request.stop_loss_pct,
+        "target_pct": request.target_pct,
+    }
+    idempotency = _paper_order_idempotency(request_context, db, user_id, idempotency_payload)
+    if idempotency is not None and idempotency.replay:
+        return idempotency.response
     account = _account(db, user_id)
     active = _position(db, user_id, symbol)
 
@@ -286,8 +318,11 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
                 active.quantity = remaining_qty
                 remaining = active
             order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl)
+    response = {"status":"success","mode":"paper","order":order,"position":_position_payload(remaining if side == "SELL" and 'remaining' in locals() else active),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+    if idempotency is not None:
+        complete(db, user_id=user_id, scope="paper/order", key=request_context.headers["Idempotency-Key"], response=response)
     db.commit()
-    return {"status":"success","mode":"paper","order":order,"position":_position_payload(remaining if side == "SELL" and active is not None and active.quantity <= 0 else (remaining if side == "SELL" and 'remaining' in locals() else active)),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+    return response
 
 
 @router.post("/paper/from-scanner")
@@ -374,7 +409,7 @@ def paper_payoff_from_strategy(request: StrategyPayoffRequest, user_id: int = De
 @router.post("/paper/payoff/from-cash-future")
 def paper_payoff_from_cash_future(request: CashFuturePayoffRequest, user_id: int = Depends(current_user_id)):
     try:
-        legs = build_cash_future_strategy(cash_entry_price=request.cash_entry_price, future_entry_price=request.future_entry_price, quantity=request.quantity, multiplier=request.multiplier)
+        legs = build_cash_future_strategy(cash_entry_price=request.cash_entry_price, future_entry_price=request.future_price, quantity=request.quantity, multiplier=request.multiplier)
         return _analytics_response(request.symbol, user_id, legs, tuple(request.underlying_prices))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
