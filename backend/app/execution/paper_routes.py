@@ -198,58 +198,31 @@ def _paper_order_idempotency(request: Request | None, db: Session, user_id: int,
     if not key:
         raise HTTPException(status_code=400, detail="Idempotency-Key header is required")
     try:
-        return claim(
-            db,
-            user_id=user_id,
-            scope="paper/order",
-            key=key,
-            request_hash=request_fingerprint(payload),
-        )
+        return claim(db, user_id=user_id, scope="paper/order", key=key, request_hash=request_fingerprint(payload))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
 
-@router.post("/paper/entry")
-def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
-    quantity = _validate_quantity(request.quantity)
-    symbol = request.symbol.strip().upper()
-    if _position(db, user_id, symbol) is not None:
-        raise HTTPException(status_code=409, detail="A paper position is already active for this symbol")
-    account = _account(db, user_id)
-    cost = _buy_cost(request.price, quantity)
-    if account.virtual_balance < cost:
-        raise HTTPException(status_code=400, detail="Insufficient paper balance")
-    engine = DualExecutionEngine(_paper_fill, config=ExecutionConfig(stop_loss_pct=request.stop_loss_pct, target_pct=request.target_pct))
-    fill = engine.enter(request.price, quantity)
-    state = engine.paper
-    position = Position(user_id=user_id, symbol=symbol, quantity=quantity, average_price=state.entry_price, stop_loss=state.stop_loss, target=state.target)
-    account.virtual_balance = round(account.virtual_balance - cost, 8)
-    db.add(position)
-    order = _create_order(db, user_id=user_id, symbol=symbol, side="BUY", price=fill.price, quantity=fill.quantity)
-    db.commit()
-    return {"status":"success","mode":state.mode.value,"fill":{"price":fill.price,"quantity":fill.quantity},"entry_price":state.entry_price,"stop_loss":state.stop_loss,"target":state.target,"position":_position_payload(position),"order":order,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+def _scanner_idempotency(request: Request | None, db: Session, user_id: int, payload: dict):
+    if request is None:
+        raise HTTPException(status_code=400, detail="Idempotency-Key header is required")
+    key = request.headers.get("Idempotency-Key")
+    if not key:
+        raise HTTPException(status_code=400, detail="Idempotency-Key header is required")
+    try:
+        return claim(db, user_id=user_id, scope="paper/from-scanner", key=key, request_hash=request_fingerprint(payload))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
-@router.post("/paper/order")
-def paper_order(request: PaperOrderRequest, request_context: Request = None, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
+def _execute_paper_order(request: PaperOrderRequest, *, user_id: int, db: Session) -> dict:
     side = request.transaction_type.strip().upper()
-    if side not in {"BUY", "SELL"}:
-        raise HTTPException(status_code=400, detail="transaction_type must be BUY or SELL")
     quantity = _validate_quantity(request.quantity)
     symbol = request.symbol.strip().upper()
-    idempotency_payload = {
-        "symbol": symbol,
-        "transaction_type": side,
-        "price": request.price,
-        "quantity": quantity,
-        "stop_loss_pct": request.stop_loss_pct,
-        "target_pct": request.target_pct,
-    }
-    idempotency = _paper_order_idempotency(request_context, db, user_id, idempotency_payload)
-    if idempotency is not None and idempotency.replay:
-        return idempotency.response
     account = _account(db, user_id)
     active = _position(db, user_id, symbol)
 
@@ -318,7 +291,48 @@ def paper_order(request: PaperOrderRequest, request_context: Request = None, use
                 active.quantity = remaining_qty
                 remaining = active
             order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl)
-    response = {"status":"success","mode":"paper","order":order,"position":_position_payload(remaining if side == "SELL" and 'remaining' in locals() else active),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+    return {"status":"success","mode":"paper","order":order,"position":remaining if side == "SELL" and 'remaining' in locals() else active,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+
+
+def _paper_order_response_payload(response: dict) -> dict:
+    result = dict(response)
+    result["position"] = _position_payload(response["position"])
+    return result
+
+
+@router.post("/paper/entry")
+def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
+    quantity = _validate_quantity(request.quantity)
+    symbol = request.symbol.strip().upper()
+    if _position(db, user_id, symbol) is not None:
+        raise HTTPException(status_code=409, detail="A paper position is already active for this symbol")
+    account = _account(db, user_id)
+    cost = _buy_cost(request.price, quantity)
+    if account.virtual_balance < cost:
+        raise HTTPException(status_code=400, detail="Insufficient paper balance")
+    engine = DualExecutionEngine(_paper_fill, config=ExecutionConfig(stop_loss_pct=request.stop_loss_pct, target_pct=request.target_pct))
+    fill = engine.enter(request.price, quantity)
+    state = engine.paper
+    position = Position(user_id=user_id, symbol=symbol, quantity=quantity, average_price=state.entry_price, stop_loss=state.stop_loss, target=state.target)
+    account.virtual_balance = round(account.virtual_balance - cost, 8)
+    db.add(position)
+    order = _create_order(db, user_id=user_id, symbol=symbol, side="BUY", price=fill.price, quantity=fill.quantity)
+    db.commit()
+    return {"status":"success","mode":state.mode.value,"fill":{"price":fill.price,"quantity":fill.quantity},"entry_price":state.entry_price,"stop_loss":state.stop_loss,"target":state.target,"position":_position_payload(position),"order":order,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+
+
+@router.post("/paper/order")
+def paper_order(request: PaperOrderRequest, request_context: Request = None, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
+    side = request.transaction_type.strip().upper()
+    if side not in {"BUY", "SELL"}:
+        raise HTTPException(status_code=400, detail="transaction_type must be BUY or SELL")
+    quantity = _validate_quantity(request.quantity)
+    symbol = request.symbol.strip().upper()
+    idempotency_payload = {"symbol": symbol, "transaction_type": side, "price": request.price, "quantity": quantity, "stop_loss_pct": request.stop_loss_pct, "target_pct": request.target_pct}
+    idempotency = _paper_order_idempotency(request_context, db, user_id, idempotency_payload)
+    if idempotency is not None and idempotency.replay:
+        return idempotency.response
+    response = _paper_order_response_payload(_execute_paper_order(request, user_id=user_id, db=db))
     if idempotency is not None:
         complete(db, user_id=user_id, scope="paper/order", key=request_context.headers["Idempotency-Key"], response=response)
     db.commit()
@@ -326,21 +340,30 @@ def paper_order(request: PaperOrderRequest, request_context: Request = None, use
 
 
 @router.post("/paper/from-scanner")
-def paper_from_scanner(request: ScannerPaperEntryRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
+def paper_from_scanner(request: ScannerPaperEntryRequest, request_context: Request = None, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     if not request.executable:
         raise HTTPException(status_code=409, detail="Scanner opportunity is not executable")
     if request.future_price is not None and request.future_price <= request.cash_price:
         raise HTTPException(status_code=409, detail="Scanner future price does not exceed cash price")
     if request.net_profit is not None and request.net_profit <= 0:
         raise HTTPException(status_code=409, detail="Scanner opportunity has no positive net profit")
-    _validate_quantity(request.quantity)
-    result = paper_order(PaperOrderRequest(symbol=request.symbol, transaction_type="BUY", price=request.cash_price, quantity=request.quantity, stop_loss_pct=request.stop_loss_pct, target_pct=request.target_pct), user_id=user_id, db=db)
-    result["source"] = "cash-future-scanner"
-    result["scanner_entry_price"] = request.cash_price
-    result["scanner_future_price"] = request.future_price
-    result["scanner_gap"] = request.gap
-    result["scanner_net_profit"] = request.net_profit
-    return result
+    quantity = _validate_quantity(request.quantity)
+    symbol = request.symbol.strip().upper()
+    scanner_payload = {"symbol": symbol, "cash_price": request.cash_price, "quantity": quantity, "future_price": request.future_price, "gap": request.gap, "net_profit": request.net_profit, "executable": request.executable, "stop_loss_pct": request.stop_loss_pct, "target_pct": request.target_pct}
+    idempotency = _scanner_idempotency(request_context, db, user_id, scanner_payload)
+    if idempotency.replay:
+        return idempotency.response
+    order_request = PaperOrderRequest(symbol=symbol, transaction_type="BUY", price=request.cash_price, quantity=quantity, stop_loss_pct=request.stop_loss_pct, target_pct=request.target_pct)
+    response = _paper_order_response_payload(_execute_paper_order(order_request, user_id=user_id, db=db))
+    response["source"] = "cash-future-scanner"
+    response["scanner_entry_price"] = request.cash_price
+    response["scanner_future_price"] = request.future_price
+    response["scanner_gap"] = request.gap
+    response["scanner_net_profit"] = request.net_profit
+    key = request_context.headers["Idempotency-Key"]
+    complete(db, user_id=user_id, scope="paper/from-scanner", key=key, response=response)
+    db.commit()
+    return response
 
 
 @router.get("/paper/orders")
