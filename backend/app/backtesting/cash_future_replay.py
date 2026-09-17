@@ -44,6 +44,17 @@ class CashFutureBothReplayTrade:
     quantity: int
     current_result: CashFutureTrade
     near_result: CashFutureTrade
+    near_lot_size: int | None = None
+
+    def __post_init__(self) -> None:
+        near_lot_size = self.lot_size if self.near_lot_size is None else self.near_lot_size
+        if near_lot_size <= 0:
+            raise ValueError("near_lot_size must be positive")
+        object.__setattr__(self, "near_lot_size", near_lot_size)
+
+    @property
+    def current_lot_size(self) -> int:
+        return self.lot_size
 
     @property
     def gross_pnl(self) -> float:
@@ -147,12 +158,16 @@ class CashFutureReplayRunner:
         lot_size: int,
         quantity: int = 1,
         charges: Mapping[str, float] | None = None,
+        near_lot_size: int | None = None,
     ) -> tuple[CashFutureBothReplayTrade, ...]:
         """Replay BOTH mode: one spot leg hedged against fixed current + near futures."""
         if contract_lock.mode != "BOTH":
             raise ValueError("run_both requires a BOTH contract lock")
         current = contract_lock.contracts["CURRENT"]
         near = contract_lock.contracts["NEAR"]
+        effective_near_lot_size = lot_size if near_lot_size is None else near_lot_size
+        if effective_near_lot_size <= 0:
+            raise ValueError("near_lot_size must be positive")
         charges = charges or {}
         by_ts = {bar.timestamp_ns: bar for bar in bars}
         entries, exits = tuple(entry_timestamps), tuple(exit_timestamps)
@@ -172,8 +187,9 @@ class CashFutureReplayRunner:
             current_result = self._trade(entry.spot, exit_.spot, entry.futures[current], exit_.futures[current],
                                         quantity=quantity, lot_size=lot_size, charges=charges)
             near_result = self._trade(entry.spot, exit_.spot, entry.futures[near], exit_.futures[near],
-                                      quantity=quantity, lot_size=lot_size, charges=charges)
+                                      quantity=quantity, lot_size=effective_near_lot_size, charges=charges)
             results.append(CashFutureBothReplayTrade(
-                entry_ts, exit_ts, current, near, lot_size, quantity, current_result, near_result
+                entry_ts, exit_ts, current, near, lot_size, quantity, current_result, near_result,
+                effective_near_lot_size,
             ))
         return tuple(results)
