@@ -33,10 +33,19 @@ class CashFutureResultStore:
                 future_instrument TEXT,
                 quantity INTEGER NOT NULL,
                 lot_size INTEGER NOT NULL,
+                near_lot_size INTEGER NOT NULL DEFAULT 0,
                 gross_pnl REAL NOT NULL,
                 net_pnl REAL NOT NULL
             )"""
         )
+        columns = {row[1] for row in self.connection.execute("PRAGMA table_info(cash_future_results)")}
+        if "near_lot_size" not in columns:
+            self.connection.execute(
+                "ALTER TABLE cash_future_results ADD COLUMN near_lot_size INTEGER NOT NULL DEFAULT 0"
+            )
+            self.connection.execute(
+                "UPDATE cash_future_results SET near_lot_size = lot_size WHERE near_lot_size = 0"
+            )
         self.connection.execute(
             """CREATE UNIQUE INDEX IF NOT EXISTS ux_cash_future_results_identity
             ON cash_future_results (
@@ -58,12 +67,12 @@ class CashFutureResultStore:
                 raise ValueError("single-leg trade cannot be stored as BOTH")
             return (run_id, trade.entry_timestamp_ns, trade.exit_timestamp_ns, normalized,
                     None, None, trade.future_instrument, trade.quantity, trade.lot_size,
-                    trade.result.gross_pnl, trade.result.net_pnl)
+                    trade.lot_size, trade.result.gross_pnl, trade.result.net_pnl)
         if normalized != "BOTH":
             raise ValueError("BOTH trade must be stored with mode BOTH")
         return (run_id, trade.entry_timestamp_ns, trade.exit_timestamp_ns, "BOTH",
                 trade.current_instrument, trade.near_instrument, None, trade.quantity,
-                trade.lot_size, trade.gross_pnl, trade.net_pnl)
+                trade.lot_size, trade.near_lot_size, trade.gross_pnl, trade.net_pnl)
 
     def append(self, run_id: str, trade: CashFutureReplayTrade | CashFutureBothReplayTrade,
                mode: str | None = None) -> bool:
@@ -71,8 +80,8 @@ class CashFutureResultStore:
         self.connection.execute(
             """INSERT OR IGNORE INTO cash_future_results
             (run_id, entry_timestamp_ns, exit_timestamp_ns, mode, current_instrument,
-             near_instrument, future_instrument, quantity, lot_size, gross_pnl, net_pnl)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", self._row(run_id, trade, mode)
+             near_instrument, future_instrument, quantity, lot_size, near_lot_size, gross_pnl, net_pnl)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", self._row(run_id, trade, mode)
         )
         self.connection.commit()
         return self.connection.total_changes > before
@@ -90,8 +99,8 @@ class CashFutureResultStore:
                 self.connection.executemany(
                     """INSERT OR IGNORE INTO cash_future_results
                     (run_id, entry_timestamp_ns, exit_timestamp_ns, mode, current_instrument,
-                     near_instrument, future_instrument, quantity, lot_size, gross_pnl, net_pnl)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", batch
+                     near_instrument, future_instrument, quantity, lot_size, near_lot_size, gross_pnl, net_pnl)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", batch
                 )
                 self.connection.commit()
                 total += self.connection.total_changes - before
@@ -101,8 +110,8 @@ class CashFutureResultStore:
             self.connection.executemany(
                 """INSERT OR IGNORE INTO cash_future_results
                 (run_id, entry_timestamp_ns, exit_timestamp_ns, mode, current_instrument,
-                 near_instrument, future_instrument, quantity, lot_size, gross_pnl, net_pnl)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", batch
+                 near_instrument, future_instrument, quantity, lot_size, near_lot_size, gross_pnl, net_pnl)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", batch
             )
             self.connection.commit()
             total += self.connection.total_changes - before
