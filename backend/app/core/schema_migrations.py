@@ -105,10 +105,16 @@ def run_schema_migrations() -> None:
                     user_id INTEGER NOT NULL,
                     scope VARCHAR(64) NOT NULL,
                     idempotency_key VARCHAR(128) NOT NULL,
+                    request_hash VARCHAR(64) NOT NULL,
                     response_json TEXT,
                     created_at DATETIME
                 )
             """))
+        else:
+            idempotency_columns = {column["name"] for column in inspect(connection).get_columns("paper_idempotency")}
+            if "request_hash" not in idempotency_columns:
+                connection.execute(text("ALTER TABLE paper_idempotency ADD COLUMN request_hash VARCHAR(64)"))
+                connection.execute(text("UPDATE paper_idempotency SET request_hash = '' WHERE request_hash IS NULL"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_paper_idempotency_identity ON paper_idempotency (user_id, scope, idempotency_key)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_paper_idempotency_user ON paper_idempotency (user_id, scope)"))
 
