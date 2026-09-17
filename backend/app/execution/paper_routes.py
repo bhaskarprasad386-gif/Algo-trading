@@ -219,13 +219,40 @@ def _scanner_idempotency(request: Request | None, db: Session, user_id: int, pay
         raise HTTPException(status_code=409, detail=str(exc))
 
 
+def _entry_idempotency(request: Request | None, db: Session, user_id: int, payload: dict):
+    if request is None:
+        raise HTTPException(status_code=400, detail="Idempotency-Key header is required")
+    key = request.headers.get("Idempotency-Key")
+    if not key:
+        raise HTTPException(status_code=400, detail="Idempotency-Key header is required")
+    try:
+        return claim(db, user_id=user_id, scope="paper/entry", key=key, request_hash=request_fingerprint(payload))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+def _exit_idempotency(request: Request | None, db: Session, user_id: int, payload: dict):
+    if request is None:
+        raise HTTPException(status_code=400, detail="Idempotency-Key header is required")
+    key = request.headers.get("Idempotency-Key")
+    if not key:
+        raise HTTPException(status_code=400, detail="Idempotency-Key header is required")
+    try:
+        return claim(db, user_id=user_id, scope="paper/exit", key=key, request_hash=request_fingerprint(payload))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
 def _execute_paper_order(request: PaperOrderRequest, *, user_id: int, db: Session) -> dict:
     side = request.transaction_type.strip().upper()
     quantity = _validate_quantity(request.quantity)
     symbol = request.symbol.strip().upper()
     account = _account(db, user_id)
     active = _position(db, user_id, symbol)
-
     if side == "BUY":
         if active is not None and active.quantity > 0:
             raise HTTPException(status_code=409, detail="A paper position is already active for this symbol")
@@ -300,8 +327,7 @@ def _paper_order_response_payload(response: dict) -> dict:
     return result
 
 
-@router.post("/paper/entry")
-def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
+def _execute_paper_entry(request: PaperEntryRequest, *, user_id: int, db: Session) -> dict:
     quantity = _validate_quantity(request.quantity)
     symbol = request.symbol.strip().upper()
     if _position(db, user_id, symbol) is not None:
@@ -317,8 +343,45 @@ def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_
     account.virtual_balance = round(account.virtual_balance - cost, 8)
     db.add(position)
     order = _create_order(db, user_id=user_id, symbol=symbol, side="BUY", price=fill.price, quantity=fill.quantity)
-    db.commit()
     return {"status":"success","mode":state.mode.value,"fill":{"price":fill.price,"quantity":fill.quantity},"entry_price":state.entry_price,"stop_loss":state.stop_loss,"target":state.target,"position":_position_payload(position),"order":order,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+
+
+def _execute_paper_exit(request: PaperExitRequest, *, user_id: int, db: Session) -> dict:
+    account = _account(db, user_id)
+    position = _position(db, user_id, request.symbol)
+    if position is None:
+        return {"status":"flat","position":None,"pnl":0.0,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+    entry_price = float(position.average_price)
+    quantity = abs(int(position.quantity))
+    if position.quantity < 0:
+        fill = Fill(price=request.price, quantity=quantity)
+        accounting_state, pnl = _accounting_after_fill(side="BUY", price=fill.price, quantity=quantity, current_quantity=float(position.quantity), current_average_price=entry_price, current_realized_pnl=account.realized_pnl)
+        account.virtual_balance = round(account.virtual_balance + _buy_cost(entry_price, quantity) + pnl, 8)
+        account.realized_pnl = accounting_state.realized_pnl
+        side = "BUY"
+    else:
+        fill = Fill(price=request.price, quantity=quantity)
+        accounting_state, pnl = _accounting_after_fill(side="SELL", price=fill.price, quantity=quantity, current_quantity=float(position.quantity), current_average_price=entry_price, current_realized_pnl=account.realized_pnl)
+        account.virtual_balance = round(account.virtual_balance + _buy_cost(fill.price, quantity), 8)
+        account.realized_pnl = accounting_state.realized_pnl
+        side = "SELL"
+    order = _create_order(db, user_id=user_id, symbol=position.symbol, side=side, price=fill.price, quantity=quantity, pnl=pnl)
+    db.delete(position)
+    return {"status":"closed","entry_price":entry_price,"exit_price":request.price,"quantity":quantity,"pnl":pnl,"order":order,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+
+
+@router.post("/paper/entry")
+def paper_entry(request: PaperEntryRequest, request_context: Request = None, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
+    symbol = request.symbol.strip().upper()
+    quantity = _validate_quantity(request.quantity)
+    payload = {"symbol": symbol, "price": request.price, "quantity": quantity, "stop_loss_pct": request.stop_loss_pct, "target_pct": request.target_pct}
+    idempotency = _entry_idempotency(request_context, db, user_id, payload)
+    if idempotency.replay:
+        return idempotency.response
+    response = _execute_paper_entry(request, user_id=user_id, db=db)
+    complete(db, user_id=user_id, scope="paper/entry", key=request_context.headers["Idempotency-Key"], response=response)
+    db.commit()
+    return response
 
 
 @router.post("/paper/order")
@@ -439,26 +502,13 @@ def paper_payoff_from_cash_future(request: CashFuturePayoffRequest, user_id: int
 
 
 @router.post("/paper/exit")
-def paper_exit(request: PaperExitRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
-    account = _account(db, user_id)
-    position = _position(db, user_id, request.symbol)
-    if position is None:
-        return {"status":"flat","position":None,"pnl":0.0,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
-    entry_price = float(position.average_price)
-    quantity = abs(int(position.quantity))
-    if position.quantity < 0:
-        fill = Fill(price=request.price, quantity=quantity)
-        accounting_state, pnl = _accounting_after_fill(side="BUY", price=fill.price, quantity=quantity, current_quantity=float(position.quantity), current_average_price=entry_price, current_realized_pnl=account.realized_pnl)
-        account.virtual_balance = round(account.virtual_balance + _buy_cost(entry_price, quantity) + pnl, 8)
-        account.realized_pnl = accounting_state.realized_pnl
-        side = "BUY"
-    else:
-        fill = Fill(price=request.price, quantity=quantity)
-        accounting_state, pnl = _accounting_after_fill(side="SELL", price=fill.price, quantity=quantity, current_quantity=float(position.quantity), current_average_price=entry_price, current_realized_pnl=account.realized_pnl)
-        account.virtual_balance = round(account.virtual_balance + _buy_cost(fill.price, quantity), 8)
-        account.realized_pnl = accounting_state.realized_pnl
-        side = "SELL"
-    order = _create_order(db, user_id=user_id, symbol=position.symbol, side=side, price=fill.price, quantity=quantity, pnl=pnl)
-    db.delete(position)
+def paper_exit(request: PaperExitRequest, request_context: Request = None, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
+    symbol = request.symbol.strip().upper() if request.symbol is not None else None
+    payload = {"symbol": symbol, "price": request.price}
+    idempotency = _exit_idempotency(request_context, db, user_id, payload)
+    if idempotency.replay:
+        return idempotency.response
+    response = _execute_paper_exit(request, user_id=user_id, db=db)
+    complete(db, user_id=user_id, scope="paper/exit", key=request_context.headers["Idempotency-Key"], response=response)
     db.commit()
-    return {"status":"closed","entry_price":entry_price,"exit_price":request.price,"quantity":quantity,"pnl":pnl,"order":order,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+    return response
