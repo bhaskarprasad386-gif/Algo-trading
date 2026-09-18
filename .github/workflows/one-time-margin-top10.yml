@@ -4,6 +4,10 @@ on:
   push:
     paths:
       - .github/workflows/one-time-margin-top10.yml
+      - backend/app/backtesting/monthly_results_routes.py
+      - backend/tests/test_monthly_results_routes_cash_future.py
+      - mobile/android/app/src/main/java/com/algotrading/app/ApiService.kt
+      - mobile/android/app/src/main/java/com/algotrading/app/FullFnoBacktestActivity.kt
   workflow_dispatch:
 
 jobs:
