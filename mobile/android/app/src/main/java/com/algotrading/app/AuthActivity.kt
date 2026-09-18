@@ -69,7 +69,16 @@ class AuthActivity : AppCompatActivity() {
             identifier.error = "Email or mobile number required"
             return
         }
-        result.text = "Password reset request submitted. If the account exists, follow the reset instructions sent to your registered contact."
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val response = ApiService.retrofitService.requestPasswordReset(PasswordResetRequest(id))
+                withContext(Dispatchers.Main) { result.text = response.message }
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main) {
+                    result.text = "Password reset request failed: ${error.message ?: "API error"}"
+                }
+            }
+        }
     }
 
     private fun submitAuth() {
