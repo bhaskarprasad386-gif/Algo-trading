@@ -127,6 +127,7 @@ def test_monthly_gap_top10_ranks_each_stock_by_its_month_high_gap_value(monkeypa
                 "gap_high_timestamp": f"{trading_date}T10:30:00",
                 "cash_price_at_gap_high": 1000.0,
                 "future_price_at_gap_high": 1000.0 + weighted / 500.0,
+                "margin_required": 250000.0 if symbol == "B" else 150000.0,
             })
         return result
 
