@@ -31,6 +31,8 @@ data class CashFutureScanError(val symbol: String = "", val error: String = "")
 data class CashFutureScanResponse(val status: String, val scanner: String, val mode: String, val symbols_requested: List<String> = emptyList(), val scanned_observations: Int = 0, val opportunity_count: Int = 0, val data: List<CashFutureOpportunity> = emptyList(), val errors: List<CashFutureScanError> = emptyList())
 data class RegisterRequest(val email: String? = null, val mobile_number: String? = null, val password: String, val full_name: String? = null)
 data class LoginRequest(val identifier: String, val password: String)
+data class PasswordResetRequest(val identifier: String)
+data class PasswordResetResponse(val status: String, val message: String)
 data class TokenResponse(val access_token: String, val token_type: String = "bearer")
 data class AccountInfo(val id: Int, val mode: String, val virtual_balance: Double, val realized_pnl: Double = 0.0, val is_active: Boolean)
 data class UserInfo(val id: Int, val email: String? = null, val mobile_number: String? = null, val full_name: String? = null, val account: AccountInfo)
@@ -117,6 +119,7 @@ interface ApiInterface {
     @GET("/") suspend fun getRootStatus(): MarketStatus
     @POST("/api/v1/auth/register") suspend fun register(@Body request: RegisterRequest): TokenResponse
     @POST("/api/v1/auth/login") suspend fun login(@Body request: LoginRequest): TokenResponse
+    @POST("/api/v1/auth/password-reset/request") suspend fun requestPasswordReset(@Body request: PasswordResetRequest): PasswordResetResponse
     @GET("/api/v1/auth/me") suspend fun me(): UserInfo
     @POST("/api/v1/auth/logout") suspend fun logout(): Map<String, String>
     @GET("/api/v1/brokers/connections") suspend fun brokerConnections(): BrokerConnectionsResponse
