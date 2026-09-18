@@ -26,6 +26,7 @@ def _paired_payload(trading_date, symbols, **kwargs):
             "gap_high_timestamp": f"{trading_date}T11:15:00",
             "cash_price_at_gap_high": 1005.0,
             "future_price_at_gap_high": 1022.0,
+            "margin_required": 150000.0,
         },
         "B": {
             "trading_date": trading_date,
@@ -44,6 +45,7 @@ def _paired_payload(trading_date, symbols, **kwargs):
             "gap_high_timestamp": f"{trading_date}T13:00:00",
             "cash_price_at_gap_high": 2010.0,
             "future_price_at_gap_high": 2022.0,
+            "margin_required": 250000.0,
         },
     }
     return [points[symbol] for symbol in symbols if symbol in points]
@@ -141,6 +143,7 @@ def test_monthly_gap_top10_ranks_each_stock_by_its_month_high_gap_value(monkeypa
     assert result["count"] == 2
     assert [item["symbol"] for item in result["data"]] == ["B", "A"]
     assert result["data"][0]["gap_value"] == 12000.0
+    assert result["data"][0]["margin_required"] == 250000.0
     assert result["data"][0]["gap_high_date"] == date(2026, 9, 10)
     assert result["data"][0]["gap_high_time"] == "10:30:00"
     assert result["data"][1]["gap_value"] == 9000.0
