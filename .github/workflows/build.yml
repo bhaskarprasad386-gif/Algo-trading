@@ -7,6 +7,7 @@ jobs:
   backend:
     name: Backend tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       SECRET_KEY: ci-test-secret-key-not-for-production
     steps:
@@ -22,11 +23,11 @@ jobs:
       - name: Compile backend
         working-directory: backend
         run: python -m compileall -q app
-      - name: Run tests
+      - name: Run tests (diagnostic first failure)
         working-directory: backend
         env:
           PYTHONPATH: ..
-        run: python -m pytest -q
+        run: python -m pytest -x -vv
 
 # Android build is intentionally deferred.
 # It will be re-enabled after the Android Gradle project is independently fixed and tested.
