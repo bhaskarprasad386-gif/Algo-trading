@@ -17,6 +17,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+      - name: Install backend test dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
       - name: Verify backend margin test
         working-directory: backend
         run: python -m pytest tests/test_monthly_results_routes_cash_future.py -q
