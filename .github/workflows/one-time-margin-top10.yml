@@ -29,6 +29,10 @@ jobs:
         run: |
           grep -q 'margin_required: Double = 0.0' mobile/android/app/src/main/java/com/algotrading/app/ApiService.kt
           grep -q 'Historical Margin' mobile/android/app/src/main/java/com/algotrading/app/FullFnoBacktestActivity.kt
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.2'
       - name: Compile Android
         working-directory: mobile/android
-        run: ./gradlew :app:compileDebugKotlin --no-daemon
+        run: gradle :app:compileDebugKotlin --no-daemon
