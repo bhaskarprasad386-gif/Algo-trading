@@ -23,7 +23,7 @@ def test_long_box_profit_when_executable_debit_is_below_width():
 
 def test_short_box_uses_high_put_bid_and_low_put_ask():
     low = option(strike=100, cb=10, ca=11, pb=1, pa=2)
-    high = option(strike=110, cb=1, ca=2, pb=8, pa=9)
+    high = option(strike=110, cb=2, ca=2, pb=8, pa=9)
     opp = BoxSpreadBacktester.evaluate(low, high, direction="SHORT")
     assert opp is not None
     # credit = low call bid + high put bid - high call ask - low put ask
