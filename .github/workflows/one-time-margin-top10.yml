@@ -16,7 +16,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Verify backend margin test
         working-directory: backend
         run: python -m pytest tests/test_monthly_results_routes_cash_future.py -q
