@@ -14,7 +14,7 @@ def test_long_box_uses_executable_bid_ask_and_expiry_width():
 
 def test_long_box_profit_when_executable_debit_is_below_width():
     low = option(strike=100, cb=12, ca=13, pb=8, pa=8.2)
-    high = option(strike=110, cb=7.1, ca=7.2, pb=4.9, pa=5)
+    high = option(strike=110, cb=7.1, ca=7.2, pb=4.9, pa=11.3)
     opp = BoxSpreadBacktester.evaluate(low, high)
     assert opp is not None
     assert round(opp.executable_edge, 6) == 0.8
