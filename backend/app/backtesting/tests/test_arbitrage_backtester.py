@@ -7,7 +7,7 @@ def option(ts=1, strike=100, cb=7, ca=8, pb=6, pa=7):
 
 def test_long_box_uses_executable_bid_ask_and_expiry_width():
     low = option(strike=100, cb=12, ca=13, pb=8, pa=9)
-    high = option(strike=110, cb=4, ca=5, pb=1, pa=2)
+    high = option(strike=110, cb=4, ca=5, pb=1, pa=9)
     opp = BoxSpreadBacktester.evaluate(low, high, direction="LONG")
     assert opp is None
 
