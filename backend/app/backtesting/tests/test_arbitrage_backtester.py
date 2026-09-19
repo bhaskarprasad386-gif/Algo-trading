@@ -32,8 +32,8 @@ def test_short_box_uses_high_put_bid_and_low_put_ask():
 
 
 def test_long_box_uses_high_put_ask_and_low_put_bid():
-    low = option(strike=100, cb=10, ca=11, pb=1, pa=2)
-    high = option(strike=110, cb=1, ca=2, pb=8, pa=9)
+    low = option(strike=100, cb=10, ca=10, pb=1, pa=2)
+    high = option(strike=110, cb=8, ca=9, pb=2, pa=3)
     opp = BoxSpreadBacktester.evaluate(low, high, direction="LONG")
     assert opp is not None
     # debit = low call ask + high put ask - high call bid - low put bid
