@@ -11,9 +11,9 @@ jobs:
       SECRET_KEY: ci-test-secret-key-not-for-production
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       - name: Install backend dependencies
