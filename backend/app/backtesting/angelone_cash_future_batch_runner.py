@@ -47,8 +47,8 @@ def run_angelone_cash_future_history_in_batches(*,ingestion,contract_master,univ
             # Only mark it completed after the returned pipeline passes the authoritative
             # readiness gate. If the worker crashes, restart sees a pending/recoverable
             # outer chunk and safely retries the idempotent inner acquisition jobs.
-            batch_config=replace(config,max_stock_underlyings=None,stock_batch_offset=0)
-            result=run_angelone_cash_future_history(ingestion=ingestion,contract_master=contract_master,universe=batch,master_rows=master_rows,start=start,end=end,spot_sessions_by_underlying=spot_sessions_by_underlying,db=db,catalog=catalog,future_sessions_by_instrument=future_sessions_by_instrument,job_store=job_store,run_id=job_id,config=batch_config,auth=auth,limiter=limiter,retry_policy=retry_policy,on_progress=on_progress,coverage_store=coverage_store,margin_required=margin_required,batch_size=materialize_batch_size)
+            batch_config=replace(config,max_stock_underlyings=batch_size,stock_batch_offset=batch_index * batch_size)
+            result=run_angelone_cash_future_history(ingestion=ingestion,contract_master=contract_master,universe=universe,master_rows=master_rows,start=start,end=end,spot_sessions_by_underlying=spot_sessions_by_underlying,db=db,catalog=catalog,future_sessions_by_instrument=future_sessions_by_instrument,job_store=job_store,run_id=job_id,config=batch_config,auth=auth,limiter=limiter,retry_policy=retry_policy,on_progress=on_progress,coverage_store=coverage_store,margin_required=margin_required,batch_size=materialize_batch_size)
             result.require_backtest_ready()
             if job_store.get(job_id).state=="cancelled": break
             job_store.complete_chunk(job_id,0)
