@@ -89,12 +89,6 @@ class UniversalEventBacktestEngine:
         last_marks: dict[str, float] = {}
 
         for record in events:
-            key = event_order_key(record)
-            identity = event_identity(record)
-            if identity in seen_identities:
-                raise ValueError("duplicate event identity")
-            if previous_key is not None and key <= previous_key:
-                raise ValueError("events must be strictly ordered by deterministic event order")
             if not isinstance(record.timestamp_ns, int) or isinstance(record.timestamp_ns, bool) or record.timestamp_ns < 0:
                 raise ValueError("event timestamp_ns must be a non-negative integer")
             if not isinstance(record.instrument, str) or not record.instrument.strip():
@@ -103,6 +97,12 @@ class UniversalEventBacktestEngine:
                 raise ValueError("event source is required")
             if record.sequence is not None and (not isinstance(record.sequence, int) or isinstance(record.sequence, bool) or record.sequence < 0):
                 raise ValueError("event sequence must be a non-negative integer or None")
+            key = event_order_key(record)
+            identity = event_identity(record)
+            if identity in seen_identities:
+                raise ValueError("duplicate event identity")
+            if previous_key is not None and key <= previous_key:
+                raise ValueError("events must be strictly ordered by deterministic event order")
             seen_identities.add(identity)
             previous_key = key
             self.clock.advance_to(record.timestamp_ns)
