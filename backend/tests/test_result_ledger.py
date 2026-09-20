@@ -140,3 +140,51 @@ def test_conflicting_same_equity_identity_is_rejected() -> None:
             "run-equity-conflict",
             [EquityPoint(4_000, 100_001.0, 1.0, 0.0, 0.0)],
         )
+
+
+def test_legacy_equity_schema_is_migratable(tmp_path) -> None:
+    db_path = tmp_path / "legacy-ledger.sqlite"
+    import sqlite3
+
+    db = sqlite3.connect(db_path)
+    db.executescript(
+        """
+        CREATE TABLE backtest_runs (
+            run_id TEXT PRIMARY KEY,
+            provenance_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'CREATED',
+            created_at_ns INTEGER NOT NULL
+        );
+        CREATE TABLE backtest_equity (
+            run_id TEXT NOT NULL,
+            timestamp_ns INTEGER NOT NULL,
+            equity REAL NOT NULL,
+            realized_pnl REAL NOT NULL,
+            unrealized_pnl REAL NOT NULL,
+            drawdown REAL NOT NULL,
+            PRIMARY KEY (run_id, timestamp_ns),
+            FOREIGN KEY (run_id) REFERENCES backtest_runs(run_id) ON DELETE CASCADE
+        );
+        """
+    )
+    db.execute(
+        "INSERT INTO backtest_runs(run_id, provenance_json, status, created_at_ns) VALUES (?, ?, ?, ?)",
+        ("legacy-run", "{}", "COMPLETED", 0),
+    )
+    db.execute(
+        "INSERT INTO backtest_equity(run_id, timestamp_ns, equity, realized_pnl, unrealized_pnl, drawdown) VALUES (?, ?, ?, ?, ?, ?)",
+        ("legacy-run", 1_000, 100_000.0, 0.0, 0.0, 0.0),
+    )
+    db.commit()
+    db.close()
+
+    ledger = BacktestResultLedger(str(db_path))
+
+    rows = ledger.equity("legacy-run")
+    assert len(rows) == 1
+    assert rows[0]["timestamp_ns"] == 1_000
+
+    assert ledger.append_equity(
+        "legacy-run",
+        [EquityPoint(1_000, 100_001.0, 1.0, 0.0, 0.0)],
+    ) == 1
