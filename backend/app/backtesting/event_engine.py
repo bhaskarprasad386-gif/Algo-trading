@@ -392,6 +392,8 @@ class EventBacktestEngine:
                 self._order_lifecycles[order.order_id] = lifecycle
             elif lifecycle.state.order != order:
                 raise ValueError("open order does not match restored lifecycle")
+            if lifecycle.state.terminal:
+                raise ValueError("restored open order must have non-terminal lifecycle")
             queue = int(raw.get("dynamic_queue_ahead", order.queue_ahead_quantity)); generation = int(raw.get("queue_generation", 0)); self._dynamic_queue_ahead[order.order_id] = queue; self._queue_lifecycles[order.order_id] = QueueLifecycleState(queue, generation, True)
 
         self._reserved_margin.update({str(k): float(v) for k, v in state.get("reserved_margin", {}).items()})
