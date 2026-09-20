@@ -171,6 +171,9 @@ class UniversalEventBacktestEngine:
         snapshots: list[PortfolioSnapshot] = []
         equity_curve: list[EquityPoint] = []
         last_marks: dict[str, float] = {}
+        accumulator = StreamingStatisticsAccumulator(self.portfolio.initial_cash)
+        peak_equity = self.portfolio.initial_cash
+        replay_sequence = 0
 
         for record in events:
             if not isinstance(record.timestamp_ns, int) or isinstance(record.timestamp_ns, bool) or record.timestamp_ns < 0:
@@ -241,11 +244,14 @@ class UniversalEventBacktestEngine:
                     self.portfolio.apply_fill(fill, last_marks)
 
             snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
-            snapshots.append(snapshot)
-            equity_curve.append(EquityPoint(record.timestamp_ns, snapshot.equity, snapshot.realized_pnl, snapshot.unrealized_pnl))
+            peak_equity = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
+            replay_sequence += 1
+            if self.retain_history:
+                snapshots.append(snapshot)
+                equity_curve.append(EquityPoint(record.timestamp_ns, snapshot.equity, snapshot.realized_pnl, snapshot.unrealized_pnl))
 
         final_snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
-        stats: BacktestStatistics = calculate_statistics(equity_curve, self.portfolio.initial_cash)
+        stats: BacktestStatistics = accumulator.finalize()
         return UniversalBacktestResult(
             initial_capital=self.portfolio.initial_cash,
             final_equity=final_snapshot.equity,
