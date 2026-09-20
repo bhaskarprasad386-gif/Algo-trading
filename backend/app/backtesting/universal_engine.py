@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from app.backtesting.engine import EventContext, EventSignal, EventStrategy, _normalize_event_signal
-from app.backtesting.contracts import DataSourceProtocol, ExecutionModelProtocol, PortfolioProtocol
+from app.backtesting.contracts import DataSourceProtocol, ExecutionModelProtocol, PortfolioProtocol, StrategyProtocol
 from app.backtesting.clock import BacktestClock, ClockProtocol
 from app.backtesting.event_model import event_identity, event_order_key
 from app.backtesting.execution import ExecutionConfig, ExecutionSide, ExecutionSimulator, SimOrder
@@ -71,11 +71,11 @@ class UniversalEventBacktestEngine:
         self.quantity = quantity
         self.clock = clock if clock is not None else BacktestClock()
 
-    def run_source(self, source: DataSourceProtocol, strategy: EventStrategy, *, start_ns: int | None = None, end_ns: int | None = None, price_field: str = "price") -> UniversalBacktestResult:
+    def run_source(self, source: DataSourceProtocol, strategy: StrategyProtocol, *, start_ns: int | None = None, end_ns: int | None = None, price_field: str = "price") -> UniversalBacktestResult:
         """Run directly from a streaming DataSource without materializing its events."""
         return self.run(source.iter_events(start_ns=start_ns, end_ns=end_ns), strategy, price_field=price_field)
 
-    def run(self, events: Iterable[HistoricalRecord], strategy: EventStrategy, *, price_field: str = "price") -> UniversalBacktestResult:
+    def run(self, events: Iterable[HistoricalRecord], strategy: StrategyProtocol, *, price_field: str = "price") -> UniversalBacktestResult:
         if not isinstance(price_field, str) or not price_field.strip():
             raise ValueError("price_field is required")
 
