@@ -152,7 +152,7 @@ class UniversalEventBacktestEngine:
             raise ValueError("price_field is required")
 
         previous_key: tuple[int, str, str, str, int] | None = None
-        seen_identities: set[object] = set()
+        previous_identity = None
         snapshots: list[PortfolioSnapshot] = []
         equity_curve: list[EquityPoint] = []
         last_marks: dict[str, float] = {}
