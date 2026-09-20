@@ -56,6 +56,7 @@ def run_events_incremental(
     intervals_years: list[float] = []
     first_timestamp = last_timestamp = last_price = None
     previous_key = None
+    seen = set()
     previous_equity = engine_config.initial_capital
     previous_timestamp = None
 
@@ -63,10 +64,13 @@ def run_events_incremental(
         if not isinstance(record.timestamp_ns, int) or isinstance(record.timestamp_ns, bool) or record.timestamp_ns < 0:
             raise ValueError("event timestamp_ns must be a non-negative integer")
         identity = record.identity()
+        if identity in seen:
+            raise ValueError("duplicate event identity")
         key = _event_order_key(record)
         if previous_key is not None and key <= previous_key:
             raise ValueError("events must be strictly ordered by timestamp, sequence, and stream identity")
         previous_key = key
+        seen.add(identity)
         first_timestamp = record.timestamp_ns if first_timestamp is None else first_timestamp
         last_timestamp = record.timestamp_ns
         context = EventContext(record.timestamp_ns, record.sequence, record.source, record.instrument, record.payload, record)
@@ -81,7 +85,11 @@ def run_events_incremental(
         if price is None:
             raw_price = record.payload.get(price_field)
             if raw_price is None and action in {"HOLD", "NONE"}:
-                continue
+                # A HOLD/NONE event still advances the marked equity state.
+                if open_trade is not None and last_price is not None:
+                    price = last_price
+                else:
+                    price = 0.0
             if not isinstance(raw_price, (int, float)) or isinstance(raw_price, bool) or not isfinite(float(raw_price)):
                 raise ValueError(f"event payload must contain finite numeric {price_field!r} or signal price")
             price = float(raw_price)
