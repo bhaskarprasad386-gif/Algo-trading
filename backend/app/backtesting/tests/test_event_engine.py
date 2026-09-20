@@ -489,6 +489,26 @@ def test_restore_rejects_terminal_order_as_open_state():
         restored.restore_market_state(state)
 
 
+def test_restore_rejects_orphaned_margin_reservation():
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(100_000))
+    state = engine.market_state()
+    state["reserved_margin"] = {"missing-order": 100.0}
+
+    restored = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(100_000))
+    with pytest.raises(ValueError, match="must belong to an open order"):
+        restored.restore_market_state(state)
+
+
+def test_restore_rejects_invalid_margin_reservation_amount():
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(100_000))
+    state = engine.market_state()
+    state["reserved_margin"] = {"bad": -1.0}
+
+    restored = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(100_000))
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        restored.restore_market_state(state)
+
+
 def test_ioc_partial_fill_is_cancelled_after_executable_quantity():
     class Strategy:
         strategy_id = "ioc"; strategy_version = "1"
