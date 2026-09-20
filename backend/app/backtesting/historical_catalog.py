@@ -220,6 +220,8 @@ class HistoricalCatalog:
     def gaps(self, *, source: str, instrument: str, timeframe: str, interval_ns: int) -> tuple[Gap, ...]:
         if is_event_timeframe(timeframe):
             raise ValueError("cadence gap detection is not valid for event timeframes")
+        if interval_ns <= 0:
+            raise ValueError("interval_ns must be positive")
         return self._gaps_between_timestamps(source=source, instrument=instrument, timeframe=timeframe, interval_ns=interval_ns)
 
     def session_gaps(self, *, source: str, instrument: str, timeframe: str, interval_ns: int, calendar: TradingCalendar, start_date, end_date) -> tuple[Gap, ...]:
