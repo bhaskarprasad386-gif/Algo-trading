@@ -334,6 +334,9 @@ class EventBacktestEngine:
             if not isinstance(raw_order, SimOrder): raise TypeError("strategy orders must be SimOrder instances")
             if raw_order.order_id in seen_order_ids:
                 raise ValueError("strategy decision contains duplicate order_id")
+            existing = self._order_lifecycles.get(raw_order.order_id)
+            if existing is not None and not existing.state.terminal:
+                raise ValueError("strategy decision reuses an open order_id")
             seen_order_ids.add(raw_order.order_id)
         try:
             for raw_order in decision.orders:
