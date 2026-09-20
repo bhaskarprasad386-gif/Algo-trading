@@ -31,6 +31,8 @@ def reinsert_order(engine, order_id: str, new_order_id: str, timestamp_ns: int, 
         raise KeyError(f"open order not found: {order_id}")
     if lifecycle.state.status not in {OrderStatus.ACCEPTED, OrderStatus.PARTIALLY_FILLED}:
         raise ValueError("only open orders can be reinserted")
+    if new_order_id in engine._order_lifecycles:
+        raise ValueError("replacement order_id is already in use")
     remaining = lifecycle.state.remaining_quantity
     if remaining <= 0:
         raise ValueError("cannot reinsert a fully filled order")
