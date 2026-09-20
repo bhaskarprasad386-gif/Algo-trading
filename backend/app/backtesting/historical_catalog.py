@@ -69,19 +69,15 @@ class HistoricalCatalog:
         """Append a batch. New records, late gap repairs and exact duplicates are all safe."""
         if ingested_at_ns < 0:
             raise ValueError("ingested_at_ns cannot be negative")
-        rows = []
-        for record in records:
-            if not record.source.strip() or not record.instrument.strip() or not record.timeframe.strip():
-                raise ValueError("source, instrument and timeframe are required")
-            if record.timestamp_ns < 0 or (record.sequence is not None and record.sequence < 0):
-                raise ValueError("timestamp_ns and sequence cannot be negative")
-            payload_json = self._payload_json(record.payload)
-            rows.append((*record.identity(), payload_json, self._hash(payload_json), ingested_at_ns))
-        if not rows:
-            return 0
         inserted = 0
         try:
-            for row in rows:
+            for record in records:
+                if not record.source.strip() or not record.instrument.strip() or not record.timeframe.strip():
+                    raise ValueError("source, instrument and timeframe are required")
+                if record.timestamp_ns < 0 or (record.sequence is not None and record.sequence < 0):
+                    raise ValueError("timestamp_ns and sequence cannot be negative")
+                payload_json = self._payload_json(record.payload)
+                row = (*record.identity(), payload_json, self._hash(payload_json), ingested_at_ns)
                 if row[4] is None:
                     existing = self._db.execute("SELECT payload_hash FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? AND timestamp_ns=? AND sequence IS NULL", row[:4]).fetchone()
                 else:
@@ -101,10 +97,13 @@ class HistoricalCatalog:
 
     def ingest_events(self, records: Iterable[HistoricalRecord], *, ingested_at_ns: int = 0) -> int:
         """Ingest non-cadenced tick/event/order-book records without cadence assumptions."""
-        records = tuple(records)
-        if any(not is_event_timeframe(record.timeframe) for record in records):
-            raise ValueError("ingest_events requires an event timeframe")
-        return self.ingest(records, ingested_at_ns=ingested_at_ns)
+        def event_records():
+            for record in records:
+                if not is_event_timeframe(record.timeframe):
+                    raise ValueError("ingest_events requires an event timeframe")
+                yield record
+
+        return self.ingest(event_records(), ingested_at_ns=ingested_at_ns)
 
     def append(self, records: Iterable[HistoricalRecord], *, ingested_at_ns: int = 0) -> int:
         return self.ingest(records, ingested_at_ns=ingested_at_ns)
