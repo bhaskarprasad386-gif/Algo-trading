@@ -127,3 +127,20 @@ def test_multi_contract_backtest_rolls_through_expiries_without_price_mixing():
     assert len(result["per_contract"]) == 2
     assert [point["equity"] for point in result["equity_curve"]] == [0.0, 600.0, 1200.0]
     assert result["max_drawdown"] == 0.0
+
+def test_cancel_check_stops_mid_stream():
+    now = datetime(2026, 9, 2, 10, 0)
+    seen = []
+    def points():
+        for gap in (10.0, 9.0, 4.0):
+            seen.append(gap)
+            yield point(now + timedelta(minutes=len(seen)), gap)
+    checks = {"count": 0}
+    def cancel_check():
+        checks["count"] += 1
+        return checks["count"] >= 2
+    result = run_backtest(points(), BacktestConfig(min_entry_gap=8.0, exit_gap=5.0), cancel_check=cancel_check)
+    assert result["status"] == "cancelled"
+    assert seen == [10.0]
+    assert result["trade_count"] == 0
+
