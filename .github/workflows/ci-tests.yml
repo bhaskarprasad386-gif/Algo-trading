@@ -3,20 +3,25 @@ on: [push, pull_request, workflow_dispatch]
 concurrency:
   group: backend-tests
   cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - run: pip install -r backend/requirements.txt pytest pytest-timeout
+
       - run: rm -f backend/*.db || true
-      - name: Run tests
+
+      - name: Run backend tests
         env:
           SECRET_KEY: ci-test-secret-key-not-for-production
           PYTHONPATH: backend
           DATABASE_URL: sqlite:///:memory:
-        run: python -m pytest backend/tests -q --tb=line --timeout=60 --maxfail=20 -k "not durable and not streaming and not dashboard_route"
+        run: python -m pytest backend/tests -q --tb=line --timeout=60 --maxfail=20
