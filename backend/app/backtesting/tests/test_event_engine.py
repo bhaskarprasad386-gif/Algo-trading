@@ -461,6 +461,34 @@ def test_resting_partial_fill_executes_only_remaining_quantity_on_next_event():
     assert engine.order_states["rest-1"].remaining_quantity == 0
 
 
+def test_restore_rejects_terminal_order_as_open_state():
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(100_000))
+    order = SimOrder("terminal-open", "X", ExecutionSide.BUY, 2, submitted_at_ns=1_000)
+    lifecycle = OrderLifecycle(order)
+    lifecycle.accept(1_000)
+    lifecycle.cancel(1_100)
+    state = engine.market_state()
+    state["order_lifecycles"] = {"terminal-open": lifecycle.to_dict()}
+    state["open_orders"] = [{
+        "order_id": "terminal-open",
+        "instrument": "X",
+        "side": "BUY",
+        "quantity": 2,
+        "order_type": "MARKET",
+        "limit_price": None,
+        "stop_price": None,
+        "submitted_at_ns": 1_000,
+        "queue_ahead_quantity": 0,
+        "dynamic_queue_ahead": 0,
+        "queue_generation": 1,
+        "time_in_force": "DAY",
+    }]
+
+    restored = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(100_000))
+    with pytest.raises(ValueError, match="non-terminal lifecycle"):
+        restored.restore_market_state(state)
+
+
 def test_ioc_partial_fill_is_cancelled_after_executable_quantity():
     class Strategy:
         strategy_id = "ioc"; strategy_version = "1"
