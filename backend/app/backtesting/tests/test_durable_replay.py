@@ -135,3 +135,22 @@ def test_resume_rejects_engine_portfolio_reservation_identity_mismatch(tmp_path)
     with pytest.raises(ValueError, match="margin reservation mismatch"):
         durable.run([], lambda event, state: None, resume=True)
     ledger.close()
+
+
+def test_resume_rejects_market_and_durable_lifecycle_state_mismatch(tmp_path):
+    ledger = BacktestLedger(str(tmp_path / "lifecycle-mismatch.sqlite"))
+    ledger.start_run("lifecycle-mismatch", "s", "1", 1000)
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(1000))
+    durable = DurableEventBacktestEngine(engine, ledger, "lifecycle-mismatch")
+    state = durable.checkpoint_state()
+    assert state is not None
+    order = SimOrder("order-1", "X", ExecutionSide.BUY, 1)
+    lifecycle = OrderLifecycle(order)
+    lifecycle.accept(1)
+    market_state = state["market_state"]
+    market_state["order_lifecycles"] = {"order-1": lifecycle.to_dict()}
+    state["order_lifecycle_state"] = []
+    ledger.checkpoint(Checkpoint("lifecycle-mismatch", 0, 0, state))
+    with pytest.raises(ValueError, match="checkpoint lifecycle state does not match market state"):
+        durable.run([], lambda event, state: None, resume=True)
+    ledger.close()
