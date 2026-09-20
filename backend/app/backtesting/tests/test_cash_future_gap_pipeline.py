@@ -123,3 +123,28 @@ def test_gap_download_planner_is_bounded_and_handles_exact_future_tokens():
     ]
     assert all(r.end_ns - r.start_ns < 120 for r in plan.requests)
     catalog.close()
+
+
+def test_gap_download_coverage_manifest_clips_expected_points_to_request_range():
+    catalog = HistoricalCatalog()
+    catalog.ingest([record(120), record(180), record(240)])
+    queue = CashFutureDownloadQueue(
+        spot=HistoricalFetchRequest("angelone", "NSE:1:NIFTY", "1m", 120, 240),
+        futures=(),
+    )
+
+    planner = CashFutureGapDownloadPlanner(interval_ns=60, max_request_ns=180)
+    manifest = planner.coverage_manifest(
+        queue=queue,
+        catalog=catalog,
+        spot_sessions=(SessionWindow(60, 300),),
+    )
+
+    assert len(manifest.ranges) == 1
+    coverage = manifest.ranges[0]
+    assert (coverage.start_ns, coverage.end_ns) == (120, 240)
+    assert coverage.expected_points == 3
+    assert coverage.observed_points == 3
+    assert coverage.missing_points == 0
+    assert coverage.complete
+    catalog.close()
