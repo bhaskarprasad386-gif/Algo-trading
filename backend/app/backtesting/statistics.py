@@ -47,8 +47,8 @@ def calculate_statistics(
     if not curve:
         return BacktestStatistics(0.0, 0.0, None, None, 0.0, None)
     for previous, current in zip(curve, curve[1:]):
-        if current.timestamp_ns <= previous.timestamp_ns:
-            raise ValueError("equity timestamps must be strictly increasing")
+        if current.timestamp_ns < previous.timestamp_ns:
+            raise ValueError("equity timestamps must be non-decreasing")
 
     final_equity = curve[-1].equity
     net_pnl = final_equity - initial_capital
