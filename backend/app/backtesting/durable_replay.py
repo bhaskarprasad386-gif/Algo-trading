@@ -235,6 +235,7 @@ class DurableEventBacktestEngine:
             e = self._event_key(last_source_event)
             final_state["source_event_identity"] = {"timestamp_ns": e[0], "instrument": e[1], "event_type": e[2], "sequence": e[3], "source": e[4]}
         self.ledger.checkpoint(Checkpoint(self.run_id, final_cursor, result.last_timestamp_ns or 0, final_state))
+        self.ledger.append(LedgerRecord(self.run_id, "RUN_END", result.last_timestamp_ns or 0, {\n            "events_seen": result.events_seen,\n            "events_dispatched": result.events_dispatched,\n            "decisions_emitted": result.decisions_emitted,\n            "orders_submitted": result.orders_submitted,\n            "fills": result.fills,\n            "risk_blocks": result.risk_blocks,\n        }))
         return result
 
     def resume_cursor(self) -> int:
