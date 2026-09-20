@@ -99,3 +99,12 @@ def test_custom_execution_cannot_be_combined_with_execution_config():
         assert "custom execution model" in str(exc)
     else:
         raise AssertionError("expected custom execution configuration conflict")
+
+
+def test_callable_strategy_satisfies_strategy_contract():
+    from app.backtesting.contracts import StrategyProtocol
+
+    def strategy(ctx):
+        return EventSignal("HOLD")
+
+    assert isinstance(strategy, StrategyProtocol)
