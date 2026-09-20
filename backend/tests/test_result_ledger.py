@@ -80,3 +80,16 @@ def test_unknown_run_is_rejected() -> None:
     ledger = BacktestResultLedger()
     with pytest.raises(ValueError, match="unknown run"):
         ledger.trades("missing")
+
+
+def test_same_timestamp_equity_points_are_distinct_records() -> None:
+    ledger = BacktestResultLedger()
+    ledger.create_run("run-same-ts", {"strategy_id": "same_timestamp_equity"})
+
+    points = [
+        EquityPoint(1_000, 100_000.0, 0.0, 0.0, 0.0),
+        EquityPoint(1_000, 100_001.0, 1.0, 0.0, 0.0),
+    ]
+
+    assert ledger.append_equity("run-same-ts", points) == 2
+    assert len(ledger.equity("run-same-ts")) == 2
