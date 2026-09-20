@@ -33,3 +33,28 @@ def test_conflicting_duplicate_identity_is_rejected_without_partial_write():
         raise AssertionError("conflicting duplicate identity must be rejected")
 
     assert catalog.count(source="provider", instrument="NFO:101", timeframe="1m") == 1
+
+
+
+def test_ingest_events_consumes_generator_incrementally_and_keeps_transaction_atomic():
+    catalog = HistoricalCatalog()
+    first = HistoricalRecord("provider", "NFO:101", "tick", 100, {"ltp": 101})
+    invalid = HistoricalRecord("provider", "NFO:101", "1m", 200, {"close": 102})
+    consumed = []
+
+    def records():
+        consumed.append(1)
+        yield first
+        assert catalog.count(source="provider", instrument="NFO:101", timeframe="tick") == 1
+        consumed.append(2)
+        yield invalid
+
+    try:
+        catalog.ingest_events(records())
+    except ValueError as exc:
+        assert str(exc) == "ingest_events requires an event timeframe"
+    else:
+        raise AssertionError("non-event timeframe must be rejected")
+
+    assert consumed == [1, 2]
+    assert catalog.count() == 0
