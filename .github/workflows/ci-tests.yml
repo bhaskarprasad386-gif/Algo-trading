@@ -7,30 +7,25 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Naya push aate hi purana auto cancel ho jayega
 concurrency:
-  group: backend-tests-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      SECRET_KEY: ci-test-secret-key-not-for-production
-      PYTHONPATH: ..
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: backend
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
@@ -40,10 +35,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest requests
+          pip install pytest pytest-xdist pytest-timeout
 
       - name: Compile backend
         run: python -m compileall -q app
 
-      - name: Run backend and repository root tests
-        run: python -m pytest -vv tests ../tests
+      - name: Run backend tests only
+        env:
+          SECRET_KEY: ci-test-secret-key-not-for-production
+          PYTHONPATH:.
+        run: |
+          # tests../tests mat karo - sirf tests
+          # -n auto = 4 core parallel, --timeout=30 = hang khatam
+          python -m pytest tests -q --tb=line --timeout=30 -n auto --maxfail=10 --durations=15
