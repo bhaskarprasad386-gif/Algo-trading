@@ -104,3 +104,19 @@ def test_resume_rejects_data_source_fingerprint_mismatch(tmp_path):
     else:
         raise AssertionError("data source mismatch must block resume")
     ledger.close()
+
+
+def test_resume_rejects_engine_portfolio_margin_reservation_mismatch(tmp_path):
+    ledger = BacktestLedger(str(tmp_path / "margin-mismatch.sqlite"))
+    ledger.start_run("margin-mismatch", "s", "1", 1000)
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(1000))
+    durable = DurableEventBacktestEngine(engine, ledger, "margin-mismatch")
+    state = durable.checkpoint_state()
+    assert state is not None
+    state["portfolio_state"]["reserved_margin"] = {"order-1": 100.0}
+    state["market_state"]["reserved_margin"] = {}
+    checkpoint = Checkpoint("margin-mismatch", 0, 0, state)
+    ledger.checkpoint(checkpoint)
+    with pytest.raises(ValueError, match="margin reservation mismatch"):
+        durable.run([], lambda event, state: None, resume=True)
+    ledger.close()
