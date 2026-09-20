@@ -230,3 +230,28 @@ def test_universal_engine_depth_non_partial_rejection_leaves_portfolio_unchanged
     assert engine.portfolio.trades == ()
     assert engine.portfolio.snapshot().positions == ()
     assert engine.portfolio.cash == 100_000.0
+
+
+def test_universal_engine_multi_leg_validates_event_fields_before_ordering():
+    first = _event(10, "AAA", 100.0, 1)
+    malformed = HistoricalRecord("test", "AAA", "tick", "bad", {"price": 100.0}, 2)
+
+    engine = UniversalEventBacktestEngine(100_000.0)
+    try:
+        engine.run_multi_leg([first, malformed], lambda ctx: ())
+    except ValueError as exc:
+        assert "timestamp_ns" in str(exc)
+    else:
+        raise AssertionError("expected invalid timestamp rejection")
+
+
+def test_universal_engine_multi_leg_rejects_unhashable_sequence_as_invalid_input():
+    malformed = HistoricalRecord("test", "AAA", "tick", 10, {"price": 100.0}, [])
+    engine = UniversalEventBacktestEngine(100_000.0)
+
+    try:
+        engine.run_multi_leg([malformed], lambda ctx: ())
+    except ValueError as exc:
+        assert "sequence" in str(exc)
+    else:
+        raise AssertionError("expected invalid sequence rejection")
