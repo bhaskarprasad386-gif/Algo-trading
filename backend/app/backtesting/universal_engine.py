@@ -114,10 +114,9 @@ class UniversalEventBacktestEngine:
             if not legs:
                 snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
             else:
-                for order, _, timestamp_ns in legs:
+                for order, book, timestamp_ns in legs:
                     if timestamp_ns != record.timestamp_ns:
                         raise ValueError("multi-leg order timestamps must match the dispatch event")
-                    book = book
                     levels = book.asks if order.side == ExecutionSide.BUY else book.bids
                     if not levels:
                         raise ValueError(f"missing executable depth for {order.instrument!r}")
