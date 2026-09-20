@@ -81,15 +81,22 @@ class DurableEventBacktestEngine:
         return [lifecycle.export_state() for lifecycle in self.engine._order_lifecycles.values()]
 
     def _restore_lifecycle_state(self, raw_state: object) -> None:
-        self.engine._order_lifecycles.clear()
         if raw_state is None: return
         if not isinstance(raw_state, (list, tuple)): raise ValueError("invalid order_lifecycle_state checkpoint")
+        restored: dict[str, OrderLifecycle] = {}
         for raw in raw_state:
             if not isinstance(raw, Mapping): raise ValueError("invalid order lifecycle checkpoint entry")
             lifecycle = OrderLifecycle.restore_state(raw)
             order_id = lifecycle.state.order.order_id
-            if order_id in self.engine._order_lifecycles: raise ValueError(f"duplicate order lifecycle checkpoint: {order_id}")
-            self.engine._order_lifecycles[order_id] = lifecycle
+            if order_id in restored: raise ValueError(f"duplicate order lifecycle checkpoint: {order_id}")
+            restored[order_id] = lifecycle
+        existing = self.engine._order_lifecycles
+        if set(existing) != set(restored):
+            raise ValueError("checkpoint lifecycle state does not match market state")
+        for order_id, lifecycle in restored.items():
+            if existing[order_id].to_dict() != lifecycle.to_dict():
+                raise ValueError("checkpoint lifecycle state does not match market state")
+        self.engine._order_lifecycles = restored
 
     @staticmethod
     def _trade_state(portfolio: Portfolio) -> list[Mapping[str, object]]:
