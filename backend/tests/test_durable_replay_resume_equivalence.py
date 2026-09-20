@@ -192,7 +192,5 @@ def test_resume_replays_journaled_event_when_checkpoint_commit_was_interrupted(t
     result = resumed.run(events, Strategy(), resume=True, data_source_fingerprint="events-v1")
 
     assert result.events_dispatched == 1
-    assert resumed_engine.portfolio.trades == (
-        resumed_engine.portfolio.trades[0],
-    )
-    assert resumed_engine.portfolio.snapshot().positions["NSE:SBIN"].quantity == 1
+    assert len(resumed_engine.portfolio.trades) == 2
+    assert "NSE:SBIN" not in resumed_engine.portfolio.snapshot().positions
