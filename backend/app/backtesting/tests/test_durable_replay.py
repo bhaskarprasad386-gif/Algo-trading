@@ -120,3 +120,18 @@ def test_resume_rejects_engine_portfolio_margin_reservation_mismatch(tmp_path):
     with pytest.raises(ValueError, match="margin reservation mismatch"):
         durable.run([], lambda event, state: None, resume=True)
     ledger.close()
+
+
+def test_resume_rejects_engine_portfolio_reservation_identity_mismatch(tmp_path):
+    ledger = BacktestLedger(str(tmp_path / "margin-identity.sqlite"))
+    ledger.start_run("margin-identity", "s", "1", 1000)
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(1000))
+    durable = DurableEventBacktestEngine(engine, ledger, "margin-identity")
+    state = durable.checkpoint_state()
+    assert state is not None
+    state["portfolio_state"]["reserved_margin"] = {"portfolio-order": 100.0}
+    state["market_state"]["reserved_margin"] = {"engine-order": 100.0}
+    ledger.checkpoint(Checkpoint("margin-identity", 0, 0, state))
+    with pytest.raises(ValueError, match="margin reservation mismatch"):
+        durable.run([], lambda event, state: None, resume=True)
+    ledger.close()
