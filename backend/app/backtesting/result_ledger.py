@@ -149,20 +149,47 @@ class BacktestResultLedger:
                 FOREIGN KEY (run_id) REFERENCES backtest_runs(run_id) ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS backtest_equity (
+                equity_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id TEXT NOT NULL,
                 timestamp_ns INTEGER NOT NULL,
                 equity REAL NOT NULL,
                 realized_pnl REAL NOT NULL,
                 unrealized_pnl REAL NOT NULL,
                 drawdown REAL NOT NULL,
-                PRIMARY KEY (run_id, timestamp_ns),
                 FOREIGN KEY (run_id) REFERENCES backtest_runs(run_id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_backtest_trades_time ON backtest_trades(run_id, timestamp_ns, sequence);
             CREATE INDEX IF NOT EXISTS idx_backtest_events_time ON backtest_events(run_id, timestamp_ns, sequence);
-            CREATE INDEX IF NOT EXISTS idx_backtest_equity_time ON backtest_equity(run_id, timestamp_ns);
+            CREATE INDEX IF NOT EXISTS idx_backtest_equity_time ON backtest_equity(run_id, timestamp_ns, equity_id);
             """
         )
+        self._migrate_equity_schema()
+        self._db.commit()
+
+    def _migrate_equity_schema(self) -> None:
+        columns = [row[1] for row in self._db.execute("PRAGMA table_info(backtest_equity)")]
+        if not columns or "equity_id" in columns:
+            return
+        self._db.executescript("""
+            CREATE TABLE backtest_equity_new (
+                equity_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                timestamp_ns INTEGER NOT NULL,
+                equity REAL NOT NULL,
+                realized_pnl REAL NOT NULL,
+                unrealized_pnl REAL NOT NULL,
+                drawdown REAL NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES backtest_runs(run_id) ON DELETE CASCADE
+            );
+            INSERT INTO backtest_equity_new
+                (run_id, timestamp_ns, equity, realized_pnl, unrealized_pnl, drawdown)
+            SELECT run_id, timestamp_ns, equity, realized_pnl, unrealized_pnl, drawdown
+            FROM backtest_equity ORDER BY rowid;
+            DROP TABLE backtest_equity;
+            ALTER TABLE backtest_equity_new RENAME TO backtest_equity;
+            CREATE INDEX idx_backtest_equity_time
+                ON backtest_equity(run_id, timestamp_ns, equity_id);
+            """)
         self._db.commit()
 
     @staticmethod
@@ -262,10 +289,10 @@ class BacktestResultLedger:
                                 continue
                         elif table == "backtest_equity":
                             existing = self._db.execute(
-                                "SELECT equity,realized_pnl,unrealized_pnl,drawdown FROM backtest_equity WHERE run_id=? AND timestamp_ns=?",
-                                (row[0], row[1]),
+                                "SELECT 1 FROM backtest_equity WHERE run_id=? AND timestamp_ns=? AND equity=? AND realized_pnl=? AND unrealized_pnl=? AND drawdown=?",
+                                (row[0], row[1], row[2], row[3], row[4], row[5]),
                             ).fetchone()
-                            if existing and tuple(existing) == tuple(row[2:]):
+                            if existing:
                                 continue
                         raise ValueError(f"conflicting duplicate in {table}")
         except sqlite3.IntegrityError as exc:
@@ -299,14 +326,17 @@ class BacktestResultLedger:
             "SELECT * FROM backtest_events WHERE run_id=? AND sequence>? ORDER BY sequence LIMIT ?",
             (run_id, after_sequence, limit)))
 
-    def equity(self, run_id: str, *, limit: int = 500, after_timestamp_ns: int = -1) -> list[sqlite3.Row]:
+    def equity(
+        self, run_id: str, *, limit: int = 500, after_timestamp_ns: int = -1,
+        after_equity_id: int = -1,
+    ) -> list[sqlite3.Row]:
         self._require_run(run_id)
         self._validate_limit(limit)
-        if after_timestamp_ns < -1:
-            raise ValueError("after_timestamp_ns must be >= -1")
+        if after_timestamp_ns < -1 or after_equity_id < -1:
+            raise ValueError("equity cursor values must be >= -1")
         return list(self._db.execute(
-            "SELECT * FROM backtest_equity WHERE run_id=? AND timestamp_ns>? ORDER BY timestamp_ns LIMIT ?",
-            (run_id, after_timestamp_ns, limit)))
+            "SELECT * FROM backtest_equity WHERE run_id=? AND (timestamp_ns>? OR (timestamp_ns=? AND equity_id>?)) ORDER BY timestamp_ns, equity_id LIMIT ?",
+            (run_id, after_timestamp_ns, after_timestamp_ns, after_equity_id, limit)))
 
     def run(self, run_id: str) -> sqlite3.Row:
         self._require_run(run_id)
