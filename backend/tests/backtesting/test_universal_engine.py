@@ -97,3 +97,25 @@ def test_universal_engine_runs_from_streaming_data_source():
 
     assert result.fill_count == 0
     assert result.equity_curve[-1].timestamp_ns == 2
+
+
+def test_universal_engine_routes_order_to_depth_execution():
+    from app.backtesting.execution import DepthLevel, OrderBook
+
+    book = OrderBook(
+        bids=(DepthLevel(99.0, 10),),
+        asks=(DepthLevel(101.0, 10),),
+    )
+    record = _event(10, "AAA", 100.0, 1)
+    record = HistoricalRecord(record.source, record.instrument, record.timeframe, record.timestamp_ns, {"price": 100.0, "book": book}, record.sequence)
+
+    engine = UniversalEventBacktestEngine(100_000.0, quantity=2)
+    result = engine.run(
+        [record],
+        lambda context: EventSignal("BUY"),
+        order_book_field="book",
+    )
+
+    assert result.fill_count == 1
+    assert engine.portfolio.positions["AAA"].quantity == 2
+    assert engine.portfolio.positions["AAA"].average_price == 101.0
