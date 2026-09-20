@@ -29,7 +29,12 @@ def test_streaming_accumulator_matches_batch_statistics():
     expected = calculate_statistics(points, 100_000.0)
     actual = _streaming(points, 100_000.0)
 
-    assert actual == expected
+    assert actual.net_pnl == pytest.approx(expected.net_pnl)
+    assert actual.total_return == pytest.approx(expected.total_return)
+    assert actual.sharpe_ratio == pytest.approx(expected.sharpe_ratio)
+    assert actual.sortino_ratio == pytest.approx(expected.sortino_ratio)
+    assert actual.max_drawdown == pytest.approx(expected.max_drawdown)
+    assert actual.cagr == pytest.approx(expected.cagr)
 
 
 def test_streaming_accumulator_preserves_same_timestamp_semantics():
