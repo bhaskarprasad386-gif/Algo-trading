@@ -45,10 +45,17 @@ def test_ledger_sequence_empty_negative_index_raises_index_error():
         ledger.close()
 
 
-def test_ledger_sequence_reads_through_ledger_without_materializing_records():
+def test_ledger_sequence_does_not_call_materializing_records_api(monkeypatch):
     ledger, sequence = _seed_ledger()
+
+    def fail_materialization(*args, **kwargs):
+        raise AssertionError("LedgerSequence must not call ledger.records()")
+
+    monkeypatch.setattr(ledger, "records", fail_materialization)
     try:
+        assert len(sequence) == 3
         assert sequence[0]["equity"] == 100_010.0
-        assert ledger.record_count("result-seq", "equity") == 3
+        assert sequence[-1]["equity"] == 100_025.0
+        assert [item["equity"] for item in sequence] == [100_010.0, 99_990.0, 100_025.0]
     finally:
         ledger.close()
