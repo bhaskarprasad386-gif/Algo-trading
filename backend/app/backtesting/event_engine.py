@@ -325,9 +325,13 @@ class EventBacktestEngine:
     def _execute_decision(self, decision: StrategyDecision, event: MarketEvent) -> tuple[SimFill, ...]:
         if self.execution is None or self.portfolio is None or not decision.orders: return ()
         effective_orders = []
+        seen_order_ids: set[str] = set()
         try:
             for raw_order in decision.orders:
                 if not isinstance(raw_order, SimOrder): raise TypeError("strategy orders must be SimOrder instances")
+                if raw_order.order_id in seen_order_ids:
+                    raise ValueError("strategy decision contains duplicate order_id")
+                seen_order_ids.add(raw_order.order_id)
                 order = self._submit_effective_order(raw_order, event); lifecycle = self._lifecycle(order, order.submitted_at_ns)
                 if lifecycle.state.terminal: continue
                 risk_reducing = order_reduces_position_risk(self.portfolio, order)
