@@ -12,7 +12,9 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from app.backtesting.engine import EventContext, EventSignal, EventStrategy, _normalize_event_signal
-from app.backtesting.contracts import ExecutionModelProtocol, PortfolioProtocol
+from app.backtesting.contracts import DataSourceProtocol, ExecutionModelProtocol, PortfolioProtocol
+from app.backtesting.clock import BacktestClock, ClockProtocol
+from app.backtesting.event_model import event_identity, event_order_key
 from app.backtesting.execution import ExecutionConfig, ExecutionSide, ExecutionSimulator, SimOrder
 from app.backtesting.portfolio import Portfolio, PortfolioSnapshot, RiskConfig
 from app.backtesting.historical_catalog import HistoricalRecord
@@ -56,6 +58,7 @@ class UniversalEventBacktestEngine:
         quantity: int = 1,
         portfolio: PortfolioProtocol | None = None,
         execution: ExecutionModelProtocol | None = None,
+        clock: ClockProtocol | None = None,
     ) -> None:
         if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
             raise ValueError("quantity must be a positive integer")
@@ -66,12 +69,18 @@ class UniversalEventBacktestEngine:
         self.portfolio = portfolio if portfolio is not None else Portfolio(initial_capital, risk_config)
         self.execution = execution if execution is not None else ExecutionSimulator(execution_config)
         self.quantity = quantity
+        self.clock = clock if clock is not None else BacktestClock()
+
+    def run_source(self, source: DataSourceProtocol, strategy: EventStrategy, *, start_ns: int | None = None, end_ns: int | None = None, price_field: str = "price") -> UniversalBacktestResult:
+        """Run directly from a streaming DataSource without materializing its events."""
+        return self.run(source.iter_events(start_ns=start_ns, end_ns=end_ns), strategy, price_field=price_field)
 
     def run(self, events: Iterable[HistoricalRecord], strategy: EventStrategy, *, price_field: str = "price") -> UniversalBacktestResult:
         if not isinstance(price_field, str) or not price_field.strip():
             raise ValueError("price_field is required")
 
-        previous_key: tuple[int, int] | None = None
+        previous_key: tuple[int, str, str, str, int] | None = None
+        seen_identities: set[object] = set()
         snapshots: list[PortfolioSnapshot] = []
         equity_curve: list[EquityPoint] = []
         last_marks: dict[str, float] = {}
@@ -85,10 +94,15 @@ class UniversalEventBacktestEngine:
                 raise ValueError("event source is required")
             if record.sequence is not None and (not isinstance(record.sequence, int) or isinstance(record.sequence, bool) or record.sequence < 0):
                 raise ValueError("event sequence must be a non-negative integer or None")
-            key = (record.timestamp_ns, record.sequence if record.sequence is not None else -1)
+            key = event_order_key(record)
+            identity = event_identity(record)
+            if identity in seen_identities:
+                raise ValueError("duplicate event identity")
             if previous_key is not None and key <= previous_key:
-                raise ValueError("events must be strictly ordered by timestamp_ns and sequence")
+                raise ValueError("events must be strictly ordered by deterministic event order")
+            seen_identities.add(identity)
             previous_key = key
+            self.clock.advance_to(record.timestamp_ns)
 
             raw_price = record.payload.get(price_field)
             if raw_price is not None:
