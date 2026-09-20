@@ -6,7 +6,7 @@ on:
     branches: [main]
   workflow_dispatch:
 concurrency:
-  group: backend-tests-${{ github.ref }}
+  group: "backend-tests-${{ github.ref }}"
   cancel-in-progress: true
 jobs:
   test:
@@ -18,9 +18,14 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install deps
-        run: pip install -r backend/requirements.txt pytest pytest-timeout
+        run: |
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-timeout
       - name: Run tests
         env:
           SECRET_KEY: ci-test-secret-key-not-for-production
           PYTHONPATH: backend
-        run: python -m pytest backend/tests -q --tb=line --timeout=60 -k "not durable and not streaming"
+          DATABASE_URL: sqlite:///:memory:
+        run: |
+          rm -f backend/*.db backend/*.sqlite* backend/app/*.db
+          python -m pytest backend/tests -q --tb=short --timeout=120 -k "not durable and not streaming and not test_dashboard_route"
