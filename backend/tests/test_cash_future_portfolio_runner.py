@@ -183,3 +183,35 @@ def test_zero_historical_depth_produces_no_fill():
     assert result.signals[0]["execution_status"] == "no_fill"
     assert result.signals[0]["filled_quantity"] == 0.0
     assert result.open_position_count == 0
+
+def test_rollover_then_new_entry_handles_existing_portfolio_margin_breach():
+    start = datetime(2026, 9, 2, 10, 0)
+    points = [
+        point(start, "BBB", 10, margin=4000),
+        point(start + timedelta(minutes=1), "BBB", -20, margin=4000),
+        point(start + timedelta(minutes=2), "AAA", 10, month="SEP", margin=4000),
+        point(start + timedelta(minutes=3), "AAA", 10, month="SEP", margin=4000),
+        point(start + timedelta(minutes=4), "AAA", 12, month="OCT", margin=4000),
+    ]
+
+    def strategy(current, history):
+        if current.symbol == "BBB":
+            return "BUY" if current is points[0] else "HOLD"
+        return "BUY" if current.gap >= 10 else "HOLD"
+
+    result = run_cash_future_portfolio_strategy(
+        points,
+        strategy,
+        initial_capital=10000,
+        rollover_policy="force_exit",
+    )
+
+    rollover = [trade for trade in result.trades if trade["exit_reason"] == "rollover"]
+    liquidation = [trade for trade in result.trades if trade["exit_reason"] == "margin_breach"]
+    assert len(rollover) == 1
+    assert rollover[0]["contract_month"] == "SEP"
+    assert len(liquidation) == 1
+    assert liquidation[0]["symbol"] == "BBB"
+    assert liquidation[0]["contract_month"] == "SEP"
+    assert result.open_position_count == 0
+    assert result.final_reserved_margin == 0.0
