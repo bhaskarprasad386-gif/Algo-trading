@@ -112,7 +112,9 @@ class CashFutureGapDownloadPlanner:
     def _coverage_for(self, request: HistoricalFetchRequest, sessions: tuple[SessionWindow, ...], catalog) -> tuple[CoverageRange, ...]:
         if not sessions:
             return ()
-        expected = self._expected_session_timestamps(sessions, self.interval_ns)
+        # Coverage is for this exact queue request, so expected points must be
+        # clipped to the request bounds just like repair planning.
+        expected = self._expected(sessions, request, self.interval_ns)
         if not expected:
             return ()
         actual: set[int] = set()
@@ -121,8 +123,8 @@ class CashFutureGapDownloadPlanner:
                 source=request.source,
                 instrument=request.instrument,
                 timeframe=request.timeframe,
-                start_ns=session.start_ns,
-                end_ns=session.end_ns,
+                start_ns=max(session.start_ns, request.start_ns),
+                end_ns=min(session.end_ns, request.end_ns),
             ))
         expected_set = set(expected)
         observed = len(expected_set & actual)
