@@ -109,3 +109,24 @@ def test_multi_instrument_source_applies_timestamp_range():
         ]
     finally:
         catalog.close()
+
+
+def test_filtered_data_source_preserves_streaming_and_applies_predicate():
+    from app.backtesting.data_source import FilteredDataSource
+
+    class Source:
+        def __init__(self):
+            self.consumed = 0
+
+        def iter_events(self, *, start_ns=None, end_ns=None):
+            for ts in range(1, 4):
+                self.consumed += 1
+                yield HistoricalRecord("test", "AAA", "tick", ts, {"price": ts}, ts)
+
+    source = Source()
+    filtered = FilteredDataSource(source, lambda record: record.timestamp_ns % 2 == 1)
+    iterator = filtered.iter_events()
+    assert next(iterator).timestamp_ns == 1
+    assert source.consumed == 1
+    assert list(iterator)[0].timestamp_ns == 3
+    assert source.consumed == 3
