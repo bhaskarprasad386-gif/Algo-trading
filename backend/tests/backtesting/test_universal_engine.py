@@ -177,3 +177,56 @@ def test_universal_engine_multi_leg_requires_atomic_execution_model():
     engine = UniversalEventBacktestEngine(100_000.0, execution=NonAtomicExecution())
     with __import__("pytest").raises(TypeError, match="atomic execution model"):
         engine.run_multi_leg([_event(10, "AAA", 100.0, 1)], lambda ctx: ())
+
+
+def test_universal_engine_depth_partial_fill_updates_only_filled_quantity():
+    from app.backtesting.execution import DepthLevel, OrderBook
+
+    book = OrderBook(asks=(DepthLevel(101.0, 2),))
+    record = HistoricalRecord(
+        "test", "AAA", "tick", 10,
+        {"price": 100.0, "book": book}, 1,
+    )
+
+    engine = UniversalEventBacktestEngine(100_000.0, quantity=5)
+    result = engine.run(
+        [record],
+        lambda context: EventSignal("BUY"),
+        order_book_field="book",
+    )
+
+    assert result.fill_count == 1
+    assert engine.portfolio.positions["AAA"].quantity == 2
+    assert engine.portfolio.positions["AAA"].average_price == 101.0
+    assert engine.portfolio.trades[0].quantity == 2
+
+
+def test_universal_engine_depth_non_partial_rejection_leaves_portfolio_unchanged():
+    from app.backtesting.execution import DepthLevel, ExecutionConfig, OrderBook
+
+    book = OrderBook(asks=(DepthLevel(101.0, 2),))
+    record = HistoricalRecord(
+        "test", "AAA", "tick", 10,
+        {"price": 100.0, "book": book}, 1,
+    )
+
+    engine = UniversalEventBacktestEngine(
+        100_000.0,
+        quantity=5,
+        execution_config=ExecutionConfig(allow_partial_fills=False),
+    )
+
+    try:
+        engine.run(
+            [record],
+            lambda context: EventSignal("BUY"),
+            order_book_field="book",
+        )
+    except ValueError as exc:
+        assert "insufficient displayed depth" in str(exc)
+    else:
+        raise AssertionError("expected depth rejection")
+
+    assert engine.portfolio.trades == ()
+    assert engine.portfolio.snapshot().positions == ()
+    assert engine.portfolio.cash == 100_000.0
