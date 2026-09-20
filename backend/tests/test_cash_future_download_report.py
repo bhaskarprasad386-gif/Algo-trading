@@ -58,3 +58,26 @@ def test_report_marks_exact_cash_future_queue_complete():
     assert report.incomplete_chunks == 0
     assert report.complete is True
     catalog.close()
+
+
+def test_report_clips_sessions_to_request_range():
+    catalog = HistoricalCatalog()
+    request = HistoricalFetchRequest("angelone", "NSE:123", "1m", 60_000_000_000, 120_000_000_000)
+    catalog.ingest(
+        HistoricalRecord("angelone", "NSE:123", "1m", timestamp, {"close": 1})
+        for timestamp in (0, 60_000_000_000, 120_000_000_000, 180_000_000_000)
+    )
+
+    report = CashFutureDownloadReporter(catalog).chunk_status(
+        request,
+        interval_ns=60_000_000_000,
+        sessions=(SessionWindow(0, 180_000_000_000),),
+    )
+
+    assert report.start_ns == 60_000_000_000
+    assert report.end_ns == 120_000_000_000
+    assert report.expected_timestamps == 2
+    assert report.actual_timestamps == 2
+    assert report.missing_timestamps == 0
+    assert report.complete is True
+    catalog.close()
