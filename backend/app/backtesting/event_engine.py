@@ -202,6 +202,7 @@ class EventBacktestEngine:
             self._journal_lifecycle(lifecycle.events[-1])
         elif lifecycle.state.status == OrderStatus.SUBMITTED:
             lifecycle.accept(timestamp_ns)
+            self._journal_lifecycle(lifecycle.events[-1])
         return lifecycle
 
     def _journal_lifecycle(self, event: object) -> None:
