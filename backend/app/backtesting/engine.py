@@ -47,7 +47,7 @@ class BacktestConfig:
         if self.quantity_step is not None and (
             self.quantity_step <= 0 or not _is_multiple(self.quantity, self.quantity_step)
         ):
-            raise ValueError("invalid quantity_step/quantity")
+            raise ValueError("quantity must be an exact multiple of quantity_step")
         if self.tick_size is not None and self.tick_size <= 0:
             raise ValueError("tick_size must be positive")
         if self.slippage_rate < 0 or self.slippage_rate >= 1:
@@ -439,12 +439,38 @@ def _validate_candle(candle, previous_timestamp):
     timestamp = candle.get("timestamp")
     if timestamp is None:
         raise ValueError("candle timestamp is required")
-    if previous_timestamp is not None and timestamp <= previous_timestamp:
-        raise ValueError("candles must have strictly increasing timestamps")
+    _validate_timestamp_type(timestamp)
+    if previous_timestamp is not None:
+        _validate_timestamp_type(previous_timestamp)
+        if _timestamp_kind(timestamp) != _timestamp_kind(previous_timestamp):
+            raise ValueError("candle timestamps must use comparable timestamp types")
+        try:
+            if timestamp <= previous_timestamp:
+                raise ValueError("candles must have strictly increasing timestamps")
+        except TypeError as exc:
+            raise ValueError("candle timestamps must be comparable") from exc
     if "close" not in candle:
         raise ValueError("candle close is required")
-    _validate_price_field(candle["close"], "close")
+    for field in ("open", "high", "low", "close"):
+        if field in candle:
+            _validate_price_field(candle[field], field)
     return timestamp
+
+
+def _timestamp_kind(value):
+    if isinstance(value, bool):
+        raise ValueError("candle timestamp must be a valid timestamp")
+    if isinstance(value, datetime):
+        return "datetime"
+    if isinstance(value, date):
+        return "date"
+    if isinstance(value, (int, float)) and isfinite(float(value)):
+        return "numeric"
+    raise ValueError("candle timestamp must be numeric, date, or datetime")
+
+
+def _validate_timestamp_type(value):
+    _timestamp_kind(value)
 
 
 def _validate_price_field(value, field):
