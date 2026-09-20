@@ -22,7 +22,11 @@ class DurableEventBacktestEngine:
         if not run_id.strip(): raise ValueError("run_id is required")
         if checkpoint_interval <= 0: raise ValueError("checkpoint_interval must be positive")
         self.engine, self.ledger, self.run_id = engine, ledger, run_id
+        self.engine.journal_callback = self._journal_engine_record
         self.checkpoint_interval = checkpoint_interval
+
+    def _journal_engine_record(self, record_type: str, timestamp_ns: int, payload: Mapping[str, object]) -> None:
+        self.ledger.append(LedgerRecord(self.run_id, record_type, timestamp_ns, dict(payload)))
 
     @staticmethod
     def _event_key(event: MarketEvent) -> tuple[object, ...]:
