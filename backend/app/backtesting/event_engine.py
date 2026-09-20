@@ -369,7 +369,7 @@ class EventBacktestEngine:
         return self._try_execute_orders(effective_orders, event)
 
     def market_state(self) -> Mapping[str, object]:
-        return {"latest_events": [{"timestamp_ns": e.timestamp_ns, "instrument": e.instrument, "event_type": e.event_type.value, "payload": dict(e.payload), "sequence": e.sequence, "source": e.source} for e in self._latest_events.values()], "latest_books": [{"instrument": instrument, "timestamp_ns": ts, "bids": [(x.price, x.quantity) for x in book.bids], "asks": [(x.price, x.quantity) for x in book.asks]} for instrument, (ts, book) in self._latest_books.items()], "open_orders": [{"order_id": o.order_id, "instrument": o.instrument, "side": o.side.value, "quantity": o.quantity, "order_type": o.order_type.value, "limit_price": o.limit_price, "stop_price": o.stop_price, "submitted_at_ns": o.submitted_at_ns, "queue_ahead_quantity": o.queue_ahead_quantity, "dynamic_queue_ahead": self._dynamic_queue_ahead.get(o.order_id, o.queue_ahead_quantity), "queue_generation": self._queue_lifecycles.get(o.order_id, QueueLifecycleState(o.queue_ahead_quantity)).generation, "time_in_force": o.time_in_force.value} for o in self._open_orders.values()], "reserved_margin": dict(self._reserved_margin)}
+        return {"latest_events": [{"timestamp_ns": e.timestamp_ns, "instrument": e.instrument, "event_type": e.event_type.value, "payload": dict(e.payload), "sequence": e.sequence, "source": e.source} for e in self._latest_events.values()], "latest_books": [{"instrument": instrument, "timestamp_ns": ts, "bids": [(x.price, x.quantity) for x in book.bids], "asks": [(x.price, x.quantity) for x in book.asks]} for instrument, (ts, book) in self._latest_books.items()], "order_lifecycles": {order_id: lifecycle.to_dict() for order_id, lifecycle in self._order_lifecycles.items()}, "open_orders": [{"order_id": o.order_id, "instrument": o.instrument, "side": o.side.value, "quantity": o.quantity, "order_type": o.order_type.value, "limit_price": o.limit_price, "stop_price": o.stop_price, "submitted_at_ns": o.submitted_at_ns, "queue_ahead_quantity": o.queue_ahead_quantity, "dynamic_queue_ahead": self._dynamic_queue_ahead.get(o.order_id, o.queue_ahead_quantity), "queue_generation": self._queue_lifecycles.get(o.order_id, QueueLifecycleState(o.queue_ahead_quantity)).generation, "time_in_force": o.time_in_force.value} for o in self._open_orders.values()], "reserved_margin": dict(self._reserved_margin)}
 
     def restore_market_state(self, state: Mapping[str, object]) -> None:
         self._latest_events.clear(); self._latest_books.clear(); self._order_lifecycles.clear(); self._open_orders.clear(); self._reserved_margin.clear(); self._dynamic_queue_ahead.clear(); self._queue_lifecycles.clear()
@@ -377,10 +377,23 @@ class EventBacktestEngine:
             e = MarketEvent(int(raw["timestamp_ns"]), str(raw["instrument"]), EventType(raw["event_type"]), dict(raw.get("payload", {})), raw.get("sequence"), raw.get("source")); self._latest_events[e.instrument] = e
         for raw in state.get("latest_books", []):
             book = OrderBook(bids=tuple(DepthLevel(float(p), int(q)) for p, q in raw.get("bids", [])), asks=tuple(DepthLevel(float(p), int(q)) for p, q in raw.get("asks", []))); self._latest_books[str(raw["instrument"])] = (int(raw["timestamp_ns"]), book)
+        for order_id, raw_lifecycle in state.get("order_lifecycles", {}).items():
+            lifecycle = OrderLifecycle.restore_state(raw_lifecycle)
+            if lifecycle.state.order.order_id != str(order_id):
+                raise ValueError("lifecycle order_id does not match state key")
+            self._order_lifecycles[str(order_id)] = lifecycle
         for raw in state.get("open_orders", []):
-            order = SimOrder(order_id=str(raw["order_id"]), instrument=str(raw["instrument"]), side=ExecutionSide(raw["side"]), quantity=int(raw["quantity"]), order_type=OrderType(raw["order_type"]), limit_price=raw.get("limit_price"), stop_price=raw.get("stop_price"), submitted_at_ns=int(raw["submitted_at_ns"]), queue_ahead_quantity=int(raw.get("queue_ahead_quantity", 0)), time_in_force=TimeInForce(raw["time_in_force"])); self._open_orders[order.order_id] = order
-            lifecycle = OrderLifecycle(order); lifecycle.accept(order.submitted_at_ns); self._order_lifecycles[order.order_id] = lifecycle
+            order = SimOrder(order_id=str(raw["order_id"]), instrument=str(raw["instrument"]), side=ExecutionSide(raw["side"]), quantity=int(raw["quantity"]), order_type=OrderType(raw["order_type"]), limit_price=raw.get("limit_price"), stop_price=raw.get("stop_price"), submitted_at_ns=int(raw["submitted_at_ns"]), queue_ahead_quantity=int(raw.get("queue_ahead_quantity", 0)), time_in_force=TimeInForce(raw["time_in_force"]))
+            self._open_orders[order.order_id] = order
+            lifecycle = self._order_lifecycles.get(order.order_id)
+            if lifecycle is None:
+                lifecycle = OrderLifecycle(order)
+                lifecycle.accept(order.submitted_at_ns)
+                self._order_lifecycles[order.order_id] = lifecycle
+            elif lifecycle.state.order != order:
+                raise ValueError("open order does not match restored lifecycle")
             queue = int(raw.get("dynamic_queue_ahead", order.queue_ahead_quantity)); generation = int(raw.get("queue_generation", 0)); self._dynamic_queue_ahead[order.order_id] = queue; self._queue_lifecycles[order.order_id] = QueueLifecycleState(queue, generation, True)
+
         self._reserved_margin.update({str(k): float(v) for k, v in state.get("reserved_margin", {}).items()})
 
     def run(self, events: Iterable[MarketEvent], strategy: object, *, state: Mapping[str, object] | None = None, start_event_index: int = 0, checkpoint_callback: Callable[[int, int, Mapping[str, object]], None] | None = None, checkpoint_interval: int | None = None) -> ReplayStats:
