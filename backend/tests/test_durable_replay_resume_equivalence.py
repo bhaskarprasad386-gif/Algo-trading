@@ -187,10 +187,12 @@ def test_resume_replays_journaled_event_when_checkpoint_commit_was_interrupted(t
     assert checkpoint is not None and checkpoint.state["source_cursor"] == 1
     assert [r.payload["sequence"] for r in ledger.records("atomicity", "EVENT")] == [1, 2]
 
-    resumed_engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(10_000.0))
-    resumed = DurableEventBacktestEngine(resumed_engine, ledger, "atomicity", checkpoint_interval=1)
-    result = resumed.run(events, Strategy(), resume=True, data_source_fingerprint="events-v1")
+    # Reuse the same durable wrapper after the failed atomic checkpoint.
+    # Its in-memory pending journal must not leak rolled-back records into the retry.
+    result = durable.run(events, Strategy(), resume=True, data_source_fingerprint="events-v1")
 
     assert result.events_dispatched == 1
-    assert len(resumed_engine.portfolio.trades) == 2
-    assert "NSE:SBIN" not in resumed_engine.portfolio.snapshot().positions
+    assert len(engine.portfolio.trades) == 2
+    assert "NSE:SBIN" not in engine.portfolio.snapshot().positions
+    event_records = ledger.records("atomicity", "EVENT")
+    assert [r.payload["sequence"] for r in event_records] == [1, 2]
