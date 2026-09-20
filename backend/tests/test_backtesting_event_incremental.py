@@ -98,3 +98,87 @@ def test_event_incremental_marks_open_trade_to_market_at_end():
     assert result.has_open_trade is True
     assert result.unrealized_pnl == 10.0
     assert result.final_capital == 10_010.0
+
+def test_event_incremental_rejects_duplicate_event_identity():
+    events = [_event(1_000, 1, 100.0), _event(1_000, 1, 101.0)]
+
+    try:
+        run_events_incremental(
+            BacktestConfig(),
+            events,
+            lambda event: "HOLD",
+            persist_chunk=lambda chunk, index: None,
+        )
+    except ValueError as exc:
+        assert "duplicate event identity" in str(exc)
+    else:
+        raise AssertionError("expected duplicate event identity rejection")
+
+
+def test_event_incremental_hold_without_price_uses_previous_mark_for_open_trade():
+    first = _event(1_000, 1, 100.0)
+    second = HistoricalRecord(
+        source="test",
+        instrument="NFO:123",
+        timeframe="tick",
+        timestamp_ns=2_000,
+        payload={},
+        sequence=2,
+    )
+
+    result = run_events_incremental(
+        BacktestConfig(initial_capital=10_000.0),
+        [first, second],
+        lambda event: EventSignal("BUY") if event.sequence == 1 else EventSignal("HOLD"),
+        persist_chunk=lambda chunk, index: None,
+    )
+
+    assert result.has_open_trade is True
+    assert result.unrealized_pnl == 0.0
+    assert result.final_capital == 10_000.0
+
+
+def test_event_incremental_flat_hold_without_price_is_preserved_without_invented_price():
+    event = HistoricalRecord(
+        source="test",
+        instrument="NFO:123",
+        timeframe="tick",
+        timestamp_ns=1_000,
+        payload={},
+        sequence=1,
+    )
+
+    result = run_events_incremental(
+        BacktestConfig(initial_capital=10_000.0),
+        [event],
+        lambda event: EventSignal("HOLD"),
+        persist_chunk=lambda chunk, index: None,
+    )
+
+    assert result.has_open_trade is False
+    assert result.final_capital == 10_000.0
+    assert result.net_pnl == 0.0
+
+
+def test_event_incremental_buy_without_price_still_rejects_missing_market_price():
+    event = HistoricalRecord(
+        source="test",
+        instrument="NFO:123",
+        timeframe="tick",
+        timestamp_ns=1_000,
+        payload={},
+        sequence=1,
+    )
+
+    try:
+        run_events_incremental(
+            BacktestConfig(),
+            [event],
+            lambda event: EventSignal("BUY"),
+            persist_chunk=lambda chunk, index: None,
+        )
+    except ValueError as exc:
+        assert "finite numeric" in str(exc)
+    else:
+        raise AssertionError("expected missing BUY price rejection")
+
