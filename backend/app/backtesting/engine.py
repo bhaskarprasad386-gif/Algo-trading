@@ -271,6 +271,18 @@ class BacktestEngine:
                 strategy(EventContext(record.timestamp_ns, record.sequence, record.source, record.instrument, record.payload, record))
             )
             if signal.action in {"HOLD", "NONE"}:
+                # HOLD/NONE is still a market event: preserve the event in the
+                # equity curve and update the mark when a price is available.
+                raw_mark = record.payload.get(price_field)
+                if raw_mark is not None:
+                    if not _is_number(raw_mark) or float(raw_mark) <= 0:
+                        raise ValueError(f"event payload {price_field!r} must be numeric and positive")
+                    last_price = float(raw_mark)
+                    curve.append(_equity_point(record.timestamp_ns, capital, open_trade, last_price, self.config))
+                elif open_trade is not None and last_price is not None:
+                    curve.append(_equity_point(record.timestamp_ns, capital, open_trade, last_price, self.config))
+                else:
+                    curve.append(_equity_point(record.timestamp_ns, capital, None, 0.0, self.config))
                 continue
             price, source = _resolve_signal_price(signal, record.payload, price_field)
             last_price = price
