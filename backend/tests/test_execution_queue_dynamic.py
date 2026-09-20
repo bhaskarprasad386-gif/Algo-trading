@@ -1,5 +1,6 @@
 from backend.app.backtesting.execution import (
     DepthLevel,
+    ExecutionConfig,
     ExecutionSimulator,
     OrderBook,
     QueueEvidence,
@@ -102,7 +103,7 @@ def test_dynamic_depth_ioc_cancels_residual_without_waiting_for_later_updates():
 
 
 def test_dynamic_depth_rejects_partial_fill_when_partial_fills_disabled():
-    sim = ExecutionSimulator(config=__import__("backend.app.backtesting.execution", fromlist=["ExecutionConfig"]).ExecutionConfig(allow_partial_fills=False))
+    sim = ExecutionSimulator(config=ExecutionConfig(allow_partial_fills=False))
     order = _buy_order(quantity=6)
     book = OrderBook(asks=(DepthLevel(100.0, 4),))
 
