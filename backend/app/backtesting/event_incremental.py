@@ -19,7 +19,7 @@ from app.backtesting.engine import (
     _net_exit_cashflow,
 )
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
-from app.backtesting.statistics import EquityPoint
+from app.backtesting.statistics import EquityPoint, StreamingStatisticsAccumulator
 
 PersistTradeChunk = Callable[[tuple[BacktestTrade, ...], int], object]
 _SECONDS_PER_YEAR = 365.25 * 24 * 60 * 60
@@ -53,8 +53,7 @@ def run_events_incremental(
     chunk_index = 0
     trade_count = wins = 0
     pnl_sum = 0.0
-    returns: list[float] = []
-    intervals_years: list[float] = []
+    statistics_accumulator = StreamingStatisticsAccumulator(engine_config.initial_capital)
     first_timestamp = last_timestamp = last_price = None
     previous_key = None
     seen = set()
@@ -99,6 +98,7 @@ def run_events_incremental(
             # A flat HOLD/NONE event may have no market mark; preserve the
             # event in the equity stream without inventing a price.
             equity_point = EquityPoint(record.timestamp_ns, capital, capital - engine_config.initial_capital, 0.0)
+            statistics_accumulator.update(equity_point)
             previous_equity = equity_point.equity
             previous_timestamp = record.timestamp_ns
             peak_equity = max(peak_equity, equity_point.equity)
@@ -142,12 +142,14 @@ def run_events_incremental(
             open_trade = None
 
         equity = capital + (_calculate_liquidation_pnl(engine_config, open_trade[1], price) if open_trade is not None else 0.0)
-        if previous_timestamp is not None and record.timestamp_ns > previous_timestamp and previous_equity > 0:
-            elapsed_years = (record.timestamp_ns - previous_timestamp) / _NANOSECONDS_PER_YEAR
-            value = equity / previous_equity - 1.0
-            if elapsed_years > 0 and isfinite(value):
-                returns.append(value)
-                intervals_years.append(elapsed_years)
+        statistics_accumulator.update(
+            EquityPoint(
+                record.timestamp_ns,
+                equity,
+                capital - engine_config.initial_capital,
+                equity - capital,
+            )
+        )
         previous_equity = equity
         previous_timestamp = record.timestamp_ns
         peak_equity = max(peak_equity, equity)
@@ -168,8 +170,9 @@ def run_events_incremental(
 
     win_rate = wins / trade_count if trade_count else 0.0
     expectancy = pnl_sum / trade_count if trade_count else 0.0
-    sharpe = _annualized_ratio(returns, intervals_years, downside_only=False)
-    sortino = _annualized_ratio(returns, intervals_years, downside_only=True)
+    statistics = statistics_accumulator.finalize()
+    sharpe = statistics.sharpe_ratio
+    sortino = statistics.sortino_ratio
     cagr = _calculate_cagr_from_timestamps(first_timestamp, last_timestamp, engine_config.initial_capital, final_capital)
     net_pnl = final_capital - engine_config.initial_capital
     return BacktestResult(
