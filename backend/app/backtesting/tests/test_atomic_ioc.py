@@ -36,5 +36,5 @@ def test_atomic_execution_rejects_partial_ioc_leg():
     assert result.rejected is True
     assert result.fills == ()
     assert result.leg_results[0].fills[0].quantity == 5
-    assert result.leg_results[0].remaining_quantity == 0
+    assert result.leg_results[0].remaining_quantity == 5
     assert result.reason == "atomic rollback: one or more legs did not fully execute"
