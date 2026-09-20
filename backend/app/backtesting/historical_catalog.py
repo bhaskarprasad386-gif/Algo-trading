@@ -136,6 +136,34 @@ class HistoricalCatalog:
         for row in cursor:
             yield HistoricalRecord(row[0], row[1], row[2], row[3], json.loads(row[4]), row[5])
 
+    def events(self, *, source: str, instrument: str, timeframe: str, start_ns: int | None = None, end_ns: int | None = None) -> tuple[HistoricalRecord, ...]:
+        """Return the selected event range as a deterministic tuple."""
+        return tuple(self.iter_records(
+            source=source,
+            instrument=instrument,
+            timeframe=timeframe,
+            start_ns=start_ns,
+            end_ns=end_ns,
+        ))
+
+    def event_count(self, *, source: str, instrument: str, timeframe: str, start_ns: int | None = None, end_ns: int | None = None) -> int:
+        """Count events in the selected range without materializing payloads."""
+        if start_ns is not None and start_ns < 0:
+            raise ValueError("start_ns cannot be negative")
+        if end_ns is not None and (end_ns < 0 or (start_ns is not None and end_ns < start_ns)):
+            raise ValueError("invalid timestamp range")
+        clauses = ["source=?", "instrument=?", "timeframe=?"]
+        params: list[Any] = [source, instrument, timeframe]
+        if start_ns is not None:
+            clauses.append("timestamp_ns>=?")
+            params.append(start_ns)
+        if end_ns is not None:
+            clauses.append("timestamp_ns<=?")
+            params.append(end_ns)
+        return int(self._db.execute(
+            "SELECT COUNT(*) FROM data_catalog WHERE " + " AND ".join(clauses), params
+        ).fetchone()[0])
+
     def instruments(self, *, source: str, timeframe: str, start_ns: int | None = None, end_ns: int | None = None, prefix: str | None = None) -> tuple[str, ...]:
         """Return distinct durable instruments observed in an optional timestamp range."""
         clauses = ["source=?", "timeframe=?"]
