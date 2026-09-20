@@ -1,5 +1,10 @@
 name: Backend Tests
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -9,10 +14,9 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install
-        run: pip install -r backend/requirements.txt pytest pytest-timeout
+        run: pip install -r backend/requirements.txt pytest
       - name: Test
         env:
           SECRET_KEY: ci-test-secret-key-not-for-production
           PYTHONPATH: backend
-          DATABASE_URL: sqlite:///:memory:
-        run: python -m pytest backend/tests -q --tb=short --timeout=120 -k "not durable and not streaming and not dashboard_route"
+        run: python -m pytest backend/tests -q -k "not durable and not streaming"
