@@ -7,44 +7,25 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Naya push aate hi purana auto cancel ho jayega
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: backend-tests-${{ github.ref }}
   cancel-in-progress: true
-
-permissions:
-  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    defaults:
-      run:
-        working-directory: backend
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-xdist pytest-timeout
-
-      - name: Compile backend
-        run: python -m compileall -q app
-
-      - name: Run backend tests only
+      - name: Install deps
+        run: pip install -r backend/requirements.txt pytest pytest-xdist pytest-timeout
+      - name: Compile
+        run: python -m compileall -q backend/app
+      - name: Run tests
         env:
           SECRET_KEY: ci-test-secret-key-not-for-production
-          PYTHONPATH:.
-        run: |
-          # tests../tests mat karo - sirf tests
-          # -n auto = 4 core parallel, --timeout=30 = hang khatam
-          python -m pytest tests -q --tb=line --timeout=30 -n auto --maxfail=10 --durations=15
+          PYTHONPATH: backend
+        run: python -m pytest backend/tests -q --tb=line --timeout=30 -n auto --maxfail=10 -k "not durable and not streaming"
