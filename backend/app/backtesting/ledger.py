@@ -7,6 +7,8 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any, Iterable, Iterator, Mapping
 
+from app.backtesting.events import MarketEvent
+
 
 LEDGER_SCHEMA_VERSION = 2
 
@@ -160,6 +162,26 @@ class BacktestLedger:
     @staticmethod
     def _row_to_record(row: tuple[Any, ...]) -> LedgerRecord:
         return LedgerRecord(row[0], row[1], row[2], json.loads(row[3]))
+
+    def event_exists(self, run_id: str, event: MarketEvent) -> bool:
+        """Check one durable EVENT identity without materializing the event journal."""
+        self._require_run(run_id)
+        payload = json.dumps({
+            "instrument": event.instrument,
+            "event_type": event.event_type.value,
+            "sequence": event.sequence,
+            "source": event.source,
+        }, sort_keys=True)
+        row = self._db.execute(
+            """
+            SELECT 1 FROM records
+            WHERE run_id=? AND record_type='EVENT' AND timestamp_ns=?
+              AND payload_json=?
+            LIMIT 1
+            """,
+            (run_id, event.timestamp_ns, payload),
+        ).fetchone()
+        return row is not None
 
     def append(self, record: LedgerRecord) -> None:
         self._require_run(record.run_id)
