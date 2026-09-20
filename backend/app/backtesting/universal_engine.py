@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from app.backtesting.engine import EventContext, EventSignal, EventStrategy, _normalize_event_signal
-from app.backtesting.contracts import DataSourceProtocol, DepthExecutionModelProtocol, ExecutionModelProtocol, PortfolioProtocol, StrategyProtocol
+from app.backtesting.contracts import AtomicExecutionModelProtocol, DataSourceProtocol, DepthExecutionModelProtocol, ExecutionModelProtocol, MultiLegStrategyProtocol, PortfolioProtocol, StrategyProtocol
 from app.backtesting.clock import BacktestClock, ClockProtocol
 from app.backtesting.event_model import event_identity, event_order_key
 from app.backtesting.execution import ExecutionConfig, ExecutionSide, ExecutionSimulator, OrderBook, SimOrder
@@ -74,6 +74,77 @@ class UniversalEventBacktestEngine:
     def run_source(self, source: DataSourceProtocol, strategy: StrategyProtocol, *, start_ns: int | None = None, end_ns: int | None = None, price_field: str = "price", order_book_field: str | None = None) -> UniversalBacktestResult:
         """Run directly from a streaming DataSource without materializing its events."""
         return self.run(source.iter_events(start_ns=start_ns, end_ns=end_ns), strategy, price_field=price_field, order_book_field=order_book_field)
+
+    def run_multi_leg(self, events: Iterable[HistoricalRecord], strategy: MultiLegStrategyProtocol) -> UniversalBacktestResult:
+        """Run a strategy that returns a complete atomic depth-execution basket per event."""
+        if not isinstance(self.execution, AtomicExecutionModelProtocol):
+            raise TypeError("multi-leg execution requires an atomic execution model")
+        if not hasattr(self.portfolio, "apply_fills_atomic"):
+            raise TypeError("multi-leg execution requires atomic portfolio accounting")
+
+        previous_key: tuple[int, str, str, str, int] | None = None
+        seen_identities: set[object] = set()
+        snapshots: list[PortfolioSnapshot] = []
+        equity_curve: list[EquityPoint] = []
+        last_marks: dict[str, float] = {}
+
+        for record in events:
+            key = event_order_key(record)
+            identity = event_identity(record)
+            if identity in seen_identities:
+                raise ValueError("duplicate event identity")
+            if previous_key is not None and key <= previous_key:
+                raise ValueError("events must be strictly ordered by deterministic event order")
+            if not isinstance(record.timestamp_ns, int) or isinstance(record.timestamp_ns, bool) or record.timestamp_ns < 0:
+                raise ValueError("event timestamp_ns must be a non-negative integer")
+            if not isinstance(record.instrument, str) or not record.instrument.strip():
+                raise ValueError("event instrument is required")
+            if not isinstance(record.source, str) or not record.source.strip():
+                raise ValueError("event source is required")
+            if record.sequence is not None and (not isinstance(record.sequence, int) or isinstance(record.sequence, bool) or record.sequence < 0):
+                raise ValueError("event sequence must be a non-negative integer or None")
+            seen_identities.add(identity)
+            previous_key = key
+            self.clock.advance_to(record.timestamp_ns)
+
+            legs = strategy(EventContext(record.timestamp_ns, record.sequence, record.source, record.instrument, record.payload, record))
+            if legs is None:
+                legs = ()
+            legs = tuple(legs)
+            if not legs:
+                snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
+            else:
+                for order, _, timestamp_ns in legs:
+                    if timestamp_ns != record.timestamp_ns:
+                        raise ValueError("multi-leg order timestamps must match the dispatch event")
+                    last_marks[order.instrument] = float(order.limit_price) if order.limit_price is not None else last_marks.get(order.instrument, 0.0)
+                    if last_marks[order.instrument] <= 0:
+                        raise ValueError(f"missing positive mark for {order.instrument!r}")
+                result = self.execution.execute_many_atomic(legs)
+                if result.rejected:
+                    raise ValueError(result.reason or "atomic multi-leg execution rejected")
+                snapshot = self.portfolio.apply_fills_atomic(result.fills, last_marks)
+
+            snapshots.append(snapshot)
+            equity_curve.append(EquityPoint(record.timestamp_ns, snapshot.equity, snapshot.realized_pnl, snapshot.unrealized_pnl))
+
+        final_snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
+        stats: BacktestStatistics = calculate_statistics(equity_curve, self.portfolio.initial_cash)
+        return UniversalBacktestResult(
+            initial_capital=self.portfolio.initial_cash,
+            final_equity=final_snapshot.equity,
+            realized_pnl=final_snapshot.realized_pnl,
+            unrealized_pnl=final_snapshot.unrealized_pnl,
+            net_pnl=stats.net_pnl,
+            total_return=stats.total_return,
+            sharpe_ratio=stats.sharpe_ratio,
+            sortino_ratio=stats.sortino_ratio,
+            max_drawdown=stats.max_drawdown,
+            cagr=stats.cagr,
+            snapshots=tuple(snapshots),
+            equity_curve=tuple(equity_curve),
+            fill_count=len(self.portfolio.trades),
+        )
 
     def run(self, events: Iterable[HistoricalRecord], strategy: StrategyProtocol, *, price_field: str = "price", order_book_field: str | None = None) -> UniversalBacktestResult:
         if not isinstance(price_field, str) or not price_field.strip():
