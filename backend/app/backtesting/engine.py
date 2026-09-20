@@ -246,7 +246,12 @@ class BacktestEngine:
             if identity in seen:
                 raise ValueError("duplicate event identity")
             seen.add(identity)
-        records.sort(key=_event_order_key)
+        previous_key = None
+        for record in records:
+            key = _event_order_key(record)
+            if previous_key is not None and key <= previous_key:
+                raise ValueError("events must be strictly ordered by timestamp, sequence, and stream identity")
+            previous_key = key
         capital = self.config.initial_capital
         open_trade = None
         trades = []
