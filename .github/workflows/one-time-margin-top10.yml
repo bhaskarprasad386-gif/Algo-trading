@@ -16,23 +16,43 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
       - name: Install backend test dependencies
         working-directory: backend
         run: |
+          python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install pytest
+
       - name: Verify backend margin test
         working-directory: backend
         run: python -m pytest tests/test_monthly_results_routes_cash_future.py -q
+
       - name: Verify Android margin field and display
         run: |
           grep -q 'margin_required: Double = 0.0' mobile/android/app/src/main/java/com/algotrading/app/ApiService.kt
           grep -q 'Historical Margin' mobile/android/app/src/main/java/com/algotrading/app/FullFnoBacktestActivity.kt
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: '8.2'
+          gradle-version: "8.2"
+
       - name: Compile Android
         working-directory: mobile/android
         run: gradle :app:compileDebugKotlin --no-daemon
