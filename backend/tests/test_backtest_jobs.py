@@ -180,3 +180,32 @@ def test_single_symbol_worker_propagates_cancellation_into_backtest(monkeypatch)
         assert called["run"] is False and job is not None and job.status == "queued"
     finally:
         db.query(BacktestJob).filter(BacktestJob.job_id == job_id).delete(); db.commit(); db.close()
+
+
+def test_single_symbol_completion_cannot_overwrite_concurrent_cancellation(monkeypatch):
+    """A cancellation racing with finalization must remain the terminal state."""
+    Base.metadata.create_all(bind=engine); job_id = "test-job-cancel-completion-race"; db = SessionLocal()
+    try:
+        db.query(BacktestJob).filter(BacktestJob.job_id == job_id).delete(); db.commit()
+        db.add(BacktestJob(job_id=job_id, status="queued", symbol="TEST", contract_month="CURRENT", requested_days=1,
+                           progress_pct=0.0, symbols_processed=0, symbols_total=1, message="Queued",
+                           created_at=datetime.utcnow(), updated_at=datetime.utcnow())); db.commit()
+    finally:
+        db.close()
+    monkeypatch.setattr(backtest_jobs, "_is_cancelled", lambda _: False)
+    monkeypatch.setattr(backtest_jobs, "read_history", lambda *args: [object()])
+    def fake_run(*args, **kwargs):
+        cancel_db = SessionLocal()
+        try:
+            assert backtest_jobs.cancel_job(cancel_db, job_id) is True
+        finally:
+            cancel_db.close()
+        return {"status": "completed", "trade_count": 0}
+    monkeypatch.setattr(backtest_jobs, "run_backtest", fake_run)
+    backtest_jobs._run_job(job_id, "TEST", "CURRENT", 1, 0.0, 0.0, 0.0, 0.0, 30)
+    db = SessionLocal()
+    try:
+        job = backtest_jobs.get_job(db, job_id)
+        assert job is not None and job.status == "cancelled" and job.message == "Cancelled"
+    finally:
+        db.query(BacktestJob).filter(BacktestJob.job_id == job_id).delete(); db.commit(); db.close()
