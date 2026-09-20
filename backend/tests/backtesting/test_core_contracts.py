@@ -1,6 +1,6 @@
 from app.backtesting.contracts import ExecutionModelProtocol, PortfolioProtocol
 from app.backtesting.engine import EventSignal
-from app.backtesting.execution import ExecutionSide, SimFill
+from app.backtesting.execution import ExecutionConfig, SimFill
 from app.backtesting.historical_catalog import HistoricalRecord
 from app.backtesting.portfolio import Portfolio, PortfolioSnapshot
 from app.backtesting.universal_engine import UniversalEventBacktestEngine
@@ -92,8 +92,10 @@ def test_custom_execution_cannot_be_combined_with_execution_config():
     try:
         UniversalEventBacktestEngine(
             100_000.0,
-            execution_config=None,
+            execution_config=ExecutionConfig(fee_per_unit=1.0),
             execution=execution,
         )
-    except ValueError:
-        raise AssertionError("None execution_config should not conflict")
+    except ValueError as exc:
+        assert "custom execution model" in str(exc)
+    else:
+        raise AssertionError("expected custom execution configuration conflict")
