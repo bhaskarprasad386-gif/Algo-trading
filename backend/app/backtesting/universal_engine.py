@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from app.backtesting.engine import EventContext, EventSignal, EventStrategy, _normalize_event_signal
+from app.backtesting.contracts import ExecutionModelProtocol, PortfolioProtocol
 from app.backtesting.execution import ExecutionConfig, ExecutionSide, ExecutionSimulator, SimOrder
 from app.backtesting.portfolio import Portfolio, PortfolioSnapshot, RiskConfig
 from app.backtesting.historical_catalog import HistoricalRecord
@@ -53,11 +54,17 @@ class UniversalEventBacktestEngine:
         risk_config: RiskConfig | None = None,
         execution_config: ExecutionConfig | None = None,
         quantity: int = 1,
+        portfolio: PortfolioProtocol | None = None,
+        execution: ExecutionModelProtocol | None = None,
     ) -> None:
         if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
             raise ValueError("quantity must be a positive integer")
-        self.portfolio = Portfolio(initial_capital, risk_config)
-        self.execution = ExecutionSimulator(execution_config)
+        if portfolio is not None and (risk_config is not None or initial_capital != portfolio.initial_cash):
+            raise ValueError("initial_capital/risk_config cannot be combined with a custom portfolio")
+        if execution is not None and execution_config is not None:
+            raise ValueError("execution_config cannot be combined with a custom execution model")
+        self.portfolio = portfolio if portfolio is not None else Portfolio(initial_capital, risk_config)
+        self.execution = execution if execution is not None else ExecutionSimulator(execution_config)
         self.quantity = quantity
 
     def run(self, events: Iterable[HistoricalRecord], strategy: EventStrategy, *, price_field: str = "price") -> UniversalBacktestResult:
