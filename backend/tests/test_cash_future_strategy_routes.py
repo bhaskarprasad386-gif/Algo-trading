@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.backtesting.cash_future_strategy_routes import router
+from app.backtesting.ledger import BacktestLedger, LedgerRecord
 
 
 def payload(*, gap: float, timestamp: datetime, contract_month: str = "SEP"):
@@ -112,3 +113,39 @@ def test_strategy_run_route_returns_output_analysis():
     assert analysis["profit_factor"] is None
     assert analysis["monthly_pnl"] == {"2026-09": 600.0}
     assert analysis["yearly_pnl"] == {"2026": 600.0}
+
+
+def test_strategy_run_result_page_returns_bounded_records_and_cursor():
+    ledger = BacktestLedger()
+    ledger.start_run("page-route", "strategy", "1", 100_000.0)
+    for index in range(3):
+        ledger.append(LedgerRecord("page-route", "equity", index, {"value": index}))
+
+    from app.backtesting.cash_future_strategy_routes import _result_page
+
+    first = _result_page(ledger, "page-route", "equity", 2, None)
+    assert [record["value"] for record in first["data"]] == [0, 1]
+    assert first["next_cursor"] is not None
+    assert first["total"] == 3
+
+    second = _result_page(
+        ledger, "page-route", "equity", 2, first["next_cursor"]
+    )
+    assert [record["value"] for record in second["data"]] == [2]
+    assert second["next_cursor"] is None
+    ledger.close()
+
+
+def test_strategy_run_result_page_rejects_unknown_run():
+    ledger = BacktestLedger()
+    from app.backtesting.cash_future_strategy_routes import _result_page
+
+    try:
+        try:
+            _result_page(ledger, "missing", "equity", 10, None)
+        except ValueError as exc:
+            assert "unknown run_id" in str(exc)
+        else:
+            raise AssertionError("unknown run must fail")
+    finally:
+        ledger.close()
