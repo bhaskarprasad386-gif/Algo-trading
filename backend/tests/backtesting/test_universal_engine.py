@@ -119,3 +119,25 @@ def test_universal_engine_routes_order_to_depth_execution():
     assert result.fill_count == 1
     assert engine.portfolio.positions["AAA"].quantity == 2
     assert engine.portfolio.positions["AAA"].average_price == 101.0
+
+
+def test_universal_engine_executes_multi_leg_basket_atomically():
+    from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+
+    books = {
+        "AAA": OrderBook(bids=(DepthLevel(99.0, 10),), asks=(DepthLevel(101.0, 10),)),
+        "BBB": OrderBook(bids=(DepthLevel(199.0, 10),), asks=(DepthLevel(201.0, 10),)),
+    }
+
+    def strategy(ctx):
+        return (
+            SimOrder("leg-a", "AAA", ExecutionSide.BUY, 1, OrderType.MARKET, submitted_at_ns=ctx.timestamp_ns),
+            SimOrder("leg-b", "BBB", ExecutionSide.SELL, 1, OrderType.MARKET, submitted_at_ns=ctx.timestamp_ns),
+        )
+
+    engine = UniversalEventBacktestEngine(100_000.0)
+    result = engine.run_multi_leg([_event(10, "AAA", 100.0, 1)], lambda ctx: tuple((order, books[order.instrument], ctx.timestamp_ns) for order in strategy(ctx)))
+
+    assert result.fill_count == 2
+    assert engine.portfolio.positions["AAA"].quantity == 1
+    assert engine.portfolio.positions["BBB"].quantity == -1
