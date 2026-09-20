@@ -18,7 +18,8 @@ from app.backtesting.event_model import event_identity, event_order_key
 from app.backtesting.execution import ExecutionConfig, ExecutionSide, ExecutionSimulator, OrderBook, SimOrder
 from app.backtesting.portfolio import Portfolio, PortfolioSnapshot, RiskConfig
 from app.backtesting.historical_catalog import HistoricalRecord
-from app.backtesting.statistics import BacktestStatistics, EquityPoint, calculate_statistics
+from app.backtesting.result_ledger import EquityPoint as LedgerEquityPoint
+from app.backtesting.statistics import BacktestStatistics, EquityPoint, StreamingStatisticsAccumulator
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,8 @@ class UniversalEventBacktestEngine:
         portfolio: PortfolioProtocol | None = None,
         execution: ExecutionModelProtocol | None = None,
         clock: ClockProtocol | None = None,
+        result_writer=None,
+        retain_history: bool = True,
     ) -> None:
         if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
             raise ValueError("quantity must be a positive integer")
@@ -66,10 +69,16 @@ class UniversalEventBacktestEngine:
             raise ValueError("initial_capital/risk_config cannot be combined with a custom portfolio")
         if execution is not None and execution_config is not None:
             raise ValueError("execution_config cannot be combined with a custom execution model")
+        if not isinstance(retain_history, bool):
+            raise ValueError("retain_history must be a boolean")
+        if not retain_history and result_writer is None:
+            raise ValueError("retain_history=False requires a result_writer")
         self.portfolio = portfolio if portfolio is not None else Portfolio(initial_capital, risk_config)
         self.execution = execution if execution is not None else ExecutionSimulator(execution_config)
         self.quantity = quantity
         self.clock = clock if clock is not None else BacktestClock()
+        self.result_writer = result_writer
+        self.retain_history = retain_history
 
     def run_source(self, source: DataSourceProtocol, strategy: StrategyProtocol, *, start_ns: int | None = None, end_ns: int | None = None, price_field: str = "price", order_book_field: str | None = None) -> UniversalBacktestResult:
         """Run directly from a streaming DataSource without materializing its events."""
@@ -87,6 +96,9 @@ class UniversalEventBacktestEngine:
         snapshots: list[PortfolioSnapshot] = []
         equity_curve: list[EquityPoint] = []
         last_marks: dict[str, float] = {}
+        accumulator = StreamingStatisticsAccumulator(self.portfolio.initial_cash)
+        peak_equity = self.portfolio.initial_cash
+        replay_sequence = 0
 
         for record in events:
             if not isinstance(record.timestamp_ns, int) or isinstance(record.timestamp_ns, bool) or record.timestamp_ns < 0:
@@ -126,11 +138,14 @@ class UniversalEventBacktestEngine:
                     raise ValueError(result.reason or "atomic multi-leg execution rejected")
                 snapshot = self.portfolio.apply_fills_atomic(result.fills, last_marks)
 
-            snapshots.append(snapshot)
-            equity_curve.append(EquityPoint(record.timestamp_ns, snapshot.equity, snapshot.realized_pnl, snapshot.unrealized_pnl))
+            peak_equity = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
+            replay_sequence += 1
+            if self.retain_history:
+                snapshots.append(snapshot)
+                equity_curve.append(EquityPoint(record.timestamp_ns, snapshot.equity, snapshot.realized_pnl, snapshot.unrealized_pnl))
 
         final_snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
-        stats: BacktestStatistics = calculate_statistics(equity_curve, self.portfolio.initial_cash)
+        stats: BacktestStatistics = accumulator.finalize()
         return UniversalBacktestResult(
             initial_capital=self.portfolio.initial_cash,
             final_equity=final_snapshot.equity,
