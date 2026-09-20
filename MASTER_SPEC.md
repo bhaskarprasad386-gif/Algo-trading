@@ -2,8 +2,8 @@
 
 ## Project Status
 
-Current Phase: FOUNDATION
-Current Step: 1A — Master Specification
+Current Phase: ARCHITECTURE / BACKTESTING REFACTOR
+Current Step: Architecture audit and controlled refactor
 Scanner Development: NOT STARTED
 Live Order Execution: DISABLED
 
@@ -109,11 +109,13 @@ Android      Website
 Same Account
 Same Data
 
+The application must remain portable across low-cost/free and later paid infrastructure.
+
 ---
 
 ## 5. Development Order
 
-The project must be developed in this order:
+The original platform roadmap remains, but the current priority is the architecture/backtesting refactor before further feature expansion.
 
 1. Foundation
 2. Backend Core
@@ -138,6 +140,8 @@ The project must be developed in this order:
 21. Optimization
 22. Final Testing
 
+Live execution remains disabled.
+
 ---
 
 ## 6. Scanner Rule
@@ -147,18 +151,6 @@ Scanner development must NOT start before the base platform is stable.
 Every scanner must be an independent module.
 
 Adding or modifying one scanner should not unnecessarily modify other scanners or the core.
-
-Future examples:
-
-* RSI Scanner
-* Future vs Spot
-* Put-Call Parity
-* Cash Arbitrage
-* Breakout
-* Volume Spike
-* Wyckoff
-* Divergence
-* Custom scanners
 
 ---
 
@@ -195,16 +187,6 @@ The graph should be generated from the same calculation engine used by:
 * Paper Trading
 * Algo Trading
 
-Possible outputs:
-
-* Profit/Loss by underlying price
-* Breakeven
-* Maximum profit
-* Maximum loss
-* Entry point
-* Exit point
-* Risk/reward information
-
 The graph must be extensible for future strategies.
 
 ---
@@ -236,19 +218,9 @@ The system must support:
 * Duplicate protection
 * Error recovery
 
-### Historical-to-Live Startup Rule
-
-When the application/server starts:
-
-1. Check the exchange market calendar.
-2. Synchronize missing historical market data first.
-3. Validate and merge historical data without duplicates.
-4. Start the live WebSocket only when the market is open.
-5. Feed live ticks into the same processing/storage pipeline used by historical data.
-
-On weekends, exchange holidays, or outside market hours, live WebSocket/live-stream processing must remain OFF. The implementation must use an exchange trading calendar rather than relying only on Saturday/Sunday rules.
-
 Historical and live data must support seamless merging and recovery after downtime.
+
+The exchange calendar, not only weekday rules, must control market-open/live-stream behavior.
 
 ---
 
@@ -256,65 +228,28 @@ Historical and live data must support seamless merging and recovery after downti
 
 The system should minimize unnecessary latency.
 
-### Latency Target
-
-Target **10–15 ms for the application's own system-side processing path** where technically practical. This is a target, not a guarantee of end-to-end broker/network latency.
-
-Architecture:
-
-WebSocket Tick
-|
-Tick Receiver
-|
-In-Memory Processing
-|
-Rust High-Speed Core
-|
-Backend WebSocket
-|
-Android / Website
+Target 10–15 ms for the application's own system-side processing path where technically practical. This is a target, not an end-to-end broker/network guarantee.
 
 Performance rules:
 
-* Rust for latency-sensitive/hot-path calculations
+* Rust for latency-sensitive/hot-path calculations where justified
 * Async I/O
 * In-memory state and caching where appropriate
 * Batch processing where it reduces overhead
 * Avoid unnecessary database writes on every tick
 * Background workers for heavy/non-latency-critical work
 * Heavy processing must not run on the Android UI thread
-* Measure actual latency at each pipeline stage instead of assuming it
+* Measure actual latency at each pipeline stage
 
-The system should expose measurable timestamps/metrics for tick receipt, processing completion, and client delivery so bottlenecks can be identified.
-
-Actual broker, Internet, server, and device latency cannot be guaranteed to remain within 10–15 ms.
-
-### Server Portability
-
-The application must be deployable on a free/low-cost server initially and movable to a paid VPS/cloud/high-performance server later without redesigning the application architecture.
-
-Use portable deployment/configuration (for example, containerized services where appropriate), environment-based secrets, and infrastructure-independent application modules.
-
-Moving to a paid server should primarily require infrastructure/configuration changes rather than rewriting the core application.
+The architecture must be portable between low-cost and higher-performance servers without requiring a core rewrite.
 
 ---
 
 ## 11. Android Performance
 
-Android must remain responsive even when many instruments are being monitored.
+Android must remain responsive even when many instruments are monitored.
 
-Rules:
-
-* Heavy processing on backend
-* Efficient WebSocket updates
-* Virtualized lists
-* Controlled chart data
-* Memory management
-* Reconnect handling
-* Graceful error handling
-* Crash recovery
-
-The application must not freeze because of market-data processing.
+Heavy processing belongs on the backend.
 
 ---
 
@@ -322,7 +257,7 @@ The application must not freeze because of market-data processing.
 
 Initial database: SQLite.
 
-Expected entities:
+Expected entities include:
 
 * Users
 * Sessions
@@ -342,12 +277,7 @@ Expected entities:
 * P&L
 * System logs
 
-Data must support:
-
-* Duplicate prevention
-* Indexing
-* Recovery
-* Historical/live merge
+Data must support duplicate prevention, indexing, recovery, and historical/live merge.
 
 ---
 
@@ -355,204 +285,31 @@ Data must support:
 
 Authentication must be shared by Android and Website.
 
-Security rules:
-
-* No API secrets in source code
-* Environment-based secrets
-* Session management
-* Access control
-* Secure authentication
+No API secrets in source code.
 
 ---
 
 ## 14. Alerts
 
-Future architecture:
-
-Signal
-|
-Alert Engine
-|
-Firebase
-|
-Android Notification
+Signal -> Alert Engine -> Firebase -> Android Notification.
 
 Alerts must also appear in the application and website feed.
 
 ---
 
-## 15. Backtesting
+# 15. LOCKED ARCHITECTURE — FUTURE-PROOF BACKTESTING + FAST TESTING
 
-Backtesting must support:
+This section is the current source of truth for backtesting architecture and supersedes earlier conflicting layouts.
 
-* Historical data
-* Entry
-* Exit
-* Stop loss
-* Target
-* Brokerage
-* Slippage
-* P&L
-* Win rate
-* Drawdown
-* Trade list
-* Equity curve
-* Spread time-series chart
-* Spread maximum/minimum and timestamps
-* Spread opportunity duration
-* Entry/exit markers
-* Bid/ask and liquidity validation
-* Complete raw trade-by-trade data
-
-Backtesting must use the same strategy/calculation logic as live and paper-trading paths wherever practical, so behavior does not diverge between modes.
-
-Backtesting must not place real orders.
-
----
-
-## 16. Paper Trading
-
-Paper trading must be completed and tested before live orders.
-
-Flow:
-
-Signal
-|
-Risk Engine
-|
-Paper Order
-|
-Virtual Position
-|
-Virtual P&L
-
----
-
-## 17. Risk Engine
-
-The system must support:
-
-* Maximum orders per day
-* Maximum quantity
-* Maximum position
-* Maximum loss
-* Duplicate-order protection
-* Strategy enable/disable
-* Market-hour restrictions
-* Kill switch
-* Emergency stop
-* Paper/Live separation
-
----
-
-## 18. Live Order Engine
-
-Live orders must remain disabled during development.
-
-Final architecture:
-
-Strategy
-|
-Signal
-|
-Risk Engine
-|
-Order Manager
-|
-Angel One API
-|
-Order Status
-|
-Position Manager
-|
-P&L
-
-All orders must be logged.
-
----
-
-## 19. Broker Compliance
-
-Before live trading:
-
-* SmartAPI requirements must be verified
-* Static IP requirements must be verified
-* Algo-ID requirements must be verified
-* API limits must be verified
-* Order restrictions must be verified
-* Current broker/regulatory requirements must be verified
-
-No assumption should be treated as confirmed broker policy.
-
----
-
-## 20. Testing Rule
-
-Every module follows:
-
-Build
-|
-Run
-|
-Test
-|
-Stress Test
-|
-Fix
-|
-Verify
-|
-Git Commit
-|
-Next Step
-
-A broken module must not be ignored while building the next dependent module.
-
----
-
-## 21. Save & Resume Rule
-
-After every completed step:
-
-1. Code is saved
-2. Tests are performed
-3. Git commit is created
-4. CHANGELOG is updated
-5. Project status is updated
-6. Next step is recorded
-
-Completed work must not be unnecessarily rewritten.
-
-The project must always be resumable from the last verified checkpoint.
-
----
-
-## 22. No Giant Code Rule
-
-Do not create the entire platform as one huge file.
-
-Use independent modules.
-
-Small working modules must be tested before adding the next module.
-
-
----
-
-## 25. LOCKED ARCHITECTURE DIRECTION — FUTURE-PROOF BACKTESTING & FAST TESTING
-
-This section supersedes any earlier backtesting/testing layout that conflicts with it.
-
-### 25.1 Architectural Goal
+## 15.1 Architectural Goal
 
 The platform must support current and future backtesting types without creating a separate core engine for each strategy family.
 
-The Universal Backtest Engine must remain generic and capability-driven.
+Adding a new backtesting type should normally require a new strategy/plugin, data capability, instrument capability, or execution model—not cloning or repeatedly modifying the Universal Backtest Engine.
 
-Adding a new backtesting type should normally require a new strategy/plugin, data capability, or execution model rather than modifying the core engine repeatedly.
+## 15.2 Universal Core
 
-### 25.2 Universal Core
-
-The target core flow is:
+Target flow:
 
 Event/Data Source
 |
@@ -574,13 +331,22 @@ Result / Journal
 |
 Result Storage
 
-The core must be deterministic, isolated per run, streaming-capable, and independent of network/database infrastructure wherever practical.
+The core must be:
 
-### 25.3 Event-Driven and Time Model
+* generic
+* deterministic
+* isolated per run
+* streaming-capable
+* infrastructure-independent wherever practical
+* reusable by backtest and paper trading wherever practical
 
-The engine must not assume candle-only or fixed-interval data.
+The core must not require network, broker API, or persistent database I/O for ordinary calculations.
 
-It must be capable of handling:
+## 15.3 Event + Time Model
+
+The engine must be event-driven and must not assume candle-only or fixed-interval data.
+
+Supported event families must be extensible to:
 
 * Tick
 * Trade
@@ -591,38 +357,45 @@ It must be capable of handling:
 * News / Event
 * Custom events
 
-Timestamp precision must support high-resolution strategies, including millisecond and microsecond data where the source data provides it.
+Timestamp precision must preserve source precision and support millisecond/microsecond strategies where the source provides that precision.
 
-Clock implementations must be separated:
+Separate clocks:
 
 * Backtest Clock
 * Paper Clock
 * Live Clock
 
-Backtests must not depend on the machine's wall clock.
+Backtests must not depend on machine wall-clock time.
 
-### 25.4 Data Architecture
+## 15.4 Data Architecture
 
-Data access must be abstracted behind DataSource interfaces/capabilities.
+Use a DataSource abstraction/capability layer.
 
 Target implementations:
 
-* In-memory data source for fast tests
-* Small deterministic fixture data source
-* SQLite data source for persistence/integration tests
-* Historical/streaming data source for large backtests
+* In-memory source — fast tests
+* Small deterministic fixture source — component tests
+* SQLite source — persistence/integration
+* Historical/streaming source — large backtests
 
-Raw, normalized, and derived data must have clear boundaries.
+Data flow:
+
+Raw Data
+-> Normalized Data
+-> Derived Data
+-> DataSource
+-> Event Stream
+-> Engine
+
+Raw historical data must not be overwritten by continuous/synthetic/derived data.
 
 Large historical datasets must be streamable and must not be unnecessarily materialized into RAM.
 
-Raw historical data must be retained rather than overwritten by derived continuous/synthetic data.
+Caching may accelerate repeated access but must remain outside the core engine contract.
 
-### 25.5 Instrument and Multi-Leg Model
+## 15.5 Instrument + Multi-Leg Model
 
-The engine must not be restricted to a single symbol/price stream.
-
-It must support:
+The engine must support:
 
 * Equity
 * Index
@@ -631,15 +404,18 @@ It must support:
 * Synthetic instruments
 * Multi-instrument strategies
 * Multi-leg positions/orders
-* Spreads and arbitrage structures
+* Spreads
+* Arbitrage structures
 
-Multi-leg operations must be a first-class capability so future arbitrage/options/spread strategies do not require a separate engine.
+Multi-leg operations are a first-class capability.
 
-### 25.6 Execution Model
+Future arbitrage/options/spread strategies must not require separate engines.
+
+## 15.6 Execution Model
 
 Execution must be pluggable.
 
-Target capabilities include:
+Target capabilities:
 
 * Simple deterministic fills
 * Brokerage/fees
@@ -650,13 +426,17 @@ Target capabilities include:
 * Market impact
 * Custom execution models
 
-Fast tests must use lightweight deterministic execution. Heavy realism must remain available to heavy backtests.
+Fast tests use lightweight deterministic execution.
 
-### 25.7 Portfolio and Accounting
+Heavy realistic backtests may use richer execution models.
+
+Paper execution must be a separate adapter while sharing common order/fill contracts.
+
+## 15.7 Portfolio + Accounting
 
 Portfolio/accounting must be independent from broker/network/database infrastructure.
 
-It must handle at minimum:
+Minimum support:
 
 * Cash
 * Positions
@@ -666,11 +446,11 @@ It must handle at minimum:
 * Equity
 * Margin where applicable
 
-Accounting/statistics must be reusable by backtest and paper-trading paths wherever practical.
+The same accounting contracts should be reusable by backtest and paper trading wherever practical.
 
-### 25.8 Run Context and Isolation
+## 15.8 Run Context + Isolation
 
-Each backtest/paper run must have an isolated Run Context containing the run-specific:
+Every backtest/paper run gets an isolated RunContext containing:
 
 * Run ID
 * Configuration
@@ -686,24 +466,26 @@ Avoid mutable global state.
 
 Configuration must not be silently mutated during a run.
 
-Deterministic seeded randomness must be available for execution models that require randomness.
+Randomized execution models must support deterministic seeds for reproducible tests.
 
-### 25.9 Results, Journal, Checkpoint and Resume
+Run isolation must be strong enough to support safe future parallel execution.
 
-The core must produce structured results without requiring persistent storage for every fast test.
+## 15.9 Results + Journal + Checkpoint
 
-Target result stores:
+The core must return structured results without requiring persistent storage for fast tests.
+
+Target stores:
 
 * In-memory result store
 * Persistent result store
 
-Large/long-running backtests must support checkpoint/resume where technically appropriate.
+Large/long-running backtests should support checkpoint/resume where technically appropriate.
 
-Result/journal persistence must be separated from the core calculation path so fast tests do not pay unnecessary I/O cost.
+Result/journal persistence must be outside the hot calculation path so fast tests do not pay unnecessary I/O cost.
 
-### 25.10 Strategy / Backtesting Extensibility
+## 15.10 Strategy/Backtest Extensibility
 
-The Universal Engine must be reusable for:
+The same Universal Engine must be capable of running:
 
 * Cash-Future
 * Futures
@@ -716,11 +498,11 @@ The Universal Engine must be reusable for:
 * OI/event-driven strategies
 * Future/custom strategies
 
-A new strategy family must not require cloning the Universal Engine.
+A new strategy family must not require cloning the engine.
 
-### 25.11 Backtest and Paper-Trading Reuse
+Before adding a new family, verify whether existing event, data, instrument, multi-leg, execution, portfolio, and strategy contracts can represent it. Add a new core capability only when source/test evidence shows the existing abstractions cannot correctly represent the requirement.
 
-Backtesting and paper trading should reuse the same strategy/calculation/portfolio contracts wherever practical.
+## 15.11 Backtest + Paper Trading Reuse
 
 Conceptual flow:
 
@@ -734,11 +516,11 @@ Same Strategy/Core
 
 Live order execution remains disabled until separately authorized and verified.
 
-### 25.12 Test Architecture
+## 15.12 Test Architecture
 
-Testing must be split by purpose without reducing total correctness coverage.
+Testing is split by purpose without reducing total correctness coverage.
 
-#### Fast CI
+### Fast CI
 
 Use:
 
@@ -751,9 +533,11 @@ Use:
 * No large historical datasets
 * No unnecessary persistent database I/O
 
-Fast tests must exercise the real core/Universal Engine where practical; they must not become a completely separate fake implementation.
+Fast tests must exercise the real core/Universal Engine wherever practical.
 
-#### Integration CI
+Fast tests must not become a completely separate fake implementation.
+
+### Integration CI
 
 Use controlled datasets to verify:
 
@@ -765,7 +549,7 @@ Use controlled datasets to verify:
 * Broker/API boundaries
 * Persistent result/journal behavior
 
-#### Heavy Backtesting CI
+### Heavy Backtesting CI
 
 Use large or realistic datasets for:
 
@@ -785,21 +569,28 @@ Use large or realistic datasets for:
 
 Heavy tests must not be deleted, silently skipped, or hidden merely to make normal CI faster.
 
-### 25.13 CI Execution Model
+## 15.13 CI Execution Model
 
 Target GitHub Actions layout:
 
-* Fast CI — normal push/PR feedback
-* Integration CI — controlled integration verification
-* Heavy Backtesting CI — long-running/full backtest verification
+Fast CI
+-> normal push/PR feedback
 
-Parallelization must be introduced only after test/run isolation is verified. Do not blindly introduce parallel workers where SQLite, files, global state, ordering, or shared resources can cause false failures.
+Integration CI
+-> controlled integration verification
 
-### 25.14 Performance Principle
+Heavy Backtesting CI
+-> long-running/full backtest verification
 
-The objective is not to make computationally heavy backtests artificially short.
+The fast workflow must remain a meaningful correctness gate, not merely a compile check.
 
-The objective is to prevent small correctness tests from paying the cost of:
+Parallelization is allowed only after run/test isolation is verified. Do not blindly parallelize tests sharing SQLite, files, global state, ordering, ports, or other mutable resources.
+
+## 15.14 Performance Principle
+
+The goal is not to make computationally heavy backtests artificially short.
+
+The goal is to prevent small correctness tests from paying the cost of:
 
 * large data preparation
 * historical materialization
@@ -808,38 +599,40 @@ The objective is to prevent small correctness tests from paying the cost of:
 * heavy execution simulation
 * unnecessary persistence
 
-Runtime must be measured before and after architectural changes.
+Runtime must be measured before and after changes.
 
-### 25.15 Refactoring Rules
+## 15.15 Refactoring Rules
 
 Do not rewrite the platform wholesale.
 
-For each architectural change:
+For every architectural change:
 
-1. Inspect current source and tests.
+1. Inspect current source and relevant tests.
 2. Identify the exact boundary/coupling problem.
 3. Preserve correct existing behavior.
 4. Make the smallest safe refactor.
 5. Run relevant tests.
 6. Run broader verification.
-7. Commit only verified work.
-8. Update project checkpoint/changelog.
+7. Commit verified work.
+8. Update checkpoint/changelog.
 
-Classification remains:
+Classification:
 
-* Verified bug/problem -> fix
-* Verified robustness/functional problem -> fix
-* Uncertain -> verify before changing
-* Correct -> leave untouched
+* Verified bug/problem -> FIX
+* Verified robustness/functional problem -> FIX
+* Uncertain -> VERIFY first
+* Correct -> untouched
 
-### 25.16 Locked Implementation Order
+A pytest failure is never dismissed merely because production code appears reasonable. Investigate whether the root cause is production code, test, fixture/data, configuration/environment, dependency/import, or API/contract mismatch, then resolve the verified cause.
 
-The architecture refactor and test-speed work must follow this order:
+## 15.16 Locked Implementation Order
+
+The architecture/backtesting/test-speed work must follow this exact order:
 
 1. Baseline/current-system freeze
-2. Current architecture and dependency audit
+2. Current architecture + dependency audit
 3. Core contracts/boundaries
-4. Event and time model
+4. Event + time model
 5. Data architecture
 6. Execution architecture
 7. Portfolio/accounting
@@ -851,70 +644,185 @@ The architecture refactor and test-speed work must follow this order:
 13. Heavy backtest suite
 14. CI workflow separation
 15. Safe performance optimization/parallelization
-16. Full verification and runtime comparison
+16. Full verification + runtime comparison
 
-No implementation step should be skipped merely because a later step appears easier.
-
-### 25.17 Future-Backtesting Compatibility Rule
-
-The architecture must be evaluated against future unknown strategies, not only today's Cash-Future/Arbitrage tests.
-
-Before adding a major new backtesting family, verify whether it can be expressed using existing:
-
-* Event types
-* DataSource capabilities
-* Instrument model
-* Multi-leg model
-* Execution model
-* Portfolio/accounting contracts
-* Strategy interface
-
-Only add a new core capability when source/test evidence shows an existing abstraction cannot correctly represent the requirement.
+No later implementation step should be used to bypass an unresolved earlier boundary problem.
 
 ---
 
-## 23. Current Status
+# 16. Paper Trading
+
+Paper trading must be completed and tested before live orders.
+
+Flow:
+
+Signal
+|
+Risk Engine
+|
+Paper Order
+|
+Virtual Position
+|
+Virtual P&L
+
+Paper trading should reuse the same strategy, order, fill, portfolio, accounting, and timing contracts as backtesting wherever practical.
+
+---
+
+# 17. Risk Engine
+
+The system must support:
+
+* Maximum orders per day
+* Maximum quantity
+* Maximum position
+* Maximum loss
+* Duplicate-order protection
+* Strategy enable/disable
+* Market-hour restrictions
+* Kill switch
+* Emergency stop
+* Paper/Live separation
+
+---
+
+# 18. Live Order Engine
+
+Live orders remain disabled during development.
+
+Future flow:
+
+Strategy
+|
+Signal
+|
+Risk Engine
+|
+Order Manager
+|
+Broker API
+|
+Order Status
+|
+Position Manager
+|
+P&L
+
+All orders must be logged.
+
+---
+
+# 19. Broker Compliance
+
+Before live trading:
+
+* SmartAPI requirements must be verified
+* Static IP requirements must be verified
+* Algo-ID requirements must be verified
+* API limits must be verified
+* Order restrictions must be verified
+* Current broker/regulatory requirements must be verified
+
+No assumption is treated as confirmed broker policy.
+
+---
+
+# 20. Testing Rule
+
+Every module follows:
+
+Build
+|
+Run
+|
+Test
+|
+Stress Test where appropriate
+|
+Fix
+|
+Verify
+|
+Git Commit
+|
+Checkpoint
+|
+Next Step
+
+A broken module must not be ignored while building a dependent module.
+
+---
+
+# 21. Save + Resume Rule
+
+After every completed step:
+
+1. Code is saved
+2. Relevant tests are performed
+3. Git commit is created
+4. CHANGELOG is updated
+5. Project status/checkpoint is updated
+6. Next step is recorded
+
+Completed work must not be unnecessarily rewritten.
+
+The project must always be resumable from the last verified checkpoint.
+
+---
+
+# 22. No Giant Code Rule
+
+Do not create the entire platform as one huge file.
+
+Use independent modules.
+
+Small working modules must be tested before adding the next module.
+
+---
+
+# 23. Current Status
 
 Foundation: IN PROGRESS
 
-Master Specification: CREATED
+Architecture Direction: LOCKED
 
-Backend: NOT STARTED
+Backtesting Architecture: LOCKED FOR CONTROLLED REFACTOR
 
-Database: NOT STARTED
-
-Angel One: NOT STARTED
-
-WebSocket: NOT STARTED
-
-Android: NOT STARTED
-
-Website: NOT STARTED
-
-Charts: NOT STARTED
-
-Alerts: NOT STARTED
-
-Backtesting: NOT STARTED
-
-Paper Trading: NOT STARTED
-
-Risk Engine: NOT STARTED
-
-Order Engine: NOT STARTED
-
-Strategy Builder: NOT STARTED
+Fast/Integration/Heavy Test Separation: PLANNED
 
 Scanner Framework: NOT STARTED
 
-Scanners: NOT STARTED
-
 Live Algo: DISABLED
+
+Current CI timeout: 90 minutes while baseline/full-suite behavior is being measured
 
 ---
 
-## 24. Current Next Step
+# 24. Current Next Step
 
-STEP 1B — Project Folder Structure
+STEP 1 — BASELINE / CURRENT ARCHITECTURE AUDIT
 
-Do not start scanner development until the foundation is completed and verified.
+Do not start the refactor by guessing.
+
+First inspect current main, source dependencies, test dependencies, runtime-heavy paths, database/network usage, global state, and existing backtesting boundaries.
+
+Then produce the exact KEEP / MOVE / REFACTOR / ADD map.
+
+---
+
+## 25. Permanent Source-of-Truth Rule
+
+MASTER_SPEC.md is the canonical architecture/specification reference for this project.
+
+When starting work in a new chat/tab:
+
+1. Read MASTER_SPEC.md from GitHub main.
+2. Read the current checkpoint/status.
+3. Verify the latest relevant commits.
+4. Inspect current source/tests before making assumptions.
+5. Continue from the recorded next step.
+6. Do not replace locked architecture with a newly invented design without explicit project-level revision.
+
+GitHub main is the source of truth for implemented code and this specification is the source of truth for the locked architecture direction.
+
