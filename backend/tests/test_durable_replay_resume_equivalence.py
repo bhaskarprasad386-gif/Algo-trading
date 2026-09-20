@@ -168,20 +168,20 @@ def test_resume_replays_journaled_event_when_checkpoint_commit_was_interrupted(t
     strategy = Strategy()
     durable.start_run(strategy, 10_000.0, data_source_fingerprint="events-v1")
 
-    original_checkpoint = ledger.checkpoint
+    original_checkpoint = ledger.append_and_checkpoint
     calls = 0
 
-    def crash_before_second_checkpoint(checkpoint):
+    def crash_before_second_checkpoint(records, checkpoint):
         nonlocal calls
         calls += 1
         if calls == 2:
             raise RuntimeError("simulated crash before checkpoint commit")
-        return original_checkpoint(checkpoint)
+        return original_checkpoint(records, checkpoint)
 
-    ledger.checkpoint = crash_before_second_checkpoint
+    ledger.append_and_checkpoint = crash_before_second_checkpoint
     with pytest.raises(RuntimeError, match="simulated crash before checkpoint commit"):
         durable.run(events, strategy, data_source_fingerprint="events-v1")
-    ledger.checkpoint = original_checkpoint
+    ledger.append_and_checkpoint = original_checkpoint
 
     checkpoint = ledger.load_checkpoint("atomicity")
     assert checkpoint is not None and checkpoint.state["source_cursor"] == 1
