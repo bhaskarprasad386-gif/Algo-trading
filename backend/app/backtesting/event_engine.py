@@ -234,6 +234,8 @@ class EventBacktestEngine:
         lifecycle = self._order_lifecycles.get(order_id); old = self._open_orders.get(order_id)
         if lifecycle is None or old is None: raise KeyError(f"open order not found: {order_id}")
         if replacement.order_id == order_id: raise ValueError("replacement must use a new order_id")
+        if replacement.order_id in self._order_lifecycles:
+            raise ValueError("replacement order_id is already in use")
         if lifecycle.state.status not in {OrderStatus.ACCEPTED, OrderStatus.PARTIALLY_FILLED}:
             raise ValueError("only open orders can be replaced")
         effective = self._submit_effective_order(replacement, MarketEvent(timestamp_ns, replacement.instrument, EventType.CUSTOM, {}, None, None))
