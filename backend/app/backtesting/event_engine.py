@@ -234,7 +234,13 @@ class EventBacktestEngine:
         lifecycle = self._order_lifecycles.get(order_id); old = self._open_orders.get(order_id)
         if lifecycle is None or old is None: raise KeyError(f"open order not found: {order_id}")
         if replacement.order_id == order_id: raise ValueError("replacement must use a new order_id")
+        if lifecycle.state.status not in {OrderStatus.ACCEPTED, OrderStatus.PARTIALLY_FILLED}:
+            raise ValueError("only open orders can be replaced")
         effective = self._submit_effective_order(replacement, MarketEvent(timestamp_ns, replacement.instrument, EventType.CUSTOM, {}, None, None))
+        if effective.instrument != old.instrument or effective.side != old.side:
+            raise ValueError("replacement must keep instrument and side")
+        if effective.submitted_at_ns < timestamp_ns:
+            raise ValueError("replacement submission cannot precede replacement timestamp")
         queue = effective.queue_ahead_quantity if queue_ahead_quantity is None else queue_ahead_quantity
         if queue < 0: raise ValueError("queue_ahead_quantity cannot be negative")
         if self.portfolio is not None and not order_reduces_position_risk(self.portfolio, effective):
