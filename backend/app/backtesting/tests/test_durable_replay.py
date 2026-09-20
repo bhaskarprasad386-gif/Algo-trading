@@ -1,6 +1,6 @@
 from app.backtesting.durable_replay import DurableEventBacktestEngine
 from app.backtesting.event_engine import EventBacktestEngine
-from app.backtesting.events import EventType, MarketEvent
+from app.backtesting.events import EventReplayConfig, EventType, MarketEvent
 from app.backtesting.ledger import BacktestLedger
 from app.backtesting.execution import ExecutionSimulator, ExecutionSide, SimOrder
 from app.backtesting.portfolio import Portfolio
@@ -21,6 +21,30 @@ def test_durable_replay_journals_events_decisions_and_checkpoint():
     assert checkpoint is not None and checkpoint.timestamp_ns == 10
     assert checkpoint.state["fills"] == 1 and checkpoint.state["strategy_state"] == {}
     assert checkpoint.state["source_cursor"] == 1 and checkpoint.state["portfolio_state"]["cash"] < 100_000
+    ledger.close()
+
+
+
+def test_durable_replay_run_start_uses_canonical_nanoseconds_for_millisecond_input():
+    ledger = BacktestLedger()
+    ledger.start_run("run-ms-start", "ms-start", "1", 1000)
+
+    engine = EventBacktestEngine(
+        config=EventReplayConfig(timestamp_unit="ms"),
+    )
+    durable = DurableEventBacktestEngine(engine, ledger, "run-ms-start")
+    durable.run(
+        [MarketEvent(100, "X", EventType.TRADE, {"price": 10})],
+        lambda event, context: None,
+    )
+
+    records = ledger.records("run-ms-start")
+    assert records[0].record_type == "RUN_START"
+    assert records[0].timestamp_ns == 100_000_000
+    assert records[1].record_type == "EVENT"
+    assert records[1].timestamp_ns == 100_000_000
+    checkpoint = ledger.load_checkpoint("run-ms-start")
+    assert checkpoint is not None and checkpoint.timestamp_ns == 100_000_000
     ledger.close()
 
 
