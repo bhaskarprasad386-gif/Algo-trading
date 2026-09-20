@@ -63,3 +63,16 @@ def test_non_monotonic_equity_timestamps_are_rejected():
             (EquityPoint(2, 100_000.0, 0.0, 0.0), EquityPoint(1, 100_001.0, 1.0, 0.0)),
             100_000.0,
         )
+
+
+def test_same_timestamp_equity_points_are_allowed_for_multi_instrument_events():
+    result = calculate_statistics(
+        (
+            EquityPoint(1_000, 100_000.0, 0.0, 0.0),
+            EquityPoint(1_000, 100_010.0, 10.0, 0.0),
+            EquityPoint(2_000, 100_020.0, 20.0, 0.0),
+        ),
+        100_000.0,
+    )
+    assert result.net_pnl == pytest.approx(20.0)
+    assert result.total_return == pytest.approx(0.0002)
