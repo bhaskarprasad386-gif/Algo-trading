@@ -234,8 +234,18 @@ class HistoricalCatalog:
         return tuple(gaps)
 
     def _gaps_between_timestamps(self, *, source: str, instrument: str, timeframe: str, interval_ns: int) -> tuple[Gap, ...]:
-        rows = self._db.execute("SELECT DISTINCT timestamp_ns FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? ORDER BY timestamp_ns", (source, instrument, timeframe)).fetchall()
-        return _gaps_from_timestamps(instrument=instrument, timeframe=timeframe, timestamps=tuple(int(r[0]) for r in rows), interval_ns=interval_ns)
+        cursor = self._db.execute(
+            "SELECT DISTINCT timestamp_ns FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? ORDER BY timestamp_ns",
+            (source, instrument, timeframe),
+        )
+        return tuple(
+            _iter_gaps_from_timestamp_rows(
+                instrument=instrument,
+                timeframe=timeframe,
+                rows=cursor,
+                interval_ns=interval_ns,
+            )
+        )
 
     def count(self, *, source: str | None = None, instrument: str | None = None, timeframe: str | None = None) -> int:
         clauses, params = [], []
@@ -252,9 +262,21 @@ class HistoricalCatalog:
         return int(self._db.execute("SELECT COUNT(*) FROM data_catalog" + where, params).fetchone()[0])
 
 
+def _iter_gaps_from_timestamp_rows(*, instrument: str, timeframe: str, rows, interval_ns: int):
+    previous: int | None = None
+    for row in rows:
+        current = int(row[0])
+        if previous is not None and current - previous > interval_ns:
+            yield Gap(instrument, timeframe, previous + interval_ns, current - interval_ns)
+        previous = current
+
+
 def _gaps_from_timestamps(*, instrument: str, timeframe: str, timestamps: tuple[int, ...], interval_ns: int) -> tuple[Gap, ...]:
-    gaps: list[Gap] = []
-    for previous, current in zip(timestamps, timestamps[1:]):
-        if current - previous > interval_ns:
-            gaps.append(Gap(instrument, timeframe, previous + interval_ns, current - interval_ns))
-    return tuple(gaps)
+    return tuple(
+        _iter_gaps_from_timestamp_rows(
+            instrument=instrument,
+            timeframe=timeframe,
+            rows=((timestamp,) for timestamp in timestamps),
+            interval_ns=interval_ns,
+        )
+    )
