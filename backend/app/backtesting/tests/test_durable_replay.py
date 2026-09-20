@@ -154,3 +154,44 @@ def test_resume_rejects_market_and_durable_lifecycle_state_mismatch(tmp_path):
     with pytest.raises(ValueError, match="checkpoint lifecycle state does not match market state"):
         durable.run([], lambda event, state: None, resume=True)
     ledger.close()
+
+
+def test_durable_replay_journals_order_lifecycle_and_fill_details():
+    ledger = BacktestLedger()
+    ledger.start_run("run-order-audit", "audit", "1", 100_000)
+
+    class Strategy:
+        strategy_id = "audit"
+        strategy_version = "1"
+
+        def on_event(self, event, context):
+            return StrategyDecision(
+                action="BUY",
+                orders=(SimOrder("audit-order", "X", ExecutionSide.BUY, 1),),
+            )
+
+    durable = DurableEventBacktestEngine(
+        EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(100_000)),
+        ledger,
+        "run-order-audit",
+    )
+    durable.run(
+        [MarketEvent(10, "X", EventType.QUOTE, {"bid": 99, "ask": 100})],
+        Strategy(),
+    )
+
+    records = ledger.records("run-order-audit")
+    lifecycle = [r for r in records if r.record_type == "ORDER_LIFECYCLE"]
+    fills = [r for r in records if r.record_type == "FILL"]
+
+    assert lifecycle
+    assert fills
+    assert lifecycle[-1].payload["order_id"] == "audit-order"
+    assert lifecycle[-1].payload["status"] == "FILLED"
+    assert fills[-1].payload["order_id"] == "audit-order"
+    assert fills[-1].payload["instrument"] == "X"
+    assert fills[-1].payload["side"] == "BUY"
+    assert fills[-1].payload["quantity"] == 1
+    assert fills[-1].payload["price"] == 100.0
+    assert fills[-1].payload["timestamp_ns"] == 10
+    ledger.close()
