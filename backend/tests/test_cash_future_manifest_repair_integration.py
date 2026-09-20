@@ -2,6 +2,7 @@ from datetime import date, datetime, timezone
 
 from app.backtesting.cash_future_coverage_manifest import CoverageRange, build_coverage_manifest
 from app.backtesting.cash_future_coverage_manifest_store import CashFutureCoverageManifestStore
+from app.backtesting.cash_future_download_queue import CashFutureDownloadQueue
 from app.backtesting.cash_future_historical_acquisition import CashFutureHistoricalAcquisitionService
 from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
 from app.backtesting.historical_catalog import HistoricalCatalog
@@ -125,9 +126,6 @@ def test_successful_provider_repair_completes_manifest_and_next_prepare_is_idemp
     service, _ = _service(tmp_path, source)
     session = _session()
     store = _store_with_range(tmp_path, complete=False)
-    # This scenario must require repair on both legs; the coverage result is
-    # catalog-backed, so a manifest marked complete for the future would not
-    # make the acquisition result complete when that future has no stored rows.
     store.upsert(
         build_coverage_manifest(
             source="angelone",
@@ -172,3 +170,39 @@ def test_repair_plan_is_idempotent_after_manifest_becomes_complete(tmp_path):
         timeframe="1m",
     )
     assert store.repair_plan(source="angelone", timeframe="1m") == ()
+
+
+def test_complete_manifest_for_old_period_does_not_suppress_new_period_repair(tmp_path):
+    service, catalog = _service(tmp_path, object())
+    old_start = _session().start_ns
+    old_end = old_start + 2 * 60 * 1_000_000_000
+    new_start = old_end + 60 * 1_000_000_000
+    new_end = new_start + 2 * 60 * 1_000_000_000
+    catalog.ingest([HistoricalRecord("angelone", "NSE:3045:SBIN", "1m", new_start, {"close": 100.0})])
+    store = CashFutureCoverageManifestStore(tmp_path / "coverage.db")
+    store.upsert(
+        build_coverage_manifest(
+            source="angelone",
+            ranges=(CoverageRange("NSE:3045:SBIN", old_start, old_end, 3, 3, 0, True),),
+        ),
+        timeframe="1m",
+    )
+
+    queue = CashFutureDownloadQueue(
+        spot=HistoricalFetchRequest("angelone", "NSE:3045:SBIN", "1m", new_start, new_end),
+        futures=(),
+    )
+    try:
+        _, plan = service.prepare(
+            spot_instrument="NSE:3045:SBIN", exchange="NFO", underlying="SBIN",
+            start=datetime.fromtimestamp(new_start / 1_000_000_000, tz=timezone.utc),
+            end=datetime.fromtimestamp(new_end / 1_000_000_000, tz=timezone.utc),
+            spot_sessions=(SessionWindow(new_start, new_end),),
+            mode="CURRENT", coverage_store=store, queue=queue,
+        )
+        assert plan.requests == (
+            HistoricalFetchRequest("angelone", "NSE:3045:SBIN", "1m", new_start + 60 * 1_000_000_000, new_end),
+        )
+    finally:
+        catalog.close()
+        store.close()
