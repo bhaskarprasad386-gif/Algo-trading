@@ -41,6 +41,11 @@ class HistoricalCatalog:
         self._db = sqlite3.connect(path)
         self._db.execute("PRAGMA foreign_keys=ON")
         self._db.execute("PRAGMA journal_mode=WAL")
+        # Query paths include source/timeframe ranges with optional instrument and timestamp bounds.
+        # The PRIMARY KEY starts with source,instrument,timeframe, so range-wide scans by
+        # source+timeframe would otherwise walk the primary-key index inefficiently.
+        self._db.execute("CREATE INDEX IF NOT EXISTS idx_data_catalog_source_timeframe_ts ON data_catalog(source, timeframe, timestamp_ns, instrument, sequence)")
+        self._db.execute("CREATE INDEX IF NOT EXISTS idx_data_catalog_source_instrument_timeframe_ts ON data_catalog(source, instrument, timeframe, timestamp_ns, sequence)")
         self._db.execute("""CREATE TABLE IF NOT EXISTS data_catalog (
             source TEXT NOT NULL, instrument TEXT NOT NULL, timeframe TEXT NOT NULL,
             timestamp_ns INTEGER NOT NULL, sequence INTEGER, payload_json TEXT NOT NULL,
