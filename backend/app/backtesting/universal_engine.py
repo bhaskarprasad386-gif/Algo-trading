@@ -80,6 +80,47 @@ class UniversalEventBacktestEngine:
         self.result_writer = result_writer
         self.retain_history = retain_history
 
+    def _record_replay_point(
+        self,
+        sequence: int,
+        record: HistoricalRecord,
+        snapshot: PortfolioSnapshot,
+        accumulator: StreamingStatisticsAccumulator,
+        peak_equity: float,
+    ) -> float:
+        point = EquityPoint(
+            record.timestamp_ns,
+            snapshot.equity,
+            snapshot.realized_pnl,
+            snapshot.unrealized_pnl,
+        )
+        accumulator.update(point)
+        peak_equity = max(peak_equity, snapshot.equity)
+        if self.result_writer is not None:
+            self.result_writer.record_event(
+                sequence,
+                record.timestamp_ns,
+                "REPLAY_EVENT",
+                {
+                    "source": record.source,
+                    "instrument": record.instrument,
+                    "timestamp_ns": record.timestamp_ns,
+                    "source_sequence": record.sequence,
+                },
+            )
+            self.result_writer.record_equity(
+                LedgerEquityPoint(
+                    record.timestamp_ns,
+                    snapshot.equity,
+                    snapshot.realized_pnl,
+                    snapshot.unrealized_pnl,
+                    (peak_equity - snapshot.equity) / peak_equity
+                    if peak_equity > 0
+                    else 0.0,
+                )
+            )
+        return peak_equity
+
     def run_source(self, source: DataSourceProtocol, strategy: StrategyProtocol, *, start_ns: int | None = None, end_ns: int | None = None, price_field: str = "price", order_book_field: str | None = None) -> UniversalBacktestResult:
         """Run directly from a streaming DataSource without materializing its events."""
         return self.run(source.iter_events(start_ns=start_ns, end_ns=end_ns), strategy, price_field=price_field, order_book_field=order_book_field)
