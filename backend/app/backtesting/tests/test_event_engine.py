@@ -237,6 +237,44 @@ def test_strategy_order_queue_ahead_requires_observed_evidence():
     assert engine.order_states["o1"].remaining_quantity == 3
 
 
+def test_resting_partial_fill_executes_only_remaining_quantity_on_next_event():
+    class Strategy:
+        strategy_id = "resting-partial"
+        strategy_version = "1"
+
+        def on_event(self, event, context):
+            if event.timestamp_ns == 1_000:
+                return StrategyDecision(
+                    action="BUY",
+                    orders=(SimOrder("rest-1", "NIFTY", ExecutionSide.BUY, 10),),
+                )
+            return None
+
+    portfolio = Portfolio(100_000)
+    engine = EventBacktestEngine(
+        execution=ExecutionSimulator(),
+        portfolio=portfolio,
+    )
+    events = [
+        MarketEvent(1_000, "NIFTY", EventType.DEPTH, {
+            "asks": [[100.0, 3]],
+            "bids": [[99.0, 5]],
+        }),
+        MarketEvent(2_000, "NIFTY", EventType.DEPTH, {
+            "asks": [[101.0, 7]],
+            "bids": [[100.0, 5]],
+        }),
+    ]
+
+    result = engine.run(events, Strategy())
+
+    assert result.fills == 2
+    assert result.final_snapshot.positions[0].quantity == 10
+    assert result.final_snapshot.cash == pytest.approx(100_000 - 3 * 100.0 - 7 * 101.0)
+    assert engine.order_states["rest-1"].status == OrderStatus.FILLED
+    assert engine.order_states["rest-1"].remaining_quantity == 0
+
+
 def test_ioc_partial_fill_is_cancelled_after_executable_quantity():
     class Strategy:
         strategy_id = "ioc"; strategy_version = "1"
