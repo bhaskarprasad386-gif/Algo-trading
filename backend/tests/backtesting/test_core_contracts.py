@@ -108,3 +108,12 @@ def test_callable_strategy_satisfies_strategy_contract():
         return EventSignal("HOLD")
 
     assert isinstance(strategy, StrategyProtocol)
+
+
+def test_multi_leg_strategy_contract_accepts_callable():
+    from app.backtesting.contracts import MultiLegStrategyProtocol
+
+    def strategy(context):
+        return None
+
+    assert isinstance(strategy, MultiLegStrategyProtocol)
