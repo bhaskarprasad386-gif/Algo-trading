@@ -292,6 +292,50 @@ def test_invalid_replacement_does_not_mutate_margin_or_lifecycle():
     assert "new" not in engine.order_states
 
 
+def test_replacement_transfers_residual_margin_to_new_order():
+    portfolio = Portfolio(100_000, RiskConfig(initial_margin_rate=0.2))
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    old = SimOrder("old", "X", ExecutionSide.BUY, 10)
+    engine._update_market_state(MarketEvent(1_000, "X", EventType.QUOTE, {"bid": 99.0, "ask": 100.0}))
+    engine._lifecycle(old, 1_000)
+    portfolio.reserve_margin("old", 140.0)
+    engine._reserved_margin["old"] = 140.0
+    engine._open_orders["old"] = old
+
+    replacement = SimOrder("new", "X", ExecutionSide.BUY, 5)
+    result = engine.replace_order("old", replacement, 2_000)
+
+    assert result.order_id == "new"
+    assert portfolio.reserved_margin == pytest.approx(100.0)
+    assert "old" not in portfolio._reserved_margin
+    assert portfolio._reserved_margin["new"] == pytest.approx(100.0)
+    assert engine.order_states["old"].status == OrderStatus.REPLACED
+    assert engine.order_states["new"].status == OrderStatus.ACCEPTED
+    assert "old" not in engine.open_orders
+    assert engine.open_orders["new"] == result
+
+
+def test_failed_replacement_reservation_preserves_old_order_and_margin():
+    portfolio = Portfolio(100_000, RiskConfig(initial_margin_rate=0.2))
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    old = SimOrder("old", "X", ExecutionSide.BUY, 10)
+    engine._update_market_state(MarketEvent(1_000, "X", EventType.QUOTE, {"bid": 99.0, "ask": 100.0}))
+    engine._lifecycle(old, 1_000)
+    portfolio.reserve_margin("old", 200.0)
+    engine._reserved_margin["old"] = 200.0
+    engine._open_orders["old"] = old
+
+    replacement = SimOrder("new", "X", ExecutionSide.BUY, 600_000)
+    with pytest.raises(RiskViolation, match="insufficient available margin"):
+        engine.replace_order("old", replacement, 2_000)
+
+    assert portfolio.reserved_margin == pytest.approx(200.0)
+    assert portfolio._reserved_margin["old"] == pytest.approx(200.0)
+    assert engine.order_states["old"].status == OrderStatus.ACCEPTED
+    assert engine.open_orders["old"] == old
+    assert "new" not in engine.order_states
+
+
 def test_resting_partial_fill_executes_only_remaining_quantity_on_next_event():
     class Strategy:
         strategy_id = "resting-partial"
