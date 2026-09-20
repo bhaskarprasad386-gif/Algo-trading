@@ -34,6 +34,41 @@ def test_rollover_closes_old_contract_at_its_last_observation():
     assert result.final_reserved_margin == 4000.0
 
 
+def test_bid_ask_force_exit_fully_closes_old_contract_and_keeps_new_position():
+    start = datetime(2026, 9, 2, 10, 0)
+
+    def quoted(ts, month, gap):
+        return CashFutureHistoryPoint(
+            timestamp=ts, symbol="AAA", contract_month=month,
+            cash_price=100.0, future_price=100.0 + gap, gap=gap, gap_pct=gap,
+            lot_size=100, margin_required=4000.0,
+            expiry_date=date(2026, 9, 30) if month == "SEP" else date(2026, 10, 30),
+            cash_ask=100.0, future_bid=100.0 + gap,
+            cash_bid=100.0, future_ask=100.0 + gap,
+            cash_ask_qty=100.0, future_bid_qty=100.0,
+            cash_bid_qty=100.0, future_ask_qty=100.0,
+        )
+
+    result = run_cash_future_portfolio_strategy(
+        [
+            quoted(start, "SEP", 10),
+            quoted(start + timedelta(minutes=1), "SEP", 8),
+            quoted(start + timedelta(minutes=2), "OCT", 12),
+        ],
+        lambda current, history: "BUY" if current.gap >= 10 else "HOLD",
+        initial_capital=10000,
+        execution_model="bid_ask",
+        rollover_policy="force_exit",
+    )
+    rollover = [trade for trade in result.trades if trade["exit_reason"] == "rollover"]
+    assert len(rollover) == 1
+    assert rollover[0]["contract_month"] == "SEP"
+    assert rollover[0]["fill_status"] == "filled"
+    assert rollover[0]["filled_quantity"] == 100.0
+    assert result.open_position_count == 1
+    assert result.final_reserved_margin == 4000.0
+
+
 def test_rollover_reject_policy_blocks_series_mixing():
     start = datetime(2026, 9, 2, 10, 0)
     with pytest.raises(ValueError, match="rollover boundary"):
@@ -52,8 +87,8 @@ def test_rollover_rejects_partial_old_contract_close_instead_of_carrying_stale_p
             cash_price=100.0, future_price=100.0 + gap, gap=gap, gap_pct=gap,
             lot_size=100, margin_required=4000.0,
             expiry_date=date(2026, 9, 30) if month == "SEP" else date(2026, 10, 30),
-            cash_ask=100.0, future_bid=110.0,
-            cash_bid=100.0, future_ask=110.0,
+            cash_ask=100.0, future_bid=100.0 + gap,
+            cash_bid=100.0, future_ask=100.0 + gap,
             cash_ask_qty=100.0, future_bid_qty=100.0,
             cash_bid_qty=bid_qty, future_ask_qty=bid_qty,
         )
