@@ -114,3 +114,23 @@ class MultiInstrumentDataSource:
 
     def __iter__(self):
         return self.iter_events()
+
+
+class FilteredDataSource:
+    """Lazily filter any DataSource without materializing its event stream."""
+
+    def __init__(self, source: DataSourceProtocol, predicate) -> None:
+        if not isinstance(source, DataSourceProtocol):
+            raise TypeError("source must implement DataSourceProtocol")
+        if not callable(predicate):
+            raise TypeError("predicate must be callable")
+        self.source = source
+        self.predicate = predicate
+
+    def iter_events(self, *, start_ns: int | None = None, end_ns: int | None = None) -> Iterator[HistoricalRecord]:
+        for record in self.source.iter_events(start_ns=start_ns, end_ns=end_ns):
+            if self.predicate(record):
+                yield record
+
+    def __iter__(self):
+        return self.iter_events()
