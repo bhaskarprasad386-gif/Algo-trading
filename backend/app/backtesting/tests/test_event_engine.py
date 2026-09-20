@@ -272,6 +272,26 @@ def test_strategy_order_queue_ahead_requires_observed_evidence():
     assert engine.order_states["o1"].remaining_quantity == 3
 
 
+def test_invalid_replacement_does_not_mutate_margin_or_lifecycle():
+    portfolio = Portfolio(100_000, RiskConfig(initial_margin_rate=0.2))
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    old = SimOrder("old", "X", ExecutionSide.BUY, 10)
+    engine._update_market_state(MarketEvent(1_000, "X", EventType.QUOTE, {"bid": 99.0, "ask": 100.0}))
+    engine._lifecycle(old, 1_000)
+    portfolio.reserve_margin("old", 200.0)
+    engine._reserved_margin["old"] = 200.0
+    engine._open_orders["old"] = old
+
+    replacement = SimOrder("new", "Y", ExecutionSide.BUY, 5)
+    with pytest.raises(ValueError, match="keep instrument and side"):
+        engine.replace_order("old", replacement, 2_000)
+
+    assert portfolio.reserved_margin == pytest.approx(200.0)
+    assert engine.order_states["old"].status == OrderStatus.ACCEPTED
+    assert engine.open_orders["old"] == old
+    assert "new" not in engine.order_states
+
+
 def test_resting_partial_fill_executes_only_remaining_quantity_on_next_event():
     class Strategy:
         strategy_id = "resting-partial"
