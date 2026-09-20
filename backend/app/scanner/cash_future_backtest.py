@@ -1,7 +1,7 @@
 """Deterministic Cash-Future convergence backtest."""
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Callable, Iterable
 import math
 from app.scanner.cash_future_history import CashFutureHistoryPoint, _is_expired
 
@@ -28,9 +28,10 @@ def _executable_spread_profit(entry: CashFutureHistoryPoint, exit_point: CashFut
 
 def _legacy_gap_profit(entry: CashFutureHistoryPoint, exit_point: CashFutureHistoryPoint) -> float: return (entry.gap-exit_point.gap)*entry.lot_size
 
-def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfig) -> dict:
+def run_backtest(points: Iterable[CashFutureHistoryPoint], config: BacktestConfig, cancel_check: Callable[[], bool] | None = None) -> dict:
     trades=[]; equity=0.0; peak=0.0; max_drawdown=0.0; total_capital=0.0; equity_curve=[]; entry=None; seen_contract=None; seen_symbol=None; previous_timestamp=None
     for point in points:
+        if cancel_check is not None and cancel_check(): return {'status':'cancelled','trade_count':len(trades),'wins':sum(1 for t in trades if t['net_profit']>0),'losses':sum(1 for t in trades if t['net_profit']<=0),'net_profit':equity,'roi_pct':equity/total_capital*100.0 if total_capital else 0.0,'invested_capital':total_capital,'max_drawdown':max_drawdown,'equity_curve':equity_curve,'trades':trades,'open_position':{'entry_time':entry.timestamp.isoformat(),'symbol':entry.symbol,'contract_month':entry.contract_month,'entry_gap':entry.gap,'lot_size':entry.lot_size} if entry is not None else None}
         if config.contract_month is not None and point.contract_month != config.contract_month: continue
         if previous_timestamp is not None and point.timestamp < previous_timestamp: raise ValueError('backtest input must be ordered by timestamp')
         previous_timestamp=point.timestamp
