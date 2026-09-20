@@ -1,11 +1,12 @@
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 from app.backtesting.trading_calendar import TradingCalendar
 
 
 def ns(day: date, hour: int, minute: int) -> int:
-    return int(datetime.combine(day, time(hour, minute), tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+    return int(datetime.combine(day, time(hour, minute), tzinfo=ZoneInfo("Asia/Kolkata")).timestamp() * 1_000_000_000)
 
 
 def record(day: date, hour: int, minute: int) -> HistoricalRecord:
