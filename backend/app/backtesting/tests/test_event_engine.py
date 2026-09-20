@@ -315,6 +315,36 @@ def test_replacement_transfers_residual_margin_to_new_order():
     assert engine.open_orders["new"] == result
 
 
+def test_partial_fill_replacement_transfers_residual_margin():
+    portfolio = Portfolio(100_000, RiskConfig(initial_margin_rate=0.2))
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    old = SimOrder("old-partial", "X", ExecutionSide.BUY, 10)
+    engine._update_market_state(MarketEvent(1_000, "X", EventType.DEPTH, {
+        "asks": [[100.0, 3]],
+        "bids": [[99.0, 5]],
+    }))
+    engine._lifecycle(old, 1_000)
+    portfolio.reserve_margin("old-partial", 200.0)
+    engine._reserved_margin["old-partial"] = 200.0
+    engine._open_orders["old-partial"] = old
+
+    engine._try_execute_orders((old,), MarketEvent(1_000, "X", EventType.DEPTH, {
+        "asks": [[100.0, 3]],
+        "bids": [[99.0, 5]],
+    }))
+
+    replacement = SimOrder("new-partial", "X", ExecutionSide.BUY, 7)
+    result = engine.replace_order("old-partial", replacement, 2_000)
+
+    assert result.order_id == "new-partial"
+    assert portfolio.reserved_margin == pytest.approx(140.0)
+    assert portfolio._reserved_margin["new-partial"] == pytest.approx(140.0)
+    assert "old-partial" not in portfolio._reserved_margin
+    assert engine.order_states["old-partial"].status == OrderStatus.REPLACED
+    assert engine.order_states["new-partial"].status == OrderStatus.ACCEPTED
+    assert engine.open_orders["new-partial"] == result
+
+
 def test_failed_replacement_reservation_preserves_old_order_and_margin():
     portfolio = Portfolio(100_000, RiskConfig(initial_margin_rate=0.2))
     engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
