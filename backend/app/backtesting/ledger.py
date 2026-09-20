@@ -20,6 +20,12 @@ class LedgerRecord:
 
 
 @dataclass(frozen=True)
+class LedgerPage:
+    records: tuple[LedgerRecord, ...]
+    next_cursor: int | None
+
+
+@dataclass(frozen=True)
 class Checkpoint:
     run_id: str
     event_index: int
@@ -271,6 +277,46 @@ class BacktestLedger:
             for row in rows:
                 yield self._row_to_record(row)
 
+    def record_page(self, run_id: str, record_type: str | None = None, *,
+                    limit: int = 100, after_id: int | None = None) -> LedgerPage:
+        """Return one bounded page using the durable records.id keyset cursor."""
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValueError("limit must be positive")
+        if after_id is not None and (
+            isinstance(after_id, bool) or not isinstance(after_id, int) or after_id < 0
+        ):
+            raise ValueError("after_id must be non-negative")
+        self._require_run(run_id)
+
+        params: list[Any] = [run_id]
+        where = "run_id=?"
+        if record_type is not None:
+            where += " AND record_type=?"
+            params.append(record_type)
+        if after_id is not None:
+            where += " AND id>?"
+            params.append(after_id)
+
+        rows = self._db.execute(
+            f"""
+            SELECT id,run_id,record_type,timestamp_ns,payload_json
+            FROM records
+            WHERE {where}
+            ORDER BY id
+            LIMIT ?
+            """,
+            (*params, limit + 1),
+        ).fetchall()
+
+        has_more = len(rows) > limit
+        page_rows = rows[:limit]
+        records = tuple(
+            LedgerRecord(row[1], row[2], int(row[3]), json.loads(row[4]))
+            for row in page_rows
+        )
+        next_cursor = int(page_rows[-1][0]) if has_more else None
+        return LedgerPage(records=records, next_cursor=next_cursor)
+
     def record_count(self, run_id: str, record_type: str | None = None) -> int:
         """Return a durable record count without loading record payloads."""
         self._require_run(run_id)
@@ -335,4 +381,4 @@ class BacktestLedger:
             yield Checkpoint(row[0], int(row[1]), int(row[2]), json.loads(row[3]))
 
 
-__all__ = ["BacktestLedger", "Checkpoint", "LedgerRecord", "LEDGER_SCHEMA_VERSION"]
+__all__ = ["BacktestLedger", "Checkpoint", "LedgerPage", "LedgerRecord", "LEDGER_SCHEMA_VERSION"]
