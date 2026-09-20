@@ -82,6 +82,8 @@ def run_cash_future_portfolio_strategy(points:Iterable[CashFutureHistoryPoint],s
                     if old_point is None:raise ValueError("cannot roll over without a genuine last observation for the old contract")
                     rollover_trade=_close_position(account,entries,old_key,old_point,execution_model=execution_model,charges_per_trade=charges_per_trade,funding_cost_per_trade=funding_cost_per_trade,exit_reason="rollover",cash_side=cash_side,future_side=future_side)
                     if rollover_trade is None:raise ValueError("rollover requires executable liquidity at the old contract boundary")
+                    if rollover_trade["fill_status"] != "filled":
+                        raise ValueError("rollover requires fully closing the old contract")
                     trades.append(rollover_trade)
             active_contract[point.symbol]=point.contract_month
         elif previous_contract is None:active_contract[point.symbol]=point.contract_month
