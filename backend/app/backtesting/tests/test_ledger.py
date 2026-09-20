@@ -136,3 +136,24 @@ def test_append_batch_rolls_back_when_any_record_is_invalid():
         ])
     assert ledger.records("run-5") == ()
     ledger.close()
+
+def test_append_and_checkpoint_rolls_back_journal_when_checkpoint_write_fails():
+    ledger = BacktestLedger()
+    ledger.start_run("atomic-ledger", "s", "1", 1000)
+    ledger._db.execute("""
+        CREATE TRIGGER fail_checkpoint_insert
+        BEFORE INSERT ON checkpoints
+        BEGIN
+            SELECT RAISE(ABORT, 'checkpoint write failed');
+        END;
+    """)
+    with pytest.raises(Exception, match="checkpoint write failed"):
+        ledger.append_and_checkpoint(
+            [LedgerRecord("atomic-ledger", "EVENT", 10, {"sequence": 1})],
+            Checkpoint("atomic-ledger", 1, 10, {"cursor": 1}),
+        )
+    assert ledger.records("atomic-ledger") == ()
+    assert ledger.load_checkpoint("atomic-ledger") is None
+    assert ledger.checkpoint_history("atomic-ledger") == ()
+    ledger.close()
+
