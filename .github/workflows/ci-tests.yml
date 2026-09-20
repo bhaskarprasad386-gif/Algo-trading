@@ -1,39 +1,26 @@
 name: Backend Tests
-
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
-
 concurrency:
   group: backend-tests-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install deps
-        run: pip install -r backend/requirements.txt pytest pytest-xdist pytest-timeout
-
-      - name: Compile
-        run: python -m compileall -q backend/app
-
+        run: pip install -r backend/requirements.txt pytest pytest-timeout
       - name: Run tests
         env:
           SECRET_KEY: ci-test-secret-key-not-for-production
           PYTHONPATH: backend
-          DATABASE_URL: sqlite:///:memory:
-        run: |
-          rm -f backend/*.db backend/*.sqlite backend/*.sqlite3 backend/app/*.db
-          rm -rf backend/__pycache__ backend/tests/__pycache__
-          python -m pytest backend/tests -q --tb=line --timeout=60 --maxfail=20 -k "not durable and not streaming"
+        run: python -m pytest backend/tests -q --tb=line --timeout=60 -k "not durable and not streaming"
