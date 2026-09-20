@@ -24,9 +24,10 @@ class DurableEventBacktestEngine:
         self.engine, self.ledger, self.run_id = engine, ledger, run_id
         self.engine.journal_callback = self._journal_engine_record
         self.checkpoint_interval = checkpoint_interval
+        self._pending_journal: list[LedgerRecord] = []
 
     def _journal_engine_record(self, record_type: str, timestamp_ns: int, payload: Mapping[str, object]) -> None:
-        self.ledger.append(LedgerRecord(self.run_id, record_type, timestamp_ns, dict(payload)))
+        self._pending_journal.append(LedgerRecord(self.run_id, record_type, timestamp_ns, dict(payload)))
 
     @staticmethod
     def _event_key(event: MarketEvent) -> tuple[object, ...]:
@@ -47,6 +48,7 @@ class DurableEventBacktestEngine:
     def _journal_strategy(self, strategy: object):
         ledger, run_id = self.ledger, self.run_id
         existing_event_keys: set[tuple[object, ...]] = set()
+        self_outer = self
         class JournalStrategy:
             strategy_id = getattr(strategy, "strategy_id", strategy.__class__.__name__)
             strategy_version = getattr(strategy, "strategy_version", "unknown")
@@ -62,12 +64,12 @@ class DurableEventBacktestEngine:
                 decision = handler(event, context) if callable(handler) else None
                 if decision is not None and not isinstance(decision, StrategyDecision):
                     raise TypeError("event strategy must return StrategyDecision or None")
-                ledger.append(LedgerRecord(run_id, "EVENT", event.timestamp_ns,
+                self_outer._pending_journal.append(LedgerRecord(run_id, "EVENT", event.timestamp_ns,
                     {"instrument": event.instrument, "event_type": event.event_type.value,
                      "sequence": event.sequence, "source": event.source}))
                 existing_event_keys.add(key)
                 if decision is not None:
-                    ledger.append(LedgerRecord(run_id, "DECISION", event.timestamp_ns,
+                    self_outer._pending_journal.append(LedgerRecord(run_id, "DECISION", event.timestamp_ns,
                         {"event_identity": {"timestamp_ns": event.timestamp_ns,
                                              "instrument": event.instrument,
                                              "event_type": event.event_type.value,
@@ -143,7 +145,9 @@ class DurableEventBacktestEngine:
             state["portfolio_state"] = None
             state["portfolio_trades"] = None
         state["order_lifecycle_state"] = self._lifecycle_state()
-        self.ledger.checkpoint(Checkpoint(self.run_id, source_cursor, int(extra.get("timestamp_ns", 0)), state))
+        checkpoint = Checkpoint(self.run_id, source_cursor, int(extra.get("timestamp_ns", 0)), state)
+        self.ledger.append_and_checkpoint(self._pending_journal, checkpoint)
+        self._pending_journal.clear()
 
     def run(self, events: Iterable[MarketEvent], strategy: object, *, state: Mapping[str, object] | None = None,
             resume: bool = False, schema_version: int = LEDGER_SCHEMA_VERSION,
@@ -238,7 +242,9 @@ class DurableEventBacktestEngine:
         if last_source_event is not None:
             e = self._event_key(last_source_event)
             final_state["source_event_identity"] = {"timestamp_ns": e[0], "instrument": e[1], "event_type": e[2], "sequence": e[3], "source": e[4]}
-        self.ledger.checkpoint(Checkpoint(self.run_id, final_cursor, result.last_timestamp_ns or 0, final_state))
+        final_checkpoint = Checkpoint(self.run_id, final_cursor, result.last_timestamp_ns or 0, final_state)
+        self.ledger.append_and_checkpoint(self._pending_journal, final_checkpoint)
+        self._pending_journal.clear()
         self.ledger.append(LedgerRecord(self.run_id, "RUN_END", result.last_timestamp_ns or 0, {\n            "events_seen": result.events_seen,\n            "events_dispatched": result.events_dispatched,\n            "decisions_emitted": result.decisions_emitted,\n            "orders_submitted": result.orders_submitted,\n            "fills": result.fills,\n            "risk_blocks": result.risk_blocks,\n        }))
         return result
 
