@@ -3,6 +3,7 @@ from backend.app.backtesting.execution import (
     ExecutionSimulator,
     OrderBook,
     QueueEvidence,
+    TimeInForce,
     SimOrder,
     ExecutionSide,
 )
@@ -81,3 +82,20 @@ def test_queue_advancement_accepts_cancellation_ahead_without_fabricating_depth(
     assert result.remaining_quantity == 8
     assert sum(f.quantity for f in result.fills) == 2
     assert all(f.price == 100.0 for f in result.fills)
+
+
+def test_dynamic_depth_ioc_cancels_residual_without_waiting_for_later_updates():
+    sim = ExecutionSimulator()
+    order = _buy_order(quantity=6, time_in_force=TimeInForce.IOC)
+    first = OrderBook(asks=(DepthLevel(100.0, 4),))
+    later = OrderBook(asks=(DepthLevel(99.0, 6),))
+
+    result = sim.execute_depth_updates(
+        order,
+        ((200, first, ()), (300, later, ())),
+    )
+
+    assert not result.rejected
+    assert [(f.filled_at_ns, f.quantity) for f in result.fills] == [(200, 4)]
+    assert result.remaining_quantity == 2
+    assert result.reason == "IOC remainder cancelled"
