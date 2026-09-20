@@ -239,25 +239,16 @@ class BacktestEngine:
     def run_events(self, events, strategy, *, price_field="price"):
         if not isinstance(price_field, str) or not price_field.strip():
             raise ValueError("price_field is required")
-        records = list(events)
+        # Keep event replay streaming: validation and execution happen in one pass.
+        # This avoids materializing potentially millions of tick/depth events in RAM.
         seen = set()
-        for record in records:
-            identity = record.identity()
-            if identity in seen:
-                raise ValueError("duplicate event identity")
-            seen.add(identity)
         previous_key = None
-        for record in records:
-            key = _event_order_key(record)
-            if previous_key is not None and key <= previous_key:
-                raise ValueError("events must be strictly ordered by timestamp, sequence, and stream identity")
-            previous_key = key
         capital = self.config.initial_capital
         open_trade = None
         trades = []
         curve = []
         last_price = None
-        for record in records:
+        for record in events:
             if not isinstance(record.timestamp_ns, int) or isinstance(record.timestamp_ns, bool) or record.timestamp_ns < 0:
                 raise ValueError("event timestamp_ns must be a non-negative integer")
             if not isinstance(record.instrument, str) or not record.instrument.strip():
@@ -268,6 +259,14 @@ class BacktestEngine:
                 not isinstance(record.sequence, int) or isinstance(record.sequence, bool) or record.sequence < 0
             ):
                 raise ValueError("event sequence must be a non-negative integer or None")
+            identity = record.identity()
+            if identity in seen:
+                raise ValueError("duplicate event identity")
+            key = _event_order_key(record)
+            if previous_key is not None and key <= previous_key:
+                raise ValueError("events must be strictly ordered by timestamp, sequence, and stream identity")
+            seen.add(identity)
+            previous_key = key
             signal = _normalize_event_signal(
                 strategy(EventContext(record.timestamp_ns, record.sequence, record.source, record.instrument, record.payload, record))
             )
