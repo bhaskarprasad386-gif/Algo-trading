@@ -255,3 +255,15 @@ def test_universal_engine_multi_leg_rejects_unhashable_sequence_as_invalid_input
         assert "sequence" in str(exc)
     else:
         raise AssertionError("expected invalid sequence rejection")
+
+
+def test_universal_engine_multi_leg_rejects_duplicate_event_identity():
+    events = [_event(1, "AAA", 100.0, 1), _event(1, "AAA", 100.0, 1)]
+    engine = UniversalEventBacktestEngine(100_000.0)
+
+    try:
+        engine.run_multi_leg(events, lambda ctx: ())
+    except ValueError as exc:
+        assert "duplicate event identity" in str(exc)
+    else:
+        raise AssertionError("expected duplicate event identity rejection")
