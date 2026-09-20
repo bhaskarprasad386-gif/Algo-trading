@@ -6,7 +6,7 @@ from datetime import date, datetime
 from math import isfinite
 from typing import Any
 from uuid import uuid4
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 from app.backtesting.cash_future_historical_loader import CashFutureHistoricalLoader, CashFutureHistorySelection
 from app.backtesting.cash_future_replay_routes import router as cash_future_replay_router
@@ -44,6 +44,12 @@ def _serialise_run(ledger:BacktestLedger,run_id:str)->dict[str,Any]:
     final_reserved_margin=float(equity[-1]["reserved_margin"]) if equity else 0.0
     blocked_entry_count=sum(1 for signal in signals if signal.get("execution_status")=="blocked")
     return {"status":"success","run_id":run_id,"strategy_id":metadata["strategy_id"],"strategy_version":metadata["strategy_version"],"initial_capital":initial_capital,"final_capital":final_capital,"final_available_capital":final_available_capital,"final_reserved_margin":final_reserved_margin,"blocked_entry_count":blocked_entry_count,"net_profit":realized_pnl,"signal_count":len(signals),"trade_count":len(trades),"signals":signals,"trades":trades,"equity_curve":equity}
+
+def _result_page(ledger:BacktestLedger,run_id:str,record_type:str,limit:int,after_id:int|None)->dict[str,Any]:
+    metadata=ledger.run_metadata(run_id)
+    if metadata is None: raise ValueError(f"unknown run_id: {run_id}")
+    page=ledger.record_page(run_id,record_type,limit=limit,after_id=after_id)
+    return {"status":"success","run_id":run_id,"record_type":record_type,"data":[dict(record.payload) for record in page.records],"total":ledger.record_count(run_id,record_type),"next_cursor":page.next_cursor}
 
 def _build_builder_strategy(request:StrategyRunRequest):
     orientation=1.0 if (request.cash_side,request.future_side)==("BUY","SELL") else -1.0; stop,target=request.stop_loss,request.target; state={"entry_gap":None}
@@ -92,4 +98,20 @@ def strategy_run_result(run_id:str):
     ledger=BacktestLedger(settings.BACKTEST_LEDGER_DB)
     try:return _serialise_run(ledger,run_id)
     finally:ledger.close()
+
+@router.get("/strategy-run/{run_id}/results/{record_type}")
+def strategy_run_result_page(
+    run_id: str,
+    record_type: str,
+    limit: int = Query(default=100, ge=1, le=1000),
+    after_id: int | None = Query(default=None, ge=0),
+):
+    ledger=BacktestLedger(settings.BACKTEST_LEDGER_DB)
+    try:
+        return _result_page(ledger,run_id,record_type,limit,after_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404 if "unknown run_id" in str(exc) else 422, detail=str(exc)) from exc
+    finally:
+        ledger.close()
+
 __all__=["router"]
