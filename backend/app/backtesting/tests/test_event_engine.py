@@ -157,6 +157,25 @@ def test_replace_rejects_order_id_already_used_by_terminal_order():
         engine.replace_order("old", SimOrder("used", "X", ExecutionSide.BUY, 5, submitted_at_ns=2_000), 2_000)
 
 
+def test_reinsert_rejects_order_id_already_in_use():
+    portfolio = Portfolio(100_000)
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    old = SimOrder("old", "X", ExecutionSide.BUY, 10, submitted_at_ns=1_000)
+    used = SimOrder("used", "X", ExecutionSide.BUY, 1, submitted_at_ns=1_000)
+    engine._lifecycle(old, 1_000)
+    engine._lifecycle(used, 1_000)
+    engine._open_orders["old"] = old
+    engine._open_orders["used"] = used
+
+    with pytest.raises(ValueError, match="already in use"):
+        engine.reinsert_order("old", "used", 2_000, 0)
+
+    assert engine.open_orders["old"] == old
+    assert engine.open_orders["used"] == used
+    assert engine.order_states["old"].status == OrderStatus.ACCEPTED
+    assert engine.order_states["used"].status == OrderStatus.ACCEPTED
+
+
 def test_risk_blocked_order_does_not_change_portfolio():
     class Strategy:
         strategy_id = "risk-block"; strategy_version = "1"
