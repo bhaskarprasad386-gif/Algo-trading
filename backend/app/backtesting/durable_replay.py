@@ -208,7 +208,8 @@ class DurableEventBacktestEngine:
             if first_source_event is not None:
                 from itertools import chain
                 source_events = chain((first_source_event,), source_events)
-                self.ledger.append(LedgerRecord(self.run_id, "RUN_START", first_source_event.timestamp_ns,
+                run_start_timestamp_ns = self.engine.config.to_ns(first_source_event.timestamp_ns)
+                self.ledger.append(LedgerRecord(self.run_id, "RUN_START", run_start_timestamp_ns,
                     {"event_count": None, "streaming": True}))
 
         journaled = self._journal_strategy(strategy)
