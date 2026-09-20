@@ -210,8 +210,7 @@ def test_rollover_then_new_entry_handles_existing_portfolio_margin_breach():
     liquidation = [trade for trade in result.trades if trade["exit_reason"] == "margin_breach"]
     assert len(rollover) == 1
     assert rollover[0]["contract_month"] == "SEP"
-    assert len(liquidation) == 1
-    assert liquidation[0]["symbol"] == "BBB"
-    assert liquidation[0]["contract_month"] == "SEP"
+    assert len(liquidation) == 2
+    assert {(trade["symbol"], trade["contract_month"]) for trade in liquidation} == {("AAA", "OCT"), ("BBB", "SEP")}
     assert result.open_position_count == 0
     assert result.final_reserved_margin == 0.0
