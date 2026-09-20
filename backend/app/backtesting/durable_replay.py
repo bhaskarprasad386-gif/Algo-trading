@@ -46,9 +46,7 @@ class DurableEventBacktestEngine:
 
     def _journal_strategy(self, strategy: object):
         ledger, run_id = self.ledger, self.run_id
-        existing_event_keys = {(record.timestamp_ns, record.payload.get("instrument"),
-                                record.payload.get("event_type"), record.payload.get("sequence"),
-                                record.payload.get("source")) for record in ledger.records(run_id, "EVENT")}
+        existing_event_keys: set[tuple[object, ...]] = set()
         class JournalStrategy:
             strategy_id = getattr(strategy, "strategy_id", strategy.__class__.__name__)
             strategy_version = getattr(strategy, "strategy_version", "unknown")
@@ -57,7 +55,9 @@ class DurableEventBacktestEngine:
                 if callable(starter): starter(context)
             def on_event(self, event, context):
                 key = DurableEventBacktestEngine._event_key(event)
-                if key in existing_event_keys: return None
+                if key in existing_event_keys or ledger.event_exists(run_id, event):
+                    existing_event_keys.add(key)
+                    return None
                 handler = getattr(strategy, "on_event", None)
                 decision = handler(event, context) if callable(handler) else None
                 if decision is not None and not isinstance(decision, StrategyDecision):
