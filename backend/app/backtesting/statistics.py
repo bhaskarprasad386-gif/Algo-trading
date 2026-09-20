@@ -37,56 +37,116 @@ class BacktestStatistics:
     cagr: float | None
 
 
+class StreamingStatisticsAccumulator:
+    """O(1)-memory accumulator preserving batch statistics semantics."""
+
+    def __init__(self, initial_capital: float) -> None:
+        if not isfinite(float(initial_capital)) or initial_capital <= 0:
+            raise ValueError("initial_capital must be finite and positive")
+        self.initial_capital = float(initial_capital)
+        self._count = 0
+        self._return_count = 0
+        self._sum_returns = 0.0
+        self._sum_return_squares = 0.0
+        self._sum_downside_squares = 0.0
+        self._sum_intervals_years = 0.0
+        self._previous_equity = self.initial_capital
+        self._previous_timestamp: int | None = None
+        self._first_timestamp: int | None = None
+        self._last_timestamp: int | None = None
+        self._final_equity: float | None = None
+        self._peak = self.initial_capital
+        self._max_drawdown = 0.0
+
+    def update(self, point: EquityPoint) -> None:
+        if not isinstance(point, EquityPoint):
+            raise TypeError("point must be an EquityPoint")
+        if self._last_timestamp is not None and point.timestamp_ns < self._last_timestamp:
+            raise ValueError("equity timestamps must be non-decreasing")
+
+        if self._first_timestamp is None:
+            self._first_timestamp = point.timestamp_ns
+
+        if self._previous_timestamp is not None and point.timestamp_ns > self._previous_timestamp and self._previous_equity > 0:
+            elapsed_years = (
+                point.timestamp_ns - self._previous_timestamp
+            ) / (365.25 * 24 * 60 * 60 * 1_000_000_000)
+            value = point.equity / self._previous_equity - 1.0
+            if elapsed_years > 0 and isfinite(value):
+                self._return_count += 1
+                self._sum_returns += value
+                self._sum_return_squares += value * value
+                self._sum_downside_squares += min(value, 0.0) ** 2
+                self._sum_intervals_years += elapsed_years
+
+        self._previous_equity = point.equity
+        self._previous_timestamp = point.timestamp_ns
+        self._last_timestamp = point.timestamp_ns
+        self._final_equity = point.equity
+        self._count += 1
+        self._peak = max(self._peak, point.equity)
+        if self._peak > 0:
+            self._max_drawdown = max(
+                self._max_drawdown,
+                (self._peak - point.equity) / self._peak,
+            )
+
+    def finalize(self) -> BacktestStatistics:
+        if self._count == 0:
+            return BacktestStatistics(0.0, 0.0, None, None, 0.0, None)
+
+        final_equity = self._final_equity
+        assert final_equity is not None
+        net_pnl = final_equity - self.initial_capital
+        total_return = net_pnl / self.initial_capital
+
+        sharpe = self._annualized_ratio(downside_only=False)
+        sortino = self._annualized_ratio(downside_only=True)
+
+        assert self._first_timestamp is not None
+        assert self._last_timestamp is not None
+        elapsed_years = (
+            self._last_timestamp - self._first_timestamp
+        ) / (365.25 * 24 * 60 * 60 * 1_000_000_000)
+        if elapsed_years > 0 and final_equity > 0:
+            cagr = (final_equity / self.initial_capital) ** (1.0 / elapsed_years) - 1.0
+        else:
+            cagr = None
+
+        return BacktestStatistics(
+            net_pnl,
+            total_return,
+            sharpe,
+            sortino,
+            self._max_drawdown,
+            cagr,
+        )
+
+    def _annualized_ratio(self, *, downside_only: bool) -> float | None:
+        if self._return_count < 2 or self._sum_intervals_years <= 0:
+            return None
+        mean = self._sum_returns / self._return_count
+        if downside_only:
+            denominator = sqrt(self._sum_downside_squares / self._return_count)
+        else:
+            variance = (
+                self._sum_return_squares / self._return_count
+            ) - mean * mean
+            denominator = sqrt(max(variance, 0.0))
+        if denominator <= 0:
+            return None
+        average_interval_years = self._sum_intervals_years / self._return_count
+        return mean / denominator * sqrt(1.0 / average_interval_years)
+
+
 def calculate_statistics(
     points: Iterable[EquityPoint],
     initial_capital: float,
 ) -> BacktestStatistics:
-    if not isfinite(float(initial_capital)) or initial_capital <= 0:
-        raise ValueError("initial_capital must be finite and positive")
-    curve = tuple(points)
-    if not curve:
-        return BacktestStatistics(0.0, 0.0, None, None, 0.0, None)
-    for previous, current in zip(curve, curve[1:]):
-        if current.timestamp_ns < previous.timestamp_ns:
-            raise ValueError("equity timestamps must be non-decreasing")
-
-    final_equity = curve[-1].equity
-    net_pnl = final_equity - initial_capital
-    total_return = net_pnl / initial_capital
-
-    peak = initial_capital
-    max_drawdown = 0.0
-    for point in curve:
-        peak = max(peak, point.equity)
-        if peak > 0:
-            max_drawdown = max(max_drawdown, (peak - point.equity) / peak)
-
-    returns: list[float] = []
-    intervals_years: list[float] = []
-    previous_equity = initial_capital
-    previous_timestamp = curve[0].timestamp_ns
-    for point in curve:
-        elapsed_years = (point.timestamp_ns - previous_timestamp) / (365.25 * 24 * 60 * 60 * 1_000_000_000)
-        if previous_equity > 0 and elapsed_years > 0:
-            value = point.equity / previous_equity - 1.0
-            if isfinite(value):
-                returns.append(value)
-                intervals_years.append(elapsed_years)
-        previous_equity = point.equity
-        previous_timestamp = point.timestamp_ns
-
-    sharpe = _annualized_sharpe(returns, intervals_years)
-    sortino = _annualized_sortino(returns, intervals_years)
-
-    elapsed_years = (curve[-1].timestamp_ns - curve[0].timestamp_ns) / (365.25 * 24 * 60 * 60 * 1_000_000_000)
-    if elapsed_years > 0 and final_equity > 0:
-        cagr = (final_equity / initial_capital) ** (1.0 / elapsed_years) - 1.0
-    else:
-        cagr = None
-
-    return BacktestStatistics(net_pnl, total_return, sharpe, sortino, max_drawdown, cagr)
-
-
+    accumulator = StreamingStatisticsAccumulator(initial_capital)
+    for point in points:
+        accumulator.update(point)
+    return accumulator.finalize()
 def _annualized_sharpe(returns: list[float], intervals_years: list[float]) -> float | None:
     if len(returns) < 2 or not intervals_years:
         return None
