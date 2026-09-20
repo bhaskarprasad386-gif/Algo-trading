@@ -87,7 +87,7 @@ def run_cash_future_portfolio_strategy(points:Iterable[CashFutureHistoryPoint],s
                     trades.append(rollover_trade)
             active_contract[point.symbol]=point.contract_month
         elif previous_contract is None:active_contract[point.symbol]=point.contract_month
-        symbol_history=histories.setdefault(point.symbol,deque(maxlen=history_window)); visible_history=tuple(symbol_history); raw_signal=strategy(point,visible_history+(point,)); symbol_history.append(point); latest[key]=point
+        symbol_history=histories.setdefault(point.symbol,deque(maxlen=history_window)); visible_history=tuple(symbol_history); raw_signal=strategy(point,visible_history); symbol_history.append(point); latest[key]=point
         action="NONE" if raw_signal is None else str(raw_signal).strip().upper()
         if action not in {"BUY","SELL","HOLD","NONE"}:raise ValueError("Cash-Future portfolio strategy must return BUY, SELL, HOLD, or NONE")
         entry_state=entries.get(key); expiry_day=point.expiry_date is not None and point.timestamp.date()>=point.expiry_date
