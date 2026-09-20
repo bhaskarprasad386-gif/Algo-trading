@@ -112,9 +112,20 @@ def test_same_timestamp_equity_pagination_is_not_ambiguous() -> None:
         "run-equity-page",
         limit=1,
         after_timestamp_ns=page[-1]["timestamp_ns"],
+        after_equity_id=page[-1]["equity_id"],
     )
     assert len(next_page) == 1
-    assert page[-1]["timestamp_ns"] != next_page[-1]["timestamp_ns"]
+    assert next_page[-1]["timestamp_ns"] == 2_000
+    assert next_page[-1]["equity_id"] > page[-1]["equity_id"]
+
+    final_page = ledger.equity(
+        "run-equity-page",
+        limit=1,
+        after_timestamp_ns=next_page[-1]["timestamp_ns"],
+        after_equity_id=next_page[-1]["equity_id"],
+    )
+    assert len(final_page) == 1
+    assert final_page[-1]["timestamp_ns"] == 2_001
 
 
 def test_identical_equity_record_is_idempotent() -> None:
