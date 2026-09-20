@@ -117,3 +117,10 @@ def test_multi_leg_strategy_contract_accepts_callable():
         return None
 
     assert isinstance(strategy, MultiLegStrategyProtocol)
+
+
+def test_portfolio_satisfies_accounting_contract():
+    from app.backtesting.contracts import AccountingProtocol
+    from app.backtesting.portfolio import Portfolio
+
+    assert isinstance(Portfolio(100_000), AccountingProtocol)
