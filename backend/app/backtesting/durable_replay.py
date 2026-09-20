@@ -165,9 +165,9 @@ class DurableEventBacktestEngine:
             market_state = saved.get("market_state")
             if isinstance(market_state, Mapping): self.engine.restore_market_state(market_state)
             if self.engine.portfolio is not None:
-                engine_reserved = sum(self.engine._reserved_margin.values())
-                portfolio_reserved = self.engine.portfolio.reserved_margin
-                if abs(engine_reserved - portfolio_reserved) > 1e-9:
+                engine_reserved = dict(self.engine._reserved_margin)
+                portfolio_reserved = dict(self.engine.portfolio._reserved_margin)
+                if set(engine_reserved) != set(portfolio_reserved) or any(abs(float(engine_reserved[k]) - float(portfolio_reserved[k])) > 1e-9 for k in engine_reserved):
                     raise ValueError("checkpoint margin reservation mismatch between engine and portfolio")
             self._restore_lifecycle_state(saved.get("order_lifecycle_state"))
             self.ledger.append(LedgerRecord(self.run_id, "RUN_RESUME", checkpoint.timestamp_ns,
