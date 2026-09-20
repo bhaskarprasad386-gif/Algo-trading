@@ -90,9 +90,10 @@ def run_events_incremental(
                     price = last_price
                 else:
                     price = 0.0
-            if not isinstance(raw_price, (int, float)) or isinstance(raw_price, bool) or not isfinite(float(raw_price)):
-                raise ValueError(f"event payload must contain finite numeric {price_field!r} or signal price")
-            price = float(raw_price)
+            else:
+                if not isinstance(raw_price, (int, float)) or isinstance(raw_price, bool) or not isfinite(float(raw_price)):
+                    raise ValueError(f"event payload must contain finite numeric {price_field!r} or signal price")
+                price = float(raw_price)
         if isinstance(price, bool) or not isinstance(price, (int, float)) or not isfinite(float(price)) or float(price) <= 0:
             raise ValueError("event execution price must be finite and positive")
         price = float(price)
