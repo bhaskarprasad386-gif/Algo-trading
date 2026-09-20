@@ -117,9 +117,11 @@ class UniversalEventBacktestEngine:
                 for order, _, timestamp_ns in legs:
                     if timestamp_ns != record.timestamp_ns:
                         raise ValueError("multi-leg order timestamps must match the dispatch event")
-                    last_marks[order.instrument] = float(order.limit_price) if order.limit_price is not None else last_marks.get(order.instrument, 0.0)
-                    if last_marks[order.instrument] <= 0:
-                        raise ValueError(f"missing positive mark for {order.instrument!r}")
+                    book = book
+                    levels = book.asks if order.side == ExecutionSide.BUY else book.bids
+                    if not levels:
+                        raise ValueError(f"missing executable depth for {order.instrument!r}")
+                    last_marks[order.instrument] = float(levels[0].price)
                 result = self.execution.execute_many_atomic(legs)
                 if result.rejected:
                     raise ValueError(result.reason or "atomic multi-leg execution rejected")
