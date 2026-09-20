@@ -75,22 +75,26 @@ class CashFutureDownloadReporter:
 
         statuses = []
         for session in sessions:
-            expected = max(0, ((session.end_ns - session.start_ns) // interval_ns) + 1)
+            start_ns = max(session.start_ns, request.start_ns)
+            end_ns = min(session.end_ns, request.end_ns)
+            if start_ns > end_ns:
+                continue
+            expected = max(0, ((end_ns - start_ns) // interval_ns) + 1)
             timestamps = tuple(
                 self.catalog.timestamps(
                     source=request.source,
                     instrument=request.instrument,
                     timeframe=request.timeframe,
-                    start_ns=session.start_ns,
-                    end_ns=session.end_ns,
+                    start_ns=start_ns,
+                    end_ns=end_ns,
                 )
             )
             present_timestamps = set(timestamps)
             first_missing = next(
                 (
-                    session.start_ns + offset * interval_ns
+                    start_ns + offset * interval_ns
                     for offset in range(expected)
-                    if session.start_ns + offset * interval_ns not in present_timestamps
+                    if start_ns + offset * interval_ns not in present_timestamps
                 ),
                 None,
             )
