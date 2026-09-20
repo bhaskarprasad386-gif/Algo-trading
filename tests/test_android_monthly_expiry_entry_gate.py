@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 ANDROID_ACTIVITY = (
-    Path(__file__).resolve().parents[2]
+    Path(__file__).resolve().parents[1]
     / "mobile"
     / "android"
     / "app"
