@@ -19,6 +19,7 @@ from app.backtesting.engine import (
     _net_exit_cashflow,
 )
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
+from app.backtesting.statistics import EquityPoint
 
 PersistTradeChunk = Callable[[tuple[BacktestTrade, ...], int], object]
 _SECONDS_PER_YEAR = 365.25 * 24 * 60 * 60
@@ -94,6 +95,16 @@ def run_events_incremental(
                 if not isinstance(raw_price, (int, float)) or isinstance(raw_price, bool) or not isfinite(float(raw_price)):
                     raise ValueError(f"event payload must contain finite numeric {price_field!r} or signal price")
                 price = float(raw_price)
+        if price == 0.0 and open_trade is None and action in {"HOLD", "NONE"}:
+            # A flat HOLD/NONE event may have no market mark; preserve the
+            # event in the equity stream without inventing a price.
+            equity_point = EquityPoint(record.timestamp_ns, capital, capital - engine_config.initial_capital, 0.0)
+            previous_equity = equity_point.equity
+            previous_timestamp = record.timestamp_ns
+            peak_equity = max(peak_equity, equity_point.equity)
+            if peak_equity > 0:
+                max_drawdown = max(max_drawdown, (peak_equity - equity_point.equity) / peak_equity)
+            continue
         if isinstance(price, bool) or not isinstance(price, (int, float)) or not isfinite(float(price)) or float(price) <= 0:
             raise ValueError("event execution price must be finite and positive")
         price = float(price)
