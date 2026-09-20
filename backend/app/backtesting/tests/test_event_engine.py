@@ -142,6 +142,21 @@ def test_open_order_id_cannot_be_reused_by_later_strategy_decision():
     assert portfolio.positions[0].quantity == 3
 
 
+def test_replace_rejects_order_id_already_used_by_terminal_order():
+    portfolio = Portfolio(100_000)
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    old = SimOrder("old", "X", ExecutionSide.BUY, 10, submitted_at_ns=1_000)
+    used = SimOrder("used", "X", ExecutionSide.BUY, 1, submitted_at_ns=1_000)
+    engine._lifecycle(old, 1_000).accept(1_000)
+    engine._lifecycle(old, 1_000).cancel(1_001)
+    used_lifecycle = engine._lifecycle(used, 1_000)
+    used_lifecycle.apply_fill(SimFill("used", "X", ExecutionSide.BUY, 1, 100.0, 1_001))
+    engine._open_orders["old"] = old
+
+    with pytest.raises(ValueError, match="already in use"):
+        engine.replace_order("old", SimOrder("used", "X", ExecutionSide.BUY, 5, submitted_at_ns=2_000), 2_000)
+
+
 def test_risk_blocked_order_does_not_change_portfolio():
     class Strategy:
         strategy_id = "risk-block"; strategy_version = "1"
