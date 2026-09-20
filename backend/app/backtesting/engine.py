@@ -378,7 +378,10 @@ class BacktestEngine:
             raise ValueError("chunk_size must be positive")
         capital = self.config.initial_capital
         open_trade = None
-        trades = []
+        pending_chunk = []
+        trade_count = 0
+        win_count = 0
+        realized_net_pnl = 0.0
         curve = []
         previous_timestamp = None
         last_close = None
@@ -409,9 +412,14 @@ class BacktestEngine:
                     exit_price_source="bar:close",
                 )
                 capital += _net_exit_cashflow(self.config, ep, xp)
-                trades.append(tr)
-                if len(trades) % chunk_size == 0:
-                    persist_chunk(tuple(trades[-chunk_size:]), len(trades) // chunk_size - 1)
+                trade_count += 1
+                realized_net_pnl += tr.net_pnl
+                if tr.net_pnl > 0:
+                    win_count += 1
+                pending_chunk.append(tr)
+                if len(pending_chunk) >= chunk_size:
+                    persist_chunk(tuple(pending_chunk), (trade_count - 1) // chunk_size)
+                    pending_chunk.clear()
                 open_trade = None
             if open_trade is not None and "low" in candle:
                 _validate_price_field(candle["low"], "low")
@@ -419,17 +427,29 @@ class BacktestEngine:
                 if peak_before > 0:
                     max_intrabar_drawdown = max(max_intrabar_drawdown, (peak_before - low_equity) / peak_before)
             curve.append(_equity_point(timestamp, capital, open_trade, close, self.config))
-        if trades and len(trades) % chunk_size:
-            persist_chunk(tuple(trades[-(len(trades) % chunk_size):]), len(trades) // chunk_size)
+        if pending_chunk:
+            persist_chunk(tuple(pending_chunk), trade_count // chunk_size)
         liquidation = _calculate_liquidation_pnl(self.config, open_trade[1], last_close) if open_trade is not None and last_close is not None else 0.0
-        return _build_result(
-            self.config.initial_capital,
-            capital + liquidation,
-            trades,
-            max_intrabar_drawdown,
-            liquidation,
-            open_trade is not None,
-            curve,
+        net = capital + liquidation - self.config.initial_capital
+        curve_tuple = tuple(curve)
+        stats = calculate_statistics(curve_tuple, self.config.initial_capital) if curve_tuple else None
+        authoritative_drawdown = max(stats.max_drawdown if stats else 0.0, max_intrabar_drawdown)
+        return BacktestResult(
+            initial_capital=self.config.initial_capital,
+            final_capital=capital + liquidation,
+            net_pnl=net,
+            total_return=net / self.config.initial_capital,
+            trades=(),
+            win_rate=win_count / trade_count if trade_count else 0.0,
+            expectancy=net / trade_count if trade_count else 0.0,
+            sharpe_ratio=stats.sharpe_ratio if stats else None,
+            sortino_ratio=stats.sortino_ratio if stats else None,
+            max_drawdown=authoritative_drawdown,
+            cagr=stats.cagr if stats else None,
+            unrealized_pnl=liquidation,
+            has_open_trade=open_trade is not None,
+            equity_curve=curve_tuple,
+            liquidation_value=capital + liquidation,
         )
 
 
