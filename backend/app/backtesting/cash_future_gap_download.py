@@ -94,7 +94,7 @@ class CashFutureGapDownloadPlanner:
             return ()
         # Session windows are authoritative. The queue request can be a broad
         # UTC/calendar range and must not suppress a valid exchange session.
-        expected = self._expected_session_timestamps(sessions, self.interval_ns)
+        expected = self._expected(sessions, request, self.interval_ns)
         actual: set[int] = set()
         for session in sessions:
             actual.update(catalog.timestamps(
