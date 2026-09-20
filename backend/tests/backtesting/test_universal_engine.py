@@ -141,3 +141,39 @@ def test_universal_engine_executes_multi_leg_basket_atomically():
     assert result.fill_count == 2
     assert engine.portfolio.positions["AAA"].quantity == 1
     assert engine.portfolio.positions["BBB"].quantity == -1
+
+
+def test_universal_engine_multi_leg_rejects_partial_atomic_execution_without_portfolio_change():
+    from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+
+    books = {
+        "AAA": OrderBook(asks=(DepthLevel(101.0, 1),)),
+        "BBB": OrderBook(bids=(DepthLevel(199.0, 0),)),
+    }
+
+    def strategy(ctx):
+        return (
+            (SimOrder("leg-a", "AAA", ExecutionSide.BUY, 1, OrderType.MARKET, submitted_at_ns=ctx.timestamp_ns), books["AAA"], ctx.timestamp_ns),
+            (SimOrder("leg-b", "BBB", ExecutionSide.SELL, 1, OrderType.MARKET, submitted_at_ns=ctx.timestamp_ns), books["BBB"], ctx.timestamp_ns),
+        )
+
+    engine = UniversalEventBacktestEngine(100_000.0)
+    try:
+        engine.run_multi_leg([_event(10, "AAA", 100.0, 1)], strategy)
+    except ValueError as exc:
+        assert "atomic rollback" in str(exc)
+    else:
+        raise AssertionError("expected atomic execution rejection")
+    assert engine.portfolio.trades == ()
+    assert engine.portfolio.snapshot().positions == ()
+
+
+def test_universal_engine_multi_leg_requires_atomic_execution_model():
+    from app.backtesting.execution import ExecutionSimulator, ExecutionSide, OrderBook, SimOrder
+
+    class NonAtomicExecution(ExecutionSimulator):
+        execute_many_atomic = None
+
+    engine = UniversalEventBacktestEngine(100_000.0, execution=NonAtomicExecution())
+    with __import__("pytest").raises(TypeError, match="atomic execution model"):
+        engine.run_multi_leg([_event(10, "AAA", 100.0, 1)], lambda ctx: ())
