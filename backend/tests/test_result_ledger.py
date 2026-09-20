@@ -93,3 +93,50 @@ def test_same_timestamp_equity_points_are_distinct_records() -> None:
 
     assert ledger.append_equity("run-same-ts", points) == 2
     assert len(ledger.equity("run-same-ts")) == 2
+
+
+def test_same_timestamp_equity_pagination_is_not_ambiguous() -> None:
+    ledger = BacktestResultLedger()
+    ledger.create_run("run-equity-page", {"strategy_id": "same_timestamp_pagination"})
+
+    points = [
+        EquityPoint(2_000, 100_000.0, 0.0, 0.0, 0.0),
+        EquityPoint(2_000, 100_001.0, 1.0, 0.0, 0.0),
+        EquityPoint(2_001, 100_002.0, 2.0, 0.0, 0.0),
+    ]
+
+    assert ledger.append_equity("run-equity-page", points) == 3
+    page = ledger.equity("run-equity-page", limit=1)
+    assert len(page) == 1
+    next_page = ledger.equity(
+        "run-equity-page",
+        limit=1,
+        after_timestamp_ns=page[-1]["timestamp_ns"],
+    )
+    assert len(next_page) == 1
+    assert page[-1]["timestamp_ns"] != next_page[-1]["timestamp_ns"]
+
+
+def test_identical_equity_record_is_idempotent() -> None:
+    ledger = BacktestResultLedger()
+    ledger.create_run("run-equity-idempotent", {"strategy_id": "equity_idempotent"})
+    point = EquityPoint(3_000, 100_000.0, 0.0, 0.0, 0.0)
+
+    assert ledger.append_equity("run-equity-idempotent", [point]) == 1
+    assert ledger.append_equity("run-equity-idempotent", [point]) == 0
+    assert len(ledger.equity("run-equity-idempotent")) == 1
+
+
+def test_conflicting_same_equity_identity_is_rejected() -> None:
+    ledger = BacktestResultLedger()
+    ledger.create_run("run-equity-conflict", {"strategy_id": "equity_conflict"})
+    ledger.append_equity(
+        "run-equity-conflict",
+        [EquityPoint(4_000, 100_000.0, 0.0, 0.0, 0.0)],
+    )
+
+    with pytest.raises(ValueError, match="conflicting duplicate"):
+        ledger.append_equity(
+            "run-equity-conflict",
+            [EquityPoint(4_000, 100_001.0, 1.0, 0.0, 0.0)],
+        )
