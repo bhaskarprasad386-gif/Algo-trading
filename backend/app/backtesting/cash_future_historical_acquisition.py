@@ -61,10 +61,7 @@ class CashFutureHistoricalAcquisitionService:
         self.ingestion = ingestion
         self.source = source
         self.contract_master = contract_master
-        self.planner = CashFutureGapDownloadPlanner(
-            interval_ns=interval_ns,
-            max_request_ns=max_request_ns,
-        )
+        self.planner = CashFutureGapDownloadPlanner(interval_ns=interval_ns, max_request_ns=max_request_ns)
         self.interval_ns = interval_ns
         self.executor = ResumableHistoricalExecutor(
             ingestion,
@@ -82,33 +79,44 @@ class CashFutureHistoricalAcquisitionService:
             for session in sessions
         }))
 
+    @staticmethod
+    def _request_is_fully_covered(
+        request,
+        ranges,
+    ) -> bool:
+        """Return true when one persisted complete range covers this exact request."""
+        return any(
+            item.instrument == request.instrument
+            and item.complete
+            and item.missing_points == 0
+            and item.start_ns <= request.start_ns
+            and item.end_ns >= request.end_ns
+            for item in ranges
+        )
+
     def _manifest_repair_instruments(
         self,
         *,
         coverage_store: CashFutureCoverageManifestStore | None,
         source: str,
         timeframe: str,
-        requested_instruments: set[str],
+        plan: HistoricalSyncPlan,
     ) -> set[str]:
-        """Return only instruments whose persisted manifest still needs repair.
+        """Keep planned requests unless their exact range is already durably covered.
 
-        A complete manifest range is skipped at the provider-request layer. An
-        incomplete range remains eligible, after which the catalog gap planner
-        narrows work to exact missing cadence chunks. Instruments absent from an
-        existing manifest are treated as new acquisition work.
+        Manifest state is range-scoped. A complete historical range for an
+        instrument must never suppress a new request for a different period.
         """
         if coverage_store is None:
-            return requested_instruments
+            return {request.instrument for request in plan.requests}
         ranges = coverage_store.ranges(source=source, timeframe=timeframe)
         if not ranges:
-            return requested_instruments
-        known = {item.instrument for item in ranges}
-        incomplete = {
-            item.instrument
-            for item in ranges
-            if item.missing_points > 0 or not item.complete
+            return {request.instrument for request in plan.requests}
+        return {
+            request.instrument
+            for request in plan.requests
+            if not self._request_is_fully_covered(request, ranges)
         }
-        return (requested_instruments - known) | incomplete
 
     def prepare(
         self,
@@ -149,7 +157,7 @@ class CashFutureHistoricalAcquisitionService:
             coverage_store=coverage_store,
             source=source,
             timeframe=timeframe,
-            requested_instruments={request.instrument for request in queue.all_requests},
+            plan=plan,
         )
         if coverage_store is not None:
             plan = HistoricalSyncPlan(tuple(
@@ -188,24 +196,34 @@ class CashFutureHistoricalAcquisitionService:
         ranges = []
         instruments = {request.instrument for request in queue.all_requests}
         sessions_by_instrument: dict[str, tuple[SessionWindow, ...]] = {
-            queue.spot.request.instrument: spot_sessions,
+            getattr(queue.spot, "request", queue.spot).instrument: spot_sessions,
         }
         if future_sessions:
             sessions_by_instrument.update(future_sessions)
         for instrument in sorted(instruments):
+            request = next(
+                (getattr(item, "request", item) for item in queue.all_requests if getattr(item, "request", item).instrument == instrument),
+                None,
+            )
+            if request is None:
+                continue
             for session in sessions_by_instrument.get(instrument, ()):
+                start_ns = max(session.start_ns, request.start_ns)
+                end_ns = min(session.end_ns, request.end_ns)
+                if start_ns > end_ns:
+                    continue
                 session_manifest = manifest_from_catalog(
                     source=source,
                     instrument=instrument,
-                    start_ns=session.start_ns,
-                    end_ns=session.end_ns,
+                    start_ns=start_ns,
+                    end_ns=end_ns,
                     interval_ns=self.interval_ns,
                     observed_timestamps=self.ingestion.catalog.timestamps(
                         source=source,
                         instrument=instrument,
                         timeframe=timeframe,
-                        start_ns=session.start_ns,
-                        end_ns=session.end_ns,
+                        start_ns=start_ns,
+                        end_ns=end_ns,
                     ),
                     generated_at=generated_at,
                 )
@@ -238,10 +256,7 @@ class CashFutureHistoricalAcquisitionService:
     @staticmethod
     def _durable_job_id(job_store: HistoricalJobStore, base_job_id: str, plan: HistoricalSyncPlan) -> str:
         """Scope durable state to the exact plan so repaired plans get fresh identities."""
-        metadata = tuple(
-            ResumableHistoricalExecutor._request_metadata(request)
-            for request in plan.requests
-        )
+        metadata = tuple(ResumableHistoricalExecutor._request_metadata(request) for request in plan.requests)
         fingerprint = job_store.fingerprint(metadata)
         return f"{base_job_id}:plan:{fingerprint}"
 
@@ -269,7 +284,6 @@ class CashFutureHistoricalAcquisitionService:
         coverage_store: CashFutureCoverageManifestStore | None = None,
         queue: CashFutureDownloadQueue | None = None,
     ) -> CashFutureAcquisitionResult:
-        """Download missing chunks and re-plan bounded gaps until coverage stabilizes."""
         durable_args = (job_store is not None, job_id is not None, run_id is not None)
         if any(durable_args) and not all(durable_args):
             raise ValueError("job_store, job_id and run_id must be supplied together")
@@ -290,21 +304,12 @@ class CashFutureHistoricalAcquisitionService:
             queue=queue,
             coverage_store=coverage_store,
         )
-        progress: list[CashFutureDataCoverageReport] = [
-            self._audit(
-                queue=queue,
-                mode=mode,
-                spot_sessions=spot_sessions,
-                future_sessions=future_sessions or {},
-            )
-        ]
+        progress: list[CashFutureDataCoverageReport] = [self._audit(
+            queue=queue, mode=mode, spot_sessions=spot_sessions, future_sessions=future_sessions or {}
+        )]
         self._persist_manifest(
-            coverage_store=coverage_store,
-            queue=queue,
-            source=source,
-            timeframe=timeframe,
-            spot_sessions=spot_sessions,
-            future_sessions=future_sessions,
+            coverage_store=coverage_store, queue=queue, source=source, timeframe=timeframe,
+            spot_sessions=spot_sessions, future_sessions=future_sessions,
         )
         if on_progress is not None:
             on_progress(CashFutureAcquisitionProgress(0, 0, 0, len(plan.requests), progress[-1]))
@@ -321,46 +326,27 @@ class CashFutureHistoricalAcquisitionService:
             if job_store is not None:
                 durable_plan_job_id = self._durable_job_id(job_store, job_id, plan)
                 execution = self.executor.run_durable(
-                    self.source,
-                    plan,
-                    job_store=job_store,
-                    job_id=durable_plan_job_id,
-                    run_id=run_id,
-                    retry_attempts=retry_attempts,
-                    retry_delay_seconds=retry_delay_seconds,
-                    retry_policy=effective_retry_policy,
+                    self.source, plan, job_store=job_store, job_id=durable_plan_job_id,
+                    run_id=run_id, retry_attempts=retry_attempts,
+                    retry_delay_seconds=retry_delay_seconds, retry_policy=effective_retry_policy,
                 )
             else:
                 execution = self.executor.run(
-                    self.source,
-                    plan,
-                    retry_attempts=retry_attempts,
-                    retry_delay_seconds=retry_delay_seconds,
-                    retry_policy=effective_retry_policy,
+                    self.source, plan, retry_attempts=retry_attempts,
+                    retry_delay_seconds=retry_delay_seconds, retry_policy=effective_retry_policy,
                 )
             total_completed += execution.completed_chunks
             total_skipped.extend(execution.skipped_request_indices)
             final_execution = DownloadExecutionResult(
-                (),
-                execution.failed_request_index,
-                tuple(total_skipped),
-                completed_count=total_completed,
+                (), execution.failed_request_index, tuple(total_skipped), completed_count=total_completed
             )
-            progress.append(
-                self._audit(
-                    queue=queue,
-                    mode=mode,
-                    spot_sessions=spot_sessions,
-                    future_sessions=future_sessions or {},
-                )
-            )
+            progress.append(self._audit(
+                queue=queue, mode=mode, spot_sessions=spot_sessions,
+                future_sessions=future_sessions or {},
+            ))
             self._persist_manifest(
-                coverage_store=coverage_store,
-                queue=queue,
-                source=source,
-                timeframe=timeframe,
-                spot_sessions=spot_sessions,
-                future_sessions=future_sessions,
+                coverage_store=coverage_store, queue=queue, source=source, timeframe=timeframe,
+                spot_sessions=spot_sessions, future_sessions=future_sessions,
             )
             if execution.failed_request_index is not None:
                 if on_progress is not None:
@@ -369,18 +355,10 @@ class CashFutureHistoricalAcquisitionService:
                     ))
                 break
             _, next_plan = self.prepare(
-                spot_instrument=spot_instrument,
-                exchange=exchange,
-                underlying=underlying,
-                start=start,
-                end=end,
-                spot_sessions=spot_sessions,
-                future_sessions=future_sessions,
-                timeframe=timeframe,
-                mode=mode,
-                source=source,
-                queue=queue,
-                coverage_store=coverage_store,
+                spot_instrument=spot_instrument, exchange=exchange, underlying=underlying,
+                start=start, end=end, spot_sessions=spot_sessions,
+                future_sessions=future_sessions, timeframe=timeframe, mode=mode,
+                source=source, queue=queue, coverage_store=coverage_store,
             )
             pending_chunks = len(next_plan.requests)
             if on_progress is not None:
