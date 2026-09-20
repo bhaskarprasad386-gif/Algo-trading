@@ -396,7 +396,14 @@ class EventBacktestEngine:
                 raise ValueError("restored open order must have non-terminal lifecycle")
             queue = int(raw.get("dynamic_queue_ahead", order.queue_ahead_quantity)); generation = int(raw.get("queue_generation", 0)); self._dynamic_queue_ahead[order.order_id] = queue; self._queue_lifecycles[order.order_id] = QueueLifecycleState(queue, generation, True)
 
-        self._reserved_margin.update({str(k): float(v) for k, v in state.get("reserved_margin", {}).items()})
+        restored_reservations = {str(k): float(v) for k, v in state.get("reserved_margin", {}).items()}
+        for order_id, amount in restored_reservations.items():
+            if not math.isfinite(amount) or amount < 0:
+                raise ValueError("restored margin reservation must be finite and non-negative")
+            lifecycle = self._order_lifecycles.get(order_id)
+            if lifecycle is None or lifecycle.state.terminal or order_id not in self._open_orders:
+                raise ValueError("restored margin reservation must belong to an open order")
+        self._reserved_margin.update({order_id: amount for order_id, amount in restored_reservations.items() if amount > 0})
 
     def run(self, events: Iterable[MarketEvent], strategy: object, *, state: Mapping[str, object] | None = None, start_event_index: int = 0, checkpoint_callback: Callable[[int, int, Mapping[str, object]], None] | None = None, checkpoint_interval: int | None = None) -> ReplayStats:
         if start_event_index < 0: raise ValueError("start_event_index cannot be negative")
