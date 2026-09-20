@@ -99,3 +99,16 @@ def test_dynamic_depth_ioc_cancels_residual_without_waiting_for_later_updates():
     assert [(f.filled_at_ns, f.quantity) for f in result.fills] == [(200, 4)]
     assert result.remaining_quantity == 2
     assert result.reason == "IOC remainder cancelled"
+
+
+def test_dynamic_depth_rejects_partial_fill_when_partial_fills_disabled():
+    sim = ExecutionSimulator(config=__import__("backend.app.backtesting.execution", fromlist=["ExecutionConfig"]).ExecutionConfig(allow_partial_fills=False))
+    order = _buy_order(quantity=6)
+    book = OrderBook(asks=(DepthLevel(100.0, 4),))
+
+    result = sim.execute_depth_updates(order, ((200, book, ()),))
+
+    assert result.rejected
+    assert result.fills == ()
+    assert result.remaining_quantity == 6
+    assert result.reason == "insufficient displayed depth"
