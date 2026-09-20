@@ -107,6 +107,41 @@ def test_duplicate_order_ids_in_one_strategy_decision_are_rejected_without_state
     assert engine.open_orders == {}
 
 
+def test_open_order_id_cannot_be_reused_by_later_strategy_decision():
+    class Strategy:
+        strategy_id = "reuse-open-id"
+        strategy_version = "1"
+
+        def on_event(self, event, context):
+            if event.timestamp_ns == 1_000:
+                return StrategyDecision(
+                    action="BUY",
+                    orders=(SimOrder("open-1", "NIFTY", ExecutionSide.BUY, 10),),
+                )
+            return StrategyDecision(
+                action="BUY",
+                orders=(SimOrder("open-1", "NIFTY", ExecutionSide.BUY, 5),),
+            )
+
+    portfolio = Portfolio(100_000)
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+
+    with pytest.raises(ValueError, match="reuses an open order_id"):
+        engine.run([
+            MarketEvent(1_000, "NIFTY", EventType.DEPTH, {
+                "asks": [[100.0, 3]],
+                "bids": [[99.0, 5]],
+            }),
+            MarketEvent(2_000, "NIFTY", EventType.DEPTH, {
+                "asks": [[101.0, 10]],
+                "bids": [[100.0, 5]],
+            }),
+        ], Strategy())
+
+    assert engine.order_states["open-1"].remaining_quantity == 7
+    assert portfolio.positions[0].quantity == 3
+
+
 def test_risk_blocked_order_does_not_change_portfolio():
     class Strategy:
         strategy_id = "risk-block"; strategy_version = "1"
