@@ -25,6 +25,12 @@ class StrategyProtocol(Protocol):
 
 
 @runtime_checkable
+class MultiLegStrategyProtocol(Protocol):
+    def __call__(self, context: EventContext) -> Iterable[tuple[SimOrder, OrderBook, int]] | None:
+        ...
+
+
+@runtime_checkable
 class DataSourceProtocol(Protocol):
     def iter_events(self, *, start_ns: int | None = None, end_ns: int | None = None) -> Iterable[HistoricalRecord]:
         ...
