@@ -210,10 +210,14 @@ class EventBacktestEngine:
 
     def _execution_order(self, order: SimOrder) -> SimOrder:
         queue = self._dynamic_queue_ahead.get(order.order_id, order.queue_ahead_quantity)
-        if queue == order.queue_ahead_quantity:
+        lifecycle = self._order_lifecycles.get(order.order_id)
+        remaining = lifecycle.state.remaining_quantity if lifecycle is not None else order.quantity
+        if remaining <= 0:
+            return order
+        if queue == order.queue_ahead_quantity and remaining == order.quantity:
             return order
         return SimOrder(order_id=order.order_id, instrument=order.instrument, side=order.side,
-            quantity=order.quantity, order_type=order.order_type, limit_price=order.limit_price,
+            quantity=remaining, order_type=order.order_type, limit_price=order.limit_price,
             stop_price=order.stop_price, submitted_at_ns=order.submitted_at_ns,
             queue_ahead_quantity=queue, time_in_force=order.time_in_force)
 
