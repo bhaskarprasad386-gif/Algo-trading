@@ -83,7 +83,7 @@ class UniversalEventBacktestEngine:
             raise TypeError("multi-leg execution requires atomic portfolio accounting")
 
         previous_key: tuple[int, str, str, str, int] | None = None
-        seen_identities: set[object] = set()
+        previous_identity = None
         snapshots: list[PortfolioSnapshot] = []
         equity_curve: list[EquityPoint] = []
         last_marks: dict[str, float] = {}
@@ -168,11 +168,11 @@ class UniversalEventBacktestEngine:
                 raise ValueError("event sequence must be a non-negative integer or None")
             key = event_order_key(record)
             identity = event_identity(record)
-            if identity in seen_identities:
+            if previous_identity is not None and identity == previous_identity:
                 raise ValueError("duplicate event identity")
             if previous_key is not None and key <= previous_key:
                 raise ValueError("events must be strictly ordered by deterministic event order")
-            seen_identities.add(identity)
+            previous_identity = identity
             previous_key = key
             self.clock.advance_to(record.timestamp_ns)
 
