@@ -152,6 +152,9 @@ class DurableEventBacktestEngine:
     def run(self, events: Iterable[MarketEvent], strategy: object, *, state: Mapping[str, object] | None = None,
             resume: bool = False, schema_version: int = LEDGER_SCHEMA_VERSION,
             data_source_fingerprint: str | None = None) -> ReplayStats:
+        # A failed checkpoint transaction rolls back its pending journal batch.
+        # Discard any uncommitted records before a retry/resume on this wrapper.
+        self._pending_journal.clear()
         source_events = iter(events)
         checkpoint = self.ledger.load_checkpoint(self.run_id) if resume else None
         context_state = dict(state or {})
