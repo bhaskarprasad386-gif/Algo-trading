@@ -149,3 +149,18 @@ def test_event_runner_validates_event_fields_before_identity_hashing():
         assert "timestamp_ns" in str(exc)
     else:
         raise AssertionError("expected invalid timestamp rejection")
+
+
+def test_event_runner_preserves_hold_events_for_equity_marking():
+    events = [
+        _event(1_000, 1, {"price": 100.0}),
+        _event(2_000, 2, {"price": 110.0}),
+    ]
+    actions = iter(("BUY", "HOLD"))
+
+    result = BacktestEngine().run_events(events, lambda event: next(actions))
+
+    assert len(result.equity_curve) == 2
+    assert result.equity_curve[-1].timestamp_ns == 2_000
+    assert result.unrealized_pnl == pytest.approx(10.0)
+    assert result.final_capital == pytest.approx(100_010.0)
