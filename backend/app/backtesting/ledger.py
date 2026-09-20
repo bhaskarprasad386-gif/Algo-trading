@@ -212,6 +212,43 @@ class BacktestLedger:
             raise
         return len(rows)
 
+    def append_and_checkpoint(self, records: Iterable[LedgerRecord], checkpoint: Checkpoint) -> None:
+        """Atomically persist pending replay journal records with their checkpoint."""
+        rows = list(records)
+        if checkpoint.event_index < 0:
+            raise ValueError("event_index must be positive")
+        if checkpoint.timestamp_ns < 0:
+            raise ValueError("checkpoint timestamp is invalid")
+        self._require_run(checkpoint.run_id)
+        for record in rows:
+            self._record_params(record)
+            if record.run_id != checkpoint.run_id:
+                raise ValueError("journal record run_id does not match checkpoint")
+        params = (checkpoint.run_id, int(checkpoint.event_index), int(checkpoint.timestamp_ns),
+                  json.dumps(dict(checkpoint.state), sort_keys=True, default=str))
+        current = self._db.execute("SELECT event_index,timestamp_ns FROM checkpoints WHERE run_id=?", (checkpoint.run_id,)).fetchone()
+        if current is not None:
+            current_event_index, current_timestamp_ns = int(current[0]), int(current[1])
+            if checkpoint.event_index < current_event_index or (checkpoint.event_index == current_event_index and checkpoint.timestamp_ns < current_timestamp_ns):
+                raise ValueError("checkpoint cannot move backwards")
+        try:
+            if rows:
+                self._db.executemany(
+                    "INSERT INTO records(run_id,record_type,timestamp_ns,payload_json) VALUES(?,?,?,?)",
+                    (self._record_params(record) for record in rows),
+                )
+            self._db.execute("""
+                INSERT INTO checkpoints(run_id,event_index,timestamp_ns,state_json) VALUES(?,?,?,?)
+                ON CONFLICT(run_id) DO UPDATE SET event_index=excluded.event_index,timestamp_ns=excluded.timestamp_ns,state_json=excluded.state_json
+            """, params)
+            self._db.execute("""
+                INSERT OR IGNORE INTO checkpoint_history(run_id,event_index,timestamp_ns,state_json) VALUES(?,?,?,?)
+            """, params)
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
+
     def checkpoint(self, checkpoint: Checkpoint) -> None:
         if checkpoint.event_index < 0:
             raise ValueError("event_index must be positive")
