@@ -535,6 +535,342 @@ Use independent modules.
 
 Small working modules must be tested before adding the next module.
 
+
+---
+
+## 25. LOCKED ARCHITECTURE DIRECTION — FUTURE-PROOF BACKTESTING & FAST TESTING
+
+This section supersedes any earlier backtesting/testing layout that conflicts with it.
+
+### 25.1 Architectural Goal
+
+The platform must support current and future backtesting types without creating a separate core engine for each strategy family.
+
+The Universal Backtest Engine must remain generic and capability-driven.
+
+Adding a new backtesting type should normally require a new strategy/plugin, data capability, or execution model rather than modifying the core engine repeatedly.
+
+### 25.2 Universal Core
+
+The target core flow is:
+
+Event/Data Source
+|
+Replay / Event Scheduling
+|
+Strategy
+|
+Order
+|
+Execution Model
+|
+Fill
+|
+Portfolio / Accounting
+|
+Risk / Metrics
+|
+Result / Journal
+|
+Result Storage
+
+The core must be deterministic, isolated per run, streaming-capable, and independent of network/database infrastructure wherever practical.
+
+### 25.3 Event-Driven and Time Model
+
+The engine must not assume candle-only or fixed-interval data.
+
+It must be capable of handling:
+
+* Tick
+* Trade
+* Quote
+* Depth / Order Book
+* Candle
+* Open Interest
+* News / Event
+* Custom events
+
+Timestamp precision must support high-resolution strategies, including millisecond and microsecond data where the source data provides it.
+
+Clock implementations must be separated:
+
+* Backtest Clock
+* Paper Clock
+* Live Clock
+
+Backtests must not depend on the machine's wall clock.
+
+### 25.4 Data Architecture
+
+Data access must be abstracted behind DataSource interfaces/capabilities.
+
+Target implementations:
+
+* In-memory data source for fast tests
+* Small deterministic fixture data source
+* SQLite data source for persistence/integration tests
+* Historical/streaming data source for large backtests
+
+Raw, normalized, and derived data must have clear boundaries.
+
+Large historical datasets must be streamable and must not be unnecessarily materialized into RAM.
+
+Raw historical data must be retained rather than overwritten by derived continuous/synthetic data.
+
+### 25.5 Instrument and Multi-Leg Model
+
+The engine must not be restricted to a single symbol/price stream.
+
+It must support:
+
+* Equity
+* Index
+* Futures
+* Options
+* Synthetic instruments
+* Multi-instrument strategies
+* Multi-leg positions/orders
+* Spreads and arbitrage structures
+
+Multi-leg operations must be a first-class capability so future arbitrage/options/spread strategies do not require a separate engine.
+
+### 25.6 Execution Model
+
+Execution must be pluggable.
+
+Target capabilities include:
+
+* Simple deterministic fills
+* Brokerage/fees
+* Slippage
+* Partial fills
+* Liquidity constraints
+* Order-book execution
+* Market impact
+* Custom execution models
+
+Fast tests must use lightweight deterministic execution. Heavy realism must remain available to heavy backtests.
+
+### 25.7 Portfolio and Accounting
+
+Portfolio/accounting must be independent from broker/network/database infrastructure.
+
+It must handle at minimum:
+
+* Cash
+* Positions
+* Average price
+* Realized P&L
+* Unrealized P&L
+* Equity
+* Margin where applicable
+
+Accounting/statistics must be reusable by backtest and paper-trading paths wherever practical.
+
+### 25.8 Run Context and Isolation
+
+Each backtest/paper run must have an isolated Run Context containing the run-specific:
+
+* Run ID
+* Configuration
+* Clock
+* Data source
+* Strategy
+* Execution model
+* Portfolio
+* Result store
+* Randomness/seed where applicable
+
+Avoid mutable global state.
+
+Configuration must not be silently mutated during a run.
+
+Deterministic seeded randomness must be available for execution models that require randomness.
+
+### 25.9 Results, Journal, Checkpoint and Resume
+
+The core must produce structured results without requiring persistent storage for every fast test.
+
+Target result stores:
+
+* In-memory result store
+* Persistent result store
+
+Large/long-running backtests must support checkpoint/resume where technically appropriate.
+
+Result/journal persistence must be separated from the core calculation path so fast tests do not pay unnecessary I/O cost.
+
+### 25.10 Strategy / Backtesting Extensibility
+
+The Universal Engine must be reusable for:
+
+* Cash-Future
+* Futures
+* Options
+* Arbitrage
+* Synthetic instruments
+* Order-book strategies
+* Market making
+* Statistical arbitrage
+* OI/event-driven strategies
+* Future/custom strategies
+
+A new strategy family must not require cloning the Universal Engine.
+
+### 25.11 Backtest and Paper-Trading Reuse
+
+Backtesting and paper trading should reuse the same strategy/calculation/portfolio contracts wherever practical.
+
+Conceptual flow:
+
+Same Strategy/Core
+|
++-- Historical Data + Simulation Execution -> Backtest
+|
++-- Live Data + Paper Execution -> Paper Trading
+|
++-- Live Data + Controlled Live Execution -> Future Live Trading
+
+Live order execution remains disabled until separately authorized and verified.
+
+### 25.12 Test Architecture
+
+Testing must be split by purpose without reducing total correctness coverage.
+
+#### Fast CI
+
+Use:
+
+* Tiny deterministic datasets
+* In-memory data
+* In-memory execution
+* In-memory results
+* Fake/mocked external services
+* No unnecessary network
+* No large historical datasets
+* No unnecessary persistent database I/O
+
+Fast tests must exercise the real core/Universal Engine where practical; they must not become a completely separate fake implementation.
+
+#### Integration CI
+
+Use controlled datasets to verify:
+
+* SQLite/persistence
+* Historical adapters
+* Data normalization
+* Batch processing
+* Recovery/restart
+* Broker/API boundaries
+* Persistent result/journal behavior
+
+#### Heavy Backtesting CI
+
+Use large or realistic datasets for:
+
+* Millisecond/microsecond replay
+* Tick/event streams
+* Order-book replay
+* Cash-Future
+* Arbitrage
+* Futures
+* Options
+* Synthetic instruments
+* Rollover
+* OI/event strategies
+* Multi-leg strategies
+* Large SQLite workloads
+* Performance/stress tests
+
+Heavy tests must not be deleted, silently skipped, or hidden merely to make normal CI faster.
+
+### 25.13 CI Execution Model
+
+Target GitHub Actions layout:
+
+* Fast CI — normal push/PR feedback
+* Integration CI — controlled integration verification
+* Heavy Backtesting CI — long-running/full backtest verification
+
+Parallelization must be introduced only after test/run isolation is verified. Do not blindly introduce parallel workers where SQLite, files, global state, ordering, or shared resources can cause false failures.
+
+### 25.14 Performance Principle
+
+The objective is not to make computationally heavy backtests artificially short.
+
+The objective is to prevent small correctness tests from paying the cost of:
+
+* large data preparation
+* historical materialization
+* database I/O
+* network access
+* heavy execution simulation
+* unnecessary persistence
+
+Runtime must be measured before and after architectural changes.
+
+### 25.15 Refactoring Rules
+
+Do not rewrite the platform wholesale.
+
+For each architectural change:
+
+1. Inspect current source and tests.
+2. Identify the exact boundary/coupling problem.
+3. Preserve correct existing behavior.
+4. Make the smallest safe refactor.
+5. Run relevant tests.
+6. Run broader verification.
+7. Commit only verified work.
+8. Update project checkpoint/changelog.
+
+Classification remains:
+
+* Verified bug/problem -> fix
+* Verified robustness/functional problem -> fix
+* Uncertain -> verify before changing
+* Correct -> leave untouched
+
+### 25.16 Locked Implementation Order
+
+The architecture refactor and test-speed work must follow this order:
+
+1. Baseline/current-system freeze
+2. Current architecture and dependency audit
+3. Core contracts/boundaries
+4. Event and time model
+5. Data architecture
+6. Execution architecture
+7. Portfolio/accounting
+8. Universal Backtest Engine
+9. Strategy/backtest adapters
+10. Result/journal/checkpoint system
+11. Fast test suite
+12. Integration test suite
+13. Heavy backtest suite
+14. CI workflow separation
+15. Safe performance optimization/parallelization
+16. Full verification and runtime comparison
+
+No implementation step should be skipped merely because a later step appears easier.
+
+### 25.17 Future-Backtesting Compatibility Rule
+
+The architecture must be evaluated against future unknown strategies, not only today's Cash-Future/Arbitrage tests.
+
+Before adding a major new backtesting family, verify whether it can be expressed using existing:
+
+* Event types
+* DataSource capabilities
+* Instrument model
+* Multi-leg model
+* Execution model
+* Portfolio/accounting contracts
+* Strategy interface
+
+Only add a new core capability when source/test evidence shows an existing abstraction cannot correctly represent the requirement.
+
 ---
 
 ## 23. Current Status
