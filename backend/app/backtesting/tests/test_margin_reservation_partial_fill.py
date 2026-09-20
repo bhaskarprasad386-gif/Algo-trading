@@ -66,3 +66,54 @@ def test_atomic_multi_leg_risk_failure_restores_reservations():
     assert result.risk_blocks == 1
     assert portfolio.reserved_margin == pytest.approx(0.0)
     assert engine.open_orders == {}
+
+
+def test_resting_partial_fill_keeps_only_residual_margin_reserved():
+    class Strategy:
+        strategy_id = "resting-reserve"
+        strategy_version = "1"
+        def on_event(self, event, context):
+            if event.timestamp_ns == 1_000:
+                return StrategyDecision(
+                    action="BUY",
+                    orders=(SimOrder("rest", "X", ExecutionSide.BUY, 10),),
+                )
+            return None
+
+    portfolio = Portfolio(100_000, RiskConfig(initial_margin_rate=0.2))
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    result = engine.run([
+        MarketEvent(1_000, "X", EventType.DEPTH, {
+            "asks": [[100.0, 3]],
+            "bids": [[99.0, 5]],
+        }),
+    ], Strategy())
+
+    assert result.fills == 1
+    assert result.final_snapshot.reserved_margin == pytest.approx(140.0)
+    assert engine.order_states["rest"].remaining_quantity == 7
+    assert engine.open_orders["rest"].quantity == 10
+
+
+def test_cancel_after_partial_fill_releases_only_remaining_reservation():
+    portfolio = Portfolio(100_000, RiskConfig(initial_margin_rate=0.2))
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    order = SimOrder("rest-cancel", "X", ExecutionSide.BUY, 10)
+    engine._update_market_state(MarketEvent(1_000, "X", EventType.DEPTH, {
+        "asks": [[100.0, 3]],
+        "bids": [[99.0, 5]],
+    }))
+    engine._lifecycle(order, 1_000)
+    engine.portfolio.reserve_margin("rest-cancel", 200.0)
+    engine._reserved_margin["rest-cancel"] = 200.0
+    engine._open_orders["rest-cancel"] = order
+
+    engine._try_execute_orders((order,), MarketEvent(1_000, "X", EventType.DEPTH, {
+        "asks": [[100.0, 3]],
+        "bids": [[99.0, 5]],
+    }))
+
+    assert portfolio.reserved_margin == pytest.approx(140.0)
+    engine.cancel_order("rest-cancel", 2_000)
+    assert portfolio.reserved_margin == pytest.approx(0.0)
+    assert "rest-cancel" not in engine.open_orders
