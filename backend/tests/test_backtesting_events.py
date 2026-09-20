@@ -113,3 +113,39 @@ def test_catalog_event_adapter_applies_inclusive_range_and_buy_sell_pnl():
     assert result.trades[0].exit_timestamp == 2_000
     assert result.net_pnl == 10.0
     catalog.close()
+
+
+def test_event_runner_consumes_generator_incrementally():
+    consumed = []
+
+    def events():
+        consumed.append(1)
+        yield _event(1_000, 1, {"price": 100.0})
+        assert consumed == [1]
+        consumed.append(2)
+        yield _event(2_000, 2, {"price": 101.0})
+
+    seen = []
+    result = BacktestEngine().run_events(events(), lambda event: seen.append(event.timestamp_ns))
+
+    assert seen == [1_000, 2_000]
+    assert consumed == [1, 2]
+    assert result.trades == ()
+
+
+def test_event_runner_validates_event_fields_before_identity_hashing():
+    malformed = HistoricalRecord(
+        source="test",
+        instrument="NFO:123",
+        timeframe="tick",
+        timestamp_ns=[],
+        payload={"price": 100.0},
+        sequence=1,
+    )
+
+    try:
+        BacktestEngine().run_events([malformed], lambda event: None)
+    except ValueError as exc:
+        assert "timestamp_ns" in str(exc)
+    else:
+        raise AssertionError("expected invalid timestamp rejection")
