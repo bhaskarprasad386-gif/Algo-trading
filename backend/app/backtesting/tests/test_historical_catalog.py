@@ -37,6 +37,15 @@ def test_gap_detection_returns_repair_ranges():
     catalog.close()
 
 
+def test_gap_detection_rejects_non_positive_interval():
+    catalog = HistoricalCatalog()
+    with pytest.raises(ValueError, match="interval_ns must be positive"):
+        catalog.gaps(source="vendor", instrument="NIFTY", timeframe="1m", interval_ns=0)
+    with pytest.raises(ValueError, match="interval_ns must be positive"):
+        catalog.gaps(source="vendor", instrument="NIFTY", timeframe="1m", interval_ns=-1)
+    catalog.close()
+
+
 def test_sequence_allows_multiple_source_events_at_same_timestamp():
     catalog = HistoricalCatalog()
     assert catalog.ingest([record(100, sequence=1), record(100, price=101, sequence=2)]) == 2
