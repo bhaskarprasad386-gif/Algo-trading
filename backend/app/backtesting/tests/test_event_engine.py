@@ -78,6 +78,35 @@ def test_event_strategy_order_uses_instrument_quote_and_ask_for_buy():
     assert engine.order_states["o1"].status == OrderStatus.FILLED
 
 
+def test_duplicate_order_ids_in_one_strategy_decision_are_rejected_without_state_mutation():
+    class Strategy:
+        strategy_id = "duplicate-orders"
+        strategy_version = "1"
+
+        def on_event(self, event, context):
+            return StrategyDecision(
+                action="BUY",
+                orders=(
+                    SimOrder("same", "NIFTY", ExecutionSide.BUY, 10),
+                    SimOrder("same", "NIFTY", ExecutionSide.BUY, 10),
+                ),
+            )
+
+    portfolio = Portfolio(100_000)
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+
+    with pytest.raises(ValueError, match="duplicate order_id"):
+        engine.run(
+            [MarketEvent(1_000, "NIFTY", EventType.QUOTE, {"bid": 99, "ask": 100})],
+            Strategy(),
+        )
+
+    assert portfolio.cash == pytest.approx(100_000)
+    assert portfolio.positions == ()
+    assert portfolio.reserved_margin == pytest.approx(0.0)
+    assert engine.open_orders == {}
+
+
 def test_risk_blocked_order_does_not_change_portfolio():
     class Strategy:
         strategy_id = "risk-block"; strategy_version = "1"
