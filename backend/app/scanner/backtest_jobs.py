@@ -39,6 +39,10 @@ def _update(db: Session, job_id: str, **values) -> None:
     job = db.query(BacktestJob).filter(BacktestJob.job_id == job_id).first()
     if job is None:
         return
+    # Cancellation is a terminal state. Do not allow a stale worker
+    # finalization to overwrite a cancellation that raced with it.
+    if values.get("status") == "completed" and job.status == "cancelled":
+        return
     for key, value in values.items():
         setattr(job, key, value)
     job.updated_at = _utcnow()
