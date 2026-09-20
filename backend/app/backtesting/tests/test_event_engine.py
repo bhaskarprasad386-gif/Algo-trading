@@ -400,6 +400,29 @@ def test_failed_replacement_reservation_preserves_old_order_and_margin():
     assert "new" not in engine.order_states
 
 
+def test_market_state_restore_preserves_partial_fill_lifecycle_and_queue():
+    portfolio = Portfolio(100_000)
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+    order = SimOrder("checkpoint-partial", "X", ExecutionSide.BUY, 10, submitted_at_ns=1_000, queue_ahead_quantity=4)
+    engine._lifecycle(order, 1_000)
+    engine._open_orders[order.order_id] = order
+    engine._dynamic_queue_ahead[order.order_id] = 2
+    engine._queue_lifecycles[order.order_id] = QueueLifecycleState(2, 3, True)
+    fill = SimFill("checkpoint-partial", "X", ExecutionSide.BUY, 3, 100.0, 1_100)
+    engine._order_lifecycles[order.order_id].apply_fill(fill)
+    state = engine.market_state()
+
+    restored = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(100_000))
+    restored.restore_market_state(state)
+
+    assert restored.order_states["checkpoint-partial"].status == OrderStatus.PARTIALLY_FILLED
+    assert restored.order_states["checkpoint-partial"].filled_quantity == 3
+    assert restored.order_states["checkpoint-partial"].remaining_quantity == 7
+    assert restored.open_orders["checkpoint-partial"] == order
+    assert restored.market_state()["open_orders"][0]["dynamic_queue_ahead"] == 2
+    assert restored.market_state()["open_orders"][0]["queue_generation"] == 3
+
+
 def test_resting_partial_fill_executes_only_remaining_quantity_on_next_event():
     class Strategy:
         strategy_id = "resting-partial"
