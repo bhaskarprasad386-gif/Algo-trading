@@ -315,6 +315,8 @@ class ExecutionSimulator:
                 break
         if not fills: return ExecutionResult((), order.quantity, True, "no executable depth")
         if order.time_in_force == TimeInForce.FOK and remaining: return ExecutionResult((), order.quantity, True, "insufficient displayed depth for FOK")
+        if not self.config.allow_partial_fills and remaining:
+            return ExecutionResult((), order.quantity, True, "insufficient displayed depth")
         if order.time_in_force == TimeInForce.IOC and remaining: return ExecutionResult(tuple(fills), remaining, False, "IOC remainder cancelled")
         return ExecutionResult(tuple(fills), remaining, False, None if remaining == 0 else "partial fill")
 
