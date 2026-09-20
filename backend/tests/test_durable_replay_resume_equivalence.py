@@ -128,3 +128,71 @@ def test_resume_event_identity_lookup_does_not_materialize_event_journal(monkeyp
     monkeypatch.setattr(ledger, "records", fail_materialization)
     assert ledger.event_exists("bounded-resume", EVENTS[0])
     assert not ledger.event_exists("bounded-resume", EVENTS[1])
+
+
+def test_resume_replays_journaled_event_when_checkpoint_commit_was_interrupted(tmp_path):
+    ledger = BacktestLedger(str(tmp_path / "atomicity.sqlite"))
+    ledger.start_run("atomicity", "atomicity", "1", 10_000.0, data_source_fingerprint="events-v1")
+    events = (
+        MarketEvent(1_000, "NSE:SBIN", EventType.QUOTE, {"bid": 99, "ask": 100}, sequence=1, source="test"),
+        MarketEvent(2_000, "NSE:SBIN", EventType.QUOTE, {"bid": 109, "ask": 110}, sequence=2, source="test"),
+    )
+
+    class Strategy:
+        strategy_id = "atomicity"
+        strategy_version = "1"
+
+        def __init__(self):
+            self.count = 0
+
+        def get_state(self):
+            return {"count": self.count}
+
+        def set_state(self, state):
+            self.count = int(state["count"])
+
+        def on_event(self, event, context):
+            self.count += 1
+            if self.count == 1:
+                return StrategyDecision(
+                    action="BUY",
+                    orders=(SimOrder("entry", event.instrument, ExecutionSide.BUY, 1),),
+                )
+            return StrategyDecision(
+                action="SELL",
+                orders=(SimOrder("exit", event.instrument, ExecutionSide.SELL, 1),),
+            )
+
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(10_000.0))
+    durable = DurableEventBacktestEngine(engine, ledger, "atomicity", checkpoint_interval=1)
+    strategy = Strategy()
+    durable.start_run(strategy, 10_000.0, data_source_fingerprint="events-v1")
+
+    original_checkpoint = ledger.checkpoint
+    calls = 0
+
+    def crash_before_second_checkpoint(checkpoint):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("simulated crash before checkpoint commit")
+        return original_checkpoint(checkpoint)
+
+    ledger.checkpoint = crash_before_second_checkpoint
+    with pytest.raises(RuntimeError, match="simulated crash before checkpoint commit"):
+        durable.run(events, strategy, data_source_fingerprint="events-v1")
+    ledger.checkpoint = original_checkpoint
+
+    checkpoint = ledger.load_checkpoint("atomicity")
+    assert checkpoint is not None and checkpoint.state["source_cursor"] == 1
+    assert [r.payload["sequence"] for r in ledger.records("atomicity", "EVENT")] == [1, 2]
+
+    resumed_engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=Portfolio(10_000.0))
+    resumed = DurableEventBacktestEngine(resumed_engine, ledger, "atomicity", checkpoint_interval=1)
+    result = resumed.run(events, Strategy(), resume=True, data_source_fingerprint="events-v1")
+
+    assert result.events_dispatched == 1
+    assert resumed_engine.portfolio.trades == (
+        resumed_engine.portfolio.trades[0],
+    )
+    assert resumed_engine.portfolio.snapshot().positions["NSE:SBIN"].quantity == 1
