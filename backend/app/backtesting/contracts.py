@@ -7,15 +7,13 @@ so the universal engine can later be reused by historical, paper, and live paths
 
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Protocol, TypeAlias, runtime_checkable
+from typing import Iterable, Mapping, Protocol, runtime_checkable
 
 from app.backtesting.engine import EventContext, EventSignal
 from app.backtesting.execution import SimFill, SimOrder
 from app.backtesting.historical_catalog import HistoricalRecord
 from app.backtesting.portfolio import PortfolioSnapshot
 
-
-EventStrategy: TypeAlias = "StrategyProtocol"
 
 
 @runtime_checkable
