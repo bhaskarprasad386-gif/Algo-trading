@@ -267,3 +267,38 @@ def test_universal_engine_multi_leg_rejects_duplicate_event_identity():
         assert "duplicate event identity" in str(exc)
     else:
         raise AssertionError("expected duplicate event identity rejection")
+
+
+
+def test_universal_engine_durable_mode_streams_results_without_retaining_full_history():
+    class Writer:
+        def __init__(self):
+            self.events = []
+            self.equity = []
+
+        def record_event(self, sequence, timestamp_ns, event_type, payload):
+            self.events.append((sequence, timestamp_ns, event_type, payload))
+
+        def record_equity(self, point):
+            self.equity.append(point)
+
+    writer = Writer()
+    events = [
+        _event(1, "AAA", 100.0, 1),
+        _event(2, "AAA", 101.0, 2),
+        _event(3, "AAA", 102.0, 3),
+    ]
+
+    engine = UniversalEventBacktestEngine(
+        100_000.0,
+        result_writer=writer,
+        retain_history=False,
+    )
+    result = engine.run(events, lambda context: EventSignal("HOLD"))
+
+    assert result.fill_count == 0
+    assert result.final_equity == 100_000.0
+    assert len(writer.events) == len(events)
+    assert len(writer.equity) == len(events)
+    assert result.snapshots == ()
+    assert result.equity_curve == ()
