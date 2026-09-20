@@ -42,6 +42,20 @@ def _split_jobs(*, instrument: str, timeframe: str, kind: str, start_ns: int, en
     return jobs
 
 
+def _split_coverage_jobs(*, instrument: str, timeframe: str, kind: str, start_ns: int, end_ns: int, max_request_ns: int) -> list[FNOAcquisitionJob]:
+    """Split an inclusive cadence gap without splitting a range that fits its time span."""
+    if end_ns - start_ns <= max_request_ns:
+        return [FNOAcquisitionJob(instrument, timeframe, start_ns, end_ns, kind)]
+    return _split_jobs(
+        instrument=instrument,
+        timeframe=timeframe,
+        kind=kind,
+        start_ns=start_ns,
+        end_ns=end_ns,
+        max_request_ns=max_request_ns,
+    )
+
+
 def _missing_session_timestamps(
     *,
     observed: tuple[int, ...],
@@ -163,7 +177,7 @@ def build_fno_coverage_plan(
                 end_ns=end_ns,
                 interval_ns=interval_ns,
             ):
-                jobs.extend(_split_jobs(
+                jobs.extend(_split_coverage_jobs(
                     instrument=contract.token,
                     timeframe=timeframe,
                     kind=contract.instrument_type,
