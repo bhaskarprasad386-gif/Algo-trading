@@ -103,3 +103,33 @@ def test_rollover_rejects_partial_old_contract_close_instead_of_carrying_stale_p
             points, lambda current, history: "BUY" if current.gap >= 10 else "HOLD",
             initial_capital=10000, execution_model="bid_ask", rollover_policy="force_exit",
         )
+
+def test_expiry_day_close_precedes_new_contract_entry_after_rollover():
+    start = datetime(2026, 9, 29, 10, 0)
+
+    def quoted(ts, month, gap):
+        expiry = date(2026, 9, 30) if month == "SEP" else date(2026, 10, 30)
+        return CashFutureHistoryPoint(
+            timestamp=ts, symbol="AAA", contract_month=month,
+            cash_price=100.0, future_price=100.0 + gap, gap=gap, gap_pct=gap,
+            lot_size=100, margin_required=4000.0, expiry_date=expiry,
+        )
+
+    result = run_cash_future_portfolio_strategy(
+        [
+            quoted(start, "SEP", 10),
+            quoted(datetime(2026, 9, 30, 10, 0), "SEP", 8),
+            quoted(datetime(2026, 10, 1, 10, 0), "OCT", 12),
+        ],
+        lambda current, history: "BUY" if current.gap >= 10 else "HOLD",
+        initial_capital=10000,
+        rollover_policy="force_exit",
+    )
+
+    expiry = [trade for trade in result.trades if trade["exit_reason"] == "expiry"]
+    rollover = [trade for trade in result.trades if trade["exit_reason"] == "rollover"]
+    assert len(expiry) == 1
+    assert len(rollover) == 0
+    assert expiry[0]["contract_month"] == "SEP"
+    assert result.open_position_count == 1
+    assert result.trades[-1]["contract_month"] == "SEP"
