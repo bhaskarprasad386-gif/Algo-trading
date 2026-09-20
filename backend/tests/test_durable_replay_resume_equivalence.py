@@ -108,3 +108,23 @@ def test_interrupted_resume_matches_fresh_orders_fills_and_portfolio():
     event_records = resumed_ledger.records("resume", "EVENT")
     assert len(event_records) == len(EVENTS)
     assert [r.payload["sequence"] for r in event_records] == [1, 2, 3, 4, 5]
+
+
+def test_resume_event_identity_lookup_does_not_materialize_event_journal(monkeypatch):
+    ledger = BacktestLedger(":memory:")
+    engine = _make_engine()
+    durable = DurableEventBacktestEngine(engine, ledger, "bounded-resume", checkpoint_interval=1)
+    strategy = DeterministicStrategy()
+    durable.start_run(strategy, 10_000_000.0, data_source_fingerprint="events-v1")
+    ledger.append(
+        __import__("app.backtesting.ledger", fromlist=["LedgerRecord"]).LedgerRecord(
+            "bounded-resume", "EVENT", EVENTS[0].timestamp_ns,
+            {"instrument": EVENTS[0].instrument, "event_type": EVENTS[0].event_type.value,
+             "sequence": EVENTS[0].sequence, "source": EVENTS[0].source},
+        )
+    )
+    def fail_materialization(*args, **kwargs):
+        raise AssertionError("resume must not materialize the full EVENT journal")
+    monkeypatch.setattr(ledger, "records", fail_materialization)
+    assert ledger.event_exists("bounded-resume", EVENTS[0])
+    assert not ledger.event_exists("bounded-resume", EVENTS[1])
