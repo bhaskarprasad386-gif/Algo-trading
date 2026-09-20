@@ -201,7 +201,9 @@ def test_permanently_incomplete_chunk_is_failure():
 
 
 def test_bounded_mode_does_not_retain_all_completed_results():
-    requests = tuple(HistoricalFetchRequest("x", "i", "1m", n, n) for n in range(1000))
+    # Enough chunks to exercise bounded iteration without making the unit test
+    # itself a large synthetic workload.
+    requests = tuple(HistoricalFetchRequest("x", "i", "1m", n, n) for n in range(256))
     service = FakeService()
     observed = []
     result = ResumableHistoricalExecutor(
@@ -215,10 +217,10 @@ def test_bounded_mode_does_not_retain_all_completed_results():
         ),
     )
     assert result.failed_request_index is None
-    assert result.completed_chunks == 1000
+    assert result.completed_chunks == 256
     assert result.results == ()
-    assert len(observed) == 1000
-    assert service.calls == 1000
+    assert len(observed) == 256
+    assert service.calls == 256
 
 
 def test_bounded_mode_preserves_completed_count_when_later_chunk_fails():
