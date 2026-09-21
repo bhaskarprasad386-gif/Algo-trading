@@ -79,6 +79,15 @@ class HistoricalCatalogEventReplay:
             by_leg[leg.event_key] = index
 
         for timestamp_ns in timestamps:
+            replay_metadata = {
+                leg.event_key: {
+                    "source": leg.source,
+                    "instrument": leg.instrument,
+                    "timeframe": leg.timeframe,
+                }
+                for leg in legs
+                if timestamp_ns in by_leg[leg.event_key]
+            }
             missing = [leg.event_key for leg in legs if timestamp_ns not in by_leg[leg.event_key]]
             if missing:
                 if require_complete:
@@ -86,6 +95,7 @@ class HistoricalCatalogEventReplay:
                 yield {
                     "timestamp_ns": timestamp_ns,
                     "data_resolution": data_resolution,
+                    "__replay_legs__": replay_metadata,
                     **{
                         leg.event_key: by_leg[leg.event_key][timestamp_ns].payload
                         for leg in legs
@@ -96,6 +106,7 @@ class HistoricalCatalogEventReplay:
             yield {
                 "timestamp_ns": timestamp_ns,
                 "data_resolution": data_resolution,
+                "__replay_legs__": replay_metadata,
                 **{
                     leg.event_key: by_leg[leg.event_key][timestamp_ns].payload
                     for leg in legs
