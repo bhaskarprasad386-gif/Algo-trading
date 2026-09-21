@@ -367,22 +367,21 @@ class UniversalEventBacktestEngine:
                         self.portfolio.apply_fills_atomic(result.fills, last_marks)
                         if self.result_writer is not None:
                             durable_fills = []
-                            for fill in result.fills:
-                                if len(result.reference_prices) != len(result.fills):
-                                    raise ValueError("execution result reference_prices must align with fills")
-                                for fill, reference_price in zip(result.fills, result.reference_prices):
-                                    durable_fills.append(BacktestFill(
-                                        fill_id=f"{replay_sequence}:{self._fill_sequence}:{fill.order_id}",
-                                        order_id=fill.order_id,
-                                        sequence=self._fill_sequence,
-                                        timestamp_ns=fill.filled_at_ns,
-                                        instrument=fill.instrument,
-                                        side=fill.side.value,
-                                        quantity=fill.quantity,
-                                        price=fill.price,
-                                        fee=fill.fee,
-                                        metadata={"reference_price": reference_price},
-                                    ))
+                            if len(result.reference_prices) != len(result.fills):
+                                raise ValueError("execution result reference_prices must align with fills")
+                            for fill, reference_price in zip(result.fills, result.reference_prices):
+                                durable_fills.append(BacktestFill(
+                                    fill_id=f"{replay_sequence}:{self._fill_sequence}:{fill.order_id}",
+                                    order_id=fill.order_id,
+                                    sequence=self._fill_sequence,
+                                    timestamp_ns=fill.filled_at_ns,
+                                    instrument=fill.instrument,
+                                    side=fill.side.value,
+                                    quantity=fill.quantity,
+                                    price=fill.price,
+                                    fee=fill.fee,
+                                    metadata={"reference_price": reference_price},
+                                ))
                                 self._fill_sequence += 1
                             self.result_writer.record_fills(tuple(durable_fills))
                 else:
