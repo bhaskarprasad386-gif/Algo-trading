@@ -39,6 +39,47 @@ class AtomicExecutionAwareProtocol(Protocol):
         ...
 
 
+@runtime_checkable
+class AccountingTradeProtocol(Protocol):
+    """Immutable accounting view required by generic trade reporting."""
+
+    order_id: str
+    instrument: str
+    side: ExecutionSide
+    quantity: int
+    price: float
+    gross_value: float
+    fee: float
+    realized_pnl_delta: float
+    cash_after: float
+    equity_after: float
+    timestamp_ns: int
+
+
+@dataclass(frozen=True)
+class AtomicTradeReportInput:
+    """Immutable generic boundary joining execution and post-accounting evidence."""
+
+    execution: AtomicExecutionResult
+    accounting_trades: tuple[AccountingTradeProtocol, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.execution, AtomicExecutionResult):
+            raise TypeError("execution must be an AtomicExecutionResult")
+        if not isinstance(self.accounting_trades, tuple):
+            raise TypeError("accounting_trades must be a tuple")
+        if any(not isinstance(trade, AccountingTradeProtocol) for trade in self.accounting_trades):
+            raise TypeError("accounting_trades must satisfy AccountingTradeProtocol")
+
+
+@runtime_checkable
+class TradeReporterProtocol(Protocol):
+    """Strategy-specific sink for completed trade reporting."""
+
+    def record_atomic_trade(self, report: AtomicTradeReportInput) -> None:
+        ...
+
+
 class DataSourceProtocol(Protocol):
     def iter_events(self, *, start_ns: int | None = None, end_ns: int | None = None) -> Iterable[HistoricalRecord]:
         ...
