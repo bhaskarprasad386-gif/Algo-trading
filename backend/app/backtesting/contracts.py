@@ -32,7 +32,6 @@ class MultiLegStrategyProtocol(Protocol):
 
 
 @runtime_checkable
-@runtime_checkable
 class AtomicExecutionAwareProtocol(Protocol):
     """Optional strategy callback for committing multi-leg execution state."""
 
