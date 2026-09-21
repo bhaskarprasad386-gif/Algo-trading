@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from app.backtesting.engine import EventContext, EventSignal, EventStrategy, _normalize_event_signal
-from app.backtesting.contracts import AtomicExecutionModelProtocol, DataSourceProtocol, DepthExecutionModelProtocol, ExecutionModelProtocol, MultiLegStrategyProtocol, PortfolioProtocol, StrategyProtocol
+from app.backtesting.contracts import AtomicExecutionAwareProtocol, AtomicExecutionModelProtocol, DataSourceProtocol, DepthExecutionModelProtocol, ExecutionModelProtocol, MultiLegStrategyProtocol, PortfolioProtocol, StrategyProtocol
 from app.backtesting.clock import BacktestClock, ClockProtocol
 from app.backtesting.event_model import event_identity, event_order_key
 from app.backtesting.execution import ExecutionConfig, ExecutionSide, ExecutionSimulator, OrderBook, SimOrder
@@ -198,6 +198,8 @@ class UniversalEventBacktestEngine:
                         raise ValueError(f"missing executable depth for {order.instrument!r}")
                     last_marks[order.instrument] = float(levels[0].price)
                 result = self.execution.execute_many_atomic(legs)
+                if isinstance(strategy, AtomicExecutionAwareProtocol):
+                    strategy.on_atomic_execution(result)
                 if result.rejected:
                     raise ValueError(result.reason or "atomic multi-leg execution rejected")
                 snapshot = self.portfolio.apply_fills_atomic(result.fills, last_marks)
