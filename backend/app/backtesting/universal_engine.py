@@ -18,7 +18,7 @@ from app.backtesting.event_model import event_identity, event_order_key
 from app.backtesting.execution import ExecutionConfig, ExecutionSide, ExecutionSimulator, OrderBook, SimOrder
 from app.backtesting.portfolio import Portfolio, PortfolioSnapshot, RiskConfig
 from app.backtesting.historical_catalog import HistoricalRecord
-from app.backtesting.result_ledger import EquityPoint as LedgerEquityPoint
+from app.backtesting.result_ledger import BacktestFill, EquityPoint as LedgerEquityPoint
 from app.backtesting.statistics import BacktestStatistics, EquityPoint, StreamingStatisticsAccumulator
 
 
@@ -232,6 +232,23 @@ class UniversalEventBacktestEngine:
                         strategy.on_atomic_execution(result)
                     raise ValueError(result.reason or "atomic multi-leg execution rejected")
                 snapshot = self.portfolio.apply_fills_atomic(result.fills, last_marks)
+                if self.result_writer is not None:
+                    self.result_writer.record_fills(
+                        tuple(
+                            BacktestFill(
+                                fill_id=f"{replay_sequence}:{index}:{fill.order_id}",
+                                order_id=fill.order_id,
+                                sequence=replay_sequence * 1_000_000 + index,
+                                timestamp_ns=fill.filled_at_ns,
+                                instrument=fill.instrument,
+                                side=fill.side.value,
+                                quantity=fill.quantity,
+                                price=fill.price,
+                                fee=fill.fee,
+                            )
+                            for index, fill in enumerate(result.fills)
+                        )
+                    )
                 if isinstance(strategy, AtomicExecutionAwareProtocol):
                     strategy.on_atomic_execution(result)
 
@@ -340,9 +357,38 @@ class UniversalEventBacktestEngine:
                         raise ValueError(result.reason or "depth execution rejected")
                     if result.fills:
                         self.portfolio.apply_fills_atomic(result.fills, last_marks)
+                        if self.result_writer is not None:
+                            self.result_writer.record_fills(
+                                tuple(
+                                    BacktestFill(
+                                        fill_id=f"{replay_sequence}:{index}:{fill.order_id}",
+                                        order_id=fill.order_id,
+                                        sequence=replay_sequence * 1_000_000 + index,
+                                        timestamp_ns=fill.filled_at_ns,
+                                        instrument=fill.instrument,
+                                        side=fill.side.value,
+                                        quantity=fill.quantity,
+                                        price=fill.price,
+                                        fee=fill.fee,
+                                    )
+                                    for index, fill in enumerate(result.fills)
+                                )
+                            )
                 else:
                     fill = self.execution.execute(order, float(price), record.timestamp_ns)
                     self.portfolio.apply_fill(fill, last_marks)
+                    if self.result_writer is not None:
+                        self.result_writer.record_fills((BacktestFill(
+                            fill_id=f"{replay_sequence}:0:{fill.order_id}",
+                            order_id=fill.order_id,
+                            sequence=replay_sequence * 1_000_000,
+                            timestamp_ns=fill.filled_at_ns,
+                            instrument=fill.instrument,
+                            side=fill.side.value,
+                            quantity=fill.quantity,
+                            price=fill.price,
+                            fee=fill.fee,
+                        ),))
 
             snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
             peak_equity = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
