@@ -257,6 +257,31 @@ def test_universal_cash_future_adapter_integrates_open_close_with_atomic_engine(
     assert result.realized_pnl == 60.0
 
 
+def test_universal_cash_future_adapter_short_direction_integrates_open_close_with_atomic_engine():
+    from app.backtesting.universal_engine import UniversalEventBacktestEngine
+
+    adapter = CashFutureUniversalMultiLegAdapter(
+        direction="SHORT_CASH_LONG_FUTURE", quantity=10
+    )
+    open_record = _universal_cf_context(
+        1,
+        {"bid": 105.0, "ask": 106.0, "bid_quantity": 20, "ask_quantity": 20},
+        {"bid": 100.0, "ask": 101.0, "bid_quantity": 20, "ask_quantity": 20},
+    )
+    close_record = _universal_cf_context(
+        2,
+        {"bid": 99.0, "ask": 100.0, "bid_quantity": 20, "ask_quantity": 20},
+        {"bid": 106.0, "ask": 107.0, "bid_quantity": 20, "ask_quantity": 20},
+    )
+
+    engine = UniversalEventBacktestEngine(100_000.0)
+    result = engine.run_multi_leg([open_record, close_record], adapter)
+
+    assert result.fill_count == 4
+    assert engine.portfolio.positions["NSE:ABC"].quantity == 0
+    assert engine.portfolio.positions["NFO:ABC-20261231"].quantity == 0
+    assert result.realized_pnl == 100.0
+
 def test_universal_cash_future_adapter_retries_failed_close_after_engine_rejection():
     from app.backtesting.execution import AtomicExecutionResult
 
