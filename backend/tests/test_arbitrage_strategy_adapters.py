@@ -87,3 +87,85 @@ def test_adapters_require_real_quote_payloads():
         pass
     else:
         raise AssertionError("invalid quote payload must be rejected")
+
+
+def _universal_cf_context(ts, cash_payload, future_payload):
+    from app.backtesting.engine import EventContext
+    from app.backtesting.historical_catalog import HistoricalRecord
+
+    record = HistoricalRecord(
+        "test",
+        "NSE:ABC",
+        "tick",
+        ts,
+        {
+            "cash": cash_payload,
+            "future": future_payload,
+            "__replay_legs__": {
+                "cash": {"source": "test", "instrument": "NSE:ABC", "timeframe": "tick"},
+                "future": {"source": "test", "instrument": "NFO:ABC-20261231", "timeframe": "tick"},
+            },
+        },
+        1,
+    )
+    return EventContext(ts, 1, "test", "NSE:ABC", record.payload, record)
+
+
+def test_universal_cash_future_adapter_emits_exact_two_executable_legs():
+    from app.backtesting.arbitrage_strategy_adapters import CashFutureUniversalMultiLegAdapter
+    from app.backtesting.contracts import MultiLegStrategyProtocol
+    from app.backtesting.execution import ExecutionSide
+
+    adapter = CashFutureUniversalMultiLegAdapter(quantity=10)
+    context = _universal_cf_context(
+        1,
+        {"bid": 100.0, "ask": 101.0, "bid_quantity": 20, "ask_quantity": 20},
+        {"bid": 104.0, "ask": 105.0, "bid_quantity": 20, "ask_quantity": 20},
+    )
+
+    assert isinstance(adapter, MultiLegStrategyProtocol)
+    legs = tuple(adapter(context))
+
+    assert len(legs) == 2
+    cash_order, cash_book, cash_ts = legs[0]
+    future_order, future_book, future_ts = legs[1]
+    assert cash_order.instrument == "NSE:ABC"
+    assert cash_order.side == ExecutionSide.BUY
+    assert cash_order.quantity == 10
+    assert cash_book.asks[0].price == 101.0
+    assert future_order.instrument == "NFO:ABC-20261231"
+    assert future_order.side == ExecutionSide.SELL
+    assert future_order.quantity == 10
+    assert future_book.bids[0].price == 104.0
+    assert cash_ts == future_ts == 1
+
+
+def test_universal_cash_future_adapter_closes_only_on_later_reverse_edge():
+    from app.backtesting.arbitrage_strategy_adapters import CashFutureUniversalMultiLegAdapter
+
+    adapter = CashFutureUniversalMultiLegAdapter(quantity=10)
+    entry_context = _universal_cf_context(
+        1,
+        {"bid": 100.0, "ask": 101.0, "bid_quantity": 20, "ask_quantity": 20},
+        {"bid": 104.0, "ask": 105.0, "bid_quantity": 20, "ask_quantity": 20},
+    )
+    assert len(tuple(adapter(entry_context))) == 2
+
+    same_context = _universal_cf_context(
+        2,
+        {"bid": 100.0, "ask": 101.0, "bid_quantity": 20, "ask_quantity": 20},
+        {"bid": 104.0, "ask": 105.0, "bid_quantity": 20, "ask_quantity": 20},
+    )
+    assert tuple(adapter(same_context)) == ()
+
+    close_context = _universal_cf_context(
+        3,
+        {"bid": 106.0, "ask": 107.0, "bid_quantity": 20, "ask_quantity": 20},
+        {"bid": 102.0, "ask": 103.0, "bid_quantity": 20, "ask_quantity": 20},
+    )
+    legs = tuple(adapter(close_context))
+    assert len(legs) == 2
+    assert legs[0][0].instrument == "NSE:ABC"
+    assert legs[0][0].side.value == "SELL"
+    assert legs[1][0].instrument == "NFO:ABC-20261231"
+    assert legs[1][0].side.value == "BUY"
