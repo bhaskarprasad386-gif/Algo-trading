@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from app.backtesting.engine import EventContext, EventSignal, EventStrategy, _normalize_event_signal
-from app.backtesting.contracts import AtomicExecutionAwareProtocol, AtomicExecutionModelProtocol, DataSourceProtocol, DepthExecutionModelProtocol, ExecutionModelProtocol, MultiLegStrategyProtocol, PortfolioProtocol, StrategyProtocol
+from app.backtesting.contracts import AtomicExecutionAwareProtocol, AtomicExecutionModelProtocol, AtomicTradeReportInput, DataSourceProtocol, DepthExecutionModelProtocol, ExecutionModelProtocol, MultiLegStrategyProtocol, PortfolioProtocol, StrategyProtocol, TradeReporterProtocol
 from app.backtesting.clock import BacktestClock, ClockProtocol
 from app.backtesting.event_model import event_identity, event_order_key
 from app.backtesting.execution import ExecutionConfig, ExecutionSide, ExecutionSimulator, OrderBook, SimOrder
@@ -61,6 +61,7 @@ class UniversalEventBacktestEngine:
         execution: ExecutionModelProtocol | None = None,
         clock: ClockProtocol | None = None,
         result_writer=None,
+        trade_reporter: TradeReporterProtocol | None = None,
         retain_history: bool = True,
     ) -> None:
         if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
@@ -77,7 +78,10 @@ class UniversalEventBacktestEngine:
         self.execution = execution if execution is not None else ExecutionSimulator(execution_config)
         self.quantity = quantity
         self.clock = clock if clock is not None else BacktestClock()
+        if trade_reporter is not None and not isinstance(trade_reporter, TradeReporterProtocol):
+            raise TypeError("trade_reporter must satisfy TradeReporterProtocol")
         self.result_writer = result_writer
+        self.trade_reporter = trade_reporter
         self.retain_history = retain_history
         self._run_started = False
         self._fill_sequence = 0
@@ -232,7 +236,9 @@ class UniversalEventBacktestEngine:
                     if isinstance(strategy, AtomicExecutionAwareProtocol):
                         strategy.on_atomic_execution(result)
                     raise ValueError(result.reason or "atomic multi-leg execution rejected")
+                trade_start = len(self.portfolio.trades)
                 snapshot = self.portfolio.apply_fills_atomic(result.fills, last_marks)
+                accounting_trades = tuple(self.portfolio.trades[trade_start:])
                 if self.result_writer is not None:
                     durable_fills = []
                     fill_offset = 0
@@ -259,6 +265,10 @@ class UniversalEventBacktestEngine:
                     self.result_writer.record_fills(tuple(durable_fills))
                 if isinstance(strategy, AtomicExecutionAwareProtocol):
                     strategy.on_atomic_execution(result)
+                if self.trade_reporter is not None:
+                    self.trade_reporter.record_atomic_trade(
+                        AtomicTradeReportInput(result, accounting_trades)
+                    )
 
             peak_equity = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
             replay_sequence += 1
