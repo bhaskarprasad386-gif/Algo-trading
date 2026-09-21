@@ -425,6 +425,81 @@ def test_universal_engine_is_single_use_and_rejects_second_run():
     else:
         raise AssertionError("expected second run to be rejected")
 
+def _context_components():
+    from app.backtesting.backtest_run import BacktestRunSpec
+    from app.backtesting.backtest_resolution import BacktestResolution
+    from app.backtesting.clock import BacktestClock
+    from app.backtesting.execution import ExecutionSimulator
+    from app.backtesting.portfolio import Portfolio
+
+    spec = BacktestRunSpec(
+        run_id="context-engine",
+        strategy_id="universal",
+        strategy_version="v1",
+        instrument="AAA",
+        start_ns=1,
+        end_ns=2,
+        resolution=BacktestResolution("tick", "historical", 1, 2),
+        parameters={},
+        data_watermarks={"AAA": 2},
+    )
+    clock = BacktestClock()
+    portfolio = Portfolio(100_000.0)
+    execution = ExecutionSimulator()
+    events = [_event(1, "AAA", 100.0, 1), _event(2, "AAA", 101.0, 2)]
+
+    class Source:
+        def iter_events(self, *, start_ns=None, end_ns=None):
+            for event in events:
+                if (start_ns is None or event.timestamp_ns >= start_ns) and (end_ns is None or event.timestamp_ns <= end_ns):
+                    yield event
+
+    return spec, clock, portfolio, execution, Source()
+
+
+def test_universal_engine_runs_from_explicit_run_context():
+    from app.backtesting.contracts import RunContext
+
+    spec, clock, portfolio, execution, source = _context_components()
+    seen = []
+    strategy = lambda ctx: (seen.append(ctx.timestamp_ns) or EventSignal("HOLD"))
+    context = RunContext(spec, clock, source, strategy, execution, portfolio)
+
+    engine = UniversalEventBacktestEngine(
+        100_000.0,
+        portfolio=portfolio,
+        execution=execution,
+        clock=clock,
+    )
+    result = engine.run_context(context)
+
+    assert seen == [1, 2]
+    assert result.final_equity == 100_000.0
+    assert clock.now_ns == 2
+
+
+def test_universal_engine_rejects_run_context_with_different_injected_dependency():
+    from app.backtesting.contracts import RunContext
+    from app.backtesting.clock import BacktestClock
+
+    spec, clock, portfolio, execution, source = _context_components()
+    context = RunContext(spec, clock, source, lambda ctx: EventSignal("HOLD"), execution, portfolio)
+
+    other_engine = UniversalEventBacktestEngine(
+        100_000.0,
+        portfolio=portfolio,
+        execution=execution,
+        clock=BacktestClock(),
+    )
+
+    try:
+        other_engine.run_context(context)
+    except ValueError as exc:
+        assert "dependencies" in str(exc)
+    else:
+        raise AssertionError("expected context dependency mismatch rejection")
+
+
 def _real_writer(tmp_path, run_id):
     from app.backtesting.backtest_resolution import BacktestResolution
     from app.backtesting.backtest_result import BacktestRunWriter
