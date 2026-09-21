@@ -332,9 +332,16 @@ class CashFutureTradeReporter:
     def record_atomic_trade(self, report: AtomicTradeReportInput) -> None:
         if report.execution.rejected or not report.accounting_trades:
             return
+        if len(report.execution.leg_results) != 2:
+            raise ValueError("Universal cash-future trade reporting requires exactly two legs")
         completed: list[BacktestTrade] = []
+        lifecycle_trade_id: str | None = None
         for index, result in enumerate(report.execution.leg_results):
             result, accounting = self._leg_evidence(report, index)
+            if index not in (0, 1) or not result.fills:
+                raise ValueError("Universal cash-future leg must contain at least one fill")
+            if len(result.reference_prices) != len(result.fills):
+                raise ValueError("reference prices must align with execution fills")
             instrument = result.fills[0].instrument
             quantity = sum(trade.quantity for trade in accounting)
             actual_price = self._weighted_price(accounting)
@@ -362,7 +369,8 @@ class CashFutureTradeReporter:
             fees = opened["entry_fees"] + sum(trade.fee for trade in accounting)
             slippage = opened["entry_slippage"] + self._slippage(result, accounting)
             exit_timestamp = max(trade.timestamp_ns for trade in accounting)
-            trade_id = f"CF:{opened['entry_order_id']}:{instrument}"
+            lifecycle_trade_id = lifecycle_trade_id or f"CF:{opened['entry_order_id']}"
+            trade_id = f"{lifecycle_trade_id}:{'CASH' if index == 0 else 'FUTURE'}"
             completed.append(BacktestTrade(
                 trade_id=trade_id,
                 sequence=self._sequence,
@@ -377,9 +385,10 @@ class CashFutureTradeReporter:
                 slippage=slippage,
                 net_pnl=gross_pnl - fees - slippage,
                 contract=instrument,
-                leg="CASH" if ":CASH" in result.fills[0].order_id else "FUTURE",
+                leg="CASH" if index == 0 else "FUTURE",
                 metadata={
                     "strategy": "CASH_CARRY_UNIVERSAL",
+                    "lifecycle_trade_id": lifecycle_trade_id,
                     "entry_timestamp_ns": opened["timestamp_ns"],
                     "exit_timestamp_ns": exit_timestamp,
                     "entry_reference_price": opened["entry_reference_price"],
