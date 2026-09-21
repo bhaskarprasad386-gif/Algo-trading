@@ -184,7 +184,7 @@ def test_run_context_rejects_mutation_of_bound_dependencies():
         parameters={},
         data_watermarks={"AAA": 10},
     )
-    context = RunContextProtocol(
+    context = RunContext(
         spec=spec,
         clock=BacktestClock(),
         data_source=object(),
