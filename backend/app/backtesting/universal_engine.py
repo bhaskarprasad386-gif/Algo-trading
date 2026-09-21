@@ -132,9 +132,24 @@ class UniversalEventBacktestEngine:
         """Run directly from a streaming DataSource without materializing its events."""
         return self.run(source.iter_events(start_ns=start_ns, end_ns=end_ns), strategy, price_field=price_field, order_book_field=order_book_field)
 
+    def _run_with_writer_lifecycle(self, run_callable) -> UniversalBacktestResult:
+        """Complete or fail a durable run while preserving the original exception."""
+        try:
+            result = run_callable()
+        except Exception as exc:
+            if self.result_writer is not None:
+                self.result_writer.fail(str(exc))
+            raise
+        if self.result_writer is not None:
+            self.result_writer.complete()
+        return result
+
     def run_multi_leg(self, events: Iterable[HistoricalRecord], strategy: MultiLegStrategyProtocol) -> UniversalBacktestResult:
         """Run a strategy that returns a complete atomic depth-execution basket per event."""
         self._begin_run()
+        return self._run_with_writer_lifecycle(lambda: self._run_multi_leg(events, strategy))
+
+    def _run_multi_leg(self, events: Iterable[HistoricalRecord], strategy: MultiLegStrategyProtocol) -> UniversalBacktestResult:
         if not isinstance(self.execution, AtomicExecutionModelProtocol):
             raise TypeError("multi-leg execution requires an atomic execution model")
         if not hasattr(self.portfolio, "apply_fills_atomic"):
@@ -213,6 +228,9 @@ class UniversalEventBacktestEngine:
 
     def run(self, events: Iterable[HistoricalRecord], strategy: StrategyProtocol, *, price_field: str = "price", order_book_field: str | None = None) -> UniversalBacktestResult:
         self._begin_run()
+        return self._run_with_writer_lifecycle(lambda: self._run(events, strategy, price_field=price_field, order_book_field=order_book_field))
+
+    def _run(self, events: Iterable[HistoricalRecord], strategy: StrategyProtocol, *, price_field: str = "price", order_book_field: str | None = None) -> UniversalBacktestResult:
         if not isinstance(price_field, str) or not price_field.strip():
             raise ValueError("price_field is required")
 
