@@ -679,6 +679,12 @@ def test_universal_engine_persists_successful_atomic_fills(tmp_path):
     assert {row["instrument"] for row in fills} == {"CASH", "FUT"}
     assert {row["quantity"] for row in fills} == {2.0}
     assert {row["price"] for row in fills} == {101.0, 104.0}
+    assert {(row["instrument"], row["side"], row["quantity"], row["price"]) for row in fills} == {
+        ("CASH", "BUY", 2.0, 101.0),
+        ("FUT", "SELL", 2.0, 104.0),
+    }
+    assert [row["sequence"] for row in fills] == [0, 1]
+    assert len(engine.portfolio.trades) == len(fills)
 
 
 def test_universal_engine_does_not_persist_rejected_atomic_fills(tmp_path):
