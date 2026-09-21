@@ -112,14 +112,18 @@ def _full_quote(response: dict) -> dict[str, Any]:
     depth = item.get("depth") if isinstance(item.get("depth"), dict) else {}
     buys = depth.get("buy") if isinstance(depth.get("buy"), list) else []
     sells = depth.get("sell") if isinstance(depth.get("sell"), list) else []
-    bid = _quote_side(buys[0].get("price")) if buys and isinstance(buys[0], dict) else None
-    ask = _quote_side(sells[0].get("price")) if sells and isinstance(sells[0], dict) else None
+    bid_level = buys[0] if buys and isinstance(buys[0], dict) else None
+    ask_level = sells[0] if sells and isinstance(sells[0], dict) else None
+    bid = _quote_side(bid_level.get("price")) if bid_level is not None else None
+    ask = _quote_side(ask_level.get("price")) if ask_level is not None else None
+    bid_qty = _non_negative_integer(bid_level.get("quantity"), "bid quantity") if bid_level is not None and bid_level.get("quantity") is not None else None
+    ask_qty = _non_negative_integer(ask_level.get("quantity"), "ask quantity") if ask_level is not None and ask_level.get("quantity") is not None else None
     timestamp = None
     for key in ("exchangeTimestamp", "exchange_timestamp", "lastTradedTimestamp", "last_traded_timestamp", "timestamp", "quoteTime", "quote_time"):
         timestamp = _quote_timestamp(item.get(key))
         if timestamp is not None:
             break
-    return {"ltp": _number(item.get("ltp")), "volume": _non_negative_integer(item.get("tradeVolume"), "tradeVolume"), "oi": _non_negative_integer(item.get("opnInterest"), "opnInterest"), "bid": bid, "ask": ask, "quote_timestamp": timestamp}
+    return {"ltp": _number(item.get("ltp")), "volume": _non_negative_integer(item.get("tradeVolume"), "tradeVolume"), "oi": _non_negative_integer(item.get("opnInterest"), "opnInterest"), "bid": bid, "ask": ask, "bid_qty": bid_qty, "ask_qty": ask_qty, "quote_timestamp": timestamp}
 
 
 def _margin_required(response: dict) -> float:
@@ -233,8 +237,8 @@ class CashFutureHistoryCollector:
                 future_quote = FutureQuote(symbol=future_symbol, contract_month=label, ltp=future_ltp, lot_size=lot_size, margin_required=margin, volume=market_quote["volume"], oi=market_quote["oi"], bid=market_quote["bid"], ask=market_quote["ask"], expiry=_expiry(future.get("expiry")))
                 result = calculate_cash_future(CashQuote(symbol=cash_symbol, ltp=cash_ltp, bid=cash_quote["bid"], ask=cash_quote["ask"]), future_quote, self.config)
                 item = result.__dict__.copy()
-                item.update({"contract_month": label, "timestamp": observation_time.isoformat(), "volume": market_quote["volume"], "oi": market_quote["oi"], "cash_bid": cash_quote["bid"], "cash_ask": cash_quote["ask"], "future_bid": market_quote["bid"], "future_ask": market_quote["ask"], "cash_quote_timestamp": cash_quote["quote_timestamp"].isoformat(), "quote_timestamp": market_quote["quote_timestamp"].isoformat()})
-                save_history_point(db, CashFutureHistoryPoint(symbol=symbol, contract_month=label, timestamp=observation_time, cash_price=cash_ltp, future_price=future_ltp, gap=result.gap, gap_pct=result.gap_pct, lot_size=lot_size, margin_required=margin, volume=market_quote["volume"], oi=market_quote["oi"], cash_bid=cash_quote["bid"], cash_ask=cash_quote["ask"], future_bid=market_quote["bid"], future_ask=market_quote["ask"], charges=self.config.charges, funding_cost=self.config.funding_cost, net_profit=result.net_profit, roi_pct=result.roi_pct, expiry_date=future_quote.expiry), expiry_date=future_quote.expiry)
+                item.update({"contract_month": label, "timestamp": observation_time.isoformat(), "volume": market_quote["volume"], "oi": market_quote["oi"], "cash_bid": cash_quote["bid"], "cash_ask": cash_quote["ask"], "future_bid": market_quote["bid"], "future_ask": market_quote["ask"], "cash_bid_qty": cash_quote["bid_qty"], "cash_ask_qty": cash_quote["ask_qty"], "future_bid_qty": market_quote["bid_qty"], "future_ask_qty": market_quote["ask_qty"], "cash_quote_timestamp": cash_quote["quote_timestamp"].isoformat(), "quote_timestamp": market_quote["quote_timestamp"].isoformat()})
+                save_history_point(db, CashFutureHistoryPoint(symbol=symbol, contract_month=label, timestamp=observation_time, cash_price=cash_ltp, future_price=future_ltp, gap=result.gap, gap_pct=result.gap_pct, lot_size=lot_size, margin_required=margin, volume=market_quote["volume"], oi=market_quote["oi"], cash_bid=cash_quote["bid"], cash_ask=cash_quote["ask"], future_bid=market_quote["bid"], future_ask=market_quote["ask"], cash_bid_qty=cash_quote["bid_qty"], cash_ask_qty=cash_quote["ask_qty"], future_bid_qty=market_quote["bid_qty"], future_ask_qty=market_quote["ask_qty"], charges=self.config.charges, funding_cost=self.config.funding_cost, net_profit=result.net_profit, roi_pct=result.roi_pct, expiry_date=future_quote.expiry), expiry_date=future_quote.expiry)
                 results.append(item)
             except Exception as exc:
                 app_logger.warning(f"Cash-Future {symbol} {label} {future_symbol}: {exc}")
