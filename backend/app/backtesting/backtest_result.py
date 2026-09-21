@@ -8,7 +8,7 @@ from typing import Any, Mapping
 from app.execution.payoff import PayoffLeg, payoff_summary
 
 from .backtest_run import BacktestRunSpec
-from .result_ledger import BacktestEvent, BacktestFill, BacktestResultLedger, EquityPoint
+from .result_ledger import BacktestEvent, BacktestFill, BacktestResultLedger, BacktestTrade, EquityPoint
 
 
 @dataclass(frozen=True)
@@ -50,6 +50,9 @@ class BacktestRunWriter:
 
     def record_fills(self, fills: tuple[BacktestFill, ...]) -> int:
         return self.ledger.append_fills(self.spec.run_id, fills)
+
+    def record_trades(self, trades: tuple[BacktestTrade, ...]) -> int:
+        return self.ledger.append_trades(self.spec.run_id, trades)
 
     def record_payoff(
         self,
