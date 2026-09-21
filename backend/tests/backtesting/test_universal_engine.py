@@ -233,9 +233,12 @@ def test_universal_engine_does_not_notify_strategy_when_atomic_accounting_fails(
             self.callback_count += 1
 
     strategy = Strategy()
+    ledger, writer = _real_writer(tmp_path, "universal-accounting-failure")
     engine = UniversalEventBacktestEngine(
         100_000.0,
         portfolio=FailingPortfolio(100_000.0),
+        result_writer=writer,
+        retain_history=False,
     )
 
     import pytest
@@ -243,6 +246,8 @@ def test_universal_engine_does_not_notify_strategy_when_atomic_accounting_fails(
         engine.run_multi_leg([_event(10, "AAA", 100.0, 1)], strategy)
 
     assert strategy.callback_count == 0
+    assert ledger.fills("universal-accounting-failure") == []
+    assert ledger.run("universal-accounting-failure")["status"] == "FAILED"
 
 
 def test_universal_engine_multi_leg_rejects_partial_atomic_execution_without_portfolio_change():
