@@ -1,4 +1,4 @@
-from app.backtesting.contracts import ExecutionModelProtocol, PortfolioProtocol, RunContextProtocol
+from app.backtesting.contracts import ExecutionModelProtocol, PortfolioProtocol, RunContext, RunContextProtocol
 from app.backtesting.engine import EventSignal
 from app.backtesting.execution import ExecutionConfig, SimFill
 from app.backtesting.historical_catalog import HistoricalRecord
@@ -148,7 +148,7 @@ def test_run_context_keeps_run_dependencies_bound_to_one_context():
     execution = RecordingExecution()
     portfolio = RecordingPortfolio()
 
-    context = RunContextProtocol(
+    context = RunContext(
         spec=spec,
         clock=clock,
         data_source=source,
@@ -165,6 +165,7 @@ def test_run_context_keeps_run_dependencies_bound_to_one_context():
     assert context.execution is execution
     assert context.portfolio is portfolio
     assert context.result_writer is None
+    assert context.seed is None
 
 
 def test_run_context_rejects_mutation_of_bound_dependencies():
