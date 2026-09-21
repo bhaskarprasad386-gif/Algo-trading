@@ -199,6 +199,40 @@ def test_universal_cash_future_adapter_binds_original_contract_across_rollover()
     closed = tuple(adapter(ctx(2, "NFO:ABC-NEW", 106, 107, 102, 103)))
     assert closed[1][0].instrument == "NFO:ABC-OLD"
 
+def test_universal_cash_future_adapter_short_direction_binds_original_future_across_rollover():
+    from app.backtesting.arbitrage_strategy_adapters import CashFutureUniversalMultiLegAdapter
+    from app.backtesting.contracts import EventContext, HistoricalRecord
+
+    def ctx(ts, future_instrument, cash_bid, cash_ask, future_bid, future_ask):
+        return EventContext(HistoricalRecord(
+            "test", "NSE:ABC", "tick", ts,
+            {
+                "cash": {"bid": cash_bid, "ask": cash_ask, "bid_quantity": 20, "ask_quantity": 20},
+                "future": {"bid": future_bid, "ask": future_ask, "bid_quantity": 20, "ask_quantity": 20},
+                "__replay_legs__": {
+                    "cash": {"source": "test", "instrument": "NSE:ABC", "timeframe": "tick"},
+                    "future": {"source": "test", "instrument": future_instrument, "timeframe": "tick"},
+                },
+            }, ts,
+        ))
+
+    adapter = CashFutureUniversalMultiLegAdapter(
+        direction="SHORT_CASH_LONG_FUTURE", quantity=10
+    )
+    opened = tuple(adapter(ctx(1, "NFO:ABC-OLD", 105, 106, 100, 101)))
+    assert opened[0][0].instrument == "NSE:ABC"
+    assert opened[0][0].side.value == "SELL"
+    assert opened[1][0].instrument == "NFO:ABC-OLD"
+    assert opened[1][0].side.value == "BUY"
+    adapter.on_atomic_execution(type("Result", (), {"rejected": False})())
+
+    closed = tuple(adapter(ctx(2, "NFO:ABC-NEW", 99, 100, 106, 107)))
+    assert closed[0][0].instrument == "NSE:ABC"
+    assert closed[0][0].side.value == "BUY"
+    assert closed[1][0].instrument == "NFO:ABC-OLD"
+    assert closed[1][0].side.value == "SELL"
+
+
 def test_universal_cash_future_adapter_integrates_open_close_with_atomic_engine():
     from app.backtesting.universal_engine import UniversalEventBacktestEngine
 
