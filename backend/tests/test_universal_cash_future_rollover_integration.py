@@ -1,5 +1,9 @@
 from app.backtesting.arbitrage_strategy_adapters import CashFutureUniversalMultiLegAdapter
+from app.backtesting.backtest_result import BacktestRunWriter
+from app.backtesting.backtest_resolution import BacktestResolution
+from app.backtesting.backtest_run import BacktestRunSpec
 from app.backtesting.contracts import EventContext, HistoricalRecord
+from app.backtesting.result_ledger import BacktestResultLedger
 from app.backtesting.universal_engine import UniversalEventBacktestEngine
 
 
@@ -40,6 +44,22 @@ def _context(ts, future_instrument, cash_bid, cash_ask, future_bid, future_ask):
     return EventContext(record)
 
 
+def _writer(tmp_path, run_id):
+    ledger = BacktestResultLedger(tmp_path / f"{run_id}.db")
+    spec = BacktestRunSpec(
+        run_id=run_id,
+        strategy_id="universal-cash-future",
+        strategy_version="v1",
+        instrument="ABC",
+        start_ns=1,
+        end_ns=2,
+        resolution=BacktestResolution("tick", "historical", 1, 2),
+        parameters={},
+        data_watermarks={"ABC": 2},
+    )
+    return ledger, BacktestRunWriter(ledger, spec)
+
+
 def test_cash_future_rollover_closes_original_contract_and_accounts_pnl():
     adapter = CashFutureUniversalMultiLegAdapter(
         direction="LONG_CASH_SHORT_FUTURE",
@@ -56,3 +76,32 @@ def test_cash_future_rollover_closes_original_contract_and_accounts_pnl():
     assert engine.portfolio.positions["NFO:ABC-OLD"].quantity == 0
     assert "NFO:ABC-NEW" not in engine.portfolio.positions
     assert result.realized_pnl == 60.0
+
+
+def test_cash_future_rollover_persists_all_four_fills_with_original_contract(tmp_path):
+    ledger, writer = _writer(tmp_path, "cf-rollover-durable")
+    adapter = CashFutureUniversalMultiLegAdapter(
+        direction="LONG_CASH_SHORT_FUTURE",
+        quantity=10,
+    )
+    open_event = _context(1, "NFO:ABC-OLD", 100.0, 101.0, 104.0, 105.0)
+    close_event = _context(2, "NFO:ABC-NEW", 106.0, 107.0, 102.0, 103.0)
+
+    engine = UniversalEventBacktestEngine(
+        100_000.0,
+        result_writer=writer,
+        retain_history=False,
+    )
+    result = engine.run_multi_leg([open_event, close_event], adapter)
+
+    fills = ledger.fills("cf-rollover-durable")
+    assert result.fill_count == 4
+    assert len(fills) == 4
+    assert [row["sequence"] for row in fills] == [0, 1, 2, 3]
+    assert [(row["instrument"], row["side"], row["quantity"], row["price"]) for row in fills] == [
+        ("NSE:ABC", "BUY", 10.0, 101.0),
+        ("NFO:ABC-OLD", "SELL", 10.0, 104.0),
+        ("NSE:ABC", "SELL", 10.0, 106.0),
+        ("NFO:ABC-OLD", "BUY", 10.0, 103.0),
+    ]
+    assert ledger.run("cf-rollover-durable")["status"] == "COMPLETED"
