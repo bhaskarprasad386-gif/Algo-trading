@@ -171,6 +171,57 @@ def test_universal_cash_future_adapter_closes_only_on_later_reverse_edge():
     assert legs[1][0].side.value == "BUY"
 
 
+def test_universal_cash_future_adapter_integrates_open_close_with_atomic_engine():
+    from app.backtesting.universal_engine import UniversalEventBacktestEngine
+
+    adapter = CashFutureUniversalMultiLegAdapter(quantity=10)
+    open_record = _universal_cf_context(
+        1,
+        {"bid": 100.0, "ask": 101.0, "bid_quantity": 20, "ask_quantity": 20},
+        {"bid": 104.0, "ask": 105.0, "bid_quantity": 20, "ask_quantity": 20},
+    )
+    close_record = _universal_cf_context(
+        2,
+        {"bid": 106.0, "ask": 107.0, "bid_quantity": 20, "ask_quantity": 20},
+        {"bid": 102.0, "ask": 103.0, "bid_quantity": 20, "ask_quantity": 20},
+    )
+
+    engine = UniversalEventBacktestEngine(100_000.0)
+    result = engine.run_multi_leg([open_record, close_record], adapter)
+
+    assert result.fill_count == 4
+    assert engine.portfolio.positions["NSE:ABC"].quantity == 0
+    assert engine.portfolio.positions["NFO:ABC-20261231"].quantity == 0
+    assert result.realized_pnl == 40.0
+
+
+def test_universal_cash_future_adapter_retries_failed_close_after_engine_rejection():
+    from app.backtesting.execution import AtomicExecutionResult
+
+    adapter = CashFutureUniversalMultiLegAdapter(quantity=10)
+    open_context = _universal_cf_context(
+        1,
+        {"bid": 100.0, "ask": 101.0, "bid_quantity": 20, "ask_quantity": 20},
+        {"bid": 104.0, "ask": 105.0, "bid_quantity": 20, "ask_quantity": 20},
+    )
+    assert len(tuple(adapter(open_context))) == 2
+    adapter.on_atomic_execution(AtomicExecutionResult((), (), False, ""))
+
+    close_context = _universal_cf_context(
+        2,
+        {"bid": 106.0, "ask": 107.0, "bid_quantity": 20, "ask_quantity": 20},
+        {"bid": 102.0, "ask": 103.0, "bid_quantity": 20, "ask_quantity": 20},
+    )
+    assert len(tuple(adapter(close_context))) == 2
+    adapter.on_atomic_execution(AtomicExecutionResult((), (), True, "rejected"))
+
+    retry_context = _universal_cf_context(
+        3,
+        {"bid": 106.0, "ask": 107.0, "bid_quantity": 20, "ask_quantity": 20},
+        {"bid": 102.0, "ask": 103.0, "bid_quantity": 20, "ask_quantity": 20},
+    )
+    assert len(tuple(adapter(retry_context))) == 2
+
 def test_universal_cash_future_adapter_does_not_change_state_when_atomic_execution_rejects():
     from app.backtesting.arbitrage_strategy_adapters import CashFutureUniversalMultiLegAdapter
     from app.backtesting.execution import AtomicExecutionResult
