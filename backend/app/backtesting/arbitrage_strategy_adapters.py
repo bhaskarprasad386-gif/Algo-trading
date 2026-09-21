@@ -167,15 +167,29 @@ class CashFutureUniversalMultiLegAdapter:
         self.quantity = quantity
         self._open = False
         self._pending_open: bool | None = None
+        self._open_cash_instrument: str | None = None
+        self._open_future_instrument: str | None = None
+        self._pending_cash_instrument: str | None = None
+        self._pending_future_instrument: str | None = None
 
     def on_atomic_execution(self, result) -> None:
         if self._pending_open is None:
             return
         if result.rejected:
             self._pending_open = None
+            self._pending_cash_instrument = None
+            self._pending_future_instrument = None
             return
         self._open = self._pending_open
         self._pending_open = None
+        if self._open:
+            self._open_cash_instrument = self._pending_cash_instrument
+            self._open_future_instrument = self._pending_future_instrument
+        else:
+            self._open_cash_instrument = None
+            self._open_future_instrument = None
+        self._pending_cash_instrument = None
+        self._pending_future_instrument = None
 
     @staticmethod
     def _quote(payload: object, name: str) -> tuple[float, float, int, int]:
@@ -242,8 +256,18 @@ class CashFutureUniversalMultiLegAdapter:
             phase = "CLOSE"
             self._pending_open = False
 
-        cash_instrument = self._leg_instrument(context, "cash")
-        future_instrument = self._leg_instrument(context, "future")
+        current_cash_instrument = self._leg_instrument(context, "cash")
+        current_future_instrument = self._leg_instrument(context, "future")
+        if self._open:
+            cash_instrument = self._open_cash_instrument
+            future_instrument = self._open_future_instrument
+            if cash_instrument is None or future_instrument is None:
+                raise ValueError("open cash-future contract identity is unavailable")
+        else:
+            cash_instrument = current_cash_instrument
+            future_instrument = current_future_instrument
+            self._pending_cash_instrument = cash_instrument
+            self._pending_future_instrument = future_instrument
         cash_book = self._book(cash_bid, cash_ask, cash_bid_qty, cash_ask_qty)
         future_book = self._book(future_bid, future_ask, future_bid_qty, future_ask_qty)
         prefix = f"CF:{context.timestamp_ns}:{phase}"
