@@ -393,6 +393,8 @@ def test_universal_cash_future_trade_reporter_persists_two_exact_legs():
     assert by_leg["CASH"].fees == 2.0
     assert by_leg["CASH"].net_pnl == 48.0
     assert by_leg["CASH"].metadata["pricing_model"] == "EXECUTABLE_EDGE"
+    assert by_leg["CASH"].metadata["lifecycle_trade_id"] == by_leg["FUTURE"].metadata["lifecycle_trade_id"]
+    assert by_leg["CASH"].trade_id.endswith(":CASH")
     assert by_leg["FUTURE"].instrument == "NFO:ABC-OLD"
     assert by_leg["FUTURE"].entry_price == 104.0
     assert by_leg["FUTURE"].exit_price == 103.0
