@@ -329,6 +329,25 @@ class CashFutureTradeReporter:
             total += max(0.0, adverse) * trade.quantity
         return total
 
+    @staticmethod
+    def _executable_edge(results: tuple[Any, Any]) -> float:
+        cash, future = results
+        if not cash.fills or not future.fills:
+            raise ValueError("cash-future edge requires both leg fills")
+        if len(cash.reference_prices) != len(cash.fills) or len(future.reference_prices) != len(future.fills):
+            raise ValueError("reference prices must align with execution fills")
+        cash_reference = sum(
+            ref * fill.quantity for fill, ref in zip(cash.fills, cash.reference_prices)
+        ) / sum(fill.quantity for fill in cash.fills)
+        future_reference = sum(
+            ref * fill.quantity for fill, ref in zip(future.fills, future.reference_prices)
+        ) / sum(fill.quantity for fill in future.fills)
+        if cash.fills[0].side == ExecutionSide.BUY and future.fills[0].side == ExecutionSide.SELL:
+            return future_reference - cash_reference
+        if cash.fills[0].side == ExecutionSide.SELL and future.fills[0].side == ExecutionSide.BUY:
+            return cash_reference - future_reference
+        raise ValueError("cash-future legs must have opposite executable sides")
+
     def record_atomic_trade(self, report: AtomicTradeReportInput) -> None:
         if report.execution.rejected or not report.accounting_trades:
             return
@@ -336,6 +355,8 @@ class CashFutureTradeReporter:
             raise ValueError("Universal cash-future trade reporting requires exactly two legs")
         completed: list[BacktestTrade] = []
         lifecycle_trade_id: str | None = None
+        leg_results = (report.execution.leg_results[0], report.execution.leg_results[1])
+        atomic_edge = self._executable_edge(leg_results)
         for index, result in enumerate(report.execution.leg_results):
             result, accounting = self._leg_evidence(report, index)
             if index not in (0, 1) or not result.fills:
@@ -358,6 +379,7 @@ class CashFutureTradeReporter:
                     "entry_quantity": quantity,
                     "entry_fees": sum(trade.fee for trade in accounting),
                     "entry_slippage": self._slippage(result, accounting),
+                    "entry_edge": atomic_edge,
                     "entry_order_id": result.fills[0].order_id,
                 }
                 continue
@@ -393,6 +415,8 @@ class CashFutureTradeReporter:
                     "exit_timestamp_ns": exit_timestamp,
                     "entry_reference_price": opened["entry_reference_price"],
                     "exit_reference_price": reference_price,
+                    "entry_edge": opened["entry_edge"],
+                    "exit_edge": atomic_edge,
                     "pricing_model": "EXECUTABLE_EDGE",
                     "entry_order_id": opened["entry_order_id"],
                     "exit_order_id": result.fills[0].order_id,
