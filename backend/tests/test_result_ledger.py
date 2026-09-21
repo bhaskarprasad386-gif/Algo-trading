@@ -4,6 +4,7 @@ import pytest
 
 from app.backtesting.result_ledger import (
     BacktestEvent,
+    BacktestFill,
     BacktestResultLedger,
     BacktestTrade,
     EquityPoint,
@@ -31,6 +32,54 @@ def trade(trade_id: str = "t1", sequence: int = 1, net: float = 95.0) -> Backtes
         data_resolution="s",
         metadata={"strategy": "box"},
     )
+
+
+def fill(fill_id: str = "f1", sequence: int = 1, price: float = 101.0) -> BacktestFill:
+    return BacktestFill(
+        fill_id=fill_id,
+        order_id="order-1",
+        sequence=sequence,
+        timestamp_ns=2_000 + sequence,
+        instrument="NIFTY26SEP25000CE",
+        side="BUY",
+        quantity=2,
+        price=price,
+        fee=1.5,
+        metadata={"leg": "CALL_LONG"},
+    )
+
+
+def test_incremental_fill_append_and_idempotency() -> None:
+    ledger = BacktestResultLedger()
+    ledger.create_run("run-fills", {"strategy_id": "multi_leg"})
+
+    assert ledger.append_fills("run-fills", [fill()]) == 1
+    assert ledger.append_fills("run-fills", [fill()]) == 0
+    rows = ledger.fills("run-fills")
+    assert len(rows) == 1
+    assert rows[0]["fill_id"] == "f1"
+    assert rows[0]["order_id"] == "order-1"
+    assert rows[0]["quantity"] == 2
+    assert rows[0]["price"] == 101.0
+
+
+def test_conflicting_fill_identity_is_rejected() -> None:
+    ledger = BacktestResultLedger()
+    ledger.create_run("run-fill-conflict", {"strategy_id": "multi_leg"})
+    ledger.append_fills("run-fill-conflict", [fill()])
+
+    with pytest.raises(ValueError, match="conflicting duplicate"):
+        ledger.append_fills("run-fill-conflict", [fill(price=102.0)])
+
+
+def test_same_order_can_have_multiple_fills() -> None:
+    ledger = BacktestResultLedger()
+    ledger.create_run("run-partial-fills", {"strategy_id": "depth"})
+    assert ledger.append_fills(
+        "run-partial-fills",
+        [fill("f1", 1, 101.0), fill("f2", 2, 102.0)],
+    ) == 2
+    assert [row["fill_id"] for row in ledger.fills("run-partial-fills")] == ["f1", "f2"]
 
 
 def test_incremental_append_and_idempotency() -> None:
