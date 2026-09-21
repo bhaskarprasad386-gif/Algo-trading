@@ -235,8 +235,12 @@ class UniversalEventBacktestEngine:
                 snapshot = self.portfolio.apply_fills_atomic(result.fills, last_marks)
                 if self.result_writer is not None:
                     durable_fills = []
-                    for fill in result.fills:
-                        durable_fills.append(BacktestFill(
+                    fill_offset = 0
+                    for leg_result in result.leg_results:
+                        if len(leg_result.reference_prices) != len(leg_result.fills):
+                            raise ValueError("execution result reference_prices must align with fills")
+                        for fill, reference_price in zip(leg_result.fills, leg_result.reference_prices):
+                            durable_fills.append(BacktestFill(
                                 fill_id=f"{replay_sequence}:{self._fill_sequence}:{fill.order_id}",
                                 order_id=fill.order_id,
                                 sequence=self._fill_sequence,
@@ -246,8 +250,12 @@ class UniversalEventBacktestEngine:
                                 quantity=fill.quantity,
                                 price=fill.price,
                                 fee=fill.fee,
+                                metadata={"reference_price": reference_price},
                             ))
-                        self._fill_sequence += 1
+                            self._fill_sequence += 1
+                            fill_offset += 1
+                    if fill_offset != len(result.fills):
+                        raise ValueError("execution result leg fills do not match atomic fills")
                     self.result_writer.record_fills(tuple(durable_fills))
                 if isinstance(strategy, AtomicExecutionAwareProtocol):
                     strategy.on_atomic_execution(result)
@@ -360,7 +368,10 @@ class UniversalEventBacktestEngine:
                         if self.result_writer is not None:
                             durable_fills = []
                             for fill in result.fills:
-                                durable_fills.append(BacktestFill(
+                                if len(result.reference_prices) != len(result.fills):
+                                    raise ValueError("execution result reference_prices must align with fills")
+                                for fill, reference_price in zip(result.fills, result.reference_prices):
+                                    durable_fills.append(BacktestFill(
                                         fill_id=f"{replay_sequence}:{self._fill_sequence}:{fill.order_id}",
                                         order_id=fill.order_id,
                                         sequence=self._fill_sequence,
@@ -370,6 +381,7 @@ class UniversalEventBacktestEngine:
                                         quantity=fill.quantity,
                                         price=fill.price,
                                         fee=fill.fee,
+                                        metadata={"reference_price": reference_price},
                                     ))
                                 self._fill_sequence += 1
                             self.result_writer.record_fills(tuple(durable_fills))
