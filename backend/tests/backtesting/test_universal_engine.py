@@ -500,6 +500,92 @@ def test_universal_engine_rejects_run_context_with_different_injected_dependency
         raise AssertionError("expected context dependency mismatch rejection")
 
 
+def test_universal_engine_runs_multi_leg_from_explicit_run_context():
+    from app.backtesting.contracts import RunContext
+    from app.backtesting.backtest_run import BacktestRunSpec
+    from app.backtesting.backtest_resolution import BacktestResolution
+    from app.backtesting.clock import BacktestClock
+    from app.backtesting.execution import DepthLevel, ExecutionSide, ExecutionSimulator, OrderBook, OrderType, SimOrder
+    from app.backtesting.portfolio import Portfolio
+
+    spec = BacktestRunSpec(
+        run_id="context-multi",
+        strategy_id="universal",
+        strategy_version="v1",
+        instrument="AAA",
+        start_ns=10,
+        end_ns=10,
+        resolution=BacktestResolution("tick", "historical", 10, 10),
+        parameters={},
+        data_watermarks={"AAA": 10, "BBB": 10},
+    )
+    clock = BacktestClock()
+    portfolio = Portfolio(100_000.0)
+    execution = ExecutionSimulator()
+    source = type("Source", (), {
+        "iter_events": lambda self, *, start_ns=None, end_ns=None: iter([_event(10, "AAA", 100.0, 1)])
+    })()
+    books = {
+        "AAA": OrderBook(asks=(DepthLevel(101.0, 1),)),
+        "BBB": OrderBook(bids=(DepthLevel(199.0, 1),)),
+    }
+
+    def strategy(context):
+        return (
+            (SimOrder("leg-a", "AAA", ExecutionSide.BUY, 1, OrderType.MARKET, submitted_at_ns=context.timestamp_ns), books["AAA"], context.timestamp_ns),
+            (SimOrder("leg-b", "BBB", ExecutionSide.SELL, 1, OrderType.MARKET, submitted_at_ns=context.timestamp_ns), books["BBB"], context.timestamp_ns),
+        )
+
+    context = RunContext(spec, clock, source, strategy, execution, portfolio)
+    engine = UniversalEventBacktestEngine(100_000.0, portfolio=portfolio, execution=execution, clock=clock)
+    result = engine.run_multi_leg_context(context)
+
+    assert result.fill_count == 2
+    assert portfolio.positions["AAA"].quantity == 1
+    assert portfolio.positions["BBB"].quantity == -1
+    assert clock.now_ns == 10
+
+
+def test_universal_engine_context_uses_context_result_writer():
+    from app.backtesting.backtest_run import BacktestRunSpec
+    from app.backtesting.backtest_resolution import BacktestResolution
+    from app.backtesting.clock import BacktestClock
+    from app.backtesting.contracts import RunContext
+    from app.backtesting.execution import ExecutionSimulator
+    from app.backtesting.portfolio import Portfolio
+
+    class Writer:
+        def __init__(self):
+            self.completed = False
+            self.failed = False
+
+        def record_event(self, *args):
+            pass
+
+        def record_equity(self, *args):
+            pass
+
+        def complete(self):
+            self.completed = True
+
+        def fail(self, reason):
+            self.failed = True
+
+    spec = BacktestRunSpec("context-writer", "universal", "v1", "AAA", 1, 1, BacktestResolution("tick", "historical", 1, 1))
+    clock = BacktestClock()
+    portfolio = Portfolio(100_000.0)
+    execution = ExecutionSimulator()
+    writer = Writer()
+    source = type("Source", (), {"iter_events": lambda self, *, start_ns=None, end_ns=None: iter([_event(1, "AAA", 100.0, 1)])})()
+    context = RunContext(spec, clock, source, lambda ctx: EventSignal("HOLD"), execution, portfolio, writer)
+
+    engine = UniversalEventBacktestEngine(100_000.0, portfolio=portfolio, execution=execution, clock=clock, result_writer=writer, retain_history=False)
+    engine.run_context(context)
+
+    assert writer.completed is True
+    assert writer.failed is False
+
+
 def _real_writer(tmp_path, run_id):
     from app.backtesting.backtest_resolution import BacktestResolution
     from app.backtesting.backtest_result import BacktestRunWriter
