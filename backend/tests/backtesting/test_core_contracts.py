@@ -1,4 +1,4 @@
-from app.backtesting.contracts import ExecutionModelProtocol, PortfolioProtocol
+from app.backtesting.contracts import ExecutionModelProtocol, PortfolioProtocol, RunContextProtocol
 from app.backtesting.engine import EventSignal
 from app.backtesting.execution import ExecutionConfig, SimFill
 from app.backtesting.historical_catalog import HistoricalRecord
@@ -124,3 +124,78 @@ def test_portfolio_satisfies_accounting_contract():
     from app.backtesting.portfolio import Portfolio
 
     assert isinstance(Portfolio(100_000), AccountingProtocol)
+
+
+def test_run_context_keeps_run_dependencies_bound_to_one_context():
+    from app.backtesting.backtest_run import BacktestRunSpec
+    from app.backtesting.backtest_resolution import BacktestResolution
+    from app.backtesting.clock import BacktestClock
+
+    spec = BacktestRunSpec(
+        run_id="ctx-test",
+        strategy_id="universal",
+        strategy_version="v1",
+        instrument="AAA",
+        start_ns=1,
+        end_ns=10,
+        resolution=BacktestResolution("tick", "historical", 1, 10),
+        parameters={"quantity": 1},
+        data_watermarks={"AAA": 10},
+    )
+    clock = BacktestClock()
+    source = object()
+    strategy = lambda context: EventSignal("HOLD")
+    execution = RecordingExecution()
+    portfolio = RecordingPortfolio()
+
+    context = RunContextProtocol(
+        spec=spec,
+        clock=clock,
+        data_source=source,
+        strategy=strategy,
+        execution=execution,
+        portfolio=portfolio,
+        result_writer=None,
+    )
+
+    assert context.spec is spec
+    assert context.clock is clock
+    assert context.data_source is source
+    assert context.strategy is strategy
+    assert context.execution is execution
+    assert context.portfolio is portfolio
+    assert context.result_writer is None
+
+
+def test_run_context_rejects_mutation_of_bound_dependencies():
+    from app.backtesting.backtest_run import BacktestRunSpec
+    from app.backtesting.backtest_resolution import BacktestResolution
+    from app.backtesting.clock import BacktestClock
+
+    spec = BacktestRunSpec(
+        run_id="ctx-immutable",
+        strategy_id="universal",
+        strategy_version="v1",
+        instrument="AAA",
+        start_ns=1,
+        end_ns=10,
+        resolution=BacktestResolution("tick", "historical", 1, 10),
+        parameters={},
+        data_watermarks={"AAA": 10},
+    )
+    context = RunContextProtocol(
+        spec=spec,
+        clock=BacktestClock(),
+        data_source=object(),
+        strategy=lambda context: EventSignal("HOLD"),
+        execution=RecordingExecution(),
+        portfolio=RecordingPortfolio(),
+        result_writer=None,
+    )
+
+    try:
+        context.strategy = lambda context: EventSignal("BUY")
+    except (AttributeError, TypeError):
+        pass
+    else:
+        raise AssertionError("expected run context dependencies to be immutable")
