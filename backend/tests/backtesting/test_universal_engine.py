@@ -807,6 +807,42 @@ def test_universal_engine_persists_multiple_depth_fills_with_monotonic_sequences
     assert page[0]["quantity"] == 3.0
 
 
+
+def test_universal_engine_does_not_call_trade_reporter_when_accounting_fails() -> None:
+    from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+    from app.backtesting.portfolio import Portfolio
+
+    class Reporter:
+        def __init__(self):
+            self.reports = []
+
+        def record_atomic_trade(self, report):
+            self.reports.append(report)
+
+    class FailingPortfolio(Portfolio):
+        def apply_fills_atomic(self, fills, marks=None):
+            raise RuntimeError("accounting failed")
+
+    reporter = Reporter()
+    portfolio = FailingPortfolio(100_000.0)
+    engine = UniversalEventBacktestEngine(100_000.0, portfolio=portfolio, trade_reporter=reporter)
+
+    def strategy(ctx):
+        return (
+            (SimOrder("leg-a", "AAA", ExecutionSide.BUY, 1, OrderType.MARKET, submitted_at_ns=ctx.timestamp_ns),
+             OrderBook(asks=(DepthLevel(101.0, 1),)), ctx.timestamp_ns),
+        )
+
+    try:
+        engine.run_multi_leg([_event(10, "AAA", 100.0, 1)], strategy)
+    except RuntimeError as exc:
+        assert str(exc) == "accounting failed"
+    else:
+        raise AssertionError("expected accounting failure")
+
+    assert reporter.reports == []
+
+
 def test_universal_engine_reports_atomic_execution_with_post_accounting_trades() -> None:
     from app.backtesting.contracts import AtomicTradeReportInput
     from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
