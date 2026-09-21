@@ -214,3 +214,24 @@ def test_rollover_then_new_entry_handles_existing_portfolio_margin_breach():
     assert {(trade["symbol"], trade["contract_month"]) for trade in liquidation} == {("AAA", "OCT"), ("BBB", "SEP")}
     assert result.open_position_count == 0
     assert result.final_reserved_margin == 0.0
+
+def test_end_of_data_marks_open_position_without_forced_liquidation():
+    start = datetime(2026, 9, 2, 10, 0)
+    points = [
+        point(start, "AAA", 10, margin=4000),
+        point(start + timedelta(minutes=1), "AAA", 7, margin=4000),
+    ]
+
+    result = run_cash_future_portfolio_strategy(
+        points,
+        lambda current, history: "BUY" if current.gap >= 10 else "HOLD",
+        initial_capital=10000,
+    )
+
+    assert result.trades == ()
+    assert result.open_position_count == 1
+    assert result.final_reserved_margin == 4000.0
+    assert result.final_available_capital == 6000.0
+    assert result.final_capital == 10700.0
+    assert result.net_profit == 700.0
+    assert result.equity_curve[-1]["unrealized_pnl"] == 700.0
