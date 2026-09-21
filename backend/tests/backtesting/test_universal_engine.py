@@ -655,3 +655,53 @@ def test_universal_engine_fails_real_result_writer_and_reraises_multi_leg_error(
 
     assert ledger.run("universal-multi-failure")["status"] == "FAILED"
     assert ledger.events("universal-multi-failure")[-1]["event_type"] == "RUN_FAILED"
+
+
+def test_universal_engine_persists_successful_atomic_fills(tmp_path):
+    from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+
+    ledger, writer = _real_writer(tmp_path, "universal-fill-success")
+    engine = UniversalEventBacktestEngine(100_000.0, result_writer=writer, retain_history=False)
+
+    def strategy(context):
+        return (
+            (SimOrder("cash-order", "CASH", ExecutionSide.BUY, 2, OrderType.MARKET, context.timestamp_ns),
+             OrderBook(asks=(DepthLevel(101.0, 2),)), context.timestamp_ns),
+            (SimOrder("future-order", "FUT", ExecutionSide.SELL, 2, OrderType.MARKET, context.timestamp_ns),
+             OrderBook(bids=(DepthLevel(104.0, 2),)), context.timestamp_ns),
+        )
+
+    engine.run_multi_leg([_event(1, "CASH", 100.0, 1)], strategy)
+
+    fills = ledger.fills("universal-fill-success")
+    assert len(fills) == 2
+    assert {row["order_id"] for row in fills} == {"cash-order", "future-order"}
+    assert {row["instrument"] for row in fills} == {"CASH", "FUT"}
+    assert {row["quantity"] for row in fills} == {2.0}
+    assert {row["price"] for row in fills} == {101.0, 104.0}
+
+
+def test_universal_engine_does_not_persist_rejected_atomic_fills(tmp_path):
+    import pytest
+    from app.backtesting.execution import DepthLevel, ExecutionConfig, ExecutionSide, OrderBook, OrderType, SimOrder
+
+    ledger, writer = _real_writer(tmp_path, "universal-fill-rejected")
+    engine = UniversalEventBacktestEngine(
+        100_000.0,
+        execution_config=ExecutionConfig(allow_partial_fills=False),
+        result_writer=writer,
+        retain_history=False,
+    )
+
+    def strategy(context):
+        return (
+            (SimOrder("cash-order", "CASH", ExecutionSide.BUY, 2, OrderType.MARKET, context.timestamp_ns),
+             OrderBook(asks=(DepthLevel(101.0, 1),)), context.timestamp_ns),
+            (SimOrder("future-order", "FUT", ExecutionSide.SELL, 2, OrderType.MARKET, context.timestamp_ns),
+             OrderBook(bids=(DepthLevel(104.0, 1),)), context.timestamp_ns),
+        )
+
+    with pytest.raises(ValueError, match="insufficient displayed depth"):
+        engine.run_multi_leg([_event(1, "CASH", 100.0, 1)], strategy)
+
+    assert ledger.fills("universal-fill-rejected") == []
