@@ -34,6 +34,7 @@ def test_depth_execution_consumes_multiple_levels_and_preserves_point_in_time_pr
     assert not result.rejected
     assert result.remaining_quantity == 0
     assert [(f.quantity, f.price) for f in result.fills] == [(50, 100.0), (70, 100.5)]
+    assert result.reference_prices == (100.0, 100.5)
     assert all(f.filled_at_ns == 1_000 for f in result.fills)
 
 
