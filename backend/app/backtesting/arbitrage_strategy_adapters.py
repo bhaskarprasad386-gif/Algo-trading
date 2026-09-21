@@ -13,9 +13,10 @@ from typing import Any, Iterable, Mapping
 from .arbitrage_backtester import BoxSpreadBacktester, FutureQuote, OptionQuote, SyntheticCashCarryBacktester
 from .calendar_spread import CalendarQuote, CalendarSpreadBacktester
 from .historical_arbitrage_runner import ExitExecution, OpenPosition
-from .contracts import MultiLegStrategyProtocol
+from .contracts import AtomicTradeReportInput, MultiLegStrategyProtocol
 from .engine import EventContext
 from .execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+from .result_ledger import BacktestTrade
 
 
 @dataclass(frozen=True)
@@ -285,6 +286,112 @@ class CashFutureUniversalMultiLegAdapter:
                 context.timestamp_ns,
             ),
         )
+
+
+class CashFutureTradeReporter:
+    """Converts completed Universal cash/future executions into durable trade records."""
+
+    def __init__(self, writer: Any) -> None:
+        if not hasattr(writer, "record_trades"):
+            raise TypeError("writer must provide record_trades")
+        self.writer = writer
+        self._open: dict[str, dict[str, Any]] = {}
+        self._sequence = 0
+
+    @staticmethod
+    def _leg_evidence(report: AtomicTradeReportInput, index: int) -> tuple[Any, tuple[Any, ...]]:
+        result = report.execution.leg_results[index]
+        fills = tuple(result.fills)
+        accounting = tuple(
+            trade for trade in report.accounting_trades
+            if any(fill.order_id == trade.order_id and fill.instrument == trade.instrument for fill in fills)
+        )
+        if len(accounting) != len(fills):
+            raise ValueError("accounting trade evidence must match execution fills")
+        return result, accounting
+
+    @staticmethod
+    def _weighted_price(trades: tuple[Any, ...]) -> float:
+        quantity = sum(trade.quantity for trade in trades)
+        if quantity <= 0:
+            raise ValueError("trade quantity must be positive")
+        return sum(trade.price * trade.quantity for trade in trades) / quantity
+
+    @staticmethod
+    def _slippage(result: Any, accounting: tuple[Any, ...]) -> float:
+        if len(result.reference_prices) != len(result.fills):
+            raise ValueError("reference prices must align with execution fills")
+        total = 0.0
+        by_order = {trade.order_id: trade for trade in accounting}
+        for fill, reference in zip(result.fills, result.reference_prices):
+            trade = by_order[fill.order_id]
+            adverse = (trade.price - reference) if fill.side == ExecutionSide.BUY else (reference - trade.price)
+            total += max(0.0, adverse) * trade.quantity
+        return total
+
+    def record_atomic_trade(self, report: AtomicTradeReportInput) -> None:
+        if report.execution.rejected or not report.accounting_trades:
+            return
+        completed: list[BacktestTrade] = []
+        for index, result in enumerate(report.execution.leg_results):
+            result, accounting = self._leg_evidence(report, index)
+            instrument = result.fills[0].instrument
+            quantity = sum(trade.quantity for trade in accounting)
+            actual_price = self._weighted_price(accounting)
+            reference_price = sum(
+                ref * fill.quantity
+                for fill, ref in zip(result.fills, result.reference_prices)
+            ) / sum(fill.quantity for fill in result.fills)
+            if instrument not in self._open:
+                self._open[instrument] = {
+                    "timestamp_ns": min(trade.timestamp_ns for trade in accounting),
+                    "entry_price": actual_price,
+                    "entry_reference_price": reference_price,
+                    "entry_side": result.fills[0].side.value,
+                    "entry_quantity": quantity,
+                    "entry_fees": sum(trade.fee for trade in accounting),
+                    "entry_slippage": self._slippage(result, accounting),
+                    "entry_order_id": result.fills[0].order_id,
+                }
+                continue
+
+            opened = self._open.pop(instrument)
+            if quantity != opened["entry_quantity"]:
+                raise ValueError("Universal cash-future trade must close the opened quantity atomically")
+            gross_pnl = sum(trade.realized_pnl_delta for trade in accounting)
+            fees = opened["entry_fees"] + sum(trade.fee for trade in accounting)
+            slippage = opened["entry_slippage"] + self._slippage(result, accounting)
+            exit_timestamp = max(trade.timestamp_ns for trade in accounting)
+            trade_id = f"CF:{opened['entry_order_id']}:{instrument}"
+            completed.append(BacktestTrade(
+                trade_id=trade_id,
+                sequence=self._sequence,
+                timestamp_ns=exit_timestamp,
+                instrument=instrument,
+                side=opened["entry_side"],
+                quantity=quantity,
+                entry_price=opened["entry_price"],
+                exit_price=actual_price,
+                gross_pnl=gross_pnl,
+                fees=fees,
+                slippage=slippage,
+                net_pnl=gross_pnl - fees - slippage,
+                contract=instrument,
+                leg="CASH" if ":CASH" in result.fills[0].order_id else "FUTURE",
+                metadata={
+                    "strategy": "CASH_CARRY_UNIVERSAL",
+                    "entry_timestamp_ns": opened["timestamp_ns"],
+                    "exit_timestamp_ns": exit_timestamp,
+                    "entry_reference_price": opened["entry_reference_price"],
+                    "exit_reference_price": reference_price,
+                    "pricing_model": "EXECUTABLE_EDGE",
+                    "entry_order_id": opened["entry_order_id"],
+                    "exit_order_id": result.fills[0].order_id,
+                },
+            ))
+            self._sequence += 1
+        if completed:
+            self.writer.record_trades(tuple(completed))
 
 
 class CalendarSpreadStrategyAdapter:
