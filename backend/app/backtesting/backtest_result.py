@@ -48,8 +48,8 @@ class BacktestRunWriter:
     def record_equity(self, point: EquityPoint) -> int:
         return self.ledger.append_equity(self.spec.run_id, [point])
 
-    def record_fill(self, fill: BacktestFill) -> int:
-        return self.ledger.append_fills(self.spec.run_id, [fill])
+    def record_fills(self, fills: tuple[BacktestFill, ...]) -> int:
+        return self.ledger.append_fills(self.spec.run_id, fills)
 
     def record_payoff(
         self,
