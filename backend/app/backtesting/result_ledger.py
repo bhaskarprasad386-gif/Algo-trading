@@ -52,6 +52,35 @@ class BacktestTrade:
 
 
 @dataclass(frozen=True)
+class BacktestFill:
+    """One immutable executable fill retained independently per run."""
+
+    fill_id: str
+    order_id: str
+    sequence: int
+    timestamp_ns: int
+    instrument: str
+    side: str
+    quantity: float
+    price: float
+    fee: float = 0.0
+    metadata: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.fill_id.strip() or not self.order_id.strip() or not self.instrument.strip() or not self.side.strip():
+            raise ValueError("fill_id, order_id, instrument and side are required")
+        if self.sequence < 0 or self.timestamp_ns < 0:
+            raise ValueError("sequence/timestamp must be non-negative")
+        numeric = (self.quantity, self.price, self.fee)
+        if any(not math.isfinite(float(value)) for value in numeric):
+            raise ValueError("fill numeric values must be finite")
+        if self.quantity <= 0 or self.price <= 0:
+            raise ValueError("quantity and price must be positive")
+        if self.fee < 0:
+            raise ValueError("fee must be non-negative")
+
+
+@dataclass(frozen=True)
 class BacktestEvent:
     """Incremental event/audit record retained independently per run."""
 
@@ -138,6 +167,22 @@ class BacktestResultLedger:
                 UNIQUE (run_id, sequence),
                 FOREIGN KEY (run_id) REFERENCES backtest_runs(run_id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS backtest_fills (
+                run_id TEXT NOT NULL,
+                fill_id TEXT NOT NULL,
+                order_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                timestamp_ns INTEGER NOT NULL,
+                instrument TEXT NOT NULL,
+                side TEXT NOT NULL,
+                quantity REAL NOT NULL,
+                price REAL NOT NULL,
+                fee REAL NOT NULL,
+                metadata_json TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                PRIMARY KEY (run_id, fill_id),
+                FOREIGN KEY (run_id) REFERENCES backtest_runs(run_id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS backtest_events (
                 run_id TEXT NOT NULL,
                 sequence INTEGER NOT NULL,
@@ -159,6 +204,7 @@ class BacktestResultLedger:
                 FOREIGN KEY (run_id) REFERENCES backtest_runs(run_id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_backtest_trades_time ON backtest_trades(run_id, timestamp_ns, sequence);
+            CREATE INDEX IF NOT EXISTS idx_backtest_fills_time ON backtest_fills(run_id, timestamp_ns, sequence);
             CREATE INDEX IF NOT EXISTS idx_backtest_events_time ON backtest_events(run_id, timestamp_ns, sequence);
             CREATE INDEX IF NOT EXISTS idx_backtest_equity_time ON backtest_equity(run_id, timestamp_ns, equity_id);
             """
@@ -246,6 +292,25 @@ class BacktestResultLedger:
             (run_id,trade_id,sequence,timestamp_ns,instrument,side,quantity,entry_price,exit_price,gross_pnl,fees,slippage,net_pnl,contract,expiry,strike,leg,data_resolution,metadata_json,payload_hash)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows, "backtest_trades")
 
+    def append_fills(self, run_id: str, fills: Iterable[BacktestFill]) -> int:
+        self._require_run(run_id)
+        rows = []
+        for fill in fills:
+            metadata_json = self._json(dict(fill.metadata or {}))
+            identity = self._json({
+                "fill_id": fill.fill_id, "order_id": fill.order_id, "sequence": fill.sequence,
+                "timestamp_ns": fill.timestamp_ns, "instrument": fill.instrument, "side": fill.side,
+                "quantity": fill.quantity, "price": fill.price, "fee": fill.fee,
+                "metadata": dict(fill.metadata or {}),
+            })
+            rows.append((run_id, fill.fill_id, fill.order_id, fill.sequence, fill.timestamp_ns,
+                         fill.instrument, fill.side, fill.quantity, fill.price, fill.fee,
+                         metadata_json, self._hash(identity)))
+        return self._insert_idempotent(
+            """INSERT INTO backtest_fills
+            (run_id,fill_id,order_id,sequence,timestamp_ns,instrument,side,quantity,price,fee,metadata_json,payload_hash)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", rows, "backtest_fills")
+
     def append_events(self, run_id: str, events: Iterable[BacktestEvent]) -> int:
         self._require_run(run_id)
         rows = []
@@ -278,6 +343,12 @@ class BacktestResultLedger:
                         if table == "backtest_trades":
                             existing = self._db.execute(
                                 "SELECT payload_hash FROM backtest_trades WHERE run_id=? AND trade_id=?", (row[0], row[1])
+                            ).fetchone()
+                            if existing and existing[0] == row[-1]:
+                                continue
+                        elif table == "backtest_fills":
+                            existing = self._db.execute(
+                                "SELECT payload_hash FROM backtest_fills WHERE run_id=? AND fill_id=?", (row[0], row[1])
                             ).fetchone()
                             if existing and existing[0] == row[-1]:
                                 continue
@@ -315,6 +386,15 @@ class BacktestResultLedger:
             raise ValueError("after_sequence must be >= -1")
         return list(self._db.execute(
             "SELECT * FROM backtest_trades WHERE run_id=? AND sequence>? ORDER BY sequence LIMIT ?",
+            (run_id, after_sequence, limit)))
+
+    def fills(self, run_id: str, *, limit: int = 500, after_sequence: int = -1) -> list[sqlite3.Row]:
+        self._require_run(run_id)
+        self._validate_limit(limit)
+        if after_sequence < -1:
+            raise ValueError("after_sequence must be >= -1")
+        return list(self._db.execute(
+            "SELECT * FROM backtest_fills WHERE run_id=? AND sequence>? ORDER BY sequence LIMIT ?",
             (run_id, after_sequence, limit)))
 
     def events(self, run_id: str, *, limit: int = 500, after_sequence: int = -1) -> list[sqlite3.Row]:
