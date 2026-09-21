@@ -84,6 +84,7 @@ class HistoricalCatalogEventReplay:
                     "source": leg.source,
                     "instrument": leg.instrument,
                     "timeframe": leg.timeframe,
+                    "sequence": by_leg[leg.event_key][timestamp_ns].sequence,
                 }
                 for leg in legs
                 if timestamp_ns in by_leg[leg.event_key]
