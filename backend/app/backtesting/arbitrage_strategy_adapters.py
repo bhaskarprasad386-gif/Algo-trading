@@ -13,6 +13,9 @@ from typing import Any, Iterable, Mapping
 from .arbitrage_backtester import BoxSpreadBacktester, FutureQuote, OptionQuote, SyntheticCashCarryBacktester
 from .calendar_spread import CalendarQuote, CalendarSpreadBacktester
 from .historical_arbitrage_runner import ExitExecution, OpenPosition
+from .contracts import MultiLegStrategyProtocol
+from .engine import EventContext
+from .execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
 
 
 @dataclass(frozen=True)
@@ -150,6 +153,104 @@ class CashFutureStrategyAdapter:
         return ExitExecution(q.timestamp_ns, edge, position.entry_price + edge,
             fees=2.0 * self.fees_per_unit * position.quantity,
             metadata={"strategy": "CASH_CARRY", "close_direction": reverse})
+
+
+class CashFutureUniversalMultiLegAdapter:
+    """Atomic cash/future strategy for the Universal multi-leg engine."""
+
+    def __init__(self, *, direction: str = "LONG_CASH_SHORT_FUTURE", quantity: int = 1) -> None:
+        if direction not in {"LONG_CASH_SHORT_FUTURE", "SHORT_CASH_LONG_FUTURE"}:
+            raise ValueError("invalid cash-future adapter direction")
+        if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity <= 0:
+            raise ValueError("quantity must be a positive integer")
+        self.direction = direction
+        self.quantity = quantity
+        self._open = False
+
+    @staticmethod
+    def _quote(payload: object, name: str) -> tuple[float, float, int, int]:
+        if not isinstance(payload, Mapping):
+            raise ValueError(f"{name} quote payload is required")
+        try:
+            bid = float(payload["bid"])
+            ask = float(payload["ask"])
+            bid_quantity = int(payload["bid_quantity"])
+            ask_quantity = int(payload["ask_quantity"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"{name} quote must contain bid/ask and bid_quantity/ask_quantity") from exc
+        if bid <= 0 or ask <= 0 or ask < bid or bid_quantity <= 0 or ask_quantity <= 0:
+            raise ValueError(f"invalid {name} executable quote")
+        return bid, ask, bid_quantity, ask_quantity
+
+    @staticmethod
+    def _book(bid: float, ask: float, bid_quantity: int, ask_quantity: int) -> OrderBook:
+        return OrderBook(
+            bids=(DepthLevel(bid, bid_quantity),),
+            asks=(DepthLevel(ask, ask_quantity),),
+        )
+
+    @staticmethod
+    def _leg_instrument(context: EventContext, event_key: str) -> str:
+        metadata = context.payload.get("__replay_legs__")
+        if not isinstance(metadata, Mapping):
+            raise ValueError("Universal cash-future replay identity metadata is required")
+        leg = metadata.get(event_key)
+        if not isinstance(leg, Mapping) or not isinstance(leg.get("instrument"), str) or not leg["instrument"].strip():
+            raise ValueError(f"exact {event_key} instrument identity is required")
+        return leg["instrument"]
+
+    def __call__(self, context: EventContext) -> Iterable[tuple[SimOrder, OrderBook, int]]:
+        cash = context.payload.get("cash")
+        future = context.payload.get("future")
+        cash_bid, cash_ask, cash_bid_qty, cash_ask_qty = self._quote(cash, "cash")
+        future_bid, future_ask, future_bid_qty, future_ask_qty = self._quote(future, "future")
+
+        if not self._open:
+            if self.direction == "LONG_CASH_SHORT_FUTURE":
+                edge = future_bid - cash_ask
+                if edge <= 0:
+                    return ()
+                cash_side, future_side = ExecutionSide.BUY, ExecutionSide.SELL
+            else:
+                edge = cash_bid - future_ask
+                if edge <= 0:
+                    return ()
+                cash_side, future_side = ExecutionSide.SELL, ExecutionSide.BUY
+            phase = "OPEN"
+            self._open = True
+        else:
+            if self.direction == "LONG_CASH_SHORT_FUTURE":
+                edge = cash_bid - future_ask
+                if edge <= 0:
+                    return ()
+                cash_side, future_side = ExecutionSide.SELL, ExecutionSide.BUY
+            else:
+                edge = future_bid - cash_ask
+                if edge <= 0:
+                    return ()
+                cash_side, future_side = ExecutionSide.BUY, ExecutionSide.SELL
+            phase = "CLOSE"
+            self._open = False
+
+        cash_instrument = self._leg_instrument(context, "cash")
+        future_instrument = self._leg_instrument(context, "future")
+        cash_book = self._book(cash_bid, cash_ask, cash_bid_qty, cash_ask_qty)
+        future_book = self._book(future_bid, future_ask, future_bid_qty, future_ask_qty)
+        prefix = f"CF:{context.timestamp_ns}:{phase}"
+        return (
+            (
+                SimOrder(f"{prefix}:CASH", cash_instrument, cash_side, self.quantity,
+                         OrderType.MARKET, submitted_at_ns=context.timestamp_ns),
+                cash_book,
+                context.timestamp_ns,
+            ),
+            (
+                SimOrder(f"{prefix}:FUTURE", future_instrument, future_side, self.quantity,
+                         OrderType.MARKET, submitted_at_ns=context.timestamp_ns),
+                future_book,
+                context.timestamp_ns,
+            ),
+        )
 
 
 class CalendarSpreadStrategyAdapter:
