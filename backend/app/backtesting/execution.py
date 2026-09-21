@@ -152,6 +152,7 @@ class ExecutionResult:
     remaining_quantity: int
     rejected: bool = False
     reason: str | None = None
+    reference_prices: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -263,6 +264,7 @@ class ExecutionSimulator:
             return ExecutionResult((), order.quantity, True, "insufficient displayed depth")
         remaining = order.quantity
         fills: list[SimFill] = []
+        reference_prices: list[float] = []
         for level in levels:
             if remaining <= 0:
                 break
@@ -272,17 +274,19 @@ class ExecutionSimulator:
             fills.append(SimFill(order.order_id, order.instrument, order.side, take,
                                  self._slippage_price(order.side, level.price),
                                  timestamp_ns + self.config.latency_ns, take * self.config.fee_per_unit))
+            reference_prices.append(level.price)
             remaining -= take
         if not fills:
             return ExecutionResult((), order.quantity, True, "no executable quantity")
         if order.time_in_force == TimeInForce.FOK and remaining:
             return ExecutionResult((), order.quantity, True, "insufficient displayed depth for FOK")
         if order.time_in_force == TimeInForce.IOC and remaining:
-            return ExecutionResult(tuple(fills), remaining, False, "IOC remainder cancelled")
-        return ExecutionResult(tuple(fills), remaining, False, None if remaining == 0 else "partial fill")
+            return ExecutionResult(tuple(fills), remaining, False, "IOC remainder cancelled", tuple(reference_prices))
+        return ExecutionResult(tuple(fills), remaining, False, None if remaining == 0 else "partial fill", tuple(reference_prices))
 
     def execute_depth_updates(self, order: SimOrder, updates: Iterable[tuple[int, OrderBook, Iterable[QueueEvidence]]]) -> ExecutionResult:
         remaining = order.quantity; queue_ahead = order.queue_ahead_quantity; consumed_by_price: dict[float, int] = {}; fills: list[SimFill] = []
+        reference_prices: list[float] = []
         previous_timestamp_ns: int | None = None
         for timestamp_ns, book, evidence in updates:
             if remaining <= 0: break
@@ -309,6 +313,7 @@ class ExecutionSimulator:
                 fills.append(SimFill(order.order_id, order.instrument, order.side, take,
                                      self._slippage_price(order.side, level.price),
                                      timestamp_ns + self.config.latency_ns, take * self.config.fee_per_unit))
+                reference_prices.append(level.price)
                 consumed_by_price[level.price] = already_consumed + take; remaining -= take
                 if remaining <= 0: break
             if order.time_in_force == TimeInForce.IOC:
@@ -317,8 +322,8 @@ class ExecutionSimulator:
         if order.time_in_force == TimeInForce.FOK and remaining: return ExecutionResult((), order.quantity, True, "insufficient displayed depth for FOK")
         if not self.config.allow_partial_fills and remaining:
             return ExecutionResult((), order.quantity, True, "insufficient displayed depth")
-        if order.time_in_force == TimeInForce.IOC and remaining: return ExecutionResult(tuple(fills), remaining, False, "IOC remainder cancelled")
-        return ExecutionResult(tuple(fills), remaining, False, None if remaining == 0 else "partial fill")
+        if order.time_in_force == TimeInForce.IOC and remaining: return ExecutionResult(tuple(fills), remaining, False, "IOC remainder cancelled", tuple(reference_prices))
+        return ExecutionResult(tuple(fills), remaining, False, None if remaining == 0 else "partial fill", tuple(reference_prices))
 
     def execute_many(self, orders: Iterable[tuple[SimOrder, float, int]]) -> tuple[SimFill, ...]:
         return tuple(self.execute(order, price, timestamp_ns) for order, price, timestamp_ns in orders)
