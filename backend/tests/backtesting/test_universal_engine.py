@@ -143,6 +143,108 @@ def test_universal_engine_executes_multi_leg_basket_atomically():
     assert engine.portfolio.positions["BBB"].quantity == -1
 
 
+def test_universal_engine_notifies_strategy_after_atomic_rejection():
+    from app.backtesting.execution import DepthLevel, ExecutionConfig, ExecutionSide, OrderBook, OrderType, SimOrder
+
+    class Strategy:
+        def __init__(self):
+            self.callbacks = []
+
+        def __call__(self, context):
+            return (
+                (SimOrder("leg-a", "AAA", ExecutionSide.BUY, 2, OrderType.MARKET, submitted_at_ns=context.timestamp_ns),
+                 OrderBook(asks=(DepthLevel(101.0, 1),)), context.timestamp_ns),
+                (SimOrder("leg-b", "BBB", ExecutionSide.SELL, 2, OrderType.MARKET, submitted_at_ns=context.timestamp_ns),
+                 OrderBook(bids=(DepthLevel(199.0, 1),)), context.timestamp_ns),
+            )
+
+        def on_atomic_execution(self, result):
+            self.callbacks.append(result)
+
+    strategy = Strategy()
+    engine = UniversalEventBacktestEngine(
+        100_000.0,
+        execution_config=ExecutionConfig(allow_partial_fills=False),
+    )
+
+    try:
+        engine.run_multi_leg([_event(10, "AAA", 100.0, 1)], strategy)
+    except ValueError as exc:
+        assert "insufficient displayed depth" in str(exc)
+    else:
+        raise AssertionError("expected atomic execution rejection")
+
+    assert len(strategy.callbacks) == 1
+    assert strategy.callbacks[0].rejected is True
+    assert strategy.callbacks[0].fills == ()
+    assert engine.portfolio.trades == ()
+    assert engine.portfolio.snapshot().positions == ()
+
+
+def test_universal_engine_notifies_strategy_only_after_successful_atomic_accounting():
+    from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+
+    class Strategy:
+        def __init__(self):
+            self.callback_positions = None
+
+        def __call__(self, context):
+            return (
+                (SimOrder("leg-a", "AAA", ExecutionSide.BUY, 1, OrderType.MARKET, submitted_at_ns=context.timestamp_ns),
+                 OrderBook(asks=(DepthLevel(101.0, 1),)), context.timestamp_ns),
+                (SimOrder("leg-b", "BBB", ExecutionSide.SELL, 1, OrderType.MARKET, submitted_at_ns=context.timestamp_ns),
+                 OrderBook(bids=(DepthLevel(199.0, 1),)), context.timestamp_ns),
+            )
+
+        def on_atomic_execution(self, result):
+            self.callback_positions = dict(engine.portfolio.positions)
+
+    strategy = Strategy()
+    engine = UniversalEventBacktestEngine(100_000.0)
+    result = engine.run_multi_leg([_event(10, "AAA", 100.0, 1)], strategy)
+
+    assert result.fill_count == 2
+    assert set(strategy.callback_positions) == {"AAA", "BBB"}
+    assert strategy.callback_positions["AAA"].quantity == 1
+    assert strategy.callback_positions["BBB"].quantity == -1
+
+
+def test_universal_engine_does_not_notify_strategy_when_atomic_accounting_fails():
+    from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+    from app.backtesting.portfolio import Portfolio
+
+    class FailingPortfolio(Portfolio):
+        def apply_fills_atomic(self, fills, marks=None):
+            raise RuntimeError("accounting failed")
+
+    class Strategy:
+        def __init__(self):
+            self.callback_count = 0
+
+        def __call__(self, context):
+            return (
+                (SimOrder("leg-a", "AAA", ExecutionSide.BUY, 1, OrderType.MARKET, submitted_at_ns=context.timestamp_ns),
+                 OrderBook(asks=(DepthLevel(101.0, 1),)), context.timestamp_ns),
+                (SimOrder("leg-b", "BBB", ExecutionSide.SELL, 1, OrderType.MARKET, submitted_at_ns=context.timestamp_ns),
+                 OrderBook(bids=(DepthLevel(199.0, 1),)), context.timestamp_ns),
+            )
+
+        def on_atomic_execution(self, result):
+            self.callback_count += 1
+
+    strategy = Strategy()
+    engine = UniversalEventBacktestEngine(
+        100_000.0,
+        portfolio=FailingPortfolio(100_000.0),
+    )
+
+    import pytest
+    with pytest.raises(RuntimeError, match="accounting failed"):
+        engine.run_multi_leg([_event(10, "AAA", 100.0, 1)], strategy)
+
+    assert strategy.callback_count == 0
+
+
 def test_universal_engine_multi_leg_rejects_partial_atomic_execution_without_portfolio_change():
     from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
 
