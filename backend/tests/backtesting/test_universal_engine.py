@@ -316,3 +316,73 @@ def test_universal_engine_is_single_use_and_rejects_second_run():
         assert "single-use" in str(exc)
     else:
         raise AssertionError("expected second run to be rejected")
+
+def _real_writer(tmp_path, run_id):
+    from app.backtesting.backtest_resolution import BacktestResolution
+    from app.backtesting.backtest_result import BacktestRunWriter
+    from app.backtesting.backtest_run import BacktestRunSpec
+    from app.backtesting.result_ledger import BacktestResultLedger
+
+    ledger = BacktestResultLedger(tmp_path / f"{run_id}.db")
+    spec = BacktestRunSpec(
+        run_id=run_id,
+        strategy_id="universal",
+        strategy_version="v1",
+        instrument="AAA",
+        start_ns=1,
+        end_ns=10,
+        resolution=BacktestResolution("tick", "historical", 1, 10),
+        parameters={},
+        data_watermarks={"AAA": 10},
+    )
+    return ledger, BacktestRunWriter(ledger, spec)
+
+
+def test_universal_engine_completes_real_result_writer_on_success(tmp_path):
+    ledger, writer = _real_writer(tmp_path, "universal-success")
+    engine = UniversalEventBacktestEngine(100_000.0, result_writer=writer, retain_history=False)
+
+    engine.run([_event(1, "AAA", 100.0, 1)], lambda context: EventSignal("HOLD"))
+
+    assert ledger.run("universal-success")["status"] == "COMPLETED"
+
+
+def test_universal_engine_fails_real_result_writer_and_reraises_run_error(tmp_path):
+    import pytest
+
+    ledger, writer = _real_writer(tmp_path, "universal-failure")
+    engine = UniversalEventBacktestEngine(100_000.0, result_writer=writer, retain_history=False)
+
+    def strategy(context):
+        raise RuntimeError("strategy exploded")
+
+    with pytest.raises(RuntimeError, match="strategy exploded"):
+        engine.run([_event(1, "AAA", 100.0, 1)], strategy)
+
+    assert ledger.run("universal-failure")["status"] == "FAILED"
+    assert ledger.events("universal-failure")[-1]["event_type"] == "RUN_FAILED"
+
+
+def test_universal_engine_completes_real_result_writer_on_multi_leg_success(tmp_path):
+    ledger, writer = _real_writer(tmp_path, "universal-multi-success")
+    engine = UniversalEventBacktestEngine(100_000.0, result_writer=writer, retain_history=False)
+
+    engine.run_multi_leg([_event(1, "AAA", 100.0, 1)], lambda context: ())
+
+    assert ledger.run("universal-multi-success")["status"] == "COMPLETED"
+
+
+def test_universal_engine_fails_real_result_writer_and_reraises_multi_leg_error(tmp_path):
+    import pytest
+
+    ledger, writer = _real_writer(tmp_path, "universal-multi-failure")
+    engine = UniversalEventBacktestEngine(100_000.0, result_writer=writer, retain_history=False)
+
+    def strategy(context):
+        raise ValueError("multi-leg strategy exploded")
+
+    with pytest.raises(ValueError, match="multi-leg strategy exploded"):
+        engine.run_multi_leg([_event(1, "AAA", 100.0, 1)], strategy)
+
+    assert ledger.run("universal-multi-failure")["status"] == "FAILED"
+    assert ledger.events("universal-multi-failure")[-1]["event_type"] == "RUN_FAILED"
