@@ -79,6 +79,13 @@ class UniversalEventBacktestEngine:
         self.clock = clock if clock is not None else BacktestClock()
         self.result_writer = result_writer
         self.retain_history = retain_history
+        self._run_started = False
+
+    def _begin_run(self) -> None:
+        """Enforce one isolated replay lifecycle per engine instance."""
+        if self._run_started:
+            raise RuntimeError("UniversalEventBacktestEngine instances are single-use; create a new engine for another run")
+        self._run_started = True
 
     def _record_replay_point(
         self,
@@ -127,6 +134,7 @@ class UniversalEventBacktestEngine:
 
     def run_multi_leg(self, events: Iterable[HistoricalRecord], strategy: MultiLegStrategyProtocol) -> UniversalBacktestResult:
         """Run a strategy that returns a complete atomic depth-execution basket per event."""
+        self._begin_run()
         if not isinstance(self.execution, AtomicExecutionModelProtocol):
             raise TypeError("multi-leg execution requires an atomic execution model")
         if not hasattr(self.portfolio, "apply_fills_atomic"):
@@ -204,6 +212,7 @@ class UniversalEventBacktestEngine:
         )
 
     def run(self, events: Iterable[HistoricalRecord], strategy: StrategyProtocol, *, price_field: str = "price", order_book_field: str | None = None) -> UniversalBacktestResult:
+        self._begin_run()
         if not isinstance(price_field, str) or not price_field.strip():
             raise ValueError("price_field is required")
 
