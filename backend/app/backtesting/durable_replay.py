@@ -193,12 +193,14 @@ class DurableEventBacktestEngine:
                  "open_orders_restored": sum(not x.state.terminal for x in self.engine._order_lifecycles.values())}))
 
         last_source_event: MarketEvent | None = None
+        checkpoint_identity_verified = start_cursor == 0
         def tracked_events():
-            nonlocal last_source_event
+            nonlocal last_source_event, checkpoint_identity_verified
             for raw_index, raw_event in enumerate(source_events):
                 if resume and start_cursor > 0 and raw_index == start_cursor - 1:
                     if DurableEventBacktestEngine._event_key(raw_event) != expected_identity:
                         raise ValueError("resume source mismatch at checkpoint cursor")
+                    checkpoint_identity_verified = True
                 last_source_event = raw_event
                 yield raw_event
 
@@ -233,6 +235,9 @@ class DurableEventBacktestEngine:
                 self.ledger.append(LedgerRecord(self.run_id, "RUN_RESUME_FAILED", resume_timestamp,
                     {"source_cursor": start_cursor, "error_type": type(exc).__name__, "error": str(exc)}))
             raise
+
+        if resume and start_cursor > 0 and not checkpoint_identity_verified:
+            raise ValueError("resume source ended before checkpoint cursor")
 
         final_cursor = result.events_seen
         final_state = {"source_cursor": final_cursor, "events_seen": result.events_seen,
