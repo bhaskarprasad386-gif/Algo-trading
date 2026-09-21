@@ -166,6 +166,16 @@ class CashFutureUniversalMultiLegAdapter:
         self.direction = direction
         self.quantity = quantity
         self._open = False
+        self._pending_open: bool | None = None
+
+    def on_atomic_execution(self, result) -> None:
+        if self._pending_open is None:
+            return
+        if result.rejected:
+            self._pending_open = None
+            return
+        self._open = self._pending_open
+        self._pending_open = None
 
     @staticmethod
     def _quote(payload: object, name: str) -> tuple[float, float, int, int]:
@@ -217,7 +227,7 @@ class CashFutureUniversalMultiLegAdapter:
                     return ()
                 cash_side, future_side = ExecutionSide.SELL, ExecutionSide.BUY
             phase = "OPEN"
-            self._open = True
+            self._pending_open = True
         else:
             if self.direction == "LONG_CASH_SHORT_FUTURE":
                 edge = cash_bid - future_ask
@@ -230,7 +240,7 @@ class CashFutureUniversalMultiLegAdapter:
                     return ()
                 cash_side, future_side = ExecutionSide.BUY, ExecutionSide.SELL
             phase = "CLOSE"
-            self._open = False
+            self._pending_open = False
 
         cash_instrument = self._leg_instrument(context, "cash")
         future_instrument = self._leg_instrument(context, "future")
