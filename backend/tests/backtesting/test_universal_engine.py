@@ -724,8 +724,11 @@ def test_universal_engine_persists_multiple_depth_fills_with_monotonic_sequences
             ),
         )
 
-    engine.run_multi_leg([_event(1, "AAA", 100.0, 1)], strategy)
+    result = engine.run_multi_leg([_event(1, "AAA", 100.0, 1)], strategy)
 
+    assert result.fill_count == 2
+    assert len(result.snapshots[-1].positions) == 1
+    assert result.snapshots[-1].positions[0].quantity == 5
     fills = ledger.fills("universal-multi-fill", limit=10)
     assert len(fills) == 2
     assert [row["sequence"] for row in fills] == [0, 1]
