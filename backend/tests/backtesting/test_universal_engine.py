@@ -705,3 +705,35 @@ def test_universal_engine_does_not_persist_rejected_atomic_fills(tmp_path):
         engine.run_multi_leg([_event(1, "CASH", 100.0, 1)], strategy)
 
     assert ledger.fills("universal-fill-rejected") == []
+
+
+def test_universal_engine_persists_multiple_depth_fills_with_monotonic_sequences(tmp_path):
+    from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+
+    ledger, writer = _real_writer(tmp_path, "universal-multi-fill")
+    engine = UniversalEventBacktestEngine(100_000.0, result_writer=writer, retain_history=False)
+
+    def strategy(context):
+        return (
+            (
+                SimOrder("depth-order", "AAA", ExecutionSide.BUY, 5, OrderType.MARKET, context.timestamp_ns),
+                OrderBook(
+                    asks=(DepthLevel(101.0, 2), DepthLevel(102.0, 3)),
+                ),
+                context.timestamp_ns,
+            ),
+        )
+
+    engine.run_multi_leg([_event(1, "AAA", 100.0, 1)], strategy)
+
+    fills = ledger.fills("universal-multi-fill", limit=10)
+    assert len(fills) == 2
+    assert [row["sequence"] for row in fills] == [0, 1]
+    assert [row["quantity"] for row in fills] == [2.0, 3.0]
+    assert [row["price"] for row in fills] == [101.0, 102.0]
+    assert fills[0]["fill_id"] != fills[1]["fill_id"]
+
+    page = ledger.fills("universal-multi-fill", limit=1, after_sequence=0)
+    assert len(page) == 1
+    assert page[0]["sequence"] == 1
+    assert page[0]["quantity"] == 3.0
