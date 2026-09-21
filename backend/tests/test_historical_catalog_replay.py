@@ -52,11 +52,13 @@ def test_catalog_replay_preserves_exact_leg_identity():
         "source": "test",
         "instrument": "NSE:ABC",
         "timeframe": "1m",
+        "sequence": None,
     }
     assert event["__replay_legs__"]["future"] == {
         "source": "test",
         "instrument": "NFO:FUT-20260924",
         "timeframe": "1m",
+        "sequence": None,
     }
 
 
