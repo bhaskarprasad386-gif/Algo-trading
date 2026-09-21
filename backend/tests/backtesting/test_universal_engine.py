@@ -286,6 +286,59 @@ def test_universal_engine_multi_leg_requires_atomic_execution_model():
         engine.run_multi_leg([_event(10, "AAA", 100.0, 1)], lambda ctx: ())
 
 
+def test_universal_engine_persists_single_leg_depth_fills(tmp_path):
+    from app.backtesting.execution import DepthLevel, OrderBook
+
+    ledger, writer = _real_writer(tmp_path, "universal-single-depth-fill")
+    book = OrderBook(asks=(DepthLevel(101.0, 2), DepthLevel(102.0, 3)))
+    record = HistoricalRecord(
+        "test", "AAA", "tick", 10,
+        {"price": 100.0, "book": book}, 1,
+    )
+    engine = UniversalEventBacktestEngine(
+        100_000.0,
+        quantity=5,
+        result_writer=writer,
+        retain_history=False,
+    )
+
+    result = engine.run(
+        [record],
+        lambda context: EventSignal("BUY"),
+        order_book_field="book",
+    )
+
+    fills = ledger.fills("universal-single-depth-fill")
+    assert result.fill_count == 2
+    assert len(fills) == 2
+    assert len(engine.portfolio.trades) == len(fills)
+    assert [row["sequence"] for row in fills] == [0, 1]
+    assert [(row["quantity"], row["price"]) for row in fills] == [(2.0, 101.0), (3.0, 102.0)]
+    assert all(row["instrument"] == "AAA" and row["side"] == "BUY" for row in fills)
+
+
+def test_universal_engine_persists_single_leg_non_depth_fill(tmp_path):
+    ledger, writer = _real_writer(tmp_path, "universal-single-fill")
+    engine = UniversalEventBacktestEngine(
+        100_000.0,
+        result_writer=writer,
+        retain_history=False,
+    )
+
+    engine.run(
+        [_event(1, "AAA", 100.0, 1)],
+        lambda context: EventSignal("BUY"),
+    )
+
+    fills = ledger.fills("universal-single-fill")
+    assert len(fills) == 1
+    assert engine.portfolio.trades[0].order_id == fills[0]["order_id"]
+    assert engine.portfolio.trades[0].instrument == fills[0]["instrument"] == "AAA"
+    assert engine.portfolio.trades[0].quantity == fills[0]["quantity"] == 1.0
+    assert engine.portfolio.trades[0].price == fills[0]["price"] == 100.0
+    assert fills[0]["sequence"] == 0
+
+
 def test_universal_engine_depth_partial_fill_updates_only_filled_quantity():
     from app.backtesting.execution import DepthLevel, OrderBook
 
