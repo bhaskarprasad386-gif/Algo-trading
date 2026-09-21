@@ -32,6 +32,14 @@ class MultiLegStrategyProtocol(Protocol):
 
 
 @runtime_checkable
+@runtime_checkable
+class AtomicExecutionAwareProtocol(Protocol):
+    """Optional strategy callback for committing multi-leg execution state."""
+
+    def on_atomic_execution(self, result: AtomicExecutionResult) -> None:
+        ...
+
+
 class DataSourceProtocol(Protocol):
     def iter_events(self, *, start_ns: int | None = None, end_ns: int | None = None) -> Iterable[HistoricalRecord]:
         ...
