@@ -169,3 +169,24 @@ def test_universal_cash_future_adapter_closes_only_on_later_reverse_edge():
     assert legs[0][0].side.value == "SELL"
     assert legs[1][0].instrument == "NFO:ABC-20261231"
     assert legs[1][0].side.value == "BUY"
+
+
+def test_universal_cash_future_adapter_does_not_change_state_when_atomic_execution_rejects():
+    from app.backtesting.arbitrage_strategy_adapters import CashFutureUniversalMultiLegAdapter
+    from app.backtesting.execution import AtomicExecutionResult
+
+    adapter = CashFutureUniversalMultiLegAdapter(quantity=10)
+    context = _universal_cf_context(
+        1,
+        {"bid": 100.0, "ask": 101.0, "bid_quantity": 20, "ask_quantity": 20},
+        {"bid": 104.0, "ask": 105.0, "bid_quantity": 20, "ask_quantity": 20},
+    )
+    assert len(tuple(adapter(context))) == 2
+    adapter.on_atomic_execution(AtomicExecutionResult((), (), True, "rejected"))
+
+    retry_context = _universal_cf_context(
+        2,
+        {"bid": 100.0, "ask": 101.0, "bid_quantity": 20, "ask_quantity": 20},
+        {"bid": 104.0, "ask": 105.0, "bid_quantity": 20, "ask_quantity": 20},
+    )
+    assert len(tuple(adapter(retry_context))) == 2
