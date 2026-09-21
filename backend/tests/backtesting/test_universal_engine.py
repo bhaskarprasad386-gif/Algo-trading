@@ -282,6 +282,12 @@ def test_universal_engine_durable_mode_streams_results_without_retaining_full_hi
         def record_equity(self, point):
             self.equity.append(point)
 
+        def complete(self):
+            pass
+
+        def fail(self, reason):
+            pass
+
     writer = Writer()
     events = [
         _event(1, "AAA", 100.0, 1),
