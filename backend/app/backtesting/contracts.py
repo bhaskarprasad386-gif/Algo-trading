@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
 
 from app.backtesting.engine import EventContext, EventSignal
@@ -87,3 +88,30 @@ class AccountingProtocol(PortfolioProtocol, Protocol):
 
     def restore_state(self, state: Mapping[str, Any]) -> None:
         ...
+
+
+@runtime_checkable
+class RunContextProtocol(Protocol):
+    """Immutable dependency boundary for one isolated backtest run."""
+
+    spec: Any
+    clock: Any
+    data_source: Any
+    strategy: Any
+    execution: ExecutionModelProtocol
+    portfolio: PortfolioProtocol
+    result_writer: Any
+
+
+@dataclass(frozen=True)
+class RunContext:
+    """Concrete immutable context binding all dependencies to one run."""
+
+    spec: Any
+    clock: Any
+    data_source: Any
+    strategy: Any
+    execution: ExecutionModelProtocol
+    portfolio: PortfolioProtocol
+    result_writer: Any = None
+    seed: int | None = None
