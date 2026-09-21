@@ -181,6 +181,7 @@ class BacktestResultLedger:
                 metadata_json TEXT NOT NULL,
                 payload_hash TEXT NOT NULL,
                 PRIMARY KEY (run_id, fill_id),
+                UNIQUE (run_id, sequence),
                 FOREIGN KEY (run_id) REFERENCES backtest_runs(run_id) ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS backtest_events (
