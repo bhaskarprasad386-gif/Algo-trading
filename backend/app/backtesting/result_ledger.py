@@ -353,6 +353,11 @@ class BacktestResultLedger:
                             ).fetchone()
                             if existing and existing[0] == row[-1]:
                                 continue
+                            sequence_existing = self._db.execute(
+                                "SELECT payload_hash FROM backtest_fills WHERE run_id=? AND sequence=?", (row[0], row[3])
+                            ).fetchone()
+                            if sequence_existing is not None:
+                                raise ValueError("conflicting duplicate fill sequence")
                         elif table == "backtest_events":
                             existing = self._db.execute(
                                 "SELECT payload_hash FROM backtest_events WHERE run_id=? AND sequence=?", (row[0], row[1])
