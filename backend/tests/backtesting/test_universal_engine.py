@@ -805,3 +805,44 @@ def test_universal_engine_persists_multiple_depth_fills_with_monotonic_sequences
     assert len(page) == 1
     assert page[0]["sequence"] == 1
     assert page[0]["quantity"] == 3.0
+
+
+def test_universal_engine_reports_atomic_execution_with_post_accounting_trades() -> None:
+    from app.backtesting.contracts import AtomicTradeReportInput
+    from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+
+    class Reporter:
+        def __init__(self):
+            self.reports = []
+
+        def record_atomic_trade(self, report):
+            self.reports.append(report)
+
+    reporter = Reporter()
+    books = {
+        "OLD": OrderBook(bids=(DepthLevel(99.0, 10),), asks=(DepthLevel(101.0, 10),)),
+        "NEW": OrderBook(bids=(DepthLevel(199.0, 10),), asks=(DepthLevel(201.0, 10),)),
+    }
+
+    def strategy(ctx):
+        return (
+            (SimOrder("leg-a", "OLD", ExecutionSide.BUY, 2, OrderType.MARKET, submitted_at_ns=ctx.timestamp_ns),
+             books["OLD"], ctx.timestamp_ns),
+            (SimOrder("leg-b", "NEW", ExecutionSide.SELL, 2, OrderType.MARKET, submitted_at_ns=ctx.timestamp_ns),
+             books["NEW"], ctx.timestamp_ns),
+        )
+
+    engine = UniversalEventBacktestEngine(100_000.0, trade_reporter=reporter)
+    engine.run_multi_leg([_event(10, "OLD", 100.0, 1)], strategy)
+
+    assert len(reporter.reports) == 1
+    report = reporter.reports[0]
+    assert isinstance(report, AtomicTradeReportInput)
+    assert report.execution.fills[0].instrument == "OLD"
+    assert report.execution.fills[1].instrument == "NEW"
+    assert report.execution.leg_results[0].reference_prices == (101.0,)
+    assert report.execution.leg_results[1].reference_prices == (199.0,)
+    assert tuple(trade.instrument for trade in report.accounting_trades) == ("OLD", "NEW")
+    assert tuple(trade.timestamp_ns for trade in report.accounting_trades) == (10, 10)
+    assert report.accounting_trades[0].price == 101.0
+    assert report.accounting_trades[1].price == 199.0
