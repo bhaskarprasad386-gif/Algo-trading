@@ -33,8 +33,8 @@ class FakeMarketClient:
                     "tradeVolume": 5000,
                     "opnInterest": 20000,
                     "depth": {
-                        "buy": [{"price": price - 0.1}],
-                        "sell": [{"price": price + 0.1}],
+                        "buy": [{"price": price - 0.1, "quantity": 120}],
+                        "sell": [{"price": price + 0.1, "quantity": 80}],
                     },
                 }]
             },
@@ -72,6 +72,10 @@ def test_collector_keeps_current_and_near_separate(monkeypatch):
     assert result[0]["cash_ask"] == 100.1
     assert result[0]["future_bid"] == 107.9
     assert result[0]["future_ask"] == 108.1
+    assert saved[0].cash_bid_qty == 120
+    assert saved[0].cash_ask_qty == 80
+    assert saved[0].future_bid_qty == 120
+    assert saved[0].future_ask_qty == 80
     assert result[0]["cash_execution_price"] == 100.1
     assert result[0]["future_execution_price"] == 107.9
     assert result[0]["margin_required"] == 50000.0
@@ -270,6 +274,23 @@ def test_quote_freshness_ignores_future_timestamp():
     collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), FakeMaster(), max_quote_age_seconds=15)
     future = datetime.now().astimezone() + timedelta(seconds=30)
     collector._validate_quote_freshness("CURRENT", "ABC30SEP2026FUT", future)
+
+
+def test_full_quote_parses_top_of_book_quantities():
+    quote = _full_quote({
+        "status": True,
+        "data": {"fetched": [{
+            "ltp": 100.0,
+            "depth": {
+                "buy": [{"price": 99.9, "quantity": 120}],
+                "sell": [{"price": 100.1, "quantity": 80}],
+            },
+        }]},
+    })
+    assert quote["bid"] == 99.9
+    assert quote["ask"] == 100.1
+    assert quote["bid_qty"] == 120
+    assert quote["ask_qty"] == 80
 
 
 def test_full_quote_does_not_invent_bid_ask():
