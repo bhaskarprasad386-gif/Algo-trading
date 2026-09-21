@@ -37,6 +37,45 @@ def test_catalog_replay_joins_only_exact_complete_timestamps():
     assert events[0]["future"]["bid"] == 109
 
 
+def test_catalog_replay_preserves_exact_leg_identity():
+    catalog = HistoricalCatalog()
+    catalog.ingest([
+        HistoricalRecord("test", "NSE:ABC", "1m", 1, {"bid": 99, "ask": 100}),
+        HistoricalRecord("test", "NFO:FUT-20260924", "1m", 1, {"bid": 109, "ask": 110}),
+    ])
+    legs = (
+        CatalogReplayLeg("cash_future", "test", "NSE:ABC", "1m"),
+        CatalogReplayLeg("future", "test", "NFO:FUT-20260924", "1m"),
+    )
+    event = next(HistoricalCatalogEventReplay(catalog).events(legs, start_ns=1, end_ns=1))
+    assert event["__replay_legs__"]["cash_future"] == {
+        "source": "test",
+        "instrument": "NSE:ABC",
+        "timeframe": "1m",
+    }
+    assert event["__replay_legs__"]["future"] == {
+        "source": "test",
+        "instrument": "NFO:FUT-20260924",
+        "timeframe": "1m",
+    }
+
+
+def test_catalog_replay_identity_metadata_does_not_mutate_payload():
+    payload = {"bid": 99, "ask": 100, "__replay_legs__": "payload-owned"}
+    catalog = HistoricalCatalog()
+    catalog.ingest([
+        HistoricalRecord("test", "NSE:ABC", "1m", 1, payload),
+        HistoricalRecord("test", "NFO:FUT", "1m", 1, {"bid": 109, "ask": 110}),
+    ])
+    legs = (
+        CatalogReplayLeg("cash", "test", "NSE:ABC", "1m"),
+        CatalogReplayLeg("future", "test", "NFO:FUT", "1m"),
+    )
+    event = next(HistoricalCatalogEventReplay(catalog).events(legs, start_ns=1, end_ns=1))
+    assert event["cash"]["__replay_legs__"] == "payload-owned"
+    assert event["__replay_legs__"]["cash"]["instrument"] == "NSE:ABC"
+
+
 def test_catalog_replay_never_fabricates_missing_leg():
     catalog = HistoricalCatalog()
     catalog.ingest([HistoricalRecord("test", "A", "ms", 10, {"price": 10}), HistoricalRecord("test", "A", "ms", 20, {"price": 20}), HistoricalRecord("test", "B", "ms", 10, {"price": 30})])
