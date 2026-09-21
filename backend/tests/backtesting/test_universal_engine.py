@@ -302,3 +302,17 @@ def test_universal_engine_durable_mode_streams_results_without_retaining_full_hi
     assert len(writer.equity) == len(events)
     assert result.snapshots == ()
     assert result.equity_curve == ()
+
+
+
+def test_universal_engine_is_single_use_and_rejects_second_run():
+    engine = UniversalEventBacktestEngine(100_000.0)
+    first = engine.run([_event(1, "AAA", 100.0, 1)], lambda context: EventSignal("HOLD"))
+    assert first.final_equity == 100_000.0
+
+    try:
+        engine.run([_event(1, "BBB", 200.0, 1)], lambda context: EventSignal("HOLD"))
+    except RuntimeError as exc:
+        assert "single-use" in str(exc)
+    else:
+        raise AssertionError("expected second run to be rejected")
