@@ -40,8 +40,8 @@ def test_catalog_replay_joins_only_exact_complete_timestamps():
 def test_catalog_replay_preserves_exact_leg_identity():
     catalog = HistoricalCatalog()
     catalog.ingest([
-        HistoricalRecord("test", "NSE:ABC", "1m", 1, {"bid": 99, "ask": 100}),
-        HistoricalRecord("test", "NFO:FUT-20260924", "1m", 1, {"bid": 109, "ask": 110}),
+        HistoricalRecord("test", "NSE:ABC", "1m", 1, {"bid": 99, "ask": 100}, sequence=17),
+        HistoricalRecord("test", "NFO:FUT-20260924", "1m", 1, {"bid": 109, "ask": 110}, sequence=29),
     ])
     legs = (
         CatalogReplayLeg("cash_future", "test", "NSE:ABC", "1m"),
@@ -52,13 +52,13 @@ def test_catalog_replay_preserves_exact_leg_identity():
         "source": "test",
         "instrument": "NSE:ABC",
         "timeframe": "1m",
-        "sequence": None,
+        "sequence": 17,
     }
     assert event["__replay_legs__"]["future"] == {
         "source": "test",
         "instrument": "NFO:FUT-20260924",
         "timeframe": "1m",
-        "sequence": None,
+        "sequence": 29,
     }
 
 
