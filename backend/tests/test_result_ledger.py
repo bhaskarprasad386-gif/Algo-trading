@@ -248,3 +248,15 @@ def test_legacy_equity_schema_is_migratable(tmp_path) -> None:
         "legacy-run",
         [EquityPoint(1_000, 100_001.0, 1.0, 0.0, 0.0)],
     ) == 1
+
+
+def test_fill_sequence_must_be_unique_per_run():
+    ledger = BacktestResultLedger(":memory:")
+    ledger.create_run("run-sequence", {"strategy_id": "test"})
+
+    first = fill("f1", sequence=7, price=101.0)
+    second = fill("f2", sequence=7, price=102.0)
+
+    assert ledger.append_fills("run-sequence", [first]) == 1
+    with pytest.raises(ValueError, match="conflicting duplicate"):
+        ledger.append_fills("run-sequence", [second])
