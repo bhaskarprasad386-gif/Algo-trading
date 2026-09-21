@@ -798,6 +798,7 @@ def test_universal_engine_persists_multiple_depth_fills_with_monotonic_sequences
     assert [row["sequence"] for row in fills] == [0, 1]
     assert [row["quantity"] for row in fills] == [2.0, 3.0]
     assert [row["price"] for row in fills] == [101.0, 102.0]
+    assert [row["metadata_json"] for row in fills] == ['{"reference_price":101.0}', '{"reference_price":102.0}']
     assert fills[0]["fill_id"] != fills[1]["fill_id"]
 
     page = ledger.fills("universal-multi-fill", limit=1, after_sequence=0)
