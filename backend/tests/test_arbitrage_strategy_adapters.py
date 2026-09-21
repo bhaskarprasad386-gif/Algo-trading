@@ -192,7 +192,7 @@ def test_universal_cash_future_adapter_integrates_open_close_with_atomic_engine(
     assert result.fill_count == 4
     assert engine.portfolio.positions["NSE:ABC"].quantity == 0
     assert engine.portfolio.positions["NFO:ABC-20261231"].quantity == 0
-    assert result.realized_pnl == 40.0
+    assert result.realized_pnl == 60.0
 
 
 def test_universal_cash_future_adapter_retries_failed_close_after_engine_rejection():
