@@ -328,3 +328,73 @@ def test_universal_cash_future_adapter_does_not_change_state_when_atomic_executi
         {"bid": 104.0, "ask": 105.0, "bid_quantity": 20, "ask_quantity": 20},
     )
     assert len(tuple(adapter(retry_context))) == 2
+
+
+def test_universal_cash_future_trade_reporter_persists_two_exact_legs():
+    from app.backtesting.arbitrage_strategy_adapters import CashFutureTradeReporter
+    from app.backtesting.contracts import AtomicTradeReportInput
+    from app.backtesting.execution import AtomicExecutionResult, ExecutionResult, ExecutionSide, SimFill
+    from app.backtesting.portfolio import TradeRecord
+
+    class Writer:
+        def __init__(self):
+            self.trades = []
+
+        def record_trades(self, trades):
+            self.trades.extend(trades)
+            return len(trades)
+
+    writer = Writer()
+    reporter = CashFutureTradeReporter(writer)
+
+    open_fills = (
+        SimFill("OPEN:CASH", "NSE:ABC", ExecutionSide.BUY, 10, 101.0, 1),
+        SimFill("OPEN:FUTURE", "NFO:ABC-OLD", ExecutionSide.SELL, 10, 104.0, 1),
+    )
+    reporter.record_atomic_trade(AtomicTradeReportInput(
+        AtomicExecutionResult(
+            fills=open_fills,
+            leg_results=(
+                ExecutionResult((open_fills[0],), 0, reference_prices=(101.0,)),
+                ExecutionResult((open_fills[1],), 0, reference_prices=(104.0,)),
+            ),
+        ),
+        (
+            TradeRecord("OPEN:CASH", "NSE:ABC", ExecutionSide.BUY, 10, 101.0, 1010.0, 1.0, 0.0, 989.0, 100000.0, 1),
+            TradeRecord("OPEN:FUTURE", "NFO:ABC-OLD", ExecutionSide.SELL, 10, 104.0, 1040.0, 1.0, 0.0, 1090.0, 100000.0, 1),
+        ),
+    ))
+    assert writer.trades == []
+
+    close_fills = (
+        SimFill("CLOSE:CASH", "NSE:ABC", ExecutionSide.SELL, 10, 106.0, 2),
+        SimFill("CLOSE:FUTURE", "NFO:ABC-OLD", ExecutionSide.BUY, 10, 103.0, 2),
+    )
+    reporter.record_atomic_trade(AtomicTradeReportInput(
+        AtomicExecutionResult(
+            fills=close_fills,
+            leg_results=(
+                ExecutionResult((close_fills[0],), 0, reference_prices=(106.0,)),
+                ExecutionResult((close_fills[1],), 0, reference_prices=(103.0,)),
+            ),
+        ),
+        (
+            TradeRecord("CLOSE:CASH", "NSE:ABC", ExecutionSide.SELL, 10, 106.0, 1060.0, 1.0, 50.0, 1100.0, 100050.0, 2),
+            TradeRecord("CLOSE:FUTURE", "NFO:ABC-OLD", ExecutionSide.BUY, 10, 103.0, 1030.0, 1.0, 10.0, 70.0, 100060.0, 2),
+        ),
+    ))
+
+    assert len(writer.trades) == 2
+    by_leg = {trade.leg: trade for trade in writer.trades}
+    assert by_leg["CASH"].instrument == "NSE:ABC"
+    assert by_leg["CASH"].entry_price == 101.0
+    assert by_leg["CASH"].exit_price == 106.0
+    assert by_leg["CASH"].gross_pnl == 50.0
+    assert by_leg["CASH"].fees == 2.0
+    assert by_leg["CASH"].net_pnl == 48.0
+    assert by_leg["CASH"].metadata["pricing_model"] == "EXECUTABLE_EDGE"
+    assert by_leg["FUTURE"].instrument == "NFO:ABC-OLD"
+    assert by_leg["FUTURE"].entry_price == 104.0
+    assert by_leg["FUTURE"].exit_price == 103.0
+    assert by_leg["FUTURE"].gross_pnl == 10.0
+    assert by_leg["FUTURE"].net_pnl == 8.0
