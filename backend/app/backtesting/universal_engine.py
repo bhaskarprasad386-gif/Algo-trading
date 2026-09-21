@@ -132,6 +132,35 @@ class UniversalEventBacktestEngine:
         """Run directly from a streaming DataSource without materializing its events."""
         return self.run(source.iter_events(start_ns=start_ns, end_ns=end_ns), strategy, price_field=price_field, order_book_field=order_book_field)
 
+    def run_context(self, context, *, price_field: str = "price", order_book_field: str | None = None) -> UniversalBacktestResult:
+        """Run the single-leg strategy and data source bound to one immutable RunContext."""
+        if context.execution is not self.execution or context.portfolio is not self.portfolio or context.clock is not self.clock:
+            raise ValueError("RunContext dependencies do not match this engine")
+        if context.result_writer is not self.result_writer:
+            raise ValueError("RunContext result_writer does not match this engine")
+        return self.run_source(
+            context.data_source,
+            context.strategy,
+            start_ns=context.spec.start_ns,
+            end_ns=context.spec.end_ns,
+            price_field=price_field,
+            order_book_field=order_book_field,
+        )
+
+    def run_multi_leg_context(self, context) -> UniversalBacktestResult:
+        """Run the multi-leg strategy and data source bound to one immutable RunContext."""
+        if context.execution is not self.execution or context.portfolio is not self.portfolio or context.clock is not self.clock:
+            raise ValueError("RunContext dependencies do not match this engine")
+        if context.result_writer is not self.result_writer:
+            raise ValueError("RunContext result_writer does not match this engine")
+        return self.run_multi_leg(
+            context.data_source.iter_events(
+                start_ns=context.spec.start_ns,
+                end_ns=context.spec.end_ns,
+            ),
+            context.strategy,
+        )
+
     def _run_with_writer_lifecycle(self, run_callable) -> UniversalBacktestResult:
         """Complete or fail a durable run while preserving the original exception."""
         try:
