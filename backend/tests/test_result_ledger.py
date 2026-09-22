@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
-
 import pytest
 
 from app.backtesting.checkpoint import CheckpointStore, ReplayCheckpoint
