@@ -95,3 +95,24 @@ def test_backtest_trade_ledger_rejects_invalid_checkpoint(tmp_path):
                 pass
             else:
                 raise AssertionError("invalid checkpoint should raise ValueError")
+
+
+def test_durable_backtest_ledger_record_count_and_record_at_are_payload_bounded(tmp_path):
+    from app.backtesting.ledger import BacktestLedger, LedgerRecord
+
+    ledger = BacktestLedger(str(tmp_path / "durable-ledger.sqlite"))
+    try:
+        ledger.start_run("run-1", "strategy", "1", 1000.0)
+        ledger.append_batch(
+            [
+                LedgerRecord("run-1", "equity", 1, {"available_capital": 900.0, "reserved_margin": 100.0}),
+                LedgerRecord("run-1", "equity", 2, {"available_capital": 1100.0, "reserved_margin": 0.0}),
+                LedgerRecord("run-1", "trade", 2, {"net_profit": 100.0}),
+            ]
+        )
+        assert ledger.record_count("run-1", "equity") == 2
+        assert ledger.record_count("run-1", "trade") == 1
+        assert ledger.record_at("run-1", "equity", 1).payload["available_capital"] == 1100.0
+        assert ledger.record_at("run-1", "equity", -1).payload["reserved_margin"] == 0.0
+    finally:
+        ledger.close()
