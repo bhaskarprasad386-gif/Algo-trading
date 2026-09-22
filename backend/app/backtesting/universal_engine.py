@@ -274,7 +274,7 @@ class UniversalEventBacktestEngine:
             replay_sequence += 1
             if self.retain_history:
                 snapshots.append(snapshot)
-                equity_curve.append(EquityPoint(record.timestamp_ns, snapshot.equity, snapshot.realized_pnl, snapshot.unrealized_pnl))
+                equity_curve.append(point)
 
         final_snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
         stats: BacktestStatistics = accumulator.finalize()
@@ -416,7 +416,7 @@ class UniversalEventBacktestEngine:
             replay_sequence += 1
             if self.retain_history:
                 snapshots.append(snapshot)
-                equity_curve.append(EquityPoint(record.timestamp_ns, snapshot.equity, snapshot.realized_pnl, snapshot.unrealized_pnl))
+                equity_curve.append(point)
 
         final_snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
         stats: BacktestStatistics = accumulator.finalize()
