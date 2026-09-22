@@ -5,7 +5,7 @@ from datetime import date, datetime
 from math import isfinite
 from typing import Any, Iterable, Mapping
 from app.backtesting.cash_future_strategy_resume import load_validated_cash_future_checkpoint
-from app.backtesting.cash_future_strategy_runner import CashFutureCapitalLedger,CashFutureStrategy,CashFutureStrategyConfig,CashFutureStrategyRun,_LedgerPayloadSequence,_point_date,_trade_gross_profit,_write_checkpoint
+from app.backtesting.cash_future_strategy_runner import CashFutureCapitalLedger,CashFutureStrategy,CashFutureStrategyConfig,CashFutureStrategyRun,_LedgerPayloadSequence,_point_date,_trade_gross_profit,_write_checkpoint,_persist
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
 
@@ -38,7 +38,7 @@ def resume_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy
     capital_ledger=CashFutureCapitalLedger(initial_capital,realized_capital=checkpoint.realized_capital,reserved_margin=checkpoint.reserved_margin,blocked_entries=checkpoint.blocked_entries)
     entry=_deserialize_entry(checkpoint.open_entry,selected_contract=selected_contract)
     history=[] if config.history_window is None else deque(maxlen=config.history_window)
-    previous_timestamp=None; resumed=False; last_processed_point=None; last_processed_event_index=checkpoint_row.event_index; selected_symbol=entry.symbol if entry is not None else None
+    previous_timestamp=None; resumed=False; last_processed_point=None; last_processed_event_index=checkpoint_row.event_index; selected_symbol=entry.symbol if entry is not None else None; pending_records=[] if config.checkpoint_interval is not None else None
     for point in points:
         point_date=_point_date(point)
         if previous_timestamp is not None and point.timestamp<previous_timestamp: raise ValueError("Cash-Future strategy input must be ordered by timestamp")
@@ -52,7 +52,7 @@ def resume_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy
             continue
         resumed=True; last_processed_point=point; last_processed_event_index+=1
         if config.start_date is not None and point_date<config.start_date:
-            _maybe_checkpoint(ledger,config,run_id,last_processed_event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint); continue
+            _maybe_checkpoint(ledger,config,run_id,last_processed_event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint,pending_records); continue
         history.append(point); visible_history=tuple(history); raw_signal=strategy(point,visible_history); action="NONE" if raw_signal is None else str(raw_signal).strip().upper()
         if action not in {"BUY","SELL","HOLD","NONE"}: raise ValueError("Cash-Future strategy must return BUY, SELL, HOLD, or NONE")
         entry_action=config.cash_side; exit_action=config.future_side
@@ -65,22 +65,21 @@ def resume_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy
         elif action==entry_action and entry is not None: capital_ledger.blocked_entries+=1; signal.update({"execution_status":"blocked","blocked_reason":"position_already_open"})
         elif action==exit_action and entry is None: signal.update({"execution_status":"rejected","rejection_reason":"no_open_position"})
         exit_reason="strategy" if action==exit_action and entry is not None else ("expiry" if entry is not None and expiry_day else None)
-        from app.backtesting.ledger import LedgerRecord
-        ledger.append(LedgerRecord(run_id,"signal",_timestamp_ns(point.timestamp),signal))
+        _persist(ledger,run_id,"signal",point,signal,pending_records)
         if exit_reason is not None and entry is not None:
             gross=_trade_gross_profit(entry,point,config); net=gross-config.charges_per_trade-config.funding_cost_per_trade; capital_ledger.apply_realized_pnl(net); capital_ledger.release(entry.margin_required)
-            ledger.append(LedgerRecord(run_id,"trade",_timestamp_ns(point.timestamp),{"entry_time":entry.timestamp.isoformat(),"exit_time":point.timestamp.isoformat(),"symbol":entry.symbol,"contract_month":entry.contract_month,"lot_size":entry.lot_size,"quantity":1,"entry_cash_price":entry.cash_price,"entry_future_price":entry.future_price,"entry_gap":entry.gap,"exit_cash_price":point.cash_price,"exit_future_price":point.future_price,"exit_gap":point.gap,"gross_profit":gross,"charges":config.charges_per_trade,"funding_cost":config.funding_cost_per_trade,"net_profit":net,"execution_model":config.execution_model,"cash_side":config.cash_side,"future_side":config.future_side,"slippage_per_share":config.slippage_per_share,"exit_reason":exit_reason,"reserved_margin":entry.margin_required})); entry=None
+            _persist(ledger,run_id,"trade",point,{"entry_time":entry.timestamp.isoformat(),"exit_time":point.timestamp.isoformat(),"symbol":entry.symbol,"contract_month":entry.contract_month,"lot_size":entry.lot_size,"quantity":1,"entry_cash_price":entry.cash_price,"entry_future_price":entry.future_price,"entry_gap":entry.gap,"exit_cash_price":point.cash_price,"exit_future_price":point.future_price,"exit_gap":point.gap,"gross_profit":gross,"charges":config.charges_per_trade,"funding_cost":config.funding_cost_per_trade,"net_profit":net,"execution_model":config.execution_model,"cash_side":config.cash_side,"future_side":config.future_side,"slippage_per_share":config.slippage_per_share,"exit_reason":exit_reason,"reserved_margin":entry.margin_required},pending_records); entry=None
         unrealized=_trade_gross_profit(entry,point,config) if entry is not None else 0.0
-        ledger.append(LedgerRecord(run_id,"equity",_timestamp_ns(point.timestamp),{"timestamp":point.timestamp.isoformat(),"equity":float(capital_ledger.realized_capital)+unrealized,"realized_capital":float(capital_ledger.realized_capital),"unrealized_pnl":unrealized,"available_capital":capital_ledger.available_capital,"reserved_margin":capital_ledger.reserved_margin}))
-        _maybe_checkpoint(ledger,config,run_id,last_processed_event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint)
+        _persist(ledger,run_id,"equity",point,{"timestamp":point.timestamp.isoformat(),"equity":float(capital_ledger.realized_capital)+unrealized,"realized_capital":float(capital_ledger.realized_capital),"unrealized_pnl":unrealized,"available_capital":capital_ledger.available_capital,"reserved_margin":capital_ledger.reserved_margin},pending_records)
+        _maybe_checkpoint(ledger,config,run_id,last_processed_event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint,pending_records)
     if not resumed: raise ValueError(f"Cash-Future resume source does not contain observations after checkpoint timestamp={checkpoint.last_timestamp}")
-    if config.checkpoint_interval is not None and last_processed_point is not None: _write_checkpoint(ledger,run_id,last_processed_event_index,last_processed_point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint)
+    if config.checkpoint_interval is not None and last_processed_point is not None: _write_checkpoint(ledger,run_id,last_processed_event_index,last_processed_point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint,pending_records)
     return CashFutureStrategyRun(strategy_id,strategy_version,initial_capital,float(capital_ledger.realized_capital),float(capital_ledger.realized_capital)-initial_capital,_LedgerPayloadSequence(ledger,run_id,"signal"),_LedgerPayloadSequence(ledger,run_id,"trade"),_LedgerPayloadSequence(ledger,run_id,"equity"),capital_ledger.available_capital,capital_ledger.reserved_margin,capital_ledger.blocked_entries)
 
 def _timestamp_ns(value:datetime)->int:return int(value.timestamp()*1_000_000_000)
-def _maybe_checkpoint(ledger,config,run_id,event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint):
+def _maybe_checkpoint(ledger,config,run_id,event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint,pending_records=None):
     if config.checkpoint_interval is None or event_index%config.checkpoint_interval!=0:return
-    _write_checkpoint(ledger,run_id,event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint)
+    _write_checkpoint(ledger,run_id,event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint,pending_records)
 
 def _deserialize_entry(payload:Mapping[str,Any]|None,*,selected_contract:str)->CashFutureHistoryPoint|None:
     if payload is None:return None
