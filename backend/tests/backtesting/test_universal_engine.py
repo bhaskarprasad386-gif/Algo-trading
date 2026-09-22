@@ -1016,6 +1016,37 @@ def test_checkpoint_state_builder_captures_resume_state() -> None:
     assert state["clock_now_ns"] == 0
 
 
+def test_checkpoint_state_builder_captures_reporter_state() -> None:
+    class StatefulStrategy:
+        def get_state(self):
+            return {}
+
+    class StatefulReporter:
+        def get_state(self):
+            return {"open": {"CASH": {"entry_order_id": "CF:1:src:ABC:0:OPEN:CASH"}}, "sequence": 4}
+
+    engine = UniversalEventBacktestEngine(100_000.0, trade_reporter=StatefulReporter())
+    record = _event(1_000, "AAA", 101.0, 0)
+    accumulator = StreamingStatisticsAccumulator(100_000.0)
+    snapshot = engine.portfolio.snapshot({"AAA": 101.0})
+    accumulator.update(EquityPoint(record.timestamp_ns, snapshot.equity, snapshot.realized_pnl, snapshot.unrealized_pnl))
+
+    state = engine._build_checkpoint_state(
+        processed_events=1,
+        replay_sequence=1,
+        previous_identity=event_identity(record),
+        last_marks={"AAA": 101.0},
+        accumulator=accumulator,
+        peak_equity=snapshot.equity,
+        strategy=StatefulStrategy(),
+    )
+
+    assert state["reporter_state"] == {
+        "open": {"CASH": {"entry_order_id": "CF:1:src:ABC:0:OPEN:CASH"}},
+        "sequence": 4,
+    }
+
+
 def test_universal_single_leg_checkpoint_resume_restores_state(tmp_path):
     events = [_event(1000, "AAA", 100.0, 0), _event(2000, "AAA", 101.0, 1), _event(3000, "AAA", 102.0, 2)]
 
