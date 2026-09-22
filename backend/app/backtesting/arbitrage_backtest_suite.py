@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import inspect
 from typing import Any, Mapping
 
+from .provenance import provenance_hash
 from .arbitrage_strategy_adapters import (
     BoxSpreadStrategyAdapter,
     CalendarSpreadStrategyAdapter,
@@ -37,10 +39,20 @@ def strategy_definition(strategy_id: str) -> ArbitrageStrategyDefinition:
         raise ValueError(f"unsupported arbitrage strategy: {strategy_id}") from exc
 
 
+def strategy_implementation_hash(strategy_id: str) -> str:
+    """Hash the registered adapter implementation source, excluding runtime state."""
+    definition = strategy_definition(strategy_id)
+    try:
+        source = inspect.getsource(definition.adapter_type)
+    except (OSError, TypeError) as exc:
+        raise RuntimeError(f"unable to inspect strategy implementation: {strategy_id}") from exc
+    return provenance_hash({"strategy_id": strategy_id, "adapter_source": source})
+
+
 def build_strategy_adapter(strategy_id: str, parameters: Mapping[str, Any] | None = None) -> Any:
     """Build an independent adapter from persisted run parameters."""
     definition = strategy_definition(strategy_id)
     return definition.adapter_type(**dict(parameters or {}))
 
 
-__all__ = ["ArbitrageStrategyDefinition", "STRATEGIES", "build_strategy_adapter", "strategy_definition"]
+__all__ = ["ArbitrageStrategyDefinition", "STRATEGIES", "build_strategy_adapter", "strategy_definition", "strategy_implementation_hash"]
