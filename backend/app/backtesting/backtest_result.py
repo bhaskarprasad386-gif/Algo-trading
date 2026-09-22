@@ -8,6 +8,7 @@ from typing import Any, Mapping
 from app.execution.payoff import PayoffLeg, payoff_summary
 
 from .backtest_run import BacktestRunSpec
+from .checkpoint import CheckpointStore, ReplayCheckpoint
 from .result_ledger import BacktestEvent, BacktestFill, BacktestResultLedger, BacktestTrade, EquityPoint
 
 
@@ -33,7 +34,19 @@ class BacktestRunWriter:
         self.ledger = ledger
         self.spec = spec
         self._last_event_sequence = -1
+        self.checkpoints = CheckpointStore(self.ledger.connection)
         self.ledger.create_run(spec.run_id, spec.provenance, created_at_ns=created_at_ns)
+
+
+    def transaction(self):
+        """Compose event/result writes and a checkpoint in one ledger transaction."""
+        return self.ledger.transaction()
+
+    def record_checkpoint(self, checkpoint: ReplayCheckpoint) -> None:
+        """Persist a checkpoint without committing inside transaction()."""
+        if checkpoint.run_id != self.spec.run_id:
+            raise ValueError("checkpoint run_id does not match writer run")
+        self.checkpoints.save(checkpoint, commit=False)
 
     def record_event(self, sequence: int, timestamp_ns: int, event_type: str, payload: Mapping[str, Any]) -> int:
         if sequence < 0:
