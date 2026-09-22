@@ -43,3 +43,11 @@ def test_trading_calendar_identity_is_stable() -> None:
     assert first == second
     assert len(first) == 64
     assert CALENDAR_IDENTITY == "trading-calendar:generic:v1"
+
+class _InjectedExecution:
+    def execute(self, order, price, timestamp_ns):
+        return None
+
+
+def test_execution_identity_accepts_injected_implementation() -> None:
+    assert execution_implementation_hash(_InjectedExecution) != execution_implementation_hash()
