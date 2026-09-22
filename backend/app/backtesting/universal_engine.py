@@ -253,7 +253,7 @@ class UniversalEventBacktestEngine:
                 realized_pnl=snapshot.realized_pnl,
                 state=self._build_checkpoint_state(
                     processed_events=processed_events,
-                    replay_sequence=replay_sequence + 1,
+                    replay_sequence=replay_sequence,
                     previous_identity=previous_identity,
                     last_marks=last_marks,
                     accumulator=accumulator,
