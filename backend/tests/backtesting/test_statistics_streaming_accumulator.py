@@ -77,3 +77,41 @@ def test_streaming_accumulator_empty_finalize_matches_batch_statistics():
     expected = calculate_statistics((), 100_000.0)
 
     assert actual == expected
+
+
+def test_streaming_accumulator_checkpoint_restore_matches_uninterrupted_run():
+    points = _points()
+    expected = _streaming(points, 100_000.0)
+
+    accumulator = StreamingStatisticsAccumulator(100_000.0)
+    for point in points[:2]:
+        accumulator.update(point)
+    state = accumulator.export_state()
+
+    restored = StreamingStatisticsAccumulator(100_000.0)
+    restored.restore_state(state)
+    for point in points[2:]:
+        restored.update(point)
+
+    assert restored.finalize() == expected
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda state: state.pop("count"),
+        lambda state: state.__setitem__("return_count", -1),
+        lambda state: state.__setitem__("sum_intervals_years", -1.0),
+        lambda state: state.__setitem__("previous_timestamp", -1),
+        lambda state: state.__setitem__("first_timestamp", 3),
+        lambda state: state.__setitem__("last_timestamp", None),
+    ],
+)
+def test_streaming_accumulator_rejects_invalid_checkpoint_state(mutate):
+    accumulator = StreamingStatisticsAccumulator(100_000.0)
+    accumulator.update(_points()[0])
+    state = dict(accumulator.export_state())
+    mutate(state)
+
+    with pytest.raises(ValueError, match="invalid statistics checkpoint"):
+        StreamingStatisticsAccumulator(100_000.0).restore_state(state)
