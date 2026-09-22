@@ -30,12 +30,23 @@ class PayoffSnapshot:
 class BacktestRunWriter:
     """Single entry point for independent, incremental backtest result writes."""
 
-    def __init__(self, ledger: BacktestResultLedger, spec: BacktestRunSpec, *, created_at_ns: int = 0) -> None:
+    def __init__(self, ledger: BacktestResultLedger, spec: BacktestRunSpec, *, created_at_ns: int = 0, resume: bool = False) -> None:
         self.ledger = ledger
         self.spec = spec
         self._last_event_sequence = -1
         self.checkpoints = CheckpointStore(self.ledger.connection)
-        self.ledger.create_run(spec.run_id, spec.provenance, created_at_ns=created_at_ns)
+        if resume:
+            row = self.ledger.run(spec.run_id)
+            if row["status"] == "COMPLETED":
+                raise ValueError("cannot resume completed run")
+            if self.ledger.run_provenance(spec.run_id) != spec.provenance:
+                raise ValueError("resume provenance does not match existing run")
+            self._last_event_sequence = max(
+                (int(item["sequence"]) for item in self.ledger.events(spec.run_id, limit=1_000_000)),
+                default=-1,
+            )
+        else:
+            self.ledger.create_run(spec.run_id, spec.provenance, created_at_ns=created_at_ns)
 
 
     def transaction(self):
