@@ -166,9 +166,10 @@ def run_persisted_cash_future_backtest(
         trade_sink=result_ledger.append_many,
         trade_source=lambda: (
             record.payload
-            for record in result_ledger.ledger.iter_records_chronological(
+            for record in result_ledger.ledger.iter_records_by_payload_timestamp(
                 result_ledger.run_id,
                 RECORD_TYPE,
+                "entry_time",
                 fetch_size=page_size,
             )
         ),
