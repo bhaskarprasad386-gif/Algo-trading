@@ -59,8 +59,8 @@ def _aggregate_contract_results(results:list[dict])->dict:
     for trade in trades:
         equity+=trade['net_profit']; running_peak=max(running_peak,equity); max_drawdown=max(max_drawdown,running_peak-equity); equity_curve.append({'timestamp':trade['exit_time'],'equity':equity})
     open_positions=[result['open_position'] for result in results if result.get('open_position') is not None]
-    contract_keys={(result.get('open_position') or {}).get('contract_month') for result in results if result.get('open_position') is not None}
-    contract_keys.update(trade.get('contract_month') for trade in trades if trade.get('contract_month') is not None)
+    contract_keys={(position.get('symbol'), position.get('contract_month')) for result in results if (position := result.get('open_position')) is not None}
+    contract_keys.update((trade.get('symbol'), trade.get('contract_month')) for trade in trades if trade.get('contract_month') is not None)
     return {'contract_count':len(contract_keys) if contract_keys else len(results),'trade_count':len(trades),'wins':wins,'losses':len(trades)-wins,'win_rate_pct':wins/len(trades)*100.0 if trades else 0.0,'net_profit':net_profit,'roi_pct':net_profit/invested_capital*100.0 if invested_capital else 0.0,'invested_capital':invested_capital,'max_drawdown':max_drawdown,'equity_curve':equity_curve,'trades':trades,'open_positions':open_positions,'per_contract':results}
 
 def run_multi_contract_backtest(points:Iterable[CashFutureHistoryPoint],config:BacktestConfig)->dict:
