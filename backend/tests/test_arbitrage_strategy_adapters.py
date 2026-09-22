@@ -24,12 +24,13 @@ def test_box_adapter_closes_only_on_later_reverse_edge():
     high = option(1, 110, 2, 3, 2, 2)
     entries = tuple(adapter.entry({"low": low, "high": high, "data_resolution": "1s"}))
     assert len(entries) == 1
-    assert entries[0].entry_price == 3.0
+    # BoxSpreadBacktester.evaluate() gives width - executable debit = 12.
+    assert entries[0].entry_price == 12.0
     assert adapter.exit(entries[0], {"low": low, "high": high}) is None
 
-    # Later quotes create a genuine positive reverse executable edge.
-    low2 = option(3, 100, 15, 16, 14, 15)
-    high2 = option(3, 110, 3, 4, 3, 4)
+    # Later quotes create a genuine positive reverse executable edge of 14.
+    low2 = option(3, 100, 20, 21, 1, 1.5)
+    high2 = option(3, 110, 14, 14.5, 20, 21)
     close = adapter.exit(entries[0], {"low": low2, "high": high2})
     assert close is not None
     assert close.gross_pnl == 14.0
