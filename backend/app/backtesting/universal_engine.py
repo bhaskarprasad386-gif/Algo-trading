@@ -143,6 +143,7 @@ class UniversalEventBacktestEngine:
             "source_event_identity": self._checkpoint_identity(previous_identity),
             "portfolio_state": dict(self.portfolio.export_state()),
             "strategy_state": dict(strategy_state(strategy)),
+            "reporter_state": dict(self.trade_reporter.get_state()) if self.trade_reporter is not None and callable(getattr(self.trade_reporter, "get_state", None)) else {},
             "statistics_state": dict(accumulator.export_state()),
             "last_marks": dict(last_marks),
             "replay_sequence": replay_sequence,
@@ -169,6 +170,14 @@ class UniversalEventBacktestEngine:
         if not isinstance(saved_strategy, dict):
             raise ValueError("checkpoint strategy_state must be a dictionary")
         restore_strategy_state(strategy, saved_strategy)
+        saved_reporter = state.get("reporter_state", {})
+        if not isinstance(saved_reporter, dict):
+            raise ValueError("checkpoint reporter_state must be a dictionary")
+        if saved_reporter:
+            setter = getattr(engine.trade_reporter, "set_state", None)
+            if engine.trade_reporter is None or not callable(setter):
+                raise ValueError("checkpoint contains reporter_state but reporter cannot restore it")
+            setter(dict(saved_reporter))
         saved_stats = state.get("statistics_state")
         if not isinstance(saved_stats, dict):
             raise ValueError("checkpoint missing statistics_state")
