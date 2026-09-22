@@ -149,19 +149,33 @@ def run_persisted_cash_future_backtest(
         raise ValueError("quality_report is required before running a persisted Cash-Future backtest")
     quality_report.require_clean()
 
-    result = run_multi_contract_backtest_streaming(
-        iter_persisted_cash_future_points(
-            db,
-            symbol=symbol,
-            contract_month=config.contract_month,
-            start=start,
-            end=end,
-            page_size=page_size,
-        ),
-        config,
+    points = iter_persisted_cash_future_points(
+        db,
+        symbol=symbol,
+        contract_month=config.contract_month,
+        start=start,
+        end=end,
+        page_size=page_size,
     )
-    if result_ledger is not None:
-        result_ledger.append_many(result["trades"])
+    if result_ledger is None:
+        return run_multi_contract_backtest_streaming(points, config)
+
+    result = run_multi_contract_backtest_streaming(
+        points,
+        config,
+        trade_sink=result_ledger.append_many,
+        trade_source=lambda: (
+            record.payload
+            for record in result_ledger.ledger.iter_records_chronological(
+                result_ledger.run_id,
+                result_ledger.RECORD_TYPE
+                if hasattr(result_ledger, "RECORD_TYPE")
+                else "CASH_FUTURE_CONVERGENCE_TRADE",
+                fetch_size=page_size,
+            )
+        ),
+        trade_batch_size=page_size,
+    )
     return result
 
 
