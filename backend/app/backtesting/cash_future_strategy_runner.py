@@ -80,7 +80,10 @@ def _trade_gross_profit(entry,exit_point,config)->float:
 def _execution_metadata(config:CashFutureStrategyConfig)->dict[str,Any]:
     return {"execution_model":config.execution_model,"charges_per_trade":config.charges_per_trade,"funding_cost_per_trade":config.funding_cost_per_trade,"start_date":config.start_date.isoformat() if config.start_date else None,"end_date":config.end_date.isoformat() if config.end_date else None,"contract_month":config.contract_month,"history_window":config.history_window,"checkpoint_interval":config.checkpoint_interval,"cash_side":config.cash_side,"future_side":config.future_side,"slippage_per_share":config.slippage_per_share}
 
-def _persist(ledger,run_id,record_type,point,payload): ledger.append(LedgerRecord(run_id,record_type,_timestamp_ns(point.timestamp),payload))
+def _persist(ledger,run_id,record_type,point,payload,pending=None):
+    record=LedgerRecord(run_id,record_type,_timestamp_ns(point.timestamp),payload)
+    if pending is None: ledger.append(record)
+    else: pending.append(record)
 def _timestamp_ns(value:datetime)->int: return int(value.timestamp()*1_000_000_000)
 
 def run_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy:CashFutureStrategy,*,strategy_id:str,strategy_version:str="1",config:CashFutureStrategyConfig|None=None,ledger=None,run_id:str|None=None,strategy_hash:str|None=None,data_source_fingerprint:str|None=None)->CashFutureStrategyRun:
@@ -90,7 +93,7 @@ def run_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy:Ca
     if ledger is not None:
         if not run_id or not run_id.strip(): raise ValueError("run_id is required when ledger persistence is enabled")
         ledger.start_run(run_id,strategy_id,strategy_version,config.initial_capital,strategy_hash=strategy_hash,data_source_fingerprint=data_source_fingerprint,metadata={"domain":"cash_future",**_execution_metadata(config)})
-    history=[] if config.history_window is None else deque(maxlen=config.history_window); signals=[] if ledger is None else None; trades=[] if ledger is None else None; equity_curve=[] if ledger is None else None; entry=None; capital_ledger=CashFutureCapitalLedger(config.initial_capital); last_point=None
+    history=[] if config.history_window is None else deque(maxlen=config.history_window); signals=[] if ledger is None else None; trades=[] if ledger is None else None; equity_curve=[] if ledger is None else None; entry=None; capital_ledger=CashFutureCapitalLedger(config.initial_capital); last_point=None; pending_records=[] if ledger is not None and config.checkpoint_interval is not None else None
     entry_action=config.cash_side; exit_action=config.future_side
     for point in points:
         point_date=_point_date(point)
@@ -102,7 +105,7 @@ def run_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy:Ca
         elif point.symbol!=selected_symbol: raise ValueError("Cash-Future strategy input contains multiple symbols")
         event_index+=1
         if config.start_date is not None and point_date<config.start_date:
-            if ledger is not None: _maybe_checkpoint(ledger,config,run_id,event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint)
+            if ledger is not None: _maybe_checkpoint(ledger,config,run_id,event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint,pending_records)
             continue
         last_point=point; history.append(point); visible_history=tuple(history); raw_signal=strategy(point,visible_history); action="NONE" if raw_signal is None else str(raw_signal).strip().upper()
         if action not in {"BUY","SELL","HOLD","NONE"}: raise ValueError("Cash-Future strategy must return BUY, SELL, HOLD, or NONE")
@@ -119,30 +122,35 @@ def run_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy:Ca
         if action==exit_action and entry is not None: exit_reason="strategy"
         elif entry is not None and expiry_day: exit_reason="expiry"
         if ledger is None: signals.append(signal_record)
-        else: _persist(ledger,run_id,"signal",point,signal_record)
+        else: _persist(ledger,run_id,"signal",point,signal_record,pending_records)
         if exit_reason is not None and entry is not None:
             gross=_trade_gross_profit(entry,point,config); net=gross-config.charges_per_trade-config.funding_cost_per_trade; capital_ledger.apply_realized_pnl(net); capital_ledger.release(entry.margin_required)
             trade={"entry_time":entry.timestamp.isoformat(),"exit_time":point.timestamp.isoformat(),"symbol":entry.symbol,"contract_month":entry.contract_month,"lot_size":entry.lot_size,"quantity":1,"entry_cash_price":entry.cash_price,"entry_future_price":entry.future_price,"entry_gap":entry.gap,"exit_cash_price":point.cash_price,"exit_future_price":point.future_price,"exit_gap":point.gap,"gross_profit":gross,"charges":config.charges_per_trade,"funding_cost":config.funding_cost_per_trade,"net_profit":net,"execution_model":config.execution_model,"cash_side":config.cash_side,"future_side":config.future_side,"slippage_per_share":config.slippage_per_share,"exit_reason":exit_reason,"reserved_margin":entry.margin_required}
             if ledger is None: trades.append(trade)
-            else: _persist(ledger,run_id,"trade",point,trade)
+            else: _persist(ledger,run_id,"trade",point,trade,pending_records)
             entry=None
         unrealized=_trade_gross_profit(entry,point,config) if entry is not None else 0.0
         equity={"timestamp":point.timestamp.isoformat(),"equity":float(capital_ledger.realized_capital)+unrealized,"realized_capital":float(capital_ledger.realized_capital),"unrealized_pnl":unrealized,"available_capital":capital_ledger.available_capital,"reserved_margin":capital_ledger.reserved_margin}
         if ledger is None: equity_curve.append(equity)
-        else: _persist(ledger,run_id,"equity",point,equity)
-        _maybe_checkpoint(ledger,config,run_id,event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint)
-    if ledger is not None and last_point is not None and config.checkpoint_interval is not None: _write_checkpoint(ledger,run_id,event_index,last_point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint)
+        else: _persist(ledger,run_id,"equity",point,equity,pending_records)
+        _maybe_checkpoint(ledger,config,run_id,event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint,pending_records)
+    if ledger is not None and last_point is not None and config.checkpoint_interval is not None: _write_checkpoint(ledger,run_id,event_index,last_point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint,pending_records)
     if ledger is not None: result_signals=_LedgerPayloadSequence(ledger,run_id,"signal"); result_trades=_LedgerPayloadSequence(ledger,run_id,"trade"); result_equity=_LedgerPayloadSequence(ledger,run_id,"equity")
     else: result_signals=tuple(signals or ()); result_trades=tuple(trades or ()); result_equity=tuple(equity_curve or ())
     return CashFutureStrategyRun(strategy_id,strategy_version,config.initial_capital,float(capital_ledger.realized_capital),float(capital_ledger.realized_capital)-config.initial_capital,result_signals,result_trades,result_equity,capital_ledger.available_capital,capital_ledger.reserved_margin,capital_ledger.blocked_entries)
 
-def _maybe_checkpoint(ledger,config,run_id,event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint):
+def _maybe_checkpoint(ledger,config,run_id,event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint,pending_records=None):
     if ledger is None or config.checkpoint_interval is None or event_index%config.checkpoint_interval!=0:return
-    _write_checkpoint(ledger,run_id,event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint)
+    _write_checkpoint(ledger,run_id,event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint,pending_records)
 
-def _write_checkpoint(ledger,run_id,event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint):
+def _write_checkpoint(ledger,run_id,event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint,pending_records=None):
     checkpoint=CashFutureStrategyCheckpoint(run_id=run_id,strategy_id=strategy_id,strategy_version=strategy_version,strategy_hash=strategy_hash,last_timestamp=point.timestamp.isoformat(),selected_contract=selected_contract,realized_capital=float(capital_ledger.realized_capital),reserved_margin=float(capital_ledger.reserved_margin),blocked_entries=int(capital_ledger.blocked_entries),open_entry=_serialize_entry(entry),source_fingerprint=data_source_fingerprint,strategy_state=_capture_strategy_state(strategy))
-    ledger.checkpoint(Checkpoint(run_id=run_id,event_index=event_index,timestamp_ns=_timestamp_ns(point.timestamp),state=json.loads(checkpoint.to_json())))
+    durable_checkpoint=Checkpoint(run_id=run_id,event_index=event_index,timestamp_ns=_timestamp_ns(point.timestamp),state=json.loads(checkpoint.to_json()))
+    if pending_records is None:
+        ledger.checkpoint(durable_checkpoint)
+    else:
+        ledger.append_and_checkpoint(tuple(pending_records),durable_checkpoint)
+        pending_records.clear()
 
 def _capture_strategy_state(strategy)->Mapping[str,Any]|None:
     capture=getattr(strategy,"checkpoint_state",None)
