@@ -526,3 +526,45 @@ def test_universal_cash_future_trade_reporter_does_not_double_count_execution_sl
     assert by_leg["FUTURE"].fees == 2.0
     assert by_leg["CASH"].net_pnl == 38.0
     assert by_leg["FUTURE"].net_pnl == 8.0
+
+def test_universal_cash_future_strategy_state_round_trips_contract_identity():
+    from app.backtesting.arbitrage_strategy_adapters import CashFutureUniversalMultiLegAdapter
+
+    adapter = CashFutureUniversalMultiLegAdapter()
+    adapter.set_state({
+        "open": True,
+        "pending_open": None,
+        "open_cash_instrument": "CASH-OLD",
+        "open_future_instrument": "FUT-OLD",
+        "pending_cash_instrument": None,
+        "pending_future_instrument": None,
+    })
+
+    state = adapter.get_state()
+    assert state["open"] is True
+    assert state["open_cash_instrument"] == "CASH-OLD"
+    assert state["open_future_instrument"] == "FUT-OLD"
+
+    restored = CashFutureUniversalMultiLegAdapter()
+    restored.set_state(state)
+    assert restored.get_state() == state
+
+
+def test_universal_cash_future_strategy_rejects_open_state_without_contract_identity():
+    from app.backtesting.arbitrage_strategy_adapters import CashFutureUniversalMultiLegAdapter
+
+    adapter = CashFutureUniversalMultiLegAdapter()
+    try:
+        adapter.set_state({
+            "open": True,
+            "pending_open": None,
+            "open_cash_instrument": None,
+            "open_future_instrument": "FUT-OLD",
+            "pending_cash_instrument": None,
+            "pending_future_instrument": None,
+        })
+    except ValueError as exc:
+        assert "requires both contract identities" in str(exc)
+    else:
+        raise AssertionError("expected invalid checkpoint state to be rejected")
+
