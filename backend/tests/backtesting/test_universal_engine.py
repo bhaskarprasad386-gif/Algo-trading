@@ -883,6 +883,44 @@ def test_universal_engine_reports_atomic_execution_with_post_accounting_trades()
     assert report.accounting_trades[0].price == 101.0
     assert report.accounting_trades[1].price == 199.0
 
+
+def test_universal_multi_leg_checkpoint_transaction_rolls_back_result_writes(tmp_path):
+    import pytest
+    from app.backtesting.checkpoint import CheckpointStore
+    from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+
+    ledger, writer = _real_writer(tmp_path, "universal-multi-checkpoint-rollback")
+
+    class FailingCheckpointStore(CheckpointStore):
+        def save(self, checkpoint, *, commit=True):
+            super().save(checkpoint, commit=False)
+            raise RuntimeError("checkpoint persistence failed")
+
+    checkpoint_store = FailingCheckpointStore(ledger.connection)
+    engine = UniversalEventBacktestEngine(
+        100_000.0,
+        result_writer=writer,
+        checkpoint_store=checkpoint_store,
+        checkpoint_every_events=1,
+        retain_history=False,
+    )
+
+    def strategy(context):
+        return (
+            (SimOrder("cash-order", "CASH", ExecutionSide.BUY, 1, OrderType.MARKET, context.timestamp_ns),
+             OrderBook(asks=(DepthLevel(101.0, 1),)), context.timestamp_ns),
+            (SimOrder("future-order", "FUT", ExecutionSide.SELL, 1, OrderType.MARKET, context.timestamp_ns),
+             OrderBook(bids=(DepthLevel(104.0, 1),)), context.timestamp_ns),
+        )
+
+    with pytest.raises(RuntimeError, match="checkpoint persistence failed"):
+        engine.run_multi_leg([_event(1, "CASH", 100.0, 1)], strategy)
+
+    assert ledger.fills("universal-multi-checkpoint-rollback") == []
+    assert ledger.equity("universal-multi-checkpoint-rollback") == []
+    assert ledger.checkpoints.load("universal-multi-checkpoint-rollback") is None
+    assert [row["event_type"] for row in ledger.events("universal-multi-checkpoint-rollback")] == ["RUN_FAILED"]
+
 def test_checkpoint_state_builder_captures_resume_state() -> None:
     class StatefulStrategy:
         def get_state(self):
