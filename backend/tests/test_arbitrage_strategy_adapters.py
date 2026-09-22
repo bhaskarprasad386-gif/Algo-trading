@@ -463,3 +463,66 @@ def test_universal_cash_future_trade_reporter_persists_short_direction_edges():
     assert len(writer.trades) == 2
     assert {trade.metadata["entry_edge"] for trade in writer.trades} == {4.0}
     assert {trade.metadata["exit_edge"] for trade in writer.trades} == {6.0}
+
+def test_universal_cash_future_trade_reporter_does_not_double_count_execution_slippage():
+    from app.backtesting.arbitrage_strategy_adapters import CashFutureTradeReporter
+    from app.backtesting.contracts import AtomicTradeReportInput
+    from app.backtesting.execution import AtomicExecutionResult, ExecutionResult, ExecutionSide, SimFill
+    from app.backtesting.portfolio import TradeRecord
+
+    class Writer:
+        def __init__(self):
+            self.trades = []
+
+        def record_trades(self, trades):
+            self.trades.extend(trades)
+            return len(trades)
+
+    writer = Writer()
+    reporter = CashFutureTradeReporter(writer)
+
+    open_fills = (
+        SimFill("OPEN:CASH", "NSE:ABC", ExecutionSide.BUY, 10, 102.0, 1),
+        SimFill("OPEN:FUTURE", "NFO:ABC-OLD", ExecutionSide.SELL, 10, 104.0, 1),
+    )
+    reporter.record_atomic_trade(AtomicTradeReportInput(
+        AtomicExecutionResult(
+            fills=open_fills,
+            leg_results=(
+                ExecutionResult((open_fills[0],), 0, reference_prices=(101.0,)),
+                ExecutionResult((open_fills[1],), 0, reference_prices=(104.0,)),
+            ),
+        ),
+        (
+            TradeRecord("OPEN:CASH", "NSE:ABC", ExecutionSide.BUY, 10, 102.0, 1020.0, 1.0, 0.0, 0.0, 100000.0, 1),
+            TradeRecord("OPEN:FUTURE", "NFO:ABC-OLD", ExecutionSide.SELL, 10, 104.0, 1040.0, 1.0, 0.0, 0.0, 100000.0, 1),
+        ),
+    ))
+
+    close_fills = (
+        SimFill("CLOSE:CASH", "NSE:ABC", ExecutionSide.SELL, 10, 106.0, 2),
+        SimFill("CLOSE:FUTURE", "NFO:ABC-OLD", ExecutionSide.BUY, 10, 103.0, 2),
+    )
+    reporter.record_atomic_trade(AtomicTradeReportInput(
+        AtomicExecutionResult(
+            fills=close_fills,
+            leg_results=(
+                ExecutionResult((close_fills[0],), 0, reference_prices=(107.0,)),
+                ExecutionResult((close_fills[1],), 0, reference_prices=(102.0,)),
+            ),
+        ),
+        (
+            TradeRecord("CLOSE:CASH", "NSE:ABC", ExecutionSide.SELL, 10, 106.0, 1060.0, 1.0, 40.0, 0.0, 100000.0, 2),
+            TradeRecord("CLOSE:FUTURE", "NFO:ABC-OLD", ExecutionSide.BUY, 10, 103.0, 1030.0, 1.0, 10.0, 0.0, 100000.0, 2),
+        ),
+    ))
+
+    by_leg = {trade.leg: trade for trade in writer.trades}
+    assert by_leg["CASH"].slippage == 10.0
+    assert by_leg["FUTURE"].slippage == 10.0
+    assert by_leg["CASH"].gross_pnl == 40.0
+    assert by_leg["FUTURE"].gross_pnl == 10.0
+    assert by_leg["CASH"].fees == 2.0
+    assert by_leg["FUTURE"].fees == 2.0
+    assert by_leg["CASH"].net_pnl == 38.0
+    assert by_leg["FUTURE"].net_pnl == 8.0
