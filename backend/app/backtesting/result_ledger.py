@@ -6,8 +6,9 @@ import hashlib
 import json
 import math
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 
 @dataclass(frozen=True)
@@ -128,7 +129,31 @@ class BacktestResultLedger:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA foreign_keys=ON")
+        self._transaction_depth = 0
         self._create_schema()
+
+    @property
+    def connection(self) -> sqlite3.Connection:
+        """Return the ledger connection for same-database transaction composition."""
+        return self._db
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Atomically compose multiple ledger/checkpoint writes on this connection."""
+        if self._transaction_depth:
+            yield
+            return
+        self._db.execute("BEGIN IMMEDIATE")
+        self._transaction_depth = 1
+        try:
+            yield
+        except Exception:
+            self._db.rollback()
+            raise
+        else:
+            self._db.commit()
+        finally:
+            self._transaction_depth = 0
 
     def close(self) -> None:
         self._db.close()
@@ -334,44 +359,39 @@ class BacktestResultLedger:
         if not rows:
             return 0
         inserted = 0
+        def insert_rows() -> None:
+            nonlocal inserted
+            for row in rows:
+                try:
+                    self._db.execute(sql, row)
+                    inserted += 1
+                except sqlite3.IntegrityError:
+                    if table == "backtest_trades":
+                        existing = self._db.execute("SELECT payload_hash FROM backtest_trades WHERE run_id=? AND trade_id=?", (row[0], row[1])).fetchone()
+                        if existing and existing[0] == row[-1]:
+                            continue
+                    elif table == "backtest_fills":
+                        existing = self._db.execute("SELECT payload_hash FROM backtest_fills WHERE run_id=? AND fill_id=?", (row[0], row[1])).fetchone()
+                        if existing and existing[0] == row[-1]:
+                            continue
+                        sequence_existing = self._db.execute("SELECT payload_hash FROM backtest_fills WHERE run_id=? AND sequence=?", (row[0], row[3])).fetchone()
+                        if sequence_existing is not None:
+                            raise ValueError("conflicting duplicate fill sequence")
+                    elif table == "backtest_events":
+                        existing = self._db.execute("SELECT payload_hash FROM backtest_events WHERE run_id=? AND sequence=?", (row[0], row[1])).fetchone()
+                        if existing and existing[0] == row[-1]:
+                            continue
+                    elif table == "backtest_equity":
+                        existing = self._db.execute("SELECT 1 FROM backtest_equity WHERE run_id=? AND timestamp_ns=? AND equity=? AND realized_pnl=? AND unrealized_pnl=? AND drawdown=?", (row[0], row[1], row[2], row[3], row[4], row[5])).fetchone()
+                        if existing:
+                            continue
+                    raise ValueError(f"conflicting duplicate in {table}")
         try:
-            with self._db:
-                for row in rows:
-                    try:
-                        self._db.execute(sql, row)
-                        inserted += 1
-                    except sqlite3.IntegrityError:
-                        if table == "backtest_trades":
-                            existing = self._db.execute(
-                                "SELECT payload_hash FROM backtest_trades WHERE run_id=? AND trade_id=?", (row[0], row[1])
-                            ).fetchone()
-                            if existing and existing[0] == row[-1]:
-                                continue
-                        elif table == "backtest_fills":
-                            existing = self._db.execute(
-                                "SELECT payload_hash FROM backtest_fills WHERE run_id=? AND fill_id=?", (row[0], row[1])
-                            ).fetchone()
-                            if existing and existing[0] == row[-1]:
-                                continue
-                            sequence_existing = self._db.execute(
-                                "SELECT payload_hash FROM backtest_fills WHERE run_id=? AND sequence=?", (row[0], row[3])
-                            ).fetchone()
-                            if sequence_existing is not None:
-                                raise ValueError("conflicting duplicate fill sequence")
-                        elif table == "backtest_events":
-                            existing = self._db.execute(
-                                "SELECT payload_hash FROM backtest_events WHERE run_id=? AND sequence=?", (row[0], row[1])
-                            ).fetchone()
-                            if existing and existing[0] == row[-1]:
-                                continue
-                        elif table == "backtest_equity":
-                            existing = self._db.execute(
-                                "SELECT 1 FROM backtest_equity WHERE run_id=? AND timestamp_ns=? AND equity=? AND realized_pnl=? AND unrealized_pnl=? AND drawdown=?",
-                                (row[0], row[1], row[2], row[3], row[4], row[5]),
-                            ).fetchone()
-                            if existing:
-                                continue
-                        raise ValueError(f"conflicting duplicate in {table}")
+            if self._transaction_depth:
+                insert_rows()
+            else:
+                with self._db:
+                    insert_rows()
         except sqlite3.IntegrityError as exc:
             raise ValueError(f"invalid {table} append") from exc
         return inserted
