@@ -217,6 +217,62 @@ def test_persisted_durable_backtest_matches_direct_with_overlapping_symbol_trade
     ledger.close()
 
 
+def test_persisted_durable_aggregation_matches_legacy_tie_break_for_same_entry_time(db_session):
+    base = datetime(2026, 9, 2, 10, 0)
+
+    def p(symbol, gap, exit_offset_hours):
+        return [
+            CashFutureHistoryPoint(
+                timestamp=base,
+                symbol=symbol,
+                contract_month="2026-09",
+                cash_price=100.0,
+                future_price=100.0 + gap,
+                gap=gap,
+                gap_pct=gap,
+                lot_size=10,
+                margin_required=1000.0,
+            ),
+            CashFutureHistoryPoint(
+                timestamp=base + timedelta(hours=exit_offset_hours),
+                symbol=symbol,
+                contract_month="2026-09",
+                cash_price=100.0,
+                future_price=104.0,
+                gap=4.0,
+                gap_pct=4.0,
+                lot_size=10,
+                margin_required=1000.0,
+            ),
+        ]
+
+    points = p("XYZ", 12.0, 2) + p("ABC", 10.0, 1)
+    save_history_points(db_session, points)
+    config = BacktestConfig(min_entry_gap=8.0, exit_gap=5.0)
+    coverage = build_persisted_cash_future_coverage(db_session)
+    quality = audit_persisted_cash_future_data_quality(db_session, page_size=1)
+
+    ledger = BacktestLedger()
+    ledger.start_run("cf-same-entry-time", "cash-future", "1", 100_000)
+    writer = CashFutureBacktestResultLedger(ledger, "cf-same-entry-time")
+
+    durable = run_persisted_cash_future_backtest(
+        db_session,
+        config,
+        page_size=1,
+        coverage_report=coverage,
+        quality_report=quality,
+        result_ledger=writer,
+    )
+    direct = run_multi_contract_backtest(points, config)
+
+    assert [trade["symbol"] for trade in direct["trades"]] == ["ABC", "XYZ"]
+    assert durable["trades"] == direct["trades"]
+    assert durable["equity_curve"] == direct["equity_curve"]
+    assert durable["max_drawdown"] == direct["max_drawdown"]
+    ledger.close()
+
+
 def test_persisted_durable_aggregation_preserves_entry_time_drawdown_order(db_session):
     base = datetime(2026, 9, 2, 10, 0)
 
