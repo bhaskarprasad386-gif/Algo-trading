@@ -141,6 +141,36 @@ def test_universal_cash_future_adapter_emits_exact_two_executable_legs():
     assert cash_ts == future_ts == 1
 
 
+def test_universal_cash_future_trade_reporter_state_round_trips_open_lifecycle():
+    class Writer:
+        def __init__(self):
+            self.trades = []
+        def record_trades(self, trades):
+            self.trades.extend(trades)
+
+    writer = Writer()
+    reporter = CashFutureTradeReporter(writer)
+    reporter._open["CASH"] = {
+        "timestamp_ns": 10,
+        "entry_price": 100.0,
+        "entry_reference_price": 99.0,
+        "entry_side": "BUY",
+        "entry_quantity": 5,
+        "entry_fees": 1.0,
+        "entry_slippage": 2.0,
+        "entry_edge": 4.0,
+        "entry_order_id": "CF:10:src:ABC:1:OPEN:CASH",
+    }
+    reporter._sequence = 3
+
+    state = reporter.get_state()
+    restored = CashFutureTradeReporter(writer)
+    restored.set_state(state)
+
+    assert restored.get_state() == state
+    assert restored._open["CASH"]["entry_order_id"] == "CF:10:src:ABC:1:OPEN:CASH"
+    assert restored._sequence == 3
+
 def test_universal_cash_future_adapter_order_ids_are_unique_for_same_timestamp_events():
     from app.backtesting.arbitrage_strategy_adapters import CashFutureUniversalMultiLegAdapter
 
