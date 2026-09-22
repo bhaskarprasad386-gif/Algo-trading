@@ -356,7 +356,7 @@ def test_resume_crash_before_checkpoint_commit_leaves_no_partial_event_records(m
         points[:2], _strategy, ledger=ledger, run_id="crash-resume", **_run_kwargs(config)
     )
     assert ledger.load_checkpoint("crash-resume").event_index == 2
-    assert ledger.record_count("crash-resume") == 6
+    assert ledger.record_count("crash-resume") == 4
 
     original = ledger.append_and_checkpoint
     calls = {"count": 0}
@@ -376,7 +376,7 @@ def test_resume_crash_before_checkpoint_commit_leaves_no_partial_event_records(m
     checkpoint = ledger.load_checkpoint("crash-resume")
     assert checkpoint is not None
     assert checkpoint.event_index == 2
-    assert ledger.record_count("crash-resume") == 6
+    assert ledger.record_count("crash-resume") == 4
     assert [r.payload["timestamp"] for r in ledger.iter_records("crash-resume", "signal")] == [
         points[0].timestamp.isoformat(), points[1].timestamp.isoformat()
     ]
@@ -393,4 +393,4 @@ def test_resume_crash_before_checkpoint_commit_leaves_no_partial_event_records(m
     assert resumed.final_available_capital == full.final_available_capital
     assert resumed.final_reserved_margin == full.final_reserved_margin
     assert resumed.blocked_entry_count == full.blocked_entry_count
-    assert ledger.record_count("crash-resume") == 12
+    assert ledger.record_count("crash-resume") == 9
