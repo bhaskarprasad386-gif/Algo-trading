@@ -309,7 +309,8 @@ class CashFutureUniversalMultiLegAdapter:
             self._pending_future_instrument = future_instrument
         cash_book = self._book(cash_bid, cash_ask, cash_bid_qty, cash_ask_qty)
         future_book = self._book(future_bid, future_ask, future_bid_qty, future_ask_qty)
-        prefix = f"CF:{context.timestamp_ns}:{phase}"
+        event_token = f"{context.timestamp_ns}:{context.source}:{context.instrument}:{context.sequence if context.sequence is not None else 'NA'}"
+        prefix = f"CF:{event_token}:{phase}"
         return (
             (
                 SimOrder(f"{prefix}:CASH", cash_instrument, cash_side, self.quantity,
