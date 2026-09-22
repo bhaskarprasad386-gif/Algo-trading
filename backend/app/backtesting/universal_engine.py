@@ -19,6 +19,7 @@ from app.backtesting.execution import ExecutionConfig, ExecutionSide, ExecutionS
 from app.backtesting.portfolio import Portfolio, PortfolioSnapshot, RiskConfig
 from app.backtesting.historical_catalog import HistoricalRecord
 from app.backtesting.result_ledger import BacktestFill, EquityPoint as LedgerEquityPoint
+from app.backtesting.strategy import strategy_state
 from app.backtesting.statistics import BacktestStatistics, EquityPoint, StreamingStatisticsAccumulator
 
 
@@ -91,6 +92,44 @@ class UniversalEventBacktestEngine:
         if self._run_started:
             raise RuntimeError("UniversalEventBacktestEngine instances are single-use; create a new engine for another run")
         self._run_started = True
+
+    @staticmethod
+    def _checkpoint_identity(identity) -> dict[str, object]:
+        """Serialize canonical event identity without depending on dataclass internals."""
+        return {
+            "timestamp_ns": identity.timestamp_ns,
+            "source": identity.source,
+            "instrument": identity.instrument,
+            "timeframe": identity.timeframe,
+            "sequence": identity.sequence,
+        }
+
+    def _build_checkpoint_state(
+        self,
+        *,
+        processed_events: int,
+        replay_sequence: int,
+        previous_identity,
+        last_marks: dict[str, float],
+        accumulator: StreamingStatisticsAccumulator,
+        peak_equity: float,
+        strategy: object,
+    ) -> dict[str, object]:
+        """Build the complete deterministic state needed to resume after this event."""
+        if processed_events <= 0 or previous_identity is None:
+            raise ValueError("checkpoint requires at least one processed event")
+        return {
+            "source_cursor": processed_events,
+            "source_event_identity": self._checkpoint_identity(previous_identity),
+            "portfolio_state": dict(self.portfolio.export_state()),
+            "strategy_state": dict(strategy_state(strategy)),
+            "statistics_state": dict(accumulator.export_state()),
+            "last_marks": dict(last_marks),
+            "replay_sequence": replay_sequence,
+            "fill_sequence": self._fill_sequence,
+            "peak_equity": peak_equity,
+            "clock_now_ns": self.clock.now_ns,
+        }
 
     def _record_replay_point(
         self,
