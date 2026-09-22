@@ -6,6 +6,7 @@ import json
 import math
 from datetime import date, datetime, timedelta
 from typing import Callable, Sequence, TypeAlias
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,12 @@ CancelCallback = Callable[[], bool]
 ResultSink = Callable[[int, str, dict], None]
 HistoricalContract: TypeAlias = tuple[str, date]
 PAPER_STARTING_CAPITAL = 10_000_000.0
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def _history_now() -> datetime:
+    """Return the naive IST timestamp used by the persisted history store."""
+    return datetime.now(IST).replace(tzinfo=None)
 
 
 def historical_current_near_contracts(contracts: Sequence[HistoricalContract], as_of: date) -> tuple[HistoricalContract | None, HistoricalContract | None]:
@@ -117,7 +124,7 @@ def run_full_fno_backtest(
     processed = resume_count
     chunks_written = 0
     results: list[dict] | None = [] if collect_results else None
-    end = datetime.utcnow()
+    end = _history_now()
     start = end - timedelta(days=days)
 
     for sequence, symbol in enumerate(symbols):
