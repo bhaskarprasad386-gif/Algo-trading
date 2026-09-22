@@ -158,6 +158,44 @@ def test_full_fno_cancellation_does_not_persist_current_symbol_result(monkeypatc
         db.query(BacktestJobResultChunk).filter(BacktestJobResultChunk.job_id == job_id).delete(); db.query(BacktestJob).filter(BacktestJob.job_id == job_id).delete(); db.commit(); db.close()
 
 
+def test_single_symbol_worker_passes_cancellation_to_backtest(monkeypatch):
+    Base.metadata.create_all(bind=engine)
+    job_id = "test-job-single-cancel-wiring"
+    db = SessionLocal()
+    try:
+        db.query(BacktestJob).filter(BacktestJob.job_id == job_id).delete()
+        db.commit()
+        db.add(BacktestJob(
+            job_id=job_id, status="queued", symbol="TEST", contract_month="CURRENT",
+            requested_days=1, progress_pct=0.0, symbols_processed=0, symbols_total=1,
+            message="Queued", created_at=datetime.utcnow(), updated_at=datetime.utcnow(),
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    monkeypatch.setattr(backtest_jobs, "_is_cancelled", lambda _: False)
+    monkeypatch.setattr(backtest_jobs, "read_history", lambda *args: [object()])
+    captured = {}
+
+    def fake_run(points, config, cancel_check=None):
+        captured["cancel_check"] = cancel_check
+        captured["config"] = config
+        return {"status": "completed", "trade_count": 0}
+
+    monkeypatch.setattr(backtest_jobs, "run_backtest", fake_run)
+    backtest_jobs._run_job(job_id, "TEST", "CURRENT", 1, 0.0, 0.0, 0.0, 0.0, 30)
+
+    try:
+        assert callable(captured["cancel_check"])
+        assert not hasattr(captured["config"], "cancel_check")
+    finally:
+        db = SessionLocal()
+        db.query(BacktestJob).filter(BacktestJob.job_id == job_id).delete()
+        db.commit()
+        db.close()
+
+
 def test_single_symbol_worker_propagates_cancellation_into_backtest(monkeypatch):
     Base.metadata.create_all(bind=engine); job_id = "test-job-single-cancel-propagation"; db = SessionLocal()
     try:
