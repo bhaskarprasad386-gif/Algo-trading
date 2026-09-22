@@ -87,3 +87,19 @@ def test_loader_rejects_non_finite_close_prices(tmp_path):
     selection = CashFutureHistorySelection("NSE:1:ABC", "NFO", "ABC", date(2026, 1, 5), date(2026, 1, 5))
     with pytest.raises(ValueError, match="finite and positive"):
         tuple(CashFutureHistoricalLoader(data, contracts).iter_points(selection))
+
+def test_loader_dataset_fingerprint_is_stable_and_changes_with_selected_data(tmp_path):
+    data = HistoricalCatalog(str(tmp_path / "data.db")); contracts = ContractMasterCatalog(str(tmp_path / "contracts.db"))
+    contracts.upsert_snapshot(date(2026, 1, 2), [ContractRecord("NFO", "ABC26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 75)])
+    cash = "NSE:1:ABC"; future = "NFO:101:ABC26JANFUT"
+    data.ingest([
+        HistoricalRecord("angelone", cash, "1m", _ns("2026-01-05T03:45:00"), {"close": 100.0}),
+        HistoricalRecord("angelone", future, "1m", _ns("2026-01-05T03:45:00"), {"close": 102.0}),
+    ])
+    selection = CashFutureHistorySelection(cash, "NFO", "ABC", date(2026, 1, 5), date(2026, 1, 5))
+    loader = CashFutureHistoricalLoader(data, contracts)
+    first = loader.dataset_fingerprint(selection)
+    assert first == loader.dataset_fingerprint(selection)
+    data.ingest([HistoricalRecord("angelone", cash, "1m", _ns("2026-01-05T03:46:00"), {"close": 101.0})])
+    assert loader.dataset_fingerprint(selection) != first
+    contracts.close(); data.close()
