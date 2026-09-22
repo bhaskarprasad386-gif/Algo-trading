@@ -351,47 +351,64 @@ def _aggregate_contract_results(results: list[dict]) -> dict:
     }
 
 
-def _aggregate_contract_results_from_iterable(trades_iter: Iterable[dict]) -> dict:
-    """Aggregate an already durable/retrieved trade stream."""
+def _aggregate_contract_results_from_iterable(
+    results: list[dict],
+    trades_iter: Iterable[dict],
+) -> dict:
+    """Aggregate compact contract state plus a chronological trade stream."""
     trades = list(trades_iter)
+    trades.sort(
+        key=lambda trade: (
+            trade["entry_time"],
+            trade.get("symbol", ""),
+            trade.get("contract_month", ""),
+        )
+    )
     wins = sum(1 for trade in trades if trade["net_profit"] > 0)
     net_profit = sum(trade["net_profit"] for trade in trades)
+    invested_capital = sum(result["invested_capital"] for result in results)
     equity = 0.0
     running_peak = 0.0
     max_drawdown = 0.0
     equity_curve = []
     if trades:
-        trades.sort(
-            key=lambda trade: (
-                trade["entry_time"],
-                trade.get("symbol", ""),
-                trade.get("contract_month", ""),
-            )
-        )
         equity_curve.append({"timestamp": trades[0]["entry_time"], "equity": 0.0})
     for trade in trades:
         equity += trade["net_profit"]
         running_peak = max(running_peak, equity)
         max_drawdown = max(max_drawdown, running_peak - equity)
         equity_curve.append({"timestamp": trade["exit_time"], "equity": equity})
+    open_positions = [
+        result["open_position"]
+        for result in results
+        if result.get("open_position") is not None
+    ]
+    contract_keys = {
+        (position.get("symbol"), position.get("contract_month"))
+        for position in open_positions
+    }
+    contract_keys.update(
+        (trade.get("symbol"), trade.get("contract_month"))
+        for trade in trades
+        if trade.get("contract_month") is not None
+    )
+    contract_count = len(contract_keys) if contract_keys else len(results)
     return {
+        "contract_count": contract_count,
         "trade_count": len(trades),
         "wins": wins,
         "losses": len(trades) - wins,
         "win_rate_pct": wins / len(trades) * 100.0 if trades else 0.0,
         "net_profit": net_profit,
-        "roi_pct": 0.0,
-        "invested_capital": 0.0,
+        "roi_pct": net_profit / invested_capital * 100.0 if invested_capital else 0.0,
+        "invested_capital": invested_capital,
         "max_drawdown": max_drawdown,
         "equity_curve": equity_curve,
         "trades": trades,
-        "open_positions": [],
-        "per_contract": [],
-        "contract_count": len({
-            (trade.get("symbol"), trade.get("contract_month"))
-            for trade in trades
-        }),
+        "open_positions": open_positions,
+        "per_contract": results,
     }
+
 
 
 def run_multi_contract_backtest(
@@ -422,11 +439,14 @@ def run_multi_contract_backtest_streaming(
     config: BacktestConfig,
     *,
     trade_sink: Callable[[Iterable[dict]], int] | None = None,
+    trade_source: Callable[[], Iterable[dict]] | None = None,
     trade_batch_size: int = 500,
 ) -> dict:
     """Process a symbol/contract ordered stream with optional bounded trade persistence."""
     if trade_batch_size <= 0:
         raise ValueError("trade_batch_size must be positive")
+    if trade_source is not None and trade_sink is None:
+        raise ValueError("trade_source requires trade_sink")
 
     results = []
     current_key = None
@@ -494,9 +514,8 @@ def run_multi_contract_backtest_streaming(
 
     # The durable sink owns the trade history; reconstruct the public aggregate
     # through the sink consumer rather than retaining all trades during replay.
-    return _aggregate_contract_results_from_iterable(
-        (trade for result in results for trade in result["trades"])
-    )
+    assert trade_source is not None
+    return _aggregate_contract_results_from_iterable(results, trade_source())
 
 
 __all__ = [
