@@ -1016,6 +1016,81 @@ def test_checkpoint_state_builder_captures_resume_state() -> None:
     assert state["clock_now_ns"] == 0
 
 
+def test_cash_future_reporter_survives_real_checkpoint_resume(tmp_path):
+    from app.backtesting.arbitrage_strategy_adapters import (
+        CashFutureTradeReporter,
+        CashFutureUniversalMultiLegAdapter,
+    )
+    from app.backtesting.backtest_result import BacktestRunWriter
+    from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+
+    def cf_event(ts, seq, cash_bid, cash_ask, future_bid, future_ask):
+        return HistoricalRecord(
+            "test",
+            "NSE:ABC",
+            "tick",
+            ts,
+            {
+                "cash": {"bid": cash_bid, "ask": cash_ask, "bid_quantity": 20, "ask_quantity": 20},
+                "future": {"bid": future_bid, "ask": future_ask, "bid_quantity": 20, "ask_quantity": 20},
+                "__replay_legs__": {
+                    "cash": {"source": "test", "instrument": "NSE:ABC", "timeframe": "tick"},
+                    "future": {"source": "test", "instrument": "NFO:ABC-20261231", "timeframe": "tick"},
+                },
+            },
+            seq,
+        )
+
+    events = [
+        cf_event(1, 0, 100.0, 101.0, 104.0, 105.0),
+        cf_event(2, 1, 106.0, 107.0, 102.0, 103.0),
+    ]
+
+    def run(events, writer=None, resume=False):
+        adapter = CashFutureUniversalMultiLegAdapter(quantity=10)
+        reporter = CashFutureTradeReporter(writer) if writer is not None else None
+        engine = UniversalEventBacktestEngine(
+            100_000.0,
+            result_writer=writer,
+            trade_reporter=reporter,
+            checkpoint_store=writer.checkpoints if writer is not None else None,
+            checkpoint_every_events=1 if writer is not None else None,
+            resume=resume,
+            retain_history=False,
+        )
+
+        def strategy(context):
+            return adapter(context)
+
+        result = engine.run_multi_leg(events, strategy)
+        return result, adapter, reporter
+
+    fresh, _, _ = run(events)
+
+    ledger, writer = _real_writer(tmp_path, "cf-reporter-resume")
+    partial, partial_adapter, partial_reporter = run(events[:1], writer)
+    assert partial_reporter is not None
+    assert partial_reporter.get_state()["open"]["NSE:ABC"]["entry_order_id"].endswith(":OPEN:CASH")
+    assert partial_adapter.get_state()["open"] is True
+    ledger.set_status("cf-reporter-resume", "FAILED")
+
+    resumed_writer = BacktestRunWriter(ledger, writer.spec, resume=True)
+    resumed, resumed_adapter, resumed_reporter = run(events, resumed_writer, resume=True)
+
+    assert resumed.final_equity == fresh.final_equity
+    assert resumed.realized_pnl == fresh.realized_pnl
+    assert resumed.net_pnl == fresh.net_pnl
+    assert resumed.fill_count == fresh.fill_count
+    assert resumed_reporter is not None
+    assert resumed_reporter.get_state()["open"] == {}
+    assert resumed_reporter.get_state()["sequence"] == 2
+    assert resumed_adapter.get_state()["open"] is True
+    trades = ledger.trades("cf-reporter-resume", limit=10)
+    assert len(trades) == 2
+    assert {row["leg"] for row in trades} == {"CASH", "FUTURE"}
+    assert len({row["metadata_json"] for row in trades}) == 2
+
+
 def test_checkpoint_state_builder_captures_reporter_state() -> None:
     class StatefulStrategy:
         def get_state(self):
