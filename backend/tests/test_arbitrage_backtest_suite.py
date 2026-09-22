@@ -1,4 +1,4 @@
-from app.backtesting.arbitrage_backtest_suite import STRATEGIES, build_strategy_adapter, strategy_definition
+from app.backtesting.arbitrage_backtest_suite import STRATEGIES, build_strategy_adapter, strategy_definition, strategy_implementation_hash
 from app.backtesting.arbitrage_strategy_adapters import (
     BoxSpreadStrategyAdapter,
     CalendarSpreadStrategyAdapter,
@@ -31,3 +31,11 @@ def test_parameters_are_passed_without_cross_strategy_fallback():
         assert "unsupported arbitrage strategy" in str(exc)
     else:
         raise AssertionError("unknown strategy must be rejected")
+
+
+def test_strategy_implementation_hash_is_stable_and_strategy_specific():
+    first = strategy_implementation_hash("box-spread")
+    second = strategy_implementation_hash("box-spread")
+    assert first == second
+    assert len(first) == 64
+    assert strategy_implementation_hash("cash-future") != first
