@@ -288,6 +288,18 @@ class BacktestResultLedger:
         except sqlite3.IntegrityError as exc:
             raise ValueError(f"run already exists: {run_id}") from exc
 
+
+    def run_provenance(self, run_id: str) -> dict[str, Any]:
+        """Return persisted provenance for an existing run."""
+        row = self.run(run_id)
+        try:
+            value = json.loads(row["provenance_json"])
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("stored run provenance is invalid JSON") from exc
+        if not isinstance(value, dict):
+            raise ValueError("stored run provenance must be an object")
+        return value
+
     def set_status(self, run_id: str, status: str) -> None:
         self._require_run(run_id)
         status = status.strip().upper()
