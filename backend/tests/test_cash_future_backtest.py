@@ -143,4 +143,7 @@ def test_cancel_check_stops_mid_stream():
     assert result["status"] == "cancelled"
     assert seen == [10.0]
     assert result["trade_count"] == 0
+    assert result["wins"] == 0
+    assert result["losses"] == 0
+    assert result["win_rate_pct"] == 0.0
 
