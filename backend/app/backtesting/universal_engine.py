@@ -99,7 +99,7 @@ class UniversalEventBacktestEngine:
         snapshot: PortfolioSnapshot,
         accumulator: StreamingStatisticsAccumulator,
         peak_equity: float,
-    ) -> float:
+    ) -> tuple[float, EquityPoint]:
         point = EquityPoint(
             record.timestamp_ns,
             snapshot.equity,
@@ -131,7 +131,7 @@ class UniversalEventBacktestEngine:
                     else 0.0,
                 )
             )
-        return peak_equity
+        return peak_equity, point
 
     def run_source(self, source: DataSourceProtocol, strategy: StrategyProtocol, *, start_ns: int | None = None, end_ns: int | None = None, price_field: str = "price", order_book_field: str | None = None) -> UniversalBacktestResult:
         """Run directly from a streaming DataSource without materializing its events."""
@@ -270,7 +270,7 @@ class UniversalEventBacktestEngine:
                         AtomicTradeReportInput(result, accounting_trades)
                     )
 
-            peak_equity = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
+            peak_equity, point = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
             replay_sequence += 1
             if self.retain_history:
                 snapshots.append(snapshot)
@@ -412,7 +412,7 @@ class UniversalEventBacktestEngine:
                         self._fill_sequence += 1
 
             snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
-            peak_equity = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
+            peak_equity, point = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
             replay_sequence += 1
             if self.retain_history:
                 snapshots.append(snapshot)
