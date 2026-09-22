@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from dataclasses import replace
+import inspect
 from datetime import date, datetime
 from math import isfinite
 from typing import Any
@@ -15,6 +16,7 @@ from app.backtesting.reporting import build_cash_future_report
 from app.backtesting.contract_master import ContractMasterCatalog
 from app.backtesting.historical_catalog import HistoricalCatalog
 from app.backtesting.ledger import BacktestLedger
+from app.backtesting.provenance import provenance_hash
 from app.core.config import settings
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 router = APIRouter(prefix="/api/v1/backtesting/cash-future", tags=["Cash-Future Backtesting"])
@@ -33,6 +35,9 @@ class StrategyRunRequest(BaseModel):
         return self
 
 def _strategy_registry()->dict[str,Any]: return {"gap_threshold":lambda current,history:"BUY" if current.gap>0 else "SELL" if current.gap<0 else "HOLD"}
+
+def _gap_threshold_implementation_hash()->str:
+    return provenance_hash({"strategy_id":"gap_threshold","factory_source":inspect.getsource(_build_builder_strategy)})
 
 def _serialise_run(ledger:BacktestLedger,run_id:str)->dict[str,Any]:
     metadata=ledger.run_metadata(run_id)
@@ -78,14 +83,21 @@ def strategy_run(request:StrategyRunRequest):
     if request.strategy_id=="gap_threshold": strategy=_build_builder_strategy(request)
     catalog=contracts=ledger=None; run_id=f"cash-future-{uuid4().hex}"
     try:
-        if request.points is not None: points=tuple(CashFutureHistoryPoint(**point.model_dump()) for point in request.points)
+        if request.points is not None:
+            point_payload=[point.model_dump(mode="json") for point in request.points]
+            points=tuple(CashFutureHistoryPoint(**point.model_dump()) for point in request.points)
+            data_source_fingerprint=provenance_hash({"input_identity":"cash_future_points:v1","points":point_payload})
         else:
             assert request.start_date is not None and request.end_date is not None and request.spot_instrument is not None and request.underlying is not None
             catalog=HistoricalCatalog(settings.BACKTEST_DATA_DB); contracts=ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
             selection=CashFutureHistorySelection(spot_instrument=request.spot_instrument,exchange=request.exchange,underlying=request.underlying,start_date=request.start_date,end_date=request.end_date,timeframe=request.timeframe,contract_month=request.contract_month,mode=request.mode,source=request.source)
-            points=CashFutureHistoricalLoader(catalog,contracts).iter_points(selection)
+            loader=CashFutureHistoricalLoader(catalog,contracts)
+            points=loader.iter_points(selection)
+            data_source_fingerprint=loader.dataset_fingerprint(selection)
         points=_scale_points(points,request.cash_lots); ledger=BacktestLedger(settings.BACKTEST_LEDGER_DB)
-        result=run_cash_future_strategy(points,strategy,strategy_id=request.strategy_id,strategy_version=request.strategy_version,config=CashFutureStrategyConfig(initial_capital=request.initial_capital,execution_model=request.execution_model,charges_per_trade=request.charges_per_trade,funding_cost_per_trade=request.funding_cost_per_trade,start_date=request.start_date,end_date=request.end_date,contract_month=request.contract_month,cash_side=request.cash_side,future_side=request.future_side,slippage_per_share=request.slippage_per_share),ledger=ledger,run_id=run_id)
+        strategy_hash=_gap_threshold_implementation_hash() if request.strategy_id=="gap_threshold" else None
+        strategy_config_hash=provenance_hash({"cash_side":request.cash_side,"future_side":request.future_side,"stop_loss":request.stop_loss,"target":request.target})
+        result=run_cash_future_strategy(points,strategy,strategy_id=request.strategy_id,strategy_version=request.strategy_version,config=CashFutureStrategyConfig(initial_capital=request.initial_capital,execution_model=request.execution_model,charges_per_trade=request.charges_per_trade,funding_cost_per_trade=request.funding_cost_per_trade,start_date=request.start_date,end_date=request.end_date,contract_month=request.contract_month,cash_side=request.cash_side,future_side=request.future_side,slippage_per_share=request.slippage_per_share),ledger=ledger,run_id=run_id,strategy_hash=strategy_hash,strategy_config_hash=strategy_config_hash,data_source_fingerprint=data_source_fingerprint)
         payload=_serialise_run(ledger,run_id); report=build_cash_future_report(result.initial_capital,payload["trades"],payload["equity_curve"]); profit_factor=report.profit_factor if isfinite(report.profit_factor) else None
         payload["analysis"]={"initial_capital":result.initial_capital,"final_equity":report.final_equity,"net_pnl":payload["net_profit"],"roi":payload["net_profit"]/result.initial_capital,"max_drawdown":report.max_drawdown,"max_drawdown_pct":report.max_drawdown_pct,"win_rate":report.win_rate,"profit_factor":profit_factor,"turnover":report.turnover,"wins":report.wins,"losses":report.losses,"trade_count":payload["trade_count"],"monthly_pnl":dict(report.monthly_pnl),"yearly_pnl":dict(report.yearly_pnl)}
         return payload
