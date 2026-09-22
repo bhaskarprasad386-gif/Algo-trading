@@ -21,6 +21,7 @@ def test_run_is_independent_and_carries_resolution_and_watermarks() -> None:
     assert run.provenance["run_id"] == "run-1"
     assert run.provenance["resolution"] == "s"
     assert run.provenance["source"] == "angelone"
+    assert run.provenance["parameters"] == {"distance": 5, "expiry": "2026-09-24"}
     assert run.provenance["data_watermarks"] == {"NIFTY": 8_500}
 
 
