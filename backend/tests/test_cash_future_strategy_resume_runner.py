@@ -340,3 +340,57 @@ def test_resume_rejects_source_that_ends_at_checkpoint():
         assert "does not contain observations after checkpoint" in str(exc)
     else:
         raise AssertionError("resume should reject a source with no post-checkpoint observations")
+
+
+def test_resume_crash_before_checkpoint_commit_leaves_no_partial_event_records(monkeypatch):
+    points = _points()
+    config = CashFutureStrategyConfig(initial_capital=100000.0, checkpoint_interval=2, history_window=10)
+
+    full_ledger = BacktestLedger(":memory:")
+    full = run_cash_future_strategy(
+        points, _strategy, ledger=full_ledger, run_id="crash-full", **_run_kwargs(config)
+    )
+
+    ledger = BacktestLedger(":memory:")
+    run_cash_future_strategy(
+        points[:2], _strategy, ledger=ledger, run_id="crash-resume", **_run_kwargs(config)
+    )
+    assert ledger.load_checkpoint("crash-resume").event_index == 2
+    assert ledger.record_count("crash-resume") == 6
+
+    original = ledger.append_and_checkpoint
+    calls = {"count": 0}
+
+    def fail_once(records, checkpoint):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("injected checkpoint failure")
+        return original(records, checkpoint)
+
+    monkeypatch.setattr(ledger, "append_and_checkpoint", fail_once)
+    with pytest.raises(RuntimeError, match="injected checkpoint failure"):
+        resume_cash_future_strategy(
+            points, _strategy, ledger=ledger, run_id="crash-resume", **_run_kwargs(config)
+        )
+
+    checkpoint = ledger.load_checkpoint("crash-resume")
+    assert checkpoint is not None
+    assert checkpoint.event_index == 2
+    assert ledger.record_count("crash-resume") == 6
+    assert [r.payload["timestamp"] for r in ledger.iter_records("crash-resume", "signal")] == [
+        points[0].timestamp.isoformat(), points[1].timestamp.isoformat()
+    ]
+
+    resumed = resume_cash_future_strategy(
+        points, _strategy, ledger=ledger, run_id="crash-resume", **_run_kwargs(config)
+    )
+
+    assert list(resumed.signals) == list(full.signals)
+    assert list(resumed.trades) == list(full.trades)
+    assert list(resumed.equity_curve) == list(full.equity_curve)
+    assert resumed.final_capital == full.final_capital
+    assert resumed.net_profit == full.net_profit
+    assert resumed.final_available_capital == full.final_available_capital
+    assert resumed.final_reserved_margin == full.final_reserved_margin
+    assert resumed.blocked_entry_count == full.blocked_entry_count
+    assert ledger.record_count("crash-resume") == 12
