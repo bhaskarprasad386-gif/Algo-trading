@@ -111,7 +111,8 @@ def _run_job(job_id: str, symbol: str, contract_month: str, days: int, min_entry
             if not _is_cancelled(job_id): _update(db, job_id, status="failed", progress_pct=100.0, message="No historical observations found")
             return
         result = run_backtest(points, BacktestConfig(min_entry_gap=min_entry_gap, exit_gap=exit_gap, charges_per_trade=charges_per_trade,
-                                                     funding_cost_per_trade=funding_cost_per_trade, max_holding_days=max_holding_days, contract_month=contract_month, cancel_check=lambda: _is_cancelled(job_id)))
+                                                     funding_cost_per_trade=funding_cost_per_trade, max_holding_days=max_holding_days, contract_month=contract_month),
+                              cancel_check=lambda: _is_cancelled(job_id))
         if not _is_cancelled(job_id): _update(db, job_id, status="completed", progress_pct=100.0, symbols_processed=1, message="Backtest completed", result_json=json.dumps(result, default=str))
     except Exception as exc:
         if not _is_cancelled(job_id): _update(db, job_id, status="failed", progress_pct=100.0, message=str(exc))
