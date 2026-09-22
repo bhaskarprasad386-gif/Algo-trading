@@ -40,10 +40,12 @@ def _serialise_run(ledger:BacktestLedger,run_id:str)->dict[str,Any]:
     signals=tuple(record.payload for record in ledger.records(run_id,"signal")); trades=tuple(record.payload for record in ledger.records(run_id,"trade")); equity=tuple(record.payload for record in ledger.records(run_id,"equity")); initial_capital=float(metadata["initial_capital"])
     realized_pnl=sum(float(trade.get("net_profit",0.0)) for trade in trades)
     final_capital=initial_capital+realized_pnl
-    final_available_capital=float(equity[-1]["available_capital"]) if equity else initial_capital
-    final_reserved_margin=float(equity[-1]["reserved_margin"]) if equity else 0.0
+    equity_count=ledger.record_count(run_id,"equity")
+    final_equity=ledger.record_at(run_id,"equity",equity_count-1).payload if equity_count else None
+    final_available_capital=float(final_equity["available_capital"]) if final_equity else initial_capital
+    final_reserved_margin=float(final_equity["reserved_margin"]) if final_equity else 0.0
     blocked_entry_count=sum(1 for signal in signals if signal.get("execution_status")=="blocked")
-    return {"status":"success","run_id":run_id,"strategy_id":metadata["strategy_id"],"strategy_version":metadata["strategy_version"],"initial_capital":initial_capital,"final_capital":final_capital,"final_available_capital":final_available_capital,"final_reserved_margin":final_reserved_margin,"blocked_entry_count":blocked_entry_count,"net_profit":realized_pnl,"signal_count":len(signals),"trade_count":len(trades),"signals":signals,"trades":trades,"equity_curve":equity}
+    return {"status":"success","run_id":run_id,"strategy_id":metadata["strategy_id"],"strategy_version":metadata["strategy_version"],"initial_capital":initial_capital,"final_capital":final_capital,"final_available_capital":final_available_capital,"final_reserved_margin":final_reserved_margin,"blocked_entry_count":blocked_entry_count,"net_profit":realized_pnl,"signal_count":ledger.record_count(run_id,"signal"),"trade_count":ledger.record_count(run_id,"trade"),"signals":signals,"trades":trades,"equity_curve":equity}
 
 def _result_page(ledger:BacktestLedger,run_id:str,record_type:str,limit:int,after_id:int|None)->dict[str,Any]:
     metadata=ledger.run_metadata(run_id)
