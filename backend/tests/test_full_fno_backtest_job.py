@@ -111,3 +111,30 @@ def test_full_fno_cancellation_stops_result_sinking(monkeypatch):
     monkeypatch.setattr(full_fno_backtest, "run_cash_future_paper_backtest", fake_engine)
     result = full_fno_backtest.run_full_fno_backtest(object(), days=365, min_entry_gap=5.0, exit_gap=1.0, charges_per_trade=0.0, funding_cost_per_trade=0.0, max_holding_days=30, future_selection="BOTH", cancelled=cancelled, result_sink=lambda sequence, symbol, item: sink_calls.append((sequence, symbol)), collect_results=False)
     assert result["status"] == "cancelled" and result["symbols_total"] == 3 and result["symbols_processed"] == 0 and result["chunks_written"] == 0 and sink_calls == []
+
+
+def test_full_fno_uses_history_store_ist_window(monkeypatch):
+    from app.scanner import full_fno_backtest
+
+    fixed_now = datetime(2026, 9, 22, 12, 0)
+    captured = {}
+
+    monkeypatch.setattr(full_fno_backtest, "persisted_stock_symbols", lambda db: [])
+    monkeypatch.setattr(full_fno_backtest, "_history_now", lambda: fixed_now)
+
+    result = full_fno_backtest.run_full_fno_backtest(
+        object(),
+        days=1,
+        min_entry_gap=0.0,
+        exit_gap=0.0,
+        charges_per_trade=0.0,
+        funding_cost_per_trade=0.0,
+        max_holding_days=1,
+        future_selection="BOTH",
+    )
+
+    assert result["status"] == "completed"
+    assert result["symbols_total"] == 0
+    # The production helper is now the single source of the persisted-history
+    # window; a UTC-naive datetime would be wrong for the naive-IST DB contract.
+    assert full_fno_backtest._history_now() == fixed_now
