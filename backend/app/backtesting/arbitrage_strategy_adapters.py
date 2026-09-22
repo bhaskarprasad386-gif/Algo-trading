@@ -404,7 +404,7 @@ class CashFutureTradeReporter:
                 gross_pnl=gross_pnl,
                 fees=fees,
                 slippage=slippage,
-                net_pnl=gross_pnl - fees - slippage,
+                net_pnl=gross_pnl - fees,
                 contract=instrument,
                 leg="CASH" if index == 0 else "FUTURE",
                 metadata={
