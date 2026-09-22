@@ -90,7 +90,7 @@ def test_adapters_require_real_quote_payloads():
         raise AssertionError("invalid quote payload must be rejected")
 
 
-def _universal_cf_context(ts, cash_payload, future_payload):
+def _universal_cf_context(ts, cash_payload, future_payload, sequence=1):
     from app.backtesting.engine import EventContext
     from app.backtesting.historical_catalog import HistoricalRecord
 
@@ -109,7 +109,7 @@ def _universal_cf_context(ts, cash_payload, future_payload):
         },
         1,
     )
-    return EventContext(ts, 1, "test", "NSE:ABC", record.payload, record)
+    return EventContext(ts, sequence, "test", "NSE:ABC", record.payload, record)
 
 
 def test_universal_cash_future_adapter_emits_exact_two_executable_legs():
@@ -140,6 +140,26 @@ def test_universal_cash_future_adapter_emits_exact_two_executable_legs():
     assert future_book.bids[0].price == 104.0
     assert cash_ts == future_ts == 1
 
+
+def test_universal_cash_future_adapter_order_ids_are_unique_for_same_timestamp_events():
+    from app.backtesting.arbitrage_strategy_adapters import CashFutureUniversalMultiLegAdapter
+
+    adapter = CashFutureUniversalMultiLegAdapter(quantity=10)
+    first = tuple(adapter(_universal_cf_context(
+        1,
+        {"bid": 100.0, "ask": 101.0, "bid_quantity": 20, "ask_quantity": 20},
+        {"bid": 104.0, "ask": 105.0, "bid_quantity": 20, "ask_quantity": 20},
+        sequence=1,
+    )))
+    second = tuple(adapter(_universal_cf_context(
+        1,
+        {"bid": 100.0, "ask": 101.0, "bid_quantity": 20, "ask_quantity": 20},
+        {"bid": 104.0, "ask": 105.0, "bid_quantity": 20, "ask_quantity": 20},
+        sequence=2,
+    )))
+
+    assert len(first) == len(second) == 2
+    assert {leg[0].order_id for leg in first}.isdisjoint({leg[0].order_id for leg in second})
 
 def test_universal_cash_future_adapter_closes_only_on_later_reverse_edge():
     from app.backtesting.arbitrage_strategy_adapters import CashFutureUniversalMultiLegAdapter
