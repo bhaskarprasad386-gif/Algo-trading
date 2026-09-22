@@ -638,22 +638,17 @@ class UniversalEventBacktestEngine:
                 peak_equity, point = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
                 replay_sequence += 1
                 processed_events += 1
-                if (
-                    self.result_writer is not None
-                    and self.checkpoint_every_events is not None
-                    and processed_events % self.checkpoint_every_events == 0
-                ):
-                    with self.result_writer.transaction():
-                        self._save_checkpoint_if_due(
-                            processed_events=processed_events,
-                            replay_sequence=replay_sequence,
-                            previous_identity=previous_identity,
-                            last_marks=last_marks,
-                            accumulator=accumulator,
-                            peak_equity=peak_equity,
-                            strategy=strategy,
-                            record=record,
-                        )
+                if checkpoint_due:
+                    self._save_checkpoint_if_due(
+                        processed_events=processed_events,
+                        replay_sequence=replay_sequence,
+                        previous_identity=previous_identity,
+                        last_marks=last_marks,
+                        accumulator=accumulator,
+                        peak_equity=peak_equity,
+                        strategy=strategy,
+                        record=record,
+                    )
                 if self.retain_history:
                     snapshots.append(snapshot)
                     equity_curve.append(point)
