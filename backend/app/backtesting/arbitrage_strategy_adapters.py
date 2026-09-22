@@ -337,6 +337,24 @@ class CashFutureTradeReporter:
         self._open: dict[str, dict[str, Any]] = {}
         self._sequence = 0
 
+    def get_state(self) -> dict[str, Any]:
+        return {
+            "open": {key: dict(value) for key, value in self._open.items()},
+            "sequence": self._sequence,
+        }
+
+    def set_state(self, state: Mapping[str, Any]) -> None:
+        if not isinstance(state, Mapping):
+            raise TypeError("reporter state must be a mapping")
+        opened = state.get("open", {})
+        sequence = state.get("sequence", 0)
+        if not isinstance(opened, Mapping):
+            raise ValueError("reporter open state must be a mapping")
+        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
+            raise ValueError("reporter sequence must be a non-negative integer")
+        self._open = {str(instrument): dict(value) for instrument, value in opened.items()}
+        self._sequence = sequence
+
     @staticmethod
     def _leg_evidence(report: AtomicTradeReportInput, index: int) -> tuple[Any, tuple[Any, ...]]:
         result = report.execution.leg_results[index]
