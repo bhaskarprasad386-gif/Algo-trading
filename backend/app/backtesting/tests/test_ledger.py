@@ -157,3 +157,19 @@ def test_append_and_checkpoint_rolls_back_journal_when_checkpoint_write_fails():
     assert ledger.checkpoint_history("atomic-ledger") == ()
     ledger.close()
 
+
+
+def test_iter_records_chronological_orders_by_timestamp_with_stable_tie_breaker():
+    ledger = BacktestLedger()
+    ledger.start_run("chrono", "strategy", "1", 1000)
+    ledger.append(LedgerRecord("chrono", "TRADE", 30, {"name": "late"}))
+    ledger.append(LedgerRecord("chrono", "TRADE", 10, {"name": "early"}))
+    ledger.append(LedgerRecord("chrono", "TRADE", 20, {"name": "middle"}))
+    ledger.append(LedgerRecord("chrono", "TRADE", 20, {"name": "middle-2"}))
+
+    records = list(ledger.iter_records_chronological("chrono", "TRADE", fetch_size=2))
+
+    assert [record.timestamp_ns for record in records] == [10, 20, 20, 30]
+    assert [record.payload["name"] for record in records] == [
+        "early", "middle", "middle-2", "late"
+    ]
