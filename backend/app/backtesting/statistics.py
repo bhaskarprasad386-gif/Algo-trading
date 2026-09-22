@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite, sqrt
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
 
 @dataclass(frozen=True)
@@ -90,6 +90,97 @@ class StreamingStatisticsAccumulator:
                 self._max_drawdown,
                 (self._peak - point.equity) / self._peak,
             )
+
+    def export_state(self) -> Mapping[str, Any]:
+        """Export the complete O(1) running state for durable checkpointing."""
+        return {
+            "initial_capital": self.initial_capital,
+            "count": self._count,
+            "return_count": self._return_count,
+            "sum_returns": self._sum_returns,
+            "sum_return_squares": self._sum_return_squares,
+            "sum_downside_squares": self._sum_downside_squares,
+            "sum_intervals_years": self._sum_intervals_years,
+            "previous_equity": self._previous_equity,
+            "previous_timestamp": self._previous_timestamp,
+            "first_timestamp": self._first_timestamp,
+            "last_timestamp": self._last_timestamp,
+            "final_equity": self._final_equity,
+            "peak": self._peak,
+            "max_drawdown": self._max_drawdown,
+        }
+
+    def restore_state(self, state: Mapping[str, Any]) -> None:
+        """Restore a previously exported checkpoint after strict validation."""
+        if not isinstance(state, Mapping):
+            raise ValueError("invalid statistics checkpoint")
+        required = (
+            "initial_capital", "count", "return_count", "sum_returns",
+            "sum_return_squares", "sum_downside_squares", "sum_intervals_years",
+            "previous_equity", "previous_timestamp", "first_timestamp",
+            "last_timestamp", "final_equity", "peak", "max_drawdown",
+        )
+        if any(key not in state for key in required):
+            raise ValueError("invalid statistics checkpoint")
+        try:
+            initial_capital = state["initial_capital"]
+            if isinstance(initial_capital, bool) or not isinstance(initial_capital, (int, float)) or not isfinite(float(initial_capital)) or initial_capital <= 0:
+                raise ValueError("invalid statistics checkpoint")
+            integer_fields = ("count", "return_count")
+            for key in integer_fields:
+                value = state[key]
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    raise ValueError("invalid statistics checkpoint")
+            non_negative_floats = (
+                "sum_return_squares", "sum_downside_squares", "sum_intervals_years", "max_drawdown"
+            )
+            for key in non_negative_floats:
+                value = state[key]
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(float(value)) or float(value) < 0:
+                    raise ValueError("invalid statistics checkpoint")
+            finite_floats = ("sum_returns", "previous_equity", "peak")
+            for key in finite_floats:
+                value = state[key]
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(float(value)):
+                    raise ValueError("invalid statistics checkpoint")
+            for key in ("previous_timestamp", "first_timestamp", "last_timestamp"):
+                value = state[key]
+                if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+                    raise ValueError("invalid statistics checkpoint")
+            final_equity = state["final_equity"]
+            if final_equity is not None and (isinstance(final_equity, bool) or not isinstance(final_equity, (int, float)) or not isfinite(float(final_equity))):
+                raise ValueError("invalid statistics checkpoint")
+            count = int(state["count"])
+            return_count = int(state["return_count"])
+            previous_timestamp = state["previous_timestamp"]
+            first_timestamp = state["first_timestamp"]
+            last_timestamp = state["last_timestamp"]
+            if count == 0:
+                if any(value is not None for value in (previous_timestamp, first_timestamp, last_timestamp, final_equity)):
+                    raise ValueError("invalid statistics checkpoint")
+            else:
+                if previous_timestamp is None or first_timestamp is None or last_timestamp is None or final_equity is None:
+                    raise ValueError("invalid statistics checkpoint")
+                if first_timestamp > last_timestamp or previous_timestamp != last_timestamp:
+                    raise ValueError("invalid statistics checkpoint")
+            if return_count > max(0, count - 1):
+                raise ValueError("invalid statistics checkpoint")
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError("invalid statistics checkpoint")
+        self.initial_capital = float(initial_capital)
+        self._count = count
+        self._return_count = return_count
+        self._sum_returns = float(state["sum_returns"])
+        self._sum_return_squares = float(state["sum_return_squares"])
+        self._sum_downside_squares = float(state["sum_downside_squares"])
+        self._sum_intervals_years = float(state["sum_intervals_years"])
+        self._previous_equity = float(state["previous_equity"])
+        self._previous_timestamp = previous_timestamp
+        self._first_timestamp = first_timestamp
+        self._last_timestamp = last_timestamp
+        self._final_equity = None if final_equity is None else float(final_equity)
+        self._peak = float(state["peak"])
+        self._max_drawdown = float(state["max_drawdown"])
 
     def finalize(self) -> BacktestStatistics:
         if self._count == 0:
