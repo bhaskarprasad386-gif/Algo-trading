@@ -915,3 +915,33 @@ def test_checkpoint_state_builder_captures_resume_state() -> None:
     assert state["fill_sequence"] == 0
     assert state["clock_now_ns"] == 0
 
+
+def test_universal_single_leg_checkpoint_resume_restores_state(tmp_path):
+    events = [_event(1000, "AAA", 100.0, 0), _event(2000, "AAA", 101.0, 1), _event(3000, "AAA", 102.0, 2)]
+
+    class StatefulBuy:
+        def __init__(self):
+            self.done = False
+        def __call__(self, context):
+            if self.done:
+                return "HOLD"
+            self.done = True
+            return "BUY"
+        def get_state(self):
+            return {"done": self.done}
+        def set_state(self, state):
+            self.done = bool(state["done"])
+
+    fresh = UniversalEventBacktestEngine(100_000.0).run(events, StatefulBuy())
+    ledger, writer = _real_writer(tmp_path, "checkpoint-resume")
+    partial = UniversalEventBacktestEngine(100_000.0, result_writer=writer, checkpoint_every_events=2, retain_history=False)
+    partial.run(events[:2], StatefulBuy())
+
+    resumed_writer = BacktestRunWriter(ledger, writer.spec, resume=True)
+    resumed = UniversalEventBacktestEngine(100_000.0, result_writer=resumed_writer, resume=True, retain_history=False)
+    resumed_result = resumed.run(events, StatefulBuy())
+
+    assert resumed_result.final_equity == fresh.final_equity
+    assert resumed_result.realized_pnl == fresh.realized_pnl
+    assert resumed_result.unrealized_pnl == fresh.unrealized_pnl
+    assert resumed_result.net_pnl == fresh.net_pnl
