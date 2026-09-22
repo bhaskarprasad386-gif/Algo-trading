@@ -157,6 +157,8 @@ class DurableEventBacktestEngine:
         self._pending_journal.clear()
         source_events = iter(events)
         checkpoint = self.ledger.load_checkpoint(self.run_id) if resume else None
+        if resume and self.ledger.record_count(self.run_id, "RUN_END") > 0:
+            raise ValueError("cannot resume completed run")
         context_state = dict(state or {})
         start_cursor = 0; resume_timestamp = 0; expected_identity = None
         if resume:
