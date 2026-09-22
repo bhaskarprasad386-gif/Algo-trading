@@ -41,3 +41,15 @@ def test_run_rejects_resolution_that_does_not_cover_range() -> None:
         assert "coverage" in str(exc)
     else:
         raise AssertionError("expected incomplete resolution coverage rejection")
+
+
+def test_run_provenance_contains_stable_strategy_config_hash() -> None:
+    resolution = BacktestResolution("s", "angelone", 1_000, 9_000)
+    left = BacktestRunSpec("run-a", "box-spread", "v3", "NFO:NIFTY", 2_000, 8_000, resolution,
+                           {"b": 2, "a": 1}, {})
+    right = BacktestRunSpec("run-b", "box-spread", "v3", "NFO:NIFTY", 2_000, 8_000, resolution,
+                            {"a": 1, "b": 2}, {})
+    changed = BacktestRunSpec("run-c", "box-spread", "v3", "NFO:NIFTY", 2_000, 8_000, resolution,
+                              {"a": 1, "b": 3}, {})
+    assert left.provenance["strategy_config_hash"] == right.provenance["strategy_config_hash"]
+    assert left.provenance["strategy_config_hash"] != changed.provenance["strategy_config_hash"]
