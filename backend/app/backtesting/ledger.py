@@ -365,6 +365,34 @@ class BacktestLedger:
             for row in rows:
                 yield self._row_to_record(row)
 
+    def iter_records_by_payload_timestamp(
+        self,
+        run_id: str,
+        record_type: str,
+        payload_field: str,
+        *,
+        fetch_size: int = 256,
+    ) -> Iterator[LedgerRecord]:
+        """Stream records ordered by an ISO timestamp stored in payload JSON."""
+        if fetch_size <= 0:
+            raise ValueError("fetch_size must be positive")
+        if not payload_field.replace("_", "").isalnum():
+            raise ValueError("payload_field must be alphanumeric")
+        self._require_run(run_id)
+        cursor = self._db.execute(
+            f"""SELECT run_id,record_type,timestamp_ns,payload_json
+                FROM records
+                WHERE run_id=? AND record_type=?
+                ORDER BY json_extract(payload_json, '$.{payload_field}'), id""",
+            (run_id, record_type),
+        )
+        while True:
+            rows = cursor.fetchmany(fetch_size)
+            if not rows:
+                break
+            for row in rows:
+                yield self._row_to_record(row)
+
     def record_page(self, run_id: str, record_type: str | None = None, *,
                     limit: int = 100, after_id: int | None = None) -> LedgerPage:
         """Return one bounded page using the durable records.id keyset cursor."""
