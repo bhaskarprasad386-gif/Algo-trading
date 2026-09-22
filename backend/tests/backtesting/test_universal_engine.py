@@ -923,6 +923,7 @@ def test_universal_multi_leg_checkpoint_transaction_rolls_back_result_writes(tmp
 
 
 def test_universal_multi_leg_checkpoint_resume_matches_fresh_run(tmp_path):
+    from app.backtesting.backtest_result import BacktestRunWriter
     from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
 
     events = [
