@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Mapping
 
 from .backtest_resolution import BacktestResolution
+from .provenance import provenance_hash
 
 
 @dataclass(frozen=True)
@@ -58,5 +59,6 @@ class BacktestRunSpec:
             "resolution": self.resolution.resolution,
             "source": self.resolution.source,
             "parameters": dict(self.parameters),
+            "strategy_config_hash": provenance_hash(dict(self.parameters)),
             "data_watermarks": dict(self.data_watermarks),
         }
