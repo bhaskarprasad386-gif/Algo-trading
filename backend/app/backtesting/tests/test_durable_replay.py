@@ -25,6 +25,24 @@ def test_durable_replay_journals_events_decisions_and_checkpoint():
 
 
 
+def test_resume_rejects_completed_run_without_duplicate_run_end():
+    ledger = BacktestLedger()
+    ledger.start_run("completed-run", "s", "1", 1000)
+    durable = DurableEventBacktestEngine(EventBacktestEngine(), ledger, "completed-run")
+    durable.run([MarketEvent(1, "X", EventType.TRADE, {"price": 10})], lambda event, state: None)
+
+    before = len(ledger.records("completed-run", "RUN_END"))
+    try:
+        durable.run([], lambda event, state: None, resume=True)
+    except ValueError as exc:
+        assert str(exc) == "cannot resume completed run"
+    else:
+        raise AssertionError("completed run must reject resume")
+
+    assert len(ledger.records("completed-run", "RUN_END")) == before == 1
+    ledger.close()
+
+
 def test_durable_replay_run_start_uses_canonical_nanoseconds_for_millisecond_input():
     ledger = BacktestLedger()
     ledger.start_run("run-ms-start", "ms-start", "1", 1000)
@@ -218,4 +236,3 @@ def test_durable_replay_journals_order_lifecycle_and_fill_details():
     assert fills[-1].payload["quantity"] == 1
     assert fills[-1].payload["price"] == 100.0
     assert fills[-1].payload["timestamp_ns"] == 10
-    ledger.close()
