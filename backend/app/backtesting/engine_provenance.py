@@ -34,16 +34,16 @@ def _source_hash(identity: str, implementation: object) -> str:
     return provenance_hash({"identity": identity, "source": source})
 
 
-def execution_implementation_hash() -> str:
-    return _source_hash("execution-simulator", ExecutionSimulator)
+def execution_implementation_hash(implementation: object = ExecutionSimulator) -> str:
+    return _source_hash("execution-simulator", implementation)
 
 
-def portfolio_accounting_hash() -> str:
-    return _source_hash("portfolio-accounting", Portfolio)
+def portfolio_accounting_hash(implementation: object = Portfolio) -> str:
+    return _source_hash("portfolio-accounting", implementation)
 
 
-def trading_calendar_hash() -> str:
-    return _source_hash(CALENDAR_IDENTITY, TradingCalendar)
+def trading_calendar_hash(implementation: object = TradingCalendar) -> str:
+    return _source_hash(CALENDAR_IDENTITY, implementation)
 
 
 def nse_calendar_hash() -> str:
