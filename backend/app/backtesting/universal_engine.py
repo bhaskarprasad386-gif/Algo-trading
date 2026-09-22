@@ -8,6 +8,7 @@ long and short exposure without duplicating accounting logic.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -517,136 +518,146 @@ class UniversalEventBacktestEngine:
         processed_events = 0
 
         for record in events:
-            if self.resume and processed_events < resume_cursor:
-                processed_events += 1
-                previous_identity = event_identity(record)
-                previous_key = event_order_key(record)
-                if processed_events == resume_cursor:
-                    self._verify_checkpoint_identity(record, saved_identity)
-                continue
-            if not isinstance(record.timestamp_ns, int) or isinstance(record.timestamp_ns, bool) or record.timestamp_ns < 0:
-                raise ValueError("event timestamp_ns must be a non-negative integer")
-            if not isinstance(record.instrument, str) or not record.instrument.strip():
-                raise ValueError("event instrument is required")
-            if not isinstance(record.source, str) or not record.source.strip():
-                raise ValueError("event source is required")
-            if record.sequence is not None and (not isinstance(record.sequence, int) or isinstance(record.sequence, bool) or record.sequence < 0):
-                raise ValueError("event sequence must be a non-negative integer or None")
-            key = event_order_key(record)
-            identity = event_identity(record)
-            if previous_identity is not None and identity == previous_identity:
-                raise ValueError("duplicate event identity")
-            if previous_key is not None and key <= previous_key:
-                raise ValueError("events must be strictly ordered by deterministic event order")
-            previous_identity = identity
-            previous_key = key
-            self.clock.advance_to(record.timestamp_ns)
-
-            raw_price = record.payload.get(price_field)
-            if raw_price is not None:
-                if isinstance(raw_price, bool) or not isinstance(raw_price, (int, float)):
-                    raise ValueError(f"event payload {price_field!r} must be numeric")
-                if raw_price <= 0:
-                    raise ValueError(f"event payload {price_field!r} must be positive")
-                last_marks[record.instrument] = float(raw_price)
-
-            signal = _normalize_event_signal(
-                strategy(EventContext(
-                    record.timestamp_ns,
-                    record.sequence,
-                    record.source,
-                    record.instrument,
-                    record.payload,
-                    record,
-                ))
-            )
-            if signal.action not in {"HOLD", "NONE"}:
-                price = signal.price
-                if price is None:
-                    price = raw_price
-                if price is None or isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
-                    raise ValueError(f"event payload must contain numeric positive {price_field!r} or signal price")
-                last_marks[record.instrument] = float(price)
-
-                side = ExecutionSide.BUY if signal.action == "BUY" else ExecutionSide.SELL
-                order = SimOrder(
-                    order_id=f"event-{record.timestamp_ns}-{record.sequence if record.sequence is not None else 'na'}-{record.instrument}",
-                    instrument=record.instrument,
-                    side=side,
-                    quantity=self.quantity,
-                    submitted_at_ns=record.timestamp_ns,
-                )
-                if order_book_field is not None:
-                    book = record.payload.get(order_book_field)
-                    if not isinstance(self.execution, DepthExecutionModelProtocol):
-                        raise TypeError("order_book execution requires a depth execution model")
-                    if not isinstance(book, OrderBook):
-                        raise TypeError(f"event payload {order_book_field!r} must contain an OrderBook")
-                    result = self.execution.execute_depth(order, book, record.timestamp_ns)
-                    if result.rejected:
-                        raise ValueError(result.reason or "depth execution rejected")
-                    if result.fills:
-                        self.portfolio.apply_fills_atomic(result.fills, last_marks)
-                        if self.result_writer is not None:
-                            durable_fills = []
-                            if len(result.reference_prices) != len(result.fills):
-                                raise ValueError("execution result reference_prices must align with fills")
-                            for fill, reference_price in zip(result.fills, result.reference_prices):
-                                durable_fills.append(BacktestFill(
-                                    fill_id=f"{replay_sequence}:{self._fill_sequence}:{fill.order_id}",
-                                    order_id=fill.order_id,
-                                    sequence=self._fill_sequence,
-                                    timestamp_ns=fill.filled_at_ns,
-                                    instrument=fill.instrument,
-                                    side=fill.side.value,
-                                    quantity=fill.quantity,
-                                    price=fill.price,
-                                    fee=fill.fee,
-                                    metadata={"reference_price": reference_price},
-                                ))
-                                self._fill_sequence += 1
-                            self.result_writer.record_fills(tuple(durable_fills))
-                else:
-                    fill = self.execution.execute(order, float(price), record.timestamp_ns)
-                    self.portfolio.apply_fill(fill, last_marks)
-                    if self.result_writer is not None:
-                        self.result_writer.record_fills((BacktestFill(
-                            fill_id=f"{replay_sequence}:{self._fill_sequence}:{fill.order_id}",
-                            order_id=fill.order_id,
-                            sequence=self._fill_sequence,
-                            timestamp_ns=fill.filled_at_ns,
-                            instrument=fill.instrument,
-                            side=fill.side.value,
-                            quantity=fill.quantity,
-                            price=fill.price,
-                            fee=fill.fee,
-                        ),))
-                        self._fill_sequence += 1
-
-            snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
-            peak_equity, point = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
-            replay_sequence += 1
-            processed_events += 1
-            if (
+            checkpoint_due = (
                 self.result_writer is not None
                 and self.checkpoint_every_events is not None
-                and processed_events % self.checkpoint_every_events == 0
+                and (processed_events + 1) % self.checkpoint_every_events == 0
+            )
+            with (
+                self.result_writer.transaction()
+                if checkpoint_due
+                else nullcontext()
             ):
-                with self.result_writer.transaction():
-                    self._save_checkpoint_if_due(
-                        processed_events=processed_events,
-                        replay_sequence=replay_sequence,
-                        previous_identity=previous_identity,
-                        last_marks=last_marks,
-                        accumulator=accumulator,
-                        peak_equity=peak_equity,
-                        strategy=strategy,
-                        record=record,
+                if self.resume and processed_events < resume_cursor:
+                    processed_events += 1
+                    previous_identity = event_identity(record)
+                    previous_key = event_order_key(record)
+                    if processed_events == resume_cursor:
+                        self._verify_checkpoint_identity(record, saved_identity)
+                    continue
+                if not isinstance(record.timestamp_ns, int) or isinstance(record.timestamp_ns, bool) or record.timestamp_ns < 0:
+                    raise ValueError("event timestamp_ns must be a non-negative integer")
+                if not isinstance(record.instrument, str) or not record.instrument.strip():
+                    raise ValueError("event instrument is required")
+                if not isinstance(record.source, str) or not record.source.strip():
+                    raise ValueError("event source is required")
+                if record.sequence is not None and (not isinstance(record.sequence, int) or isinstance(record.sequence, bool) or record.sequence < 0):
+                    raise ValueError("event sequence must be a non-negative integer or None")
+                key = event_order_key(record)
+                identity = event_identity(record)
+                if previous_identity is not None and identity == previous_identity:
+                    raise ValueError("duplicate event identity")
+                if previous_key is not None and key <= previous_key:
+                    raise ValueError("events must be strictly ordered by deterministic event order")
+                previous_identity = identity
+                previous_key = key
+                self.clock.advance_to(record.timestamp_ns)
+    
+                raw_price = record.payload.get(price_field)
+                if raw_price is not None:
+                    if isinstance(raw_price, bool) or not isinstance(raw_price, (int, float)):
+                        raise ValueError(f"event payload {price_field!r} must be numeric")
+                    if raw_price <= 0:
+                        raise ValueError(f"event payload {price_field!r} must be positive")
+                    last_marks[record.instrument] = float(raw_price)
+    
+                signal = _normalize_event_signal(
+                    strategy(EventContext(
+                        record.timestamp_ns,
+                        record.sequence,
+                        record.source,
+                        record.instrument,
+                        record.payload,
+                        record,
+                    ))
+                )
+                if signal.action not in {"HOLD", "NONE"}:
+                    price = signal.price
+                    if price is None:
+                        price = raw_price
+                    if price is None or isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
+                        raise ValueError(f"event payload must contain numeric positive {price_field!r} or signal price")
+                    last_marks[record.instrument] = float(price)
+    
+                    side = ExecutionSide.BUY if signal.action == "BUY" else ExecutionSide.SELL
+                    order = SimOrder(
+                        order_id=f"event-{record.timestamp_ns}-{record.sequence if record.sequence is not None else 'na'}-{record.instrument}",
+                        instrument=record.instrument,
+                        side=side,
+                        quantity=self.quantity,
+                        submitted_at_ns=record.timestamp_ns,
                     )
-            if self.retain_history:
-                snapshots.append(snapshot)
-                equity_curve.append(point)
-
+                    if order_book_field is not None:
+                        book = record.payload.get(order_book_field)
+                        if not isinstance(self.execution, DepthExecutionModelProtocol):
+                            raise TypeError("order_book execution requires a depth execution model")
+                        if not isinstance(book, OrderBook):
+                            raise TypeError(f"event payload {order_book_field!r} must contain an OrderBook")
+                        result = self.execution.execute_depth(order, book, record.timestamp_ns)
+                        if result.rejected:
+                            raise ValueError(result.reason or "depth execution rejected")
+                        if result.fills:
+                            self.portfolio.apply_fills_atomic(result.fills, last_marks)
+                            if self.result_writer is not None:
+                                durable_fills = []
+                                if len(result.reference_prices) != len(result.fills):
+                                    raise ValueError("execution result reference_prices must align with fills")
+                                for fill, reference_price in zip(result.fills, result.reference_prices):
+                                    durable_fills.append(BacktestFill(
+                                        fill_id=f"{replay_sequence}:{self._fill_sequence}:{fill.order_id}",
+                                        order_id=fill.order_id,
+                                        sequence=self._fill_sequence,
+                                        timestamp_ns=fill.filled_at_ns,
+                                        instrument=fill.instrument,
+                                        side=fill.side.value,
+                                        quantity=fill.quantity,
+                                        price=fill.price,
+                                        fee=fill.fee,
+                                        metadata={"reference_price": reference_price},
+                                    ))
+                                    self._fill_sequence += 1
+                                self.result_writer.record_fills(tuple(durable_fills))
+                    else:
+                        fill = self.execution.execute(order, float(price), record.timestamp_ns)
+                        self.portfolio.apply_fill(fill, last_marks)
+                        if self.result_writer is not None:
+                            self.result_writer.record_fills((BacktestFill(
+                                fill_id=f"{replay_sequence}:{self._fill_sequence}:{fill.order_id}",
+                                order_id=fill.order_id,
+                                sequence=self._fill_sequence,
+                                timestamp_ns=fill.filled_at_ns,
+                                instrument=fill.instrument,
+                                side=fill.side.value,
+                                quantity=fill.quantity,
+                                price=fill.price,
+                                fee=fill.fee,
+                            ),))
+                            self._fill_sequence += 1
+    
+                snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
+                peak_equity, point = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
+                replay_sequence += 1
+                processed_events += 1
+                if (
+                    self.result_writer is not None
+                    and self.checkpoint_every_events is not None
+                    and processed_events % self.checkpoint_every_events == 0
+                ):
+                    with self.result_writer.transaction():
+                        self._save_checkpoint_if_due(
+                            processed_events=processed_events,
+                            replay_sequence=replay_sequence,
+                            previous_identity=previous_identity,
+                            last_marks=last_marks,
+                            accumulator=accumulator,
+                            peak_equity=peak_equity,
+                            strategy=strategy,
+                            record=record,
+                        )
+                if self.retain_history:
+                    snapshots.append(snapshot)
+                    equity_curve.append(point)
+    
         if self.resume and resume_cursor > processed_events:
             raise ValueError("checkpoint source_cursor exceeds available source events")
         final_snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
