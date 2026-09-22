@@ -882,3 +882,36 @@ def test_universal_engine_reports_atomic_execution_with_post_accounting_trades()
     assert tuple(trade.timestamp_ns for trade in report.accounting_trades) == (10, 10)
     assert report.accounting_trades[0].price == 101.0
     assert report.accounting_trades[1].price == 199.0
+
+def test_checkpoint_state_builder_captures_resume_state() -> None:
+    class StatefulStrategy:
+        def get_state(self):
+            return {"counter": 7}
+
+    engine = UniversalEventBacktestEngine(100_000.0)
+    record = _event(1_000, "AAA", 101.0, 0)
+    accumulator = StreamingStatisticsAccumulator(100_000.0)
+    snapshot = engine.portfolio.snapshot({"AAA": 101.0})
+    accumulator.update(EquityPoint(record.timestamp_ns, snapshot.equity, snapshot.realized_pnl, snapshot.unrealized_pnl))
+    identity = event_identity(record)
+
+    state = engine._build_checkpoint_state(
+        processed_events=1,
+        replay_sequence=1,
+        previous_identity=identity,
+        last_marks={"AAA": 101.0},
+        accumulator=accumulator,
+        peak_equity=snapshot.equity,
+        strategy=StatefulStrategy(),
+    )
+
+    assert state["source_cursor"] == 1
+    assert state["source_event_identity"]["instrument"] == "AAA"
+    assert state["portfolio_state"]["cash"] == 100_000.0
+    assert state["strategy_state"] == {"counter": 7}
+    assert state["statistics_state"]["count"] == 1
+    assert state["last_marks"] == {"AAA": 101.0}
+    assert state["replay_sequence"] == 1
+    assert state["fill_sequence"] == 0
+    assert state["clock_now_ns"] == 0
+
