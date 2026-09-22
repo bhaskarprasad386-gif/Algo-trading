@@ -351,6 +351,49 @@ def _aggregate_contract_results(results: list[dict]) -> dict:
     }
 
 
+def _aggregate_contract_results_from_iterable(trades_iter: Iterable[dict]) -> dict:
+    """Aggregate an already durable/retrieved trade stream."""
+    trades = list(trades_iter)
+    wins = sum(1 for trade in trades if trade["net_profit"] > 0)
+    net_profit = sum(trade["net_profit"] for trade in trades)
+    equity = 0.0
+    running_peak = 0.0
+    max_drawdown = 0.0
+    equity_curve = []
+    if trades:
+        trades.sort(
+            key=lambda trade: (
+                trade["entry_time"],
+                trade.get("symbol", ""),
+                trade.get("contract_month", ""),
+            )
+        )
+        equity_curve.append({"timestamp": trades[0]["entry_time"], "equity": 0.0})
+    for trade in trades:
+        equity += trade["net_profit"]
+        running_peak = max(running_peak, equity)
+        max_drawdown = max(max_drawdown, running_peak - equity)
+        equity_curve.append({"timestamp": trade["exit_time"], "equity": equity})
+    return {
+        "trade_count": len(trades),
+        "wins": wins,
+        "losses": len(trades) - wins,
+        "win_rate_pct": wins / len(trades) * 100.0 if trades else 0.0,
+        "net_profit": net_profit,
+        "roi_pct": 0.0,
+        "invested_capital": 0.0,
+        "max_drawdown": max_drawdown,
+        "equity_curve": equity_curve,
+        "trades": trades,
+        "open_positions": [],
+        "per_contract": [],
+        "contract_count": len({
+            (trade.get("symbol"), trade.get("contract_month"))
+            for trade in trades
+        }),
+    }
+
+
 def run_multi_contract_backtest(
     points: Iterable[CashFutureHistoryPoint],
     config: BacktestConfig,
@@ -377,13 +420,25 @@ def run_multi_contract_backtest(
 def run_multi_contract_backtest_streaming(
     points: Iterable[CashFutureHistoryPoint],
     config: BacktestConfig,
+    *,
+    trade_sink: Callable[[Iterable[dict]], int] | None = None,
+    trade_batch_size: int = 500,
 ) -> dict:
-    """Process a symbol/contract ordered stream while retaining one state machine."""
+    """Process a symbol/contract ordered stream with optional bounded trade persistence."""
+    if trade_batch_size <= 0:
+        raise ValueError("trade_batch_size must be positive")
+
     results = []
     current_key = None
     processor: CashFutureBacktestProcessor | None = None
     previous_timestamp = None
     seen_keys = set()
+    pending_trades: list[dict] = []
+
+    def flush_trades() -> None:
+        if trade_sink is not None and pending_trades:
+            trade_sink(tuple(pending_trades))
+            pending_trades.clear()
 
     for point in points:
         if (
@@ -395,10 +450,13 @@ def run_multi_contract_backtest_streaming(
         key = (point.contract_month, point.symbol)
         if current_key is None:
             current_key = key
-            processor = CashFutureBacktestProcessor(config)
+            processor = CashFutureBacktestProcessor(
+                config, retain_outputs=trade_sink is None
+            )
         elif key != current_key:
             assert processor is not None
             results.append(processor.finalize())
+            flush_trades()
             seen_keys.add(current_key)
             if key in seen_keys:
                 raise ValueError(
@@ -406,7 +464,9 @@ def run_multi_contract_backtest_streaming(
                     "symbol/contract series contiguous"
                 )
             current_key = key
-            processor = CashFutureBacktestProcessor(config)
+            processor = CashFutureBacktestProcessor(
+                config, retain_outputs=trade_sink is None
+            )
             previous_timestamp = None
 
         if (
@@ -419,11 +479,24 @@ def run_multi_contract_backtest_streaming(
             )
         previous_timestamp = point.timestamp
         assert processor is not None
-        processor.process(point)
+        trade = processor.process(point)
+        if trade_sink is not None and trade is not None:
+            pending_trades.append(trade)
+            if len(pending_trades) >= trade_batch_size:
+                flush_trades()
 
     if processor is not None:
         results.append(processor.finalize())
-    return _aggregate_contract_results(results)
+    flush_trades()
+
+    if trade_sink is None:
+        return _aggregate_contract_results(results)
+
+    # The durable sink owns the trade history; reconstruct the public aggregate
+    # through the sink consumer rather than retaining all trades during replay.
+    return _aggregate_contract_results_from_iterable(
+        (trade for result in results for trade in result["trades"])
+    )
 
 
 __all__ = [
