@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 from datetime import date, datetime, time, timezone
 from itertools import groupby
 from math import isfinite
@@ -15,6 +17,7 @@ from app.scanner.cash_future_history import CashFutureHistoryPoint
 
 MARKET_TZ = ZoneInfo("Asia/Kolkata")
 PAIR_TOLERANCE_NS = 60 * 1_000_000_000
+LOADER_IDENTITY = "cash_future_historical_loader:v1"
 
 @dataclass(frozen=True)
 class CashFutureHistorySelection:
@@ -151,6 +154,39 @@ class CashFutureHistoricalLoader:
             cash_iter=self.catalog.iter_records(source=selection.source,instrument=cash_instrument,timeframe=selection.timeframe,start_ns=start_ns,end_ns=end_ns)
             future_iter=self.catalog.iter_records(source=selection.source,instrument=f"{contract.exchange}:{contract.token}:{contract.symbol}",timeframe=selection.timeframe,start_ns=start_ns,end_ns=end_ns)
             yield from _merge_pair(cash_iter,future_iter,symbol=selection.underlying.upper(),contract=contract)
+    def dataset_fingerprint(self, selection: CashFutureHistorySelection) -> str:
+        """Hash the exact raw rows and point-in-time contracts selected by this loader."""
+        digest = hashlib.sha256()
+        def add(value: object) -> None:
+            encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False, default=str).encode("utf-8")
+            digest.update(len(encoded).to_bytes(8, "big"))
+            digest.update(encoded)
+        add({"loader_identity": LOADER_IDENTITY, "selection": {
+            "spot_instrument": selection.spot_instrument, "exchange": selection.exchange,
+            "underlying": selection.underlying, "start_date": selection.start_date.isoformat(),
+            "end_date": selection.end_date.isoformat(), "timeframe": selection.timeframe,
+            "contract_month": selection.contract_month, "mode": selection.mode.upper(), "source": selection.source,
+        }})
+        for segment_start, segment_end, contract in self._contracts_by_segment(selection):
+            add({"segment_start": segment_start.isoformat(), "segment_end": segment_end.isoformat(),
+                 "contract": {"exchange": contract.exchange, "symbol": contract.symbol, "token": contract.token,
+                              "expiry": contract.expiry.isoformat(), "instrument_type": contract.instrument_type,
+                              "underlying": contract.underlying, "lot_size": contract.lot_size,
+                              "snapshot_date": contract.snapshot_date.isoformat() if contract.snapshot_date else None,
+                              "tick_size": contract.tick_size}})
+            start_ns, _ = _market_bounds(segment_start); _, end_ns = _market_bounds(segment_end)
+            cash_instrument = self._resolve_spot_instrument(selection.underlying.upper(), start_ns, end_ns,
+                                                            selection.spot_instrument, selection.source, selection.timeframe)
+            future_instrument = f"{contract.exchange}:{contract.token}:{contract.symbol}"
+            for label, instrument in (("cash", cash_instrument), ("future", future_instrument)):
+                add({"leg": label, "instrument": instrument})
+                for record in self.catalog.iter_records(source=selection.source, instrument=instrument,
+                                                        timeframe=selection.timeframe, start_ns=start_ns, end_ns=end_ns):
+                    add({"source": record.source, "instrument": record.instrument, "timeframe": record.timeframe,
+                         "timestamp_ns": record.timestamp_ns, "sequence": record.sequence,
+                         "payload_hash": self.catalog._hash(self.catalog._payload_json(record.payload))})
+        return digest.hexdigest()
+
     def load_points(self,selection:CashFutureHistorySelection)->tuple[CashFutureHistoryPoint,...]: return tuple(self.iter_points(selection))
 
 __all__=["CashFutureHistorySelection","CashFutureHistoricalLoader"]
