@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -214,4 +214,55 @@ def test_persisted_durable_backtest_matches_direct_with_overlapping_symbol_trade
     assert durable["max_drawdown"] == direct["max_drawdown"]
     assert durable["trades"] == direct["trades"]
     assert durable["equity_curve"] == direct["equity_curve"]
+    ledger.close()
+
+
+def test_persisted_durable_aggregation_preserves_entry_time_drawdown_order(db_session):
+    base = datetime(2026, 9, 2, 10, 0)
+
+    def p(offset_hours, symbol, gap, expiry=None):
+        return CashFutureHistoryPoint(
+            timestamp=base + timedelta(hours=offset_hours),
+            symbol=symbol,
+            contract_month="2026-09",
+            cash_price=100.0,
+            future_price=100.0 + gap,
+            gap=gap,
+            gap_pct=gap,
+            lot_size=10,
+            margin_required=1000.0,
+            expiry_date=expiry or datetime(2026, 9, 30).date(),
+        )
+
+    points = [
+        p(0, "ABC", 15.0),
+        p(3, "ABC", 10.0),
+        p(1, "XYZ", 10.0),
+        p(2, "XYZ", 11.0),
+        p(2, "PQR", 10.0),
+        p(4, "PQR", 11.0),
+    ]
+    save_history_points(db_session, points)
+    config = BacktestConfig(min_entry_gap=8.0, exit_gap=5.0)
+    coverage = build_persisted_cash_future_coverage(db_session)
+    quality = audit_persisted_cash_future_data_quality(db_session, page_size=1)
+
+    ledger = BacktestLedger()
+    ledger.start_run("cf-order", "cash-future", "1", 100_000)
+    writer = CashFutureBacktestResultLedger(ledger, "cf-order")
+
+    durable = run_persisted_cash_future_backtest(
+        db_session,
+        config,
+        page_size=1,
+        coverage_report=coverage,
+        quality_report=quality,
+        result_ledger=writer,
+    )
+    direct = run_multi_contract_backtest(points, config)
+
+    assert durable["trades"] == direct["trades"]
+    assert durable["equity_curve"] == direct["equity_curve"]
+    assert durable["max_drawdown"] == direct["max_drawdown"] == 20.0
+    assert durable["net_profit"] == direct["net_profit"] == 30.0
     ledger.close()
