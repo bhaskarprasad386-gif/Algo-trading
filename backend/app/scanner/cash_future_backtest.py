@@ -177,9 +177,6 @@ class CashFutureBacktestProcessor:
 
     def process(self, point: CashFutureHistoryPoint) -> dict | None:
         """Consume one point and return a completed trade, if any."""
-        if self.cancel_check is not None and self.cancel_check():
-            return None
-
         if (
             self.config.contract_month is not None
             and point.contract_month != self.config.contract_month
@@ -279,14 +276,9 @@ def run_backtest(
 ) -> dict:
     processor = CashFutureBacktestProcessor(config, cancel_check)
     for point in points:
-        if (
-            cancel_check is not None
-            and cancel_check()
-        ):
-            return processor.cancelled_result()
-        processor.process(point)
         if cancel_check is not None and cancel_check():
             return processor.cancelled_result()
+        processor.process(point)
     return processor.finalize()
 
 
