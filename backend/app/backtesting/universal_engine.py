@@ -19,7 +19,7 @@ from app.backtesting.execution import ExecutionConfig, ExecutionSide, ExecutionS
 from app.backtesting.portfolio import Portfolio, PortfolioSnapshot, RiskConfig
 from app.backtesting.historical_catalog import HistoricalRecord
 from app.backtesting.result_ledger import BacktestFill, EquityPoint as LedgerEquityPoint
-from app.backtesting.strategy import strategy_state
+from app.backtesting.strategy import restore_strategy_state, strategy_state
 from app.backtesting.statistics import BacktestStatistics, EquityPoint, StreamingStatisticsAccumulator
 
 
@@ -130,6 +130,43 @@ class UniversalEventBacktestEngine:
             "peak_equity": peak_equity,
             "clock_now_ns": self.clock.now_ns,
         }
+
+
+    @staticmethod
+    def _restore_checkpoint_state(
+        engine,
+        checkpoint,
+        strategy,
+        accumulator: StreamingStatisticsAccumulator,
+        last_marks: dict[str, float],
+    ) -> tuple[int, int, object, float]:
+        state = checkpoint.state
+        portfolio_state = state.get("portfolio_state")
+        if not isinstance(portfolio_state, dict):
+            raise ValueError("checkpoint missing portfolio_state")
+        engine.portfolio.restore_state(portfolio_state)
+        saved_strategy = state.get("strategy_state", {})
+        if not isinstance(saved_strategy, dict):
+            raise ValueError("checkpoint strategy_state must be a dictionary")
+        restore_strategy_state(strategy, saved_strategy)
+        saved_stats = state.get("statistics_state")
+        if not isinstance(saved_stats, dict):
+            raise ValueError("checkpoint missing statistics_state")
+        accumulator.restore_state(saved_stats)
+        saved_marks = state.get("last_marks", {})
+        if not isinstance(saved_marks, dict):
+            raise ValueError("checkpoint last_marks must be a dictionary")
+        last_marks.clear()
+        last_marks.update({str(k): float(v) for k, v in saved_marks.items()})
+        replay_sequence = state.get("replay_sequence")
+        fill_sequence = state.get("fill_sequence")
+        peak_equity = state.get("peak_equity")
+        if any(isinstance(v, bool) or not isinstance(v, int) for v in (replay_sequence, fill_sequence)):
+            raise ValueError("checkpoint sequence state is invalid")
+        if isinstance(peak_equity, bool) or not isinstance(peak_equity, (int, float)):
+            raise ValueError("checkpoint peak_equity is invalid")
+        engine._fill_sequence = fill_sequence
+        return int(state["source_cursor"]), int(replay_sequence), state["source_event_identity"], float(peak_equity)
 
     def _record_replay_point(
         self,
