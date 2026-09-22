@@ -137,3 +137,81 @@ def test_persisted_backtest_can_write_results_to_durable_ledger(db_session):
     assert len(records) == 1
     assert records[0].payload["net_profit"] == 60.0
     ledger.close()
+
+
+def test_persisted_durable_backtest_matches_direct_with_overlapping_symbol_trades(db_session):
+    base = datetime(2026, 9, 2, 10, 0)
+    points = [
+        CashFutureHistoryPoint(
+            timestamp=base,
+            symbol="ABC",
+            contract_month="2026-09",
+            cash_price=100.0,
+            future_price=110.0,
+            gap=10.0,
+            gap_pct=10.0,
+            lot_size=10,
+            margin_required=1000.0,
+        ),
+        CashFutureHistoryPoint(
+            timestamp=base + __import__("datetime").timedelta(hours=1),
+            symbol="ABC",
+            contract_month="2026-09",
+            cash_price=100.0,
+            future_price=104.0,
+            gap=4.0,
+            gap_pct=4.0,
+            lot_size=10,
+            margin_required=1000.0,
+        ),
+        CashFutureHistoryPoint(
+            timestamp=base + __import__("datetime").timedelta(minutes=30),
+            symbol="XYZ",
+            contract_month="2026-09",
+            cash_price=100.0,
+            future_price=109.0,
+            gap=9.0,
+            gap_pct=9.0,
+            lot_size=10,
+            margin_required=1000.0,
+        ),
+        CashFutureHistoryPoint(
+            timestamp=base + __import__("datetime").timedelta(hours=2),
+            symbol="XYZ",
+            contract_month="2026-09",
+            cash_price=100.0,
+            future_price=103.0,
+            gap=3.0,
+            gap_pct=3.0,
+            lot_size=10,
+            margin_required=1000.0,
+        ),
+    ]
+    save_history_points(db_session, points)
+    config = BacktestConfig(min_entry_gap=8.0, exit_gap=5.0)
+    coverage = build_persisted_cash_future_coverage(db_session)
+    quality = audit_persisted_cash_future_data_quality(db_session, page_size=1)
+
+    ledger = BacktestLedger()
+    ledger.start_run("cf-equivalence", "cash-future", "1", 100_000)
+    writer = CashFutureBacktestResultLedger(ledger, "cf-equivalence")
+
+    durable = run_persisted_cash_future_backtest(
+        db_session,
+        config,
+        page_size=1,
+        coverage_report=coverage,
+        quality_report=quality,
+        result_ledger=writer,
+    )
+    direct = run_multi_contract_backtest(points, config)
+
+    assert durable["trade_count"] == direct["trade_count"] == 2
+    assert durable["wins"] == direct["wins"] == 2
+    assert durable["losses"] == direct["losses"] == 0
+    assert durable["net_profit"] == direct["net_profit"] == 160.0
+    assert durable["invested_capital"] == direct["invested_capital"]
+    assert durable["max_drawdown"] == direct["max_drawdown"]
+    assert durable["trades"] == direct["trades"]
+    assert durable["equity_curve"] == direct["equity_curve"]
+    ledger.close()
