@@ -63,7 +63,7 @@ class CheckpointStore:
         except (TypeError, ValueError) as exc:
             raise ValueError("checkpoint state must be JSON serializable") from exc
 
-    def save(self, checkpoint: ReplayCheckpoint) -> None:
+    def save(self, checkpoint: ReplayCheckpoint, *, commit: bool = True) -> None:
         self._validate(checkpoint)
         self.connection.execute(
             """INSERT INTO backtest_checkpoints
@@ -82,7 +82,8 @@ class CheckpointStore:
              json.dumps(checkpoint.state, sort_keys=True, separators=(",", ":")),
              checkpoint.instrument, checkpoint.event_type),
         )
-        self.connection.commit()
+        if commit:
+            self.connection.commit()
 
     def load(self, run_id: str) -> ReplayCheckpoint | None:
         if not isinstance(run_id, str) or not run_id.strip():
