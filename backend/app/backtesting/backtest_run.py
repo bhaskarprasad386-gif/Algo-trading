@@ -57,5 +57,6 @@ class BacktestRunSpec:
             "end_ns": self.end_ns,
             "resolution": self.resolution.resolution,
             "source": self.resolution.source,
+            "parameters": dict(self.parameters),
             "data_watermarks": dict(self.data_watermarks),
         }
