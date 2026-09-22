@@ -505,8 +505,19 @@ class UniversalEventBacktestEngine:
         accumulator = StreamingStatisticsAccumulator(self.portfolio.initial_cash)
         peak_equity = self.portfolio.initial_cash
         replay_sequence = 0
+        resume_cursor, replay_sequence, saved_identity, peak_equity = self._load_checkpoint_for_resume(
+            strategy=strategy, accumulator=accumulator, last_marks=last_marks
+        )
+        processed_events = 0
 
         for record in events:
+            if self.resume and processed_events < resume_cursor:
+                processed_events += 1
+                previous_identity = event_identity(record)
+                previous_key = event_order_key(record)
+                if processed_events == resume_cursor:
+                    self._verify_checkpoint_identity(record, saved_identity)
+                continue
             if not isinstance(record.timestamp_ns, int) or isinstance(record.timestamp_ns, bool) or record.timestamp_ns < 0:
                 raise ValueError("event timestamp_ns must be a non-negative integer")
             if not isinstance(record.instrument, str) or not record.instrument.strip():
@@ -609,10 +620,23 @@ class UniversalEventBacktestEngine:
             snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
             peak_equity, point = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
             replay_sequence += 1
+            processed_events += 1
+            self._save_checkpoint_if_due(
+                processed_events=processed_events,
+                replay_sequence=replay_sequence,
+                previous_identity=previous_identity,
+                last_marks=last_marks,
+                accumulator=accumulator,
+                peak_equity=peak_equity,
+                strategy=strategy,
+                record=record,
+            )
             if self.retain_history:
                 snapshots.append(snapshot)
                 equity_curve.append(point)
 
+        if self.resume and resume_cursor > processed_events:
+            raise ValueError("checkpoint source_cursor exceeds available source events")
         final_snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
         stats: BacktestStatistics = accumulator.finalize()
         return UniversalBacktestResult(
