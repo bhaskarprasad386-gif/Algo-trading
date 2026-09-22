@@ -299,3 +299,30 @@ def test_composed_transaction_commits_ledger_and_checkpoint_together() -> None:
     checkpoint = checkpoints.load("run-atomic-commit")
     assert checkpoint is not None
     assert checkpoint.sequence == 1
+
+
+def test_run_writer_composes_checkpoint_with_result_transaction(tmp_path) -> None:
+    from app.backtesting.backtest_result import BacktestRunWriter
+    from app.backtesting.backtest_run import BacktestRunSpec
+    from app.backtesting.backtest_resolution import BacktestResolution
+    from app.backtesting.checkpoint import ReplayCheckpoint
+
+    ledger = BacktestResultLedger(tmp_path / "writer-atomic.db")
+    spec = BacktestRunSpec(
+        run_id="writer-atomic", strategy_id="universal", strategy_version="v1",
+        instrument="AAA", start_ns=1, end_ns=2,
+        resolution=BacktestResolution("tick", "historical", 1, 2),
+        parameters={}, data_watermarks={"AAA": 2},
+    )
+    writer = BacktestRunWriter(ledger, spec)
+    checkpoint = ReplayCheckpoint(
+        "writer-atomic", 1, 0, 1, 0.0,
+        {"source_cursor": 0, "source_event_identity": {"timestamp_ns": 1}},
+    )
+
+    with writer.transaction():
+        writer.record_event(0, 1, "REPLAY_EVENT", {"instrument": "AAA"})
+        writer.record_checkpoint(checkpoint)
+
+    assert len(ledger.events("writer-atomic")) == 1
+    assert writer.checkpoints.load("writer-atomic") == checkpoint
