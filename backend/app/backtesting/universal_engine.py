@@ -15,6 +15,7 @@ from app.backtesting.engine import EventContext, EventSignal, EventStrategy, _no
 from app.backtesting.contracts import AtomicExecutionAwareProtocol, AtomicExecutionModelProtocol, AtomicTradeReportInput, DataSourceProtocol, DepthExecutionModelProtocol, ExecutionModelProtocol, MultiLegStrategyProtocol, PortfolioProtocol, StrategyProtocol, TradeReporterProtocol
 from app.backtesting.clock import BacktestClock, ClockProtocol
 from app.backtesting.event_model import event_identity, event_order_key
+from app.backtesting.checkpoint import CheckpointStore, ReplayCheckpoint
 from app.backtesting.execution import ExecutionConfig, ExecutionSide, ExecutionSimulator, OrderBook, SimOrder
 from app.backtesting.portfolio import Portfolio, PortfolioSnapshot, RiskConfig
 from app.backtesting.historical_catalog import HistoricalRecord
@@ -64,6 +65,9 @@ class UniversalEventBacktestEngine:
         result_writer=None,
         trade_reporter: TradeReporterProtocol | None = None,
         retain_history: bool = True,
+        checkpoint_store: CheckpointStore | None = None,
+        checkpoint_every_events: int | None = None,
+        resume: bool = False,
     ) -> None:
         if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
             raise ValueError("quantity must be a positive integer")
@@ -75,6 +79,16 @@ class UniversalEventBacktestEngine:
             raise ValueError("retain_history must be a boolean")
         if not retain_history and result_writer is None:
             raise ValueError("retain_history=False requires a result_writer")
+        if checkpoint_every_events is not None and (
+            isinstance(checkpoint_every_events, bool)
+            or not isinstance(checkpoint_every_events, int)
+            or checkpoint_every_events <= 0
+        ):
+            raise ValueError("checkpoint_every_events must be a positive integer or None")
+        if resume and result_writer is None:
+            raise ValueError("resume requires a result_writer")
+        if (checkpoint_store is not None or checkpoint_every_events is not None) and result_writer is None:
+            raise ValueError("checkpointing requires a result_writer")
         self.portfolio = portfolio if portfolio is not None else Portfolio(initial_capital, risk_config)
         self.execution = execution if execution is not None else ExecutionSimulator(execution_config)
         self.quantity = quantity
@@ -84,6 +98,11 @@ class UniversalEventBacktestEngine:
         self.result_writer = result_writer
         self.trade_reporter = trade_reporter
         self.retain_history = retain_history
+        self.checkpoint_store = checkpoint_store if checkpoint_store is not None else (
+            result_writer.checkpoints if result_writer is not None else None
+        )
+        self.checkpoint_every_events = checkpoint_every_events
+        self.resume = resume
         self._run_started = False
         self._fill_sequence = 0
 
@@ -167,6 +186,84 @@ class UniversalEventBacktestEngine:
             raise ValueError("checkpoint peak_equity is invalid")
         engine._fill_sequence = fill_sequence
         return int(state["source_cursor"]), int(replay_sequence), state["source_event_identity"], float(peak_equity)
+
+    def _load_checkpoint_for_resume(
+        self,
+        *,
+        strategy: object,
+        accumulator: StreamingStatisticsAccumulator,
+        last_marks: dict[str, float],
+    ) -> tuple[int, int, object | None, float]:
+        if not self.resume:
+            return 0, 0, None, self.portfolio.initial_cash
+        if self.checkpoint_store is None or self.result_writer is None:
+            raise ValueError("resume requires checkpointing and a result writer")
+        checkpoint = self.checkpoint_store.load(self.result_writer.spec.run_id)
+        if checkpoint is None:
+            raise ValueError("no checkpoint available for resume")
+        cursor, replay_sequence, saved_identity, peak_equity = self._restore_checkpoint_state(
+            self, checkpoint, strategy, accumulator, last_marks
+        )
+        if cursor != checkpoint.processed_events:
+            raise ValueError("checkpoint source_cursor does not match processed_events")
+        clock_now_ns = checkpoint.state.get("clock_now_ns")
+        if isinstance(clock_now_ns, bool) or not isinstance(clock_now_ns, int) or clock_now_ns < 0:
+            raise ValueError("checkpoint clock_now_ns is invalid")
+        self.clock.advance_to(clock_now_ns)
+        return cursor, replay_sequence, saved_identity, peak_equity
+
+    @staticmethod
+    def _verify_checkpoint_identity(record: HistoricalRecord, saved_identity: object) -> None:
+        if not isinstance(saved_identity, dict):
+            raise ValueError("checkpoint missing source_event_identity")
+        actual = event_identity(record)
+        expected = (
+            saved_identity.get("timestamp_ns"),
+            saved_identity.get("source"),
+            saved_identity.get("instrument"),
+            saved_identity.get("timeframe"),
+            saved_identity.get("sequence"),
+        )
+        if (actual.timestamp_ns, actual.source, actual.instrument, actual.timeframe, actual.sequence) != expected:
+            raise ValueError("checkpoint source_event_identity does not match source")
+
+    def _save_checkpoint_if_due(
+        self,
+        *,
+        processed_events: int,
+        replay_sequence: int,
+        previous_identity,
+        last_marks: dict[str, float],
+        accumulator: StreamingStatisticsAccumulator,
+        peak_equity: float,
+        strategy: object,
+        record: HistoricalRecord,
+    ) -> None:
+        if self.checkpoint_store is None or self.checkpoint_every_events is None:
+            return
+        if processed_events % self.checkpoint_every_events != 0:
+            return
+        snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
+        self.checkpoint_store.save(
+            ReplayCheckpoint(
+                run_id=self.result_writer.spec.run_id,
+                timestamp_ns=record.timestamp_ns,
+                sequence=replay_sequence,
+                processed_events=processed_events,
+                realized_pnl=snapshot.realized_pnl,
+                state=self._build_checkpoint_state(
+                    processed_events=processed_events,
+                    replay_sequence=replay_sequence + 1,
+                    previous_identity=previous_identity,
+                    last_marks=last_marks,
+                    accumulator=accumulator,
+                    peak_equity=peak_equity,
+                    strategy=strategy,
+                ),
+                instrument=record.instrument,
+                event_type="REPLAY_EVENT",
+            )
+        )
 
     def _record_replay_point(
         self,
@@ -273,8 +370,19 @@ class UniversalEventBacktestEngine:
         accumulator = StreamingStatisticsAccumulator(self.portfolio.initial_cash)
         peak_equity = self.portfolio.initial_cash
         replay_sequence = 0
+        resume_cursor, replay_sequence, saved_identity, peak_equity = self._load_checkpoint_for_resume(
+            strategy=strategy, accumulator=accumulator, last_marks=last_marks
+        )
+        processed_events = 0
 
         for record in events:
+            if self.resume and processed_events < resume_cursor:
+                processed_events += 1
+                previous_identity = event_identity(record)
+                previous_key = event_order_key(record)
+                if processed_events == resume_cursor:
+                    self._verify_checkpoint_identity(record, saved_identity)
+                continue
             if not isinstance(record.timestamp_ns, int) or isinstance(record.timestamp_ns, bool) or record.timestamp_ns < 0:
                 raise ValueError("event timestamp_ns must be a non-negative integer")
             if not isinstance(record.instrument, str) or not record.instrument.strip():
@@ -348,6 +456,17 @@ class UniversalEventBacktestEngine:
 
             peak_equity, point = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
             replay_sequence += 1
+            processed_events += 1
+            self._save_checkpoint_if_due(
+                processed_events=processed_events,
+                replay_sequence=replay_sequence,
+                previous_identity=previous_identity,
+                last_marks=last_marks,
+                accumulator=accumulator,
+                peak_equity=peak_equity,
+                strategy=strategy,
+                record=record,
+            )
             if self.retain_history:
                 snapshots.append(snapshot)
                 equity_curve.append(point)
