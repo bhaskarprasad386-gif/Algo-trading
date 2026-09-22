@@ -336,6 +336,35 @@ class BacktestLedger:
             for row in rows:
                 yield self._row_to_record(row)
 
+    def iter_records_chronological(
+        self,
+        run_id: str,
+        record_type: str | None = None,
+        *,
+        fetch_size: int = 256,
+    ) -> Iterator[LedgerRecord]:
+        """Stream durable records in timestamp order with id as a stable tie-breaker."""
+        if fetch_size <= 0:
+            raise ValueError("fetch_size must be positive")
+        self._require_run(run_id)
+        params: list[Any] = [run_id]
+        where = "run_id=?"
+        if record_type is not None:
+            where += " AND record_type=?"
+            params.append(record_type)
+        cursor = self._db.execute(
+            f"""SELECT run_id,record_type,timestamp_ns,payload_json
+                FROM records WHERE {where}
+                ORDER BY timestamp_ns, id""",
+            tuple(params),
+        )
+        while True:
+            rows = cursor.fetchmany(fetch_size)
+            if not rows:
+                break
+            for row in rows:
+                yield self._row_to_record(row)
+
     def record_page(self, run_id: str, record_type: str | None = None, *,
                     limit: int = 100, after_id: int | None = None) -> LedgerPage:
         """Return one bounded page using the durable records.id keyset cursor."""
