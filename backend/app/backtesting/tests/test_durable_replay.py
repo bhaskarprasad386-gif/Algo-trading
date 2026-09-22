@@ -1,8 +1,11 @@
+import pytest
+
 from app.backtesting.durable_replay import DurableEventBacktestEngine
 from app.backtesting.event_engine import EventBacktestEngine
 from app.backtesting.events import EventReplayConfig, EventType, MarketEvent
-from app.backtesting.ledger import BacktestLedger
+from app.backtesting.ledger import BacktestLedger, Checkpoint
 from app.backtesting.execution import ExecutionSimulator, ExecutionSide, SimOrder
+from app.backtesting.order_lifecycle import OrderLifecycle
 from app.backtesting.portfolio import Portfolio
 from app.backtesting.strategy import StrategyDecision, restore_strategy_state
 
@@ -22,7 +25,6 @@ def test_durable_replay_journals_events_decisions_and_checkpoint():
     assert checkpoint.state["fills"] == 1 and checkpoint.state["strategy_state"] == {}
     assert checkpoint.state["source_cursor"] == 1 and checkpoint.state["portfolio_state"]["cash"] < 100_000
     ledger.close()
-
 
 
 def test_resume_rejects_completed_run_without_duplicate_run_end():
@@ -128,10 +130,8 @@ def test_resume_rejects_schema_version_mismatch(tmp_path):
     durable = DurableEventBacktestEngine(EventBacktestEngine(), ledger, "schema-run")
     try:
         durable.run([], lambda event, state: None, resume=True, schema_version=3, data_source_fingerprint="source-a")
-    except ValueError as exc:
-        assert "schema_version mismatch" in str(exc)
-    else:
-        raise AssertionError("schema mismatch must block resume")
+    except ValueError as exc: assert "schema_version mismatch" in str(exc)
+    else: raise AssertionError("schema mismatch must block resume")
     ledger.close()
 
 
@@ -141,10 +141,8 @@ def test_resume_rejects_data_source_fingerprint_mismatch(tmp_path):
     durable = DurableEventBacktestEngine(EventBacktestEngine(), ledger, "fingerprint-run")
     try:
         durable.run([], lambda event, state: None, resume=True, schema_version=2, data_source_fingerprint="source-b")
-    except ValueError as exc:
-        assert "data_source_fingerprint mismatch" in str(exc)
-    else:
-        raise AssertionError("data source mismatch must block resume")
+    except ValueError as exc: assert "data_source_fingerprint mismatch" in str(exc)
+    else: raise AssertionError("data source mismatch must block resume")
     ledger.close()
 
 
