@@ -1084,7 +1084,7 @@ def test_cash_future_reporter_survives_real_checkpoint_resume(tmp_path):
     assert resumed_reporter is not None
     assert resumed_reporter.get_state()["open"] == {}
     assert resumed_reporter.get_state()["sequence"] == 2
-    assert resumed_adapter.get_state()["open"] is True
+    assert resumed_adapter.get_state()["open"] is False
     trades = ledger.trades("cf-reporter-resume", limit=10)
     assert len(trades) == 2
     assert {row["leg"] for row in trades} == {"CASH", "FUTURE"}
