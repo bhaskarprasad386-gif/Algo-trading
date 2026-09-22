@@ -483,6 +483,8 @@ class UniversalEventBacktestEngine:
                     snapshots.append(snapshot)
                     equity_curve.append(point)
 
+        if self.resume and resume_cursor > processed_events:
+            raise ValueError("checkpoint source_cursor exceeds available source events")
         final_snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
         stats: BacktestStatistics = accumulator.finalize()
         return UniversalBacktestResult(
