@@ -2,7 +2,12 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from app.scanner.cash_future_backtest import BacktestConfig, run_backtest, run_multi_contract_backtest
+from app.scanner.cash_future_backtest import (
+    BacktestConfig,
+    CashFutureBacktestProcessor,
+    run_backtest,
+    run_multi_contract_backtest,
+)
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
 
@@ -164,3 +169,32 @@ def test_cancel_check_stops_mid_stream():
     assert result["losses"] == 0
     assert result["win_rate_pct"] == 0.0
 
+
+
+def test_incremental_processor_matches_run_backtest_result():
+    now = datetime(2026, 9, 2, 10, 0)
+    points = [point(now, 10.0), point(now + timedelta(hours=1), 4.0)]
+    config = BacktestConfig(min_entry_gap=8.0, exit_gap=5.0)
+
+    processor = CashFutureBacktestProcessor(config)
+    emitted = [processor.process(item) for item in points]
+    result = processor.finalize()
+    expected = run_backtest(points, config)
+
+    assert [trade for trade in emitted if trade is not None] == expected["trades"]
+    assert result == expected
+
+
+def test_incremental_processor_preserves_open_position_without_exit():
+    now = datetime(2026, 9, 2, 10, 0)
+    processor = CashFutureBacktestProcessor(
+        BacktestConfig(min_entry_gap=8.0, exit_gap=5.0)
+    )
+
+    assert processor.process(point(now, 10.0)) is None
+    assert processor.process(point(now + timedelta(hours=1), 8.0)) is None
+
+    result = processor.finalize()
+    assert result["trade_count"] == 0
+    assert result["open_position"]["entry_gap"] == 10.0
+    assert result["equity_curve"][-1]["equity"] == 0.0
