@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
+from app.backtesting.checkpoint import CheckpointStore, ReplayCheckpoint
 from app.backtesting.result_ledger import (
     BacktestEvent,
     BacktestFill,
@@ -260,3 +263,41 @@ def test_fill_sequence_must_be_unique_per_run():
     assert ledger.append_fills("run-sequence", [first]) == 1
     with pytest.raises(ValueError, match="conflicting duplicate"):
         ledger.append_fills("run-sequence", [second])
+
+
+def test_composed_transaction_rolls_back_ledger_and_checkpoint_together() -> None:
+    ledger = BacktestResultLedger()
+    ledger.create_run("run-atomic", {"strategy_id": "atomic"})
+    checkpoints = CheckpointStore(ledger.connection)
+    point = EquityPoint(5_000, 100_010.0, 10.0, 0.0, 0.0)
+
+    with pytest.raises(RuntimeError, match="abort"):
+        with ledger.transaction():
+            ledger.append_equity("run-atomic", [point])
+            checkpoints.save(
+                ReplayCheckpoint("run-atomic", 5_000, 1, 1, 10.0, {"portfolio": {"cash": 100010}}),
+                commit=False,
+            )
+            raise RuntimeError("abort")
+
+    assert ledger.equity("run-atomic") == []
+    assert checkpoints.load("run-atomic") is None
+
+
+def test_composed_transaction_commits_ledger_and_checkpoint_together() -> None:
+    ledger = BacktestResultLedger()
+    ledger.create_run("run-atomic-commit", {"strategy_id": "atomic"})
+    checkpoints = CheckpointStore(ledger.connection)
+    point = EquityPoint(6_000, 100_020.0, 20.0, 0.0, 0.0)
+
+    with ledger.transaction():
+        ledger.append_equity("run-atomic-commit", [point])
+        checkpoints.save(
+            ReplayCheckpoint("run-atomic-commit", 6_000, 1, 1, 20.0, {"portfolio": {"cash": 100020}}),
+            commit=False,
+        )
+
+    assert len(ledger.equity("run-atomic-commit")) == 1
+    checkpoint = checkpoints.load("run-atomic-commit")
+    assert checkpoint is not None
+    assert checkpoint.sequence == 1
