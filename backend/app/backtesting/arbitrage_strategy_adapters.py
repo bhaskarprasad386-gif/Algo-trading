@@ -172,6 +172,45 @@ class CashFutureUniversalMultiLegAdapter:
         self._pending_cash_instrument: str | None = None
         self._pending_future_instrument: str | None = None
 
+    def get_state(self) -> dict[str, Any]:
+        return {
+            "open": self._open,
+            "pending_open": self._pending_open,
+            "open_cash_instrument": self._open_cash_instrument,
+            "open_future_instrument": self._open_future_instrument,
+            "pending_cash_instrument": self._pending_cash_instrument,
+            "pending_future_instrument": self._pending_future_instrument,
+        }
+
+    def set_state(self, state: Mapping[str, Any]) -> None:
+        if not isinstance(state, Mapping):
+            raise ValueError("cash-future strategy state must be a mapping")
+        open_value = state.get("open", False)
+        pending_open = state.get("pending_open")
+        if not isinstance(open_value, bool):
+            raise ValueError("cash-future strategy state open must be boolean")
+        if pending_open is not None and not isinstance(pending_open, bool):
+            raise ValueError("cash-future strategy state pending_open must be boolean or None")
+        values = {
+            "open_cash_instrument": state.get("open_cash_instrument"),
+            "open_future_instrument": state.get("open_future_instrument"),
+            "pending_cash_instrument": state.get("pending_cash_instrument"),
+            "pending_future_instrument": state.get("pending_future_instrument"),
+        }
+        for name, value in values.items():
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"cash-future strategy state {name} must be a non-empty string or None")
+        if open_value and (values["open_cash_instrument"] is None or values["open_future_instrument"] is None):
+            raise ValueError("open cash-future strategy state requires both contract identities")
+        if pending_open is True and (values["pending_cash_instrument"] is None or values["pending_future_instrument"] is None):
+            raise ValueError("pending open cash-future state requires both contract identities")
+        self._open = open_value
+        self._pending_open = pending_open
+        self._open_cash_instrument = values["open_cash_instrument"]
+        self._open_future_instrument = values["open_future_instrument"]
+        self._pending_cash_instrument = values["pending_cash_instrument"]
+        self._pending_future_instrument = values["pending_future_instrument"]
+
     def on_atomic_execution(self, result) -> None:
         if self._pending_open is None:
             return
