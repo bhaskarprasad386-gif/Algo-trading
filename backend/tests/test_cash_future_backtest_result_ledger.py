@@ -44,3 +44,39 @@ def test_cash_future_backtest_trade_batch_is_atomic():
     assert writer.append_many((_trade(), _trade())) == 2
     assert len(ledger.records("cf-2", RECORD_TYPE)) == 2
     ledger.close()
+
+
+def test_cash_future_backtest_trade_batch_failure_is_atomic():
+    ledger = BacktestLedger()
+    ledger.start_run("cf-3", "cash-future", "1", 100_000)
+    writer = CashFutureBacktestResultLedger(ledger, "cf-3")
+
+    valid = _trade()
+    invalid = dict(valid)
+    invalid.pop("net_profit")
+
+    try:
+        writer.append_many((valid, invalid))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid batch should fail")
+
+    assert ledger.record_count("cf-3", RECORD_TYPE) == 0
+    ledger.close()
+
+
+def test_cash_future_backtest_trade_batch_can_be_read_chronologically():
+    ledger = BacktestLedger()
+    ledger.start_run("cf-4", "cash-future", "1", 100_000)
+    writer = CashFutureBacktestResultLedger(ledger, "cf-4")
+
+    first = _trade()
+    second = dict(_trade(), exit_time="2026-09-10T10:17:00+05:30")
+    writer.append_many((second, first))
+
+    records = list(ledger.iter_records_chronological("cf-4", RECORD_TYPE))
+    assert [record.payload["exit_time"] for record in records] == [
+        first["exit_time"], second["exit_time"]
+    ]
+    ledger.close()
