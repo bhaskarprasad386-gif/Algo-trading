@@ -6,10 +6,10 @@ from app.scanner.cash_future_backtest import BacktestConfig, run_backtest, run_m
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 
 
-def point(ts, gap, expiry=date(2026, 9, 30), month="CURRENT", **quotes):
+def point(ts, gap, expiry=date(2026, 9, 30), month="CURRENT", symbol="ABC", **quotes):
     return CashFutureHistoryPoint(
         timestamp=ts,
-        symbol="ABC",
+        symbol=symbol,
         contract_month=month,
         cash_price=100.0,
         future_price=100.0 + gap,
@@ -127,6 +127,23 @@ def test_multi_contract_backtest_rolls_through_expiries_without_price_mixing():
     assert len(result["per_contract"]) == 2
     assert [point["equity"] for point in result["equity_curve"]] == [0.0, 600.0, 1200.0]
     assert result["max_drawdown"] == 0.0
+
+
+def test_multi_contract_backtest_counts_same_month_for_distinct_symbols_separately():
+    now = datetime(2026, 9, 2, 10, 0)
+    points = [
+        point(now, 10.0, month="SEP", symbol="ABC"),
+        point(now + timedelta(hours=1), 4.0, month="SEP", symbol="ABC"),
+        point(now + timedelta(hours=2), 9.0, month="SEP", symbol="XYZ"),
+        point(now + timedelta(hours=3), 3.0, month="SEP", symbol="XYZ"),
+    ]
+    result = run_multi_contract_backtest(
+        points,
+        BacktestConfig(min_entry_gap=8.0, exit_gap=5.0),
+    )
+    assert result["contract_count"] == 2
+    assert result["trade_count"] == 2
+
 
 def test_cancel_check_stops_mid_stream():
     now = datetime(2026, 9, 2, 10, 0)
