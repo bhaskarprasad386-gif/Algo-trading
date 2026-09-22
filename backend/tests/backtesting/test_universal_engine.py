@@ -936,6 +936,7 @@ def test_universal_single_leg_checkpoint_resume_restores_state(tmp_path):
     ledger, writer = _real_writer(tmp_path, "checkpoint-resume")
     partial = UniversalEventBacktestEngine(100_000.0, result_writer=writer, checkpoint_every_events=2, retain_history=False)
     partial.run(events[:2], StatefulBuy())
+    ledger.set_status("checkpoint-resume", "FAILED")
 
     resumed_writer = BacktestRunWriter(ledger, writer.spec, resume=True)
     resumed = UniversalEventBacktestEngine(100_000.0, result_writer=resumed_writer, resume=True, retain_history=False)
