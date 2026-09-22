@@ -463,7 +463,7 @@ class UniversalEventBacktestEngine:
                 and processed_events % self.checkpoint_every_events == 0
             ):
                 with self.result_writer.transaction():
-            self._save_checkpoint_if_due(
+                    self._save_checkpoint_if_due(
                     processed_events=processed_events,
                     replay_sequence=replay_sequence,
                     previous_identity=previous_identity,
@@ -473,7 +473,7 @@ class UniversalEventBacktestEngine:
                     strategy=strategy,
                     record=record,
                 )
-                if self.retain_history:
+            if self.retain_history:
                 snapshots.append(snapshot)
                 equity_curve.append(point)
 
