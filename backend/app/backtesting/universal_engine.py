@@ -377,106 +377,111 @@ class UniversalEventBacktestEngine:
         processed_events = 0
 
         for record in events:
-            if self.resume and processed_events < resume_cursor:
-                processed_events += 1
-                previous_identity = event_identity(record)
-                previous_key = event_order_key(record)
-                if processed_events == resume_cursor:
-                    self._verify_checkpoint_identity(record, saved_identity)
-                continue
-            if not isinstance(record.timestamp_ns, int) or isinstance(record.timestamp_ns, bool) or record.timestamp_ns < 0:
-                raise ValueError("event timestamp_ns must be a non-negative integer")
-            if not isinstance(record.instrument, str) or not record.instrument.strip():
-                raise ValueError("event instrument is required")
-            if not isinstance(record.source, str) or not record.source.strip():
-                raise ValueError("event source is required")
-            if record.sequence is not None and (not isinstance(record.sequence, int) or isinstance(record.sequence, bool) or record.sequence < 0):
-                raise ValueError("event sequence must be a non-negative integer or None")
-            key = event_order_key(record)
-            identity = event_identity(record)
-            if previous_identity is not None and identity == previous_identity:
-                raise ValueError("duplicate event identity")
-            if previous_key is not None and key <= previous_key:
-                raise ValueError("events must be strictly ordered by deterministic event order")
-            previous_identity = identity
-            previous_key = key
-            self.clock.advance_to(record.timestamp_ns)
-
-            legs = strategy(EventContext(record.timestamp_ns, record.sequence, record.source, record.instrument, record.payload, record))
-            if legs is None:
-                legs = ()
-            legs = tuple(legs)
-            if not legs:
-                snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
-            else:
-                for order, book, timestamp_ns in legs:
-                    if timestamp_ns != record.timestamp_ns:
-                        raise ValueError("multi-leg order timestamps must match the dispatch event")
-                    levels = book.asks if order.side == ExecutionSide.BUY else book.bids
-                    if not levels:
-                        raise ValueError(f"missing executable depth for {order.instrument!r}")
-                    last_marks[order.instrument] = float(levels[0].price)
-                result = self.execution.execute_many_atomic(legs)
-                if result.rejected:
-                    if isinstance(strategy, AtomicExecutionAwareProtocol):
-                        strategy.on_atomic_execution(result)
-                    raise ValueError(result.reason or "atomic multi-leg execution rejected")
-                trade_start = len(self.portfolio.trades)
-                snapshot = self.portfolio.apply_fills_atomic(result.fills, last_marks)
-                accounting_trades = tuple(self.portfolio.trades[trade_start:])
-                if self.result_writer is not None:
-                    durable_fills = []
-                    fill_offset = 0
-                    for leg_result in result.leg_results:
-                        if len(leg_result.reference_prices) != len(leg_result.fills):
-                            raise ValueError("execution result reference_prices must align with fills")
-                        for fill, reference_price in zip(leg_result.fills, leg_result.reference_prices):
-                            durable_fills.append(BacktestFill(
-                                fill_id=f"{replay_sequence}:{self._fill_sequence}:{fill.order_id}",
-                                order_id=fill.order_id,
-                                sequence=self._fill_sequence,
-                                timestamp_ns=fill.filled_at_ns,
-                                instrument=fill.instrument,
-                                side=fill.side.value,
-                                quantity=fill.quantity,
-                                price=fill.price,
-                                fee=fill.fee,
-                                metadata={"reference_price": reference_price},
-                            ))
-                            self._fill_sequence += 1
-                            fill_offset += 1
-                    if fill_offset != len(result.fills):
-                        raise ValueError("execution result leg fills do not match atomic fills")
-                    self.result_writer.record_fills(tuple(durable_fills))
-                if isinstance(strategy, AtomicExecutionAwareProtocol):
-                    strategy.on_atomic_execution(result)
-                if self.trade_reporter is not None:
-                    self.trade_reporter.record_atomic_trade(
-                        AtomicTradeReportInput(result, accounting_trades)
-                    )
-
-            peak_equity, point = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
-            replay_sequence += 1
-            processed_events += 1
-            if (
+            checkpoint_due = (
                 self.result_writer is not None
                 and self.checkpoint_every_events is not None
-                and processed_events % self.checkpoint_every_events == 0
+                and (processed_events + 1) % self.checkpoint_every_events == 0
+            )
+            with (
+                self.result_writer.transaction()
+                if checkpoint_due
+                else nullcontext()
             ):
-                with self.result_writer.transaction():
+                if self.resume and processed_events < resume_cursor:
+                    processed_events += 1
+                    previous_identity = event_identity(record)
+                    previous_key = event_order_key(record)
+                    if processed_events == resume_cursor:
+                        self._verify_checkpoint_identity(record, saved_identity)
+                    continue
+                if not isinstance(record.timestamp_ns, int) or isinstance(record.timestamp_ns, bool) or record.timestamp_ns < 0:
+                    raise ValueError("event timestamp_ns must be a non-negative integer")
+                if not isinstance(record.instrument, str) or not record.instrument.strip():
+                    raise ValueError("event instrument is required")
+                if not isinstance(record.source, str) or not record.source.strip():
+                    raise ValueError("event source is required")
+                if record.sequence is not None and (not isinstance(record.sequence, int) or isinstance(record.sequence, bool) or record.sequence < 0):
+                    raise ValueError("event sequence must be a non-negative integer or None")
+                key = event_order_key(record)
+                identity = event_identity(record)
+                if previous_identity is not None and identity == previous_identity:
+                    raise ValueError("duplicate event identity")
+                if previous_key is not None and key <= previous_key:
+                    raise ValueError("events must be strictly ordered by deterministic event order")
+                previous_identity = identity
+                previous_key = key
+                self.clock.advance_to(record.timestamp_ns)
+
+                legs = strategy(EventContext(record.timestamp_ns, record.sequence, record.source, record.instrument, record.payload, record))
+                if legs is None:
+                    legs = ()
+                legs = tuple(legs)
+                if not legs:
+                    snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
+                else:
+                    for order, book, timestamp_ns in legs:
+                        if timestamp_ns != record.timestamp_ns:
+                            raise ValueError("multi-leg order timestamps must match the dispatch event")
+                        levels = book.asks if order.side == ExecutionSide.BUY else book.bids
+                        if not levels:
+                            raise ValueError(f"missing executable depth for {order.instrument!r}")
+                        last_marks[order.instrument] = float(levels[0].price)
+                    result = self.execution.execute_many_atomic(legs)
+                    if result.rejected:
+                        if isinstance(strategy, AtomicExecutionAwareProtocol):
+                            strategy.on_atomic_execution(result)
+                        raise ValueError(result.reason or "atomic multi-leg execution rejected")
+                    trade_start = len(self.portfolio.trades)
+                    snapshot = self.portfolio.apply_fills_atomic(result.fills, last_marks)
+                    accounting_trades = tuple(self.portfolio.trades[trade_start:])
+                    if self.result_writer is not None:
+                        durable_fills = []
+                        fill_offset = 0
+                        for leg_result in result.leg_results:
+                            if len(leg_result.reference_prices) != len(leg_result.fills):
+                                raise ValueError("execution result reference_prices must align with fills")
+                            for fill, reference_price in zip(leg_result.fills, leg_result.reference_prices):
+                                durable_fills.append(BacktestFill(
+                                    fill_id=f"{replay_sequence}:{self._fill_sequence}:{fill.order_id}",
+                                    order_id=fill.order_id,
+                                    sequence=self._fill_sequence,
+                                    timestamp_ns=fill.filled_at_ns,
+                                    instrument=fill.instrument,
+                                    side=fill.side.value,
+                                    quantity=fill.quantity,
+                                    price=fill.price,
+                                    fee=fill.fee,
+                                    metadata={"reference_price": reference_price},
+                                ))
+                                self._fill_sequence += 1
+                                fill_offset += 1
+                        if fill_offset != len(result.fills):
+                            raise ValueError("execution result leg fills do not match atomic fills")
+                        self.result_writer.record_fills(tuple(durable_fills))
+                    if isinstance(strategy, AtomicExecutionAwareProtocol):
+                        strategy.on_atomic_execution(result)
+                    if self.trade_reporter is not None:
+                        self.trade_reporter.record_atomic_trade(
+                            AtomicTradeReportInput(result, accounting_trades)
+                        )
+
+                peak_equity, point = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
+                replay_sequence += 1
+                processed_events += 1
+                if checkpoint_due:
                     self._save_checkpoint_if_due(
-                        processed_events=processed_events,
-                        replay_sequence=replay_sequence,
-                        previous_identity=previous_identity,
-                        last_marks=last_marks,
-                        accumulator=accumulator,
-                        peak_equity=peak_equity,
-                        strategy=strategy,
-                        record=record,
-                    )
-            if self.retain_history:
-                snapshots.append(snapshot)
-                equity_curve.append(point)
+                            processed_events=processed_events,
+                            replay_sequence=replay_sequence,
+                            previous_identity=previous_identity,
+                            last_marks=last_marks,
+                            accumulator=accumulator,
+                            peak_equity=peak_equity,
+                            strategy=strategy,
+                            record=record,
+                        )
+                if self.retain_history:
+                    snapshots.append(snapshot)
+                    equity_curve.append(point)
 
         final_snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
         stats: BacktestStatistics = accumulator.finalize()
