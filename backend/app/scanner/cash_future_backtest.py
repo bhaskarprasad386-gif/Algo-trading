@@ -355,29 +355,32 @@ def _aggregate_contract_results_from_iterable(
     results: list[dict],
     trades_iter: Iterable[dict],
 ) -> dict:
-    """Aggregate compact contract state plus a chronological trade stream."""
-    trades = list(trades_iter)
-    trades.sort(
-        key=lambda trade: (
-            trade["entry_time"],
-            trade.get("symbol", ""),
-            trade.get("contract_month", ""),
-        )
-    )
-    wins = sum(1 for trade in trades if trade["net_profit"] > 0)
-    net_profit = sum(trade["net_profit"] for trade in trades)
+    """Aggregate compact contract state from a chronological trade stream."""
+    wins = 0
+    trade_count = 0
+    net_profit = 0.0
     invested_capital = sum(result["invested_capital"] for result in results)
     equity = 0.0
     running_peak = 0.0
     max_drawdown = 0.0
-    equity_curve = []
-    if trades:
-        equity_curve.append({"timestamp": trades[0]["entry_time"], "equity": 0.0})
-    for trade in trades:
+    equity_curve: list[dict] = []
+    trades: list[dict] = []
+    first_entry_time = None
+
+    for trade in trades_iter:
+        if first_entry_time is None:
+            first_entry_time = trade["entry_time"]
+            equity_curve.append({"timestamp": first_entry_time, "equity": 0.0})
+        trades.append(trade)
+        trade_count += 1
+        if trade["net_profit"] > 0:
+            wins += 1
+        net_profit += trade["net_profit"]
         equity += trade["net_profit"]
         running_peak = max(running_peak, equity)
         max_drawdown = max(max_drawdown, running_peak - equity)
         equity_curve.append({"timestamp": trade["exit_time"], "equity": equity})
+
     open_positions = [
         result["open_position"]
         for result in results
@@ -395,10 +398,10 @@ def _aggregate_contract_results_from_iterable(
     contract_count = len(contract_keys) if contract_keys else len(results)
     return {
         "contract_count": contract_count,
-        "trade_count": len(trades),
+        "trade_count": trade_count,
         "wins": wins,
-        "losses": len(trades) - wins,
-        "win_rate_pct": wins / len(trades) * 100.0 if trades else 0.0,
+        "losses": trade_count - wins,
+        "win_rate_pct": wins / trade_count * 100.0 if trade_count else 0.0,
         "net_profit": net_profit,
         "roi_pct": net_profit / invested_capital * 100.0 if invested_capital else 0.0,
         "invested_capital": invested_capital,
@@ -408,7 +411,6 @@ def _aggregate_contract_results_from_iterable(
         "open_positions": open_positions,
         "per_contract": results,
     }
-
 
 
 def run_multi_contract_backtest(
