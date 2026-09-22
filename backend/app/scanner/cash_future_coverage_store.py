@@ -12,7 +12,7 @@ from app.models.cash_future_history import CashFutureHistory
 from app.scanner.cash_future_backtest import BacktestConfig, run_multi_contract_backtest_streaming
 from app.scanner.cash_future_coverage import CashFutureCoverageReport, build_cash_future_coverage_report
 from app.scanner.cash_future_history import CashFutureHistoryPoint
-from app.backtesting.cash_future_backtest_result_ledger import CashFutureBacktestResultLedger
+from app.backtesting.cash_future_backtest_result_ledger import RECORD_TYPE, CashFutureBacktestResultLedger
 from app.backtesting.cash_future_data_quality import (
     CashFutureDataQualityReport,
     audit_cash_future_points,
@@ -168,9 +168,7 @@ def run_persisted_cash_future_backtest(
             record.payload
             for record in result_ledger.ledger.iter_records_chronological(
                 result_ledger.run_id,
-                result_ledger.RECORD_TYPE
-                if hasattr(result_ledger, "RECORD_TYPE")
-                else "CASH_FUTURE_CONVERGENCE_TRADE",
+                RECORD_TYPE,
                 fetch_size=page_size,
             )
         ),
