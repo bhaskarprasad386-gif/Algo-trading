@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Callable, Iterable, Iterator, Mapping, Any
 import json, math
+from app.backtesting.provenance import provenance_hash
 from app.backtesting.cash_future_strategy_checkpoint import CashFutureStrategyCheckpoint
 from app.backtesting.ledger import LedgerRecord, Checkpoint
 from app.scanner.cash_future_backtest import _executable_spread_profit
@@ -86,13 +87,13 @@ def _persist(ledger,run_id,record_type,point,payload,pending=None):
     else: pending.append(record)
 def _timestamp_ns(value:datetime)->int: return int(value.timestamp()*1_000_000_000)
 
-def run_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy:CashFutureStrategy,*,strategy_id:str,strategy_version:str="1",config:CashFutureStrategyConfig|None=None,ledger=None,run_id:str|None=None,strategy_hash:str|None=None,data_source_fingerprint:str|None=None)->CashFutureStrategyRun:
+def run_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy:CashFutureStrategy,*,strategy_id:str,strategy_version:str="1",config:CashFutureStrategyConfig|None=None,ledger=None,run_id:str|None=None,strategy_hash:str|None=None,strategy_config_hash:str|None=None,data_source_fingerprint:str|None=None)->CashFutureStrategyRun:
     if not isinstance(strategy_id,str) or not strategy_id.strip(): raise ValueError("strategy_id is required")
     if not isinstance(strategy_version,str) or not strategy_version.strip(): raise ValueError("strategy_version is required")
     config=config or CashFutureStrategyConfig(); selected_contract=config.contract_month; selected_symbol=None; event_index=0; previous_timestamp=None
     if ledger is not None:
         if not run_id or not run_id.strip(): raise ValueError("run_id is required when ledger persistence is enabled")
-        ledger.start_run(run_id,strategy_id,strategy_version,config.initial_capital,strategy_hash=strategy_hash,data_source_fingerprint=data_source_fingerprint,metadata={"domain":"cash_future",**_execution_metadata(config)})
+        ledger.start_run(run_id,strategy_id,strategy_version,config.initial_capital,strategy_hash=strategy_hash,data_source_fingerprint=data_source_fingerprint,metadata={"domain":"cash_future","strategy_config_hash":strategy_config_hash,**_execution_metadata(config)})
     history=[] if config.history_window is None else deque(maxlen=config.history_window); signals=[] if ledger is None else None; trades=[] if ledger is None else None; equity_curve=[] if ledger is None else None; entry=None; capital_ledger=CashFutureCapitalLedger(config.initial_capital); last_point=None; pending_records=[] if ledger is not None and config.checkpoint_interval is not None else None
     entry_action=config.cash_side; exit_action=config.future_side
     for point in points:
