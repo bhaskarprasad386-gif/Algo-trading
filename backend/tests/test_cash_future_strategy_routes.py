@@ -149,3 +149,27 @@ def test_strategy_run_result_page_rejects_unknown_run():
             raise AssertionError("unknown run must fail")
     finally:
         ledger.close()
+
+
+def test_strategy_run_persists_provenance_for_direct_points():
+    start = datetime(2026, 9, 2, 10, 0)
+    request = {
+        "strategy_id": "gap_threshold",
+        "strategy_version": "1",
+        "initial_capital": 10_000_000,
+        "points": [payload(gap=10, timestamp=start), payload(gap=4, timestamp=start + timedelta(hours=1))],
+        "stop_loss": 2.0,
+        "target": 5.0,
+    }
+    response = client().post("/api/v1/backtesting/cash-future/strategy-run", json=request)
+    assert response.status_code == 200
+    run_id = response.json()["run_id"]
+    ledger = BacktestLedger()
+    try:
+        metadata = ledger.run_metadata(run_id)
+        assert metadata is not None
+        assert len(metadata["strategy_hash"]) == 64
+        assert len(metadata["data_source_fingerprint"]) == 64
+        assert len(metadata["metadata"]["strategy_config_hash"]) == 64
+    finally:
+        ledger.close()
