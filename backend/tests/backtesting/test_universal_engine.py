@@ -921,6 +921,67 @@ def test_universal_multi_leg_checkpoint_transaction_rolls_back_result_writes(tmp
     assert ledger.checkpoints.load("universal-multi-checkpoint-rollback") is None
     assert [row["event_type"] for row in ledger.events("universal-multi-checkpoint-rollback")] == ["RUN_FAILED"]
 
+
+def test_universal_multi_leg_checkpoint_resume_matches_fresh_run(tmp_path):
+    from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+
+    events = [
+        _event(1, "CASH", 100.0, 0),
+        _event(2, "CASH", 101.0, 1),
+        _event(3, "CASH", 102.0, 2),
+    ]
+
+    books = {
+        "CASH": OrderBook(bids=(DepthLevel(99.0, 10),), asks=(DepthLevel(100.0, 10),)),
+        "FUT": OrderBook(bids=(DepthLevel(104.0, 10),), asks=(DepthLevel(105.0, 10),)),
+    }
+
+    class StatefulBasket:
+        def __init__(self):
+            self.done = False
+
+        def __call__(self, context):
+            if self.done:
+                return ()
+            self.done = True
+            return (
+                (SimOrder("cash-order", "CASH", ExecutionSide.BUY, 1, OrderType.MARKET, context.timestamp_ns), books["CASH"], context.timestamp_ns),
+                (SimOrder("future-order", "FUT", ExecutionSide.SELL, 1, OrderType.MARKET, context.timestamp_ns), books["FUT"], context.timestamp_ns),
+            )
+
+        def get_state(self):
+            return {"done": self.done}
+
+        def set_state(self, state):
+            self.done = bool(state["done"])
+
+    fresh = UniversalEventBacktestEngine(100_000.0, retain_history=False).run_multi_leg(events, StatefulBasket())
+
+    ledger, writer = _real_writer(tmp_path, "multi-checkpoint-resume")
+    partial = UniversalEventBacktestEngine(
+        100_000.0,
+        result_writer=writer,
+        checkpoint_every_events=2,
+        retain_history=False,
+    )
+    partial.run_multi_leg(events[:2], StatefulBasket())
+    ledger.set_status("multi-checkpoint-resume", "FAILED")
+
+    resumed_writer = BacktestRunWriter(ledger, writer.spec, resume=True)
+    resumed = UniversalEventBacktestEngine(
+        100_000.0,
+        result_writer=resumed_writer,
+        resume=True,
+        retain_history=False,
+    )
+    result = resumed.run_multi_leg(events, StatefulBasket())
+
+    assert result.final_equity == fresh.final_equity
+    assert result.realized_pnl == fresh.realized_pnl
+    assert result.unrealized_pnl == fresh.unrealized_pnl
+    assert result.net_pnl == fresh.net_pnl
+    assert result.fill_count == fresh.fill_count
+
 def test_checkpoint_state_builder_captures_resume_state() -> None:
     class StatefulStrategy:
         def get_state(self):
