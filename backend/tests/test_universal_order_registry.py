@@ -93,8 +93,9 @@ def test_fok_rejection_changes_lifecycle_without_fills():
 
     assert outcome.status is OrderStatus.REJECTED
     assert outcome.filled_quantity == 0
-    assert registry.open_orders() == (make_order(tif=TimeInForce.FOK),)
-    assert registry.reservation("o1") == pytest.approx(1000.0)
+    assert registry.open_orders() == ()
+    assert registry.reservation("o1") == 0.0
+    assert registry.lifecycle("o1").state.reject_reason == "insufficient displayed depth"
 
 
 def test_queue_advance_flows_into_effective_execution_order():
