@@ -341,6 +341,33 @@ def test_run_writer_composes_checkpoint_with_result_transaction(tmp_path) -> Non
     assert writer.checkpoints.load("writer-atomic") == checkpoint
 
 
+def test_bounded_summary_primitives_do_not_materialize_collections() -> None:
+    ledger = BacktestResultLedger(":memory:")
+    ledger.create_run("run-summary", {"strategy_id": "summary"})
+    ledger.append_events("run-summary", [BacktestEvent(1, 1000, "EVENT", {})])
+    ledger.append_fills("run-summary", [fill("f1", 1, 101.0), fill("f2", 2, 102.0)])
+    ledger.append_trades("run-summary", [trade("t1", 1, 95.0), trade("t2", 2, -5.0)])
+    ledger.append_equity(
+        "run-summary",
+        [
+            EquityPoint(2_000, 100_000.0, 0.0, 0.0, 0.0),
+            EquityPoint(2_000, 100_010.0, 10.0, 0.0, 0.0),
+            EquityPoint(2_001, 100_090.0, 90.0, 0.0, 0.0),
+        ],
+    )
+
+    assert ledger.count_events("run-summary") == 1
+    assert ledger.count_fills("run-summary") == 2
+    assert ledger.count_trades("run-summary") == 2
+    assert ledger.count_equity("run-summary") == 3
+    assert ledger.trade_net_pnl("run-summary") == pytest.approx(90.0)
+
+    first = ledger.first_equity("run-summary")
+    latest = ledger.latest_equity("run-summary")
+    assert first is not None and first["equity"] == pytest.approx(100_000.0)
+    assert latest is not None and latest["equity"] == pytest.approx(100_090.0)
+
+
 def test_latest_event_sequence_uses_bounded_cursor_query(monkeypatch):
     ledger = BacktestResultLedger(":memory:")
     ledger.create_run("run-latest-seq", {"strategy_id": "cursor"})
