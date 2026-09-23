@@ -6,8 +6,8 @@ from dataclasses import dataclass
 import math
 from typing import Iterable, Literal
 
-Resolution = Literal["ms", "s", "m", "h"]
-_RESOLUTION_RANK: dict[str, int] = {"ms": 0, "s": 1, "m": 2, "h": 3}
+Resolution = Literal["tick", "ms", "s", "m", "h"]
+_RESOLUTION_RANK: dict[str, int] = {"tick": 0, "ms": 1, "s": 2, "m": 3, "h": 4}
 
 
 def _validate_ns(value: int, name: str) -> None:
