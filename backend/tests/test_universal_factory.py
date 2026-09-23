@@ -78,3 +78,51 @@ def test_create_universal_run_closes_ledger_when_engine_creation_fails(tmp_path)
     spec = make_spec()
     with pytest.raises(ValueError, match="quantity"):
         create_universal_run(
+
+def test_universal_worker_claims_and_completes_new_run(tmp_path):
+    from app.backtesting.universal_factory import UniversalBacktestWorker
+
+    resources = create_universal_run(
+        make_spec(),
+        data_source=DummySource(),
+        strategy=strategy,
+        ledger_path=tmp_path / "results.db",
+    )
+    resources.close()
+
+    result = UniversalBacktestWorker().run(
+        make_spec(),
+        data_source=DummySource(),
+        strategy=strategy,
+        ledger_path=tmp_path / "results.db",
+    )
+    assert result.final_equity == pytest.approx(100_000.0)
+
+    ledger = create_universal_ledger(tmp_path / "results.db")
+    try:
+        assert ledger.run("factory-run")["status"] == "COMPLETED"
+    finally:
+        ledger.close()
+
+
+def test_universal_worker_records_failure_and_closes_resources(tmp_path):
+    from app.backtesting.universal_factory import UniversalBacktestWorker
+
+    class FailingSource:
+        def iter_events(self, *, start_ns=None, end_ns=None):
+            raise RuntimeError("source failure")
+            yield
+
+    with pytest.raises(RuntimeError, match="source failure"):
+        UniversalBacktestWorker().run(
+            make_spec(),
+            data_source=FailingSource(),
+            strategy=strategy,
+            ledger_path=tmp_path / "failed" / "results.db",
+        )
+
+    ledger = create_universal_ledger(tmp_path / "failed" / "results.db")
+    try:
+        assert ledger.run("factory-run")["status"] == "FAILED"
+    finally:
+        ledger.close()
