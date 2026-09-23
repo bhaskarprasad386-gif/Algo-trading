@@ -435,6 +435,7 @@ class UniversalEventBacktestEngine:
             return
         if not isinstance(raw, (list, tuple)):
             raise ValueError("queue_evidence must be a list or tuple")
+        evidences: list[QueueEvidence] = []
         for index, item in enumerate(raw):
             if not isinstance(item, Mapping):
                 raise ValueError(f"invalid queue_evidence[{index}]")
@@ -444,14 +445,20 @@ class UniversalEventBacktestEngine:
                 cancelled_quantity_ahead = item.get("cancelled_quantity_ahead", 0)
                 if isinstance(price, bool) or isinstance(executed_quantity, bool) or isinstance(cancelled_quantity_ahead, bool):
                     raise ValueError("boolean queue evidence field")
-                evidence = QueueEvidence(
-                    price=price,
-                    executed_quantity=executed_quantity,
-                    cancelled_quantity_ahead=cancelled_quantity_ahead,
+                evidences.append(
+                    QueueEvidence(
+                        price=price,
+                        executed_quantity=executed_quantity,
+                        cancelled_quantity_ahead=cancelled_quantity_ahead,
+                    )
                 )
             except (KeyError, TypeError, ValueError, OverflowError) as exc:
                 raise ValueError(f"invalid queue_evidence[{index}]") from exc
-            for order in tuple(self.order_registry.open_orders()):
+
+        # Validate the complete payload before mutating any queue state.
+        open_orders = tuple(self.order_registry.open_orders())
+        for evidence in evidences:
+            for order in open_orders:
                 if (
                     order.instrument != record.instrument
                     or order.order_type != OrderType.LIMIT
