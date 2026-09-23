@@ -627,6 +627,9 @@ class UniversalEventBacktestEngine:
         )
         processed_events = 0
 
+        if isinstance(events, (list, tuple)):
+            events = sorted(events, key=event_order_key)
+
         for record in events:
             checkpoint_due = (
                 self.result_writer is not None
@@ -887,7 +890,7 @@ class UniversalEventBacktestEngine:
                                 release = getattr(self.portfolio, "release_margin", None)
                                 if callable(release):
                                     release(order.order_id)
-                        raise
+                            raise
                     self._record_order_lifecycle(replay_sequence, record.timestamp_ns, order.order_id)
                     self._execute_registered_order(
                         order.order_id,
