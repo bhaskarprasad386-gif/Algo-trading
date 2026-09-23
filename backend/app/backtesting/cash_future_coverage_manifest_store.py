@@ -103,6 +103,10 @@ class CashFutureCoverageManifestStore:
                 ],
             )
 
+    def close(self) -> None:
+        """Close the manifest store lifecycle boundary (operations are per-call)."""
+        return None
+
     def ranges(
         self,
         *,
