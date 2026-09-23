@@ -280,6 +280,14 @@ class UniversalOrderRegistry:
             "reservations": dict(self._reservations),
         }
 
+    def restore_from_state(self, raw: Mapping[str, object]) -> None:
+        """Restore checkpoint state in-place so external registry references stay valid."""
+        restored = type(self).restore_state(raw)
+        self._orders = restored._orders
+        self._lifecycles = restored._lifecycles
+        self._queue = restored._queue
+        self._reservations = restored._reservations
+
     @classmethod
     def restore_state(cls, raw: Mapping[str, object]) -> "UniversalOrderRegistry":
         if not isinstance(raw, Mapping):
