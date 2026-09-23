@@ -46,8 +46,6 @@ def _validate_point(point: CashFutureHistoryPoint, symbol: str, contract_month: 
         raise ValueError("historical source returned a different symbol")
     if point.contract_month != contract_month:
         raise ValueError("historical source returned a different contract month")
-    if point.timestamp.tzinfo is None:
-        raise ValueError("historical source timestamps must be timezone-aware")
 
 
 def ingest_cash_future_history(
@@ -90,7 +88,9 @@ def ingest_cash_future_history(
         end=end,
     ):
         _validate_point(point, normalized_symbol, normalized_contract)
-        if point.timestamp < start or point.timestamp > end:
+        from zoneinfo import ZoneInfo
+        point_timestamp = point.timestamp.replace(tzinfo=ZoneInfo("Asia/Kolkata")) if point.timestamp.tzinfo is None else point.timestamp
+        if point_timestamp < start or point_timestamp > end:
             raise ValueError("historical source returned a record outside requested range")
         batch.append(point)
         fetched += 1
