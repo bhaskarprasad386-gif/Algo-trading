@@ -139,6 +139,40 @@ def test_runs_are_isolated_and_cursor_is_incremental() -> None:
     assert [row["trade_id"] for row in ledger.trades("run-b")] == ["b1"]
 
 
+def test_completed_run_rejects_all_accounting_appends() -> None:
+    ledger = BacktestResultLedger(":memory:")
+    ledger.create_run("run-completed", {"strategy_id": "immutability"})
+    ledger.set_status("run-completed", "COMPLETED")
+
+    with pytest.raises(ValueError, match="completed run is immutable"):
+        ledger.append_events("run-completed", [BacktestEvent(1, 1, "EVENT", {})])
+    with pytest.raises(ValueError, match="completed run is immutable"):
+        ledger.append_fills("run-completed", [fill()])
+    with pytest.raises(ValueError, match="completed run is immutable"):
+        ledger.append_trades("run-completed", [trade()])
+    with pytest.raises(ValueError, match="completed run is immutable"):
+        ledger.append_equity("run-completed", [EquityPoint(1, 100_000.0, 0.0, 0.0, 0.0)])
+
+
+def test_completed_run_rejects_status_regression() -> None:
+    ledger = BacktestResultLedger(":memory:")
+    ledger.create_run("run-status-immutable", {"strategy_id": "immutability"})
+    ledger.set_status("run-status-immutable", "COMPLETED")
+
+    for status in ("CREATED", "RUNNING", "FAILED", "CANCELLED"):
+        with pytest.raises(ValueError, match="completed run is immutable"):
+            ledger.set_status("run-status-immutable", status)
+    assert ledger.run("run-status-immutable")["status"] == "COMPLETED"
+
+
+def test_completed_status_is_idempotent() -> None:
+    ledger = BacktestResultLedger(":memory:")
+    ledger.create_run("run-complete-idempotent", {"strategy_id": "immutability"})
+    ledger.set_status("run-complete-idempotent", "COMPLETED")
+    ledger.set_status("run-complete-idempotent", "completed")
+    assert ledger.run("run-complete-idempotent")["status"] == "COMPLETED"
+
+
 def test_unknown_run_is_rejected() -> None:
     ledger = BacktestResultLedger()
     with pytest.raises(ValueError, match="unknown run"):
