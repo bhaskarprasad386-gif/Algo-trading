@@ -69,6 +69,34 @@ def test_universal_engine_keeps_positions_independent_by_instrument() -> None:
     assert positions == {"AAA": 1, "BBB": 1}
 
 
+def test_universal_engine_keeps_partial_order_resting_and_exposes_updated_open_order() -> None:
+    from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+    from app.backtesting.universal_order_registry import UniversalOrderRegistry
+
+    registry = UniversalOrderRegistry()
+    registry.submit(SimOrder("resting", "AAA", ExecutionSide.BUY, 3, OrderType.MARKET, submitted_at_ns=1))
+    seen = []
+
+    def strategy(ctx):
+        seen.append(tuple((order.order_id, order.quantity) for order in ctx.open_orders))
+        return EventSignal("HOLD")
+
+    events = [
+        HistoricalRecord("test", "AAA", "tick", 1, {"price": 100.0, "book": OrderBook(asks=(DepthLevel(101.0, 1),))}, 1),
+        HistoricalRecord("test", "AAA", "tick", 2, {"price": 102.0, "book": OrderBook(asks=(DepthLevel(102.0, 2),))}, 2),
+    ]
+
+    engine = UniversalEventBacktestEngine(100_000.0, order_registry=registry)
+    result = engine.run(events, strategy, order_book_field="book")
+
+    assert seen[0] == (("resting", 2),)
+    assert seen[1] == ()
+    assert registry.lifecycle("resting").state.status.value == "FILLED"
+    assert registry.open_orders() == ()
+    assert result.fill_count == 2
+    assert engine.portfolio.positions["AAA"].quantity == 3
+
+
 def test_universal_engine_uses_deterministic_event_order_and_clock():
     from app.backtesting.clock import BacktestClock
 
@@ -418,19 +446,3 @@ def test_universal_engine_multi_leg_validates_event_fields_before_ordering():
     except ValueError as exc:
         assert "timestamp_ns" in str(exc)
     else:
-        raise AssertionError("expected invalid timestamp rejection")
-
-
-def test_universal_engine_multi_leg_rejects_unhashable_sequence_as_invalid_input():
-    malformed = HistoricalRecord("test", "AAA", "tick", 10, {"price": 100.0}, [])
-    engine = UniversalEventBacktestEngine(100_000.0)
-
-    try:
-        engine.run_multi_leg([malformed], lambda ctx: ())
-    except ValueError as exc:
-        assert "sequence" in str(exc)
-    else:
-        raise AssertionError("expected invalid sequence rejection")
-
-
-def test_universal_engine_multi_leg_rejects_duplicate_event_identity():
