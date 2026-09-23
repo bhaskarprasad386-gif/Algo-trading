@@ -900,14 +900,15 @@ class UniversalEventBacktestEngine:
                                 if callable(release):
                                     release(order.order_id)
                             raise
-                    self._record_order_lifecycle(replay_sequence, record.timestamp_ns, order.order_id)
-                    self._execute_registered_order(
-                        order.order_id,
-                        record,
-                        float(price),
-                        order_book_field,
-                        replay_sequence,
-                    )
+                        self._record_order_lifecycle(replay_sequence, record.timestamp_ns, order.order_id)
+                        self._execute_registered_order(
+                            order.order_id,
+                            record,
+                            float(price),
+                            order_book_field,
+                            replay_sequence,
+                            last_marks,
+                        )
                 snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
                 peak_equity, point = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
                 replay_sequence += 1
