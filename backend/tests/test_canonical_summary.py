@@ -85,3 +85,40 @@ def test_canonical_summary_empty_completed_run_uses_initial_capital() -> None:
     assert summary.final_equity == pytest.approx(100_000.0)
     assert summary.net_pnl == pytest.approx(0.0)
     assert summary.equity_count == 0
+
+
+def test_canonical_summary_reads_initial_capital_from_persisted_provenance() -> None:
+    ledger = BacktestResultLedger(":memory:")
+    ledger.create_run(
+        "run-persisted-capital",
+        {"strategy_id": "universal", "initial_capital": 125_000.0},
+    )
+    ledger.append_equity(
+        "run-persisted-capital",
+        [
+            EquityPoint(0, 125_000.0, 0.0, 0.0, 0.0),
+            EquityPoint(1_000, 125_250.0, 250.0, 0.0, 0.0),
+        ],
+    )
+    ledger.set_status("run-persisted-capital", "COMPLETED")
+
+    summary = CanonicalRunSummary.from_completed_run(ledger, "run-persisted-capital")
+
+    assert summary.initial_capital == pytest.approx(125_000.0)
+    assert summary.final_equity == pytest.approx(125_250.0)
+
+
+def test_canonical_summary_rejects_capital_mismatch_with_persisted_provenance() -> None:
+    ledger = BacktestResultLedger(":memory:")
+    ledger.create_run(
+        "run-capital-mismatch",
+        {"strategy_id": "universal", "initial_capital": 125_000.0},
+    )
+    ledger.set_status("run-capital-mismatch", "COMPLETED")
+
+    with pytest.raises(ValueError, match="does not match persisted"):
+        CanonicalRunSummary.from_completed_run(
+            ledger,
+            "run-capital-mismatch",
+            initial_capital=100_000.0,
+        )
