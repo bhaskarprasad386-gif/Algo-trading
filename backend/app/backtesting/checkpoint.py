@@ -65,6 +65,28 @@ class CheckpointStore:
 
     def save(self, checkpoint: ReplayCheckpoint, *, commit: bool = True) -> None:
         self._validate(checkpoint)
+        current = self.connection.execute(
+            "SELECT timestamp_ns,sequence,processed_events,realized_pnl,state_json,instrument,event_type "
+            "FROM backtest_checkpoints WHERE run_id=?",
+            (checkpoint.run_id,),
+        ).fetchone()
+        if current is not None:
+            current_processed = int(current[2])
+            if checkpoint.processed_events < current_processed:
+                raise ValueError("checkpoint processed_events cannot move backwards")
+            candidate = (
+                checkpoint.timestamp_ns,
+                checkpoint.sequence,
+                checkpoint.processed_events,
+                float(checkpoint.realized_pnl),
+                json.dumps(checkpoint.state, sort_keys=True, separators=(",", ":")),
+                checkpoint.instrument,
+                checkpoint.event_type,
+            )
+            if checkpoint.processed_events == current_processed and tuple(current) != candidate:
+                raise ValueError("conflicting checkpoint at the same processed_events cursor")
+            if tuple(current) == candidate:
+                return
         self.connection.execute(
             """INSERT INTO backtest_checkpoints
                (run_id,timestamp_ns,sequence,processed_events,realized_pnl,state_json,instrument,event_type)
