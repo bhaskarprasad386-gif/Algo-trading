@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import sqlite3
+from contextlib import nullcontext
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Iterable, Iterator, Mapping
@@ -416,7 +417,7 @@ class BacktestResultLedger:
     def append_equity(self, run_id: str, points: Iterable[EquityPoint]) -> int:
         self._require_mutable_run(run_id)
         inserted = 0
-        with self._db:
+        with (self._db if self._transaction_depth == 0 else nullcontext()):
             for point in points:
                 existing = self._db.execute(
                     """SELECT equity, realized_pnl, unrealized_pnl, drawdown
@@ -441,7 +442,7 @@ class BacktestResultLedger:
         if not rows:
             return 0
         inserted = 0
-        with self._db:
+        with (self._db if self._transaction_depth == 0 else nullcontext()):
             for row in rows:
                 try:
                     self._db.execute(sql, row)
