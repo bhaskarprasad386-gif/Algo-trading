@@ -3,6 +3,7 @@ from app.backtesting.historical_catalog import HistoricalRecord
 import pytest
 
 from app.backtesting.universal_engine import UniversalEventBacktestEngine
+from app.backtesting.statistics import StreamingStatisticsAccumulator
 
 
 def _event(ts: int, instrument: str, price: float, seq: int) -> HistoricalRecord:
@@ -370,7 +371,7 @@ def test_universal_checkpoint_due_uses_composed_transaction(monkeypatch) -> None
     )
 
     with pytest.raises(RuntimeError, match="abort checkpoint transaction"):
-        engine.run(events, lambda ctx: ())
+        engine.run(events, lambda ctx: None)
 
     assert writer.checkpoint_saves == [False]
 
