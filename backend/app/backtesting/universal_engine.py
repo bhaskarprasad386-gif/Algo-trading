@@ -93,6 +93,12 @@ class UniversalEventBacktestEngine:
         if (checkpoint_store is not None or checkpoint_every_events is not None) and result_writer is None:
             raise ValueError("checkpointing requires a result_writer")
         self.portfolio = portfolio if portfolio is not None else Portfolio(initial_capital, risk_config)
+        if result_writer is not None:
+            persisted_capital = getattr(result_writer.spec, "initial_capital", None)
+            if persisted_capital is None:
+                raise ValueError("durable universal runs require spec.initial_capital")
+            if float(persisted_capital) != float(self.portfolio.initial_cash):
+                raise ValueError("result writer initial_capital must match portfolio initial_cash")
         self.execution = execution if execution is not None else ExecutionSimulator(execution_config)
         self.quantity = quantity
         self.clock = clock if clock is not None else BacktestClock()
