@@ -474,6 +474,7 @@ class UniversalEventBacktestEngine:
         raw_price,
         order_book_field: str | None,
         replay_sequence: int,
+        marks: Mapping[str, float] | None = None,
     ) -> None:
         order = self.order_registry.effective_order(order_id)
         if order.submitted_at_ns > record.timestamp_ns or order.instrument != record.instrument:
@@ -487,7 +488,9 @@ class UniversalEventBacktestEngine:
             result = self.execution.execute_depth(order, book, record.timestamp_ns)
             if result.fills:
                 mark = book.asks[0].price if order.side == ExecutionSide.BUY else book.bids[0].price
-                self.portfolio.apply_fills_atomic(result.fills, {record.instrument: float(mark)})
+                fill_marks = dict(marks or {})
+                fill_marks[record.instrument] = float(mark)
+                self.portfolio.apply_fills_atomic(result.fills, fill_marks)
             outcome = self.order_registry.apply_execution(order_id, result, record.timestamp_ns)
             if outcome.released_reservation:
                 release = getattr(self.portfolio, "release_margin", None)
@@ -500,7 +503,9 @@ class UniversalEventBacktestEngine:
         if raw_price is None:
             return
         fill = self.execution.execute(order, float(raw_price), record.timestamp_ns)
-        self.portfolio.apply_fill(fill, {record.instrument: float(raw_price)})
+        fill_marks = dict(marks or {})
+        fill_marks[record.instrument] = float(raw_price)
+        self.portfolio.apply_fill(fill, fill_marks)
         self._fill_count += 1
         result = ExecutionResult(
             fills=(fill,),
@@ -626,6 +631,9 @@ class UniversalEventBacktestEngine:
             strategy=strategy, accumulator=accumulator, last_marks=last_marks
         )
         processed_events = 0
+
+        if isinstance(events, (list, tuple)):
+            events = sorted(events, key=event_order_key)
 
         if isinstance(events, (list, tuple)):
             events = sorted(events, key=event_order_key)
@@ -847,6 +855,7 @@ class UniversalEventBacktestEngine:
                             raw_price,
                             order_book_field,
                             replay_sequence,
+                            last_marks,
                         )
 
                 signal = _normalize_event_signal(
