@@ -371,3 +371,32 @@ def test_universal_checkpoint_due_uses_composed_transaction(monkeypatch) -> None
         engine.run(events, lambda ctx: ())
 
     assert writer.checkpoint_saves == [False]
+
+def test_universal_fill_count_is_restored_from_checkpoint_state() -> None:
+    from types import SimpleNamespace
+    from app.backtesting.event_model import event_identity
+    from app.backtesting.statistics import StreamingStatisticsAccumulator
+
+    engine = UniversalEventBacktestEngine(100_000.0)
+    engine._fill_count = 7
+    engine._fill_sequence = 7
+    accumulator = StreamingStatisticsAccumulator(100_000.0)
+    record = _event(1, "AAA", 100.0, 1)
+    state = engine._build_checkpoint_state(
+        processed_events=1,
+        replay_sequence=1,
+        previous_identity=event_identity(record),
+        last_marks={"AAA": 100.0},
+        accumulator=accumulator,
+        peak_equity=100_000.0,
+        strategy=lambda ctx: EventSignal("HOLD"),
+    )
+    assert state["fill_count"] == 7
+
+    restored = UniversalEventBacktestEngine(100_000.0)
+    restored_accumulator = StreamingStatisticsAccumulator(100_000.0)
+    checkpoint = SimpleNamespace(processed_events=1, state=state)
+    restored._restore_checkpoint_state(
+        restored, checkpoint, lambda ctx: EventSignal("HOLD"), restored_accumulator, {}
+    )
+    assert restored._fill_count == 7
