@@ -82,7 +82,7 @@ class UniversalOrderRegistry:
         return self._reservations.get(order_id, 0.0)
 
     def open_orders(self) -> tuple[SimOrder, ...]:
-        return tuple(self._orders.values())
+        return tuple(self.effective_order(order_id) for order_id in self._orders)
 
     def effective_order(self, order_id: str) -> SimOrder:
         """Return the execution order carrying the current dynamic queue."""
