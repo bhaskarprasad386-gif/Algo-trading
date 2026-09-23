@@ -569,26 +569,50 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
     from app.backtesting.backtest_resolution import BacktestResolution
     from app.backtesting.backtest_result import BacktestRunWriter
     from app.backtesting.backtest_run import BacktestRunSpec
-    from app.backtesting.execution import DepthLevel, OrderBook
+    from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+    from app.backtesting.portfolio import Portfolio
     from app.backtesting.result_ledger import BacktestResultLedger
+    from app.backtesting.universal_order_registry import UniversalOrderRegistry
 
-    events = [
-        HistoricalRecord(
-            "test", "AAA", "tick", 1,
-            {"price": 100.0, "book": OrderBook(asks=(DepthLevel(100.0, 2),))},
-            1,
-        ),
-        HistoricalRecord(
-            "test", "AAA", "tick", 2,
-            {"price": 101.0, "book": OrderBook(asks=(DepthLevel(101.0, 1),))},
-            2,
-        ),
-        HistoricalRecord(
-            "test", "AAA", "tick", 3,
-            {"price": 102.0, "book": OrderBook(asks=(DepthLevel(102.0, 1),))},
+    def make_events():
+        return [
+            HistoricalRecord(
+                "test", "AAA", "tick", 1,
+                {"price": 100.0, "book": OrderBook(asks=(DepthLevel(100.0, 1),))},
+                1,
+            ),
+            HistoricalRecord(
+                "test", "AAA", "tick", 2,
+                {
+                    "price": 101.0,
+                    "book": OrderBook(asks=(DepthLevel(101.0, 1),)),
+                    "queue_evidence": [{"price": 100.0, "cancelled_quantity_ahead": 5}],
+                },
+                2,
+            ),
+            HistoricalRecord(
+                "test", "AAA", "tick", 3,
+                {"price": 102.0, "book": OrderBook(asks=(DepthLevel(102.0, 2),))},
+                3,
+            ),
+        ]
+
+    def make_state():
+        portfolio = Portfolio(100_000.0)
+        registry = UniversalOrderRegistry()
+        order = SimOrder(
+            "queued",
+            "AAA",
+            ExecutionSide.BUY,
             3,
-        ),
-    ]
+            OrderType.LIMIT,
+            limit_price=100.0,
+            queue_ahead_quantity=5,
+            submitted_at_ns=1,
+        )
+        reservation = portfolio.reserve_margin("queued", 30_000.0, {})
+        registry.submit(order, reservation)
+        return portfolio, registry
 
     def make_writer(path, run_id):
         ledger = BacktestResultLedger(path)
@@ -599,24 +623,30 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
         )
         return ledger, BacktestRunWriter(ledger, spec)
 
-    def strategy(ctx):
-        return EventSignal("BUY") if ctx.timestamp_ns == 1 else EventSignal("HOLD")
+    events = make_events()
+    ref_portfolio, ref_registry = make_state()
 
     # A: uninterrupted reference run.
     ref_ledger, ref_writer = make_writer(tmp_path / "reference.db", "reference")
     reference = UniversalEventBacktestEngine(
-        100_000.0, result_writer=ref_writer, retain_history=False, quantity=3
-    ).run(events, strategy)
+        100_000.0,
+        portfolio=ref_portfolio,
+        order_registry=ref_registry,
+        result_writer=ref_writer,
+        retain_history=False,
+    ).run(events, lambda ctx: EventSignal("HOLD"), order_book_field="book")
     ref_writer.complete()
 
-    # B: checkpoint after event 1, then an interruption.
+    # B: checkpoint while queue-ahead and reservation are still non-zero.
+    resumed_portfolio, resumed_registry = make_state()
     resumed_ledger, first_writer = make_writer(tmp_path / "resumed.db", "resumed")
     first_engine = UniversalEventBacktestEngine(
         100_000.0,
+        portfolio=resumed_portfolio,
+        order_registry=resumed_registry,
         result_writer=first_writer,
         retain_history=False,
         checkpoint_every_events=1,
-        quantity=3,
     )
 
     def interrupted_events():
@@ -624,22 +654,26 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
         raise RuntimeError("simulated interruption")
 
     with pytest.raises(RuntimeError, match="simulated interruption"):
-        first_engine.run(interrupted_events(), strategy)
+        first_engine.run(interrupted_events(), lambda ctx: EventSignal("HOLD"), order_book_field="book")
 
     checkpoint = first_writer.checkpoints.load("resumed")
     assert checkpoint is not None
-    assert checkpoint.processed_events == 1
-    assert checkpoint.state["order_registry_state"]["orders"]
+    saved_registry = checkpoint.state["order_registry_state"]
+    assert saved_registry["orders"]["queued"]["quantity"] == 3
+    assert saved_registry["queue"]["queued"]["queue_ahead_quantity"] == 5
+    assert saved_registry["reservations"]["queued"] == pytest.approx(30_000.0)
+    assert checkpoint.state["portfolio_state"]["reserved_margin"]["queued"] == pytest.approx(30_000.0)
 
     resume_writer = BacktestRunWriter(resumed_ledger, first_writer.spec, resume=True)
     resumed = UniversalEventBacktestEngine(
         100_000.0,
+        portfolio=resumed_portfolio,
+        order_registry=resumed_registry,
         result_writer=resume_writer,
         retain_history=False,
         checkpoint_every_events=1,
-        quantity=3,
         resume=True,
-    ).run(events, strategy)
+    ).run(events, lambda ctx: EventSignal("HOLD"), order_book_field="book")
     resume_writer.complete()
 
     assert resumed.final_equity == pytest.approx(reference.final_equity)
@@ -653,12 +687,8 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
     assert resumed.cagr == pytest.approx(reference.cagr)
     assert resumed.fill_count == reference.fill_count
 
-    # The checkpoint must carry the partially filled order, not just counters.
-    saved_order = checkpoint.state["order_registry_state"]["orders"]["event-1-1-AAA"]
-    assert saved_order["quantity"] == 3
-    assert resumed_ledger.count_events("resumed") == ref_ledger.count_events("reference")
-    assert resumed_ledger.count_fills("resumed") == ref_ledger.count_fills("reference")
-    assert resumed_ledger.count_equity("resumed") == ref_ledger.count_equity("reference")
+    assert resumed_registry.export_state() == ref_registry.export_state()
+    assert resumed_portfolio.export_state() == ref_portfolio.export_state()
 
     ref_fills = ref_ledger.fills("reference", limit=100)
     resumed_fills = resumed_ledger.fills("resumed", limit=100)
@@ -675,4 +705,3 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
         (p.timestamp_ns, p.equity, p.realized_pnl, p.unrealized_pnl, p.drawdown)
         for p in ref_equity
     ]
-\n
