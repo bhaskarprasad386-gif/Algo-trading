@@ -275,11 +275,15 @@ def run_backtest(
     cancel_check: Callable[[], bool] | None = None,
 ) -> dict:
     processor = CashFutureBacktestProcessor(config, cancel_check)
-    for point in points:
+    iterator = iter(points)
+    while True:
         if cancel_check is not None and cancel_check():
             return processor.cancelled_result()
+        try:
+            point = next(iterator)
+        except StopIteration:
+            return processor.finalize()
         processor.process(point)
-    return processor.finalize()
 
 
 def _aggregate_contract_results(results: list[dict]) -> dict:
