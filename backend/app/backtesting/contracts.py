@@ -80,6 +80,7 @@ class TradeReporterProtocol(Protocol):
         ...
 
 
+@runtime_checkable
 class DataSourceProtocol(Protocol):
     def iter_events(self, *, start_ns: int | None = None, end_ns: int | None = None) -> Iterable[HistoricalRecord]:
         ...
