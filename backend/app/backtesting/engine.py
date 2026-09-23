@@ -518,6 +518,9 @@ def _validate_timestamp_type(value):
     _timestamp_kind(value)
 
 
+def _is_number(value):
+    return not isinstance(value, bool) and isinstance(value, (int, float, Decimal)) and isfinite(float(value))
+
 def _validate_price_field(value, field):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(float(value)) or float(value) <= 0:
         raise ValueError(f"candle {field} must be finite and positive")
@@ -593,7 +596,9 @@ def _continuous_record_to_candle(item):
 
 
 def _continuous_record_to_event(item):
-    return HistoricalRecord("continuous_futures", item.record.instrument, item.timeframe, item.timestamp_ns, item.payload, item.record.sequence)
+    payload = dict(item.payload)
+    payload["contract_token"] = item.contract_token
+    return HistoricalRecord("continuous_futures", item.record.instrument, item.timeframe, item.timestamp_ns, payload, item.record.sequence)
 
 
 def _normalize_event_signal(decision):
