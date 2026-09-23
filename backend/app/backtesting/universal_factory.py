@@ -84,6 +84,22 @@ def create_universal_run(
         raise
 
 
+class UniversalRecoveryCoordinator:
+    """Coordinate only explicitly confirmed worker-loss recovery."""
+
+    def __init__(self, ledger_path: str | Path | None = None) -> None:
+        self.ledger = create_universal_ledger(ledger_path)
+
+    def mark_worker_lost(self, run_id: str, *, worker_loss_confirmed: bool = False) -> None:
+        """Move RUNNING to RECOVERABLE only after external loss confirmation."""
+        if not worker_loss_confirmed:
+            raise ValueError("worker loss confirmation is required")
+        self.ledger.mark_recoverable(run_id)
+
+    def close(self) -> None:
+        self.ledger.close()
+
+
 class UniversalBacktestWorker:
     """Execute one Universal run with explicit new-run or recovery ownership."""
 
