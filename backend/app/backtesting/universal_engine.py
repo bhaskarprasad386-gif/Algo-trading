@@ -585,6 +585,9 @@ class UniversalEventBacktestEngine:
                         record.instrument,
                         record.payload,
                         record,
+                        self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({}),
+                        (),
+                        (self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})).available_margin,
                     ))
                 )
                 if signal.action not in {"HOLD", "NONE"}:
