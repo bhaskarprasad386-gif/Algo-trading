@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Callable, Iterable, Mapping
 
 from sqlalchemy import func, select
@@ -24,6 +25,8 @@ from .provider_retry import ProviderRetryPolicy
 from .session_gap_planner import SessionWindow
 from app.models.cash_future_history import CashFutureHistory
 from app.scanner.cash_future_backtest import BacktestConfig
+
+MARKET_TZ = ZoneInfo("Asia/Kolkata")
 from app.scanner.cash_future_coverage_store import (
     audit_persisted_cash_future_data_quality,
     build_persisted_cash_future_coverage,
@@ -274,8 +277,8 @@ def _request_has_materialized_rows(
 ) -> bool:
     """Require persisted rows to cover every expected session timestamp in the request."""
     if sessions is None:
-        start = datetime.fromtimestamp(request.start_ns / 1_000_000_000)
-        end = datetime.fromtimestamp(request.end_ns / 1_000_000_000)
+        start = datetime.fromtimestamp(request.start_ns / 1_000_000_000, tz=MARKET_TZ)
+        end = datetime.fromtimestamp(request.end_ns / 1_000_000_000, tz=MARKET_TZ)
         expected_datetimes = (
             start,
             end,
@@ -295,7 +298,7 @@ def _request_has_materialized_rows(
         if not expected_ns:
             return False
         expected_datetimes = tuple(
-            datetime.fromtimestamp(timestamp_ns / 1_000_000_000)
+            datetime.fromtimestamp(timestamp_ns / 1_000_000_000, tz=MARKET_TZ)
             for timestamp_ns in expected_ns
         )
 
