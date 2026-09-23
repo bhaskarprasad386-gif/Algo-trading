@@ -374,6 +374,28 @@ def test_universal_checkpoint_due_uses_composed_transaction(monkeypatch) -> None
 
     assert writer.checkpoint_saves == [False]
 
+
+def test_universal_checkpoint_rejects_initial_capital_mismatch() -> None:
+    from types import SimpleNamespace
+
+    engine = UniversalEventBacktestEngine(100_000.0)
+    accumulator = StreamingStatisticsAccumulator(100_000.0)
+    state = engine._build_checkpoint_state(
+        processed_events=1,
+        replay_sequence=0,
+        previous_identity=SimpleNamespace(timestamp_ns=1, source="test", instrument="NFO:ABC", timeframe="tick", sequence=0),
+        last_marks={},
+        accumulator=accumulator,
+        peak_equity=100_000.0,
+        strategy=lambda ctx: EventSignal("HOLD"),
+    )
+    state["portfolio_state"]["initial_cash"] = 125_000.0
+    checkpoint = SimpleNamespace(processed_events=1, state=state)
+    with pytest.raises(ValueError, match="checkpoint initial_cash does not match engine portfolio initial_cash"):
+        engine._restore_checkpoint_state(
+            engine, checkpoint, lambda ctx: EventSignal("HOLD"), accumulator, {}
+        )
+
 def test_universal_fill_count_is_restored_from_checkpoint_state() -> None:
     from types import SimpleNamespace
     from app.backtesting.event_model import event_identity
