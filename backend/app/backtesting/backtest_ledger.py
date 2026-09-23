@@ -149,7 +149,7 @@ class BacktestTradeLedger:
                 return 0
             existing = self._db.execute("SELECT sequence,entry_timestamp_json,exit_timestamp_json,entry_price,exit_price,quantity,gross_pnl,costs,net_pnl,metadata_json FROM backtest_trades WHERE run_id=? AND sequence BETWEEN ? AND ? ORDER BY sequence", (run_id, sequence, sequence + len(rows) - 1)).fetchall()
             if existing:
-                expected = [tuple(row[1:]) for row in rows]
+                expected = [tuple(row[2:]) for row in rows]
                 actual = [tuple(row[1:]) for row in existing]
                 if len(existing) != len(rows) or actual != expected:
                     raise ValueError(f"trade sequence already exists: {existing[0][0]}")
