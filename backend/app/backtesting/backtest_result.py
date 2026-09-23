@@ -37,8 +37,8 @@ class BacktestRunWriter:
         self.checkpoints = CheckpointStore(self.ledger.connection)
         if resume:
             row = self.ledger.run(spec.run_id)
-            if row["status"] == "COMPLETED":
-                raise ValueError("cannot resume completed run")
+            if row["status"] != "RECOVERABLE":
+                raise ValueError("resume requires a RECOVERABLE run")
             if self.ledger.run_provenance(spec.run_id) != spec.provenance:
                 raise ValueError("resume provenance does not match existing run")
             self._last_event_sequence = self.ledger.latest_event_sequence(spec.run_id)
