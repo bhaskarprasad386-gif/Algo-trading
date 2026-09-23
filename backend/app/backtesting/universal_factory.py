@@ -83,8 +83,9 @@ def create_universal_run(
         ledger.close()
         raise
 
+
 class UniversalBacktestWorker:
-    """Execute one newly-created Universal run with owned resources."""
+    """Execute one Universal run with explicit new-run or recovery ownership."""
 
     def run(
         self,
@@ -93,6 +94,7 @@ class UniversalBacktestWorker:
         data_source: DataSourceProtocol,
         strategy: StrategyProtocol,
         ledger_path: str | Path | None = None,
+        resume: bool = False,
         quantity: int = 1,
         risk_config=None,
         execution_config=None,
@@ -105,6 +107,7 @@ class UniversalBacktestWorker:
             data_source=data_source,
             strategy=strategy,
             ledger_path=ledger_path,
+            resume=resume,
             quantity=quantity,
             risk_config=risk_config,
             execution_config=execution_config,
@@ -112,12 +115,16 @@ class UniversalBacktestWorker:
             checkpoint_every_events=checkpoint_every_events,
         )
         try:
-            if not resources.ledger.claim_run(spec.run_id):
-                raise ValueError(f"run is already claimed: {spec.run_id}")
+            claimed = (
+                resources.ledger.claim_recoverable(spec.run_id)
+                if resume
+                else resources.ledger.claim_run(spec.run_id)
+            )
+            if not claimed:
+                expected = "recoverable" if resume else "created"
+                raise ValueError(f"run is not {expected}: {spec.run_id}")
             if multi_leg:
                 return resources.engine.run_multi_leg_context(resources.context)
             return resources.engine.run_context(resources.context)
-        except Exception:
-            raise
         finally:
             resources.close()
