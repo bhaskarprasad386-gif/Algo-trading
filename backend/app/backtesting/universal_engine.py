@@ -359,12 +359,26 @@ class UniversalEventBacktestEngine:
             commit=False,
         )
 
+    def _next_result_event_sequence(self) -> int:
+        """Allocate a unique durable journal sequence across lifecycle/replay events."""
+        if self.result_writer is None:
+            return 0
+        current = getattr(self.result_writer, "_last_event_sequence", -1)
+        if isinstance(current, bool) or not isinstance(current, int):
+            current = -1
+        sequence = current + 1
+        try:
+            setattr(self.result_writer, "_last_event_sequence", sequence)
+        except Exception:
+            pass
+        return sequence
+
     def _record_order_lifecycle(self, sequence: int, timestamp_ns: int, order_id: str) -> None:
         if self.result_writer is None:
             return
         state = self.order_registry.lifecycle(order_id).state
         self.result_writer.record_event(
-            sequence,
+            self._next_result_event_sequence(),
             timestamp_ns,
             "ORDER_LIFECYCLE",
             {
@@ -543,7 +557,7 @@ class UniversalEventBacktestEngine:
         peak_equity = max(peak_equity, snapshot.equity)
         if self.result_writer is not None:
             self.result_writer.record_event(
-                sequence,
+                self._next_result_event_sequence(),
                 record.timestamp_ns,
                 "REPLAY_EVENT",
                 {
@@ -695,7 +709,7 @@ class UniversalEventBacktestEngine:
                     if result.rejected:
                         if self.result_writer is not None:
                             self.result_writer.record_event(
-                                replay_sequence,
+                                self._next_result_event_sequence(),
                                 record.timestamp_ns,
                                 "ATOMIC_EXECUTION_REJECTED",
                                 {
