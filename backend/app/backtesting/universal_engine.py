@@ -409,6 +409,7 @@ class UniversalEventBacktestEngine:
         record: HistoricalRecord,
         raw_price,
         order_book_field: str | None,
+        marks: Mapping[str, float] | None = None,
     ) -> float:
         reserve = getattr(self.portfolio, "reserve_margin", None)
         risk_config = getattr(self.portfolio, "risk_config", None)
@@ -426,7 +427,9 @@ class UniversalEventBacktestEngine:
         if reference is None:
             return 0.0
         amount = order.quantity * reference * float(risk_config.initial_margin_rate)
-        reserve(order.order_id, amount, {record.instrument: reference})
+        reserve_marks = dict(marks or {})
+        reserve_marks[record.instrument] = reference
+        reserve(order.order_id, amount, reserve_marks)
         return float(amount)
 
     def _apply_queue_evidence(self, record: HistoricalRecord) -> None:
@@ -891,7 +894,7 @@ class UniversalEventBacktestEngine:
                         submitted_at_ns=record.timestamp_ns,
                     )
                     try:
-                        reservation = self._reserve_order_margin(order, record, float(price), order_book_field)
+                        reservation = self._reserve_order_margin(order, record, float(price), order_book_field, last_marks)
                     except RiskViolation:
                         reservation = None
                     if reservation is not None:
