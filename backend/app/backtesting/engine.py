@@ -130,6 +130,11 @@ class EventContext:
     open_orders: tuple[object, ...] = ()
     available_margin: float | None = None
 
+    @property
+    def timeframe(self) -> str:
+        """Expose the canonical timeframe carried by the source record."""
+        return self.record.timeframe
+
 
 @dataclass(frozen=True)
 class EventSignal:
