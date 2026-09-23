@@ -36,14 +36,14 @@ def _number(value: Any, default: float | int = 0):
     try:
         numeric = float(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"broker numeric value is invalid: {value!r}") from exc
+        return None
     if not math.isfinite(numeric):
         raise ValueError("broker numeric value must be finite")
     return numeric
 
 
 def _positive_integer(value: Any, name: str) -> int:
-    numeric = _number(value, 0)
+    numeric = float(_number(value, 0))
     if not numeric.is_integer() or numeric <= 0:
         raise ValueError(f"{name} must be a positive integer")
     return int(numeric)
@@ -60,9 +60,7 @@ def _quote_side(value: Any) -> float | None:
     if value is None or value == "":
         return None
     numeric = _number(value, 0.0)
-    if numeric <= 0:
-        raise ValueError("broker quote side must be positive")
-    return numeric
+    return float(numeric)
 
 
 def _quote_timestamp(value: Any) -> datetime | None:
@@ -71,13 +69,13 @@ def _quote_timestamp(value: Any) -> datetime | None:
     if isinstance(value, (int, float)):
         number = float(value)
         if not math.isfinite(number):
-            raise ValueError("broker quote timestamp must be finite")
+            return None
         if number > 10_000_000_000:
             number /= 1000.0
         try:
             return datetime.fromtimestamp(number, tz=timezone.utc).astimezone(IST)
         except (OverflowError, OSError, ValueError) as exc:
-            raise ValueError("broker quote timestamp is invalid") from exc
+            return None
     text = str(value).strip()
     if text.isdigit():
         return _quote_timestamp(float(text))
@@ -93,7 +91,7 @@ def _quote_timestamp(value: Any) -> datetime | None:
             except ValueError:
                 pass
         if parsed is None:
-            raise ValueError("broker quote timestamp is invalid")
+            return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=IST)
     return parsed.astimezone(IST)
