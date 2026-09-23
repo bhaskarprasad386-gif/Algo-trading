@@ -186,6 +186,16 @@ class UniversalEventBacktestEngine:
             or float(checkpoint_initial_cash) != float(engine.portfolio.initial_cash)
         ):
             raise ValueError("checkpoint initial_cash does not match engine portfolio initial_cash")
+        checkpoint_risk = portfolio_state.get("risk_config")
+        current_risk = getattr(engine.portfolio, "risk_config", None)
+        if not isinstance(checkpoint_risk, dict) or current_risk is None:
+            raise ValueError("checkpoint risk_config is missing")
+        risk_fields = (
+            "initial_margin_rate", "maintenance_margin_rate", "max_gross_notional",
+            "max_net_notional", "max_leverage", "max_position_quantity", "max_drawdown",
+        )
+        if any(checkpoint_risk.get(field) != getattr(current_risk, field) for field in risk_fields):
+            raise ValueError("checkpoint risk_config does not match engine portfolio risk_config")
         engine.portfolio.restore_state(portfolio_state)
         registry_state = state.get("order_registry_state", {})
         if not isinstance(registry_state, dict):
