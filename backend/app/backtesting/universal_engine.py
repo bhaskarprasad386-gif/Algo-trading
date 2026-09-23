@@ -801,6 +801,9 @@ class UniversalEventBacktestEngine:
         )
         processed_events = 0
 
+        if isinstance(events, (list, tuple)):
+            events = sorted(events, key=event_order_key)
+
         for record in events:
             checkpoint_due = (
                 self.result_writer is not None
