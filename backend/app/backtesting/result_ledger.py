@@ -472,6 +472,23 @@ class BacktestResultLedger:
                 raise ValueError(f"conflicting duplicate in {table}")
         return inserted
 
+    def count_events(self, run_id: str) -> int:
+        self._require_run(run_id)
+        return int(self._db.execute("SELECT COUNT(*) FROM backtest_events WHERE run_id=?", (run_id,)).fetchone()[0])
+
+    def count_fills(self, run_id: str) -> int:
+        self._require_run(run_id)
+        return int(self._db.execute("SELECT COUNT(*) FROM backtest_fills WHERE run_id=?", (run_id,)).fetchone()[0])
+
+    def count_trades(self, run_id: str) -> int:
+        self._require_run(run_id)
+        return int(self._db.execute("SELECT COUNT(*) FROM backtest_trades WHERE run_id=?", (run_id,)).fetchone()[0])
+
+    def trade_net_pnl(self, run_id: str) -> float:
+        self._require_run(run_id)
+        row = self._db.execute("SELECT COALESCE(SUM(net_pnl), 0.0) FROM backtest_trades WHERE run_id=?", (run_id,)).fetchone()
+        return float(row[0] or 0.0)
+
     def _require_run(self, run_id: str) -> None:
         if self._db.execute("SELECT 1 FROM backtest_runs WHERE run_id=?", (run_id,)).fetchone() is None:
             raise ValueError(f"unknown run: {run_id}")
