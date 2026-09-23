@@ -205,8 +205,9 @@ class StreamingStatisticsAccumulator:
         ) / (365.25 * 24 * 60 * 60 * 1_000_000_000)
         if elapsed_years > 0 and final_equity > 0:
             try:
-                cagr = (final_equity / self.initial_capital) ** (1.0 / elapsed_years) - 1.0
-            except OverflowError:
+                exponent = 1.0 / elapsed_years
+                cagr = (final_equity / self.initial_capital) ** exponent - 1.0
+            except (OverflowError, ZeroDivisionError):
                 cagr = None
         else:
             cagr = None
