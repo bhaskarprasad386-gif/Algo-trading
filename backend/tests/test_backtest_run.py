@@ -53,3 +53,27 @@ def test_run_provenance_contains_stable_strategy_config_hash() -> None:
                               {"a": 1, "b": 3}, {})
     assert left.provenance["strategy_config_hash"] == right.provenance["strategy_config_hash"]
     assert left.provenance["strategy_config_hash"] != changed.provenance["strategy_config_hash"]
+
+
+def test_run_provenance_persists_initial_capital_when_supplied() -> None:
+    resolution = BacktestResolution("s", "angelone", 1_000, 9_000)
+    run = BacktestRunSpec(
+        "run-capital", "box-spread", "v3", "NFO:NIFTY", 2_000, 8_000,
+        resolution, {}, {}, 250_000.0,
+    )
+    assert run.initial_capital == 250_000.0
+    assert run.provenance["initial_capital"] == 250_000.0
+
+
+def test_run_rejects_invalid_initial_capital() -> None:
+    resolution = BacktestResolution("s", "angelone", 1_000, 9_000)
+    for value in (0, -1, True, "100000"):
+        try:
+            BacktestRunSpec(
+                "run-capital-invalid", "box", "v1", "NIFTY", 2_000, 8_000,
+                resolution, {}, {}, value,
+            )
+        except ValueError as exc:
+            assert "initial_capital" in str(exc)
+        else:
+            raise AssertionError("expected invalid initial_capital rejection")
