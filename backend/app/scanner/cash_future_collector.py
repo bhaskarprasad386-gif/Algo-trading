@@ -50,7 +50,7 @@ def _positive_integer(value: Any, name: str) -> int:
 
 
 def _non_negative_integer(value: Any, name: str) -> int:
-    numeric = _number(value, 0)
+    numeric = float(_number(value, 0))
     if not numeric.is_integer() or numeric < 0:
         raise ValueError(f"{name} must be a non-negative integer")
     return int(numeric)
