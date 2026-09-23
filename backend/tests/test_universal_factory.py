@@ -269,3 +269,46 @@ def test_universal_worker_reclaims_recoverable_checkpoint_and_resumes_without_du
     finally:
         reference_ledger.close()
         recovery_ledger.close()
+
+def test_universal_recovery_coordinator_requires_explicit_loss_confirmation(tmp_path):
+    from app.backtesting.universal_factory import UniversalRecoveryCoordinator
+
+    ledger = create_universal_ledger(tmp_path / "recovery.db")
+    try:
+        ledger.create_run("recover-me", {"strategy_id": "universal"})
+        assert ledger.claim_run("recover-me") is True
+    finally:
+        ledger.close()
+
+    coordinator = UniversalRecoveryCoordinator(tmp_path / "recovery.db")
+    try:
+        with pytest.raises(ValueError, match="worker loss confirmation"):
+            coordinator.mark_worker_lost("recover-me")
+        assert coordinator.ledger.run("recover-me")["status"] == "RUNNING"
+
+        coordinator.mark_worker_lost("recover-me", worker_loss_confirmed=True)
+        assert coordinator.ledger.run("recover-me")["status"] == "RECOVERABLE"
+
+        with pytest.raises(ValueError, match="not RUNNING"):
+            coordinator.mark_worker_lost("recover-me", worker_loss_confirmed=True)
+    finally:
+        coordinator.close()
+
+
+def test_universal_recovery_coordinator_cannot_recover_non_running_run(tmp_path):
+    from app.backtesting.universal_factory import UniversalRecoveryCoordinator
+
+    ledger = create_universal_ledger(tmp_path / "terminal.db")
+    try:
+        ledger.create_run("terminal-run", {"strategy_id": "universal"})
+        ledger.set_status("terminal-run", "COMPLETED")
+    finally:
+        ledger.close()
+
+    coordinator = UniversalRecoveryCoordinator(tmp_path / "terminal.db")
+    try:
+        with pytest.raises(ValueError, match="not RUNNING"):
+            coordinator.mark_worker_lost("terminal-run", worker_loss_confirmed=True)
+        assert coordinator.ledger.run("terminal-run")["status"] == "COMPLETED"
+    finally:
+        coordinator.close()
