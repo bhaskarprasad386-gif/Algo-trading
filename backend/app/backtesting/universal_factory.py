@@ -118,11 +118,6 @@ class UniversalBacktestWorker:
                 return resources.engine.run_multi_leg_context(resources.context)
             return resources.engine.run_context(resources.context)
         except Exception:
-            if resources.ledger.run(spec.run_id)["status"] == "RUNNING":
-                try:
-                    resources.writer.fail("Universal worker execution failed")
-                except Exception:
-                    pass
             raise
         finally:
             resources.close()
