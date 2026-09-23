@@ -707,6 +707,9 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
     assert checkpoint.state["strategy_state"] == {"count": 1, "last_timestamp_ns": 1}
     assert checkpoint.state["reporter_state"] == {"marker": "checkpointed", "records_seen": 7}
 
+    # An interrupted run must be explicitly declared recoverable before resume.
+    resumed_ledger.mark_recoverable("resumed")
+
     # Resume must restore both user-defined strategy state and reporter state.
     resume_strategy = StatefulStrategy()
     resume_strategy._last_timestamp_ns = None
