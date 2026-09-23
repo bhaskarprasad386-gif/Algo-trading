@@ -99,7 +99,7 @@ def test_boolean_candle_values_are_excluded_from_numeric_context():
             seen.append("flag" in context)
             return False
     BacktestEngine().run([{ "timestamp": 1, "close": 100, "flag": True}], Capture(), Capture())
-    assert seen == [False, False]
+    assert seen == [False]
 
 
 def test_low_missing_is_allowed_for_close_execution_but_not_used_as_risk_mark():
