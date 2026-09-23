@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from calendar import monthrange
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
@@ -14,9 +14,22 @@ from app.backtesting.contract_master import ContractMasterCatalog
 from app.backtesting.historical_catalog import HistoricalCatalog
 from app.core.config import settings
 from app.core.database import get_db
+from zoneinfo import ZoneInfo
 
 router = APIRouter(prefix="/api/v1/backtesting/results", tags=["Backtesting Results"])
+MARKET_TZ = ZoneInfo("Asia/Kolkata")
 
+
+def _market_timestamp_iso(value: str | datetime | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=MARKET_TZ)
+    else:
+        value = value.astimezone(MARKET_TZ)
+    return value.isoformat()
 
 def _daily_rows(db: Session, start: date, end: date, symbol: str | None = None, instrument_type: str = "STOCK") -> list[dict]:
     params: dict[str, object] = {"start": start.isoformat(), "end": (end + timedelta(days=1)).isoformat(), "instrument_type": instrument_type.upper()}
@@ -140,7 +153,7 @@ def monthly_gap_top10(year: int = Query(..., ge=2000, le=2100), month: int = Que
     data = []
     for rank, item in enumerate(ranked, start=1):
         timestamp = item.get("gap_high_timestamp")
-        data.append({"rank":rank,"ranking_metric":"net_profit","symbol":item["symbol"],"lot_size":item["lot_size"],"month_gap_high":item["gap"],"gap_value":item["weighted_gap"],"gap_high_date":item["trading_date"],"gap_high_time":timestamp.split("T",1)[1] if timestamp and "T" in timestamp else timestamp,"gap_high_timestamp":timestamp,"cash_price_at_gap_high":item["cash_price_at_gap_high"],"future_price_at_gap_high":item["future_price_at_gap_high"],"contract_month":item["contract_month"],"instrument_key":item["instrument_key"],"expiry_date":item.get("expiry_date"),"is_expiry_day":item.get("is_expiry_day",False),"margin_required":item.get("margin_required",0.0),"charges":item.get("charges",0.0),"funding_cost":item.get("funding_cost",0.0),"net_profit":item.get("net_profit",0.0),"roi_pct":item.get("roi_pct",0.0)})
+        data.append({"rank":rank,"ranking_metric":"net_profit","symbol":item["symbol"],"lot_size":item["lot_size"],"month_gap_high":item["gap"],"gap_value":item["weighted_gap"],"gap_high_date":item["trading_date"],"gap_high_time":timestamp.split("T",1)[1] if timestamp and "T" in timestamp else timestamp,"gap_high_timestamp":_market_timestamp_iso(timestamp),"cash_price_at_gap_high":item["cash_price_at_gap_high"],"future_price_at_gap_high":item["future_price_at_gap_high"],"contract_month":item["contract_month"],"instrument_key":item["instrument_key"],"expiry_date":item.get("expiry_date"),"is_expiry_day":item.get("is_expiry_day",False),"margin_required":item.get("margin_required",0.0),"charges":item.get("charges",0.0),"funding_cost":item.get("funding_cost",0.0),"net_profit":item.get("net_profit",0.0),"roi_pct":item.get("roi_pct",0.0)})
     return {"status":"success","month":f"{year:04d}-{month:02d}","mode":"shorting","instrument_type":instrument_type.upper(),"count":len(data),"ranking_metric":"net_profit","data":data}
 
 
