@@ -176,7 +176,7 @@ def test_route_run_isolation() -> None:
 
     response = client.get("/api/v1/backtesting/universal/runs/run-b/events")
     assert response.status_code == 200
-    assert response.json()["data"][0]["payload_json"] != '{"i":0}'
+    assert response.json()["data"][0]["payload_json"] == '{"run":"b"}'
 
 
 def test_route_isolation_keeps_legacy_namespace_untouched() -> None:
