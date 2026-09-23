@@ -359,4 +359,3 @@ def test_latest_event_sequence_uses_bounded_cursor_query(monkeypatch):
 
     assert ledger.latest_event_sequence("run-latest-seq") == 9
     monkeypatch.setattr(ledger, "events", original_events)
-    assert ledger.latest_event_sequence("missing") if False else True
