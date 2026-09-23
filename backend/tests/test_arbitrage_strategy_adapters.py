@@ -514,6 +514,85 @@ def test_universal_cash_future_trade_reporter_persists_short_direction_edges():
     assert {trade.metadata["entry_edge"] for trade in writer.trades} == {4.0}
     assert {trade.metadata["exit_edge"] for trade in writer.trades} == {6.0}
 
+def test_universal_cash_future_trade_reporter_matches_split_fills_by_order_and_instrument():
+    from app.backtesting.arbitrage_strategy_adapters import CashFutureTradeReporter
+    from app.backtesting.contracts import AtomicTradeReportInput
+    from app.backtesting.execution import AtomicExecutionResult, ExecutionResult, ExecutionSide, SimFill
+    from app.backtesting.portfolio import TradeRecord
+
+    class Writer:
+        def __init__(self):
+            self.trades = []
+        def record_trades(self, trades):
+            self.trades.extend(trades)
+            return len(trades)
+
+    writer = Writer()
+    reporter = CashFutureTradeReporter(writer)
+
+    open_cash = (
+        SimFill("OPEN:CASH", "NSE:ABC", ExecutionSide.BUY, 4, 101.0, 1),
+        SimFill("OPEN:CASH", "NSE:ABC", ExecutionSide.BUY, 6, 103.0, 1),
+    )
+    open_future = (
+        SimFill("OPEN:FUTURE", "NFO:ABC-OLD", ExecutionSide.SELL, 4, 104.0, 1),
+        SimFill("OPEN:FUTURE", "NFO:ABC-OLD", ExecutionSide.SELL, 6, 105.0, 1),
+    )
+    reporter.record_atomic_trade(AtomicTradeReportInput(
+        AtomicExecutionResult(
+            fills=open_cash + open_future,
+            leg_results=(
+                ExecutionResult(open_cash, 0, reference_prices=(100.0, 102.0)),
+                ExecutionResult(open_future, 0, reference_prices=(104.0, 106.0)),
+            ),
+        ),
+        (
+            TradeRecord("OPEN:CASH", "NSE:ABC", ExecutionSide.BUY, 4, 101.0, 404.0, 1.0, 0.0, 0.0, 0.0, 1),
+            TradeRecord("OPEN:CASH", "NSE:ABC", ExecutionSide.BUY, 6, 103.0, 618.0, 1.0, 0.0, 0.0, 0.0, 1),
+            TradeRecord("OPEN:FUTURE", "NFO:ABC-OLD", ExecutionSide.SELL, 4, 104.0, 416.0, 1.0, 0.0, 0.0, 0.0, 1),
+            TradeRecord("OPEN:FUTURE", "NFO:ABC-OLD", ExecutionSide.SELL, 6, 105.0, 630.0, 1.0, 0.0, 0.0, 0.0, 1),
+        ),
+    ))
+
+    close_cash = (
+        SimFill("CLOSE:CASH", "NSE:ABC", ExecutionSide.SELL, 4, 106.0, 2),
+        SimFill("CLOSE:CASH", "NSE:ABC", ExecutionSide.SELL, 6, 108.0, 2),
+    )
+    close_future = (
+        SimFill("CLOSE:FUTURE", "NFO:ABC-OLD", ExecutionSide.BUY, 4, 103.0, 2),
+        SimFill("CLOSE:FUTURE", "NFO:ABC-OLD", ExecutionSide.BUY, 6, 102.0, 2),
+    )
+    reporter.record_atomic_trade(AtomicTradeReportInput(
+        AtomicExecutionResult(
+            fills=close_cash + close_future,
+            leg_results=(
+                ExecutionResult(close_cash, 0, reference_prices=(107.0, 107.0)),
+                ExecutionResult(close_future, 0, reference_prices=(103.0, 103.0)),
+            ),
+        ),
+        (
+            TradeRecord("CLOSE:CASH", "NSE:ABC", ExecutionSide.SELL, 4, 106.0, 424.0, 2.0, 20.0, 0.0, 0.0, 2),
+            TradeRecord("CLOSE:CASH", "NSE:ABC", ExecutionSide.SELL, 6, 108.0, 648.0, 2.0, 30.0, 0.0, 0.0, 2),
+            TradeRecord("CLOSE:FUTURE", "NFO:ABC-OLD", ExecutionSide.BUY, 4, 103.0, 412.0, 2.0, 4.0, 0.0, 0.0, 2),
+            TradeRecord("CLOSE:FUTURE", "NFO:ABC-OLD", ExecutionSide.BUY, 6, 102.0, 612.0, 2.0, 6.0, 0.0, 0.0, 2),
+        ),
+    ))
+
+    by_leg = {trade.leg: trade for trade in writer.trades}
+    assert by_leg["CASH"].quantity == 10
+    assert by_leg["CASH"].entry_price == 102.2
+    assert by_leg["CASH"].exit_price == 107.2
+    assert by_leg["CASH"].gross_pnl == 50.0
+    assert by_leg["CASH"].fees == 6.0
+    assert by_leg["CASH"].slippage == 4.0
+    assert by_leg["CASH"].net_pnl == 44.0
+    assert by_leg["FUTURE"].quantity == 10
+    assert by_leg["FUTURE"].gross_pnl == 10.0
+    assert by_leg["FUTURE"].fees == 6.0
+    assert by_leg["FUTURE"].slippage == 12.0
+    assert by_leg["FUTURE"].net_pnl == 4.0
+
+
 def test_universal_cash_future_trade_reporter_does_not_double_count_execution_slippage():
     from app.backtesting.arbitrage_strategy_adapters import CashFutureTradeReporter
     from app.backtesting.contracts import AtomicTradeReportInput
