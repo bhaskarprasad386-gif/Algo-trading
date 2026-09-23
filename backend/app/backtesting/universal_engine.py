@@ -327,6 +327,32 @@ class UniversalEventBacktestEngine:
         if durable_fills:
             self.result_writer.record_fills(tuple(durable_fills))
 
+    def _reserve_order_margin(
+        self,
+        order: SimOrder,
+        record: HistoricalRecord,
+        raw_price,
+        order_book_field: str | None,
+    ) -> float:
+        reserve = getattr(self.portfolio, "reserve_margin", None)
+        risk_config = getattr(self.portfolio, "risk_config", None)
+        if not callable(reserve) or risk_config is None:
+            return 0.0
+        reference = None
+        if order_book_field is not None:
+            book = record.payload.get(order_book_field)
+            if isinstance(book, OrderBook):
+                levels = book.asks if order.side == ExecutionSide.BUY else book.bids
+                if levels:
+                    reference = float(levels[0].price)
+        if reference is None and raw_price is not None:
+            reference = float(raw_price)
+        if reference is None:
+            return 0.0
+        amount = order.quantity * reference * float(risk_config.initial_margin_rate)
+        reserve(order.order_id, amount, {record.instrument: reference})
+        return float(amount)
+
     def _apply_queue_evidence(self, record: HistoricalRecord) -> None:
         raw = record.payload.get("queue_evidence")
         if raw is None:
@@ -379,7 +405,11 @@ class UniversalEventBacktestEngine:
             if result.fills:
                 mark = book.asks[0].price if order.side == ExecutionSide.BUY else book.bids[0].price
                 self.portfolio.apply_fills_atomic(result.fills, {record.instrument: float(mark)})
-            self.order_registry.apply_execution(order_id, result, record.timestamp_ns)
+            outcome = self.order_registry.apply_execution(order_id, result, record.timestamp_ns)
+            if outcome.released_reservation:
+                release = getattr(self.portfolio, "release_margin", None)
+                if callable(release):
+                    release(order_id, outcome.released_reservation)
             self._record_durable_fills(result.fills, replay_sequence, result.reference_prices)
             self._record_order_lifecycle(replay_sequence, record.timestamp_ns, order_id)
             return
@@ -394,7 +424,11 @@ class UniversalEventBacktestEngine:
             reason=None,
             reference_prices=(float(raw_price),),
         )
-        self.order_registry.apply_execution(order_id, result, record.timestamp_ns)
+        outcome = self.order_registry.apply_execution(order_id, result, record.timestamp_ns)
+        if outcome.released_reservation:
+            release = getattr(self.portfolio, "release_margin", None)
+            if callable(release):
+                release(order_id, outcome.released_reservation)
         self._record_durable_fills((fill,), replay_sequence, (float(raw_price),))
         self._record_order_lifecycle(replay_sequence, record.timestamp_ns, order_id)
 
@@ -741,7 +775,15 @@ class UniversalEventBacktestEngine:
                         quantity=self.quantity,
                         submitted_at_ns=record.timestamp_ns,
                     )
-                    self.order_registry.submit(order)
+                    reservation = self._reserve_order_margin(order, record, float(price), order_book_field)
+                    try:
+                        self.order_registry.submit(order, reservation)
+                    except Exception:
+                        if reservation:
+                            release = getattr(self.portfolio, "release_margin", None)
+                            if callable(release):
+                                release(order.order_id)
+                        raise
                     self._record_order_lifecycle(replay_sequence, record.timestamp_ns, order.order_id)
                     self._execute_registered_order(
                         order.order_id,
