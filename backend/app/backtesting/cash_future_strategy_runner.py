@@ -95,13 +95,15 @@ def run_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy:Ca
         if not run_id or not run_id.strip(): raise ValueError("run_id is required when ledger persistence is enabled")
         ledger.start_run(run_id,strategy_id,strategy_version,config.initial_capital,strategy_hash=strategy_hash,data_source_fingerprint=data_source_fingerprint,metadata={"domain":"cash_future","strategy_config_hash":strategy_config_hash,**_execution_metadata(config)})
     history=[] if config.history_window is None else deque(maxlen=config.history_window); signals=[] if ledger is None else None; trades=[] if ledger is None else None; equity_curve=[] if ledger is None else None; entry=None; capital_ledger=CashFutureCapitalLedger(config.initial_capital); last_point=None; pending_records=[] if ledger is not None and config.checkpoint_interval is not None else None
-    entry_action=config.cash_side; exit_action=config.future_side
+    entry_action="BUY"; exit_action="SELL"
     for point in points:
         point_date=_point_date(point)
         if previous_timestamp is not None and point.timestamp<previous_timestamp: raise ValueError("Cash-Future strategy input must be ordered by timestamp")
         previous_timestamp=point.timestamp
         if config.end_date is not None and point_date>config.end_date: break
-        # A configured contract month is a hard point-in-time universe boundary.\n        if config.contract_month is not None and point.contract_month != config.contract_month:\n            continue\n        if selected_contract is None: selected_contract=point.contract_month\n        elif point.contract_month!=selected_contract:\n            if config.contract_month is not None:\n                continue\n            raise ValueError("Cash-Future strategy input contains multiple contract months")
+        # A configured contract month is a hard point-in-time universe boundary.
+        if config.contract_month is not None and point.contract_month != config.contract_month:
+            continue\n        if selected_contract is None: selected_contract=point.contract_month\n        elif point.contract_month!=selected_contract:\n            if config.contract_month is not None:\n                continue\n            raise ValueError("Cash-Future strategy input contains multiple contract months")
         if selected_symbol is None: selected_symbol=point.symbol
         elif point.symbol!=selected_symbol: raise ValueError("Cash-Future strategy input contains multiple symbols")
         event_index+=1
