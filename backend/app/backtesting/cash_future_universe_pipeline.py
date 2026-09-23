@@ -318,7 +318,7 @@ def _request_has_materialized_rows(
         CashFutureHistory.timestamp <= expected_datetimes[-1],
     )
     first, last = db.execute(stmt).one()
-    if first is None or last is None or first > expected_datetimes[0] or last < expected_datetimes[-1]:
+    if first is None or last is None or _market_datetime(first) > expected_datetimes[0] or _market_datetime(last) < expected_datetimes[-1]:
         return False
 
     if sessions is None:
@@ -339,9 +339,9 @@ def _request_has_materialized_rows(
     observed = iter(db.execute(observed_stmt).scalars())
     current = next(observed, None)
     for expected_dt in expected_datetimes:
-        while current is not None and current < expected_dt:
+        while current is not None and _market_datetime(current) < expected_dt:
             current = next(observed, None)
-        if current != expected_dt:
+        if current is None or _market_datetime(current) != expected_dt:
             return False
     return True
 
