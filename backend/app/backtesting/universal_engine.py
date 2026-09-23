@@ -619,7 +619,9 @@ class UniversalEventBacktestEngine:
             result = run_callable()
         except Exception as exc:
             if self.result_writer is not None:
-                self.result_writer.fail(str(exc))
+                # Checkpointed runs remain RUNNING until recovery is explicitly decided.
+                if self.checkpoint_every_events is None:
+                    self.result_writer.fail(str(exc))
             raise
         if self.result_writer is not None:
             self.result_writer.complete()
