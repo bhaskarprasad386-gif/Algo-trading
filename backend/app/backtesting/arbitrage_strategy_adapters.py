@@ -366,6 +366,14 @@ class CashFutureTradeReporter:
         )
         if len(accounting) != len(fills):
             raise ValueError("accounting trade evidence must match execution fills")
+        fill_quantities = sorted(
+            (fill.order_id, fill.instrument, fill.quantity) for fill in fills
+        )
+        trade_quantities = sorted(
+            (trade.order_id, trade.instrument, trade.quantity) for trade in accounting
+        )
+        if fill_quantities != trade_quantities:
+            raise ValueError("accounting trade quantities must match execution fills")
         return result, accounting
 
     @staticmethod
