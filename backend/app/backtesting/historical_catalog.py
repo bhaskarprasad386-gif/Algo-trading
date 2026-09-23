@@ -36,6 +36,16 @@ class Gap:
 class HistoricalCatalog:
     """SQLite catalog that appends new market data and repairs gaps without replacing prior data."""
 
+    _SQLITE_INT_MIN = -(1 << 63)
+    _SQLITE_INT_MAX = (1 << 63) - 1
+
+    @classmethod
+    def _sqlite_timestamp_bound(cls, value: int) -> int:
+        """Clamp a Python timestamp bound to SQLite INTEGER's signed 64-bit range."""
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("timestamp bounds must be integers")
+        return max(cls._SQLITE_INT_MIN, min(value, cls._SQLITE_INT_MAX))
+
     def __init__(self, path: str = ":memory:") -> None:
         self.path = path
         self._db = sqlite3.connect(path)
@@ -132,10 +142,10 @@ class HistoricalCatalog:
             params.append(instrument)
         if start_ns is not None:
             clauses.append("timestamp_ns>=?")
-            params.append(start_ns)
+            params.append(self._sqlite_timestamp_bound(start_ns))
         if end_ns is not None:
             clauses.append("timestamp_ns<=?")
-            params.append(end_ns)
+            params.append(self._sqlite_timestamp_bound(end_ns))
         cursor = self._db.execute("SELECT source,instrument,timeframe,timestamp_ns,payload_json,sequence FROM data_catalog WHERE " + " AND ".join(clauses) + " ORDER BY timestamp_ns, instrument, sequence", params)
         for row in cursor:
             yield HistoricalRecord(row[0], row[1], row[2], row[3], json.loads(row[4]), row[5])
@@ -160,10 +170,10 @@ class HistoricalCatalog:
         params: list[Any] = [source, instrument, timeframe]
         if start_ns is not None:
             clauses.append("timestamp_ns>=?")
-            params.append(start_ns)
+            params.append(self._sqlite_timestamp_bound(start_ns))
         if end_ns is not None:
             clauses.append("timestamp_ns<=?")
-            params.append(end_ns)
+            params.append(self._sqlite_timestamp_bound(end_ns))
         return int(self._db.execute(
             "SELECT COUNT(*) FROM data_catalog WHERE " + " AND ".join(clauses), params
         ).fetchone()[0])
