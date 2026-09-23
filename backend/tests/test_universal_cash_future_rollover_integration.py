@@ -60,6 +60,50 @@ def _writer(tmp_path, run_id):
     return ledger, BacktestRunWriter(ledger, spec)
 
 
+def test_universal_multi_leg_context_executes_bound_source_and_strategy():
+    from app.backtesting.contracts import RunContext
+    from app.backtesting.clock import BacktestClock
+
+    adapter = CashFutureUniversalMultiLegAdapter(
+        direction="LONG_CASH_SHORT_FUTURE",
+        quantity=10,
+    )
+    records = [
+        _context(1, "NFO:ABC-OLD", 100.0, 101.0, 104.0, 105.0).record,
+    ]
+
+    class Source:
+        def iter_events(self, *, start_ns=None, end_ns=None):
+            return iter(records)
+
+    engine = UniversalEventBacktestEngine(100_000.0)
+    context = RunContext(
+        spec=BacktestRunSpec(
+            run_id="multi-leg-context",
+            strategy_id="universal-cash-future",
+            strategy_version="v1",
+            instrument="ABC",
+            start_ns=1,
+            end_ns=1,
+            resolution=BacktestResolution("tick", "historical", 1, 1),
+            parameters={},
+            data_watermarks={"ABC": 1},
+        ),
+        clock=engine.clock,
+        data_source=Source(),
+        strategy=adapter,
+        execution=engine.execution,
+        portfolio=engine.portfolio,
+        result_writer=None,
+    )
+
+    result = engine.run_multi_leg_context(context)
+
+    assert result.fill_count == 2
+    assert engine.portfolio.positions["NSE:ABC"].quantity == 10
+    assert engine.portfolio.positions["NFO:ABC-OLD"].quantity == -10
+
+
 def test_cash_future_rollover_closes_original_contract_and_accounts_pnl():
     adapter = CashFutureUniversalMultiLegAdapter(
         direction="LONG_CASH_SHORT_FUTURE",
