@@ -27,6 +27,12 @@ from app.models.cash_future_history import CashFutureHistory
 from app.scanner.cash_future_backtest import BacktestConfig
 
 MARKET_TZ = ZoneInfo("Asia/Kolkata")
+
+
+def _market_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=MARKET_TZ)
+    return value.astimezone(MARKET_TZ)
 from app.scanner.cash_future_coverage_store import (
     audit_persisted_cash_future_data_quality,
     build_persisted_cash_future_coverage,
