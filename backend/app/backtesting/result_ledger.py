@@ -305,11 +305,24 @@ class BacktestResultLedger:
         status = status.strip().upper()
         if status not in {"CREATED", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"}:
             raise ValueError(f"invalid run status: {status}")
+        current = self._db.execute(
+            "SELECT status FROM backtest_runs WHERE run_id=?", (run_id,)
+        ).fetchone()[0]
+        if current == "COMPLETED" and status != "COMPLETED":
+            raise ValueError("completed run is immutable")
         self._db.execute("UPDATE backtest_runs SET status=? WHERE run_id=?", (status, run_id))
         self._db.commit()
 
-    def append_trades(self, run_id: str, trades: Iterable[BacktestTrade]) -> int:
+    def _require_mutable_run(self, run_id: str) -> None:
         self._require_run(run_id)
+        status = self._db.execute(
+            "SELECT status FROM backtest_runs WHERE run_id=?", (run_id,)
+        ).fetchone()[0]
+        if status == "COMPLETED":
+            raise ValueError("completed run is immutable")
+
+    def append_trades(self, run_id: str, trades: Iterable[BacktestTrade]) -> int:
+        self._require_mutable_run(run_id)
         rows = []
         for trade in trades:
             metadata_json = self._json(dict(trade.metadata or {}))
@@ -331,7 +344,7 @@ class BacktestResultLedger:
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows, "backtest_trades")
 
     def append_fills(self, run_id: str, fills: Iterable[BacktestFill]) -> int:
-        self._require_run(run_id)
+        self._require_mutable_run(run_id)
         rows = []
         for fill in fills:
             metadata_json = self._json(dict(fill.metadata or {}))
@@ -350,7 +363,7 @@ class BacktestResultLedger:
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", rows, "backtest_fills")
 
     def append_events(self, run_id: str, events: Iterable[BacktestEvent]) -> int:
-        self._require_run(run_id)
+        self._require_mutable_run(run_id)
         rows = []
         for event in events:
             payload_json = self._json(event.payload)
@@ -367,7 +380,7 @@ class BacktestResultLedger:
             rows, "backtest_events")
 
     def append_equity(self, run_id: str, points: Iterable[EquityPoint]) -> int:
-        self._require_run(run_id)
+        self._require_mutable_run(run_id)
         rows = [(run_id, p.timestamp_ns, p.equity, p.realized_pnl, p.unrealized_pnl, p.drawdown) for p in points]
         return self._insert_idempotent(
             "INSERT INTO backtest_equity(run_id,timestamp_ns,equity,realized_pnl,unrealized_pnl,drawdown) VALUES (?,?,?,?,?,?)",
