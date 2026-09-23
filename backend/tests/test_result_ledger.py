@@ -83,3 +83,31 @@ def test_incremental_fill_append_and_idempotency() -> None:
     assert ledger.append_fills("run-fills", [fill()]) == 0
     rows = ledger.fills("run-fills")
     assert len(rows) == 1
+
+def test_recoverable_run_requires_explicit_running_transition_and_atomic_reclaim() -> None:
+    owner = BacktestResultLedger()
+    contender = BacktestResultLedger()
+    try:
+        owner.create_run("recoverable-run", {"strategy_id": "universal"})
+        assert owner.claim_run("recoverable-run") is True
+        owner.mark_recoverable("recoverable-run")
+        assert owner.run("recoverable-run")["status"] == "RECOVERABLE"
+
+        assert owner.claim_recoverable("recoverable-run") is True
+        assert contender.claim_recoverable("recoverable-run") is False
+        assert owner.run("recoverable-run")["status"] == "RUNNING"
+    finally:
+        contender.close()
+        owner.close()
+
+
+def test_completed_run_cannot_be_marked_recoverable() -> None:
+    ledger = BacktestResultLedger()
+    try:
+        ledger.create_run("completed-recovery", {"strategy_id": "universal"})
+        ledger.claim_run("completed-recovery")
+        ledger.set_status("completed-recovery", "COMPLETED")
+        with pytest.raises(ValueError, match="not RUNNING"):
+            ledger.mark_recoverable("completed-recovery")
+    finally:
+        ledger.close()
