@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass
+import math
 from typing import Iterable, Mapping
 
 from app.backtesting.engine import EventContext, EventSignal, EventStrategy, _normalize_event_signal
@@ -154,6 +155,7 @@ class UniversalEventBacktestEngine:
             "source_event_identity": self._checkpoint_identity(previous_identity),
             "portfolio_state": dict(self.portfolio.export_state()),
             "order_registry_state": dict(self.order_registry.export_state()),
+            "execution_state": self._execution_checkpoint_state(),
             "strategy_state": dict(strategy_state(strategy)),
             "reporter_state": dict(self.trade_reporter.get_state()) if self.trade_reporter is not None and callable(getattr(self.trade_reporter, "get_state", None)) else {},
             "statistics_state": dict(accumulator.export_state()),
@@ -165,6 +167,47 @@ class UniversalEventBacktestEngine:
             "clock_now_ns": self.clock.now_ns,
         }
 
+
+    def _execution_checkpoint_state(self) -> dict[str, object]:
+        if isinstance(self.execution, ExecutionSimulator):
+            config = self.execution.config
+            return {
+                "kind": "ExecutionSimulator",
+                "config": {
+                    "slippage_bps": config.slippage_bps,
+                    "latency_ns": config.latency_ns,
+                    "fee_per_unit": config.fee_per_unit,
+                    "allow_partial_fills": config.allow_partial_fills,
+                },
+            }
+        return {
+            "kind": "custom",
+            "class": f"{type(self.execution).__module__}.{type(self.execution).__qualname__}",
+        }
+
+    @staticmethod
+    def _validate_execution_checkpoint(engine, state: Mapping[str, object]) -> None:
+        if not isinstance(state, Mapping):
+            raise ValueError("checkpoint execution_state is invalid")
+        kind = state.get("kind")
+        if kind == "ExecutionSimulator":
+            if not isinstance(engine.execution, ExecutionSimulator):
+                raise ValueError("checkpoint execution model does not match engine execution model")
+            config = state.get("config")
+            if not isinstance(config, Mapping):
+                raise ValueError("checkpoint execution config is missing")
+            current = engine.execution.config
+            fields = ("slippage_bps", "latency_ns", "fee_per_unit", "allow_partial_fills")
+            if any(config.get(field) != getattr(current, field) for field in fields):
+                raise ValueError("checkpoint execution config does not match engine execution config")
+            return
+        if kind == "custom":
+            expected = state.get("class")
+            actual = f"{type(engine.execution).__module__}.{type(engine.execution).__qualname__}"
+            if expected != actual:
+                raise ValueError("checkpoint execution model class does not match engine execution model")
+            return
+        raise ValueError("checkpoint execution_state kind is invalid")
 
     @staticmethod
     def _restore_checkpoint_state(
@@ -201,6 +244,10 @@ class UniversalEventBacktestEngine:
         if not isinstance(registry_state, dict):
             raise ValueError("checkpoint order_registry_state must be a dictionary")
         engine.order_registry = UniversalOrderRegistry.restore_state(registry_state)
+        execution_state = state.get("execution_state")
+        if execution_state is None:
+            raise ValueError("checkpoint missing execution_state")
+        UniversalEventBacktestEngine._validate_execution_checkpoint(engine, execution_state)
         saved_strategy = state.get("strategy_state", {})
         if not isinstance(saved_strategy, dict):
             raise ValueError("checkpoint strategy_state must be a dictionary")
