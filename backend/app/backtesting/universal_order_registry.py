@@ -143,14 +143,21 @@ class UniversalOrderRegistry:
         if result.remaining_quantity != final_remaining:
             raise ValueError("execution result remaining quantity is inconsistent")
 
-        # FOK rejection is an execution rejection, not a lifecycle fill.
+        # Execution rejection does not necessarily terminate a resting order:
+        # no-depth/queue/stop cases can remain open. FOK is terminal by contract.
         if result.rejected:
             if fills:
                 raise ValueError("rejected execution cannot contain fills")
             if result.remaining_quantity != lifecycle.state.remaining_quantity:
                 raise ValueError("rejected execution cannot change remaining quantity")
-            if lifecycle.state.status in {OrderStatus.SUBMITTED, OrderStatus.ACCEPTED}:
-                lifecycle.reject(result.reason or "execution rejected", timestamp_ns)
+            if order.time_in_force == TimeInForce.FOK and lifecycle.state.status in {OrderStatus.SUBMITTED, OrderStatus.ACCEPTED}:
+                lifecycle.reject(result.reason or "FOK execution rejected", timestamp_ns)
+                released = self._reservations.pop(order_id, 0.0)
+                self._orders.pop(order_id, None)
+                self._queue[order_id] = self._queue[order_id].cancel()
+                return RegistryExecutionOutcome(
+                    order_id, lifecycle.state.status, previous_filled, lifecycle.state.remaining_quantity, released
+                )
             return RegistryExecutionOutcome(
                 order_id, lifecycle.state.status, previous_filled, lifecycle.state.remaining_quantity, 0.0
             )
