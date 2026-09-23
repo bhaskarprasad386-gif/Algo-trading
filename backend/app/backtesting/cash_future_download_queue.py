@@ -97,7 +97,6 @@ def build_rollover_download_queue(
     spot = CashFutureSegmentDownload(None, spot_request)
 
     items: list[CashFutureSegmentDownload] = []
-    seen_requests: set[tuple[str, str, str, int, int]] = set()
     for segments in segments_by_leg:
         for segment in segments:
             day_start = _market_day_bounds(segment.start)[0]
@@ -112,9 +111,28 @@ def build_rollover_download_queue(
                 timeframe,
                 _ns(seg_start), _ns(seg_end),
             )
-            identity = (request.source, request.instrument, request.timeframe, request.start_ns, request.end_ns)
-            if identity in seen_requests:
-                continue
-            seen_requests.add(identity)
-            items.append(CashFutureSegmentDownload(segment, request))
+            # A repeated contract token can appear in overlapping rollover
+            # segments. Coalesce those requests; keep disjoint ranges separate.
+            merged = False
+            for index, existing in enumerate(items):
+                existing_request = existing.request
+                if (
+                    existing_request.source == request.source
+                    and existing_request.instrument == request.instrument
+                    and existing_request.timeframe == request.timeframe
+                    and request.start_ns <= existing_request.end_ns
+                    and request.end_ns >= existing_request.start_ns
+                ):
+                    merged_request = HistoricalFetchRequest(
+                        request.source,
+                        request.instrument,
+                        request.timeframe,
+                        min(existing_request.start_ns, request.start_ns),
+                        max(existing_request.end_ns, request.end_ns),
+                    )
+                    items[index] = CashFutureSegmentDownload(existing.segment, merged_request)
+                    merged = True
+                    break
+            if not merged:
+                items.append(CashFutureSegmentDownload(segment, request))
     return CashFutureDownloadQueue(spot=spot, futures=tuple(items))
