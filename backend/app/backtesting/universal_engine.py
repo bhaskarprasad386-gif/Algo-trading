@@ -108,6 +108,7 @@ class UniversalEventBacktestEngine:
         self.resume = resume
         self._run_started = False
         self._fill_sequence = 0
+        self._fill_count = 0
         self.order_registry = order_registry if order_registry is not None else UniversalOrderRegistry()
 
     def _begin_run(self) -> None:
@@ -152,6 +153,7 @@ class UniversalEventBacktestEngine:
             "last_marks": dict(last_marks),
             "replay_sequence": replay_sequence,
             "fill_sequence": self._fill_sequence,
+            "fill_count": self._fill_count,
             "peak_equity": peak_equity,
             "clock_now_ns": self.clock.now_ns,
         }
@@ -197,12 +199,14 @@ class UniversalEventBacktestEngine:
         last_marks.update({str(k): float(v) for k, v in saved_marks.items()})
         replay_sequence = state.get("replay_sequence")
         fill_sequence = state.get("fill_sequence")
+        fill_count = state.get("fill_count", fill_sequence)
         peak_equity = state.get("peak_equity")
-        if any(isinstance(v, bool) or not isinstance(v, int) for v in (replay_sequence, fill_sequence)):
+        if any(isinstance(v, bool) or not isinstance(v, int) or v < 0 for v in (replay_sequence, fill_sequence, fill_count)):
             raise ValueError("checkpoint sequence state is invalid")
         if isinstance(peak_equity, bool) or not isinstance(peak_equity, (int, float)):
             raise ValueError("checkpoint peak_equity is invalid")
         engine._fill_sequence = fill_sequence
+        engine._fill_count = fill_count
         return int(state["source_cursor"]), int(replay_sequence), state["source_event_identity"], float(peak_equity)
 
     def _load_checkpoint_for_resume(
@@ -410,6 +414,7 @@ class UniversalEventBacktestEngine:
                 release = getattr(self.portfolio, "release_margin", None)
                 if callable(release):
                     release(order_id, outcome.released_reservation)
+            self._fill_count += len(result.fills)
             self._record_durable_fills(result.fills, replay_sequence, result.reference_prices)
             self._record_order_lifecycle(replay_sequence, record.timestamp_ns, order_id)
             return
@@ -417,6 +422,7 @@ class UniversalEventBacktestEngine:
             return
         fill = self.execution.execute(order, float(raw_price), record.timestamp_ns)
         self.portfolio.apply_fill(fill, {record.instrument: float(raw_price)})
+        self._fill_count += 1
         result = ExecutionResult(
             fills=(fill,),
             remaining_quantity=0,
@@ -610,8 +616,8 @@ class UniversalEventBacktestEngine:
                         if isinstance(strategy, AtomicExecutionAwareProtocol):
                             strategy.on_atomic_execution(result)
                         raise ValueError(result.reason or "atomic multi-leg execution rejected")
-                    trade_start = len(self.portfolio.trades)
                     snapshot = self.portfolio.apply_fills_atomic(result.fills, last_marks)
+                    self._fill_count += len(result.fills)
                     accounting_trades = tuple(self.portfolio.trades[trade_start:])
                     if self.result_writer is not None:
                         durable_fills = []
@@ -679,7 +685,7 @@ class UniversalEventBacktestEngine:
             cagr=stats.cagr,
             snapshots=tuple(snapshots),
             equity_curve=tuple(equity_curve),
-            fill_count=len(self.portfolio.trades),
+            fill_count=self._fill_count,
         )
 
     def run(self, events: Iterable[HistoricalRecord], strategy: StrategyProtocol, *, price_field: str = "price", order_book_field: str | None = None) -> UniversalBacktestResult:
