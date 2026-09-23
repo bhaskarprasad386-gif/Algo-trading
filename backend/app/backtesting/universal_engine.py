@@ -373,7 +373,7 @@ class UniversalEventBacktestEngine:
                 "filled_quantity": state.filled_quantity,
                 "remaining_quantity": state.remaining_quantity,
                 "reason": state.reject_reason,
-                "replacement_order_id": state.replacement_order_id,
+                "replacement_order_id": state.events[-1].replacement_order_id if state.events else None,
             },
         )
 
