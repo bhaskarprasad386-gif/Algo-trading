@@ -146,7 +146,7 @@ class CashFutureHistoryCollector:
         self.config = config or CashFutureConfig()
         for value, name in ((symbol_timeout_seconds, "symbol_timeout_seconds"), (max_quote_age_seconds, "max_quote_age_seconds"), (max_quote_timestamp_skew_seconds, "max_quote_timestamp_skew_seconds")):
             if value is not None and (not math.isfinite(float(value)) or value <= 0):
-                raise ValueError(f"{name} must be finite and positive or None")
+                raise ValueError(f"{name} must be positive or None")
         self.symbol_timeout_seconds = symbol_timeout_seconds
         self.max_quote_age_seconds = max_quote_age_seconds
         self.max_quote_timestamp_skew_seconds = max_quote_timestamp_skew_seconds
@@ -161,11 +161,14 @@ class CashFutureHistoryCollector:
             name = str(item.get("name", "")).strip().upper()
             tradingsymbol = str(item.get("symbol", "")).strip().upper()
             token = str(item.get("token") or "").strip()
-            lot_size = _positive_integer(item.get("lotsize") or item.get("lotSize"), "lot size")
             if name != symbol or not tradingsymbol:
                 continue
             exp = _expiry(item.get("expiry"))
-            if exp is None or exp < date.today() or not token or lot_size <= 0:
+            if exp is None or exp < date.today() or not token:
+                continue
+            try:
+                lot_size = _positive_integer(item.get("lotsize") or item.get("lotSize"), "lot size")
+            except ValueError:
                 continue
             identity = (exp, tradingsymbol)
             if identity in seen:
@@ -208,8 +211,6 @@ class CashFutureHistoryCollector:
         cash_ltp = cash_quote["ltp"]
         if not math.isfinite(cash_ltp) or cash_ltp <= 0:
             raise ValueError(f"invalid cash LTP for {cash_symbol}")
-        if cash_quote["quote_timestamp"] is None:
-            raise ValueError(f"cash quote timestamp missing for {cash_symbol}")
         futures = self._future_instruments(symbol)
         if not futures:
             raise ValueError(f"no eligible NFO FUTSTK contracts found: {symbol}")
@@ -226,18 +227,25 @@ class CashFutureHistoryCollector:
                 market_quote = _full_quote(self.market_client.quote("NFO", future_symbol, str(future["token"])))
                 self._validate_quote_freshness(label, future_symbol, market_quote["quote_timestamp"])
                 self._validate_quote_timestamp_skew(cash_quote["quote_timestamp"], market_quote["quote_timestamp"], future_symbol)
-                if market_quote["quote_timestamp"] is None:
-                    raise ValueError(f"future quote timestamp missing for {future_symbol}")
                 future_ltp = market_quote["ltp"]
                 if not math.isfinite(future_ltp) or future_ltp <= 0:
                     raise ValueError(f"invalid future LTP for {future_symbol}")
                 lot_size = _positive_integer(future.get("lotsize") or future.get("lotSize"), "lot size")
                 margin = self._future_margin(future, future_ltp, lot_size)
-                observation_time = max(cash_quote["quote_timestamp"], market_quote["quote_timestamp"]).replace(microsecond=0)
+                quote_times = tuple(
+                    value for value in (cash_quote["quote_timestamp"], market_quote["quote_timestamp"])
+                    if value is not None
+                )
+                observation_time = (
+                    max(quote_times).replace(microsecond=0)
+                    if quote_times
+                    else datetime.now(IST).replace(microsecond=0)
+                )
                 future_quote = FutureQuote(symbol=future_symbol, contract_month=label, ltp=future_ltp, lot_size=lot_size, margin_required=margin, volume=market_quote["volume"], oi=market_quote["oi"], bid=market_quote["bid"], ask=market_quote["ask"], expiry=_expiry(future.get("expiry")))
                 result = calculate_cash_future(CashQuote(symbol=cash_symbol, ltp=cash_ltp, bid=cash_quote["bid"], ask=cash_quote["ask"]), future_quote, self.config)
                 item = result.__dict__.copy()
-                item.update({"contract_month": label, "timestamp": observation_time.isoformat(), "volume": market_quote["volume"], "oi": market_quote["oi"], "cash_bid": cash_quote["bid"], "cash_ask": cash_quote["ask"], "future_bid": market_quote["bid"], "future_ask": market_quote["ask"], "cash_bid_qty": cash_quote["bid_qty"], "cash_ask_qty": cash_quote["ask_qty"], "future_bid_qty": market_quote["bid_qty"], "future_ask_qty": market_quote["ask_qty"], "cash_quote_timestamp": cash_quote["quote_timestamp"].isoformat(), "quote_timestamp": market_quote["quote_timestamp"].isoformat()})
+                item.update({"contract_month": label, "timestamp": observation_time.isoformat(), "volume": market_quote["volume"], "oi": market_quote["oi"], "cash_bid": cash_quote["bid"], "cash_ask": cash_quote["ask"], "future_bid": market_quote["bid"], "future_ask": market_quote["ask"], "cash_bid_qty": cash_quote["bid_qty"], "cash_ask_qty": cash_quote["ask_qty"], "future_bid_qty": market_quote["bid_qty"], "future_ask_qty": market_quote["ask_qty"], "cash_quote_timestamp": cash_quote["quote_timestamp"].isoformat() if cash_quote["quote_timestamp"] else None,
+                    "quote_timestamp": market_quote["quote_timestamp"].isoformat() if market_quote["quote_timestamp"] else None})
                 save_history_point(db, CashFutureHistoryPoint(symbol=symbol, contract_month=label, timestamp=observation_time, cash_price=cash_ltp, future_price=future_ltp, gap=result.gap, gap_pct=result.gap_pct, lot_size=lot_size, margin_required=margin, volume=market_quote["volume"], oi=market_quote["oi"], cash_bid=cash_quote["bid"], cash_ask=cash_quote["ask"], future_bid=market_quote["bid"], future_ask=market_quote["ask"], cash_bid_qty=cash_quote["bid_qty"], cash_ask_qty=cash_quote["ask_qty"], future_bid_qty=market_quote["bid_qty"], future_ask_qty=market_quote["ask_qty"], charges=self.config.charges, funding_cost=self.config.funding_cost, net_profit=result.net_profit, roi_pct=result.roi_pct, expiry_date=future_quote.expiry), expiry_date=future_quote.expiry)
                 results.append(item)
             except Exception as exc:
