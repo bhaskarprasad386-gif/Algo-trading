@@ -886,3 +886,51 @@ class UniversalEventBacktestEngine:
                             if reservation:
                                 release = getattr(self.portfolio, "release_margin", None)
                                 if callable(release):
+                                    release(order.order_id)
+                        raise
+                    self._record_order_lifecycle(replay_sequence, record.timestamp_ns, order.order_id)
+                    self._execute_registered_order(
+                        order.order_id,
+                        record,
+                        float(price),
+                        order_book_field,
+                        replay_sequence,
+                    )
+                snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
+                peak_equity, point = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
+                replay_sequence += 1
+                processed_events += 1
+                if checkpoint_due:
+                    self._save_checkpoint_if_due(
+                        processed_events=processed_events,
+                        replay_sequence=replay_sequence,
+                        previous_identity=previous_identity,
+                        last_marks=last_marks,
+                        accumulator=accumulator,
+                        peak_equity=peak_equity,
+                        strategy=strategy,
+                        record=record,
+                    )
+                if self.retain_history:
+                    snapshots.append(snapshot)
+                    equity_curve.append(point)
+    
+        if self.resume and resume_cursor > processed_events:
+            raise ValueError("checkpoint source_cursor exceeds available source events")
+        final_snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
+        stats: BacktestStatistics = accumulator.finalize()
+        return UniversalBacktestResult(
+            initial_capital=self.portfolio.initial_cash,
+            final_equity=final_snapshot.equity,
+            realized_pnl=final_snapshot.realized_pnl,
+            unrealized_pnl=final_snapshot.unrealized_pnl,
+            net_pnl=stats.net_pnl,
+            total_return=stats.total_return,
+            sharpe_ratio=stats.sharpe_ratio,
+            sortino_ratio=stats.sortino_ratio,
+            max_drawdown=stats.max_drawdown,
+            cagr=stats.cagr,
+            snapshots=tuple(snapshots),
+            equity_curve=tuple(equity_curve),
+            fill_count=len(self.portfolio.trades),
+        )
