@@ -101,7 +101,7 @@ def run_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy:Ca
         if previous_timestamp is not None and point.timestamp<previous_timestamp: raise ValueError("Cash-Future strategy input must be ordered by timestamp")
         previous_timestamp=point.timestamp
         if config.end_date is not None and point_date>config.end_date: break
-        # A configured contract month defines the point-in-time universe for this run.\n        # Other contract observations may be present in the source stream and must not\n        # contaminate strategy history/signals/trades for the selected contract.\n        if selected_contract is None: selected_contract=point.contract_month\n        elif point.contract_month!=selected_contract:\n            if config.contract_month is not None:\n                continue\n            raise ValueError("Cash-Future strategy input contains multiple contract months")
+        # A configured contract month is a hard point-in-time universe boundary.\n        if config.contract_month is not None and point.contract_month != config.contract_month:\n            continue\n        if selected_contract is None: selected_contract=point.contract_month\n        elif point.contract_month!=selected_contract:\n            if config.contract_month is not None:\n                continue\n            raise ValueError("Cash-Future strategy input contains multiple contract months")
         if selected_symbol is None: selected_symbol=point.symbol
         elif point.symbol!=selected_symbol: raise ValueError("Cash-Future strategy input contains multiple symbols")
         event_index+=1
