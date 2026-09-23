@@ -79,19 +79,21 @@ def run_resumable_events(
         if len(chunk) < chunk_size:
             continue
         trades = _run_chunk(engine, chunk, strategy, state, price_field=price_field)
-        if trades:
-            ledger.append_next(run_id, trades)
-            persisted_trades.extend(trades)
-        ledger.save_checkpoint(run_id, _cursor(chunk[-1]), ledger.count(run_id))
+        with ledger.transaction():
+            if trades:
+                ledger.append_next(run_id, trades)
+                persisted_trades.extend(trades)
+            ledger.save_checkpoint(run_id, _cursor(chunk[-1]), ledger.count(run_id))
         processed_any = True
         chunk.clear()
 
     if chunk:
         trades = _run_chunk(engine, chunk, strategy, state, price_field=price_field)
-        if trades:
-            ledger.append_next(run_id, trades)
-            persisted_trades.extend(trades)
-        ledger.save_checkpoint(run_id, _cursor(chunk[-1]), ledger.count(run_id))
+        with ledger.transaction():
+            if trades:
+                ledger.append_next(run_id, trades)
+                persisted_trades.extend(trades)
+            ledger.save_checkpoint(run_id, _cursor(chunk[-1]), ledger.count(run_id))
         processed_any = True
 
     if not processed_any:
