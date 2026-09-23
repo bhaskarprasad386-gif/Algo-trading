@@ -247,8 +247,7 @@ class UniversalEventBacktestEngine:
 
     def _save_checkpoint_if_due(
         self,
-        *,
-        processed_events: int,
+        *,        processed_events: int,
         replay_sequence: int,
         previous_identity,
         last_marks: dict[str, float],
@@ -497,8 +496,7 @@ class UniversalEventBacktestEngine:
         if context.execution is not self.execution or context.portfolio is not self.portfolio or context.clock is not self.clock:
             raise ValueError("RunContext dependencies do not match this engine")
         if context.result_writer is not self.result_writer:
-            raise ValueError("RunContext result_writer does not match this engine")
-        return self.run_multi_leg(
+            raise ValueError("RunContext result_writer does not match this engine")        return self.run_multi_leg(
             context.data_source.iter_events(
                 start_ns=context.spec.start_ns,
                 end_ns=context.spec.end_ns,
@@ -594,6 +592,20 @@ class UniversalEventBacktestEngine:
                         last_marks[order.instrument] = float(levels[0].price)
                     result = self.execution.execute_many_atomic(legs)
                     if result.rejected:
+                        if self.result_writer is not None:
+                            self.result_writer.record_event(
+                                replay_sequence,
+                                record.timestamp_ns,
+                                "ATOMIC_EXECUTION_REJECTED",
+                                {
+                                    "reason": result.reason,
+                                    "leg_count": len(result.leg_results),
+                                    "filled_quantity": sum(
+                                        fill.quantity
+                                        for fill in result.fills
+                                    ),
+                                },
+                            )
                         if isinstance(strategy, AtomicExecutionAwareProtocol):
                             strategy.on_atomic_execution(result)
                         raise ValueError(result.reason or "atomic multi-leg execution rejected")
@@ -798,40 +810,3 @@ class UniversalEventBacktestEngine:
                     )
     
                 snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
-                peak_equity, point = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
-                replay_sequence += 1
-                processed_events += 1
-                if checkpoint_due:
-                    self._save_checkpoint_if_due(
-                        processed_events=processed_events,
-                        replay_sequence=replay_sequence,
-                        previous_identity=previous_identity,
-                        last_marks=last_marks,
-                        accumulator=accumulator,
-                        peak_equity=peak_equity,
-                        strategy=strategy,
-                        record=record,
-                    )
-                if self.retain_history:
-                    snapshots.append(snapshot)
-                    equity_curve.append(point)
-    
-        if self.resume and resume_cursor > processed_events:
-            raise ValueError("checkpoint source_cursor exceeds available source events")
-        final_snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
-        stats: BacktestStatistics = accumulator.finalize()
-        return UniversalBacktestResult(
-            initial_capital=self.portfolio.initial_cash,
-            final_equity=final_snapshot.equity,
-            realized_pnl=final_snapshot.realized_pnl,
-            unrealized_pnl=final_snapshot.unrealized_pnl,
-            net_pnl=stats.net_pnl,
-            total_return=stats.total_return,
-            sharpe_ratio=stats.sharpe_ratio,
-            sortino_ratio=stats.sortino_ratio,
-            max_drawdown=stats.max_drawdown,
-            cagr=stats.cagr,
-            snapshots=tuple(snapshots),
-            equity_curve=tuple(equity_curve),
-            fill_count=len(self.portfolio.trades),
-        )
