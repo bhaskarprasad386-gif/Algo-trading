@@ -36,7 +36,7 @@ def _number(value: Any, default: float | int = 0):
     try:
         numeric = float(value)
     except (TypeError, ValueError) as exc:
-        return None
+        raise ValueError(f"broker numeric value is invalid: {value!r}") from exc
     if not math.isfinite(numeric):
         raise ValueError("broker numeric value must be finite")
     return numeric
@@ -59,7 +59,10 @@ def _non_negative_integer(value: Any, name: str) -> int:
 def _quote_side(value: Any) -> float | None:
     if value is None or value == "":
         return None
-    numeric = _number(value, 0.0)
+    try:
+        numeric = _number(value, 0.0)
+    except ValueError:
+        return None
     return float(numeric)
 
 
