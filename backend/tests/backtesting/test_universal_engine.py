@@ -322,3 +322,52 @@ def test_universal_multi_leg_rejection_is_durable_before_run_failure() -> None:
     assert "atomic" in rejection[0][3]["reason"]
     assert writer.failed is not None
     assert writer.completed is False
+
+def test_universal_checkpoint_due_uses_composed_transaction(monkeypatch) -> None:
+    events = [
+        HistoricalRecord("test", "AAA", "tick", 1, {"price": 100.0}, 1),
+    ]
+
+    class FailingWriter:
+        def __init__(self):
+            self.events = []
+            self.checkpoint_saves = []
+
+        def transaction(self):
+            from contextlib import contextmanager
+            @contextmanager
+            def tx():
+                yield
+                raise RuntimeError("abort checkpoint transaction")
+            return tx()
+
+        def record_event(self, *args):
+            self.events.append(args)
+
+        def record_equity(self, *args):
+            pass
+
+        def fail(self, reason):
+            pass
+
+        def complete(self):
+            pass
+
+        @property
+        def checkpoints(self):
+            return self
+
+        def save(self, checkpoint, *, commit=True):
+            self.checkpoint_saves.append(commit)
+
+    writer = FailingWriter()
+    engine = UniversalEventBacktestEngine(
+        100_000.0,
+        result_writer=writer,
+        checkpoint_every_events=1,
+    )
+
+    with pytest.raises(RuntimeError, match="abort checkpoint transaction"):
+        engine.run(events, lambda ctx: ())
+
+    assert writer.checkpoint_saves == [False]
