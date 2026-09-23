@@ -178,6 +178,14 @@ class UniversalEventBacktestEngine:
         portfolio_state = state.get("portfolio_state")
         if not isinstance(portfolio_state, dict):
             raise ValueError("checkpoint missing portfolio_state")
+        checkpoint_initial_cash = portfolio_state.get("initial_cash")
+        if (
+            isinstance(checkpoint_initial_cash, bool)
+            or not isinstance(checkpoint_initial_cash, (int, float))
+            or not math.isfinite(float(checkpoint_initial_cash))
+            or float(checkpoint_initial_cash) != float(engine.portfolio.initial_cash)
+        ):
+            raise ValueError("checkpoint initial_cash does not match engine portfolio initial_cash")
         engine.portfolio.restore_state(portfolio_state)
         registry_state = state.get("order_registry_state", {})
         if not isinstance(registry_state, dict):
