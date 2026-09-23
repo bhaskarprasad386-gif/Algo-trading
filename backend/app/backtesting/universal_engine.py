@@ -23,6 +23,7 @@ from app.backtesting.historical_catalog import HistoricalRecord
 from app.backtesting.result_ledger import BacktestFill, EquityPoint as LedgerEquityPoint
 from app.backtesting.strategy import restore_strategy_state, strategy_state
 from app.backtesting.statistics import BacktestStatistics, EquityPoint, StreamingStatisticsAccumulator
+from app.backtesting.universal_order_registry import UniversalOrderRegistry
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ class UniversalEventBacktestEngine:
         checkpoint_store: CheckpointStore | None = None,
         checkpoint_every_events: int | None = None,
         resume: bool = False,
+        order_registry: UniversalOrderRegistry | None = None,
     ) -> None:
         if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
             raise ValueError("quantity must be a positive integer")
@@ -106,6 +108,7 @@ class UniversalEventBacktestEngine:
         self.resume = resume
         self._run_started = False
         self._fill_sequence = 0
+        self.order_registry = order_registry if order_registry is not None else UniversalOrderRegistry()
 
     def _begin_run(self) -> None:
         """Enforce one isolated replay lifecycle per engine instance."""
@@ -142,6 +145,7 @@ class UniversalEventBacktestEngine:
             "source_cursor": processed_events,
             "source_event_identity": self._checkpoint_identity(previous_identity),
             "portfolio_state": dict(self.portfolio.export_state()),
+            "order_registry_state": dict(self.order_registry.export_state()),
             "strategy_state": dict(strategy_state(strategy)),
             "reporter_state": dict(self.trade_reporter.get_state()) if self.trade_reporter is not None and callable(getattr(self.trade_reporter, "get_state", None)) else {},
             "statistics_state": dict(accumulator.export_state()),
@@ -166,6 +170,10 @@ class UniversalEventBacktestEngine:
         if not isinstance(portfolio_state, dict):
             raise ValueError("checkpoint missing portfolio_state")
         engine.portfolio.restore_state(portfolio_state)
+        registry_state = state.get("order_registry_state", {})
+        if not isinstance(registry_state, dict):
+            raise ValueError("checkpoint order_registry_state must be a dictionary")
+        engine.order_registry = UniversalOrderRegistry.restore_state(registry_state)
         saved_strategy = state.get("strategy_state", {})
         if not isinstance(saved_strategy, dict):
             raise ValueError("checkpoint strategy_state must be a dictionary")
@@ -274,6 +282,90 @@ class UniversalEventBacktestEngine:
                 event_type="REPLAY_EVENT",
             )
         )
+
+    def _record_order_lifecycle(self, sequence: int, timestamp_ns: int, order_id: str) -> None:
+        if self.result_writer is None:
+            return
+        state = self.order_registry.lifecycle(order_id).state
+        self.result_writer.record_event(
+            sequence,
+            timestamp_ns,
+            "ORDER_LIFECYCLE",
+            {
+                "order_id": order_id,
+                "status": state.status.value,
+                "filled_quantity": state.filled_quantity,
+                "remaining_quantity": state.remaining_quantity,
+                "reason": state.reject_reason,
+                "replacement_order_id": state.replacement_order_id,
+            },
+        )
+
+    def _record_durable_fills(self, fills, replay_sequence: int, reference_prices=()) -> None:
+        if self.result_writer is None:
+            return
+        fills = tuple(fills)
+        reference_prices = tuple(reference_prices)
+        if reference_prices and len(reference_prices) != len(fills):
+            raise ValueError("execution result reference_prices must align with fills")
+        durable_fills = []
+        for index, fill in enumerate(fills):
+            metadata = {"reference_price": reference_prices[index]} if reference_prices else {}
+            durable_fills.append(BacktestFill(
+                fill_id=f"{replay_sequence}:{self._fill_sequence}:{fill.order_id}",
+                order_id=fill.order_id,
+                sequence=self._fill_sequence,
+                timestamp_ns=fill.filled_at_ns,
+                instrument=fill.instrument,
+                side=fill.side.value,
+                quantity=fill.quantity,
+                price=fill.price,
+                fee=fill.fee,
+                metadata=metadata,
+            ))
+            self._fill_sequence += 1
+        if durable_fills:
+            self.result_writer.record_fills(tuple(durable_fills))
+
+    def _execute_registered_order(
+        self,
+        order_id: str,
+        record: HistoricalRecord,
+        raw_price,
+        order_book_field: str | None,
+        replay_sequence: int,
+    ) -> None:
+        order = self.order_registry.effective_order(order_id)
+        if order.submitted_at_ns > record.timestamp_ns or order.instrument != record.instrument:
+            return
+        if order_book_field is not None:
+            book = record.payload.get(order_book_field)
+            if not isinstance(self.execution, DepthExecutionModelProtocol):
+                raise TypeError("order_book execution requires a depth execution model")
+            if not isinstance(book, OrderBook):
+                raise TypeError(f"event payload {order_book_field!r} must contain an OrderBook")
+            result = self.execution.execute_depth(order, book, record.timestamp_ns)
+            if result.fills:
+                mark = book.asks[0].price if order.side == ExecutionSide.BUY else book.bids[0].price
+                self.portfolio.apply_fills_atomic(result.fills, {record.instrument: float(mark)})
+            self.order_registry.apply_execution(order_id, result, record.timestamp_ns)
+            self._record_durable_fills(result.fills, replay_sequence, result.reference_prices)
+            self._record_order_lifecycle(replay_sequence, record.timestamp_ns, order_id)
+            return
+        if raw_price is None:
+            return
+        fill = self.execution.execute(order, float(raw_price), record.timestamp_ns)
+        self.portfolio.apply_fill(fill, {record.instrument: float(raw_price)})
+        result = ExecutionResult(
+            fills=(fill,),
+            remaining_quantity=0,
+            rejected=False,
+            reason=None,
+            reference_prices=(float(raw_price),),
+        )
+        self.order_registry.apply_execution(order_id, result, record.timestamp_ns)
+        self._record_durable_fills((fill,), replay_sequence, (float(raw_price),))
+        self._record_order_lifecycle(replay_sequence, record.timestamp_ns, order_id)
 
     def _record_replay_point(
         self,
@@ -577,6 +669,16 @@ class UniversalEventBacktestEngine:
                         raise ValueError(f"event payload {price_field!r} must be positive")
                     last_marks[record.instrument] = float(raw_price)
     
+                for open_order in tuple(self.order_registry.open_orders()):
+                    if open_order.instrument == record.instrument:
+                        self._execute_registered_order(
+                            open_order.order_id,
+                            record,
+                            raw_price,
+                            order_book_field,
+                            replay_sequence,
+                        )
+
                 signal = _normalize_event_signal(
                     strategy(EventContext(
                         record.timestamp_ns,
@@ -586,7 +688,7 @@ class UniversalEventBacktestEngine:
                         record.payload,
                         record,
                         self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({}),
-                        (),
+                        self.order_registry.open_orders(),
                         (self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})).available_margin,
                     ))
                 )
@@ -596,8 +698,6 @@ class UniversalEventBacktestEngine:
                         price = raw_price
                     if price is None or isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
                         raise ValueError(f"event payload must contain numeric positive {price_field!r} or signal price")
-                    last_marks[record.instrument] = float(price)
-    
                     side = ExecutionSide.BUY if signal.action == "BUY" else ExecutionSide.SELL
                     order = SimOrder(
                         order_id=f"event-{record.timestamp_ns}-{record.sequence if record.sequence is not None else 'na'}-{record.instrument}",
@@ -606,53 +706,16 @@ class UniversalEventBacktestEngine:
                         quantity=self.quantity,
                         submitted_at_ns=record.timestamp_ns,
                     )
-                    if order_book_field is not None:
-                        book = record.payload.get(order_book_field)
-                        if not isinstance(self.execution, DepthExecutionModelProtocol):
-                            raise TypeError("order_book execution requires a depth execution model")
-                        if not isinstance(book, OrderBook):
-                            raise TypeError(f"event payload {order_book_field!r} must contain an OrderBook")
-                        result = self.execution.execute_depth(order, book, record.timestamp_ns)
-                        if result.rejected:
-                            raise ValueError(result.reason or "depth execution rejected")
-                        if result.fills:
-                            self.portfolio.apply_fills_atomic(result.fills, last_marks)
-                            if self.result_writer is not None:
-                                durable_fills = []
-                                if len(result.reference_prices) != len(result.fills):
-                                    raise ValueError("execution result reference_prices must align with fills")
-                                for fill, reference_price in zip(result.fills, result.reference_prices):
-                                    durable_fills.append(BacktestFill(
-                                        fill_id=f"{replay_sequence}:{self._fill_sequence}:{fill.order_id}",
-                                        order_id=fill.order_id,
-                                        sequence=self._fill_sequence,
-                                        timestamp_ns=fill.filled_at_ns,
-                                        instrument=fill.instrument,
-                                        side=fill.side.value,
-                                        quantity=fill.quantity,
-                                        price=fill.price,
-                                        fee=fill.fee,
-                                        metadata={"reference_price": reference_price},
-                                    ))
-                                    self._fill_sequence += 1
-                                self.result_writer.record_fills(tuple(durable_fills))
-                    else:
-                        fill = self.execution.execute(order, float(price), record.timestamp_ns)
-                        self.portfolio.apply_fill(fill, last_marks)
-                        if self.result_writer is not None:
-                            self.result_writer.record_fills((BacktestFill(
-                                fill_id=f"{replay_sequence}:{self._fill_sequence}:{fill.order_id}",
-                                order_id=fill.order_id,
-                                sequence=self._fill_sequence,
-                                timestamp_ns=fill.filled_at_ns,
-                                instrument=fill.instrument,
-                                side=fill.side.value,
-                                quantity=fill.quantity,
-                                price=fill.price,
-                                fee=fill.fee,
-                            ),))
-                            self._fill_sequence += 1
-    
+                    self.order_registry.submit(order)
+                    self._record_order_lifecycle(replay_sequence, record.timestamp_ns, order.order_id)
+                    self._execute_registered_order(
+                        order.order_id,
+                        record,
+                        float(price),
+                        order_book_field,
+                        replay_sequence,
+                    )
+
                 snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
                 peak_equity, point = self._record_replay_point(replay_sequence, record, snapshot, accumulator, peak_equity)
                 replay_sequence += 1
