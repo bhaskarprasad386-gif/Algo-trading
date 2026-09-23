@@ -7,6 +7,7 @@ only when a later event contains an executable reverse transaction.
 
 from __future__ import annotations
 
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
@@ -379,11 +380,18 @@ class CashFutureTradeReporter:
         if len(result.reference_prices) != len(result.fills):
             raise ValueError("reference prices must align with execution fills")
         total = 0.0
-        by_order = {trade.order_id: trade for trade in accounting}
+        by_fill_key: dict[tuple[str, str], deque[Any]] = defaultdict(deque)
+        for trade in accounting:
+            by_fill_key[(trade.order_id, trade.instrument)].append(trade)
         for fill, reference in zip(result.fills, result.reference_prices):
-            trade = by_order[fill.order_id]
+            candidates = by_fill_key.get((fill.order_id, fill.instrument))
+            if not candidates:
+                raise ValueError("accounting trade evidence is missing for execution fill")
+            trade = candidates.popleft()
             adverse = (trade.price - reference) if fill.side == ExecutionSide.BUY else (reference - trade.price)
             total += max(0.0, adverse) * trade.quantity
+        if any(candidates for candidates in by_fill_key.values()):
+            raise ValueError("accounting trade evidence contains unmatched execution trades")
         return total
 
     @staticmethod
