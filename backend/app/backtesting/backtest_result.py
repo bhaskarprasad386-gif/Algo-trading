@@ -41,10 +41,7 @@ class BacktestRunWriter:
                 raise ValueError("cannot resume completed run")
             if self.ledger.run_provenance(spec.run_id) != spec.provenance:
                 raise ValueError("resume provenance does not match existing run")
-            self._last_event_sequence = max(
-                (int(item["sequence"]) for item in self.ledger.events(spec.run_id, limit=1_000_000)),
-                default=-1,
-            )
+            self._last_event_sequence = self.ledger.latest_event_sequence(spec.run_id)
         else:
             self.ledger.create_run(spec.run_id, spec.provenance, created_at_ns=created_at_ns)
 
