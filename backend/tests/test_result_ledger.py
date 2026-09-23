@@ -100,6 +100,19 @@ def test_incremental_append_and_idempotency() -> None:
     assert len(ledger.equity("run-a")) == 1
 
 
+def test_conflicting_event_identity_is_rejected_even_when_payload_matches() -> None:
+    ledger = BacktestResultLedger()
+    ledger.create_run("run-event-identity", {"strategy_id": "event_identity"})
+    event = BacktestEvent(7, 7_000, "SIGNAL", {"side": "BUY"})
+    ledger.append_events("run-event-identity", [event])
+
+    with pytest.raises(ValueError, match="conflicting duplicate"):
+        ledger.append_events(
+            "run-event-identity",
+            [BacktestEvent(7, 7_001, "DIFFERENT", {"side": "BUY"})],
+        )
+
+
 def test_conflicting_duplicates_are_rejected() -> None:
     ledger = BacktestResultLedger()
     ledger.create_run("run-a", {"strategy_id": "synthetic_cash_carry"})
