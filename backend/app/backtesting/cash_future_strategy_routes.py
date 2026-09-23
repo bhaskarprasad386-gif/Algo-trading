@@ -63,10 +63,10 @@ def _build_builder_strategy(request:StrategyRunRequest):
     def strategy(current:CashFutureHistoryPoint,history:tuple[CashFutureHistoryPoint,...]):
         effective_gap=orientation*float(current.gap); entry_gap=state["entry_gap"]
         if entry_gap is None:
-            if effective_gap>0: state["entry_gap"]=effective_gap; return "BUY"
+            if effective_gap>0: state["entry_gap"]=effective_gap; return request.cash_side
             return "HOLD"
         spread_profit_per_share=entry_gap-effective_gap
-        if target is not None and spread_profit_per_share>=target: state["entry_gap"]=None; return "SELL"
+        if target is not None and spread_profit_per_share>=target: state["entry_gap"]=None; return request.future_side
         if stop is not None and spread_profit_per_share<=-stop: state["entry_gap"]=None; return "SELL"
         if effective_gap<=0: state["entry_gap"]=None; return "SELL"
         return "HOLD"
