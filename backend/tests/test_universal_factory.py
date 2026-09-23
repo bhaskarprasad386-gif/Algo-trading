@@ -126,3 +126,27 @@ def test_universal_worker_records_failure_and_closes_resources(tmp_path):
         assert ledger.run("factory-run")["status"] == "FAILED"
     finally:
         ledger.close()
+
+def test_universal_worker_does_not_duplicate_engine_failure_record(tmp_path):
+    from app.backtesting.universal_factory import UniversalBacktestWorker
+
+    class FailingSource:
+        def iter_events(self, *, start_ns=None, end_ns=None):
+            raise RuntimeError("source failure")
+            yield
+
+    with pytest.raises(RuntimeError, match="source failure"):
+        UniversalBacktestWorker().run(
+            make_spec(),
+            data_source=FailingSource(),
+            strategy=strategy,
+            ledger_path=tmp_path / "duplicate-failure" / "results.db",
+        )
+
+    ledger = create_universal_ledger(tmp_path / "duplicate-failure" / "results.db")
+    try:
+        assert ledger.run("factory-run")["status"] == "FAILED"
+        rows = ledger.events("factory-run", limit=20)
+        assert sum(row["event_type"] == "RUN_FAILED" for row in rows) == 1
+    finally:
+        ledger.close()
