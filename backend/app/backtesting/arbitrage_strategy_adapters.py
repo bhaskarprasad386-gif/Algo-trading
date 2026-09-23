@@ -428,6 +428,8 @@ class CashFutureTradeReporter:
             raise ValueError("Universal cash-future trade reporting requires exactly two legs")
         completed: list[BacktestTrade] = []
         lifecycle_trade_id: str | None = None
+        working_open = {key: dict(value) for key, value in self._open.items()}
+        working_sequence = self._sequence
         leg_results = (report.execution.leg_results[0], report.execution.leg_results[1])
         atomic_edge = self._executable_edge(leg_results)
         for index, result in enumerate(report.execution.leg_results):
@@ -443,8 +445,8 @@ class CashFutureTradeReporter:
                 ref * fill.quantity
                 for fill, ref in zip(result.fills, result.reference_prices)
             ) / sum(fill.quantity for fill in result.fills)
-            if instrument not in self._open:
-                self._open[instrument] = {
+            if instrument not in working_open:
+                working_open[instrument] = {
                     "timestamp_ns": min(trade.timestamp_ns for trade in accounting),
                     "entry_price": actual_price,
                     "entry_reference_price": reference_price,
@@ -457,7 +459,7 @@ class CashFutureTradeReporter:
                 }
                 continue
 
-            opened = self._open.pop(instrument)
+            opened = working_open.pop(instrument)
             if quantity != opened["entry_quantity"]:
                 raise ValueError("Universal cash-future trade must close the opened quantity atomically")
             gross_pnl = sum(trade.realized_pnl_delta for trade in accounting)
@@ -468,7 +470,7 @@ class CashFutureTradeReporter:
             trade_id = f"{lifecycle_trade_id}:{'CASH' if index == 0 else 'FUTURE'}"
             completed.append(BacktestTrade(
                 trade_id=trade_id,
-                sequence=self._sequence,
+                sequence=working_sequence,
                 timestamp_ns=exit_timestamp,
                 instrument=instrument,
                 side=opened["entry_side"],
@@ -495,9 +497,11 @@ class CashFutureTradeReporter:
                     "exit_order_id": result.fills[0].order_id,
                 },
             ))
-            self._sequence += 1
+            working_sequence += 1
         if completed:
             self.writer.record_trades(tuple(completed))
+        self._open = working_open
+        self._sequence = working_sequence
 
 
 class CalendarSpreadStrategyAdapter:
