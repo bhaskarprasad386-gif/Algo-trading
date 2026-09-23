@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+from contextlib import contextmanager
 from threading import RLock
 from typing import Iterable
 
@@ -17,6 +18,7 @@ class BacktestTradeLedger:
     def __init__(self, path: str = ":memory:") -> None:
         self._lock = RLock()
         self._db = sqlite3.connect(path, check_same_thread=False)
+        self._transaction_depth = 0
         self._db.execute("""CREATE TABLE IF NOT EXISTS backtest_runs (
             run_id TEXT PRIMARY KEY, initial_capital REAL NOT NULL, final_capital REAL NOT NULL,
             net_pnl REAL NOT NULL, total_return REAL NOT NULL, win_rate REAL NOT NULL,
@@ -72,6 +74,25 @@ class BacktestTradeLedger:
             keys = ("run_id", "initial_capital", "final_capital", "net_pnl", "total_return", "win_rate", "expectancy", "sharpe_ratio", "sortino_ratio", "max_drawdown", "cagr")
             return dict(zip(keys, row))
 
+    @contextmanager
+    def transaction(self):
+        """Atomically compose trade and checkpoint writes on this ledger."""
+        with self._lock:
+            if self._transaction_depth:
+                yield
+                return
+            self._db.execute("BEGIN IMMEDIATE")
+            self._transaction_depth = 1
+            try:
+                yield
+            except Exception:
+                self._db.rollback()
+                raise
+            else:
+                self._db.commit()
+            finally:
+                self._transaction_depth = 0
+
     def save_checkpoint(self, run_id: str, cursor: str, trade_count: int) -> None:
         with self._lock:
             if not isinstance(run_id, str) or not run_id.strip() or not isinstance(cursor, str) or not cursor.strip():
@@ -83,7 +104,8 @@ class BacktestTradeLedger:
                 raise ValueError("checkpoint trade_count cannot move backwards")
             self._db.execute("""INSERT INTO backtest_checkpoints(run_id,cursor,trade_count) VALUES(?,?,?)
                 ON CONFLICT(run_id) DO UPDATE SET cursor=excluded.cursor, trade_count=excluded.trade_count""", (run_id, cursor, trade_count))
-            self._db.commit()
+            if not self._transaction_depth:
+                self._db.commit()
 
     def checkpoint(self, run_id: str) -> dict[str, object] | None:
         with self._lock:
@@ -136,9 +158,11 @@ class BacktestTradeLedger:
                 self._db.executemany("""INSERT INTO backtest_trades
                     (run_id,sequence,entry_timestamp_json,exit_timestamp_json,entry_price,exit_price,quantity,gross_pnl,costs,net_pnl,metadata_json)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?)""", rows)
-                self._db.commit()
+                if not self._transaction_depth:
+                    self._db.commit()
             except Exception:
-                self._db.rollback()
+                if not self._transaction_depth:
+                    self._db.rollback()
                 raise
             return len(rows)
 
