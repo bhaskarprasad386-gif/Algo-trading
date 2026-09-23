@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import Mapping
 
 from .backtest_resolution import BacktestResolution
@@ -11,7 +12,7 @@ from .provenance import provenance_hash
 
 @dataclass(frozen=True)
 class BacktestRunSpec:
-    """Self-contained configuration/provenance for a single backtest."""
+    """Self-contained configuration/provenance for a single backtest run."""
 
     run_id: str
     strategy_id: str
@@ -42,8 +43,8 @@ class BacktestRunSpec:
         if self.initial_capital is not None:
             if isinstance(self.initial_capital, bool) or not isinstance(self.initial_capital, (int, float)):
                 raise ValueError("initial_capital must be a number")
-            if self.initial_capital <= 0:
-                raise ValueError("initial_capital must be positive")
+            if not isfinite(float(self.initial_capital)) or self.initial_capital <= 0:
+                raise ValueError("initial_capital must be finite and positive")
         if not isinstance(self.parameters, Mapping) or not isinstance(self.data_watermarks, Mapping):
             raise ValueError("parameters and data_watermarks must be mappings")
         for key, watermark in self.data_watermarks.items():
