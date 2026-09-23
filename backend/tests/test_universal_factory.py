@@ -162,6 +162,27 @@ def test_universal_worker_does_not_duplicate_engine_failure_record(tmp_path):
     finally:
         ledger.close()
 
+def test_universal_writer_resume_requires_recoverable_run(tmp_path):
+    from app.backtesting.backtest_result import BacktestRunWriter
+
+    path = tmp_path / "terminal-resume.db"
+    ledger = create_universal_ledger(path)
+    try:
+        spec = make_spec()
+        ledger.create_run(spec.run_id, spec.provenance)
+        for status in ("CREATED", "RUNNING", "FAILED", "CANCELLED"):
+            ledger.set_status(spec.run_id, status)
+            with pytest.raises(ValueError, match="RECOVERABLE"):
+                BacktestRunWriter(ledger, spec, resume=True)
+            if status != "CANCELLED":
+                ledger.set_status(spec.run_id, "CANCELLED")
+        ledger.set_status(spec.run_id, "RECOVERABLE")
+        writer = BacktestRunWriter(ledger, spec, resume=True)
+        assert writer.spec.run_id == spec.run_id
+    finally:
+        ledger.close()
+
+
 def test_universal_worker_reclaims_recoverable_checkpoint_and_resumes_without_duplicates(tmp_path):
     from app.backtesting.historical_catalog import HistoricalRecord
     from app.backtesting.universal_factory import UniversalBacktestWorker
