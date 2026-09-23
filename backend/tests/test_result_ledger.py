@@ -277,7 +277,7 @@ def test_legacy_equity_schema_is_migratable(tmp_path) -> None:
     )
     db.execute(
         "INSERT INTO backtest_runs(run_id, provenance_json, status, created_at_ns) VALUES (?, ?, ?, ?)",
-        ("legacy-run", "{}", "COMPLETED", 0),
+        ("legacy-run", "{}", "CREATED", 0),
     )
     db.execute(
         "INSERT INTO backtest_equity(run_id, timestamp_ns, equity, realized_pnl, unrealized_pnl, drawdown) VALUES (?, ?, ?, ?, ?, ?)",
