@@ -110,7 +110,7 @@ class UniversalEventBacktestEngine:
         self.trade_reporter = trade_reporter
         self.retain_history = retain_history
         self.checkpoint_store = checkpoint_store if checkpoint_store is not None else (
-            result_writer.checkpoints if result_writer is not None else None
+            getattr(result_writer, "checkpoints", None) if result_writer is not None else None
         )
         self.checkpoint_every_events = checkpoint_every_events
         self.resume = resume
