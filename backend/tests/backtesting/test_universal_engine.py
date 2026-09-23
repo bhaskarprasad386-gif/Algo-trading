@@ -459,3 +459,67 @@ def test_universal_durable_engine_rejects_capital_mismatch(tmp_path) -> None:
     writer = BacktestRunWriter(ledger, spec)
     with pytest.raises(ValueError, match="match portfolio initial_cash"):
         UniversalEventBacktestEngine(100_000.0, result_writer=writer)
+
+
+
+def test_universal_checkpoint_rejects_execution_config_mismatch() -> None:
+    from types import SimpleNamespace
+    from app.backtesting.execution import ExecutionConfig
+    from app.backtesting.statistics import StreamingStatisticsAccumulator
+
+    engine = UniversalEventBacktestEngine(
+        100_000.0,
+        execution_config=ExecutionConfig(slippage_bps=5.0),
+    )
+    accumulator = StreamingStatisticsAccumulator(100_000.0)
+    state = engine._build_checkpoint_state(
+        processed_events=1,
+        replay_sequence=1,
+        previous_identity=SimpleNamespace(
+            timestamp_ns=1, source="test", instrument="NFO:ABC",
+            timeframe="tick", sequence=0,
+        ),
+        last_marks={},
+        accumulator=accumulator,
+        peak_equity=100_000.0,
+        strategy=lambda ctx: EventSignal("HOLD"),
+    )
+    state["execution_state"]["config"]["slippage_bps"] = 7.0
+    checkpoint = SimpleNamespace(processed_events=1, state=state)
+    with pytest.raises(ValueError, match="checkpoint execution config does not match"):
+        engine._restore_checkpoint_state(
+            engine, checkpoint, lambda ctx: EventSignal("HOLD"), accumulator, {}
+        )
+
+
+def test_universal_checkpoint_rejects_execution_model_class_mismatch() -> None:
+    from types import SimpleNamespace
+    from app.backtesting.execution import ExecutionConfig, ExecutionSimulator
+    from app.backtesting.statistics import StreamingStatisticsAccumulator
+
+    class CustomExecution(ExecutionSimulator):
+        pass
+
+    engine = UniversalEventBacktestEngine(
+        100_000.0,
+        execution=ExecutionSimulator(ExecutionConfig()),
+    )
+    accumulator = StreamingStatisticsAccumulator(100_000.0)
+    state = engine._build_checkpoint_state(
+        processed_events=1,
+        replay_sequence=1,
+        previous_identity=SimpleNamespace(
+            timestamp_ns=1, source="test", instrument="NFO:ABC",
+            timeframe="tick", sequence=0,
+        ),
+        last_marks={},
+        accumulator=accumulator,
+        peak_equity=100_000.0,
+        strategy=lambda ctx: EventSignal("HOLD"),
+    )
+    state["execution_state"] = {"kind": "custom", "class": f"{CustomExecution.__module__}.{CustomExecution.__qualname__}"}
+    checkpoint = SimpleNamespace(processed_events=1, state=state)
+    with pytest.raises(ValueError, match="checkpoint execution model class does not match"):
+        engine._restore_checkpoint_state(
+            engine, checkpoint, lambda ctx: EventSignal("HOLD"), accumulator, {}
+        )
