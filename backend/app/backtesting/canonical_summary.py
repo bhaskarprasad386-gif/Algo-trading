@@ -37,7 +37,7 @@ class CanonicalRunSummary:
         ledger: BacktestResultLedger,
         run_id: str,
         *,
-        initial_capital: float,
+        initial_capital: float | None = None,
         equity_page_size: int = 500,
     ) -> "CanonicalRunSummary":
         """Reconstruct canonical scalar results using bounded equity pages.
@@ -46,6 +46,11 @@ class CanonicalRunSummary:
         does not persist it in backtest_runs. Performance P&L is derived from
         marked equity, never from SUM(backtest_trades.net_pnl).
         """
+        persisted_capital = ledger.run_provenance(run_id).get("initial_capital")
+        if initial_capital is None:
+            initial_capital = persisted_capital
+        elif persisted_capital is not None and float(initial_capital) != float(persisted_capital):
+            raise ValueError("initial_capital does not match persisted run provenance")
         if isinstance(initial_capital, bool) or not isinstance(initial_capital, (int, float)) or initial_capital <= 0:
             raise ValueError("initial_capital must be finite and positive")
         if not isinstance(equity_page_size, int) or isinstance(equity_page_size, bool) or equity_page_size <= 0:
