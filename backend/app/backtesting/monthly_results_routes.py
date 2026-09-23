@@ -24,7 +24,7 @@ def _market_timestamp_iso(value: str | datetime | None) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):
-        value = datetime.fromisoformat(value)
+        return value
     if value.tzinfo is None:
         value = value.replace(tzinfo=MARKET_TZ)
     else:
