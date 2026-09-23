@@ -629,10 +629,11 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
 
         def __call__(self, context):
             self.count += 1
+            self._last_timestamp_ns = context.timestamp_ns
             return EventSignal("HOLD")
 
         def get_state(self):
-            return {"count": self.count, "last_timestamp_ns": self.count and self._last_timestamp_ns or None}
+            return {"count": self.count, "last_timestamp_ns": self._last_timestamp_ns}
 
         def set_state(self, state):
             self.count = int(state["count"])
@@ -676,7 +677,8 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
     resumed_portfolio, resumed_registry = make_state()
     resumed_strategy = StatefulStrategy()
     resumed_strategy._last_timestamp_ns = None
-    resumed_reporter = StatefulReporter(marker="fresh")
+    resumed_reporter = StatefulReporter(marker="checkpointed")
+    resumed_reporter.records_seen = 7
     resumed_ledger, first_writer = make_writer(tmp_path / "resumed.db", "resumed")
     first_engine = UniversalEventBacktestEngine(
         100_000.0,
@@ -702,8 +704,8 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
     assert saved_registry["queue"]["queued"]["queue_ahead_quantity"] == 5
     assert saved_registry["reservations"]["queued"] == pytest.approx(30_000.0)
     assert checkpoint.state["portfolio_state"]["reserved_margin"]["queued"] == pytest.approx(30_000.0)
-    assert checkpoint.state["strategy_state"] == {"count": 1, "last_timestamp_ns": None}
-    assert checkpoint.state["reporter_state"] == {"marker": "fresh", "records_seen": 0}
+    assert checkpoint.state["strategy_state"] == {"count": 1, "last_timestamp_ns": 1}
+    assert checkpoint.state["reporter_state"] == {"marker": "checkpointed", "records_seen": 7}
 
     # Resume must restore both user-defined strategy state and reporter state.
     resume_strategy = StatefulStrategy()
