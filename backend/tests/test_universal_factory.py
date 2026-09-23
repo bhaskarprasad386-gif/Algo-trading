@@ -73,11 +73,20 @@ def test_create_universal_run_requires_initial_capital():
         create_universal_run(spec, data_source=DummySource(), strategy=strategy)
 
 
+
 def test_create_universal_run_closes_ledger_when_engine_creation_fails(tmp_path):
     path = tmp_path / "cleanup" / "results.db"
     spec = make_spec()
     with pytest.raises(ValueError, match="quantity"):
         create_universal_run(
+            spec,
+            data_source=DummySource(),
+            strategy=strategy,
+            ledger_path=path,
+            quantity=0,
+        )
+    assert path.exists()
+
 
 def test_universal_worker_claims_and_completes_new_run(tmp_path):
     from app.backtesting.universal_factory import UniversalBacktestWorker
@@ -126,6 +135,7 @@ def test_universal_worker_records_failure_and_closes_resources(tmp_path):
         assert ledger.run("factory-run")["status"] == "FAILED"
     finally:
         ledger.close()
+
 
 def test_universal_worker_does_not_duplicate_engine_failure_record(tmp_path):
     from app.backtesting.universal_factory import UniversalBacktestWorker
