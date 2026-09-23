@@ -253,10 +253,11 @@ def test_universal_cash_future_adapter_binds_original_contract_across_rollover()
 
 def test_universal_cash_future_adapter_short_direction_binds_original_future_across_rollover():
     from app.backtesting.arbitrage_strategy_adapters import CashFutureUniversalMultiLegAdapter
-    from app.backtesting.contracts import EventContext, HistoricalRecord
+    from app.backtesting.engine import EventContext
+    from app.backtesting.historical_catalog import HistoricalRecord
 
     def ctx(ts, future_instrument, cash_bid, cash_ask, future_bid, future_ask):
-        return EventContext(HistoricalRecord(
+        record = HistoricalRecord(
             "test", "NSE:ABC", "tick", ts,
             {
                 "cash": {"bid": cash_bid, "ask": cash_ask, "bid_quantity": 20, "ask_quantity": 20},
@@ -266,7 +267,8 @@ def test_universal_cash_future_adapter_short_direction_binds_original_future_acr
                     "future": {"source": "test", "instrument": future_instrument, "timeframe": "tick"},
                 },
             }, ts,
-        ))
+        )
+        return EventContext(record.timestamp_ns, record.sequence, record.source, record.instrument, record.payload, record)
 
     adapter = CashFutureUniversalMultiLegAdapter(
         direction="SHORT_CASH_LONG_FUTURE", quantity=10
