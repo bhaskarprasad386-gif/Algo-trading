@@ -616,6 +616,7 @@ class UniversalEventBacktestEngine:
                         if isinstance(strategy, AtomicExecutionAwareProtocol):
                             strategy.on_atomic_execution(result)
                         raise ValueError(result.reason or "atomic multi-leg execution rejected")
+                    trade_start = len(self.portfolio.trades)
                     snapshot = self.portfolio.apply_fills_atomic(result.fills, last_marks)
                     self._fill_count += len(result.fills)
                     accounting_trades = tuple(self.portfolio.trades[trade_start:])
