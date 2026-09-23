@@ -151,3 +151,82 @@ def test_universal_engine_uses_deterministic_event_order_and_clock():
     assert clock.now_ns == 10
     assert result.fill_count == 0
 
+
+
+def test_universal_engine_applies_queue_evidence_before_depth_execution() -> None:
+    from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+    from app.backtesting.universal_order_registry import UniversalOrderRegistry
+
+    registry = UniversalOrderRegistry()
+    registry.submit(
+        SimOrder(
+            "queued",
+            "AAA",
+            ExecutionSide.BUY,
+            1,
+            OrderType.LIMIT,
+            limit_price=100.0,
+            queue_ahead_quantity=5,
+            submitted_at_ns=1,
+        )
+    )
+    events = [
+        HistoricalRecord(
+            "test", "AAA", "tick", 1,
+            {
+                "price": 100.0,
+                "book": OrderBook(asks=(DepthLevel(100.0, 1),)),
+                "queue_evidence": [{"price": 100.0, "executed_quantity": 2}],
+            },
+            1,
+        ),
+        HistoricalRecord(
+            "test", "AAA", "tick", 2,
+            {
+                "price": 100.0,
+                "book": OrderBook(asks=(DepthLevel(100.0, 1),)),
+                "queue_evidence": [{"price": 100.0, "executed_quantity": 3}],
+            },
+            2,
+        ),
+    ]
+
+    engine = UniversalEventBacktestEngine(100_000.0, order_registry=registry)
+    result = engine.run(events, lambda ctx: EventSignal("HOLD"), order_book_field="book")
+
+    assert registry.lifecycle("queued").state.status.value == "FILLED"
+    assert registry.open_orders() == ()
+    assert engine.portfolio.positions["AAA"].quantity == 1
+    assert result.fill_count == 1
+
+
+def test_universal_engine_does_not_advance_queue_without_evidence() -> None:
+    from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+    from app.backtesting.universal_order_registry import UniversalOrderRegistry
+
+    registry = UniversalOrderRegistry()
+    registry.submit(
+        SimOrder(
+            "queued",
+            "AAA",
+            ExecutionSide.BUY,
+            1,
+            OrderType.LIMIT,
+            limit_price=100.0,
+            queue_ahead_quantity=5,
+            submitted_at_ns=1,
+        )
+    )
+    event = HistoricalRecord(
+        "test", "AAA", "tick", 1,
+        {"price": 100.0, "book": OrderBook(asks=(DepthLevel(100.0, 1),))},
+        1,
+    )
+
+    result = UniversalEventBacktestEngine(100_000.0, order_registry=registry).run(
+        [event], lambda ctx: EventSignal("HOLD"), order_book_field="book"
+    )
+
+    assert registry.lifecycle("queued").state.status.value == "ACCEPTED"
+    assert registry.open_orders()[0].queue_ahead_quantity == 5
+    assert result.fill_count == 0
