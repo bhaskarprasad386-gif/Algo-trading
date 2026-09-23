@@ -354,8 +354,14 @@ class BacktestResultLedger:
         rows = []
         for event in events:
             payload_json = self._json(event.payload)
+            identity = self._json({
+                "sequence": event.sequence,
+                "timestamp_ns": event.timestamp_ns,
+                "event_type": event.event_type,
+                "payload": dict(event.payload),
+            })
             rows.append((run_id, event.sequence, event.timestamp_ns, event.event_type,
-                         payload_json, self._hash(payload_json)))
+                         payload_json, self._hash(identity)))
         return self._insert_idempotent(
             "INSERT INTO backtest_events(run_id,sequence,timestamp_ns,event_type,payload_json,payload_hash) VALUES (?,?,?,?,?,?)",
             rows, "backtest_events")
