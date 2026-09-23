@@ -33,23 +33,17 @@ class UniversalResultService:
             raise
         return asdict(summary)
 
-    def events(
-        self, run_id: str, *, limit: int = 100, after_sequence: int = -1
-    ) -> dict[str, Any]:
+    def events(self, run_id: str, *, limit: int = 100, after_sequence: int = -1) -> dict[str, Any]:
         self._validate_sequence_cursor(after_sequence)
         rows = self._page(self.ledger.events, run_id, limit, after_sequence)
         return self._sequence_page(run_id, "events", rows, limit)
 
-    def fills(
-        self, run_id: str, *, limit: int = 100, after_sequence: int = -1
-    ) -> dict[str, Any]:
+    def fills(self, run_id: str, *, limit: int = 100, after_sequence: int = -1) -> dict[str, Any]:
         self._validate_sequence_cursor(after_sequence)
         rows = self._page(self.ledger.fills, run_id, limit, after_sequence)
         return self._sequence_page(run_id, "fills", rows, limit)
 
-    def trades(
-        self, run_id: str, *, limit: int = 100, after_sequence: int = -1
-    ) -> dict[str, Any]:
+    def trades(self, run_id: str, *, limit: int = 100, after_sequence: int = -1) -> dict[str, Any]:
         self._validate_sequence_cursor(after_sequence)
         rows = self._page(self.ledger.trades, run_id, limit, after_sequence)
         return self._sequence_page(run_id, "trades", rows, limit)
@@ -62,10 +56,12 @@ class UniversalResultService:
         after_timestamp_ns: int = -1,
         after_equity_id: int = -1,
     ) -> dict[str, Any]:
+        self._validate_limit(limit)
         if (after_timestamp_ns == -1) != (after_equity_id == -1):
             raise ValueError(
                 "after_timestamp_ns and after_equity_id must be supplied together"
             )
+        self._require_run(run_id)
         rows = self.ledger.equity(
             run_id,
             limit=limit,
@@ -101,7 +97,11 @@ class UniversalResultService:
             raise ValueError("after_sequence must be >= -1")
 
     def _require_run(self, run_id: str) -> None:
-        if self.ledger.run(run_id) is None:
+        try:
+            row = self.ledger.run(run_id)
+        except ValueError as exc:
+            raise UniversalRunNotFoundError(f"run not found: {run_id}") from exc
+        if row is None:
             raise UniversalRunNotFoundError(f"run not found: {run_id}")
 
     def _page(self, method, run_id: str, limit: int, after_sequence: int):
@@ -110,9 +110,7 @@ class UniversalResultService:
         return method(run_id, limit=limit, after_sequence=after_sequence)
 
     @staticmethod
-    def _sequence_page(
-        run_id: str, record_type: str, rows: list[Any], limit: int
-    ) -> dict[str, Any]:
+    def _sequence_page(run_id: str, record_type: str, rows: list[Any], limit: int) -> dict[str, Any]:
         data = [dict(row) for row in rows]
         next_cursor = int(rows[-1]["sequence"]) if len(rows) == limit and rows else None
         return {
