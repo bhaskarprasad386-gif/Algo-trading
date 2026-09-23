@@ -10,14 +10,14 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from app.backtesting.engine import EventContext, EventSignal, EventStrategy, _normalize_event_signal
 from app.backtesting.contracts import AtomicExecutionAwareProtocol, AtomicExecutionModelProtocol, AtomicTradeReportInput, DataSourceProtocol, DepthExecutionModelProtocol, ExecutionModelProtocol, MultiLegStrategyProtocol, PortfolioProtocol, StrategyProtocol, TradeReporterProtocol
 from app.backtesting.clock import BacktestClock, ClockProtocol
 from app.backtesting.event_model import event_identity, event_order_key
 from app.backtesting.checkpoint import CheckpointStore, ReplayCheckpoint
-from app.backtesting.execution import ExecutionConfig, ExecutionResult, ExecutionSide, ExecutionSimulator, OrderBook, SimOrder
+from app.backtesting.execution import ExecutionConfig, ExecutionResult, ExecutionSide, ExecutionSimulator, OrderBook, OrderType, QueueEvidence, SimOrder
 from app.backtesting.portfolio import Portfolio, PortfolioSnapshot, RiskConfig
 from app.backtesting.historical_catalog import HistoricalRecord
 from app.backtesting.result_ledger import BacktestFill, EquityPoint as LedgerEquityPoint
@@ -326,6 +326,37 @@ class UniversalEventBacktestEngine:
             self._fill_sequence += 1
         if durable_fills:
             self.result_writer.record_fills(tuple(durable_fills))
+
+    def _apply_queue_evidence(self, record: HistoricalRecord) -> None:
+        raw = record.payload.get("queue_evidence")
+        if raw is None:
+            return
+        if not isinstance(raw, (list, tuple)):
+            raise ValueError("queue_evidence must be a list or tuple")
+        for index, item in enumerate(raw):
+            if not isinstance(item, Mapping):
+                raise ValueError(f"invalid queue_evidence[{index}]")
+            try:
+                price = item["price"]
+                executed_quantity = item.get("executed_quantity", 0)
+                cancelled_quantity_ahead = item.get("cancelled_quantity_ahead", 0)
+                if isinstance(price, bool) or isinstance(executed_quantity, bool) or isinstance(cancelled_quantity_ahead, bool):
+                    raise ValueError("boolean queue evidence field")
+                evidence = QueueEvidence(
+                    price=price,
+                    executed_quantity=executed_quantity,
+                    cancelled_quantity_ahead=cancelled_quantity_ahead,
+                )
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(f"invalid queue_evidence[{index}]") from exc
+            for order in tuple(self.order_registry.open_orders()):
+                if (
+                    order.instrument != record.instrument
+                    or order.order_type != OrderType.LIMIT
+                    or order.limit_price != evidence.price
+                ):
+                    continue
+                self.order_registry.advance_queue(order.order_id, evidence)
 
     def _execute_registered_order(
         self,
@@ -669,6 +700,8 @@ class UniversalEventBacktestEngine:
                         raise ValueError(f"event payload {price_field!r} must be positive")
                     last_marks[record.instrument] = float(raw_price)
     
+                self._apply_queue_evidence(record)
+
                 for open_order in tuple(self.order_registry.open_orders()):
                     if open_order.instrument == record.instrument:
                         self._execute_registered_order(
