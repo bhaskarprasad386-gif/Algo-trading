@@ -582,7 +582,8 @@ class UniversalEventBacktestEngine:
         if context.execution is not self.execution or context.portfolio is not self.portfolio or context.clock is not self.clock:
             raise ValueError("RunContext dependencies do not match this engine")
         if context.result_writer is not self.result_writer:
-            raise ValueError("RunContext result_writer does not match this engine")        return self.run_multi_leg(
+            raise ValueError("RunContext result_writer does not match this engine")
+        return self.run_multi_leg(
             context.data_source.iter_events(
                 start_ns=context.spec.start_ns,
                 end_ns=context.spec.end_ns,
