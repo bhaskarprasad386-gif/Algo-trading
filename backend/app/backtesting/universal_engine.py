@@ -18,7 +18,7 @@ from app.backtesting.clock import BacktestClock, ClockProtocol
 from app.backtesting.event_model import event_identity, event_order_key
 from app.backtesting.checkpoint import CheckpointStore, ReplayCheckpoint
 from app.backtesting.execution import ExecutionConfig, ExecutionResult, ExecutionSide, ExecutionSimulator, OrderBook, OrderType, QueueEvidence, SimOrder
-from app.backtesting.portfolio import Portfolio, PortfolioSnapshot, RiskConfig
+from app.backtesting.portfolio import Portfolio, PortfolioSnapshot, RiskConfig, RiskViolation
 from app.backtesting.historical_catalog import HistoricalRecord
 from app.backtesting.result_ledger import BacktestFill, EquityPoint as LedgerEquityPoint
 from app.backtesting.strategy import restore_strategy_state, strategy_state
@@ -775,16 +775,20 @@ class UniversalEventBacktestEngine:
                         quantity=self.quantity,
                         submitted_at_ns=record.timestamp_ns,
                     )
-                    reservation = self._reserve_order_margin(order, record, float(price), order_book_field)
                     try:
-                        self.order_registry.submit(order, reservation)
-                    except Exception:
-                        if reservation:
-                            release = getattr(self.portfolio, "release_margin", None)
-                            if callable(release):
-                                release(order.order_id)
-                        raise
-                    self._record_order_lifecycle(replay_sequence, record.timestamp_ns, order.order_id)
+                        reservation = self._reserve_order_margin(order, record, float(price), order_book_field)
+                    except RiskViolation:
+                        reservation = None
+                    if reservation is not None:
+                        try:
+                            self.order_registry.submit(order, reservation)
+                        except Exception:
+                            if reservation:
+                                release = getattr(self.portfolio, "release_margin", None)
+                                if callable(release):
+                                    release(order.order_id)
+                            raise
+                        self._record_order_lifecycle(replay_sequence, record.timestamp_ns, order.order_id)
                     self._execute_registered_order(
                         order.order_id,
                         record,
