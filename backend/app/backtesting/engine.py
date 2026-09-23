@@ -588,12 +588,12 @@ def _equity_point(timestamp, capital, open_trade, mark_price, config):
 
 def _continuous_record_to_candle(item):
     candle = dict(item.payload)
-    candle["timestamp"] = item.timestamp
+    candle["timestamp"] = item.timestamp_ns
     return candle
 
 
 def _continuous_record_to_event(item):
-    return HistoricalRecord("continuous_futures", item.symbol, item.timeframe, _timestamp_ns(item.timestamp), item.payload, 0)
+    return HistoricalRecord("continuous_futures", item.record.instrument, item.timeframe, item.timestamp_ns, item.payload, item.record.sequence)
 
 
 def _normalize_event_signal(decision):
