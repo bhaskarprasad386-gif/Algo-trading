@@ -266,3 +266,59 @@ def test_universal_engine_blocks_strategy_order_when_margin_is_insufficient() ->
     assert result.fill_count == 0
     assert engine.portfolio.positions == {}
     assert engine.portfolio.reserved_margin == 0.0
+
+def test_universal_multi_leg_rejection_is_durable_before_run_failure() -> None:
+    from app.backtesting.execution import DepthLevel, ExecutionSide, OrderBook, OrderType, SimOrder
+
+    class Writer:
+        def __init__(self):
+            self.events = []
+            self.failed = None
+            self.completed = False
+
+        def record_event(self, sequence, timestamp_ns, event_type, payload):
+            self.events.append((sequence, timestamp_ns, event_type, payload))
+            return 1
+
+        def fail(self, reason):
+            self.failed = reason
+
+        def complete(self):
+            self.completed = True
+
+    writer = Writer()
+    events = [
+        HistoricalRecord(
+            "test", "AAA", "tick", 1,
+            {"price": 100.0},
+            1,
+        )
+    ]
+
+    def strategy(ctx):
+        return (
+            (
+                SimOrder("leg-a", "AAA", ExecutionSide.BUY, 2, OrderType.MARKET, submitted_at_ns=1),
+                OrderBook(asks=(DepthLevel(101.0, 1),)),
+                1,
+            ),
+            (
+                SimOrder("leg-b", "BBB", ExecutionSide.BUY, 1, OrderType.MARKET, submitted_at_ns=1),
+                OrderBook(asks=(DepthLevel(201.0, 1),)),
+                1,
+            ),
+        )
+
+    engine = UniversalEventBacktestEngine(100_000.0, result_writer=writer)
+    with pytest.raises(ValueError, match="atomic"):
+        engine.run_multi_leg(events, strategy)
+
+    rejection = [event for event in writer.events if event[2] == "ATOMIC_EXECUTION_REJECTED"]
+    assert len(rejection) == 1
+    assert rejection[0][0] == 0
+    assert rejection[0][1] == 1
+    assert rejection[0][3]["leg_count"] == 2
+    assert rejection[0][3]["filled_quantity"] == 0
+    assert "atomic" in rejection[0][3]["reason"]
+    assert writer.failed is not None
+    assert writer.completed is False
