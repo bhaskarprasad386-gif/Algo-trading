@@ -62,7 +62,7 @@ class StreamingStatisticsAccumulator:
         if not isinstance(point, EquityPoint):
             raise TypeError("point must be an EquityPoint")
         if self._last_timestamp is not None and point.timestamp_ns < self._last_timestamp:
-            raise ValueError("equity timestamps must be strictly increasing")
+            raise ValueError("equity timestamps must be non-decreasing")
 
         if self._first_timestamp is None:
             self._first_timestamp = point.timestamp_ns
@@ -74,10 +74,15 @@ class StreamingStatisticsAccumulator:
             value = point.equity / self._previous_equity - 1.0
             if elapsed_years > 0 and isfinite(value):
                 self._return_count += 1
-                self._sum_returns += value
-                self._sum_return_squares += value * value
-                self._sum_downside_squares += min(value, 0.0) ** 2
-                self._sum_intervals_years += elapsed_years
+                return_square = value * value
+                downside = min(value, 0.0)
+                downside_square = downside * downside
+                if isfinite(return_square) and isfinite(downside_square):
+                    self._return_count += 1
+                    self._sum_returns += value
+                    self._sum_return_squares += return_square
+                    self._sum_downside_squares += downside_square
+                    self._sum_intervals_years += elapsed_years
 
         self._previous_equity = point.equity
         self._previous_timestamp = point.timestamp_ns
