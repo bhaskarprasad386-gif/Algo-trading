@@ -8,10 +8,9 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Mapping
 
-from app.backtesting.execution import ExecutionResult, SimFill, SimOrder, TimeInForce
+from app.backtesting.execution import ExecutionResult, QueueEvidence, SimFill, SimOrder, TimeInForce
 from app.backtesting.order_lifecycle import OrderLifecycle, OrderStatus
 from app.backtesting.queue_lifecycle import QueueLifecycleState
-from app.backtesting.execution import QueueEvidence
 
 
 @dataclass(frozen=True)
@@ -123,12 +122,8 @@ class UniversalOrderRegistry:
             raise ValueError("execution timestamp must be a non-negative integer after submission")
 
         fills = tuple(result.fills)
-        expected_remaining = lifecycle.state.remaining_quantity - sum(fill.quantity for fill in fills)
-        if expected_remaining < 0:
-            raise ValueError("execution fills exceed remaining order quantity")
-        if result.remaining_quantity != expected_remaining:
-            raise ValueError("execution remaining_quantity does not match fills")
-
+        available_quantity = lifecycle.state.remaining_quantity
+        total_fill_quantity = 0
         previous_filled = lifecycle.state.filled_quantity
         for fill in fills:
             if not isinstance(fill, SimFill):
@@ -139,11 +134,9 @@ class UniversalOrderRegistry:
                 raise ValueError("execution fill does not match order")
             if fill.filled_at_ns < order.submitted_at_ns:
                 raise ValueError("execution fill timestamp cannot precede submission")
-            if fill.quantity <= 0 or fill.quantity > expected_remaining + fill.quantity:
+            if fill.quantity <= 0 or fill.quantity > available_quantity - total_fill_quantity:
                 raise ValueError("invalid execution fill quantity")
-            expected_remaining += fill.quantity
-        # Recompute from the original quantity after validating each fill.
-        total_fill_quantity = sum(fill.quantity for fill in fills)
+            total_fill_quantity += fill.quantity
         final_remaining = lifecycle.state.remaining_quantity - total_fill_quantity
         if final_remaining < 0:
             raise ValueError("execution fills exceed remaining order quantity")
