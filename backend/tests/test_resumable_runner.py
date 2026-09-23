@@ -81,3 +81,43 @@ def test_resumable_runner_reconstructs_open_position_after_restart(tmp_path):
     assert ledger.count("run-2") == 1
     assert rerun.net_pnl == 10.0
     ledger.close()
+
+
+def test_resumable_runner_rolls_back_trade_when_checkpoint_fails(tmp_path, monkeypatch):
+    ledger = BacktestTradeLedger(tmp_path / "atomic.sqlite")
+    events = (_event(1, 100, 1), _event(2, 110, 2))
+
+    original_save = ledger.save_checkpoint
+    calls = 0
+
+    def fail_checkpoint(run_id, cursor, trade_count):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("simulated checkpoint failure")
+        return original_save(run_id, cursor, trade_count)
+
+    monkeypatch.setattr(ledger, "save_checkpoint", fail_checkpoint)
+
+    try:
+        run_resumable_events(
+            BacktestEngine(), events, _strategy,
+            ledger=ledger, run_id="atomic-run", chunk_size=2,
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "simulated checkpoint failure"
+    else:
+        raise AssertionError("expected checkpoint failure")
+
+    assert ledger.count("atomic-run") == 0
+    assert ledger.checkpoint("atomic-run") is None
+
+    monkeypatch.setattr(ledger, "save_checkpoint", original_save)
+    result = run_resumable_events(
+        BacktestEngine(), events, _strategy,
+        ledger=ledger, run_id="atomic-run", chunk_size=2,
+    )
+    assert result.net_pnl == 10.0
+    assert ledger.count("atomic-run") == 1
+    assert ledger.checkpoint("atomic-run")["cursor"] == "2:2"
+    ledger.close()
