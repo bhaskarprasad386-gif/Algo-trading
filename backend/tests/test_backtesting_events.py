@@ -1,3 +1,5 @@
+import pytest
+
 from app.backtesting.engine import BacktestConfig, BacktestEngine, EventContext, EventSignal
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 
