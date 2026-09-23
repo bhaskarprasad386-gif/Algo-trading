@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -26,8 +27,11 @@ def _optional_float(record: HistoricalRecord, *keys: str) -> float | None:
     return None
 
 
+MARKET_TZ = ZoneInfo("Asia/Kolkata")
+
+
 def _timestamp(record: HistoricalRecord) -> datetime:
-    return datetime.fromtimestamp(record.timestamp_ns / 1_000_000_000, tz=None)
+    return datetime.fromtimestamp(record.timestamp_ns / 1_000_000_000, tz=timezone.utc).astimezone(MARKET_TZ)
 
 
 def _point_from_records(
