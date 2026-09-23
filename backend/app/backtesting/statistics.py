@@ -62,7 +62,7 @@ class StreamingStatisticsAccumulator:
         if not isinstance(point, EquityPoint):
             raise TypeError("point must be an EquityPoint")
         if self._last_timestamp is not None and point.timestamp_ns < self._last_timestamp:
-            raise ValueError("equity timestamps must be non-decreasing")
+            raise ValueError("equity timestamps must be strictly increasing (non-decreasing)")
 
         if self._first_timestamp is None:
             self._first_timestamp = point.timestamp_ns
