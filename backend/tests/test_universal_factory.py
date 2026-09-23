@@ -260,7 +260,7 @@ def test_universal_worker_reclaims_recoverable_checkpoint_and_resumes_without_du
         ref_fills = reference_ledger.fills("worker-reference", limit=100)
         recovery_fills = recovery_ledger.fills("worker-recovery", limit=100)
         assert [(row["order_id"], row["sequence"], row["quantity"], row["price"]) for row in recovery_fills] == [
-            (row.order_id, row.sequence, row.quantity, row.price) for row in ref_fills
+            (row["order_id"], row["sequence"], row["quantity"], row["price"]) for row in ref_fills
         ]
         assert recovery_ledger.count_events("worker-recovery") == reference_ledger.count_events("worker-reference")
         assert recovery_ledger.count_fills("worker-recovery") == reference_ledger.count_fills("worker-reference")
