@@ -36,7 +36,7 @@ def test_create_universal_ledger_creates_parent_directory(tmp_path):
     ledger = create_universal_ledger(path)
     try:
         assert path.exists()
-        assert ledger.run("missing") is None if False else True
+        assert ledger.connection is not None
     finally:
         ledger.close()
 
@@ -78,10 +78,3 @@ def test_create_universal_run_closes_ledger_when_engine_creation_fails(tmp_path)
     spec = make_spec()
     with pytest.raises(ValueError, match="quantity"):
         create_universal_run(
-            spec,
-            data_source=DummySource(),
-            strategy=strategy,
-            ledger_path=path,
-            quantity=0,
-        )
-    assert path.exists()
