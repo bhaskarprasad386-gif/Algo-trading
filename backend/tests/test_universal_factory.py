@@ -312,3 +312,27 @@ def test_universal_recovery_coordinator_cannot_recover_non_running_run(tmp_path)
         assert coordinator.ledger.run("terminal-run")["status"] == "COMPLETED"
     finally:
         coordinator.close()
+
+
+def test_universal_recovery_coordinator_allows_only_one_recovery_transition(tmp_path):
+    from app.backtesting.universal_factory import UniversalRecoveryCoordinator
+
+    path = tmp_path / "race.db"
+    ledger = create_universal_ledger(path)
+    try:
+        ledger.create_run("race-run", {"strategy_id": "universal"})
+        assert ledger.claim_run("race-run") is True
+    finally:
+        ledger.close()
+
+    first = UniversalRecoveryCoordinator(path)
+    second = UniversalRecoveryCoordinator(path)
+    try:
+        first.mark_worker_lost("race-run", worker_loss_confirmed=True)
+        with pytest.raises(ValueError, match="not RUNNING"):
+            second.mark_worker_lost("race-run", worker_loss_confirmed=True)
+        assert first.ledger.run("race-run")["status"] == "RECOVERABLE"
+        assert second.ledger.run("race-run")["status"] == "RECOVERABLE"
+    finally:
+        second.close()
+        first.close()
