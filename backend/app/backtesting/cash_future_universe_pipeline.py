@@ -308,14 +308,18 @@ def _request_has_materialized_rows(
             for timestamp_ns in expected_ns
         )
 
+    # SQLite stores these ORM timestamps as naive IST values. Normalize
+    # query bounds to the same representation before asking SQL for min/max.
+    query_start = expected_datetimes[0].replace(tzinfo=None)
+    query_end = expected_datetimes[-1].replace(tzinfo=None)
     stmt = select(
         func.min(CashFutureHistory.timestamp),
         func.max(CashFutureHistory.timestamp),
     ).where(
         CashFutureHistory.symbol == symbol,
         CashFutureHistory.contract_month == contract_month,
-        CashFutureHistory.timestamp >= expected_datetimes[0],
-        CashFutureHistory.timestamp <= expected_datetimes[-1],
+        CashFutureHistory.timestamp >= query_start,
+        CashFutureHistory.timestamp <= query_end,
     )
     first, last = db.execute(stmt).one()
     if first is None or last is None or _market_datetime(first) > expected_datetimes[0] or _market_datetime(last) < expected_datetimes[-1]:
@@ -329,8 +333,8 @@ def _request_has_materialized_rows(
         .where(
             CashFutureHistory.symbol == symbol,
             CashFutureHistory.contract_month == contract_month,
-            CashFutureHistory.timestamp >= expected_datetimes[0],
-            CashFutureHistory.timestamp <= expected_datetimes[-1],
+            CashFutureHistory.timestamp >= query_start,
+            CashFutureHistory.timestamp <= query_end,
         )
         .order_by(CashFutureHistory.timestamp)
         .distinct()
