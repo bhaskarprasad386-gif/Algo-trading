@@ -339,7 +339,7 @@ class UniversalEventBacktestEngine:
         snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
         self.checkpoint_store.save(
             ReplayCheckpoint(
-                run_id=self.result_writer.spec.run_id,
+                run_id=getattr(getattr(self.result_writer, "spec", None), "run_id", ""),
                 timestamp_ns=record.timestamp_ns,
                 sequence=replay_sequence,
                 processed_events=processed_events,
