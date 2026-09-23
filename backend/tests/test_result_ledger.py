@@ -50,6 +50,16 @@ def fill(fill_id: str = "f1", sequence: int = 1, price: float = 101.0) -> Backte
     )
 
 
+def test_claim_run_is_atomic_and_only_created_run_can_be_claimed() -> None:
+    ledger = BacktestResultLedger()
+    ledger.create_run("claim-run", {"strategy_id": "universal"})
+
+    assert ledger.claim_run("claim-run") is True
+    assert ledger.run("claim-run")["status"] == "RUNNING"
+    assert ledger.claim_run("claim-run") is False
+    assert ledger.run("claim-run")["status"] == "RUNNING"
+
+
 def test_incremental_fill_append_and_idempotency() -> None:
     ledger = BacktestResultLedger()
     ledger.create_run("run-fills", {"strategy_id": "multi_leg"})
