@@ -563,7 +563,8 @@ def test_universal_queue_evidence_validation_is_atomic() -> None:
         engine.run([event], lambda ctx: EventSignal("HOLD"))
 
     assert registry.export_state() == before
-\n
+
+
 
 def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None:
     from app.backtesting.backtest_resolution import BacktestResolution
