@@ -103,7 +103,13 @@ def run_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy:Ca
         if config.end_date is not None and point_date>config.end_date: break
         # A configured contract month is a hard point-in-time universe boundary.
         if config.contract_month is not None and point.contract_month != config.contract_month:
-            continue        if selected_contract is None: selected_contract=point.contract_month        elif point.contract_month!=selected_contract:            if config.contract_month is not None:                continue            raise ValueError("Cash-Future strategy input contains multiple contract months")
+            continue
+        if selected_contract is None:
+            selected_contract=point.contract_month
+        elif point.contract_month!=selected_contract:
+            if config.contract_month is not None:
+                continue
+            raise ValueError("Cash-Future strategy input contains multiple contract months")
         if selected_symbol is None: selected_symbol=point.symbol
         elif point.symbol!=selected_symbol: raise ValueError("Cash-Future strategy input contains multiple symbols")
         event_index+=1
