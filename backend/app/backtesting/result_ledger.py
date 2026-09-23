@@ -441,6 +441,15 @@ class BacktestResultLedger:
             "SELECT * FROM backtest_fills WHERE run_id=? AND sequence>? ORDER BY sequence LIMIT ?",
             (run_id, after_sequence, limit)))
 
+    def latest_event_sequence(self, run_id: str) -> int:
+        """Return the durable event cursor without materializing the event journal."""
+        self._require_run(run_id)
+        row = self._db.execute(
+            "SELECT MAX(sequence) FROM backtest_events WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        return -1 if row is None or row[0] is None else int(row[0])
+
     def events(self, run_id: str, *, limit: int = 500, after_sequence: int = -1) -> list[sqlite3.Row]:
         self._require_run(run_id)
         self._validate_limit(limit)
