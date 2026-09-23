@@ -230,3 +230,39 @@ def test_universal_engine_does_not_advance_queue_without_evidence() -> None:
     assert registry.lifecycle("queued").state.status.value == "ACCEPTED"
     assert registry.open_orders()[0].queue_ahead_quantity == 5
     assert result.fill_count == 0
+
+
+def test_universal_engine_reserves_and_releases_margin_for_strategy_orders() -> None:
+    from app.backtesting.portfolio import RiskConfig
+
+    engine = UniversalEventBacktestEngine(
+        1_000.0,
+        risk_config=RiskConfig(initial_margin_rate=1.0),
+        quantity=5,
+    )
+    result = engine.run(
+        [_event(1, "AAA", 100.0, 1)],
+        lambda ctx: EventSignal("BUY"),
+    )
+
+    assert result.fill_count == 1
+    assert engine.portfolio.reserved_margin == 0.0
+    assert engine.portfolio.positions["AAA"].quantity == 5
+
+
+def test_universal_engine_blocks_strategy_order_when_margin_is_insufficient() -> None:
+    from app.backtesting.portfolio import RiskConfig
+
+    engine = UniversalEventBacktestEngine(
+        100.0,
+        risk_config=RiskConfig(initial_margin_rate=1.0),
+        quantity=2,
+    )
+    result = engine.run(
+        [_event(1, "AAA", 100.0, 1)],
+        lambda ctx: EventSignal("BUY"),
+    )
+
+    assert result.fill_count == 0
+    assert engine.portfolio.positions == {}
+    assert engine.portfolio.reserved_margin == 0.0
