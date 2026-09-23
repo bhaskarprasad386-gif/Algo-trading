@@ -158,3 +158,16 @@ def test_export_restore_preserves_open_order_lifecycle_queue_and_reservation():
     assert restored.lifecycle("o1").export_state() == registry.lifecycle("o1").export_state()
     assert restored.queue_state("o1") == registry.queue_state("o1")
     assert restored.reservation("o1") == pytest.approx(600.0)
+
+
+def test_non_terminal_execution_rejection_keeps_resting_order():
+    registry = UniversalOrderRegistry()
+    registry.submit(make_order(), 1000.0)
+    result = ExecutionResult((), 10, True, "queue ahead not depleted")
+
+    outcome = registry.apply_execution("o1", result, 110)
+
+    assert outcome.status is OrderStatus.ACCEPTED
+    assert outcome.remaining_quantity == 10
+    assert registry.open_orders() == (make_order(),)
+    assert registry.reservation("o1") == pytest.approx(1000.0)
