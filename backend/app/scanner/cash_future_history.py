@@ -106,7 +106,6 @@ class CashFutureHistoryPoint:
         ):
             if value is not None and value <= 0:
                 raise ValueError(f"{name} must be positive when provided")
-        if self.cash_bid is not None and self.cash_ask is not None and self.cash_bid > self.cash_ask:
         if self.future_bid is not None and self.future_ask is not None and self.future_bid > self.future_ask:
             raise ValueError("future_bid cannot exceed future_ask")
         for value, name in (
