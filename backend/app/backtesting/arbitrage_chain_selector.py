@@ -20,7 +20,7 @@ class ChainContract:
         if type(self.lot_size) is not int or self.lot_size<=0: raise ValueError("lot_size must be a positive integer")
         for value,name in ((self.strike,"strike"),(self.volume,"volume"),(self.oi,"oi"),(self.bid,"bid"),(self.ask,"ask")):
             if isinstance(value,bool) or not isinstance(value,(int,float)) or not isfinite(float(value)): raise ValueError(f"{name} must be finite")
-        if self.strike<=0 or self.volume<0 or self.oi<0 or self.bid<0 or self.ask<self.bid: raise ValueError("invalid historical contract fields")
+        if self.strike<0 or self.volume<0 or self.oi<0 or self.bid<0 or self.ask<self.bid: raise ValueError("invalid historical contract fields")
 
 @dataclass(frozen=True)
 class SelectedPair:
