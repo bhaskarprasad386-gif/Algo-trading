@@ -73,7 +73,6 @@ class StreamingStatisticsAccumulator:
             ) / (365.25 * 24 * 60 * 60 * 1_000_000_000)
             value = point.equity / self._previous_equity - 1.0
             if elapsed_years > 0 and isfinite(value):
-                self._return_count += 1
                 return_square = value * value
                 downside = min(value, 0.0)
                 downside_square = downside * downside
