@@ -29,13 +29,8 @@ def test_run_rejects_resolution_that_does_not_cover_range() -> None:
     resolution = BacktestResolution("m", "archive", 5_000, 8_000)
     try:
         BacktestRunSpec(
-            run_id="run-2",
-            strategy_id="strategy",
-            strategy_version="v1",
-            instrument="NFO:ABC",
-            start_ns=4_000,
-            end_ns=8_000,
-            resolution=resolution,
+            run_id="run-2", strategy_id="strategy", strategy_version="v1",
+            instrument="NFO:ABC", start_ns=4_000, end_ns=8_000, resolution=resolution,
         )
     except ValueError as exc:
         assert "coverage" in str(exc)
@@ -57,22 +52,18 @@ def test_run_provenance_contains_stable_strategy_config_hash() -> None:
 
 def test_run_provenance_persists_initial_capital_when_supplied() -> None:
     resolution = BacktestResolution("s", "angelone", 1_000, 9_000)
-    run = BacktestRunSpec(
-        "run-capital", "box-spread", "v3", "NFO:NIFTY", 2_000, 8_000,
-        resolution, {}, {}, 250_000.0,
-    )
+    run = BacktestRunSpec("run-capital", "box-spread", "v3", "NFO:NIFTY", 2_000, 8_000,
+                          resolution, {}, {}, 250_000.0)
     assert run.initial_capital == 250_000.0
     assert run.provenance["initial_capital"] == 250_000.0
 
 
 def test_run_rejects_invalid_initial_capital() -> None:
     resolution = BacktestResolution("s", "angelone", 1_000, 9_000)
-    for value in (0, -1, True, "100000"):
+    for value in (0, -1, True, "100000", float("nan"), float("inf"), float("-inf")):
         try:
-            BacktestRunSpec(
-                "run-capital-invalid", "box", "v1", "NIFTY", 2_000, 8_000,
-                resolution, {}, {}, value,
-            )
+            BacktestRunSpec("run-capital-invalid", "box", "v1", "NIFTY", 2_000, 8_000,
+                            resolution, {}, {}, value)
         except ValueError as exc:
             assert "initial_capital" in str(exc)
         else:
