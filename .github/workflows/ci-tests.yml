@@ -23,5 +23,5 @@ jobs:
         env:
           SECRET_KEY: ci-test-secret-key-not-for-production
           PYTHONPATH: backend
-          DATABASE_URL: sqlite:///:memory:
+          DATABASE_URL: "sqlite:///:memory:"
         run: python -m pytest backend/tests -q --tb=line --timeout=60 --maxfail=20
