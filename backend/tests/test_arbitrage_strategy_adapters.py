@@ -1,6 +1,6 @@
 from app.backtesting.arbitrage_strategy_adapters import (
     BoxSpreadStrategyAdapter, CalendarSpreadStrategyAdapter, CashFutureStrategyAdapter,
-    SyntheticCashCarryStrategyAdapter,
+    SyntheticCashCarryStrategyAdapter, CashFutureTradeReporter, CashFutureUniversalMultiLegAdapter,
 )
 
 
@@ -201,6 +201,7 @@ def test_universal_cash_future_adapter_closes_only_on_later_reverse_edge():
         {"bid": 104.0, "ask": 105.0, "bid_quantity": 20, "ask_quantity": 20},
     )
     assert len(tuple(adapter(entry_context))) == 2
+    adapter.on_atomic_execution(type("Result", (), {"rejected": False})())
 
     same_context = _universal_cf_context(
         2,
@@ -241,7 +242,7 @@ def test_universal_cash_future_adapter_binds_original_contract_across_rollover()
                 },
             }, ts,
         )
-        return EventContext(record)
+        return EventContext(record.timestamp_ns, record.sequence, record.source, record.instrument, record.payload, record)
 
     adapter = CashFutureUniversalMultiLegAdapter(quantity=10)
     opened = tuple(adapter(ctx(1, "NFO:ABC-OLD", 100, 101, 104, 105)))
