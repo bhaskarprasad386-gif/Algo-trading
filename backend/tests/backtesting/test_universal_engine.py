@@ -1,5 +1,7 @@
 from app.backtesting.engine import EventSignal
 from app.backtesting.historical_catalog import HistoricalRecord
+import pytest
+
 from app.backtesting.universal_engine import UniversalEventBacktestEngine
 
 
@@ -400,3 +402,15 @@ def test_universal_fill_count_is_restored_from_checkpoint_state() -> None:
         restored, checkpoint, lambda ctx: EventSignal("HOLD"), restored_accumulator, {}
     )
     assert restored._fill_count == 7
+
+
+def test_universal_durable_engine_rejects_capital_mismatch(tmp_path) -> None:
+    from app.backtesting.backtest_resolution import BacktestResolution
+    from app.backtesting.backtest_result import BacktestRunWriter
+    from app.backtesting.backtest_run import BacktestRunSpec
+    from app.backtesting.result_ledger import BacktestResultLedger
+    ledger = BacktestResultLedger(tmp_path / "capital-mismatch.db")
+    spec = BacktestRunSpec("capital-mismatch", "universal", "v1", "NFO:ABC", 1, 2, BacktestResolution("tick", "historical", 1, 2), initial_capital=125_000.0)
+    writer = BacktestRunWriter(ledger, spec)
+    with pytest.raises(ValueError, match="match portfolio initial_cash"):
+        UniversalEventBacktestEngine(100_000.0, result_writer=writer)
