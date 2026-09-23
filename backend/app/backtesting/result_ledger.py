@@ -441,6 +441,45 @@ class BacktestResultLedger:
             "SELECT * FROM backtest_fills WHERE run_id=? AND sequence>? ORDER BY sequence LIMIT ?",
             (run_id, after_sequence, limit)))
 
+    def count_events(self, run_id: str) -> int:
+        self._require_run(run_id)
+        row = self._db.execute("SELECT COUNT(*) FROM backtest_events WHERE run_id=?", (run_id,)).fetchone()
+        return int(row[0])
+
+    def count_fills(self, run_id: str) -> int:
+        self._require_run(run_id)
+        row = self._db.execute("SELECT COUNT(*) FROM backtest_fills WHERE run_id=?", (run_id,)).fetchone()
+        return int(row[0])
+
+    def count_trades(self, run_id: str) -> int:
+        self._require_run(run_id)
+        row = self._db.execute("SELECT COUNT(*) FROM backtest_trades WHERE run_id=?", (run_id,)).fetchone()
+        return int(row[0])
+
+    def count_equity(self, run_id: str) -> int:
+        self._require_run(run_id)
+        row = self._db.execute("SELECT COUNT(*) FROM backtest_equity WHERE run_id=?", (run_id,)).fetchone()
+        return int(row[0])
+
+    def first_equity(self, run_id: str) -> sqlite3.Row | None:
+        self._require_run(run_id)
+        return self._db.execute(
+            "SELECT * FROM backtest_equity WHERE run_id=? ORDER BY timestamp_ns, equity_id LIMIT 1",
+            (run_id,),
+        ).fetchone()
+
+    def latest_equity(self, run_id: str) -> sqlite3.Row | None:
+        self._require_run(run_id)
+        return self._db.execute(
+            "SELECT * FROM backtest_equity WHERE run_id=? ORDER BY timestamp_ns DESC, equity_id DESC LIMIT 1",
+            (run_id,),
+        ).fetchone()
+
+    def trade_net_pnl(self, run_id: str) -> float:
+        self._require_run(run_id)
+        row = self._db.execute("SELECT COALESCE(SUM(net_pnl), 0.0) FROM backtest_trades WHERE run_id=?", (run_id,)).fetchone()
+        return float(row[0])
+
     def latest_event_sequence(self, run_id: str) -> int:
         """Return the durable event cursor without materializing the event journal."""
         self._require_run(run_id)
