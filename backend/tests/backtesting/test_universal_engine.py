@@ -605,7 +605,7 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
     # A: uninterrupted reference run.
     ref_ledger, ref_writer = make_writer(tmp_path / "reference.db", "reference")
     reference = UniversalEventBacktestEngine(
-        100_000.0, result_writer=ref_writer, retain_history=False
+        100_000.0, result_writer=ref_writer, retain_history=False, quantity=3
     ).run(events, strategy)
     ref_writer.complete()
 
@@ -616,6 +616,7 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
         result_writer=first_writer,
         retain_history=False,
         checkpoint_every_events=1,
+        quantity=3,
     )
 
     def interrupted_events():
@@ -636,6 +637,7 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
         result_writer=resume_writer,
         retain_history=False,
         checkpoint_every_events=1,
+        quantity=3,
         resume=True,
     ).run(events, strategy)
     resume_writer.complete()
@@ -650,6 +652,13 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
     assert resumed.max_drawdown == pytest.approx(reference.max_drawdown)
     assert resumed.cagr == pytest.approx(reference.cagr)
     assert resumed.fill_count == reference.fill_count
+
+    # The checkpoint must carry the partially filled order, not just counters.
+    saved_order = checkpoint.state["order_registry_state"]["orders"]["event-1-1-AAA"]
+    assert saved_order["quantity"] == 3
+    assert resumed_ledger.count_events("resumed") == ref_ledger.count_events("reference")
+    assert resumed_ledger.count_fills("resumed") == ref_ledger.count_fills("reference")
+    assert resumed_ledger.count_equity("resumed") == ref_ledger.count_equity("reference")
 
     ref_fills = ref_ledger.fills("reference", limit=100)
     resumed_fills = resumed_ledger.fills("resumed", limit=100)
