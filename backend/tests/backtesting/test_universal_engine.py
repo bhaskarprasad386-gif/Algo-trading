@@ -564,3 +564,106 @@ def test_universal_queue_evidence_validation_is_atomic() -> None:
 
     assert registry.export_state() == before
 \n
+
+def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None:
+    from app.backtesting.backtest_resolution import BacktestResolution
+    from app.backtesting.backtest_result import BacktestRunWriter
+    from app.backtesting.backtest_run import BacktestRunSpec
+    from app.backtesting.execution import DepthLevel, OrderBook
+    from app.backtesting.result_ledger import BacktestResultLedger
+
+    events = [
+        HistoricalRecord(
+            "test", "AAA", "tick", 1,
+            {"price": 100.0, "book": OrderBook(asks=(DepthLevel(100.0, 2),))},
+            1,
+        ),
+        HistoricalRecord(
+            "test", "AAA", "tick", 2,
+            {"price": 101.0, "book": OrderBook(asks=(DepthLevel(101.0, 1),))},
+            2,
+        ),
+        HistoricalRecord(
+            "test", "AAA", "tick", 3,
+            {"price": 102.0, "book": OrderBook(asks=(DepthLevel(102.0, 1),))},
+            3,
+        ),
+    ]
+
+    def make_writer(path, run_id):
+        ledger = BacktestResultLedger(path)
+        spec = BacktestRunSpec(
+            run_id, "universal", "v1", "AAA", 1, 3,
+            BacktestResolution("tick", "historical", 1, 3),
+            initial_capital=100_000.0,
+        )
+        return ledger, BacktestRunWriter(ledger, spec)
+
+    def strategy(ctx):
+        return EventSignal("BUY") if ctx.timestamp_ns == 1 else EventSignal("HOLD")
+
+    # A: uninterrupted reference run.
+    ref_ledger, ref_writer = make_writer(tmp_path / "reference.db", "reference")
+    reference = UniversalEventBacktestEngine(
+        100_000.0, result_writer=ref_writer, retain_history=False
+    ).run(events, strategy)
+    ref_writer.complete()
+
+    # B: checkpoint after event 1, then an interruption.
+    resumed_ledger, first_writer = make_writer(tmp_path / "resumed.db", "resumed")
+    first_engine = UniversalEventBacktestEngine(
+        100_000.0,
+        result_writer=first_writer,
+        retain_history=False,
+        checkpoint_every_events=1,
+    )
+
+    def interrupted_events():
+        yield events[0]
+        raise RuntimeError("simulated interruption")
+
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        first_engine.run(interrupted_events(), strategy)
+
+    checkpoint = first_writer.checkpoints.load("resumed")
+    assert checkpoint is not None
+    assert checkpoint.processed_events == 1
+    assert checkpoint.state["order_registry_state"]["orders"]
+
+    resume_writer = BacktestRunWriter(resumed_ledger, first_writer.spec, resume=True)
+    resumed = UniversalEventBacktestEngine(
+        100_000.0,
+        result_writer=resume_writer,
+        retain_history=False,
+        checkpoint_every_events=1,
+        resume=True,
+    ).run(events, strategy)
+    resume_writer.complete()
+
+    assert resumed.final_equity == pytest.approx(reference.final_equity)
+    assert resumed.realized_pnl == pytest.approx(reference.realized_pnl)
+    assert resumed.unrealized_pnl == pytest.approx(reference.unrealized_pnl)
+    assert resumed.net_pnl == pytest.approx(reference.net_pnl)
+    assert resumed.total_return == pytest.approx(reference.total_return)
+    assert resumed.sharpe_ratio == pytest.approx(reference.sharpe_ratio)
+    assert resumed.sortino_ratio == pytest.approx(reference.sortino_ratio)
+    assert resumed.max_drawdown == pytest.approx(reference.max_drawdown)
+    assert resumed.cagr == pytest.approx(reference.cagr)
+    assert resumed.fill_count == reference.fill_count
+
+    ref_fills = ref_ledger.fills("reference", limit=100)
+    resumed_fills = resumed_ledger.fills("resumed", limit=100)
+    assert [(f.order_id, f.sequence, f.quantity, f.price) for f in resumed_fills] == [
+        (f.order_id, f.sequence, f.quantity, f.price) for f in ref_fills
+    ]
+
+    ref_equity = ref_ledger.equity("reference", limit=100)
+    resumed_equity = resumed_ledger.equity("resumed", limit=100)
+    assert [
+        (p.timestamp_ns, p.equity, p.realized_pnl, p.unrealized_pnl, p.drawdown)
+        for p in resumed_equity
+    ] == [
+        (p.timestamp_ns, p.equity, p.realized_pnl, p.unrealized_pnl, p.drawdown)
+        for p in ref_equity
+    ]
+\n
