@@ -114,12 +114,21 @@ class BacktestResult:
 
 @dataclass(frozen=True)
 class EventContext:
+    """Read-only event context shared by event strategies.
+
+    The original six fields remain positional/backward-compatible.  The optional
+    portfolio/order views are populated by engines that own those boundaries.
+    """
+
     timestamp_ns: int
     sequence: int | None
     source: str
     instrument: str
     payload: Mapping[str, object]
     record: HistoricalRecord
+    portfolio_snapshot: object | None = None
+    open_orders: tuple[object, ...] = ()
+    available_margin: float | None = None
 
 
 @dataclass(frozen=True)
@@ -698,12 +707,3 @@ def _calculate_cagr_from_timestamps(start, end, initial_capital, final_capital):
     if start is None or end is None or initial_capital <= 0 or final_capital <= 0:
         return None
     start_ns = _timestamp_ns(start)
-    end_ns = _timestamp_ns(end)
-    years = (end_ns - start_ns) / (365.25 * 24 * 60 * 60 * 1e9)
-    if years <= 0:
-        return None
-    return (final_capital / initial_capital) ** (1.0 / years) - 1.0
-
-
-def _is_number(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(float(value))
