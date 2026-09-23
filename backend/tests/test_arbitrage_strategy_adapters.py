@@ -697,3 +697,77 @@ def test_universal_cash_future_strategy_rejects_open_state_without_contract_iden
     else:
         raise AssertionError("expected invalid checkpoint state to be rejected")
 
+
+
+def test_universal_cash_future_reporter_is_atomic_on_validation_and_writer_failure():
+    from app.backtesting.arbitrage_strategy_adapters import CashFutureTradeReporter
+    from app.backtesting.contracts import AtomicTradeReportInput
+    from app.backtesting.execution import AtomicExecutionResult, ExecutionResult, ExecutionSide, SimFill
+    from app.backtesting.portfolio import TradeRecord
+
+    class Writer:
+        def __init__(self, fail=False):
+            self.trades = []
+            self.fail = fail
+
+        def record_trades(self, trades):
+            if self.fail:
+                raise RuntimeError("writer failed")
+            self.trades.extend(trades)
+            return len(trades)
+
+    def report(cash_qty, future_qty, cash_price=106.0, future_price=103.0):
+        fills = (
+            SimFill("CLOSE:CASH", "NSE:ABC", ExecutionSide.SELL, cash_qty, cash_price, 2),
+            SimFill("CLOSE:FUTURE", "NFO:ABC", ExecutionSide.BUY, future_qty, future_price, 2),
+        )
+        return AtomicTradeReportInput(
+            AtomicExecutionResult(
+                fills=fills,
+                leg_results=(
+                    ExecutionResult((fills[0],), 0, reference_prices=(107.0,)),
+                    ExecutionResult((fills[1],), 0, reference_prices=(102.0,)),
+                ),
+            ),
+            (
+                TradeRecord("CLOSE:CASH", "NSE:ABC", ExecutionSide.SELL, cash_qty, cash_price, cash_qty * cash_price, 1.0, 40.0, 0.0, 100000.0, 2),
+                TradeRecord("CLOSE:FUTURE", "NFO:ABC", ExecutionSide.BUY, future_qty, future_price, future_qty * future_price, 1.0, 10.0, 0.0, 100000.0, 2),
+            ),
+        )
+
+    entry_fills = (
+        SimFill("OPEN:CASH", "NSE:ABC", ExecutionSide.BUY, 10, 102.0, 1),
+        SimFill("OPEN:FUTURE", "NFO:ABC", ExecutionSide.SELL, 10, 104.0, 1),
+    )
+    entry_report = AtomicTradeReportInput(
+        AtomicExecutionResult(
+            fills=entry_fills,
+            leg_results=(
+                ExecutionResult((entry_fills[0],), 0, reference_prices=(101.0,)),
+                ExecutionResult((entry_fills[1],), 0, reference_prices=(104.0,)),
+            ),
+        ),
+        (
+            TradeRecord("OPEN:CASH", "NSE:ABC", ExecutionSide.BUY, 10, 102.0, 1020.0, 1.0, 0.0, 0.0, 100000.0, 1),
+            TradeRecord("OPEN:FUTURE", "NFO:ABC", ExecutionSide.SELL, 10, 104.0, 1040.0, 1.0, 0.0, 0.0, 100000.0, 1),
+        ),
+    )
+
+    writer = Writer()
+    reporter = CashFutureTradeReporter(writer)
+    reporter.record_atomic_trade(entry_report)
+    before = reporter.get_state()
+
+    import pytest
+    with pytest.raises(ValueError, match="close the opened quantity atomically"):
+        reporter.record_atomic_trade(report(10, 9))
+    assert reporter.get_state() == before
+    assert writer.trades == []
+
+    failing_writer = Writer(fail=True)
+    reporter = CashFutureTradeReporter(failing_writer)
+    reporter.record_atomic_trade(entry_report)
+    before = reporter.get_state()
+    with pytest.raises(RuntimeError, match="writer failed"):
+        reporter.record_atomic_trade(report(10, 10))
+    assert reporter.get_state() == before
