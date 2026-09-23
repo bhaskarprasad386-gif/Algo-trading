@@ -279,7 +279,8 @@ class UniversalEventBacktestEngine:
                 ),
                 instrument=record.instrument,
                 event_type="REPLAY_EVENT",
-            )
+            ),
+            commit=False,
         )
 
     def _record_order_lifecycle(self, sequence: int, timestamp_ns: int, order_id: str) -> None:
@@ -798,15 +799,3 @@ class UniversalEventBacktestEngine:
                             if reservation:
                                 release = getattr(self.portfolio, "release_margin", None)
                                 if callable(release):
-                                    release(order.order_id)
-                            raise
-                        self._record_order_lifecycle(replay_sequence, record.timestamp_ns, order.order_id)
-                    self._execute_registered_order(
-                        order.order_id,
-                        record,
-                        float(price),
-                        order_book_field,
-                        replay_sequence,
-                    )
-    
-                snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
