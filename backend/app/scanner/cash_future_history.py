@@ -108,9 +108,10 @@ class CashFutureHistoryPoint:
                 raise ValueError(f"{name} must be positive when provided")
         if self.future_bid is not None and self.future_ask is not None and self.future_bid > self.future_ask:
             raise ValueError("future_bid cannot exceed future_ask")
+        # Quote-depth quantities are intentionally not rejected here: the data-quality
+        # audit must be able to ingest malformed raw observations and count negative
+        # depth before the explicit clean-data gate is applied.
         for value, name in (
-            (self.cash_bid_qty, "cash_bid_qty"), (self.cash_ask_qty, "cash_ask_qty"),
-            (self.future_bid_qty, "future_bid_qty"), (self.future_ask_qty, "future_ask_qty"),
             (self.volume, "volume"), (self.oi, "oi"),
         ):
             if value is not None and value < 0:
