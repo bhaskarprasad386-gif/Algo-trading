@@ -62,7 +62,25 @@ def build_rollover_segments(
     segments: list[CashFutureSegment] = []
     for current_day in days:
         contract = catalog.resolve(exchange=exchange.strip(), underlying=underlying.strip().upper(), as_of=current_day, mode=mode)
-        same_contract = bool(segments) and segments[-1].future == contract
+        same_contract = bool(segments) and (
+            segments[-1].future.exchange,
+            segments[-1].future.symbol,
+            segments[-1].future.token,
+            segments[-1].future.expiry,
+            segments[-1].future.instrument_type,
+            segments[-1].future.underlying,
+            segments[-1].future.lot_size,
+            segments[-1].future.tick_size,
+        ) == (
+            contract.exchange,
+            contract.symbol,
+            contract.token,
+            contract.expiry,
+            contract.instrument_type,
+            contract.underlying,
+            contract.lot_size,
+            contract.tick_size,
+        )
         # With an explicit session calendar, adjacent entries in `days` are adjacent
         # trading sessions even when a weekend/holiday lies between their calendar dates.
         # Keep one segment for the same contract instead of creating duplicate download
