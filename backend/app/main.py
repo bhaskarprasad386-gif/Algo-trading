@@ -37,6 +37,9 @@ from app.backtesting.contract_master import ContractMasterCatalog
 from app.backtesting.contract_master_sync import DailyContractMasterSync
 from app.backtesting.monthly_results_routes import router as monthly_results_router
 from app.backtesting.cash_future_strategy_routes import router as cash_future_strategy_router
+from app.backtesting.universal_factory import create_universal_ledger
+from app.backtesting.universal_result_routes import create_universal_result_router
+from app.backtesting.universal_result_service import UniversalResultService
 
 run_schema_migrations()
 Base.metadata.create_all(bind=engine)
@@ -73,6 +76,7 @@ async def lifespan(app: FastAPI):
         _contract_master_sync_task = None
         backtest_download_manager.close()
         backtest_status_store.close()
+        universal_result_ledger.close()
 
 app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug, lifespan=lifespan)
 app.add_exception_handler(TradingAppException, trading_exception_handler)
@@ -107,6 +111,11 @@ backtest_download_manager = CashFutureDownloadManager(
     status_store=backtest_status_store,
 )
 app.include_router(create_cash_future_download_router(backtest_download_manager))
+
+# Universal results use a dedicated durable ledger, isolated from legacy backtesting APIs.
+universal_result_ledger = create_universal_ledger(settings.BACKTEST_RESULT_LEDGER_DB)
+universal_result_service = UniversalResultService(universal_result_ledger)
+app.include_router(create_universal_result_router(universal_result_service))
 
 DASHBOARD_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "index.html"
 BROKER_SETTINGS_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "broker.html"
