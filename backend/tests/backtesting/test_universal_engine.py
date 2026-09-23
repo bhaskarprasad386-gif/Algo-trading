@@ -523,3 +523,44 @@ def test_universal_checkpoint_rejects_execution_model_class_mismatch() -> None:
         engine._restore_checkpoint_state(
             engine, checkpoint, lambda ctx: EventSignal("HOLD"), accumulator, {}
         )
+
+def test_universal_queue_evidence_validation_is_atomic() -> None:
+    from app.backtesting.execution import ExecutionSide, OrderType, SimOrder
+    from app.backtesting.universal_order_registry import UniversalOrderRegistry
+
+    registry = UniversalOrderRegistry()
+    registry.submit(
+        SimOrder(
+            "queued",
+            "AAA",
+            ExecutionSide.BUY,
+            1,
+            OrderType.LIMIT,
+            limit_price=100.0,
+            queue_ahead_quantity=5,
+            submitted_at_ns=1,
+        )
+    )
+    event = HistoricalRecord(
+        "test",
+        "AAA",
+        "tick",
+        1,
+        {
+            "price": 100.0,
+            "queue_evidence": [
+                {"price": 100.0, "executed_quantity": 2},
+                {"price": 100.0, "executed_quantity": "invalid"},
+            ],
+        },
+        1,
+    )
+
+    before = registry.export_state()
+    engine = UniversalEventBacktestEngine(100_000.0, order_registry=registry)
+
+    with pytest.raises(ValueError, match=r"invalid queue_evidence\[1\]"):
+        engine.run([event], lambda ctx: EventSignal("HOLD"))
+
+    assert registry.export_state() == before
+\n
