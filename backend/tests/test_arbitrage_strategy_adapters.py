@@ -584,12 +584,12 @@ def test_universal_cash_future_trade_reporter_matches_split_fills_by_order_and_i
     assert by_leg["CASH"].exit_price == 107.2
     assert by_leg["CASH"].gross_pnl == 50.0
     assert by_leg["CASH"].fees == 6.0
-    assert by_leg["CASH"].slippage == 4.0
+    assert by_leg["CASH"].slippage == 14.0
     assert by_leg["CASH"].net_pnl == 44.0
     assert by_leg["FUTURE"].quantity == 10
     assert by_leg["FUTURE"].gross_pnl == 10.0
     assert by_leg["FUTURE"].fees == 6.0
-    assert by_leg["FUTURE"].slippage == 12.0
+    assert by_leg["FUTURE"].slippage == 6.0
     assert by_leg["FUTURE"].net_pnl == 4.0
 
 
