@@ -300,6 +300,16 @@ class BacktestResultLedger:
             raise ValueError("stored run provenance must be an object")
         return value
 
+    def claim_run(self, run_id: str) -> bool:
+        """Atomically claim a CREATED run for one Universal worker."""
+        self._require_run(run_id)
+        with self.transaction():
+            cursor = self._db.execute(
+                "UPDATE backtest_runs SET status=? WHERE run_id=? AND status=?",
+                ("RUNNING", run_id, "CREATED"),
+            )
+            return cursor.rowcount == 1
+
     def set_status(self, run_id: str, status: str) -> None:
         self._require_run(run_id)
         status = status.strip().upper()
