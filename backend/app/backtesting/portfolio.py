@@ -114,6 +114,10 @@ class Portfolio:
         return sum(self._reserved_margin.values())
 
     @property
+    def positions(self) -> Mapping[str, Position]:
+        return dict(self._positions)
+
+    @property
     def trades(self) -> tuple[TradeRecord, ...]:
         return tuple(self._trades)
 
