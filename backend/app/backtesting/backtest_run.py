@@ -22,6 +22,7 @@ class BacktestRunSpec:
     resolution: BacktestResolution
     parameters: Mapping[str, object] = field(default_factory=dict)
     data_watermarks: Mapping[str, int] = field(default_factory=dict)
+    initial_capital: float | None = None
 
     def __post_init__(self) -> None:
         for name, value in (("run_id", self.run_id), ("strategy_id", self.strategy_id),
@@ -38,6 +39,11 @@ class BacktestRunSpec:
             raise ValueError("resolution metadata is required")
         if self.resolution.start_ns > self.start_ns or self.resolution.end_ns < self.end_ns:
             raise ValueError("resolution coverage does not contain backtest range")
+        if self.initial_capital is not None:
+            if isinstance(self.initial_capital, bool) or not isinstance(self.initial_capital, (int, float)):
+                raise ValueError("initial_capital must be a number")
+            if self.initial_capital <= 0:
+                raise ValueError("initial_capital must be positive")
         if not isinstance(self.parameters, Mapping) or not isinstance(self.data_watermarks, Mapping):
             raise ValueError("parameters and data_watermarks must be mappings")
         for key, watermark in self.data_watermarks.items():
@@ -61,4 +67,5 @@ class BacktestRunSpec:
             "parameters": dict(self.parameters),
             "strategy_config_hash": provenance_hash(dict(self.parameters)),
             "data_watermarks": dict(self.data_watermarks),
+            **({"initial_capital": float(self.initial_capital)} if self.initial_capital is not None else {}),
         }
