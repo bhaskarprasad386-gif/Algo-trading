@@ -243,7 +243,7 @@ class UniversalEventBacktestEngine:
         registry_state = state.get("order_registry_state", {})
         if not isinstance(registry_state, dict):
             raise ValueError("checkpoint order_registry_state must be a dictionary")
-        engine.order_registry = UniversalOrderRegistry.restore_state(registry_state)
+        engine.order_registry.restore_from_state(registry_state)
         execution_state = state.get("execution_state")
         if execution_state is None:
             raise ValueError("checkpoint missing execution_state")
