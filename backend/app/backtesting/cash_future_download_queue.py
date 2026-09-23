@@ -97,6 +97,7 @@ def build_rollover_download_queue(
     spot = CashFutureSegmentDownload(None, spot_request)
 
     items: list[CashFutureSegmentDownload] = []
+    seen_requests: set[tuple[str, str, str, int, int]] = set()
     for segments in segments_by_leg:
         for segment in segments:
             day_start = _market_day_bounds(segment.start)[0]
@@ -105,13 +106,15 @@ def build_rollover_download_queue(
             seg_end = min(local_end, day_end)
             if seg_end < seg_start:
                 continue
-            items.append(CashFutureSegmentDownload(
-                segment,
-                HistoricalFetchRequest(
-                    source,
-                    f"{segment.future.exchange}:{segment.future.token}:{segment.future.symbol}",
-                    timeframe,
-                    _ns(seg_start), _ns(seg_end),
-                ),
-            ))
+            request = HistoricalFetchRequest(
+                source,
+                f"{segment.future.exchange}:{segment.future.token}:{segment.future.symbol}",
+                timeframe,
+                _ns(seg_start), _ns(seg_end),
+            )
+            identity = (request.source, request.instrument, request.timeframe, request.start_ns, request.end_ns)
+            if identity in seen_requests:
+                continue
+            seen_requests.add(identity)
+            items.append(CashFutureSegmentDownload(segment, request))
     return CashFutureDownloadQueue(spot=spot, futures=tuple(items))
