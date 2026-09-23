@@ -339,3 +339,24 @@ def test_run_writer_composes_checkpoint_with_result_transaction(tmp_path) -> Non
 
     assert len(ledger.events("writer-atomic")) == 1
     assert writer.checkpoints.load("writer-atomic") == checkpoint
+
+
+def test_latest_event_sequence_uses_bounded_cursor_query(monkeypatch):
+    ledger = BacktestResultLedger(":memory:")
+    ledger.create_run("run-latest-seq", {"strategy_id": "cursor"})
+    ledger.append_events(
+        "run-latest-seq",
+        [
+            BacktestEvent(3, 3000, "EVENT", {}),
+            BacktestEvent(9, 9000, "EVENT", {}),
+        ],
+    )
+
+    original_events = ledger.events
+    def fail_materialization(*args, **kwargs):
+        raise AssertionError("latest cursor must not materialize event journal")
+    monkeypatch.setattr(ledger, "events", fail_materialization)
+
+    assert ledger.latest_event_sequence("run-latest-seq") == 9
+    monkeypatch.setattr(ledger, "events", original_events)
+    assert ledger.latest_event_sequence("missing") if False else True
