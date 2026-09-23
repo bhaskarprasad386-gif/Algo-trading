@@ -80,7 +80,7 @@ def test_recover_interrupted_legacy_job_without_config_fails_safely():
         db = SessionLocal()
         job = backtest_jobs.get_job(db, job_id)
         assert job is not None and job.status == "failed"
-        assert "durable chunks preserved" in job.message
+        assert job.message == "Worker interrupted; job configuration unavailable for safe recovery"
         db.close()
     finally:
         db = SessionLocal()
