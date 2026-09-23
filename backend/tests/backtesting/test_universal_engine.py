@@ -623,8 +623,42 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
         )
         return ledger, BacktestRunWriter(ledger, spec)
 
+    class StatefulStrategy:
+        def __init__(self, count=0):
+            self.count = count
+
+        def __call__(self, context):
+            self.count += 1
+            return EventSignal("HOLD")
+
+        def get_state(self):
+            return {"count": self.count, "last_timestamp_ns": self.count and self._last_timestamp_ns or None}
+
+        def set_state(self, state):
+            self.count = int(state["count"])
+            self._last_timestamp_ns = state.get("last_timestamp_ns")
+
+    class StatefulReporter:
+        def __init__(self, marker="fresh"):
+            self.marker = marker
+            self.records_seen = 0
+
+        def record_atomic_trade(self, report):
+            self.records_seen += 1
+
+        def get_state(self):
+            return {"marker": self.marker, "records_seen": self.records_seen}
+
+        def set_state(self, state):
+            self.marker = str(state["marker"])
+            self.records_seen = int(state["records_seen"])
+
     events = make_events()
     ref_portfolio, ref_registry = make_state()
+    ref_strategy = StatefulStrategy()
+    ref_strategy._last_timestamp_ns = None
+    ref_reporter = StatefulReporter(marker="checkpointed")
+    ref_reporter.records_seen = 7
 
     # A: uninterrupted reference run.
     ref_ledger, ref_writer = make_writer(tmp_path / "reference.db", "reference")
@@ -633,18 +667,23 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
         portfolio=ref_portfolio,
         order_registry=ref_registry,
         result_writer=ref_writer,
+        trade_reporter=ref_reporter,
         retain_history=False,
-    ).run(events, lambda ctx: EventSignal("HOLD"), order_book_field="book")
+    ).run(events, ref_strategy, order_book_field="book")
     ref_writer.complete()
 
     # B: checkpoint while queue-ahead and reservation are still non-zero.
     resumed_portfolio, resumed_registry = make_state()
+    resumed_strategy = StatefulStrategy()
+    resumed_strategy._last_timestamp_ns = None
+    resumed_reporter = StatefulReporter(marker="fresh")
     resumed_ledger, first_writer = make_writer(tmp_path / "resumed.db", "resumed")
     first_engine = UniversalEventBacktestEngine(
         100_000.0,
         portfolio=resumed_portfolio,
         order_registry=resumed_registry,
         result_writer=first_writer,
+        trade_reporter=resumed_reporter,
         retain_history=False,
         checkpoint_every_events=1,
     )
@@ -654,7 +693,7 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
         raise RuntimeError("simulated interruption")
 
     with pytest.raises(RuntimeError, match="simulated interruption"):
-        first_engine.run(interrupted_events(), lambda ctx: EventSignal("HOLD"), order_book_field="book")
+        first_engine.run(interrupted_events(), resumed_strategy, order_book_field="book")
 
     checkpoint = first_writer.checkpoints.load("resumed")
     assert checkpoint is not None
@@ -663,17 +702,24 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
     assert saved_registry["queue"]["queued"]["queue_ahead_quantity"] == 5
     assert saved_registry["reservations"]["queued"] == pytest.approx(30_000.0)
     assert checkpoint.state["portfolio_state"]["reserved_margin"]["queued"] == pytest.approx(30_000.0)
+    assert checkpoint.state["strategy_state"] == {"count": 1, "last_timestamp_ns": None}
+    assert checkpoint.state["reporter_state"] == {"marker": "fresh", "records_seen": 0}
 
+    # Resume must restore both user-defined strategy state and reporter state.
+    resume_strategy = StatefulStrategy()
+    resume_strategy._last_timestamp_ns = None
+    resume_reporter = StatefulReporter(marker="different")
     resume_writer = BacktestRunWriter(resumed_ledger, first_writer.spec, resume=True)
     resumed = UniversalEventBacktestEngine(
         100_000.0,
         portfolio=resumed_portfolio,
         order_registry=resumed_registry,
         result_writer=resume_writer,
+        trade_reporter=resume_reporter,
         retain_history=False,
         checkpoint_every_events=1,
         resume=True,
-    ).run(events, lambda ctx: EventSignal("HOLD"), order_book_field="book")
+    ).run(events, resume_strategy, order_book_field="book")
     resume_writer.complete()
 
     assert resumed.final_equity == pytest.approx(reference.final_equity)
@@ -686,6 +732,8 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
     assert resumed.max_drawdown == pytest.approx(reference.max_drawdown)
     assert resumed.cagr == pytest.approx(reference.cagr)
     assert resumed.fill_count == reference.fill_count
+    assert resume_strategy.get_state() == ref_strategy.get_state()
+    assert resume_reporter.get_state() == ref_reporter.get_state()
 
     assert resumed_registry.export_state() == ref_registry.export_state()
     assert resumed_portfolio.export_state() == ref_portfolio.export_state()
