@@ -614,7 +614,16 @@ class UniversalEventBacktestEngine:
         )
 
     def _run_with_writer_lifecycle(self, run_callable) -> UniversalBacktestResult:
-        """Complete or fail a durable run while preserving the original exception."""
+        """Claim the durable run, then complete/fail it while preserving exceptions."""
+        if self.result_writer is not None:
+            ledger = getattr(self.result_writer, "ledger", None)
+            if ledger is not None:
+                if self.resume:
+                    if not ledger.claim_recoverable(self.result_writer.spec.run_id):
+                        raise ValueError("recoverable run could not be claimed")
+                else:
+                    if not ledger.claim_run(self.result_writer.spec.run_id):
+                        raise ValueError("created run could not be claimed")
         try:
             result = run_callable()
         except Exception as exc:
