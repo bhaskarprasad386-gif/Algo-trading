@@ -229,7 +229,11 @@ def _calculate_cagr_from_timestamps(start: object | None, end: object | None, in
         return None
     if years <= 0:
         return None
-    return (final_capital / initial_capital) ** (1.0 / years) - 1.0
+    try:
+        exponent = 1.0 / years
+        return (final_capital / initial_capital) ** exponent - 1.0
+    except (OverflowError, ZeroDivisionError):
+        return None
 
 
 def run_catalog_events_incremental(
