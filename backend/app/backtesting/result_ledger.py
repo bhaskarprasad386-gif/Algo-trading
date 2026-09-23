@@ -379,3 +379,169 @@ class BacktestResultLedger:
         rows = []
         for fill in fills:
             metadata_json = self._json(dict(fill.metadata or {}))
+            identity = self._json({
+                "fill_id": fill.fill_id, "order_id": fill.order_id, "sequence": fill.sequence,
+                "timestamp_ns": fill.timestamp_ns, "instrument": fill.instrument,
+                "side": fill.side, "quantity": fill.quantity, "price": fill.price,
+                "fee": fill.fee, "metadata": dict(fill.metadata or {}),
+            })
+            rows.append((
+                run_id, fill.fill_id, fill.order_id, fill.sequence, fill.timestamp_ns,
+                fill.instrument, fill.side, fill.quantity, fill.price, fill.fee,
+                metadata_json, self._hash(identity),
+            ))
+        return self._insert_idempotent(
+            """INSERT INTO backtest_fills
+            (run_id,fill_id,order_id,sequence,timestamp_ns,instrument,side,quantity,price,fee,metadata_json,payload_hash)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            rows,
+            "backtest_fills",
+        )
+
+    def append_events(self, run_id: str, events: Iterable[BacktestEvent]) -> int:
+        self._require_mutable_run(run_id)
+        rows = []
+        for event in events:
+            payload_json = self._json(event.payload)
+            rows.append((
+                run_id, event.sequence, event.timestamp_ns, event.event_type,
+                payload_json, self._hash(payload_json),
+            ))
+        return self._insert_idempotent(
+            "INSERT INTO backtest_events(run_id,sequence,timestamp_ns,event_type,payload_json,payload_hash) VALUES (?,?,?,?,?,?)",
+            rows,
+            "backtest_events",
+        )
+
+    def append_equity(self, run_id: str, points: Iterable[EquityPoint]) -> int:
+        self._require_mutable_run(run_id)
+        inserted = 0
+        with self._db:
+            for point in points:
+                existing = self._db.execute(
+                    """SELECT equity, realized_pnl, unrealized_pnl, drawdown
+                       FROM backtest_equity
+                       WHERE run_id=? AND timestamp_ns=?
+                       ORDER BY equity_id""",
+                    (run_id, point.timestamp_ns),
+                ).fetchall()
+                values = (point.equity, point.realized_pnl, point.unrealized_pnl, point.drawdown)
+                if any(tuple(row) == values for row in existing):
+                    continue
+                self._db.execute(
+                    """INSERT INTO backtest_equity
+                    (run_id,timestamp_ns,equity,realized_pnl,unrealized_pnl,drawdown)
+                    VALUES (?,?,?,?,?,?)""",
+                    (run_id, point.timestamp_ns, point.equity, point.realized_pnl, point.unrealized_pnl, point.drawdown),
+                )
+                inserted += 1
+        return inserted
+
+    def _insert_idempotent(self, sql: str, rows: list[tuple[Any, ...]], table: str) -> int:
+        if not rows:
+            return 0
+        inserted = 0
+        with self._db:
+            for row in rows:
+                try:
+                    self._db.execute(sql, row)
+                    inserted += 1
+                    continue
+                except sqlite3.IntegrityError:
+                    pass
+                if table == "backtest_trades":
+                    existing = self._db.execute(
+                        "SELECT payload_hash FROM backtest_trades WHERE run_id=? AND trade_id=?",
+                        (row[0], row[1]),
+                    ).fetchone()
+                elif table == "backtest_fills":
+                    existing = self._db.execute(
+                        "SELECT payload_hash FROM backtest_fills WHERE run_id=? AND fill_id=?",
+                        (row[0], row[1]),
+                    ).fetchone()
+                elif table == "backtest_events":
+                    existing = self._db.execute(
+                        "SELECT payload_hash FROM backtest_events WHERE run_id=? AND sequence=?",
+                        (row[0], row[1]),
+                    ).fetchone()
+                else:
+                    existing = None
+                if existing is not None and existing[0] == row[-1]:
+                    continue
+                raise ValueError(f"conflicting duplicate in {table}")
+        return inserted
+
+    def _require_run(self, run_id: str) -> None:
+        if self._db.execute("SELECT 1 FROM backtest_runs WHERE run_id=?", (run_id,)).fetchone() is None:
+            raise ValueError(f"unknown run: {run_id}")
+
+    def latest_event_sequence(self, run_id: str) -> int:
+        self._require_run(run_id)
+        row = self._db.execute(
+            "SELECT MAX(sequence) FROM backtest_events WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        return -1 if row is None or row[0] is None else int(row[0])
+
+    @staticmethod
+    def _validate_limit(limit: int) -> None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValueError("limit must be a positive integer")
+
+    def run(self, run_id: str) -> sqlite3.Row:
+        self._require_run(run_id)
+        return self._db.execute(
+            "SELECT * FROM backtest_runs WHERE run_id=?", (run_id,)
+        ).fetchone()
+
+    def trades(self, run_id: str, *, limit: int = 500, after_sequence: int = -1) -> list[sqlite3.Row]:
+        self._require_run(run_id)
+        self._validate_limit(limit)
+        if after_sequence < -1:
+            raise ValueError("after_sequence must be >= -1")
+        return list(self._db.execute(
+            "SELECT * FROM backtest_trades WHERE run_id=? AND sequence>? ORDER BY sequence LIMIT ?",
+            (run_id, after_sequence, limit),
+        ))
+
+    def fills(self, run_id: str, *, limit: int = 500, after_sequence: int = -1) -> list[sqlite3.Row]:
+        self._require_run(run_id)
+        self._validate_limit(limit)
+        if after_sequence < -1:
+            raise ValueError("after_sequence must be >= -1")
+        return list(self._db.execute(
+            "SELECT * FROM backtest_fills WHERE run_id=? AND sequence>? ORDER BY sequence LIMIT ?",
+            (run_id, after_sequence, limit),
+        ))
+
+    def events(self, run_id: str, *, limit: int = 500, after_sequence: int = -1) -> list[sqlite3.Row]:
+        self._require_run(run_id)
+        self._validate_limit(limit)
+        if after_sequence < -1:
+            raise ValueError("after_sequence must be >= -1")
+        return list(self._db.execute(
+            "SELECT * FROM backtest_events WHERE run_id=? AND sequence>? ORDER BY sequence LIMIT ?",
+            (run_id, after_sequence, limit),
+        ))
+
+    def equity(
+        self,
+        run_id: str,
+        *,
+        limit: int = 500,
+        after_timestamp_ns: int = -1,
+        after_equity_id: int = -1,
+    ) -> list[sqlite3.Row]:
+        self._require_run(run_id)
+        self._validate_limit(limit)
+        if after_timestamp_ns < -1 or after_equity_id < -1:
+            raise ValueError("equity cursor must be >= -1")
+        return list(self._db.execute(
+            """SELECT * FROM backtest_equity
+               WHERE run_id=?
+                 AND (timestamp_ns > ? OR (timestamp_ns = ? AND equity_id > ?))
+               ORDER BY timestamp_ns, equity_id
+               LIMIT ?""",
+            (run_id, after_timestamp_ns, after_timestamp_ns, after_equity_id, limit),
+        ))
+
