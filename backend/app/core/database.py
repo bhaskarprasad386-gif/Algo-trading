@@ -1,15 +1,23 @@
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.pool import StaticPool
 from app.core.config import settings
 
 
 _is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+_is_memory_sqlite = settings.DATABASE_URL in {"sqlite:///:memory:", "sqlite://"}
 
-engine = create_engine(
-    settings.DATABASE_URL,
-    connect_args={"check_same_thread": False} if _is_sqlite else {},
-    pool_pre_ping=True,
-)
+engine_kwargs = {
+    "connect_args": {"check_same_thread": False} if _is_sqlite else {},
+    "pool_pre_ping": True,
+}
+if _is_memory_sqlite:
+    # SQLite in-memory databases are connection-local. CI/TestClient can open
+    # multiple connections, so a single shared connection is required for the
+    # schema and transaction state to remain visible across requests.
+    engine_kwargs["poolclass"] = StaticPool
+
+engine = create_engine(settings.DATABASE_URL, **engine_kwargs)
 
 
 if _is_sqlite:
