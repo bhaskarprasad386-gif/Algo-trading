@@ -75,7 +75,7 @@ def test_completed_terminal_chunk_with_internal_catalog_gaps_repairs_only_missin
     missing_indices = {5, 6, 100, 101}
     for index, record in enumerate(records):
         if index not in missing_indices:
-            catalog.ingest(record)
+            catalog.ingest((record,))
     job_store.start_chunk("internal-gap-job", 0)
     job_store.complete_chunk("internal-gap-job", 0)
     catalog.close()
