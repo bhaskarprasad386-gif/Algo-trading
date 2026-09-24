@@ -1,4 +1,5 @@
-from datetime import date, time, datetime, timezone
+from datetime import date, time, datetime
+from zoneinfo import ZoneInfo
 
 from app.backtesting.continuous_futures_acquisition import build_continuous_futures_gap_plan
 from app.backtesting.fno_rollover import FNORolloverWindow
@@ -9,7 +10,7 @@ INTERVAL_NS = 60 * 1_000_000_000
 
 
 def _ns(day: date, at: time) -> int:
-    return int(datetime.combine(day, at, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+    return int(datetime.combine(day, at, tzinfo=ZoneInfo("Asia/Kolkata")).timestamp() * 1_000_000_000)
 
 
 def test_cash_future_gap_plan_repairs_leading_trailing_and_empty_sessions(tmp_path):
@@ -44,7 +45,7 @@ def test_cash_future_gap_plan_repairs_leading_trailing_and_empty_sessions(tmp_pa
     assert [(r.instrument, r.start_ns, r.end_ns) for r in plan.requests] == [
         ("NFO:JAN", friday.start_ns, friday.start_ns),
         ("NFO:JAN", friday.end_ns, friday.end_ns),
-        ("NFO:JAN", _ns(date(2026, 1, 5), time(9, 15)), _ns(date(2026, 1, 5), time(9, 18))),
+        ("NFO:JAN", _ns(date(2026, 1, 6), time(9, 15)), _ns(date(2026, 1, 6), time(9, 18))),
     ]
 
 
