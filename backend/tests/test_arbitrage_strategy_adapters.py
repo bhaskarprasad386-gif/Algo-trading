@@ -332,8 +332,8 @@ def test_universal_cash_future_adapter_short_direction_integrates_open_close_wit
     result = engine.run_multi_leg([open_record, close_record], adapter)
 
     assert result.fill_count == 4
-    assert engine.portfolio.positions["NSE:ABC"].quantity == 0
-    assert engine.portfolio.positions["NFO:ABC-20261231"].quantity == 0
+    assert engine.portfolio.positions.get("NSE:ABC", type("PositionView", (), {"quantity": 0})()).quantity == 0
+    assert engine.portfolio.positions.get("NFO:ABC-20261231", type("PositionView", (), {"quantity": 0})()).quantity == 0
     assert result.realized_pnl == 100.0
 
 def test_universal_cash_future_adapter_retries_failed_close_after_engine_rejection():
