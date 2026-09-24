@@ -47,7 +47,7 @@ def _windows() -> list[FNORolloverWindow]:
 def _seed_session_gaps(catalog: HistoricalCatalog, instrument: str, days: tuple[date, ...]) -> None:
     for day in days:
         for at in (time(9, 15), time(9, 17)):
-            catalog.ingest(("fake", instrument, "1m", _ns(day, at), {"close": 100.0}))
+            catalog.ingest(HistoricalRecord("fake", instrument, "1m", _ns(day, at), {"close": 100.0}))
 
 
 def test_multi_contract_multi_session_rollover_boundary_recovers_durably(tmp_path):
@@ -84,7 +84,7 @@ def test_multi_contract_multi_session_rollover_boundary_recovers_durably(tmp_pat
     assert store.get("multi-session-rollover-repair").state == "progress"
 
     for day in (date(2026, 1, 8), date(2026, 1, 9)):
-        catalog.upsert(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(day, time(9, 16)), {"close": 100.0}))
+        catalog.ingest(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(day, time(9, 16)), {"close": 100.0}))
     source.allow_failed_instrument = True
     before_resume = len(source.requests)
 
