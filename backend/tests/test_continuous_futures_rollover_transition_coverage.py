@@ -47,7 +47,6 @@ def test_rollover_transition_keeps_old_and_new_contract_session_coverage_separat
         (sessions[1].start_ns, sessions[1].end_ns),
         (sessions[2].start_ns, sessions[2].end_ns),
         (sessions[3].start_ns, sessions[3].end_ns),
-        (sessions[3].start_ns, sessions[3].end_ns),
     ]
 
 
