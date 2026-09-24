@@ -58,8 +58,7 @@ def test_backtest_applies_slippage_and_transaction_costs():
     assert result.expectancy == pytest.approx(15.3802)
     assert result.sharpe_ratio is None
     assert result.sortino_ratio is None
-    assert result.max_drawdown == 0.0
-    assert result.cagr is None
+    # Open-position equity is marked to the executable liquidation price, so\n    # entry slippage creates the corresponding temporary drawdown.\n    assert result.max_drawdown == pytest.approx(4.4198 / 1000)\n    assert result.cagr is None
 
 
 def test_backtest_sharpe_ratio_uses_equity_curve_returns():
