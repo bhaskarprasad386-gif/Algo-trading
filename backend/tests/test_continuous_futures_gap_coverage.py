@@ -45,7 +45,7 @@ def test_cash_future_gap_plan_repairs_leading_trailing_and_empty_sessions(tmp_pa
     assert [(r.instrument, r.start_ns, r.end_ns) for r in plan.requests] == [
         ("NFO:JAN", friday.start_ns, friday.start_ns),
         ("NFO:JAN", friday.end_ns, friday.end_ns),
-        ("NFO:JAN", _ns(date(2026, 1, 6), time(9, 15)), _ns(date(2026, 1, 6), time(9, 18))),
+        ("NFO:JAN", _ns(date(2026, 1, 5), time(9, 15)), _ns(date(2026, 1, 5), time(9, 18))),
     ]
 
 
