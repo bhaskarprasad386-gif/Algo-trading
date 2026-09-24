@@ -296,9 +296,13 @@ class ExecutionSimulator:
 
         remaining = order.quantity; queue_ahead = order.queue_ahead_quantity; fills: list[SimFill] = []
         reference_prices: list[float] = []
+        consumed_by_price: dict[float, int] = {}
+        previous_execution_timestamp_ns: int | None = None
         for timestamp_ns, book, evidence in updates:
             if remaining <= 0: break
-            consumed_by_price: dict[float, int] = {}
+            if previous_execution_timestamp_ns == timestamp_ns:
+                consumed_by_price = {}
+            previous_execution_timestamp_ns = timestamp_ns
             levels = self._executable_levels(order, book)
             if order.order_type == OrderType.STOP:
                 best = book.asks if order.side == ExecutionSide.BUY else book.bids
