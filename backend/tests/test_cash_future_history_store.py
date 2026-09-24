@@ -62,7 +62,7 @@ def test_history_upsert_keeps_one_row_for_same_identity(db_session):
         future_ask=108.1,
     )
     save_history_point(db_session, point)
-    save_history_point(db_session, replace(point, future_price=109.0, gap=9.0))
+    save_history_point(db_session, replace(point, future_price=109.0, gap=9.0, gap_pct=9.0))
 
     rows = read_history(db_session, "ABC", "CURRENT")
     assert len(rows) == 1
@@ -83,10 +83,10 @@ def test_history_batch_upsert_is_bounded_and_idempotent(db_session):
         lot_size=100,
         margin_required=25000.0,
     )
-    second = replace(first, timestamp=datetime(2026, 9, 2, 10, 1), future_price=109.0, gap=9.0)
+    second = replace(first, timestamp=datetime(2026, 9, 2, 10, 1), future_price=109.0, gap=9.0, gap_pct=9.0)
 
     assert save_history_points(db_session, [first, second]) == 2
-    assert save_history_points(db_session, [first, replace(second, future_price=110.0, gap=10.0)]) == 2
+    assert save_history_points(db_session, [first, replace(second, future_price=110.0, gap=10.0, gap_pct=10.0)]) == 2
 
     rows = read_history(db_session, "ABC", "CURRENT")
     assert len(rows) == 2
