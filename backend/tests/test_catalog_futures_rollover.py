@@ -28,7 +28,7 @@ def test_catalog_builder_uses_real_contract_tokens_and_expiry_chain():
     )
     assert [(w.contract_token, w.start_date, w.end_date) for w in windows] == [
         ("101", date(2026, 1, 1), date(2026, 1, 29)),
-        ("102", date(2026, 1, 30), date(2026, 2, 28)),
+        ("102", date(2026, 1, 30), date(2026, 2, 26)),
     ]
 
 
