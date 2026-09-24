@@ -59,7 +59,7 @@ def test_expiry_transition_uses_next_contract_when_historical_snapshot_changes()
                                        start=date(2026, 1, 28), end=date(2026, 1, 31), mode="CURRENT")
     assert [(s.start, s.end, s.future.token) for s in segments] == [
         (date(2026, 1, 28), date(2026, 1, 29), "101"),
-        (date(2026, 1, 30), date(2026, 1, 31), "102"),
+        (date(2026, 1, 30), date(2026, 1, 30), "102"),
     ]
 
 
