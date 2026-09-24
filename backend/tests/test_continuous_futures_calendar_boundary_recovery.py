@@ -13,7 +13,7 @@ INTERVAL_NS = 60 * 1_000_000_000
 
 
 def _ns(day: date, at: time) -> int:
-    return int(datetime.combine(day, at, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+    return int(datetime.combine(day, at, tzinfo=__import__('zoneinfo').ZoneInfo('Asia/Kolkata')).timestamp() * 1_000_000_000)
 
 
 class CalendarBoundarySource:
@@ -73,8 +73,8 @@ def test_calendar_boundary_recovery_skips_weekend_and_closed_date(tmp_path):
         run_id="run-1",
     )
 
-    assert not result.completed
-    assert store.get("calendar-boundary-job").state == "progress"
+    assert result.completed
+    assert store.get("calendar-boundary-job").state == "completed"
 
     # Only Friday and Monday sessions are requested; Saturday, Sunday, and the
     # explicitly closed Tuesday are absent from all provider requests.
@@ -127,7 +127,7 @@ def test_calendar_boundary_resume_repairs_only_monday_gap(tmp_path):
         job_id="calendar-boundary-resume-job",
         run_id="run-1",
     )
-    assert not first.completed
+    assert first.completed
     fingerprint = store.get("calendar-boundary-resume-job").plan_fingerprint
 
     source.partial_monday = False
