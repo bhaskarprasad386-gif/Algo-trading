@@ -111,7 +111,7 @@ def test_session_reconciliation_does_not_bridge_friday_to_monday():
 
 def test_session_reconciliation_accepts_fully_covered_session():
     engine = _db()
-    start = datetime(2026, 10, 1, 9, 15)
+    start = datetime(2026, 10, 1, 9, 15, tzinfo=IST)
     end = start + timedelta(minutes=3)
     sessions = (SessionWindow(int(start.timestamp() * 1e9), int(end.timestamp() * 1e9)),)
 
