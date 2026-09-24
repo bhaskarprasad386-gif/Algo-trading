@@ -147,7 +147,7 @@ def build_cash_future_universe_download_plan(
             )
             if request is not None:
                 futures.append(request)
-        futures_tuple = tuple(futures)
+        futures_tuple = tuple(sorted(futures, key=lambda request: (request.end_ns, request.instrument, request.start_ns)))
         jobs.append(CashFutureUniverseDownloadJob(underlying, spot, futures_tuple))
         requests.extend((spot, *futures_tuple))
 
