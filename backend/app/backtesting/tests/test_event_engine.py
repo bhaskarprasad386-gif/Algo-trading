@@ -78,6 +78,30 @@ def test_event_strategy_order_uses_instrument_quote_and_ask_for_buy():
     assert engine.order_states["o1"].status == OrderStatus.FILLED
 
 
+def test_final_snapshot_uses_latest_market_mark_for_open_position():
+    class Strategy:
+        strategy_id = "final-mark"
+        strategy_version = "1"
+
+        def on_event(self, event, context):
+            return StrategyDecision(
+                action="BUY",
+                orders=(SimOrder("open", "NIFTY", ExecutionSide.BUY, 1),),
+            )
+
+    portfolio = Portfolio(initial_cash=10_000)
+    engine = EventBacktestEngine(execution=ExecutionSimulator(), portfolio=portfolio)
+
+    result = engine.run(
+        [MarketEvent(1_000, "NIFTY", EventType.QUOTE, {"bid": 100.0, "ask": 110.0})],
+        Strategy(),
+    )
+
+    assert result.final_snapshot is not None
+    assert result.final_snapshot.positions[0].quantity == 1
+    assert result.final_snapshot.equity == pytest.approx(9_995.0)
+
+
 def test_duplicate_order_ids_in_one_strategy_decision_are_rejected_without_state_mutation():
     class Strategy:
         strategy_id = "duplicate-orders"
