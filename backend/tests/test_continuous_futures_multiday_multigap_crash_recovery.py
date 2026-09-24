@@ -150,10 +150,13 @@ def test_multiday_multicontract_restart_repairs_multiple_gaps_and_partial_tail(t
         job_store.chunk_state("multiday-multigap-job", index)[0]
         for index in range(len(plan.requests))
     ] == ["completed", "completed", "completed"]
+    expected_counts = {}
     for request in plan.requests:
+        expected_counts[request.instrument] = expected_counts.get(request.instrument, 0) + len(records_by_request[request])
+    for instrument, expected_count in expected_counts.items():
         assert catalog.count(
-            source="angelone", instrument=request.instrument, timeframe="1m"
-        ) == len(records_by_request[request])
+            source="angelone", instrument=instrument, timeframe="1m"
+        ) == expected_count
 
     catalog.close()
     job_store.close()
