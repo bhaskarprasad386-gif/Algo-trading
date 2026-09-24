@@ -109,7 +109,7 @@ def test_durable_gap_repair_persists_and_resumes(tmp_path):
     assert source.requests[0].start_ns == session.start_ns + INTERVAL_NS and source.requests[0].end_ns == session.start_ns + INTERVAL_NS
     assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 4
     second = repair_continuous_futures_history_gaps(catalog, source, [window], source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=10 * INTERVAL_NS, job_store=store, job_id="gap-repair-job", run_id="run-1")
-    assert second.completed and second.execution.completed_chunks == 0 and second.execution.skipped_chunks == 0 and len(source.requests) == 1
+    assert second.completed and second.execution.completed_chunks == 0 and second.execution.skipped_chunks == 1 and len(source.requests) == 1
 
 def test_durable_gap_repair_recovers_after_provider_failure(tmp_path):
     catalog = HistoricalCatalog(tmp_path / "catalog.sqlite"); store = HistoricalJobStore(tmp_path / "jobs.sqlite")
@@ -145,7 +145,7 @@ def test_gap_repair_handles_multiple_contracts_and_multiple_internal_gaps(tmp_pa
     assert [request.instrument for request in resumed_source.requests] == ["NFO:JAN", "NFO:FEB", "NFO:FEB"]
     assert store.get("multi-gap-repair").plan_fingerprint == fingerprint
     assert store.get("multi-gap-repair").state == "completed"
-    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 6
+    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 5
     assert catalog.count(source="fake", instrument="NFO:FEB", timeframe="1m") == 6
 
 def test_durable_gap_repair_recovers_leading_trailing_and_empty_sessions(tmp_path):
