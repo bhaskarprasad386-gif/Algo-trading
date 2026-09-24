@@ -94,7 +94,7 @@ def test_multiple_terminal_chunks_across_rollover_repair_only_corrupt_ranges(tmp
         missing = {5, 6} if chunk_index == 0 else {100, 101}
         for index, record in enumerate(records_by_request[request]):
             if index not in missing:
-                catalog.ingest(record)
+                catalog.ingest((record,))
         job_store.start_chunk("multi-session-repair", chunk_index)
         job_store.complete_chunk("multi-session-repair", chunk_index)
 
