@@ -23,12 +23,12 @@ def test_unified_box_replay_persists_trade_and_graph_ready_payoff():
         parameters={"direction": "LONG", "fees_per_unit": 1.0},
     )
     events = [
-        {"timestamp_ns": 1, "data_resolution": "s", "low": _option(1, 100, 6, 4, 5, 3),
-         "high": _option(1, 110, 2, 3, 2, 2)},
+        {"timestamp_ns": 1, "data_resolution": "s", "low": _option(1, 100, 6, 7, 5, 6),
+         "high": _option(1, 110, 2, 3, 2, 3)},
         {"timestamp_ns": 2, "data_resolution": "s", "low": _option(2, 100, 6, 7, 5, 6),
          "high": _option(2, 110, 2, 2, 1, 2)},
-        {"timestamp_ns": 3, "data_resolution": "s", "low": _option(3, 100, 15, 16, 14, 15),
-         "high": _option(3, 110, 3, 4, 3, 4)},
+        {"timestamp_ns": 3, "data_resolution": "s", "low": _option(3, 100, 15, 16, 1, 2),
+         "high": _option(3, 110, 2, 3, 14, 15)},
     ]
     result = run_historical_arbitrage(ledger, spec, events, payoff_prices=(90, 100, 110, 120))
     assert result.completed_trades == 1
