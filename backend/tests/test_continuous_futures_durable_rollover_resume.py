@@ -92,6 +92,7 @@ def test_durable_rollover_resume_skips_completed_old_contract_and_resumes_new_co
         "NFO:101",
         "NFO:202",
         "NFO:202",
+        "NFO:202",
     ]
     assert job_store.pending_indices("rollover-job") == ()
 
