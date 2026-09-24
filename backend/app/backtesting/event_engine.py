@@ -455,4 +455,4 @@ class EventBacktestEngine:
         if started:
             finisher = getattr(strategy, "on_end", None)
             if callable(finisher): finisher(StrategyContext(last if last is not None else 0, tuple(history), dict(context_state)))
-        return ReplayStats(seen, dispatched, first, last, decisions, orders, fill_count, self._risk_blocks, self.portfolio.snapshot() if self.portfolio is not None else None)
+        return ReplayStats(seen, dispatched, first, last, decisions, orders, fill_count, self._risk_blocks, self.portfolio.snapshot(self._current_marks()) if self.portfolio is not None else None)
