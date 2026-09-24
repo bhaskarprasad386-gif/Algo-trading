@@ -19,7 +19,18 @@ class RecordingSource:
 
     def fetch(self, request):
         self.calls.append(request)
-        yield from self.records_by_request[request]
+        records = self.records_by_request.get(request)
+        if records is None:
+            for timestamp in range(request.start_ns, request.end_ns + 1, 60_000_000_000):
+                yield HistoricalRecord(
+                    source=request.source,
+                    instrument=request.instrument,
+                    timeframe=request.timeframe,
+                    timestamp_ns=timestamp,
+                    payload={"close": 100.0},
+                )
+            return
+        yield from records
 
 
 def _records(plan, *, interval_ns):
