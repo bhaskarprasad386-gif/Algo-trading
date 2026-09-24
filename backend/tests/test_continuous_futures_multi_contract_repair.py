@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 
 from app.backtesting.continuous_futures_acquisition import repair_continuous_futures_history_gaps
 from app.backtesting.fno_rollover import FNORolloverWindow
@@ -13,7 +14,7 @@ INTERVAL_NS = 60 * 1_000_000_000
 
 
 def _ns(day: date, at: time) -> int:
-    return int(datetime.combine(day, at, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+    return int(datetime.combine(day, at, tzinfo=ZoneInfo("Asia/Kolkata")).timestamp() * 1_000_000_000)
 
 
 class MultiContractSource:
@@ -40,9 +41,9 @@ def _window(token: str) -> FNORolloverWindow:
     return FNORolloverWindow("ABC", "STOCK_FUTURE", token, date(2026, 1, 9), date(2026, 1, 9))
 
 
-def _seed_gap(catalog: HistoricalCatalog, instrument: str) -> None:
+def _seed_gap(catalog: HistoricalCatalog, instrument: str, day: date) -> None:
     for at in (time(9, 15), time(9, 17)):
-        catalog.ingest((HistoricalRecord("fake", instrument, "1m", _ns(date(2026, 1, 9), at), {"close": 100.0}),))
+        catalog.ingest((HistoricalRecord("fake", instrument, "1m", _ns(day, at), {"close": 100.0}),))
 
 
 def test_multi_contract_repair_recovers_failed_gap_independently(tmp_path):
@@ -50,10 +51,13 @@ def test_multi_contract_repair_recovers_failed_gap_independently(tmp_path):
     store = HistoricalJobStore(tmp_path / "jobs.sqlite")
     source = MultiContractSource()
     calendar = _calendar()
-    windows = [\n        _window("JAN"),\n        FNORolloverWindow("ABC", "STOCK_FUTURE", "FEB", date(2026, 1, 12), date(2026, 1, 12)),\n    ]
+    windows = [
+        _window("JAN"),
+        FNORolloverWindow("ABC", "STOCK_FUTURE", "FEB", date(2026, 1, 12), date(2026, 1, 12)),
+    ]
 
-    _seed_gap(catalog, "NFO:JAN")
-    _seed_gap(catalog, "NFO:FEB")
+    _seed_gap(catalog, "NFO:JAN", date(2026, 1, 9))
+    _seed_gap(catalog, "NFO:FEB", date(2026, 1, 12))
 
     first = repair_continuous_futures_history_gaps(
         catalog, source, windows, source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS,
@@ -91,10 +95,10 @@ def test_multi_contract_repair_rejects_run_change_after_partial_failure(tmp_path
     store = HistoricalJobStore(tmp_path / "jobs.sqlite")
     source = MultiContractSource()
     calendar = _calendar()
-    windows = [_window("JAN"), _window("FEB")]
+    windows = [_window("JAN"), FNORolloverWindow("ABC", "STOCK_FUTURE", "FEB", date(2026, 1, 12), date(2026, 1, 12))]
 
-    _seed_gap(catalog, "NFO:JAN")
-    _seed_gap(catalog, "NFO:FEB")
+    _seed_gap(catalog, "NFO:JAN", date(2026, 1, 9))
+    _seed_gap(catalog, "NFO:FEB", date(2026, 1, 12))
 
     repair_continuous_futures_history_gaps(
         catalog, source, windows, source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS,
