@@ -210,10 +210,13 @@ def test_rollover_then_new_entry_handles_existing_portfolio_margin_breach():
     liquidation = [trade for trade in result.trades if trade["exit_reason"] == "margin_breach"]
     assert len(rollover) == 1
     assert rollover[0]["contract_month"] == "SEP"
-    assert len(liquidation) == 2
-    assert {(trade["symbol"], trade["contract_month"]) for trade in liquidation} == {("AAA", "OCT"), ("BBB", "SEP")}
-    assert result.open_position_count == 0
-    assert result.final_reserved_margin == 0.0
+    # BBB loses 3,000 at the -20 gap, but marked equity (7,000) remains
+    # above its 4,000 reserved margin, so it is not a margin breach.
+    # AAA/SEP is closed at rollover and AAA/OCT is a fresh open position.
+    assert len(liquidation) == 0
+    assert result.open_position_count == 2
+    assert result.final_reserved_margin == 8000.0
+    assert {(symbol, month) for symbol, month in [(trade["symbol"], trade["contract_month"]) for trade in liquidation]} == set()
 
 def test_end_of_data_marks_open_position_without_forced_liquidation():
     start = datetime(2026, 9, 2, 10, 0)
