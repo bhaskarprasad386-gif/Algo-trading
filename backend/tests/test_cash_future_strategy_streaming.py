@@ -79,6 +79,6 @@ def test_history_window_must_be_positive():
     try:
         CashFutureStrategyConfig(history_window=0)
     except ValueError as exc:
-        assert "history_window must be positive" in str(exc)
+        assert "history_window must be a positive integer when provided" in str(exc)
     else:
         raise AssertionError("non-positive history_window was accepted")
