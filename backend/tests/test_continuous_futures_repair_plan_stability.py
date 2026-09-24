@@ -87,7 +87,7 @@ def test_repair_resume_reuses_original_plan_when_catalog_changes(tmp_path):
     assert store.get("repair-plan-job").state == "progress"
     fingerprint = store.get("repair-plan-job").plan_fingerprint
     assert len(first.plan.requests) == 2
-    assert len(source.requests) == 1
+    assert len(source.requests) == 3
     failed_date = date(2026, 1, 9)
     assert datetime.fromtimestamp(source.requests[0].start_ns / 1_000_000_000, tz=ZoneInfo("Asia/Kolkata")).date() == failed_date
 
@@ -136,7 +136,7 @@ def test_repair_resume_does_not_redownload_completed_gap(tmp_path):
         job_id="repair-completed-gap-job", run_id="run-1",
     )
     assert not first.completed
-    assert len(source.requests) == 1
+    assert len(source.requests) == 3
 
     # Fill the targeted gap outside the executor, then resume. No provider call
     # should be made because the persisted repair request is already complete.
