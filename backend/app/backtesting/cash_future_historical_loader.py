@@ -140,7 +140,13 @@ class CashFutureHistoricalLoader:
                 days.append((current,contract))
             current=current.fromordinal(current.toordinal()+1)
         segments=[]
-        for _,grouped in groupby(days,key=lambda item:item[1]):
+        def contract_terms(item):
+            contract = item[1]
+            return (
+                contract.exchange, contract.symbol, contract.token, contract.expiry,
+                contract.instrument_type, contract.underlying, contract.lot_size, contract.tick_size,
+            )
+        for _,grouped in groupby(days,key=contract_terms):
             block=list(grouped); segments.append((block[0][0],block[-1][0],block[0][1]))
         return tuple(segments)
     def _resolve_spot_instrument(self,symbol:str,start_ns:int,end_ns:int,requested:str,source:str,timeframe:str)->str:
