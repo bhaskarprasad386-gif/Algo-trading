@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -15,7 +16,7 @@ INTERVAL_NS = 60 * 1_000_000_000
 
 
 def _ns(day: date, at: time) -> int:
-    return int(datetime.combine(day, at, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+    return int(datetime.combine(day, at, tzinfo=ZoneInfo("Asia/Kolkata")).timestamp() * 1_000_000_000)
 
 
 class RepairSource:
@@ -88,7 +89,7 @@ def test_repair_resume_reuses_original_plan_when_catalog_changes(tmp_path):
     assert len(first.plan.requests) == 2
     assert len(source.requests) == 1
     failed_date = date(2026, 1, 9)
-    assert datetime.fromtimestamp(source.requests[0].start_ns / 1_000_000_000, tz=timezone.utc).date() == failed_date
+    assert datetime.fromtimestamp(source.requests[0].start_ns / 1_000_000_000, tz=ZoneInfo("Asia/Kolkata")).date() == failed_date
 
     # External catalog progress changes the live gap set: the first gap is filled
     # before resume. The durable repair job must still use its original plan.
