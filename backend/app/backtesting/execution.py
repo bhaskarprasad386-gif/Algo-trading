@@ -285,16 +285,20 @@ class ExecutionSimulator:
         return ExecutionResult(tuple(fills), remaining, False, None if remaining == 0 else "partial fill", tuple(reference_prices))
 
     def execute_depth_updates(self, order: SimOrder, updates: Iterable[tuple[int, OrderBook, Iterable[QueueEvidence]]]) -> ExecutionResult:
-        remaining = order.quantity; queue_ahead = order.queue_ahead_quantity; consumed_by_price: dict[float, int] = {}; fills: list[SimFill] = []
-        reference_prices: list[float] = []
+        updates = tuple(updates)
         previous_timestamp_ns: int | None = None
-        for timestamp_ns, book, evidence in updates:
-            if remaining <= 0: break
+        for timestamp_ns, _, _ in updates:
             if isinstance(timestamp_ns, bool) or not isinstance(timestamp_ns, int) or timestamp_ns < order.submitted_at_ns:
                 raise ValueError("fill timestamp must be an integer and cannot precede order submission")
             if previous_timestamp_ns is not None and timestamp_ns < previous_timestamp_ns:
                 raise ValueError("depth update timestamps must be monotonic non-decreasing")
             previous_timestamp_ns = timestamp_ns
+
+        remaining = order.quantity; queue_ahead = order.queue_ahead_quantity; fills: list[SimFill] = []
+        reference_prices: list[float] = []
+        for timestamp_ns, book, evidence in updates:
+            if remaining <= 0: break
+            consumed_by_price: dict[float, int] = {}
             levels = self._executable_levels(order, book)
             if order.order_type == OrderType.STOP:
                 best = book.asks if order.side == ExecutionSide.BUY else book.bids
