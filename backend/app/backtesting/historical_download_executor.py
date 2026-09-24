@@ -89,6 +89,11 @@ class ResumableHistoricalExecutor:
             if last_error is not None:
                 if on_chunk_failed is not None:
                     on_chunk_failed(index, request, last_error, attempts)
+                # A durable identity conflict is a data-integrity violation, not a
+                # recoverable provider failure. Propagate it so callers cannot
+                # mistake a rejected replay for a resumable download failure.
+                if isinstance(last_error, ValueError) and str(last_error).startswith("conflicting historical record identity:"):
+                    raise last_error
                 return DownloadExecutionResult(tuple(results), index, tuple(skipped), completed_count=completed_count)
         return DownloadExecutionResult(tuple(results), None, tuple(skipped), completed_count=completed_count)
 
