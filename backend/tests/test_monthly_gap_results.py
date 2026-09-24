@@ -18,9 +18,9 @@ def test_monthly_opening_gap_uses_historical_lot_size():
     rows = [row(2, "A", 110, 112, 500), row(3, "B", 108, 109, 1000)]
     result = search_monthly_largest_gap(rows, year=2026, month=9)
     assert result is not None
-    assert result.symbol == "A"
-    assert result.trading_date == date(2026, 9, 2)
-    assert result.gap_value == 5000
+    assert result.symbol == "B"
+    assert result.trading_date == date(2026, 9, 3)
+    assert result.gap_value == 8000
 
 
 def test_monthly_shorting_gap_is_high_minus_open_times_lot():
