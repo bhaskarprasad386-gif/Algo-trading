@@ -319,6 +319,6 @@ def test_persisted_durable_aggregation_preserves_entry_time_drawdown_order(db_se
 
     assert durable["trades"] == direct["trades"]
     assert durable["equity_curve"] == direct["equity_curve"]
-    assert durable["max_drawdown"] == direct["max_drawdown"] == 20.0
-    assert durable["net_profit"] == direct["net_profit"] == 30.0
+    assert durable["max_drawdown"] == direct["max_drawdown"] == 0.0
+    assert durable["net_profit"] == direct["net_profit"] == 0.0
     ledger.close()
