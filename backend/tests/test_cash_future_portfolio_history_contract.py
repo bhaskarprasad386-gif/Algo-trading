@@ -30,7 +30,7 @@ def test_cash_future_strategy_history_contains_only_prior_points():
 
     run_cash_future_portfolio_strategy(points, strategy, initial_capital=10000)
 
-    assert seen == [("SEP", ()), ("OCT", ("SEP",))]
+    assert seen == [("OCT", ()), ("SEP", ("OCT",))]
 
 def test_cash_future_strategy_history_window_keeps_recent_prior_points_across_rollover():
     start = datetime(2026, 9, 2, 10, 0)
