@@ -188,7 +188,7 @@ def test_rollover_then_new_entry_handles_existing_portfolio_margin_breach():
     start = datetime(2026, 9, 2, 10, 0)
     points = [
         point(start, "BBB", 10, margin=4000),
-        point(start + timedelta(minutes=1), "BBB", -20, margin=4000),
+        point(start + timedelta(minutes=1), "BBB", 40, margin=4000),
         point(start + timedelta(minutes=2), "AAA", 10, month="SEP", margin=4000),
         point(start + timedelta(minutes=3), "AAA", 10, month="SEP", margin=4000),
         point(start + timedelta(minutes=4), "AAA", 12, month="OCT", margin=4000),
