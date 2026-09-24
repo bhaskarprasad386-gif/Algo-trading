@@ -97,6 +97,7 @@ def test_strategy_run_route_returns_output_analysis():
             "start_date": start.date().isoformat(),
             "end_date": start.date().isoformat(),
             "initial_capital": 10_000_000,
+            "target": 5.0,
             "points": [
                 payload(gap=10, timestamp=start),
                 payload(gap=4, timestamp=start + timedelta(hours=1)),
