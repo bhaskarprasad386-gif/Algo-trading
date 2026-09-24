@@ -1,4 +1,6 @@
 from datetime import date, datetime, time
+
+import pytest
 from zoneinfo import ZoneInfo
 
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
@@ -61,14 +63,15 @@ def test_session_gaps_do_not_invent_tick_cadence():
             ]
         )
 
-        assert catalog.session_gaps(
-            source="test",
-            instrument="ABC",
-            timeframe="tick",
-            interval_ns=1_000_000,
-            calendar=calendar,
-            start_date=date(2026, 1, 27),
-            end_date=date(2026, 1, 27),
-        ) == ()
+        with pytest.raises(ValueError, match="cadence session-gap detection is not valid for event timeframes"):
+            catalog.session_gaps(
+                source="test",
+                instrument="ABC",
+                timeframe="tick",
+                interval_ns=1_000_000,
+                calendar=calendar,
+                start_date=date(2026, 1, 27),
+                end_date=date(2026, 1, 27),
+            )
     finally:
         catalog.close()
