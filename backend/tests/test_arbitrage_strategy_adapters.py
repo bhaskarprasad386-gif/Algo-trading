@@ -21,7 +21,7 @@ def calendar(ts, expiry, bid, ask):
 def test_box_adapter_closes_only_on_later_reverse_edge():
     adapter = BoxSpreadStrategyAdapter(fees_per_unit=1.0)
     low = option(1, 100, 6, 7, 3, 4)
-    high = option(1, 110, 2, 3, 2, 3)
+    high = option(1, 110, 2, 3, 4, 5)
     entries = tuple(adapter.entry({"low": low, "high": high, "data_resolution": "1s"}))
     assert len(entries) == 1
     # Executable option quotes produce a 5-point long-box edge: width 10 minus 5-point debit.
@@ -34,7 +34,7 @@ def test_box_adapter_closes_only_on_later_reverse_edge():
     high2 = option(3, 110, 2, 3, 20, 21)
     close = adapter.exit(entries[0], {"low": low2, "high": high2})
     assert close is not None
-    assert close.gross_pnl == 28.0
+    assert close.gross_pnl == 12.0
     assert close.fees == 2.0
 
 
