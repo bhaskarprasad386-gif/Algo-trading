@@ -78,7 +78,7 @@ def test_portfolio_equity_includes_unrealized_mtm_for_all_open_positions():
         points, lambda current, history: "BUY" if current.gap >= 10 else "HOLD", initial_capital=10000,
     )
     assert result.trades == ()
-    assert result.equity_curve[-1]["unrealized_pnl"] == 300.0
+    assert result.equity_curve[-1]["unrealized_pnl"] == 700.0
     assert result.equity_curve[-1]["equity"] == 10700.0
     assert result.equity_curve[-1]["available_capital"] == 2000.0
     assert result.equity_curve[-1]["reserved_margin"] == 8000.0
@@ -232,6 +232,6 @@ def test_end_of_data_marks_open_position_without_forced_liquidation():
     assert result.open_position_count == 1
     assert result.final_reserved_margin == 4000.0
     assert result.final_available_capital == 6000.0
-    assert result.final_capital == 10700.0
+    assert result.final_capital == 10300.0
     assert result.net_profit == 300.0
-    assert result.equity_curve[-1]["unrealized_pnl"] == 700.0
+    assert result.equity_curve[-1]["unrealized_pnl"] == 300.0
