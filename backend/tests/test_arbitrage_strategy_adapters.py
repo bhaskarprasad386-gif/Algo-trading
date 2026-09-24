@@ -651,7 +651,7 @@ def test_universal_cash_future_trade_reporter_does_not_double_count_execution_sl
 
     by_leg = {trade.leg: trade for trade in writer.trades}
     assert by_leg["CASH"].slippage == 20.0
-    assert by_leg["FUTURE"].slippage == 0.0
+    # The close BUY at 103 versus its 102 reference is 1 point adverse slippage.\n    assert by_leg["FUTURE"].slippage == 10.0
     assert by_leg["CASH"].gross_pnl == 40.0
     assert by_leg["FUTURE"].gross_pnl == 10.0
     assert by_leg["CASH"].fees == 2.0
