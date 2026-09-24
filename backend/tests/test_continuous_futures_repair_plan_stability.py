@@ -45,10 +45,10 @@ def _window() -> FNORolloverWindow:
 def _seed_complete_except_two_gaps(catalog: HistoricalCatalog) -> None:
     for at in (time(9, 15), time(9, 16), time(9, 17)):
         if at != time(9, 16):
-            catalog.upsert(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), at), {"close": 100.0}))
+            catalog.ingest(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), at), {"close": 100.0}))
     # A second gap is created by using a second session on the same contract.
     for at in (time(9, 15), time(9, 16)):
-        catalog.upsert(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 12), at), {"close": 100.0}))
+        catalog.ingest(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 12), at), {"close": 100.0}))
 
 
 def test_repair_resume_reuses_original_plan_when_catalog_changes(tmp_path):
@@ -63,9 +63,9 @@ def test_repair_resume_reuses_original_plan_when_catalog_changes(tmp_path):
 
     # Seed Friday with one missing candle and Monday with one missing candle.
     for at in (time(9, 15), time(9, 17)):
-        catalog.upsert(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), at), {"close": 100.0}))
+        catalog.ingest(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), at), {"close": 100.0}))
     for at in (time(9, 15), time(9, 17)):
-        catalog.upsert(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 12), at), {"close": 100.0}))
+        catalog.ingest(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 12), at), {"close": 100.0}))
 
     first = repair_continuous_futures_history_gaps(
         catalog,
@@ -92,7 +92,7 @@ def test_repair_resume_reuses_original_plan_when_catalog_changes(tmp_path):
 
     # External catalog progress changes the live gap set: the first gap is filled
     # before resume. The durable repair job must still use its original plan.
-    catalog.upsert(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), time(9, 16)), {"close": 100.0}))
+    catalog.ingest(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), time(9, 16)), {"close": 100.0}))
     before_resume = len(source.requests)
 
     second = repair_continuous_futures_history_gaps(
@@ -126,8 +126,8 @@ def test_repair_resume_does_not_redownload_completed_gap(tmp_path):
     window = _window()
     source = RepairSource()
 
-    catalog.upsert(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), time(9, 15)), {"close": 100.0}))
-    catalog.upsert(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), time(9, 17)), {"close": 100.0}))
+    catalog.ingest(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), time(9, 15)), {"close": 100.0}))
+    catalog.ingest(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), time(9, 17)), {"close": 100.0}))
 
     first = repair_continuous_futures_history_gaps(
         catalog, source, [window], source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS,
@@ -139,7 +139,7 @@ def test_repair_resume_does_not_redownload_completed_gap(tmp_path):
 
     # Fill the targeted gap outside the executor, then resume. No provider call
     # should be made because the persisted repair request is already complete.
-    catalog.upsert(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), time(9, 16)), {"close": 100.0}))
+    catalog.ingest(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), time(9, 16)), {"close": 100.0}))
     before = len(source.requests)
     second = repair_continuous_futures_history_gaps(
         catalog, source, [window], source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS,
@@ -157,8 +157,8 @@ def test_repair_existing_job_rejects_different_run_id(tmp_path):
     calendar = _calendar()
     window = _window()
     source = RepairSource()
-    catalog.upsert(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), time(9, 15)), {"close": 100.0}))
-    catalog.upsert(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), time(9, 17)), {"close": 100.0}))
+    catalog.ingest(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), time(9, 15)), {"close": 100.0}))
+    catalog.ingest(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), time(9, 17)), {"close": 100.0}))
 
     repair_continuous_futures_history_gaps(
         catalog, source, [window], source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS,
