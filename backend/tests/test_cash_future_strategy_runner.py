@@ -63,7 +63,7 @@ def test_strategy_persists_metadata_signals_trades_and_equity():
         config=CashFutureStrategyConfig(charges_per_trade=20, funding_cost_per_trade=10),
         ledger=ledger, run_id="cash-future-p0-1", strategy_hash="abc123")
     assert result.final_capital == 100000570.0
-    assert result.final_available_capital == 10000570.0
+    assert result.final_available_capital == 100000570.0
     assert result.final_reserved_margin == 0.0
     metadata = ledger.run_metadata("cash-future-p0-1")
     assert metadata["strategy_id"] == "persisted-gap"
