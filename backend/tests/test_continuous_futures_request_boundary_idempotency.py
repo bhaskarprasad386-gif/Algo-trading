@@ -31,6 +31,9 @@ def test_request_boundaries_are_contiguous_without_overlap_or_gaps():
 
     assert plan.requests
 
+    sessions = calendar.sessions_between(date(2026, 1, 29), date(2026, 2, 2))
+    assert sessions
+
     for instrument in {request.instrument for request in plan.requests}:
         instrument_requests = [request for request in plan.requests if request.instrument == instrument]
         for previous, current in zip(instrument_requests, instrument_requests[1:]):
@@ -41,8 +44,6 @@ def test_request_boundaries_are_contiguous_without_overlap_or_gaps():
             else:
                 assert current_session.start_ns > previous_session.end_ns
 
-    sessions = calendar.sessions_between(date(2026, 1, 29), date(2026, 2, 2))
-    assert sessions
     expected_by_instrument = {
         "NFO:101": 1,
         "NFO:202": len(sessions) - 1,
@@ -53,10 +54,3 @@ def test_request_boundaries_are_contiguous_without_overlap_or_gaps():
             actual_by_instrument.get(request.instrument, 0) + 1
         )
     assert actual_by_instrument == expected_by_instrument
-
-    for instrument in actual_by_instrument:
-        instrument_requests = [
-            request for request in plan.requests if request.instrument == instrument
-        ]
-        for previous, current in zip(instrument_requests, instrument_requests[1:]):
-            assert current.start_ns == previous.end_ns + interval_ns
