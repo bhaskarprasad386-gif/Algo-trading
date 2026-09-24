@@ -132,7 +132,6 @@ def test_resume_event_identity_lookup_does_not_materialize_event_journal(monkeyp
 
 def test_resume_replays_journaled_event_when_checkpoint_commit_was_interrupted(tmp_path):
     ledger = BacktestLedger(str(tmp_path / "atomicity.sqlite"))
-    ledger.start_run("atomicity", "atomicity", "1", 10_000.0, data_source_fingerprint="events-v1")
     events = (
         MarketEvent(1_000, "NSE:SBIN", EventType.QUOTE, {"bid": 99, "ask": 100}, sequence=1, source="test"),
         MarketEvent(2_000, "NSE:SBIN", EventType.QUOTE, {"bid": 109, "ask": 110}, sequence=2, source="test"),
