@@ -39,7 +39,7 @@ class FailOnRequestSource(FakeHistoricalSource):
         super().__init__()
         self.fail_on_call = fail_on_call
     def fetch(self, request: HistoricalFetchRequest):
-        if len(self.requests) + 1 == self.fail_on_call:
+        if len(self.requests) + 1 >= self.fail_on_call:
             self.requests.append(request)
             raise RuntimeError("temporary provider failure")
         yield from super().fetch(request)
