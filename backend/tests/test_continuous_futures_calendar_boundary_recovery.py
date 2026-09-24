@@ -29,6 +29,8 @@ class CalendarBoundarySource:
         # Friday is complete. Monday deliberately omits 09:17; the weekend and
         # an explicitly closed Tuesday must never become requested data ranges.
         monday = date(2026, 1, 12)
+        if self.fail_after_partial and request.start_ns == _ns(monday, time(9, 17)):
+            raise RuntimeError("simulated durable interruption on remaining Monday gap")
         if request.start_ns == _ns(monday, time(9, 15)) and self.partial_monday:
             for at in (time(9, 15), time(9, 16), time(9, 18)):
                 yield HistoricalRecord(
