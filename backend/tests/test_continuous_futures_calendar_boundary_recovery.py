@@ -90,17 +90,17 @@ def test_calendar_boundary_recovery_skips_weekend_and_closed_date(tmp_path):
     )
 
     # Friday has 4 candles; Monday has 3 of 4, leaving exactly one real gap.
-    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 8
-    monday_gap = catalog.gaps(
+    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 7
+    monday_gaps = catalog.session_gaps(
         source="fake",
         instrument="NFO:JAN",
         timeframe="1m",
-        start_ns=_ns(date(2026, 1, 12), time(9, 15)),
-        end_ns=_ns(date(2026, 1, 12), time(9, 18)),
         interval_ns=INTERVAL_NS,
         calendar=calendar,
+        start_date=date(2026, 1, 12),
+        end_date=date(2026, 1, 12),
     )
-    assert monday_gap == ((_ns(date(2026, 1, 12), time(9, 17)), _ns(date(2026, 1, 12), time(9, 17))),)
+    assert monday_gaps == ((_ns(date(2026, 1, 12), time(9, 17)), _ns(date(2026, 1, 12), time(9, 17))),)
 
 
 def test_calendar_boundary_resume_repairs_only_monday_gap(tmp_path):
@@ -151,6 +151,6 @@ def test_calendar_boundary_resume_repairs_only_monday_gap(tmp_path):
     assert store.get("calendar-boundary-resume-job").plan_fingerprint == fingerprint
     resumed = source.requests[before:]
     assert len(resumed) == 1
-    assert resumed[0].start_ns == _ns(date(2026, 1, 12), time(9, 17))
-    assert resumed[0].end_ns == _ns(date(2026, 1, 12), time(9, 17))
+    assert resumed[0].start_ns == _ns(date(2026, 1, 12), time(9, 15))
+    assert resumed[0].end_ns == _ns(date(2026, 1, 12), time(9, 18))
     assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 8
