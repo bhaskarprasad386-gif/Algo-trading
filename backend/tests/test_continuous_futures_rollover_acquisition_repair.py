@@ -1,4 +1,5 @@
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 
 from app.backtesting.continuous_futures_acquisition import acquire_continuous_futures_history
 from app.backtesting.fno_rollover import FNORolloverWindow
@@ -13,7 +14,7 @@ TIMEFRAME = "2h"
 
 
 def _ns(day: date, clock: time) -> int:
-    return int(datetime.combine(day, clock, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+    return int(datetime.combine(day, clock, tzinfo=ZoneInfo("Asia/Kolkata")).timestamp() * 1_000_000_000)
 
 
 class _RecordingSource:
