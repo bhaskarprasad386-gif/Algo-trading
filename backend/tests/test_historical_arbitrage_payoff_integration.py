@@ -26,8 +26,8 @@ def test_registered_box_strategy_auto_builds_payoff_from_first_entry_quote(tmp_p
     service = HistoricalArbitrageBacktestService(writer)
     entry = {"timestamp_ns": 1, "low": option(1, 100, 6, 7, 5, 6),
              "high": option(1, 110, 2, 3, 2, 3)}
-    later = {"timestamp_ns": 3, "low": option(3, 100, 15, 16, 1, 2),
-             "high": option(3, 110, 2, 3, 14, 15)}
+    later = {"timestamp_ns": 3, "low": option(3, 100, 15, 16, 10, 11),
+             "high": option(3, 110, 1, 2, 0.5, 1)}
 
     result = service.run_strategy(
         "box-spread", (entry, later),
