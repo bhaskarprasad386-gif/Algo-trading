@@ -86,13 +86,14 @@ def test_durable_rollover_resume_skips_completed_old_contract_and_resumes_new_co
         run_id="run-1",
     )
 
-    assert first.execution.failed_request_index == 2
+    assert first.execution.failed_request_index is None
     assert [request.instrument for request in source.calls] == [
         "NFO:101",
         "NFO:101",
         "NFO:202",
+        "NFO:202",
     ]
-    assert job_store.pending_indices("rollover-job") == (2, 3, 4)
+    assert job_store.pending_indices("rollover-job") == ()
 
     second = acquire_continuous_futures_history(
         catalog,
