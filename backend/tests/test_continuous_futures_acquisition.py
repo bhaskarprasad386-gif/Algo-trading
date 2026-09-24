@@ -150,7 +150,7 @@ def test_gap_repair_handles_multiple_contracts_and_multiple_internal_gaps(tmp_pa
 
 def test_durable_gap_repair_recovers_leading_trailing_and_empty_sessions(tmp_path):
     catalog = HistoricalCatalog(tmp_path / "catalog.sqlite"); store = HistoricalJobStore(tmp_path / "jobs.sqlite")
-    calendar = TradingCalendar(session_open=time(9, 15), session_close=time(9, 18))
+    calendar = TradingCalendar(session_open=time(9, 15), session_close=time(9, 18), closed_dates=frozenset({date(2026, 1, 5)}))
     window = FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 2), date(2026, 1, 6))
     friday = calendar.sessions_between(date(2026, 1, 2), date(2026, 1, 2))[0]
     tuesday = calendar.sessions_between(date(2026, 1, 6), date(2026, 1, 6))[0]
