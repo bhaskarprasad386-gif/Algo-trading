@@ -25,6 +25,8 @@ class PartialThenFailSource:
 
     def fetch(self, request: HistoricalFetchRequest):
         self.requests.append(request)
+        if request.start_ns == _ns(date(2026, 1, 2), time(9, 18)):
+            raise RuntimeError("targeted recovery failed")
         yield HistoricalRecord(request.source, request.instrument, request.timeframe, request.start_ns, {"close": 100.0})
         raise RuntimeError("targeted recovery failed")
 
