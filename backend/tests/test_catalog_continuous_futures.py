@@ -46,7 +46,7 @@ def test_contract_master_snapshots_build_multi_expiry_chain_from_catalog():
         ))
         contracts.upsert_snapshot(date(2026, 2, 1), (
             _contract("FEB", date(2026, 2, 26), date(2026, 2, 1)),
-            _contract("MAR", date(2026, 3, 26), date(2026, 1, 1)),
+            _contract("MAR", date(2026, 3, 26), date(2026, 2, 1)),
         ))
         history.ingest((
             _bar("JAN", date(2026, 1, 28), 100.0),
