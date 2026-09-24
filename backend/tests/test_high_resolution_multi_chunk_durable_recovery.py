@@ -12,12 +12,10 @@ class _MultiChunkEventSource:
     def fetch(self, request):
         if request.start_ns == 200 and not self.failed:
             self.failed = True
-            return iter(
-                (
-                    HistoricalRecord(request.source, request.instrument, request.timeframe, 200, {"ltp": 200}, 1),
-                    HistoricalRecord(request.source, request.instrument, request.timeframe, 250, {"ltp": 250}, 1),
-                )
-            )
+            def interrupted():
+                yield HistoricalRecord(request.source, request.instrument, request.timeframe, 200, {"ltp": 200}, 1)
+                raise RuntimeError("simulated mid-stream interruption")
+            return interrupted()
         return tuple(
             HistoricalRecord(request.source, request.instrument, request.timeframe, ts, {"ltp": ts}, 1)
             for ts in (request.start_ns, request.end_ns)
