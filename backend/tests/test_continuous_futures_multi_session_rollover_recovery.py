@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 
 from app.backtesting.continuous_futures_acquisition import repair_continuous_futures_history_gaps
 from app.backtesting.fno_rollover import FNORolloverWindow, validate_futures_rollover_chain
@@ -13,7 +14,7 @@ INTERVAL_NS = 60 * 1_000_000_000
 
 
 def _ns(day: date, at: time) -> int:
-    return int(datetime.combine(day, at, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+    return int(datetime.combine(day, at, tzinfo=ZoneInfo("Asia/Kolkata")).timestamp() * 1_000_000_000)
 
 
 class MultiSessionSource:
@@ -39,14 +40,14 @@ def _calendar() -> TradingCalendar:
 def _windows() -> list[FNORolloverWindow]:
     return [
         FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 8), date(2026, 1, 9)),
-        FNORolloverWindow("ABC", "STOCK_FUTURE", "FEB", date(2026, 1, 12), date(2026, 1, 13)),
+        FNORolloverWindow("ABC", "STOCK_FUTURE", "FEB", date(2026, 1, 10), date(2026, 1, 13)),
     ]
 
 
 def _seed_session_gaps(catalog: HistoricalCatalog, instrument: str, days: tuple[date, ...]) -> None:
     for day in days:
         for at in (time(9, 15), time(9, 17)):
-            catalog.upsert(HistoricalRecord("fake", instrument, "1m", _ns(day, at), {"close": 100.0}))
+            catalog.ingest(("fake", instrument, "1m", _ns(day, at), {"close": 100.0}),))
 
 
 def test_multi_contract_multi_session_rollover_boundary_recovers_durably(tmp_path):
@@ -62,7 +63,7 @@ def test_multi_contract_multi_session_rollover_boundary_recovers_durably(tmp_pat
         instrument_type="STOCK_FUTURE",
     )
     _seed_session_gaps(catalog, "NFO:JAN", (date(2026, 1, 8), date(2026, 1, 9)))
-    _seed_session_gaps(catalog, "NFO:FEB", (date(2026, 1, 12), date(2026, 1, 13)))
+    _seed_session_gaps(catalog, "NFO:FEB", (date(2026, 1, 10), date(2026, 1, 13)))
 
     first = repair_continuous_futures_history_gaps(
         catalog, source, windows, source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS,
