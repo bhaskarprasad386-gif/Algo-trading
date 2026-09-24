@@ -30,8 +30,8 @@ def test_box_adapter_closes_only_on_later_reverse_edge():
 
     # The adapter's ExitExecution gross PnL is entry price plus the executable
     # reverse edge, so the later 23-point close price yields 28 gross PnL.
-    low2 = option(3, 100, 20, 21, 3, 4)
-    high2 = option(3, 110, 2, 3, 20, 21)
+    low2 = option(3, 100, 20, 21, 20, 21)
+    high2 = option(3, 110, 1, 2, 20, 21)
     close = adapter.exit(entries[0], {"low": low2, "high": high2})
     assert close is not None
     assert close.gross_pnl == 12.0
