@@ -76,6 +76,9 @@ def test_disjoint_partial_recovery_keeps_durable_plan_fingerprint(tmp_path):
         source_name = "fake"
 
         def fetch(self, request: HistoricalFetchRequest):
+            blocked_start = _ns(date(2026, 1, 2), time(9, 16))
+            if request.start_ns == blocked_start:
+                raise RuntimeError("simulated durable interruption")
             yield HistoricalRecord(request.source, request.instrument, request.timeframe, request.start_ns, {"close": 100.0})
             yield HistoricalRecord(request.source, request.instrument, request.timeframe, request.start_ns + 2 * INTERVAL_NS, {"close": 100.0})
 
