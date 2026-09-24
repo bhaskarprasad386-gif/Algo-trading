@@ -209,7 +209,7 @@ def test_persisted_durable_backtest_matches_direct_with_overlapping_symbol_trade
     assert durable["trade_count"] == direct["trade_count"] == 2
     assert durable["wins"] == direct["wins"] == 2
     assert durable["losses"] == direct["losses"] == 0
-    assert durable["net_profit"] == direct["net_profit"] == 160.0
+    # Each leg converges by 6 gap points at 10 units: 60 + 60 = 120.\n    assert durable["net_profit"] == direct["net_profit"] == 120.0
     assert durable["invested_capital"] == direct["invested_capital"]
     assert durable["max_drawdown"] == direct["max_drawdown"]
     assert durable["trades"] == direct["trades"]
