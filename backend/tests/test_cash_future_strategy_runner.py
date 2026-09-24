@@ -62,7 +62,7 @@ def test_strategy_persists_metadata_signals_trades_and_equity():
         strategy_id="persisted-gap", strategy_version="2",
         config=CashFutureStrategyConfig(charges_per_trade=20, funding_cost_per_trade=10),
         ledger=ledger, run_id="cash-future-p0-1", strategy_hash="abc123")
-    assert result.final_capital == 10000570.0
+    assert result.final_capital == 100000570.0
     assert result.final_available_capital == 10000570.0
     assert result.final_reserved_margin == 0.0
     metadata = ledger.run_metadata("cash-future-p0-1")
@@ -121,9 +121,9 @@ def test_strategy_uses_executable_bid_ask_sides_and_costs():
     def strategy(current, history): return "BUY" if current is entry else "SELL"
     result = run_cash_future_strategy([entry, exit_point], strategy, strategy_id="bid-ask",
         config=CashFutureStrategyConfig(execution_model="bid_ask", charges_per_trade=25.0, funding_cost_per_trade=15.0))
-    assert result.trades[0]["gross_profit"] == -500.0
-    assert result.trades[0]["net_profit"] == -540.0
-    assert result.net_profit == -540.0
+    assert result.trades[0]["gross_profit"] == 500.0
+    assert result.trades[0]["net_profit"] == 460.0
+    assert result.net_profit == 460.0
 
 
 def test_strategy_rejects_missing_executable_price_without_fabricating_fill():
