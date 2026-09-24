@@ -18,6 +18,14 @@ class HistoricalFutureSelection:
     def token(self) -> str:
         return self.record.token
 
+    @property
+    def symbol(self) -> str:
+        return self.record.symbol
+
+    @property
+    def lot_size(self) -> int:
+        return self.record.lot_size
+
 
 class HistoricalContractResolver:
     def __init__(self, catalog: ContractMasterCatalog) -> None:
