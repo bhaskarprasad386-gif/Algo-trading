@@ -104,10 +104,10 @@ def test_fno_coverage_run_repairs_missing_session_bars_and_is_idempotent():
     calendar = TradingCalendar(session_open=time(9, 15), session_close=time(9, 19))
     session = calendar.sessions_between(date(2026, 9, 7), date(2026, 9, 7))[0]
     interval = 60 * 1_000_000_000
-    catalog.ingest(
+    catalog.ingest([
         HistoricalRecord("provider", "101", "1m", session.start_ns + interval, {"close": 101}),
         HistoricalRecord("provider", "101", "1m", session.start_ns + 3 * interval, {"close": 103}),
-    )
+    ])
 
     first = service.run_coverage(
         source,
