@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, time, datetime, timezone
+from datetime import date, time, datetime
+from zoneinfo import ZoneInfo
 
 from app.backtesting.continuous_futures_acquisition import acquire_continuous_futures_history
 from app.backtesting.fno_rollover import FNORolloverWindow
@@ -13,7 +14,7 @@ INTERVAL_NS = 60 * 1_000_000_000
 
 
 def _ns(day: date, at: time) -> int:
-    return int(datetime.combine(day, at, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+    return int(datetime.combine(day, at, tzinfo=ZoneInfo("Asia/Kolkata")).timestamp() * 1_000_000_000)
 
 
 class PartialThenCompleteSource:
