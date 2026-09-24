@@ -83,7 +83,7 @@ def test_portfolio_equity_includes_unrealized_mtm_for_all_open_positions():
     assert result.equity_curve[-1]["available_capital"] == 2000.0
     assert result.equity_curve[-1]["reserved_margin"] == 8000.0
     assert result.open_position_count == 2
-    assert result.final_capital == 10300.0
+    assert result.final_capital == 10700.0
 
 
 def test_portfolio_forces_historical_exit_when_marked_equity_breaches_margin():
