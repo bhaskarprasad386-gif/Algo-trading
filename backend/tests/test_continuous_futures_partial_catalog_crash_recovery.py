@@ -81,7 +81,7 @@ def test_running_chunk_crash_with_partial_catalog_data_resumes_only_missing_tail
 
     # The first contract was already durably completed before the crash.
     for record in records[plan.requests[0]]:
-        catalog.ingest(record)
+        catalog.ingest((record,))
     job_store.start_chunk("partial-crash-job", 0)
     job_store.complete_chunk("partial-crash-job", 0)
 
