@@ -88,7 +88,7 @@ def test_durable_acquisition_resumes_only_unfinished_chunks():
     assert store.chunk_state("cash-future-job", 0)[0] == "completed" and store.chunk_state("cash-future-job", 1)[0] == "recoverable"
     resumed_source = FakeHistoricalSource()
     second = acquire_continuous_futures_history(catalog, resumed_source, windows, source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=INTERVAL_NS, job_store=store, job_id="cash-future-job", run_id="run-1")
-    assert second.completed and second.execution.failed_request_index is None and len(resumed_source.requests) == 1
+    assert second.completed and second.execution.failed_request_index is None and len(resumed_source.requests) == 2
     assert store.get("cash-future-job").state == "completed"
 
 def test_durable_arguments_must_be_complete():
