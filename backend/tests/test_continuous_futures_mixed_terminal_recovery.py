@@ -95,7 +95,7 @@ def test_mixed_terminal_states_reconcile_only_corrupt_chunks(tmp_path):
         missing = missing_by_chunk.get(chunk_index, set())
         for index, record in enumerate(records_by_request[request]):
             if index not in missing:
-                catalog.ingest(record)
+                catalog.ingest((record,))
         job_store.start_chunk("mixed-terminal-recovery", chunk_index)
         if chunk_index in (0, 1):
             job_store.complete_chunk("mixed-terminal-recovery", chunk_index)
