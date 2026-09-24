@@ -148,12 +148,7 @@ class CashFutureHistoricalLoader:
         exact=[instrument for instrument in self.catalog.instruments(source=source,timeframe=timeframe,start_ns=start_ns,end_ns=end_ns,prefix="NSE:") if instrument.rsplit(":",1)[-1].upper()==symbol.upper()]
         return exact[0] if exact else requested
     def iter_points(self,selection:CashFutureHistorySelection)->Iterable[CashFutureHistoryPoint]:
-        try:
-            segments = self._contracts_by_segment(selection)
-        except LookupError:
-            # No point-in-time snapshot means there is no historical derivative
-            # data to stream for this selection; direct resolution stays strict.
-            return
+        segments = self._contracts_by_segment(selection)
         for segment_start,segment_end,contract in segments:
             start_ns,_=_market_bounds(segment_start); _,end_ns=_market_bounds(segment_end)
             cash_instrument=self._resolve_spot_instrument(selection.underlying.upper(),start_ns,end_ns,selection.spot_instrument,selection.source,selection.timeframe)
