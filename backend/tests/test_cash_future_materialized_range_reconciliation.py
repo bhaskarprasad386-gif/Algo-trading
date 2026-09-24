@@ -1,4 +1,7 @@
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -42,7 +45,7 @@ def _db():
 
 def test_materialized_range_rejects_rows_only_inside_requested_range():
     engine = _db()
-    start = datetime(2026, 10, 1, 9, 15)
+    start = datetime(2026, 10, 1, 9, 15, tzinfo=IST)
     end = start + timedelta(minutes=10)
 
     with Session(engine) as db:
@@ -86,9 +89,9 @@ def test_session_reconciliation_rejects_genuine_interior_one_minute_gap():
 
 def test_session_reconciliation_does_not_bridge_friday_to_monday():
     engine = _db()
-    friday_start = datetime(2026, 10, 2, 15, 29)
-    friday_end = datetime(2026, 10, 2, 15, 30)
-    monday_start = datetime(2026, 10, 5, 9, 15)
+    friday_start = datetime(2026, 10, 2, 15, 29, tzinfo=IST)
+    friday_end = datetime(2026, 10, 2, 15, 30, tzinfo=IST)
+    monday_start = datetime(2026, 10, 5, 9, 15, tzinfo=IST)
     sessions = (
         SessionWindow(int(friday_start.timestamp() * 1e9), int(friday_end.timestamp() * 1e9)),
         SessionWindow(int(monday_start.timestamp() * 1e9), int(monday_start.timestamp() * 1e9)),
