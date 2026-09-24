@@ -140,16 +140,26 @@ class HistoricalIngestionService:
         inserted_total = 0
         fetched_total = 0
         batch: list[HistoricalRecord] = []
-        for record in source_adapter.fetch(request):
-            self._validate_record(record, request)
-            batch.append(record)
-            if len(batch) < batch_size:
-                continue
-            inserted_total += self.catalog.ingest(batch, ingested_at_ns=ingested_at_ns)
-            fetched_total += len(batch)
-            if on_batch is not None:
-                on_batch(inserted_total, fetched_total)
-            batch.clear()
+        try:
+            for record in source_adapter.fetch(request):
+                self._validate_record(record, request)
+                batch.append(record)
+                if len(batch) < batch_size:
+                    continue
+                inserted_total += self.catalog.ingest(batch, ingested_at_ns=ingested_at_ns)
+                fetched_total += len(batch)
+                if on_batch is not None:
+                    on_batch(inserted_total, fetched_total)
+                batch.clear()
+        except Exception:
+            # Preserve records already yielded by a provider before a stream failure.
+            if batch:
+                inserted_total += self.catalog.ingest(batch, ingested_at_ns=ingested_at_ns)
+                fetched_total += len(batch)
+                if on_batch is not None:
+                    on_batch(inserted_total, fetched_total)
+                batch.clear()
+            raise
 
         if batch:
             inserted_total += self.catalog.ingest(batch, ingested_at_ns=ingested_at_ns)
