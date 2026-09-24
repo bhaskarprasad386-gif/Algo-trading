@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.backtesting.cash_future_strategy_routes import router
 from app.backtesting.ledger import BacktestLedger, LedgerRecord
+from app.core.config import settings
 
 
 def payload(*, gap: float, timestamp: datetime, contract_month: str = "SEP"):
@@ -115,8 +116,10 @@ def test_strategy_run_route_returns_output_analysis():
     assert analysis["yearly_pnl"] == {"2026": 600.0}
 
 
-def test_strategy_run_result_page_returns_bounded_records_and_cursor():
-    ledger = BacktestLedger()
+def test_strategy_run_result_page_returns_bounded_records_and_cursor(monkeypatch, tmp_path):
+    ledger_db = str(tmp_path / "ledger.db")
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", ledger_db)
+    ledger = BacktestLedger(ledger_db)
     ledger.start_run("page-route", "strategy", "1", 100_000.0)
     for index in range(3):
         ledger.append(LedgerRecord("page-route", "equity", index, {"value": index}))
@@ -151,7 +154,9 @@ def test_strategy_run_result_page_rejects_unknown_run():
         ledger.close()
 
 
-def test_strategy_run_persists_provenance_for_direct_points():
+def test_strategy_run_persists_provenance_for_direct_points(monkeypatch, tmp_path):
+    ledger_db = str(tmp_path / "ledger.db")
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", ledger_db)
     start = datetime(2026, 9, 2, 10, 0)
     request = {
         "strategy_id": "gap_threshold",
@@ -164,7 +169,7 @@ def test_strategy_run_persists_provenance_for_direct_points():
     response = client().post("/api/v1/backtesting/cash-future/strategy-run", json=request)
     assert response.status_code == 200
     run_id = response.json()["run_id"]
-    ledger = BacktestLedger()
+    ledger = BacktestLedger(ledger_db)
     try:
         metadata = ledger.run_metadata(run_id)
         assert metadata is not None
