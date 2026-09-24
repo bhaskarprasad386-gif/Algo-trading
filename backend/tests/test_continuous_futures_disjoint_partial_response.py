@@ -13,7 +13,7 @@ INTERVAL_NS = 60 * 1_000_000_000
 
 
 def _ns(day: date, at: time) -> int:
-    return int(datetime.combine(day, at, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+    return int(datetime.combine(day, at, tzinfo=__import__('zoneinfo').ZoneInfo('Asia/Kolkata')).timestamp() * 1_000_000_000)
 
 
 class DisjointPartialThenCompleteSource:
