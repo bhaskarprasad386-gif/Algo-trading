@@ -20,7 +20,7 @@ def test_continuous_futures_catalog_replay_switches_contracts_without_cross_cont
         ("103", "2026-03-26T09:15:00"),
         ("103", "2026-03-26T09:16:00"),
     ):
-        catalog.upsert(
+        catalog.ingest((
             HistoricalRecord(
                 source="fake",
                 instrument=f"NFO:{token}",
@@ -28,7 +28,7 @@ def test_continuous_futures_catalog_replay_switches_contracts_without_cross_cont
                 timestamp_ns=_ns(timestamp),
                 payload={"close": float(token)},
             )
-        )
+        ,))
 
     windows = (
         FNORolloverWindow("SBIN", "STOCK_FUTURE", "101", date(2026, 1, 29), date(2026, 1, 29)),
