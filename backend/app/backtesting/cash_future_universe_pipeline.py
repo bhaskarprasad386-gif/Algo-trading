@@ -122,20 +122,38 @@ class CashFutureUniversePipelineResult:
                         manifest_requests.append(
                             (request.instrument, int(request.start_ns), int(request.end_ns))
                         )
-            if not manifest_requests:
-                # Legacy queue objects may expose only the future requests.
-                # In that case retain the exact future-range gate above.
-                manifest_requests = requested_ranges
-            if not manifest_requests:
-                return False
             source = self.coverage_source
             timeframe = self.coverage_timeframe
-            if not self.coverage_store.is_complete_for_requests(
-                source=source,
-                timeframe=timeframe,
-                requests=manifest_requests,
-            ):
-                return False
+            if manifest_requests:
+                if not self.coverage_store.is_complete_for_requests(
+                    source=source,
+                    timeframe=timeframe,
+                    requests=manifest_requests,
+                ):
+                    return False
+            elif requested_ranges:
+                if not self.coverage_store.is_complete_for_requests(
+                    source=source,
+                    timeframe=timeframe,
+                    requests=requested_ranges,
+                ):
+                    return False
+            else:
+                instruments = tuple(
+                    request.instrument
+                    for result in results
+                    for request in (
+                        self._request(item)
+                        for item in (getattr(getattr(result, "queue", None), "all_requests", ()) or ())
+                    )
+                    if request is not None and getattr(request, "instrument", None)
+                )
+                if not self.coverage_store.is_complete_for_instruments(
+                    source=source,
+                    timeframe=timeframe,
+                    instruments=instruments,
+                ):
+                    return False
 
         return True
 
