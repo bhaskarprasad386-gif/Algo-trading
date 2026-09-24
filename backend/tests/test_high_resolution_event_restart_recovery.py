@@ -49,7 +49,7 @@ def test_high_resolution_events_survive_durable_restart_without_losing_sequence(
         should_accept=lambda req, result: complete(req),
     )
     assert first.failed_request_index == 0
-    assert catalog.events(source="feed", instrument="NFO:101", timeframe="orderbook") == (records[0],)
+    assert catalog.events(source="feed", instrument="NFO:101", timeframe="orderbook") == (records[0], records[2])
     catalog.close()
     jobs.close()
 
