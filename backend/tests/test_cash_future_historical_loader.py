@@ -57,8 +57,10 @@ def test_loader_selection_does_not_store_request_state_between_iterators(tmp_pat
     loader = CashFutureHistoricalLoader(data, contracts)
     first = loader.iter_points(CashFutureHistorySelection("NSE:1:ABC", "NFO", "ABC", date(2026, 1, 5), date(2026, 1, 5)))
     second = loader.iter_points(CashFutureHistorySelection("NSE:2:ABC", "NFO", "ABC", date(2026, 1, 5), date(2026, 1, 5)))
-    assert tuple(first) == ()
-    assert tuple(second) == ()
+    with pytest.raises(LookupError, match="2026-01-05"):
+        tuple(first)
+    with pytest.raises(LookupError, match="2026-01-05"):
+        tuple(second)
 
 
 def test_loader_splits_same_token_when_historical_snapshot_changes_lot_size(tmp_path):
