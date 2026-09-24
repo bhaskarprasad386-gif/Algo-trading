@@ -49,6 +49,9 @@ class InitialDisjointSource:
 
     def fetch(self, request: HistoricalFetchRequest):
         self.requests.append(request)
+        blocked_start = _ns(date(2026, 1, 2), time(9, 16))
+        if request.start_ns == blocked_start:
+            raise RuntimeError("simulated durable interruption")
         for timestamp in (request.start_ns, request.start_ns + 2 * INTERVAL_NS):
             if timestamp <= request.end_ns:
                 yield HistoricalRecord(request.source, request.instrument, request.timeframe, timestamp, {"close": 100.0})
