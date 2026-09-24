@@ -168,6 +168,19 @@ class HistoricalJobStore:
         self._db.commit()
         return self.get(job_id)
 
+    def reopen_chunk(self, job_id: str, chunk_index: int) -> None:
+        """Reopen a terminal chunk when durable completeness has been lost externally."""
+        self.get(job_id)
+        self._require_chunk(job_id, chunk_index)
+        state, _, _ = self.chunk_state(job_id, chunk_index)
+        if state not in {"completed", "skipped"}:
+            raise ValueError(f"chunk {chunk_index} cannot reopen from state {state}")
+        self._db.execute(
+            "UPDATE historical_job_chunks SET state='pending', error=NULL WHERE job_id=? AND chunk_index=?",
+            (job_id, chunk_index),
+        )
+        self._refresh_counts(job_id)
+
     def start_chunk(self, job_id: str, chunk_index: int) -> None:
         self.get(job_id)
         self._require_chunk(job_id, chunk_index)
