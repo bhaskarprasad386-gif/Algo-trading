@@ -22,6 +22,7 @@ class CalendarBoundarySource:
     def __init__(self) -> None:
         self.requests: list[HistoricalFetchRequest] = []
         self.partial_monday = True
+        self.fail_after_partial = False
 
     def fetch(self, request: HistoricalFetchRequest):
         self.requests.append(request)
@@ -37,6 +38,8 @@ class CalendarBoundarySource:
                     _ns(monday, at),
                     {"close": 100.0},
                 )
+            if self.fail_after_partial:
+                raise RuntimeError("simulated durable interruption after partial Monday response")
             return
         for timestamp in range(request.start_ns, request.end_ns + 1, INTERVAL_NS):
             yield HistoricalRecord(request.source, request.instrument, request.timeframe, timestamp, {"close": 100.0})
@@ -89,8 +92,8 @@ def test_calendar_boundary_recovery_skips_weekend_and_closed_date(tmp_path):
         for r in source.requests
     )
 
-    # Friday has 4 candles; Monday has 3 of 4, leaving exactly one real gap.
-    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 7
+    # The acquisition layer repairs the partial Monday response in the same run.
+    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 8
     monday_gaps = catalog.session_gaps(
         source="fake",
         instrument="NFO:JAN",
@@ -100,7 +103,7 @@ def test_calendar_boundary_recovery_skips_weekend_and_closed_date(tmp_path):
         start_date=date(2026, 1, 12),
         end_date=date(2026, 1, 12),
     )
-    assert monday_gaps == ((_ns(date(2026, 1, 12), time(9, 17)), _ns(date(2026, 1, 12), time(9, 17))),)
+    assert monday_gaps == ()
 
 
 def test_calendar_boundary_resume_repairs_only_monday_gap(tmp_path):
@@ -114,6 +117,7 @@ def test_calendar_boundary_resume_repairs_only_monday_gap(tmp_path):
     window = FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 9), date(2026, 1, 13))
     source = CalendarBoundarySource()
 
+    source.fail_after_partial = True
     first = acquire_continuous_futures_history(
         catalog,
         source,
@@ -127,10 +131,12 @@ def test_calendar_boundary_resume_repairs_only_monday_gap(tmp_path):
         job_id="calendar-boundary-resume-job",
         run_id="run-1",
     )
-    assert first.completed
+    assert not first.completed
+    assert store.get("calendar-boundary-resume-job").state == "progress"
     fingerprint = store.get("calendar-boundary-resume-job").plan_fingerprint
 
     source.partial_monday = False
+    source.fail_after_partial = False
     before = len(source.requests)
     second = acquire_continuous_futures_history(
         catalog,
@@ -151,6 +157,6 @@ def test_calendar_boundary_resume_repairs_only_monday_gap(tmp_path):
     assert store.get("calendar-boundary-resume-job").plan_fingerprint == fingerprint
     resumed = source.requests[before:]
     assert len(resumed) == 1
-    assert resumed[0].start_ns == _ns(date(2026, 1, 12), time(9, 15))
-    assert resumed[0].end_ns == _ns(date(2026, 1, 12), time(9, 18))
+    assert resumed[0].start_ns == _ns(date(2026, 1, 12), time(9, 17))
+    assert resumed[0].end_ns == _ns(date(2026, 1, 12), time(9, 17))
     assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 8
