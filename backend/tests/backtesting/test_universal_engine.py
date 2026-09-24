@@ -754,9 +754,9 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
     ref_equity = ref_ledger.equity("reference", limit=100)
     resumed_equity = resumed_ledger.equity("resumed", limit=100)
     assert [
-        (p.timestamp_ns, p.equity, p.realized_pnl, p.unrealized_pnl, p.drawdown)
+        (p["timestamp_ns"], p["equity"], p["realized_pnl"], p["unrealized_pnl"], p["drawdown"])
         for p in resumed_equity
     ] == [
-        (p.timestamp_ns, p.equity, p.realized_pnl, p.unrealized_pnl, p.drawdown)
+        (p["timestamp_ns"], p["equity"], p["realized_pnl"], p["unrealized_pnl"], p["drawdown"])
         for p in ref_equity
     ]
