@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, time, datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -49,8 +50,10 @@ class AlwaysFailHistoricalSource(FakeHistoricalSource):
         raise RuntimeError("provider unavailable")
         yield  # pragma: no cover
 
+IST = ZoneInfo("Asia/Kolkata")
+
 def _ns(day: date, at: time) -> int:
-    return int(datetime.combine(day, at, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+    return int(datetime.combine(day, at, tzinfo=IST).timestamp() * 1_000_000_000)
 
 def test_plan_never_crosses_rollover_windows_or_closed_days():
     calendar = TradingCalendar(session_open=time(9, 15), session_close=time(9, 16))
