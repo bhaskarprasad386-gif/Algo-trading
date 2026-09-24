@@ -24,8 +24,8 @@ def test_box_adapter_closes_only_on_later_reverse_edge():
     high = option(1, 110, 2, 3, 2, 3)
     entries = tuple(adapter.entry({"low": low, "high": high, "data_resolution": "1s"}))
     assert len(entries) == 1
-    # Valid executable quotes give width - debit = 8.
-    assert entries[0].entry_price == 8.0
+    # Executable option quotes produce a 5-point long-box edge: width 10 minus 5-point debit.
+    assert entries[0].entry_price == 5.0
     assert adapter.exit(entries[0], {"low": low, "high": high}) is None
 
     # Later valid quotes create a genuine positive reverse executable edge of 8.
