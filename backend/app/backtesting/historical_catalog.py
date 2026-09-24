@@ -80,11 +80,13 @@ class HistoricalCatalog:
     def _hash(payload_json: str) -> str:
         return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
 
-    def ingest(self, records: Iterable[HistoricalRecord], *, ingested_at_ns: int = 0) -> int:
-        """Append a batch. New records, late gap repairs and exact duplicates are all safe."""
+    def ingest(self, records: Iterable[HistoricalRecord] | HistoricalRecord, *, ingested_at_ns: int = 0) -> int:
+        """Append records, accepting one record or an iterable batch."""
         if ingested_at_ns < 0:
             raise ValueError("ingested_at_ns cannot be negative")
         inserted = 0
+        if isinstance(records, HistoricalRecord):
+            records = (records,)
         try:
             for record in records:
                 if not record.source.strip() or not record.instrument.strip() or not record.timeframe.strip():
