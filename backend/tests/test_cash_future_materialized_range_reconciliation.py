@@ -58,7 +58,7 @@ def test_materialized_range_rejects_rows_only_inside_requested_range():
 
 def test_materialized_range_accepts_rows_spanning_requested_endpoints():
     engine = _db()
-    start = datetime(2026, 10, 1, 9, 15)
+    start = datetime(2026, 10, 1, 9, 15, tzinfo=IST)
     end = start + timedelta(minutes=10)
 
     with Session(engine) as db:
@@ -71,7 +71,7 @@ def test_materialized_range_accepts_rows_spanning_requested_endpoints():
 
 def test_session_reconciliation_rejects_genuine_interior_one_minute_gap():
     engine = _db()
-    start = datetime(2026, 10, 1, 9, 15)
+    start = datetime(2026, 10, 1, 9, 15, tzinfo=IST)
     end = start + timedelta(minutes=3)
     sessions = (SessionWindow(int(start.timestamp() * 1e9), int(end.timestamp() * 1e9)),)
 
