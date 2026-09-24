@@ -39,7 +39,7 @@ def test_historical_gap_does_not_exit_after_max_holding_deadline():
 
 
 def test_reverse_cash_future_direction_uses_sell_to_open_and_buy_to_close():
-    strategy = lambda point, history: "BUY" if not history else "SELL"
+    strategy = lambda point, history: "BUY" if len(history) == 1 else "SELL"
     result = run_cash_future_strategy(
         [cf_point(-5, 15), cf_point(-3, 16)],
         strategy,
