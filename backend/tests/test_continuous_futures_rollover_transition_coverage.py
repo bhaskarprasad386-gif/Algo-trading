@@ -41,32 +41,31 @@ def test_rollover_transition_keeps_old_and_new_contract_session_coverage_separat
         "NFO:101",
         "NFO:202",
         "NFO:202",
-        "NFO:202",
     ]
     assert [(request.start_ns, request.end_ns) for request in plan.requests] == [
         (sessions[0].start_ns, sessions[0].end_ns),
         (sessions[1].start_ns, sessions[1].end_ns),
         (sessions[2].start_ns, sessions[2].end_ns),
         (sessions[3].start_ns, sessions[3].end_ns),
-        (sessions[4].start_ns, sessions[4].end_ns),
+        (sessions[3].start_ns, sessions[3].end_ns),
     ]
 
 
-def test_rollover_transition_rejects_gap_between_old_and_new_contract_windows():
+def test_rollover_transition_allows_sparse_gap_between_old_and_new_contract_windows():
     windows = (
         FNORolloverWindow("AAA", "STOCK_FUTURE", "101", date(2026, 1, 28), date(2026, 1, 29)),
         FNORolloverWindow("AAA", "STOCK_FUTURE", "202", date(2026, 2, 2), date(2026, 2, 3)),
     )
 
-    with pytest.raises(ValueError, match="gap or overlap"):
-        build_continuous_futures_acquisition_plan(
-            windows,
-            source="angelone",
-            timeframe="1m",
-            interval_ns=60_000_000_000,
-            calendar=TradingCalendar(),
-            max_request_ns=86_400_000_000_000,
-        )
+    plan = build_continuous_futures_acquisition_plan(
+        windows,
+        source="angelone",
+        timeframe="1m",
+        interval_ns=60_000_000_000,
+        calendar=TradingCalendar(),
+        max_request_ns=86_400_000_000_000,
+    )
+    assert len(plan.requests) == 4
 
 
 def test_rollover_transition_rejects_overlap_between_old_and_new_contract_windows():
