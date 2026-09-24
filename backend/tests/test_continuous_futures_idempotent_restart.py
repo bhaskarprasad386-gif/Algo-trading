@@ -93,7 +93,7 @@ def test_repeated_restart_after_repair_is_idempotent(tmp_path):
     missing = {5, 6, 100, 101}
     for index, record in enumerate(records_by_request[plan.requests[0]]):
         if index not in missing:
-            catalog.ingest(record)
+            catalog.ingest((record,))
     for chunk_index in range(len(plan.requests)):
         if chunk_index == 0:
             job_store.start_chunk("idempotent-restart-job", chunk_index)
