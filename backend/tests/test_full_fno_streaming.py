@@ -9,6 +9,7 @@ def test_backtest_accepts_ordered_iterable_without_full_dataset_list():
             for i in range(4):
                 yield type("Point", (), {
                     "timestamp": datetime(2026, 1, 1) + timedelta(minutes=i),
+                    "symbol": "NIFTY",
                     "contract_month": "CURRENT",
                     "gap": 10.0 if i == 0 else 0.0,
                     "lot_size": 10,
