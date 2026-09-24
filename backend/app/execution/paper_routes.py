@@ -220,6 +220,7 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
     symbol = request.symbol.strip().upper()
     account = _account(db, user_id)
     active = _position(db, user_id, symbol)
+    remaining = active
 
     if side == "BUY":
         if active is not None and active.quantity > 0:
@@ -287,7 +288,7 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
                 remaining = active
             order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl)
     db.commit()
-    return {"status":"success","mode":"paper","order":order,"position":_position_payload(remaining if side == "SELL" and active is not None and active.quantity <= 0 else (remaining if side == "SELL" and 'remaining' in locals() else active)),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+    return {"status":"success","mode":"paper","order":order,"position":_position_payload(remaining),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
 
 
 @router.post("/paper/from-scanner")
