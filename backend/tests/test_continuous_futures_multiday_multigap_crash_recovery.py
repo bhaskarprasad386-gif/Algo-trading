@@ -99,7 +99,7 @@ def test_multiday_multicontract_restart_repairs_multiple_gaps_and_partial_tail(t
         missing = missing_by_chunk.get(chunk_index, set())
         for index, record in enumerate(records_by_request[request]):
             if index not in missing:
-                catalog.ingest(record)
+                catalog.ingest((record,))
         job_store.start_chunk("multiday-multigap-job", chunk_index)
         if chunk_index < 2:
             job_store.complete_chunk("multiday-multigap-job", chunk_index)
