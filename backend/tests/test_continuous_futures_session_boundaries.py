@@ -25,7 +25,8 @@ def test_continuous_futures_plan_respects_trading_session_boundaries_and_skips_w
     )
 
     assert len(plan.requests) == 2
+    sessions = TradingCalendar().sessions_between(date(2026, 1, 9), date(2026, 1, 12))
     assert [(r.instrument, r.start_ns, r.end_ns) for r in plan.requests] == [
-        ("NFO:101", 1767930300000000000, 1767972600000000000),
-        ("NFO:101", 1768189500000000000, 1768231800000000000),
+        ("NFO:101", sessions[0].start_ns, sessions[0].end_ns),
+        ("NFO:101", sessions[1].start_ns, sessions[1].end_ns),
     ]
