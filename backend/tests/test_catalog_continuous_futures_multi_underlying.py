@@ -6,14 +6,13 @@ from app.backtesting.trading_calendar import TradingCalendar
 
 
 def test_catalog_continuous_futures_plan_supports_multiple_underlyings_independently():
-    catalog = ContractMasterCatalog(
-        [
-            ContractRecord(symbol="AAA", underlying="AAA", instrument_type="STOCK_FUTURE", exchange="NFO", token="101", expiry=date(2026, 1, 29), lot_size=1),
-            ContractRecord(symbol="AAA", underlying="AAA", instrument_type="STOCK_FUTURE", exchange="NFO", token="102", expiry=date(2026, 2, 26), lot_size=1),
-            ContractRecord(symbol="BBB", underlying="BBB", instrument_type="STOCK_FUTURE", exchange="NFO", token="201", expiry=date(2026, 1, 29), lot_size=1),
-            ContractRecord(symbol="BBB", underlying="BBB", instrument_type="STOCK_FUTURE", exchange="NFO", token="202", expiry=date(2026, 2, 26), lot_size=1),
-        ]
-    )
+    catalog = ContractMasterCatalog()
+    catalog.upsert_snapshot(date(2026, 1, 1), (
+        ContractRecord(symbol="AAA", underlying="AAA", instrument_type="STOCK_FUTURE", exchange="NFO", token="101", expiry=date(2026, 1, 29), lot_size=1),
+        ContractRecord(symbol="AAA", underlying="AAA", instrument_type="STOCK_FUTURE", exchange="NFO", token="102", expiry=date(2026, 2, 26), lot_size=1),
+        ContractRecord(symbol="BBB", underlying="BBB", instrument_type="STOCK_FUTURE", exchange="NFO", token="201", expiry=date(2026, 1, 29), lot_size=1),
+        ContractRecord(symbol="BBB", underlying="BBB", instrument_type="STOCK_FUTURE", exchange="NFO", token="202", expiry=date(2026, 2, 26), lot_size=1),
+    ))
     windows, plan = build_catalog_continuous_futures_acquisition_plan(
         catalog,
         start_date=date(2026, 1, 5),
