@@ -120,8 +120,7 @@ def build_rollover_download_queue(
                     existing_request.source == request.source
                     and existing_request.instrument == request.instrument
                     and existing_request.timeframe == request.timeframe
-                    and request.start_ns <= existing_request.end_ns
-                    and request.end_ns >= existing_request.start_ns
+                    and request.instrument == existing_request.instrument
                 ):
                     merged_request = HistoricalFetchRequest(
                         request.source,
