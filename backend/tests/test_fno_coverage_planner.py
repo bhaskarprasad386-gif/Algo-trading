@@ -81,16 +81,16 @@ def test_coverage_plan_does_not_cross_session_boundary():
 
 def test_coverage_plan_uses_bounded_chunks_for_missing_session_edges():
     catalog = HistoricalCatalog()
-    calendar = TradingCalendar(session_open=time(9, 15), session_close=time(9, 20))
+    calendar = TradingCalendar(session_open=time(9, 15), session_close=time(9, 15, 5))
     session = calendar.sessions_between(date(2026, 9, 7), date(2026, 9, 7))[0]
-    interval = 1
+    interval = 1_000_000_000
 
-    plan = make_plan(catalog, calendar, session, interval, max_request_ns=2)
+    plan = make_plan(catalog, calendar, session, interval, max_request_ns=2_000_000_000)
 
     assert [(job.start_ns, job.end_ns) for job in plan.jobs] == [
-        (session.start_ns, session.start_ns + 1),
-        (session.start_ns + 2, session.start_ns + 3),
-        (session.start_ns + 4, session.start_ns + 4),
+        (session.start_ns, session.start_ns + interval),
+        (session.start_ns + 2 * interval, session.start_ns + 3 * interval),
+        (session.start_ns + 4 * interval, session.start_ns + 4 * interval),
     ]
 
 
