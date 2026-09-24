@@ -22,11 +22,10 @@ def test_strategy_applies_only_selected_date_range_and_normalizes_buy_sell():
     result = run_cash_future_strategy([point(start - timedelta(days=1), 12), point(start, 10),
         point(start + timedelta(hours=1), 4), point(start + timedelta(days=1), 3)], strategy,
         strategy_id="gap-test", config=CashFutureStrategyConfig(start_date=start.date(), end_date=start.date()))
-    assert len(seen) == 3
-    assert seen[0][0] == start - timedelta(days=1)
-    assert seen[0][1] == (start - timedelta(days=1),)
-    assert seen[1][1] == (start - timedelta(days=1), start)
-    assert seen[2][1] == (start - timedelta(days=1), start + timedelta(hours=1))
+    assert len(seen) == 2
+    assert seen[0][0] == start
+    assert seen[0][1] == (start,)
+    assert seen[1][1] == (start, start + timedelta(hours=1))
     assert len(result.signals) == 2
     assert result.trades[0]["entry_time"] == start.isoformat()
     assert result.trades[0]["exit_time"] == (start + timedelta(hours=1)).isoformat()
@@ -74,8 +73,8 @@ def test_strategy_persists_metadata_signals_trades_and_equity():
     assert len(equity) == 2
     assert equity[0].payload["reserved_margin"] == 10000.0
     assert equity[0].payload["available_capital"] == 99990000.0
-    assert equity[-1].payload["equity"] == 10000570.0
-    assert equity[-1].payload["available_capital"] == 10000570.0
+    assert equity[-1].payload["equity"] == 100000570.0
+    assert equity[-1].payload["available_capital"] == 100000570.0
     ledger.close()
 
 
