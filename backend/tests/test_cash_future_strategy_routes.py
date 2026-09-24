@@ -39,6 +39,8 @@ def test_strategy_run_route_executes_historical_buy_sell():
             "start_date": start.date().isoformat(),
             "end_date": start.date().isoformat(),
             "initial_capital": 10_000_000,
+            "target": 5.0,
+            "stop_loss": 2.0,
             "points": [
                 payload(gap=10, timestamp=start),
                 payload(gap=4, timestamp=start + timedelta(hours=1)),
