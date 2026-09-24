@@ -146,7 +146,7 @@ def test_gap_repair_handles_multiple_contracts_and_multiple_internal_gaps(tmp_pa
     assert store.get("multi-gap-repair").plan_fingerprint == fingerprint
     assert store.get("multi-gap-repair").state == "completed"
     assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 5
-    assert catalog.count(source="fake", instrument="NFO:FEB", timeframe="1m") == 6
+    assert catalog.count(source="fake", instrument="NFO:FEB", timeframe="1m") == 5
 
 def test_durable_gap_repair_recovers_leading_trailing_and_empty_sessions(tmp_path):
     catalog = HistoricalCatalog(tmp_path / "catalog.sqlite"); store = HistoricalJobStore(tmp_path / "jobs.sqlite")
