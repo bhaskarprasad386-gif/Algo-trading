@@ -53,10 +53,10 @@ def test_coverage_plan_does_not_cross_session_boundary():
     calendar = TradingCalendar(session_open=time(9, 15), session_close=time(9, 20))
     sessions = calendar.sessions_between(date(2026, 9, 7), date(2026, 9, 8))
     interval = 60 * 1_000_000_000
-    catalog.ingest(
+    catalog.ingest([
         HistoricalRecord("provider", "101", "1m", sessions[0].start_ns + 4 * interval, {"close": 100}),
         HistoricalRecord("provider", "101", "1m", sessions[1].start_ns, {"close": 100}),
-    )
+    ])
 
     plan = build_fno_coverage_plan(
         make_universe(),
