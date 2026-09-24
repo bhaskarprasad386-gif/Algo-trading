@@ -95,7 +95,7 @@ def test_durable_arguments_must_be_complete():
     catalog = HistoricalCatalog(); source = FakeHistoricalSource()
     calendar = TradingCalendar(session_open=time(9, 15), session_close=time(9, 16))
     windows = (FNORolloverWindow("ABC", "STOCK_FUTURE", "JAN", date(2026, 1, 2), date(2026, 1, 2)),)
-    with pytest.raises(ValueError, match="job_store requires both job_id and run_id"):
+    with pytest.raises(ValueError, match="job_id and run_id require both job_id and run_id"):
         acquire_continuous_futures_history(catalog, source, windows, source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=INTERVAL_NS, job_store=HistoricalJobStore(), job_id="job-only")
 
 def test_durable_gap_repair_persists_and_resumes(tmp_path):
