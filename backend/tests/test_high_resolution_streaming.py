@@ -23,9 +23,9 @@ def test_streaming_path_keeps_only_bounded_state_and_persists_trade(tmp_path):
     writer = HighResolutionLedgerWriter(ledger, "stream-1")
 
     events = (
-        MarketEvent(30, "NIFTY", data=(("price", 103.0),)),
         MarketEvent(10, "NIFTY", data=(("price", 100.0),)),
         MarketEvent(20, "NIFTY", data=(("price", 101.0),)),
+        MarketEvent(30, "NIFTY", data=(("price", 103.0),)),
     )
     result = HighResolutionStreamingRunner().run(events, BuyThenSell(), writer)
 
