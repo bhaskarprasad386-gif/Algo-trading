@@ -98,7 +98,7 @@ class DurableEventBacktestEngine:
         if set(existing) != set(restored):
             raise ValueError("checkpoint lifecycle state does not match market state")
         for order_id, lifecycle in restored.items():
-            if existing[order_id].to_dict() != lifecycle.to_dict():
+            if existing[order_id].export_state() != lifecycle.export_state():
                 raise ValueError("checkpoint lifecycle state does not match market state")
         self.engine._order_lifecycles = restored
 
