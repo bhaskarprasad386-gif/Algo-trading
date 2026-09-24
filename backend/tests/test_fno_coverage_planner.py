@@ -88,8 +88,8 @@ def test_coverage_plan_uses_bounded_chunks_for_missing_session_edges():
     plan = make_plan(catalog, calendar, session, interval, max_request_ns=2_000_000_000)
 
     assert [(job.start_ns, job.end_ns) for job in plan.jobs] == [
-        (session.start_ns, session.start_ns + interval),
-        (session.start_ns + 2 * interval, session.start_ns + 3 * interval),
+        (session.start_ns, session.start_ns + 2 * interval - 1),
+        (session.start_ns + 2 * interval, session.start_ns + 4 * interval - 1),
         (session.start_ns + 4 * interval, session.start_ns + 4 * interval),
     ]
 
