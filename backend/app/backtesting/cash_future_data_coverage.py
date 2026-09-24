@@ -27,6 +27,10 @@ class CashFutureDataCoverageReport:
         return all(chunk.complete for chunk in self._chunks())
 
     @property
+    def status(self) -> str:
+        return "READY" if self.complete else "INCOMPLETE"
+
+    @property
     def total_chunks(self) -> int:
         return len(self._chunks())
 
