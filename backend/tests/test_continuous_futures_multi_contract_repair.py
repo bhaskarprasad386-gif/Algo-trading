@@ -42,7 +42,7 @@ def _window(token: str) -> FNORolloverWindow:
 
 def _seed_gap(catalog: HistoricalCatalog, instrument: str) -> None:
     for at in (time(9, 15), time(9, 17)):
-        catalog.ingest((HistoricalRecord("fake", instrument, "1m", _ns(date(2026, 1, 9), at), {"close": 100.0}))
+        catalog.ingest((HistoricalRecord("fake", instrument, "1m", _ns(date(2026, 1, 9), at), {"close": 100.0}),))
 
 
 def test_multi_contract_repair_recovers_failed_gap_independently(tmp_path):
@@ -67,9 +67,7 @@ def test_multi_contract_repair_recovers_failed_gap_independently(tmp_path):
     fingerprint = store.get("multi-contract-repair").plan_fingerprint
     assert store.get("multi-contract-repair").state == "progress"
 
-    # JAN becomes available only after the durable job is paused. FEB must still
-    # be executed from the original two-request plan, without rebuilding it.
-    catalog.upsert(HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), time(9, 16)), {"close": 100.0}))
+    catalog.ingest((HistoricalRecord("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 9), time(9, 16)), {"close": 100.0}),))
     source.allow_failed_instrument = True
     before_resume = len(source.requests)
 
