@@ -199,10 +199,10 @@ class EventBacktestEngine:
             lifecycle = OrderLifecycle(order)
             self._order_lifecycles[order.order_id] = lifecycle
             lifecycle.accept(timestamp_ns)
-            self._journal_lifecycle(lifecycle.events[-1])
+            self._journal_lifecycle(lifecycle.state.events[-1])
         elif lifecycle.state.status == OrderStatus.SUBMITTED:
             lifecycle.accept(timestamp_ns)
-            self._journal_lifecycle(lifecycle.events[-1])
+            self._journal_lifecycle(lifecycle.state.events[-1])
         return lifecycle
 
     def _journal_lifecycle(self, event: object) -> None:
@@ -243,7 +243,7 @@ class EventBacktestEngine:
     def cancel_order(self, order_id: str, timestamp_ns: int, reason: str = "cancelled") -> None:
         lifecycle = self._order_lifecycles.get(order_id); order = self._open_orders.get(order_id)
         if lifecycle is None or order is None: raise KeyError(f"open order not found: {order_id}")
-        lifecycle.cancel(timestamp_ns, reason); self._journal_lifecycle(lifecycle.events[-1])
+        lifecycle.cancel(timestamp_ns, reason); self._journal_lifecycle(lifecycle.state.events[-1])
         state = self._queue_lifecycles.get(order_id)
         if state is not None: self._queue_lifecycles[order_id] = state.cancel()
         if self.portfolio is not None: self.portfolio.release_margin(order_id)
@@ -276,7 +276,7 @@ class EventBacktestEngine:
         else:
             self._reserved_margin.pop(order_id, None)
             if self.portfolio is not None: self.portfolio.release_margin(order_id)
-        lifecycle.replace(effective, timestamp_ns); self._journal_lifecycle(lifecycle.events[-1])
+        lifecycle.replace(effective, timestamp_ns); self._journal_lifecycle(lifecycle.state.events[-1])
         prior_queue = self._queue_lifecycles.get(order_id, QueueLifecycleState(self._dynamic_queue_ahead.get(order_id, old.queue_ahead_quantity)))
         self._queue_lifecycles[order_id] = prior_queue.cancel()
         self._open_orders.pop(order_id, None); self._dynamic_queue_ahead.pop(order_id, None)
@@ -292,7 +292,7 @@ class EventBacktestEngine:
             if lifecycle is None or lifecycle.state.terminal: continue
             if event.timestamp_ns < order.submitted_at_ns: continue
             if not self._market_risk_allows_order(order):
-                self._risk_blocks += 1; lifecycle.reject("market risk violation", event.timestamp_ns); self._journal_lifecycle(lifecycle.events[-1]); self.portfolio.release_margin(order.order_id)
+                self._risk_blocks += 1; lifecycle.reject("market risk violation", event.timestamp_ns); self._journal_lifecycle(lifecycle.state.events[-1]); self.portfolio.release_margin(order.order_id)
                 self._reserved_margin.pop(order.order_id, None); self._open_orders.pop(order.order_id, None); self._dynamic_queue_ahead.pop(order.order_id, None); self._queue_lifecycles.pop(order.order_id, None); continue
             observed = self._latest_events.get(order.instrument)
             if observed is None or observed.timestamp_ns > event.timestamp_ns: continue
@@ -308,7 +308,7 @@ class EventBacktestEngine:
                 result = self.execution.execute_depth(order, book_state[1], event.timestamp_ns)
                 if order.time_in_force == TimeInForce.FOK and result.remaining_quantity > 0:
                     lifecycle = lifecycles[order.order_id]
-                    if lifecycle.state.status in {OrderStatus.SUBMITTED, OrderStatus.ACCEPTED}: lifecycle.reject(result.reason or "FOK not fully executable", event.timestamp_ns); self._journal_lifecycle(lifecycle.events[-1])
+                    if lifecycle.state.status in {OrderStatus.SUBMITTED, OrderStatus.ACCEPTED}: lifecycle.reject(result.reason or "FOK not fully executable", event.timestamp_ns); self._journal_lifecycle(lifecycle.state.events[-1])
                     results[order.order_id] = result; continue
                 fills.extend(result.fills); results[order.order_id] = result
             else:
@@ -328,21 +328,21 @@ class EventBacktestEngine:
             self._risk_blocks += 1
             for order, _, _ in candidates:
                 lifecycle = lifecycles[order.order_id]
-                if not lifecycle.state.terminal: lifecycle.reject("atomic execution risk violation", event.timestamp_ns); self._journal_lifecycle(lifecycle.events[-1])
+                if not lifecycle.state.terminal: lifecycle.reject("atomic execution risk violation", event.timestamp_ns); self._journal_lifecycle(lifecycle.state.events[-1])
                 self.portfolio.release_margin(order.order_id); self._reserved_margin.pop(order.order_id, None); self._open_orders.pop(order.order_id, None); self._dynamic_queue_ahead.pop(order.order_id, None); self._queue_lifecycles.pop(order.order_id, None)
             return ()
         filled_by_order: dict[str, int] = {}
         for fill in fills: filled_by_order[fill.order_id] = filled_by_order.get(fill.order_id, 0) + fill.quantity
         for order, _, _ in candidates:
             lifecycle = lifecycles[order.order_id]
-            for fill in (f for f in fills if f.order_id == order.order_id): lifecycle.apply_fill(fill); self._journal_lifecycle(lifecycle.events[-1]); self._journal_fill(fill)
+            for fill in (f for f in fills if f.order_id == order.order_id): lifecycle.apply_fill(fill); self._journal_lifecycle(lifecycle.state.events[-1]); self._journal_fill(fill)
             result = results.get(order.order_id)
             if not lifecycle.state.terminal and result is not None:
-                if order.time_in_force == TimeInForce.IOC: lifecycle.cancel(event.timestamp_ns, result.reason or "IOC residual cancelled"); self._journal_lifecycle(lifecycle.events[-1])
-                elif order.time_in_force == TimeInForce.FOK and lifecycle.state.status in {OrderStatus.SUBMITTED, OrderStatus.ACCEPTED}: lifecycle.reject(result.reason or "FOK residual rejected", event.timestamp_ns); self._journal_lifecycle(lifecycle.events[-1])
+                if order.time_in_force == TimeInForce.IOC: lifecycle.cancel(event.timestamp_ns, result.reason or "IOC residual cancelled"); self._journal_lifecycle(lifecycle.state.events[-1])
+                elif order.time_in_force == TimeInForce.FOK and lifecycle.state.status in {OrderStatus.SUBMITTED, OrderStatus.ACCEPTED}: lifecycle.reject(result.reason or "FOK residual rejected", event.timestamp_ns); self._journal_lifecycle(lifecycle.state.events[-1])
             remaining = lifecycle.state.remaining_quantity; terminal_action = tif_after_execution(order.time_in_force, remaining)
-            if terminal_action == OrderStatus.CANCELLED and not lifecycle.state.terminal: lifecycle.cancel(event.timestamp_ns, "IOC residual cancelled"); self._journal_lifecycle(lifecycle.events[-1])
-            elif terminal_action == OrderStatus.REJECTED and not lifecycle.state.terminal: lifecycle.reject("FOK residual rejected", event.timestamp_ns); self._journal_lifecycle(lifecycle.events[-1])
+            if terminal_action == OrderStatus.CANCELLED and not lifecycle.state.terminal: lifecycle.cancel(event.timestamp_ns, "IOC residual cancelled"); self._journal_lifecycle(lifecycle.state.events[-1])
+            elif terminal_action == OrderStatus.REJECTED and not lifecycle.state.terminal: lifecycle.reject("FOK residual rejected", event.timestamp_ns); self._journal_lifecycle(lifecycle.state.events[-1])
             filled_qty = filled_by_order.get(order.order_id, 0); reserved = self._reserved_margin.get(order.order_id, 0.0)
             if filled_qty and reserved:
                 release = reserved * filled_qty / order.quantity; self.portfolio.release_margin(order.order_id, release); self._reserved_margin[order.order_id] = max(0.0, reserved - release)
