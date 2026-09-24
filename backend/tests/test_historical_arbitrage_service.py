@@ -81,8 +81,8 @@ def test_run_strategy_builds_box_payoff_before_completion(tmp_path):
     }
     exit_event = {
         "timestamp_ns": 2,
-        "low": {**entry["low"], "timestamp_ns": 2, "call_bid": 80, "call_ask": 90, "put_bid": 70, "put_ask": 80},
-        "high": {**entry["high"], "timestamp_ns": 2, "call_bid": 5, "call_ask": 20, "put_bid": 5, "put_ask": 20},
+        "low": {**entry["low"], "timestamp_ns": 2, "call_bid": 60, "call_ask": 61, "put_bid": 60, "put_ask": 61},
+        "high": {**entry["high"], "timestamp_ns": 2, "call_bid": 3, "call_ask": 3.5, "put_bid": 3, "put_ask": 3.5},
     }
     result = service.run_strategy("box-spread", [entry, exit_event], payoff_prices=(24900, 25000, 25100))
     assert result.completed_trades == 1
