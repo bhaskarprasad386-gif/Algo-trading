@@ -81,18 +81,11 @@ def build_rollover_segments(
             contract.lot_size,
             contract.tick_size,
         )
-        # With an explicit session calendar, adjacent entries in `days` are adjacent
-        # trading sessions even when a weekend/holiday lies between their calendar dates.
-        # Keep one segment for the same contract instead of creating duplicate download
-        # requests for the same token. Without an explicit calendar, retain calendar-day
-        # contiguity for the generated weekday sequence.
-        contiguous = (
-            same_contract
-            and (
-                session_days is not None
-                or segments[-1].end + timedelta(days=1) == current_day
-            )
-        )
+        # A contract identity is the durable segment boundary. The same historical
+        # contract may span weekends/holidays, and splitting it by calendar gaps would
+        # create duplicate requests for the same token. Session-aware consumers already
+        # prevent weekend/holiday rows from being treated as market data.
+        contiguous = same_contract
         if contiguous:
             previous = segments[-1]
             segments[-1] = CashFutureSegment(previous.start, current_day, previous.future)
