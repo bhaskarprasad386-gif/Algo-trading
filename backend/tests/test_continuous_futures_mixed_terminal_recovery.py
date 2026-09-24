@@ -151,9 +151,14 @@ def test_mixed_terminal_states_reconcile_only_corrupt_chunks(tmp_path):
     for chunk_index in range(len(plan.requests)):
         assert job_store.chunk_state("mixed-terminal-recovery", chunk_index)[0] == "completed"
     for request in plan.requests:
+        expected_count = sum(
+            len(records_by_request[item])
+            for item in plan.requests
+            if item.instrument == request.instrument
+        )
         assert catalog.count(
             source="angelone", instrument=request.instrument, timeframe="1m"
-        ) == len(records_by_request[request])
+        ) == expected_count
 
     catalog.close()
     job_store.close()
