@@ -50,7 +50,7 @@ def _close_position(account,entries,key,point,*,execution_model,charges_per_trad
     fill_quantity,liquidity_source=_historical_fill_capacity(point,side="exit",requested_quantity=quantity,execution_model=execution_model,cash_side=cash_side,future_side=future_side)
     if fill_quantity<=0:return None
     gross=_unrealized_profit(entry,point,execution_model,fill_quantity,cash_side,future_side); net=gross-charges_per_trade-funding_cost_per_trade; account.apply_realized_pnl(net)
-    reservation=account.reservation(key); released_margin=float(reservation.margin_required)*fill_quantity/quantity; account.release(released_margin); remaining=quantity-fill_quantity
+    reservation=account.reservation(key); released_margin=float(reservation.margin_required)*fill_quantity/quantity; account.release(key); remaining=quantity-fill_quantity
     if remaining>0:
         remaining_margin=max(float(entry.margin_required),0.0)*remaining/entry.lot_size
         if not account.reserve(remaining_margin):raise ValueError("cannot restore capital reservation for unfilled Cash-Future quantity")
