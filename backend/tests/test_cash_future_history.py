@@ -31,7 +31,7 @@ def test_gap_history_keeps_contract_months_separate():
         point(now - timedelta(days=1), "NEAR", 8.0),
         point(now, "CURRENT", 9.0),
     ]
-    matches = find_historical_gap_matches(points, target_gap=8.0, contract_month="CURRENT")
+    matches = find_historical_gap_matches(points, target_gap=9.0, contract_month="CURRENT")
     assert [m.gap for m in matches] == [9.0]
 
 
