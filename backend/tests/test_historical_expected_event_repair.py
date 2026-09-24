@@ -86,7 +86,7 @@ def test_expected_event_repair_reports_unresolved_provider_misses_and_is_resumab
         )
         assert second.remaining_missing_timestamps == ()
         assert [(request.start_ns, request.end_ns) for request in provider.requests] == [
-            (10, 10), (20, 20), (30, 30), (40, 40), (10, 10), (30, 30)
+            (10, 20), (30, 40), (10, 10), (30, 30)
         ]
     finally:
         catalog.close()
