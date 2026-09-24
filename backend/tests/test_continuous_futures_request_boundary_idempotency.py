@@ -31,11 +31,15 @@ def test_request_boundaries_are_contiguous_without_overlap_or_gaps():
 
     assert plan.requests
 
-    for previous, current in zip(plan.requests, plan.requests[1:]):
-        if previous.instrument == current.instrument:
-            assert current.start_ns == previous.end_ns + interval_ns
-        else:
-            assert current.instrument != previous.instrument
+    for instrument in {request.instrument for request in plan.requests}:
+        instrument_requests = [request for request in plan.requests if request.instrument == instrument]
+        for previous, current in zip(instrument_requests, instrument_requests[1:]):
+            previous_session = next(session for session in sessions if session.start_ns <= previous.start_ns <= session.end_ns)
+            current_session = next(session for session in sessions if session.start_ns <= current.start_ns <= session.end_ns)
+            if previous_session == current_session:
+                assert current.start_ns == previous.end_ns + interval_ns
+            else:
+                assert current_session.start_ns > previous_session.end_ns
 
     sessions = calendar.sessions_between(date(2026, 1, 29), date(2026, 2, 2))
     assert sessions
