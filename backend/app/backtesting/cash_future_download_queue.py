@@ -42,6 +42,26 @@ class CashFutureDownloadQueue:
             object.__setattr__(self, "futures", normalized_futures)
 
     @property
+    def instrument(self) -> str:
+        return self.request.instrument
+
+    @property
+    def source(self) -> str:
+        return self.request.source
+
+    @property
+    def timeframe(self) -> str:
+        return self.request.timeframe
+
+    @property
+    def start_ns(self) -> int:
+        return self.request.start_ns
+
+    @property
+    def end_ns(self) -> int:
+        return self.request.end_ns
+
+    @property
     def all_requests(self) -> tuple[HistoricalFetchRequest, ...]:
         return (self.spot.request, *(item.request for item in self.futures))
 
