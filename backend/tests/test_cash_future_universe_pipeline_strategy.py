@@ -67,8 +67,10 @@ def test_pipeline_strategy_streams_loader_into_existing_strategy_runner(monkeypa
         run_id="run-1",
     )
     assert result == "ok"
-    assert loader.called is True
     assert captured["points"] is not None
+    # The runner receives the stream lazily; consuming it verifies the loader boundary.
+    assert tuple(captured["points"]) == ()
+    assert loader.called is True
     assert iter(captured["points"]) is captured["points"]
     assert captured["kwargs"]["strategy_id"] == "historical-gap"
     assert captured["kwargs"]["strategy_version"] == "2"
