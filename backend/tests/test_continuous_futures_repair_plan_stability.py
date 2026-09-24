@@ -23,12 +23,12 @@ class RepairSource:
 
     def __init__(self) -> None:
         self.requests: list[HistoricalFetchRequest] = []
-        self.fail_first = True
+        self.fail_first = 3
 
     def fetch(self, request: HistoricalFetchRequest):
         self.requests.append(request)
-        if self.fail_first:
-            self.fail_first = False
+        if self.fail_first > 0:
+            self.fail_first -= 1
             raise RuntimeError("targeted gap temporarily unavailable")
         for timestamp in range(request.start_ns, request.end_ns + 1, INTERVAL_NS):
             yield HistoricalRecord(request.source, request.instrument, request.timeframe, timestamp, {"close": 100.0})
