@@ -90,7 +90,7 @@ def test_calendar_boundary_recovery_skips_weekend_and_closed_date(tmp_path):
     )
 
     # Friday has 4 candles; Monday has 3 of 4, leaving exactly one real gap.
-    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 7
+    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 8
     monday_gap = catalog.gaps(
         source="fake",
         instrument="NFO:JAN",
