@@ -53,7 +53,7 @@ def _close_position(account,entries,key,point,*,execution_model,charges_per_trad
     reservation=account.reservation(key); released_margin=float(reservation.margin_required)*fill_quantity/quantity; account.release(key); remaining=quantity-fill_quantity
     if remaining>0:
         remaining_margin=max(float(entry.margin_required),0.0)*remaining/entry.lot_size
-        if not account.reserve(remaining_margin):raise ValueError("cannot restore capital reservation for unfilled Cash-Future quantity")
+        if not account.reserve(key, remaining_margin):raise ValueError("cannot restore capital reservation for unfilled Cash-Future quantity")
         entries[key]=(entry,remaining)
     else:entries.pop(key,None)
     return {"entry_time":entry.timestamp.isoformat(),"exit_time":point.timestamp.isoformat(),"symbol":entry.symbol,"contract_month":entry.contract_month,"lot_size":entry.lot_size,"requested_quantity":quantity,"filled_quantity":fill_quantity,"unfilled_quantity":remaining,"gross_profit":gross,"charges":charges_per_trade,"funding_cost":funding_cost_per_trade,"net_profit":net,"execution_model":execution_model,"cash_side":cash_side,"future_side":future_side,"exit_reason":exit_reason,"reserved_margin":released_margin,"liquidity_source":liquidity_source,"fill_status":"filled" if remaining==0 else "partial_fill"}
