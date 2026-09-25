@@ -192,6 +192,6 @@ def test_resume_replays_journaled_event_when_checkpoint_commit_was_interrupted(t
 
     assert result.events_dispatched == 1
     assert len(engine.portfolio.trades) == 2
-    assert "NSE:SBIN" not in engine.portfolio.snapshot().positions
+    assert "NSE:SBIN" not in engine.portfolio.snapshot(engine._current_marks()).positions
     event_records = ledger.records("atomicity", "EVENT")
     assert [r.payload["sequence"] for r in event_records] == [1, 2]
