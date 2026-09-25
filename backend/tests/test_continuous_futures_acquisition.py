@@ -169,7 +169,7 @@ def test_durable_gap_repair_recovers_leading_trailing_and_empty_sessions(tmp_pat
     assert second.completed and second.execution.failed_request_index is None
     assert len(resumed_source.requests) == 1
     assert [(request.start_ns, request.end_ns) for request in resumed_source.requests] == [
-        (tuesday.end_ns, tuesday.end_ns),
+        (friday.end_ns, friday.end_ns),
     ]
     assert store.get("edge-gap-repair").plan_fingerprint == fingerprint
     assert store.get("edge-gap-repair").state == "completed"
