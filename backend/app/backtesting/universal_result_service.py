@@ -64,14 +64,16 @@ class UniversalResultService:
         self._require_run(run_id)
         rows = self.ledger.equity(
             run_id,
-            limit=limit,
+            limit=limit + 1,
             after_timestamp_ns=after_timestamp_ns,
             after_equity_id=after_equity_id,
         )
-        data = [dict(row) for row in rows]
+        has_more = len(rows) > limit
+        data_rows = rows[:limit]
+        data = [dict(row) for row in data_rows]
         next_cursor = None
-        if len(rows) == limit and rows:
-            last = rows[-1]
+        if has_more and data_rows:
+            last = data_rows[-1]
             next_cursor = {
                 "timestamp_ns": int(last["timestamp_ns"]),
                 "equity_id": int(last["equity_id"]),
@@ -111,8 +113,10 @@ class UniversalResultService:
 
     @staticmethod
     def _sequence_page(run_id: str, record_type: str, rows: list[Any], limit: int) -> dict[str, Any]:
-        data = [dict(row) for row in rows]
-        next_cursor = int(rows[-1]["sequence"]) if len(rows) == limit and rows else None
+        has_more = len(rows) > limit
+        data_rows = rows[:limit]
+        data = [dict(row) for row in data_rows]
+        next_cursor = int(data_rows[-1]["sequence"]) if has_more and data_rows else None
         return {
             "run_id": run_id,
             "record_type": record_type,
