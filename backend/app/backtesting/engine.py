@@ -255,7 +255,7 @@ class BacktestEngine:
             raise ValueError("price_field is required")
         # Keep event replay streaming: validation and execution happen in one pass.
         # This avoids materializing potentially millions of tick/depth events in RAM.
-        seen = set()
+        previous_identity = None
         previous_key = None
         capital = self.config.initial_capital
         open_trade = None
@@ -274,12 +274,12 @@ class BacktestEngine:
             ):
                 raise ValueError("event sequence must be a non-negative integer or None")
             identity = record.identity()
-            if identity in seen:
+            if previous_key is not None and identity == previous_identity:
                 raise ValueError("duplicate event identity")
             key = _event_order_key(record)
             if previous_key is not None and key <= previous_key:
                 raise ValueError("events must be strictly ordered by timestamp, sequence, and stream identity")
-            seen.add(identity)
+            previous_identity = identity
             previous_key = key
             signal = _normalize_event_signal(
                 strategy(EventContext(record.timestamp_ns, record.sequence, record.source, record.instrument, record.payload, record))
