@@ -109,7 +109,7 @@ class UniversalResultService:
     def _page(self, method, run_id: str, limit: int, after_sequence: int):
         self._validate_limit(limit)
         self._require_run(run_id)
-        return method(run_id, limit=limit, after_sequence=after_sequence)
+        return method(run_id, limit=limit + 1, after_sequence=after_sequence)
 
     @staticmethod
     def _sequence_page(run_id: str, record_type: str, rows: list[Any], limit: int) -> dict[str, Any]:
