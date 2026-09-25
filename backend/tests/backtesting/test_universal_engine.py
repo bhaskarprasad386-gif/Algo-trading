@@ -3,6 +3,7 @@ from app.backtesting.historical_catalog import HistoricalRecord
 import pytest
 
 from app.backtesting.universal_engine import UniversalEventBacktestEngine
+from app.backtesting.portfolio import Portfolio
 from app.backtesting.statistics import StreamingStatisticsAccumulator
 
 
