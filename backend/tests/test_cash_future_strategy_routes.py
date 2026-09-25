@@ -56,6 +56,10 @@ def test_strategy_run_route_executes_historical_buy_sell():
     assert body["signal_count"] == 2
     assert body["trade_count"] == 1
     assert body["net_profit"] == 600.0
+    assert body["final_capital"] == 10_000_600.0
+    assert body["final_available_capital"] == 10_000_600.0
+    assert body["final_reserved_margin"] == 0.0
+    assert body["blocked_entry_count"] == 0
 
 
 def test_strategy_run_route_rejects_unknown_strategy():
