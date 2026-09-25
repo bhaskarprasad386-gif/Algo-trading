@@ -41,7 +41,7 @@ def _context(ts, future_instrument, cash_bid, cash_ask, future_bid, future_ask):
         },
         ts,
     )
-    return EventContext(record)
+    return EventContext(record.timestamp_ns, record.sequence, record.source, record.instrument, record.payload, record)
 
 
 def _writer(tmp_path, run_id):
