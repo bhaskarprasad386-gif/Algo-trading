@@ -81,6 +81,10 @@ def test_date_gap_shorting_uses_paired_intraday_future_cash_payload(monkeypatch)
     assert result["top"]["symbol"] == "B"
     assert result["top"]["gap"] == 12.0
     assert result["top"]["weighted_gap"] == 12000.0
+    assert result["top"]["charges"] == 37.5
+    assert result["top"]["funding_cost"] == 12.25
+    assert result["top"]["net_profit"] == 11950.25
+    assert result["top"]["roi_pct"] == 4.7801
     assert result["data"][1]["symbol"] == "A"
     assert result["data"][1]["charges"] == 25.0
     assert result["data"][1]["funding_cost"] == 10.0
