@@ -56,6 +56,7 @@ def _writer(tmp_path, run_id):
         resolution=BacktestResolution("tick", "historical", 1, 2),
         parameters={},
         data_watermarks={"ABC": 2},
+        initial_capital=100_000.0,
     )
     return ledger, BacktestRunWriter(ledger, spec)
 
