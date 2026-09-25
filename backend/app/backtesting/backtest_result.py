@@ -30,7 +30,7 @@ class PayoffSnapshot:
 class BacktestRunWriter:
     """Single entry point for independent, incremental backtest result writes."""
 
-    def __init__(self, ledger: BacktestResultLedger, spec: BacktestRunSpec, *, created_at_ns: int = 0, resume: bool = False) -> None:
+    def __init__(self, ledger: BacktestResultLedger, spec: BacktestRunSpec, *, created_at_ns: int = 0, resume: bool = False, adopt_created: bool = False) -> None:
         self.ledger = ledger
         self.spec = spec
         self._last_event_sequence = -1
@@ -43,7 +43,15 @@ class BacktestRunWriter:
                 raise ValueError("resume provenance does not match existing run")
             self._last_event_sequence = self.ledger.latest_event_sequence(spec.run_id)
         else:
-            self.ledger.create_run(spec.run_id, spec.provenance, created_at_ns=created_at_ns)
+            if adopt_created:
+                row = self.ledger.run(spec.run_id)
+                if row["status"] != "CREATED":
+                    raise ValueError("adopt_created requires a CREATED run")
+                if self.ledger.run_provenance(spec.run_id) != spec.provenance:
+                    raise ValueError("adopt_created provenance does not match existing run")
+                self._last_event_sequence = self.ledger.latest_event_sequence(spec.run_id)
+            else:
+                self.ledger.create_run(spec.run_id, spec.provenance, created_at_ns=created_at_ns)
 
 
     def transaction(self):
