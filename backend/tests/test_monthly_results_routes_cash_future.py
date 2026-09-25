@@ -171,3 +171,75 @@ def test_monthly_gap_top10_ranks_each_stock_by_its_month_high_gap_value(monkeypa
     assert result["data"][0]["gap_high_time"] == "10:30:00"
     assert result["data"][1]["gap_value"] == 9000.0
     assert result["data"][1]["gap_high_date"] == date(2026, 9, 11)
+
+
+class _ReplayMappings:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _ReplayResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def mappings(self):
+        return _ReplayMappings(self._rows)
+
+
+class _ReplayDB:
+    def __init__(self, rows):
+        self.rows = rows
+        self.params = None
+
+    def execute(self, _sql, params):
+        self.params = params
+        return _ReplayResult(self.rows)
+
+
+def test_intraday_replay_preserves_ohlc_volume_oi_lot_and_contract_fields():
+    trading_day = date(2026, 9, 10)
+    rows = [
+        {
+            "timestamp": "2026-09-10T09:15:00+05:30",
+            "open": 100.0,
+            "high": 105.0,
+            "low": 99.0,
+            "close": 103.0,
+            "volume": 12500.0,
+            "oi": 98765.0,
+            "lot_size": 500.0,
+            "contract_month": "2026-09",
+            "instrument_key": "NFO:2026-09",
+        }
+    ]
+    db = _ReplayDB(rows)
+
+    response = routes.intraday_replay(
+        trading_date=trading_day,
+        symbol=" test ",
+        instrument_type="stock",
+        contract_month="2026-09",
+        interval_minutes=1,
+        db=db,
+    )
+
+    assert response["status"] == "success"
+    assert response["count"] == 1
+    assert response["source_interval_minutes"] == 1
+    point = response["series"][0]
+    assert point["timestamp"] == "2026-09-10T09:15:00+05:30"
+    assert point["open"] == 100.0
+    assert point["high"] == 105.0
+    assert point["low"] == 99.0
+    assert point["close"] == 103.0
+    assert point["volume"] == 12500.0
+    assert point["oi"] == 98765.0
+    assert point["lot_size"] == 500.0
+    assert point["contract_month"] == "2026-09"
+    assert point["instrument_key"] == "NFO:2026-09"
+    assert db.params["symbol"] == "TEST"
+    assert db.params["instrument_type"] == "STOCK"
+    assert db.params["contract_month"] == "2026-09"
