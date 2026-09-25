@@ -63,7 +63,7 @@ def _semantic_result(engine: EventBacktestEngine):
         (order_id, lifecycle.export_state())
         for order_id, lifecycle in sorted(engine._order_lifecycles.items())
     )
-    snapshot = engine.portfolio.snapshot()
+    snapshot = engine.portfolio.snapshot(engine._current_marks())
     return trades, lifecycles, snapshot
 
 
