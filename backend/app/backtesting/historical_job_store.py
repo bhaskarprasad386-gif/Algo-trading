@@ -31,7 +31,7 @@ class HistoricalJobStore:
 
     def __init__(self, path: str = ":memory:") -> None:
         self.path = path
-        self._db = sqlite3.connect(path)
+        self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA foreign_keys=ON")
         self._db.execute("""CREATE TABLE IF NOT EXISTS historical_jobs (
