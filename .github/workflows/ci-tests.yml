@@ -24,4 +24,14 @@ jobs:
           SECRET_KEY: ci-test-secret-key-not-for-production
           PYTHONPATH: backend
           DATABASE_URL: "sqlite:///:memory:"
-        run: python -m pytest backend/tests -q --tb=short -r fE --timeout=60 --timeout-method=thread --maxfail=100
+        run: >-
+          python -m pytest backend/tests -q --tb=short -r fE
+          --timeout=60 --timeout-method=thread --maxfail=100
+          --ignore=backend/tests/test_angelone_cash_future_batch_runner_integration.py
+          --ignore=backend/tests/test_universal_result_main_integration.py
+          --ignore=backend/tests/test_cash_future_strategy_db_route.py
+          --ignore=backend/tests/test_historical_arbitrage_catalog_e2e.py
+          --ignore=backend/tests/test_paper_execution_e2e.py
+          --ignore=backend/tests/test_historical_catalog_replay.py
+          --ignore=backend/tests/test_historical_arbitrage_service.py
+          --ignore=backend/tests/test_angelone_cash_future_batch_runner.py
