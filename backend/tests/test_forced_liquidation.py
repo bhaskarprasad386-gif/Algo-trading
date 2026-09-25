@@ -1,8 +1,8 @@
 import pytest
 
-from backend.app.backtesting.execution import ExecutionSide, SimFill
-from backend.app.backtesting.forced_liquidation import ForcedLiquidationEngine
-from backend.app.backtesting.portfolio import Portfolio, RiskConfig, RiskViolation
+from app.backtesting.execution import ExecutionSide, SimFill
+from app.backtesting.forced_liquidation import ForcedLiquidationEngine
+from app.backtesting.portfolio import Portfolio, RiskConfig, RiskViolation
 
 
 def _breached_short() -> Portfolio:
