@@ -78,4 +78,6 @@ print(json.dumps({"status": "ok"}))
         f"main.app integration subprocess failed: "
         f"stdout={completed.stdout!r} stderr={completed.stderr!r}"
     )
-    assert json.loads(completed.stdout) == {"status": "ok"}
+    output_lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    assert output_lines
+    assert json.loads(output_lines[-1]) == {"status": "ok"}
