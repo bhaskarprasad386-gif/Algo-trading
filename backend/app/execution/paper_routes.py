@@ -245,6 +245,7 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
                 active.quantity = remaining_qty
                 active.average_price = accounting_state.average_price
                 remaining = active
+                db.flush()
             order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl)
         else:
             cost = _buy_cost(request.price, quantity)
