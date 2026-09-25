@@ -469,7 +469,7 @@ def test_universal_engine_builds_strategy_context_snapshot_once_per_event(monkey
 
     # One strategy-context snapshot plus one replay-point snapshot per event,
     # rather than two identical context snapshots per event.
-    assert calls["snapshot"] == len(events) + 1
+    assert calls["snapshot"] == (2 * len(events)) + 1
 
 
 def test_universal_durable_engine_rejects_capital_mismatch(tmp_path) -> None:
