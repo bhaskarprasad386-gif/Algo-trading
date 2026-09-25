@@ -1,0 +1,42 @@
+name: Integration Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: integration-tests
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r backend/requirements.txt pytest pytest-timeout
+
+      - name: Run integration and E2E tests
+        env:
+          SECRET_KEY: ci-test-secret-key-not-for-production
+          PYTHONPATH: backend
+          DATABASE_URL: "sqlite:///:memory:"
+        run: >
+          python -m pytest -q --tb=short -r fE
+          --timeout=60 --timeout-method=thread --maxfail=100
+          backend/app/market_data/tests/test_integration.py
+          backend/tests/test_angelone_cash_future_batch_runner_integration.py
+          backend/tests/test_universal_result_main_integration.py
+          backend/tests/test_cash_future_strategy_db_route.py
+          backend/tests/test_historical_arbitrage_catalog_e2e.py
+          backend/tests/test_paper_execution_e2e.py
+          backend/tests/test_historical_catalog_replay.py
+          backend/tests/test_historical_arbitrage_service.py
+          backend/tests/test_angelone_cash_future_batch_runner.py
