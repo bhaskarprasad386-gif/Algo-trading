@@ -243,3 +243,67 @@ def test_intraday_replay_preserves_ohlc_volume_oi_lot_and_contract_fields():
     assert db.params["symbol"] == "TEST"
     assert db.params["instrument_type"] == "STOCK"
     assert db.params["contract_month"] == "2026-09"
+
+
+class _GraphMappings:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _GraphResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def mappings(self):
+        return _GraphMappings(self._rows)
+
+
+class _GraphDB:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def execute(self, _sql, _params):
+        return _GraphResult(self.rows)
+
+
+def test_monthly_graph_preserves_daily_ohlc_lot_and_contract_filter():
+    rows = [
+        {
+            "instrument_key": "NFO:2026-09",
+            "symbol": "TEST",
+            "segment": "NFO",
+            "instrument_type": "STOCK",
+            "contract_month": "2026-09",
+            "trading_date": date(2026, 9, 10),
+            "open": 100.0,
+            "high": 108.0,
+            "low": 98.0,
+            "close": 105.0,
+            "lot_size": 500.0,
+            "previous_close": 99.0,
+        },
+    ]
+
+    response = routes.monthly_graph(
+        symbol=" test ",
+        year=2026,
+        month=9,
+        instrument_type="stock",
+        contract_month="2026-09",
+        db=_GraphDB(rows),
+    )
+
+    assert response["status"] == "success"
+    assert response["symbol"] == "TEST"
+    assert response["count"] == 1
+    point = response["series"][0]
+    assert point["trading_date"] == date(2026, 9, 10)
+    assert point["open"] == 100.0
+    assert point["high"] == 108.0
+    assert point["low"] == 98.0
+    assert point["close"] == 105.0
+    assert point["lot_size"] == 500.0
+    assert point["contract_month"] == "2026-09"
