@@ -133,14 +133,6 @@ class UniversalBacktestWorker:
             adopt_created=not resume,
         )
         try:
-            claimed = (
-                resources.ledger.claim_recoverable(spec.run_id)
-                if resume
-                else resources.ledger.claim_run(spec.run_id)
-            )
-            if not claimed:
-                expected = "recoverable" if resume else "created"
-                raise ValueError(f"run is not {expected}: {spec.run_id}")
             if multi_leg:
                 return resources.engine.run_multi_leg_context(resources.context)
             return resources.engine.run_context(resources.context)
