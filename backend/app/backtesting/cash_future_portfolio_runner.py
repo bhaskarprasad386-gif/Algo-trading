@@ -117,10 +117,9 @@ def run_cash_future_portfolio_strategy(points:Iterable[CashFutureHistoryPoint],s
         marked_equity=_marked_equity(account,entries,latest,execution_model,cash_side,future_side)
         if entries and marked_equity<account.reserved_margin:
             signal_record["margin_breach"]=True
-            liquidation_keys = tuple(
-                key for key in sorted(entries)
-                if active_contract.get(key[0]) == key[1]
-            )
+            # A maintenance breach applies to every position currently open;
+            # rollover filtering must not leave unrelated exposure behind.
+            liquidation_keys = tuple(sorted(entries))
             for liquidation_key in liquidation_keys:
                 liquidation_point=latest.get(liquidation_key)
                 if liquidation_point is None:raise ValueError("margin breach has no genuine liquidation observation")
