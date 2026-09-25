@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.backtesting.cash_future_historical_loader import CashFutureHistoricalLoader, CashFutureHistorySelection
 from app.backtesting.cash_future_replay_routes import router as cash_future_replay_router
 from app.backtesting.cash_future_strategy_runner import CashFutureStrategyConfig, run_cash_future_strategy
+from app.backtesting.cash_future_strategy_resume_runner import resume_cash_future_strategy
 from app.backtesting.reporting import build_cash_future_report
 from app.backtesting.contract_master import ContractMasterCatalog
 from app.backtesting.historical_catalog import HistoricalCatalog
@@ -24,7 +25,7 @@ router.include_router(cash_future_replay_router)
 class StrategyPointRequest(BaseModel):
     timestamp: datetime; symbol: str; contract_month: str; cash_price: float; future_price: float; gap: float; gap_pct: float=0.0; lot_size:int=Field(gt=0); margin_required:float=Field(ge=0); volume:int=Field(default=0,ge=0); oi:int=Field(default=0,ge=0); cash_bid:float|None=Field(default=None,gt=0); cash_ask:float|None=Field(default=None,gt=0); future_bid:float|None=Field(default=None,gt=0); future_ask:float|None=Field(default=None,gt=0); charges:float=Field(default=0.0,ge=0); funding_cost:float=Field(default=0.0,ge=0); expiry_date:date|None=None
 class StrategyRunRequest(BaseModel):
-    strategy_id:str=Field(min_length=1); strategy_version:str=Field(default="1",min_length=1); start_date:date|None=None; end_date:date|None=None; contract_month:str|None=None; execution_model:str=Field(default="gap",pattern="^(gap|bid_ask)$"); charges_per_trade:float=Field(default=0.0,ge=0); funding_cost_per_trade:float=Field(default=0.0,ge=0); initial_capital:float=Field(default=100_000_000.0,gt=0); points:list[StrategyPointRequest]|None=None; spot_instrument:str|None=None; exchange:str="NFO"; underlying:str|None=None; timeframe:str="1m"; mode:str=Field(default="CURRENT",pattern="^(CURRENT|NEAR)$"); source:str="angelone"; cash_side:str=Field(default="BUY",pattern="^(BUY|SELL)$"); future_side:str=Field(default="SELL",pattern="^(BUY|SELL)$"); cash_lots:int=Field(default=1,gt=0); future_lots:int=Field(default=1,gt=0); stop_loss:float|None=Field(default=None,ge=0); target:float|None=Field(default=None,ge=0); slippage_per_share:float=Field(default=0.0,ge=0)
+    strategy_id:str=Field(min_length=1); strategy_version:str=Field(default="1",min_length=1); start_date:date|None=None; end_date:date|None=None; contract_month:str|None=None; execution_model:str=Field(default="gap",pattern="^(gap|bid_ask)$"); charges_per_trade:float=Field(default=0.0,ge=0); funding_cost_per_trade:float=Field(default=0.0,ge=0); initial_capital:float=Field(default=100_000_000.0,gt=0); points:list[StrategyPointRequest]|None=None; spot_instrument:str|None=None; exchange:str="NFO"; underlying:str|None=None; timeframe:str="1m"; mode:str=Field(default="CURRENT",pattern="^(CURRENT|NEAR)$"); source:str="angelone"; cash_side:str=Field(default="BUY",pattern="^(BUY|SELL)$"); future_side:str=Field(default="SELL",pattern="^(BUY|SELL)$"); cash_lots:int=Field(default=1,gt=0); future_lots:int=Field(default=1,gt=0); stop_loss:float|None=Field(default=None,ge=0); target:float|None=Field(default=None,ge=0); slippage_per_share:float=Field(default=0.0,ge=0); history_window:int|None=Field(default=None,gt=0); checkpoint_interval:int|None=Field(default=None,gt=0)
     @model_validator(mode="after")
     def validate_input_mode(self):
         if self.cash_lots!=self.future_lots: raise ValueError("cash_lots and future_lots must match for paired Cash-Future execution")
@@ -97,11 +98,70 @@ def strategy_run(request:StrategyRunRequest):
         points=_scale_points(points,request.cash_lots); ledger=BacktestLedger(settings.BACKTEST_LEDGER_DB)
         strategy_hash=_gap_threshold_implementation_hash() if request.strategy_id=="gap_threshold" else None
         strategy_config_hash=provenance_hash({"cash_side":request.cash_side,"future_side":request.future_side,"stop_loss":request.stop_loss,"target":request.target})
-        result=run_cash_future_strategy(points,strategy,strategy_id=request.strategy_id,strategy_version=request.strategy_version,config=CashFutureStrategyConfig(initial_capital=request.initial_capital,execution_model=request.execution_model,charges_per_trade=request.charges_per_trade,funding_cost_per_trade=request.funding_cost_per_trade,start_date=request.start_date,end_date=request.end_date,contract_month=request.contract_month,cash_side=request.cash_side,future_side=request.future_side,slippage_per_share=request.slippage_per_share),ledger=ledger,run_id=run_id,strategy_hash=strategy_hash,strategy_config_hash=strategy_config_hash,data_source_fingerprint=data_source_fingerprint)
+        result=run_cash_future_strategy(points,strategy,strategy_id=request.strategy_id,strategy_version=request.strategy_version,config=CashFutureStrategyConfig(initial_capital=request.initial_capital,execution_model=request.execution_model,charges_per_trade=request.charges_per_trade,funding_cost_per_trade=request.funding_cost_per_trade,start_date=request.start_date,end_date=request.end_date,contract_month=request.contract_month,cash_side=request.cash_side,future_side=request.future_side,slippage_per_share=request.slippage_per_share,history_window=request.history_window,checkpoint_interval=request.checkpoint_interval),ledger=ledger,run_id=run_id,strategy_hash=strategy_hash,strategy_config_hash=strategy_config_hash,data_source_fingerprint=data_source_fingerprint)
         payload=_serialise_run(ledger,run_id); report=build_cash_future_report(result.initial_capital,payload["trades"],payload["equity_curve"]); profit_factor=report.profit_factor if isfinite(report.profit_factor) else None
         payload["analysis"]={"initial_capital":result.initial_capital,"final_equity":report.final_equity,"net_pnl":payload["net_profit"],"roi":payload["net_profit"]/result.initial_capital,"max_drawdown":report.max_drawdown,"max_drawdown_pct":report.max_drawdown_pct,"win_rate":report.win_rate,"profit_factor":profit_factor,"turnover":report.turnover,"wins":report.wins,"losses":report.losses,"trade_count":payload["trade_count"],"monthly_pnl":dict(report.monthly_pnl),"yearly_pnl":dict(report.yearly_pnl)}
         return payload
     except (ValueError,LookupError) as exc: raise HTTPException(status_code=422,detail=str(exc)) from exc
+    finally:
+        if catalog is not None: catalog.close()
+        if contracts is not None: contracts.close()
+        if ledger is not None: ledger.close()
+
+
+@router.post("/strategy-run/{run_id}/resume")
+def strategy_run_resume(run_id: str, request: StrategyRunRequest):
+    strategy = _strategy_registry().get(request.strategy_id)
+    if strategy is None:
+        raise HTTPException(status_code=404, detail=f"unknown Cash-Future strategy: {request.strategy_id}")
+    if request.strategy_id == "gap_threshold":
+        strategy = _build_builder_strategy(request)
+    catalog = contracts = ledger = None
+    try:
+        if request.points is None:
+            assert request.start_date is not None and request.end_date is not None and request.spot_instrument is not None and request.underlying is not None
+            catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
+            contracts = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
+            selection = CashFutureHistorySelection(
+                spot_instrument=request.spot_instrument, exchange=request.exchange, underlying=request.underlying,
+                start_date=request.start_date, end_date=request.end_date, timeframe=request.timeframe,
+                contract_month=request.contract_month, mode=request.mode, source=request.source,
+            )
+            loader = CashFutureHistoricalLoader(catalog, contracts)
+            points = loader.iter_points(selection)
+            data_source_fingerprint = loader.dataset_fingerprint(selection)
+        else:
+            point_payload = [point.model_dump(mode="json") for point in request.points]
+            points = tuple(CashFutureHistoryPoint(**point.model_dump()) for point in request.points)
+            data_source_fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": point_payload})
+        points = _scale_points(points, request.cash_lots)
+        ledger = BacktestLedger(settings.BACKTEST_LEDGER_DB)
+        strategy_hash = _gap_threshold_implementation_hash() if request.strategy_id == "gap_threshold" else None
+        config = CashFutureStrategyConfig(
+            initial_capital=request.initial_capital, execution_model=request.execution_model,
+            charges_per_trade=request.charges_per_trade, funding_cost_per_trade=request.funding_cost_per_trade,
+            start_date=request.start_date, end_date=request.end_date, contract_month=request.contract_month,
+            history_window=request.history_window, checkpoint_interval=request.checkpoint_interval,
+            cash_side=request.cash_side, future_side=request.future_side, slippage_per_share=request.slippage_per_share,
+        )
+        result = resume_cash_future_strategy(
+            points, strategy, ledger=ledger, run_id=run_id, strategy_id=request.strategy_id,
+            strategy_version=request.strategy_version, config=config, strategy_hash=strategy_hash,
+            data_source_fingerprint=data_source_fingerprint,
+        )
+        payload = _serialise_run(ledger, run_id)
+        report = build_cash_future_report(result.initial_capital, payload["trades"], payload["equity_curve"])
+        payload["analysis"] = {
+            "initial_capital": result.initial_capital, "final_equity": report.final_equity,
+            "net_pnl": payload["net_profit"], "roi": payload["net_profit"] / result.initial_capital,
+            "max_drawdown": report.max_drawdown, "max_drawdown_pct": report.max_drawdown_pct,
+            "win_rate": report.win_rate, "profit_factor": report.profit_factor if isfinite(report.profit_factor) else None,
+            "turnover": report.turnover, "wins": report.wins, "losses": report.losses,
+            "trade_count": payload["trade_count"], "monthly_pnl": dict(report.monthly_pnl), "yearly_pnl": dict(report.yearly_pnl),
+        }
+        return payload
+    except (ValueError, LookupError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
         if catalog is not None: catalog.close()
         if contracts is not None: contracts.close()
