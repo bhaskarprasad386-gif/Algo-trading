@@ -96,7 +96,8 @@ class HistoricalArbitrageRunner:
             for event in events:
                 self._sequence += 1
                 timestamp_ns = int(event["timestamp_ns"])
-                for trade_id, position in tuple(self._open.items()):
+                closed_trade_ids: list[str] = []
+                for trade_id, position in self._open.items():
                     if timestamp_ns <= position.timestamp_ns:
                         continue
                     execution = exit_selector(position, event)
@@ -127,9 +128,11 @@ class HistoricalArbitrageRunner:
                     )])
                     self._realized_pnl += net_pnl
                     self.completed += 1
-                    del self._open[trade_id]
+                    closed_trade_ids.append(trade_id)
                     self._audit(execution.timestamp_ns, "POSITION_CLOSED",
                                 {"trade_id": trade_id, "net_pnl": net_pnl})
+                for trade_id in closed_trade_ids:
+                    del self._open[trade_id]
 
                 for position in entry_selector(event):
                     if position.trade_id in self._open:
