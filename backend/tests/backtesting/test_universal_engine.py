@@ -782,3 +782,68 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
         (p["timestamp_ns"], p["equity"], p["realized_pnl"], p["unrealized_pnl"], p["drawdown"])
         for p in ref_equity
     ]
+
+def test_universal_engine_runs_two_materially_different_generic_strategies() -> None:
+    events = [
+        _event(1, "AAA", 100.0, 1),
+        _event(2, "AAA", 110.0, 2),
+    ]
+
+    def buy_then_sell(ctx):
+        return EventSignal("BUY" if ctx.timestamp_ns == 1 else "SELL")
+
+    def sell_then_buy(ctx):
+        return EventSignal("SELL" if ctx.timestamp_ns == 1 else "BUY")
+
+    long_result = UniversalEventBacktestEngine(100_000.0).run(events, buy_then_sell)
+    short_result = UniversalEventBacktestEngine(100_000.0).run(events, sell_then_buy)
+
+    assert long_result.fill_count == short_result.fill_count == 2
+    assert long_result.realized_pnl == pytest.approx(10.0)
+    assert short_result.realized_pnl == pytest.approx(-10.0)
+    assert long_result.final_equity == pytest.approx(100_010.0)
+    assert short_result.final_equity == pytest.approx(99_990.0)
+
+
+def test_universal_engine_executes_option_contract_payload_end_to_end() -> None:
+    from app.backtesting.fno_events import FnoContract, FnoInstrumentType, OptionSide
+
+    contract = FnoContract(
+        instrument="NFO:ABC-20261231-100-CE",
+        instrument_type=FnoInstrumentType.OPTION,
+        underlying="ABC",
+        expiry="20261231",
+        lot_size=1,
+        strike=100.0,
+        option_side=OptionSide.CE,
+    )
+    events = [
+        HistoricalRecord(
+            "test",
+            contract.instrument,
+            "tick",
+            1,
+            {"price": 10.0, "contract": contract},
+            1,
+        ),
+        HistoricalRecord(
+            "test",
+            contract.instrument,
+            "tick",
+            2,
+            {"price": 15.0, "contract": contract},
+            2,
+        ),
+    ]
+
+    def strategy(ctx):
+        assert ctx.payload["contract"] == contract
+        return EventSignal("BUY" if ctx.timestamp_ns == 1 else "SELL")
+
+    result = UniversalEventBacktestEngine(100_000.0).run(events, strategy)
+
+    assert result.fill_count == 2
+    assert result.realized_pnl == pytest.approx(5.0)
+    assert result.final_equity == pytest.approx(100_005.0)
+    assert result.snapshots[-1].positions == ()
+\n
