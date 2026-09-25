@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, String, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, DateTime
 
 from app.core.database import Base
 
@@ -14,9 +14,5 @@ class Session(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, index=True, nullable=False)
-    access_token = Column(String, unique=True, index=True, nullable=False)
-    refresh_token = Column(String, nullable=True)
-    device_info = Column(String, nullable=True)  # android / web
-    is_active = Column(Boolean, default=True)
-    expires_at = Column(DateTime, nullable=True)
+    token_hash = Column(String(256), unique=True, index=True, nullable=False)
     created_at = Column(DateTime, default=utc_now)
