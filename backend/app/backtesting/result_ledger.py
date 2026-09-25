@@ -126,7 +126,7 @@ class BacktestResultLedger:
     """SQLite WAL ledger; appends are transactional and idempotent."""
 
     def __init__(self, path: str = ":memory:") -> None:
-        self._db = sqlite3.connect(path)
+        self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA foreign_keys=ON")
