@@ -47,3 +47,29 @@ def test_continuous_futures_catalog_replay_switches_contracts_without_cross_cont
     assert tuple(item.payload["close"] for item in series) == (101.0, 101.0, 102.0, 102.0, 103.0, 103.0)
     assert all(previous.timestamp_ns < current.timestamp_ns for previous, current in zip(series, series[1:]))
     catalog.close()
+
+
+def test_continuous_futures_catalog_replay_streams_contract_ranges(tmp_path):
+    class StreamingOnlyCatalog(HistoricalCatalog):
+        def records_by_contract_tokens(self, **kwargs):
+            raise AssertionError("continuous replay must not materialize contract tuples")
+
+    catalog = StreamingOnlyCatalog(tmp_path / "streaming.sqlite")
+    catalog.ingest((HistoricalRecord(
+        source="fake",
+        instrument="NFO:101",
+        timeframe="1m",
+        timestamp_ns=_ns("2026-01-29T09:15:00"),
+        payload={"close": 101.0},
+    ),))
+
+    series = build_continuous_futures_series_from_catalog(
+        catalog,
+        (FNORolloverWindow("SBIN", "STOCK_FUTURE", "101", date(2026, 1, 29), date(2026, 1, 29)),),
+        source="fake",
+        timeframe="1m",
+    )
+
+    assert len(series) == 1
+    assert series[0].contract_token == "101"
+    catalog.close()
