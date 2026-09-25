@@ -57,15 +57,15 @@ class DurableEventBacktestEngine:
                 if callable(starter): starter(context)
             def on_event(self, event, context):
                 key = DurableEventBacktestEngine._event_key(event)
-                if key in existing_event_keys: return None
                 handler = getattr(strategy, "on_event", None)
                 decision = handler(event, context) if callable(handler) else None
                 if decision is not None and not isinstance(decision, StrategyDecision):
                     raise TypeError("event strategy must return StrategyDecision or None")
-                ledger.append(LedgerRecord(run_id, "EVENT", event.timestamp_ns,
-                    {"instrument": event.instrument, "event_type": event.event_type.value,
-                     "sequence": event.sequence, "source": event.source}))
-                existing_event_keys.add(key)
+                if key not in existing_event_keys:
+                    ledger.append(LedgerRecord(run_id, "EVENT", event.timestamp_ns,
+                        {"instrument": event.instrument, "event_type": event.event_type.value,
+                         "sequence": event.sequence, "source": event.source}))
+                    existing_event_keys.add(key)
                 if decision is not None:
                     ledger.append(LedgerRecord(run_id, "DECISION", event.timestamp_ns,
                         {"event_identity": {"timestamp_ns": event.timestamp_ns,
