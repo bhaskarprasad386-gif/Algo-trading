@@ -117,8 +117,8 @@ def test_cash_future_rollover_closes_original_contract_and_accounts_pnl():
     result = engine.run_multi_leg([open_event, close_event], adapter)
 
     assert result.fill_count == 4
-    assert engine.portfolio.positions["NSE:ABC"].quantity == 0
-    assert engine.portfolio.positions["NFO:ABC-OLD"].quantity == 0
+    assert "NSE:ABC" not in engine.portfolio.positions
+    assert "NFO:ABC-OLD" not in engine.portfolio.positions
     assert "NFO:ABC-NEW" not in engine.portfolio.positions
     assert result.realized_pnl == 60.0
 
