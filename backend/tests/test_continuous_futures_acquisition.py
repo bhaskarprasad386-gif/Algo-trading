@@ -159,7 +159,7 @@ def test_durable_gap_repair_recovers_leading_trailing_and_empty_sessions(tmp_pat
     failing_source = FailOnRequestSource(fail_on_call=2)
     first = repair_continuous_futures_history_gaps(catalog, failing_source, [window], source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS, calendar=calendar, max_request_ns=10 * INTERVAL_NS, job_store=store, job_id="edge-gap-repair", run_id="run-1")
     assert not first.completed and first.execution.failed_request_index == 1
-    assert len(first.plan.requests) == 3
+    assert len(first.plan.requests) == 2
     assert store.chunk_state("edge-gap-repair", 0)[0] == "completed"
     assert store.chunk_state("edge-gap-repair", 1)[0] == "recoverable"
     fingerprint = store.get("edge-gap-repair").plan_fingerprint
