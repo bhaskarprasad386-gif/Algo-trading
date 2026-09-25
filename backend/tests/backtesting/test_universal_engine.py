@@ -783,6 +783,103 @@ def test_universal_checkpoint_resume_matches_uninterrupted_run(tmp_path) -> None
         for p in ref_equity
     ]
 
+
+def test_universal_engine_reconciles_source_signal_fill_cost_pnl_and_ledger(tmp_path) -> None:
+    from app.backtesting.backtest_resolution import BacktestResolution
+    from app.backtesting.backtest_result import BacktestRunWriter
+    from app.backtesting.backtest_run import BacktestRunSpec
+    from app.backtesting.data_source import CatalogDataSource
+    from app.backtesting.execution import ExecutionConfig
+    from app.backtesting.result_ledger import BacktestResultLedger
+
+    ledger = BacktestResultLedger(tmp_path / "reconciliation.db")
+    spec = BacktestRunSpec(
+        "reconciliation",
+        "reconcile",
+        "v1",
+        "AAA",
+        1,
+        2,
+        BacktestResolution("tick", "test", 1, 2),
+        initial_capital=100_000.0,
+    )
+    writer = BacktestRunWriter(ledger, spec)
+    catalog = HistoricalCatalog()
+    catalog.ingest(
+        [
+            _event(1, "AAA", 100.0, 1),
+            _event(2, "AAA", 110.0, 2),
+        ]
+    )
+    seen = []
+    engine = UniversalEventBacktestEngine(
+        100_000.0,
+        execution_config=ExecutionConfig(slippage_bps=100.0, fee_per_unit=2.0),
+        result_writer=writer,
+    )
+
+    def strategy(ctx):
+        seen.append((ctx.timestamp_ns, ctx.timeframe, ctx.payload["price"]))
+        return EventSignal("BUY" if ctx.timestamp_ns == 1 else "SELL")
+
+    result = engine.run_source(
+        CatalogDataSource(
+            catalog,
+            source="test",
+            instrument="AAA",
+            timeframe="tick",
+        ),
+        strategy,
+    )
+
+    # Market prices 100/110 become execution prices 101/108.9 at 1% slippage.
+    # Two unit fees cost 4 total, so net P&L is 108.9 - 101 - 4 = 3.9.
+    assert seen == [(1, "tick", 100.0), (2, "tick", 110.0)]
+    assert result.fill_count == 2
+    assert result.realized_pnl == pytest.approx(3.9)
+    assert result.final_equity == pytest.approx(100_003.9)
+
+    fills = ledger.fills("reconciliation", limit=10)
+    assert [(fill.timestamp_ns, fill.price, fill.fee) for fill in fills] == [
+        (1, pytest.approx(101.0), pytest.approx(2.0)),
+        (2, pytest.approx(108.9), pytest.approx(2.0)),
+    ]
+    equity = ledger.equity("reconciliation", limit=10)
+    assert equity[-1]["equity"] == pytest.approx(100_003.9)
+    assert equity[-1]["realized_pnl"] == pytest.approx(3.9)
+    replay_events = ledger.events("reconciliation", limit=10)
+    assert [(event["timestamp_ns"], event["payload"]["timestamp_ns"], event["payload"]["source_sequence"]) for event in replay_events] == [
+        (1, 1, 1),
+        (2, 2, 2),
+    ]
+
+
+def test_universal_engine_preserves_native_tick_timestamp_through_catalog_replay(tmp_path) -> None:
+    from app.backtesting.data_source import CatalogDataSource
+
+    catalog = HistoricalCatalog(tmp_path / "native-tick.db")
+    records = [
+        HistoricalRecord("test", "AAA", "tick", 1_000_001, {"price": 100.0}, 7),
+        HistoricalRecord("test", "AAA", "tick", 1_000_002, {"price": 101.0}, 8),
+    ]
+    catalog.ingest(records)
+    seen = []
+
+    def strategy(ctx):
+        seen.append((ctx.timestamp_ns, ctx.sequence, ctx.timeframe, ctx.record.identity()))
+        return EventSignal("HOLD")
+
+    result = UniversalEventBacktestEngine(100_000.0).run_source(
+        CatalogDataSource(catalog, source="test", instrument="AAA", timeframe="tick"),
+        strategy,
+    )
+
+    assert seen == [
+        (1_000_001, 7, "tick", records[0].identity()),
+        (1_000_002, 8, "tick", records[1].identity()),
+    ]
+    assert result.fill_count == 0
+
 def test_universal_engine_runs_two_materially_different_generic_strategies() -> None:
     events = [
         _event(1, "AAA", 100.0, 1),
