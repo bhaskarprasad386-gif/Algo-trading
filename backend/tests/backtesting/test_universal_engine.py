@@ -833,10 +833,10 @@ def test_universal_engine_reconciles_source_signal_fill_cost_pnl_and_ledger(tmp_
     )
 
     # Market prices 100/110 become execution prices 101/108.9 at 1% slippage.
-    # Two unit fees cost 4 total, so net P&L is 108.9 - 101 - 4 = 3.9.
+    # Portfolio realized P&L is trade-price P&L; fees are tracked separately in equity/cost accounting.
     assert seen == [(1, "tick", 100.0), (2, "tick", 110.0)]
     assert result.fill_count == 2
-    assert result.realized_pnl == pytest.approx(3.9)
+    assert result.realized_pnl == pytest.approx(7.9)
     assert result.final_equity == pytest.approx(100_003.9)
 
     fills = ledger.fills("reconciliation", limit=10)
