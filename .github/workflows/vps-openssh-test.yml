@@ -1,0 +1,23 @@
+name: VPS OpenSSH Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-ssh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate key and SSH
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$VPS_KEY" > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          ssh-keygen -y -f /tmp/vps_key > /tmp/vps_pub
+          echo "KEY_PARSE_OK"
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'echo SSH_OK; whoami; hostname; pwd'
