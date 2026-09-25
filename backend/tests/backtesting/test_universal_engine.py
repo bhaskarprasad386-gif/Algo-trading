@@ -1,5 +1,6 @@
 from app.backtesting.engine import EventSignal
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
+import json
 import pytest
 
 from app.backtesting.universal_engine import UniversalEventBacktestEngine
@@ -848,7 +849,7 @@ def test_universal_engine_reconciles_source_signal_fill_cost_pnl_and_ledger(tmp_
     assert equity[-1]["equity"] == pytest.approx(100_003.9)
     assert equity[-1]["realized_pnl"] == pytest.approx(7.9)
     replay_events = ledger.events("reconciliation", limit=10)
-    assert [(event["timestamp_ns"], event["payload"]["timestamp_ns"], event["payload"]["source_sequence"]) for event in replay_events] == [
+    assert [(event["timestamp_ns"], json.loads(event["payload_json"])["timestamp_ns"], json.loads(event["payload_json"])["source_sequence"]) for event in replay_events] == [
         (1, 1, 1),
         (2, 2, 2),
     ]
