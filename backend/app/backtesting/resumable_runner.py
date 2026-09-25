@@ -71,6 +71,7 @@ def run_resumable_events(
         if not found:
             raise ValueError("persisted checkpoint cursor was not found in event stream")
 
+    ledger_has_trades = hasattr(ledger, "trades")
     persisted_trades: list = []
     processed_any = resumed
     chunk: list[HistoricalRecord] = []
@@ -82,7 +83,8 @@ def run_resumable_events(
         with ledger.transaction():
             if trades:
                 ledger.append_next(run_id, trades)
-                persisted_trades.extend(trades)
+                if not ledger_has_trades:
+                    persisted_trades.extend(trades)
             ledger.save_checkpoint(run_id, _cursor(chunk[-1]), ledger.count(run_id))
         processed_any = True
         chunk.clear()
@@ -102,7 +104,7 @@ def run_resumable_events(
     liquidation = 0.0
     if state.open_trade is not None and state.last_price is not None:
         liquidation = _calculate_liquidation_pnl(engine.config, state.open_trade[1], state.last_price)
-    if hasattr(ledger, "trades"):
+    if ledger_has_trades:
         all_trades = tuple(ledger.trades(run_id))
     else:
         all_trades = tuple(persisted_trades)
