@@ -473,7 +473,7 @@ class UniversalEventBacktestEngine:
                 raise ValueError(f"invalid queue_evidence[{index}]") from exc
 
         # Validate the complete payload before mutating any queue state.
-        open_orders = tuple(self.order_registry.open_orders())
+        open_orders = self.order_registry.open_orders()
         for evidence in evidences:
             for order in open_orders:
                 if (
@@ -875,7 +875,7 @@ class UniversalEventBacktestEngine:
     
                 self._apply_queue_evidence(record)
 
-                for open_order in tuple(self.order_registry.open_orders()):
+                for open_order in self.order_registry.open_orders():
                     if open_order.instrument == record.instrument:
                         self._execute_registered_order(
                             open_order.order_id,
