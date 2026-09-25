@@ -111,3 +111,12 @@ def test_completed_run_cannot_be_marked_recoverable() -> None:
             ledger.mark_recoverable("completed-recovery")
     finally:
         ledger.close()
+
+
+def test_equity_append_is_idempotent_for_same_point() -> None:
+    ledger = BacktestResultLedger()
+    ledger.create_run("equity-run", {"strategy_id": "universal"})
+    point = EquityPoint(1_000, 100_010.0, 10.0, 0.0, 0.0)
+    assert ledger.append_equity("equity-run", [point]) == 1
+    assert ledger.append_equity("equity-run", [point]) == 0
+    assert ledger.count_equity("equity-run") == 1
