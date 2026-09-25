@@ -210,10 +210,11 @@ def test_rollover_then_new_entry_handles_existing_portfolio_margin_breach():
     liquidation = [trade for trade in result.trades if trade["exit_reason"] == "margin_breach"]
     assert len(rollover) == 1
     assert rollover[0]["contract_month"] == "SEP"
-    # BBB's loss leaves marked portfolio equity below the combined
-    # reserved margin after the AAA/SEP rollover and AAA/OCT entry.
+    # The portfolio breaches its marked-margin requirement when the
+    # first AAA/SEP position is added, so that position and BBB are
+    # liquidated before the later SEP -> OCT rollover boundary.
     assert len(liquidation) == 2
-    assert {(trade["symbol"], trade["contract_month"]) for trade in liquidation} == {("AAA", "OCT"), ("BBB", "SEP")}
+    assert {(trade["symbol"], trade["contract_month"]) for trade in liquidation} == {("AAA", "SEP"), ("BBB", "SEP")}
     assert result.open_position_count == 0
     assert result.final_reserved_margin == 0.0
 
