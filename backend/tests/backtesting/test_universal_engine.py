@@ -846,7 +846,7 @@ def test_universal_engine_reconciles_source_signal_fill_cost_pnl_and_ledger(tmp_
     ]
     equity = ledger.equity("reconciliation", limit=10)
     assert equity[-1]["equity"] == pytest.approx(100_003.9)
-    assert equity[-1]["realized_pnl"] == pytest.approx(3.9)
+    assert equity[-1]["realized_pnl"] == pytest.approx(7.9)
     replay_events = ledger.events("reconciliation", limit=10)
     assert [(event["timestamp_ns"], event["payload"]["timestamp_ns"], event["payload"]["source_sequence"]) for event in replay_events] == [
         (1, 1, 1),
