@@ -4,6 +4,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.backtesting.cash_future_strategy_routes import (
+    StrategyRunRequest,
+    _build_builder_strategy,
     _gap_threshold_implementation_hash,
     router,
 )
@@ -298,7 +300,14 @@ def test_strategy_run_resume_route_continues_from_checkpoint_without_duplicates(
     try:
         run_cash_future_strategy(
             tuple(CashFutureHistoryPoint(**item) for item in points[:2]),
-            lambda current, history: "BUY" if current.gap > 0 else "HOLD",
+            _build_builder_strategy(StrategyRunRequest(
+                strategy_id="gap_threshold",
+                initial_capital=10_000_000,
+                start_date=start.date(),
+                end_date=start.date(),
+                target=5.0,
+                points=points[:2],
+            )),
             strategy_id="gap_threshold",
             strategy_version="1",
             config=config,
