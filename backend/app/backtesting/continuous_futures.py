@@ -105,9 +105,45 @@ def build_continuous_futures_series_from_catalog(
 ) -> tuple[ContinuousFuturesRecord, ...]:
     """Build a continuous series directly from durable historical catalog data."""
     windows = tuple(windows)
-    tokens = tuple(dict.fromkeys(window.contract_token for window in windows))
-    records_by_token = catalog.records_by_contract_tokens(source=source, contract_tokens=tokens, timeframe=timeframe, instrument_prefix=instrument_prefix)
-    return build_continuous_futures_series(windows, records_by_token, instrument_prefix=instrument_prefix)
+    if not windows:
+        return ()
+
+    # Stream only the timestamp range required by each rollover window. The
+    # returned series is still materialized because this public API returns a
+    # tuple, but the intermediate per-contract catalog tuples are no longer
+    # duplicated in memory.
+    output: list[ContinuousFuturesRecord] = []
+    for window in windows:
+        start_ns = _day_start_ns(window.start_date)
+        end_ns = _day_end_ns(window.end_date)
+        instrument = f"{instrument_prefix}{window.contract_token}"
+        for record in catalog.iter_records(
+            source=source,
+            instrument=instrument,
+            timeframe=timeframe,
+            start_ns=start_ns,
+            end_ns=end_ns,
+        ):
+            output.append(
+                ContinuousFuturesRecord(
+                    window.underlying,
+                    window.instrument_type,
+                    window.contract_token,
+                    record,
+                )
+            )
+
+    output.sort(
+        key=lambda item: (
+            item.timestamp_ns,
+            item.underlying,
+            item.instrument_type,
+            item.contract_token,
+            item.record.instrument,
+            item.record.sequence if item.record.sequence is not None else -1,
+        )
+    )
+    return tuple(output)
 
 
 __all__ = ["ContinuousFuturesRecord", "build_continuous_futures_series", "build_continuous_futures_series_from_catalog"]
