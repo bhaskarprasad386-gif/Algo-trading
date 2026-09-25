@@ -12,7 +12,7 @@ from .historical_catalog import HistoricalCatalog
 from .historical_download_executor import DownloadExecutionResult, ResumableHistoricalExecutor
 from .historical_ingest import HistoricalFetchRequest, HistoricalIngestionService, HistoricalSource
 from .historical_job_store import HistoricalJobStore
-from .historical_sync import HistoricalSyncPlan, build_chunked_plan
+from .historical_sync import HistoricalSyncPlan, _build_cadence_chunked_plan
 from .trading_calendar import TradingCalendar
 
 
@@ -71,7 +71,7 @@ def build_continuous_futures_acquisition_plan(windows: tuple[FNORolloverWindow, 
     requests: list[HistoricalFetchRequest] = []
     for window in windows:
         for session_start, session_end in _window_sessions(window, calendar):
-            requests.extend(build_chunked_plan(source=source, instrument=f"NFO:{window.contract_token}", timeframe=timeframe, start_ns=session_start, end_ns=session_end, chunk_ns=max_request_ns).requests)
+            requests.extend(_build_cadence_chunked_plan(source=source, instrument=f"NFO:{window.contract_token}", timeframe=timeframe, start_ns=session_start, end_ns=session_end, interval_ns=interval_ns, max_request_ns=max_request_ns).requests)
     return HistoricalSyncPlan(tuple(requests))
 
 
@@ -106,7 +106,7 @@ def build_continuous_futures_gap_plan(catalog: HistoricalCatalog, windows: tuple
         instrument = f"NFO:{window.contract_token}"
         for session_start, session_end in _window_sessions(window, calendar):
             for gap_start, gap_end in _missing_ranges(catalog, source=source, instrument=instrument, timeframe=timeframe, session_start_ns=session_start, session_end_ns=session_end, interval_ns=interval_ns):
-                requests.extend(build_chunked_plan(source=source, instrument=instrument, timeframe=timeframe, start_ns=gap_start, end_ns=gap_end, chunk_ns=max_request_ns).requests)
+                requests.extend(_build_cadence_chunked_plan(source=source, instrument=instrument, timeframe=timeframe, start_ns=gap_start, end_ns=gap_end, interval_ns=interval_ns, max_request_ns=max_request_ns).requests)
     return HistoricalSyncPlan(tuple(requests))
 
 
