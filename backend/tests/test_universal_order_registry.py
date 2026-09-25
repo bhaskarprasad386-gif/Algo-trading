@@ -6,13 +6,13 @@ from app.backtesting.queue_lifecycle import QueueEvidence
 from app.backtesting.universal_order_registry import UniversalOrderRegistry
 
 
-def make_order(order_id="o1", quantity=10, tif=TimeInForce.DAY, queue=5):
+def make_order(order_id="o1", quantity=10, tif=TimeInForce.DAY, queue=5, submitted_at_ns=100):
     return SimOrder(
         order_id,
         "NIFTY",
         ExecutionSide.BUY,
         quantity,
-        submitted_at_ns=100,
+        submitted_at_ns=submitted_at_ns,
         queue_ahead_quantity=queue,
         time_in_force=tif,
     )
@@ -118,7 +118,7 @@ def test_replace_uses_remaining_quantity_and_new_queue_generation():
         110,
     )
 
-    replacement = make_order("o2", quantity=6, queue=2)
+    replacement = make_order("o2", quantity=6, queue=2, submitted_at_ns=120)
     registry.replace("o1", replacement, 120)
 
     assert registry.lifecycle("o1").state.status is OrderStatus.REPLACED
