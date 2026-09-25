@@ -98,6 +98,8 @@ def test_monthly_gap_shorting_selects_highest_paired_intraday_gap_value(monkeypa
     assert result["result"]["gap"] == 12.0
     assert result["result"]["gap_value"] == 12000.0
     assert result["result"]["gap_high_timestamp"] == "2026-09-11T13:00:00"
+    assert result["result"]["cash_price_at_gap_high"] == 2010.0
+    assert result["result"]["future_price_at_gap_high"] == 2022.0
 
 
 def test_monthly_gap_top10_ranks_each_stock_by_its_month_high_gap_value(monkeypatch):
