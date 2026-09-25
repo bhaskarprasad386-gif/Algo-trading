@@ -54,42 +54,52 @@ class HistoricalCatalogEventReplay:
             raise ValueError("replay event keys must be unique")
 
         data_resolution = self._data_resolution(legs)
-        streams: dict[str, tuple[HistoricalRecord, ...]] = {}
-        for leg in legs:
-            streams[leg.event_key] = tuple(
-                record
-                for record in self.catalog.records(
+        streams = {
+            leg.event_key: iter(
+                self.catalog.iter_records(
                     source=leg.source,
                     instrument=leg.instrument,
                     timeframe=leg.timeframe,
+                    start_ns=start_ns,
+                    end_ns=end_ns,
                 )
-                if start_ns <= record.timestamp_ns <= end_ns
             )
-
-        timestamps = sorted({record.timestamp_ns for records in streams.values() for record in records})
-        by_leg: dict[str, dict[int, HistoricalRecord]] = {}
+            for leg in legs
+        }
+        current: dict[str, HistoricalRecord | None] = {}
         for leg in legs:
-            index: dict[int, HistoricalRecord] = {}
-            for record in streams[leg.event_key]:
-                if record.timestamp_ns in index:
+            current[leg.event_key] = next(streams[leg.event_key], None)
+
+        while any(record is not None for record in current.values()):
+            timestamp_ns = min(
+                record.timestamp_ns
+                for record in current.values()
+                if record is not None
+            )
+            at_timestamp: dict[str, HistoricalRecord] = {}
+            for leg in legs:
+                record = current[leg.event_key]
+                if record is None or record.timestamp_ns != timestamp_ns:
+                    continue
+                at_timestamp[leg.event_key] = record
+                current[leg.event_key] = next(streams[leg.event_key], None)
+                duplicate = current[leg.event_key]
+                if duplicate is not None and duplicate.timestamp_ns == timestamp_ns:
                     raise ValueError(
                         f"multiple catalog records at one timestamp for replay leg: {leg.event_key}"
                     )
-                index[record.timestamp_ns] = record
-            by_leg[leg.event_key] = index
 
-        for timestamp_ns in timestamps:
             replay_metadata = {
                 leg.event_key: {
                     "source": leg.source,
                     "instrument": leg.instrument,
                     "timeframe": leg.timeframe,
-                    "sequence": by_leg[leg.event_key][timestamp_ns].sequence,
+                    "sequence": at_timestamp[leg.event_key].sequence,
                 }
                 for leg in legs
-                if timestamp_ns in by_leg[leg.event_key]
+                if leg.event_key in at_timestamp
             }
-            missing = [leg.event_key for leg in legs if timestamp_ns not in by_leg[leg.event_key]]
+            missing = [leg.event_key for leg in legs if leg.event_key not in at_timestamp]
             if missing:
                 if require_complete:
                     continue
@@ -98,9 +108,9 @@ class HistoricalCatalogEventReplay:
                     "data_resolution": data_resolution,
                     "__replay_legs__": replay_metadata,
                     **{
-                        leg.event_key: by_leg[leg.event_key][timestamp_ns].payload
+                        leg.event_key: at_timestamp[leg.event_key].payload
                         for leg in legs
-                        if timestamp_ns in by_leg[leg.event_key]
+                        if leg.event_key in at_timestamp
                     },
                 }
                 continue
@@ -109,7 +119,7 @@ class HistoricalCatalogEventReplay:
                 "data_resolution": data_resolution,
                 "__replay_legs__": replay_metadata,
                 **{
-                    leg.event_key: by_leg[leg.event_key][timestamp_ns].payload
+                    leg.event_key: at_timestamp[leg.event_key].payload
                     for leg in legs
                 },
             }
