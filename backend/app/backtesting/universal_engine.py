@@ -663,9 +663,6 @@ class UniversalEventBacktestEngine:
         if isinstance(events, (list, tuple)):
             events = sorted(events, key=event_order_key)
 
-        if isinstance(events, (list, tuple)):
-            events = sorted(events, key=event_order_key)
-
         for record in events:
             checkpoint_due = (
                 self.result_writer is not None
@@ -889,6 +886,8 @@ class UniversalEventBacktestEngine:
                             last_marks,
                         )
 
+                context_snapshot = self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})
+                context_open_orders = self.order_registry.open_orders()
                 signal = _normalize_event_signal(
                     strategy(EventContext(
                         record.timestamp_ns,
@@ -897,9 +896,9 @@ class UniversalEventBacktestEngine:
                         record.instrument,
                         record.payload,
                         record,
-                        self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({}),
-                        self.order_registry.open_orders(),
-                        (self.portfolio.snapshot(last_marks) if last_marks else self.portfolio.snapshot({})).available_margin,
+                        context_snapshot,
+                        context_open_orders,
+                        context_snapshot.available_margin,
                     ))
                 )
                 if signal.action not in {"HOLD", "NONE"}:
