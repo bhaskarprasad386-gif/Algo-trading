@@ -40,6 +40,22 @@ def build_chunked_plan(*, source: str, instrument: str, timeframe: str, start_ns
     return HistoricalSyncPlan(tuple(requests))
 
 
+def _build_cadence_chunked_plan(*, source: str, instrument: str, timeframe: str, start_ns: int, end_ns: int, interval_ns: int, max_request_ns: int) -> HistoricalSyncPlan:
+    """Chunk fixed-cadence gaps without splitting between cadence timestamps."""
+    if interval_ns <= 0 or max_request_ns <= 0:
+        raise ValueError("interval_ns and max_request_ns must be positive")
+    if start_ns > end_ns:
+        return HistoricalSyncPlan(())
+    points_per_request = max(1, max_request_ns // interval_ns)
+    requests: list[HistoricalFetchRequest] = []
+    cursor = start_ns
+    while cursor <= end_ns:
+        chunk_end = min(end_ns, cursor + (points_per_request - 1) * interval_ns)
+        requests.append(HistoricalFetchRequest(source, instrument, timeframe, cursor, chunk_end))
+        cursor = chunk_end + interval_ns
+    return HistoricalSyncPlan(tuple(requests))
+
+
 def build_session_gap_plan(
     catalog,
     calendar,
@@ -75,13 +91,14 @@ def build_session_gap_plan(
     requests: list[HistoricalFetchRequest] = []
     for gap in gaps:
         requests.extend(
-            build_chunked_plan(
+            _build_cadence_chunked_plan(
                 source=source,
                 instrument=instrument,
                 timeframe=timeframe,
                 start_ns=gap.start_ns,
                 end_ns=gap.end_ns,
-                chunk_ns=max_request_ns,
+                interval_ns=interval_ns,
+                max_request_ns=max_request_ns,
             ).requests
         )
     return HistoricalSyncPlan(tuple(requests))
