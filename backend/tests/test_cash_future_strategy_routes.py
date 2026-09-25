@@ -362,6 +362,7 @@ def test_strategy_run_resume_route_rejects_mismatched_data(monkeypatch, tmp_path
             ledger=ledger,
             run_id="resume-mismatch",
             strategy_hash=_gap_threshold_implementation_hash(),
+            strategy_config_hash=provenance_hash({"cash_side": "BUY", "future_side": "SELL", "stop_loss": None, "target": None}),
             data_source_fingerprint=fingerprint,
         )
     finally:
@@ -381,3 +382,20 @@ def test_strategy_run_resume_route_rejects_mismatched_data(monkeypatch, tmp_path
     )
     assert response.status_code == 422
     assert "data source fingerprint" in response.json()["detail"]
+
+
+def test_strategy_run_resume_route_rejects_mismatched_strategy_configuration(monkeypatch, tmp_path):
+    ledger_db = str(tmp_path / "resume-config-mismatch.db")
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", ledger_db)
+    start = datetime(2026, 9, 2, 10, 0)
+    points = [payload(gap=10, timestamp=start), payload(gap=8, timestamp=start + timedelta(hours=1))]
+    fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": points})
+    stored_config_hash = provenance_hash({"cash_side": "BUY", "future_side": "SELL", "stop_loss": None, "target": 5.0})
+    ledger = BacktestLedger(ledger_db)
+    try:
+        run_cash_future_strategy(tuple(CashFutureHistoryPoint(**item) for item in points), _build_builder_strategy(StrategyRunRequest(strategy_id="gap_threshold", initial_capital=10_000_000, target=5.0, points=points)), strategy_id="gap_threshold", strategy_version="1", config=CashFutureStrategyConfig(initial_capital=10_000_000, checkpoint_interval=1), ledger=ledger, run_id="resume-config-mismatch", strategy_hash=_gap_threshold_implementation_hash(), strategy_config_hash=stored_config_hash, data_source_fingerprint=fingerprint)
+    finally:
+        ledger.close()
+    response = client().post("/api/v1/backtesting/cash-future/strategy-run/resume-config-mismatch/resume", json={"strategy_id": "gap_threshold", "strategy_version": "1", "initial_capital": 10_000_000, "checkpoint_interval": 1, "points": points})
+    assert response.status_code == 422
+    assert "strategy configuration hash mismatch" in response.json()["detail"]
