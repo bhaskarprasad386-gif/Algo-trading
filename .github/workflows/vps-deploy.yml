@@ -1,0 +1,49 @@
+name: VPS Deploy
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: vps-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Deploy main to VPS
+        env:
+          VPS_KEY_B64: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$VPS_KEY_B64" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          ssh-keygen -y -f /tmp/vps_key > /tmp/vps_pub
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -Eeuo pipefail
+          APP_DIR="/opt/Algo-Trading"
+
+          if [[ ! -d "$APP_DIR/.git" ]]; then
+            rm -rf "$APP_DIR"
+            git clone --branch main --single-branch https://github.com/bhaskarprasad386-gif/Algo-trading.git "$APP_DIR"
+          fi
+
+          cd "$APP_DIR"
+          git fetch origin main
+          git merge --ff-only origin/main
+
+          bash deploy/bootstrap-vps.sh
+
+          printf 'DEPLOY_COMMIT='
+          git rev-parse --short HEAD
+          printf 'SERVICE='
+          systemctl is-active algo-trading.service
+          printf 'HEALTH='
+          curl --fail --silent --show-error http://127.0.0.1:8000/health
+          printf '\n'
+          REMOTE
