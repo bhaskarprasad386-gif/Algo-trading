@@ -63,7 +63,7 @@ def test_multi_contract_multi_session_rollover_boundary_recovers_durably(tmp_pat
         instrument_type="STOCK_FUTURE",
     )
     _seed_session_gaps(catalog, "NFO:JAN", (date(2026, 1, 8), date(2026, 1, 9)))
-    _seed_session_gaps(catalog, "NFO:FEB", (date(2026, 1, 10), date(2026, 1, 13)))
+    _seed_session_gaps(catalog, "NFO:FEB", (date(2026, 1, 12), date(2026, 1, 13)))
 
     first = repair_continuous_futures_history_gaps(
         catalog, source, windows, source_name="fake", timeframe="1m", interval_ns=INTERVAL_NS,
