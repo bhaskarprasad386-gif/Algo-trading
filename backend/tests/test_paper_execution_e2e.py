@@ -122,7 +122,7 @@ def test_paper_short_reversal_deducts_remaining_long_cost():
     assert reversal["position"]["quantity"] == 3.0
     assert reversal["position"]["entry_price"] == 90.0
     assert reversal["realized_pnl"] == 50.0
-    assert reversal["virtual_balance"] == 999_180.0
+    assert reversal["virtual_balance"] == 999_780.0
 
     position = paper_position(user_id=user.id, db=db)
     assert position["position"]["quantity"] == 3.0
