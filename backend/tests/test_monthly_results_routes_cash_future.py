@@ -27,6 +27,10 @@ def _paired_payload(trading_date, symbols, **kwargs):
             "cash_price_at_gap_high": 1005.0,
             "future_price_at_gap_high": 1022.0,
             "margin_required": 150000.0,
+            "charges": 25.0,
+            "funding_cost": 10.0,
+            "net_profit": 8465.0,
+            "roi_pct": 5.6433333333,
         },
         "B": {
             "trading_date": trading_date,
@@ -46,6 +50,10 @@ def _paired_payload(trading_date, symbols, **kwargs):
             "cash_price_at_gap_high": 2010.0,
             "future_price_at_gap_high": 2022.0,
             "margin_required": 250000.0,
+            "charges": 37.5,
+            "funding_cost": 12.25,
+            "net_profit": 11950.25,
+            "roi_pct": 4.7801,
         },
     }
     return [points[symbol] for symbol in symbols if symbol in points]
@@ -74,6 +82,10 @@ def test_date_gap_shorting_uses_paired_intraday_future_cash_payload(monkeypatch)
     assert result["top"]["gap"] == 12.0
     assert result["top"]["weighted_gap"] == 12000.0
     assert result["data"][1]["symbol"] == "A"
+    assert result["data"][1]["charges"] == 25.0
+    assert result["data"][1]["funding_cost"] == 10.0
+    assert result["data"][1]["net_profit"] == 8465.0
+    assert result["data"][1]["roi_pct"] == 5.6433333333
 
 
 def test_monthly_gap_shorting_selects_highest_paired_intraday_gap_value(monkeypatch):
@@ -100,6 +112,10 @@ def test_monthly_gap_shorting_selects_highest_paired_intraday_gap_value(monkeypa
     assert result["result"]["gap_high_timestamp"] == "2026-09-11T13:00:00"
     assert result["result"]["cash_price_at_gap_high"] == 2010.0
     assert result["result"]["future_price_at_gap_high"] == 2022.0
+    assert result["result"]["charges"] == 37.5
+    assert result["result"]["funding_cost"] == 12.25
+    assert result["result"]["net_profit"] == 11950.25
+    assert result["result"]["roi_pct"] == 4.7801
 
 
 def test_monthly_gap_top10_ranks_each_stock_by_its_month_high_gap_value(monkeypatch):
