@@ -269,6 +269,7 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
             fill = Fill(price=request.price, quantity=quantity)
             accounting_state, pnl = _accounting_after_fill(side="SELL", price=fill.price, quantity=quantity, current_quantity=0, current_average_price=0, current_realized_pnl=account.realized_pnl)
             active = Position(user_id=user_id, symbol=symbol, quantity=-quantity, average_price=accounting_state.average_price, stop_loss=None, target=None)
+            remaining = active
             db.add(active)
             account.virtual_balance = round(account.virtual_balance - margin, 8)
             order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity)
