@@ -52,13 +52,14 @@ def create_universal_run(
     execution_config=None,
     retain_history: bool = False,
     checkpoint_every_events: int | None = None,
+    adopt_created: bool = False,
 ) -> UniversalRunResources:
     """Compose ledger, writer, engine and immutable RunContext for one run."""
     if spec.initial_capital is None:
         raise ValueError("Universal durable runs require spec.initial_capital")
     ledger = create_universal_ledger(ledger_path)
     try:
-        writer = BacktestRunWriter(ledger, spec, resume=resume)
+        writer = BacktestRunWriter(ledger, spec, resume=resume, adopt_created=adopt_created)
         engine = UniversalEventBacktestEngine(
             float(spec.initial_capital),
             risk_config=risk_config,
@@ -129,6 +130,7 @@ class UniversalBacktestWorker:
             execution_config=execution_config,
             retain_history=retain_history,
             checkpoint_every_events=checkpoint_every_events,
+            adopt_created=not resume,
         )
         try:
             claimed = (
