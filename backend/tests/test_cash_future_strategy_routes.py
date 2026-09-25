@@ -239,3 +239,37 @@ def test_strategy_run_persists_provenance_for_direct_points(monkeypatch, tmp_pat
         assert len(metadata["metadata"]["strategy_config_hash"]) == 64
     finally:
         ledger.close()
+
+
+
+def test_strategy_run_route_honors_backdate_start_and_end_dates():
+    day1 = datetime(2026, 9, 1, 10, 0)
+    day2 = datetime(2026, 9, 2, 10, 0)
+    day3 = datetime(2026, 9, 3, 10, 0)
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "gap_threshold",
+            "strategy_version": "1",
+            "start_date": "2026-09-02",
+            "end_date": "2026-09-02",
+            "initial_capital": 10_000_000,
+            "target": 5.0,
+            "points": [
+                payload(gap=10, timestamp=day1),
+                payload(gap=10, timestamp=day2),
+                payload(gap=4, timestamp=day2 + timedelta(hours=1)),
+                payload(gap=1, timestamp=day3),
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["signal_count"] == 2
+    assert body["trade_count"] == 1
+    assert body["net_profit"] == 600.0
+    assert [item["timestamp"] for item in body["signals"]] == [
+        day2.isoformat(),
+        (day2 + timedelta(hours=1)).isoformat(),
+    ]
