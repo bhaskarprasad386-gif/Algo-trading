@@ -56,8 +56,8 @@ def test_open_position_result_exposes_executable_liquidation_value():
     config = BacktestConfig(initial_capital=1000.0, transaction_cost_rate=0.01)
     engine = BacktestEngine(config)
     events = [
-        SimpleNamespace(timestamp_ns=1, sequence=0, source="test", instrument="X", timeframe="tick", payload={"price": 100}),
-        SimpleNamespace(timestamp_ns=2, sequence=0, source="test", instrument="X", timeframe="tick", payload={"price": 110}),
+        HistoricalRecord("test", "X", "tick", 1, {"price": 100}, 0),
+        HistoricalRecord("test", "X", "tick", 2, {"price": 110}, 0),
     ]
     result = engine.run_events(events, lambda c: EventSignal("BUY"))
     assert result.has_open_trade is True
