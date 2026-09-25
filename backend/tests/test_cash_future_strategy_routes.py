@@ -62,6 +62,30 @@ def test_strategy_run_route_executes_historical_buy_sell():
     assert body["blocked_entry_count"] == 0
 
 
+def test_strategy_run_route_exposes_unrealized_equity_separately_from_final_capital():
+    start = datetime(2026, 9, 2, 10, 0)
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "gap_threshold",
+            "strategy_version": "1",
+            "start_date": start.date().isoformat(),
+            "end_date": start.date().isoformat(),
+            "initial_capital": 10_000_000,
+            "points": [payload(gap=10, timestamp=start)],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["net_profit"] == 0.0
+    assert body["final_capital"] == 10_000_000.0
+    assert body["final_available_capital"] == 9_999_000.0
+    assert body["final_reserved_margin"] == 1_000.0
+    assert body["equity_curve"][-1]["unrealized_pnl"] == 0.0
+    assert body["analysis"]["final_equity"] == 10_000_000.0
+
+
 def test_strategy_run_route_rejects_unknown_strategy():
     now = datetime(2026, 9, 2, 10, 0)
     response = client().post(
