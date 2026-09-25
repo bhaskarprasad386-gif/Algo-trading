@@ -1,5 +1,5 @@
 from app.backtesting.engine import EventSignal
-from app.backtesting.historical_catalog import HistoricalRecord
+from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 import pytest
 
 from app.backtesting.universal_engine import UniversalEventBacktestEngine
