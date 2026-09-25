@@ -840,7 +840,7 @@ def test_universal_engine_reconciles_source_signal_fill_cost_pnl_and_ledger(tmp_
     assert result.final_equity == pytest.approx(100_003.9)
 
     fills = ledger.fills("reconciliation", limit=10)
-    assert [(fill.timestamp_ns, fill.price, fill.fee) for fill in fills] == [
+    assert [(fill["timestamp_ns"], fill["price"], fill["fee"]) for fill in fills] == [
         (1, pytest.approx(101.0), pytest.approx(2.0)),
         (2, pytest.approx(108.9), pytest.approx(2.0)),
     ]
