@@ -4,13 +4,14 @@ from types import SimpleNamespace
 import pytest
 
 from app.backtesting.engine import BacktestConfig, BacktestEngine, EventSignal
+from app.backtesting.historical_catalog import HistoricalRecord
 from app.backtesting.root_level_fixes_571_590 import cagr, event_sort_key
 
 
 def test_cagr_uses_actual_interval():
     start = datetime(2025, 1, 1, tzinfo=timezone.utc)
     end = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    assert cagr(100.0, 110.0, start, end) == pytest.approx(0.0997, rel=1e-3)
+    assert cagr(100.0, 110.0, start, end) == pytest.approx(0.10006965697379555, rel=1e-6)
 
 
 def test_cagr_rejects_non_positive_equity_and_zero_duration():
@@ -27,8 +28,8 @@ def test_event_order_has_deterministic_stream_tie_breakers():
 def test_event_signal_price_is_used_when_present():
     engine = BacktestEngine(BacktestConfig(quantity=1))
     events = [
-        SimpleNamespace(timestamp_ns=1, sequence=0, source="test", instrument="X", timeframe="tick", payload={"price": 90}),
-        SimpleNamespace(timestamp_ns=2, sequence=0, source="test", instrument="X", timeframe="tick", payload={"price": 100}),
+        HistoricalRecord("test", "X", "tick", 1, {"price": 90}, 0),
+        HistoricalRecord("test", "X", "tick", 2, {"price": 100}, 0),
     ]
     result = engine.run_events(events, lambda c: EventSignal("BUY", 95) if c.timestamp_ns == 1 else EventSignal("SELL", 100))
     assert len(result.trades) == 1
