@@ -450,6 +450,27 @@ def test_universal_fill_count_is_restored_from_checkpoint_state() -> None:
     assert restored._fill_count == 7
 
 
+def test_universal_engine_builds_strategy_context_snapshot_once_per_event(monkeypatch) -> None:
+    events = [_event(1, "AAA", 100.0, 1), _event(2, "AAA", 101.0, 2)]
+    calls = {"snapshot": 0}
+    original = Portfolio.snapshot
+
+    def counted(self, marks):
+        calls["snapshot"] += 1
+        return original(self, marks)
+
+    monkeypatch.setattr(Portfolio, "snapshot", counted)
+
+    UniversalEventBacktestEngine(100_000.0).run(
+        events,
+        lambda ctx: EventSignal("HOLD"),
+    )
+
+    # One strategy-context snapshot plus one replay-point snapshot per event,
+    # rather than two identical context snapshots per event.
+    assert calls["snapshot"] == len(events) * 2
+
+
 def test_universal_durable_engine_rejects_capital_mismatch(tmp_path) -> None:
     from app.backtesting.backtest_resolution import BacktestResolution
     from app.backtesting.backtest_result import BacktestRunWriter
