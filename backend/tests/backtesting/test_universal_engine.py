@@ -943,4 +943,4 @@ def test_universal_engine_executes_option_contract_payload_end_to_end() -> None:
     assert result.realized_pnl == pytest.approx(5.0)
     assert result.final_equity == pytest.approx(100_005.0)
     assert result.snapshots[-1].positions == ()
-\n
+
