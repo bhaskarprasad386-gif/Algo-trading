@@ -210,13 +210,15 @@ def test_rollover_then_new_entry_handles_existing_portfolio_margin_breach():
     liquidation = [trade for trade in result.trades if trade["exit_reason"] == "margin_breach"]
     assert len(rollover) == 1
     assert rollover[0]["contract_month"] == "SEP"
-    # The portfolio breaches its marked-margin requirement when the
-    # first AAA/SEP position is added, so that position and BBB are
-    # liquidated before the later SEP -> OCT rollover boundary.
+    # The maintenance breach liquidates the two positions that are open at
+    # that point. The later signal opens AAA/SEP again, then the next contract
+    # observation performs the normal SEP -> OCT rollover, leaving that new
+    # OCT position open at end of data.
     assert len(liquidation) == 2
     assert {(trade["symbol"], trade["contract_month"]) for trade in liquidation} == {("AAA", "SEP"), ("BBB", "SEP")}
-    assert result.open_position_count == 0
-    assert result.final_reserved_margin == 0.0
+    assert result.open_position_count == 1
+    assert result.final_reserved_margin == 4000.0
+    assert [(trade["symbol"], trade["contract_month"]) for trade in rollover] == [("AAA", "SEP")]
 
 def test_end_of_data_marks_open_position_without_forced_liquidation():
     start = datetime(2026, 9, 2, 10, 0)
