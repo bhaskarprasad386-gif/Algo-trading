@@ -71,6 +71,13 @@ def _build_builder_strategy(request:StrategyRunRequest):
         if stop is not None and spread_profit_per_share<=-stop: state["entry_gap"]=None; return "SELL"
         if effective_gap<=0: state["entry_gap"]=None; return "SELL"
         return "HOLD"
+    def checkpoint_state():
+        return {"entry_gap": state["entry_gap"]}
+    def restore_checkpoint_state(saved):
+        value = saved.get("entry_gap")
+        state["entry_gap"] = None if value is None else float(value)
+    strategy.checkpoint_state = checkpoint_state
+    strategy.restore_checkpoint_state = restore_checkpoint_state
     return strategy
 
 def _scale_points(points,lots:int):
