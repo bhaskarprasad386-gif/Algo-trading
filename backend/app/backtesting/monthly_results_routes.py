@@ -125,7 +125,7 @@ def date_gap_ranking(trading_date: date = Query(...), mode: str = Query("shortin
 
 @router.get("/monthly-gap-top10")
 def monthly_gap_top10(year: int = Query(..., ge=2000, le=2100), month: int = Query(..., ge=1, le=12), instrument_type: str = Query("STOCK"), contract_month: str | None = Query(None), db: Session = Depends(get_db)):
-    """Rank monthly opportunities by modeled net profit, not weighted gap."""
+    """Rank monthly Cash-Future opportunities by maximum executable gap × historical lot."""
     start = date(year, month, 1)
     end = date(year, month, monthrange(year, month)[1])
     rows = _daily_rows(db, start, end, instrument_type=instrument_type)
@@ -143,18 +143,18 @@ def monthly_gap_top10(year: int = Query(..., ge=2000, le=2100), month: int = Que
         day_symbols = sorted(day_db_symbols | set(downloaded_symbols))
         for item in _cash_future_shorting_payloads(trading_day, day_symbols, contract_month=contract_month, mode="CURRENT"):
             current = monthly_highs.get(item["symbol"])
-            item_key = (float(item.get("net_profit", 0.0)), float(item.get("roi_pct", 0.0)), float(item["weighted_gap"]), item["gap_high_timestamp"])
-            current_key = None if current is None else (float(current.get("net_profit", 0.0)), float(current.get("roi_pct", 0.0)), float(current["weighted_gap"]), current["gap_high_timestamp"])
+            item_key = (float(item["weighted_gap"]), item["gap_high_timestamp"], item["symbol"])
+            current_key = None if current is None else (float(current["weighted_gap"]), current["gap_high_timestamp"], current["symbol"])
             if current_key is None or item_key > current_key:
                 monthly_highs[item["symbol"]] = item
     if not monthly_highs:
         raise HTTPException(status_code=404, detail="no historical Cash-Future gap rows found for the requested month")
-    ranked = sorted(monthly_highs.values(), key=lambda item: (float(item.get("net_profit", 0.0)), float(item.get("roi_pct", 0.0)), float(item["weighted_gap"]), item["symbol"]), reverse=True)[:10]
+    ranked = sorted(monthly_highs.values(), key=lambda item: (float(item["weighted_gap"]), item["gap_high_timestamp"], item["symbol"]), reverse=True)[:10]
     data = []
     for rank, item in enumerate(ranked, start=1):
         timestamp = item.get("gap_high_timestamp")
-        data.append({"rank":rank,"ranking_metric":"net_profit","symbol":item["symbol"],"lot_size":item["lot_size"],"month_gap_high":item["gap"],"gap_value":item["weighted_gap"],"gap_high_date":item["trading_date"],"gap_high_time":timestamp.split("T",1)[1] if timestamp and "T" in timestamp else timestamp,"gap_high_timestamp":_market_timestamp_iso(timestamp),"cash_price_at_gap_high":item["cash_price_at_gap_high"],"future_price_at_gap_high":item["future_price_at_gap_high"],"contract_month":item["contract_month"],"instrument_key":item["instrument_key"],"expiry_date":item.get("expiry_date"),"is_expiry_day":item.get("is_expiry_day",False),"margin_required":item.get("margin_required",0.0),"charges":item.get("charges",0.0),"funding_cost":item.get("funding_cost",0.0),"net_profit":item.get("net_profit",0.0),"roi_pct":item.get("roi_pct",0.0)})
-    return {"status":"success","month":f"{year:04d}-{month:02d}","mode":"shorting","instrument_type":instrument_type.upper(),"count":len(data),"ranking_metric":"net_profit","data":data}
+        data.append({"rank":rank,"ranking_metric":"weighted_gap","symbol":item["symbol"],"lot_size":item["lot_size"],"month_gap_high":item["gap"],"gap_value":item["weighted_gap"],"gap_high_date":item["trading_date"],"gap_high_time":timestamp.split("T",1)[1] if timestamp and "T" in timestamp else timestamp,"gap_high_timestamp":_market_timestamp_iso(timestamp),"cash_price_at_gap_high":item["cash_price_at_gap_high"],"future_price_at_gap_high":item["future_price_at_gap_high"],"contract_month":item["contract_month"],"instrument_key":item["instrument_key"],"expiry_date":item.get("expiry_date"),"is_expiry_day":item.get("is_expiry_day",False),"margin_required":item.get("margin_required",0.0),"charges":item.get("charges",0.0),"funding_cost":item.get("funding_cost",0.0),"net_profit":item.get("net_profit",0.0),"roi_pct":item.get("roi_pct",0.0)})
+    return {"status":"success","month":f"{year:04d}-{month:02d}","mode":"shorting","instrument_type":instrument_type.upper(),"count":len(data),"ranking_metric":"weighted_gap","data":data}
 
 
 @router.get("/prior-gap")
