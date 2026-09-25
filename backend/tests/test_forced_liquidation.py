@@ -68,7 +68,7 @@ def test_multiple_liquidations_are_atomic_on_validation_failure() -> None:
         risk_config=RiskConfig(initial_margin_rate=0.50, maintenance_margin_rate=0.40),
     )
     portfolio.apply_fill(SimFill("e1", "A", ExecutionSide.SELL, 50, 10.0, 1))
-    portfolio.apply_fill(SimFill("e2", "B", ExecutionSide.SELL, 50, 10.0, 2))
+    portfolio.apply_fill(SimFill("e2", "B", ExecutionSide.SELL, 50, 10.0, 2), {"A": 10.0, "B": 10.0})
     before = portfolio.export_state()
     with pytest.raises(RiskViolation):
         portfolio.apply_fills_atomic(
