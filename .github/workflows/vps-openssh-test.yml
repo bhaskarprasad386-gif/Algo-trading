@@ -14,7 +14,7 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           set -euo pipefail
-          printf '%s\n' "$VPS_KEY" > /tmp/vps_key
+          printf '%s' "$VPS_KEY" | base64 --decode > /tmp/vps_key
           chmod 600 /tmp/vps_key
           ssh-keygen -y -f /tmp/vps_key > /tmp/vps_pub
           echo "KEY_PARSE_OK"
