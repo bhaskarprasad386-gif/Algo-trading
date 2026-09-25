@@ -44,9 +44,13 @@ class BacktestRunWriter:
             self._last_event_sequence = self.ledger.latest_event_sequence(spec.run_id)
         else:
             if adopt_created:
-                row = self.ledger.run(spec.run_id)
-                if row["status"] != "CREATED":
-                    raise ValueError("adopt_created requires a CREATED run")
+                try:
+                    row = self.ledger.run(spec.run_id)
+                except KeyError:
+                    self.ledger.create_run(spec.run_id, spec.provenance, created_at_ns=created_at_ns)
+                else:
+                    if row["status"] != "CREATED":
+                        raise ValueError("adopt_created requires a CREATED run")
                 if self.ledger.run_provenance(spec.run_id) != spec.provenance:
                     raise ValueError("adopt_created provenance does not match existing run")
                 self._last_event_sequence = self.ledger.latest_event_sequence(spec.run_id)
