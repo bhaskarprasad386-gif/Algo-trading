@@ -81,7 +81,7 @@ def test_strategy_run_route_exposes_unrealized_equity_separately_from_final_capi
     assert body["net_profit"] == 0.0
     assert body["final_capital"] == 10_000_000.0
     assert body["final_available_capital"] == 9_990_000.0
-    assert body["final_reserved_margin"] == 1_000.0
+    assert body["final_reserved_margin"] == 10_000.0
     assert body["equity_curve"][-1]["unrealized_pnl"] == 0.0
     assert body["analysis"]["final_equity"] == 10_000_000.0
 
