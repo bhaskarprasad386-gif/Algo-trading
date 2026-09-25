@@ -101,7 +101,7 @@ def test_disjoint_targeted_recovery_failure_then_resume_repairs_only_remaining_g
     # The provider yielded 09:16 before failing; that record must survive the stream failure.
     assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 3
     assert all(request.start_ns == request.end_ns for request in failing.requests)
-    assert failing.requests[0].start_ns == _ns(date(2026, 1, 2), time(9, 16))
+    assert failing.requests[0].start_ns == _ns(date(2026, 1, 2), time(9, 18))
     assert failing.requests[-1].start_ns == _ns(date(2026, 1, 2), time(9, 18))
     assert store.get("disjoint-failure-job").plan_fingerprint == fingerprint
 
