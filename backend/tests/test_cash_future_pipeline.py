@@ -164,9 +164,10 @@ def test_pipeline_reads_only_requested_history_range(tmp_path):
     catalog.ingest([
         HistoricalRecord("test", "SPOT", "1s", TEST_T1 - 10_000_000_000, {"close": 99}),
         HistoricalRecord("test", "SPOT", "1s", TEST_T1, {"close": 100}),
+        HistoricalRecord("test", "SPOT", "1s", TEST_T2, {"close": 103}),
         HistoricalRecord("test", "NIFTY-CURRENT", "1s", TEST_T1, {"close": 105}),
-        HistoricalRecord("test", "NIFTY-CURRENT", "1s", TEST_T2 + 10_000_000_000, {"close": 104}),
         HistoricalRecord("test", "NIFTY-CURRENT", "1s", TEST_T2, {"close": 101}),
+        HistoricalRecord("test", "NIFTY-CURRENT", "1s", TEST_T2 + 10_000_000_000, {"close": 104}),
     ])
     pipeline = CashFutureBacktestPipeline(
         contract_catalog=FakeContractCatalog(),
@@ -189,5 +190,6 @@ def test_pipeline_reads_only_requested_history_range(tmp_path):
         entry_timestamp_ns=TEST_T1,
         exit_timestamp_ns=TEST_T2,
     )
-    assert len(result.bars) == 1
+    assert len(result.bars) == 2
+    assert [bar.timestamp_ns for bar in result.bars] == [TEST_T1, TEST_T2]
     catalog.close()
