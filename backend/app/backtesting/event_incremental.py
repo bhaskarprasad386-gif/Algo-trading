@@ -56,7 +56,7 @@ def run_events_incremental(
     statistics_accumulator = StreamingStatisticsAccumulator(engine_config.initial_capital)
     first_timestamp = last_timestamp = last_price = None
     previous_key = None
-    seen = set()
+    previous_identity = None
     previous_equity = engine_config.initial_capital
     previous_timestamp = None
 
@@ -64,13 +64,13 @@ def run_events_incremental(
         if not isinstance(record.timestamp_ns, int) or isinstance(record.timestamp_ns, bool) or record.timestamp_ns < 0:
             raise ValueError("event timestamp_ns must be a non-negative integer")
         identity = record.identity()
-        if identity in seen:
+        if previous_key is not None and identity == previous_identity:
             raise ValueError("duplicate event identity")
         key = _event_order_key(record)
         if previous_key is not None and key <= previous_key:
             raise ValueError("events must be strictly ordered by timestamp, sequence, and stream identity")
+        previous_identity = identity
         previous_key = key
-        seen.add(identity)
         first_timestamp = record.timestamp_ns if first_timestamp is None else first_timestamp
         last_timestamp = record.timestamp_ns
         context = EventContext(record.timestamp_ns, record.sequence, record.source, record.instrument, record.payload, record)
