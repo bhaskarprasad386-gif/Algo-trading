@@ -46,7 +46,9 @@ class BacktestRunWriter:
             if adopt_created:
                 try:
                     row = self.ledger.run(spec.run_id)
-                except KeyError:
+                except ValueError as exc:
+                    if str(exc) != f"unknown run: {spec.run_id}":
+                        raise
                     self.ledger.create_run(spec.run_id, spec.provenance, created_at_ns=created_at_ns)
                 else:
                     if row["status"] != "CREATED":
