@@ -976,5 +976,5 @@ class UniversalEventBacktestEngine:
             cagr=stats.cagr,
             snapshots=tuple(snapshots),
             equity_curve=tuple(equity_curve),
-            fill_count=len(self.portfolio.trades),
+            fill_count=self._fill_count,
         )
