@@ -94,7 +94,8 @@ def run_resumable_events(
         with ledger.transaction():
             if trades:
                 ledger.append_next(run_id, trades)
-                persisted_trades.extend(trades)
+                if not ledger_has_trades:
+                    persisted_trades.extend(trades)
             ledger.save_checkpoint(run_id, _cursor(chunk[-1]), ledger.count(run_id))
         processed_any = True
 
