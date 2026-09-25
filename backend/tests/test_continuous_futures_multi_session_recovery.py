@@ -30,6 +30,7 @@ class MultiSessionPartialSource:
         if request.start_ns == day2_start:
             yield HistoricalRecord(request.source, request.instrument, request.timeframe, request.start_ns, {"close": 100.0})
             yield HistoricalRecord(request.source, request.instrument, request.timeframe, request.start_ns + 2 * INTERVAL_NS, {"close": 100.0})
+            yield HistoricalRecord(request.source, request.instrument, request.timeframe, request.start_ns + 3 * INTERVAL_NS, {"close": 100.0})
             return
         if request.start_ns == _ns(date(2026, 1, 6), time(9, 16)):
             self.targeted_failures += 1
