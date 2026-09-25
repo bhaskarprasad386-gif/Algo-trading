@@ -49,10 +49,15 @@ class CashFutureBacktestPipeline:
         return int(value.timestamp()*1_000_000_000)
     def _resolve(self,*,exchange:str,underlying:str,as_of:datetime,mode:str): return self.contract_catalog.resolve(exchange=exchange,underlying=underlying,as_of=as_of.astimezone(timezone.utc).date(),mode=mode)
     def _records(self,*,source:str,instrument:str,timeframe:str,start_ns:int,end_ns:int)->tuple:
-        records=self.historical_catalog.records(source=source,instrument=instrument,timeframe=timeframe)
-        filtered=tuple(r for r in records if start_ns<=r.timestamp_ns<=end_ns)
-        if not filtered: raise LookupError(f"no historical records for {instrument} ({timeframe}) in requested range")
-        return filtered
+        records=tuple(self.historical_catalog.iter_records(
+            source=source,
+            instrument=instrument,
+            timeframe=timeframe,
+            start_ns=start_ns,
+            end_ns=end_ns,
+        ))
+        if not records: raise LookupError(f"no historical records for {instrument} ({timeframe}) in requested range")
+        return records
     def _sync_one(self,spot_records:tuple,future_records:tuple)->tuple[CashFutureBar,...]:
         spot={}; future={}
         for r in spot_records:
