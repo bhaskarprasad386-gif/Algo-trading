@@ -34,7 +34,7 @@ def test_resumable_runner_preserves_position_across_chunk_boundary(tmp_path):
     assert result.net_pnl == 10.0
     assert result.trades[0].entry_price == 100.0
     assert result.trades[0].exit_price == 110.0
-    assert ledger.checkpoint("run-1")["cursor"] == "2:2"
+    assert ledger.checkpoint("run-1")["cursor"] == "2:2:test:TEST:tick"
     ledger.close()
 
 
@@ -52,7 +52,7 @@ def test_resumable_runner_accepts_one_pass_generator(tmp_path):
 
     assert ledger.count("generator-run") == 1
     assert result.net_pnl == 10.0
-    assert ledger.checkpoint("generator-run")["cursor"] == "2:2"
+    assert ledger.checkpoint("generator-run")["cursor"] == "2:2:test:TEST:tick"
     ledger.close()
 
 
@@ -62,7 +62,7 @@ def test_resumable_runner_reconstructs_open_position_after_restart(tmp_path):
 
     # Simulate an interruption immediately after the BUY event. No trade has
     # closed yet, but the checkpoint identifies the last processed event.
-    ledger.save_checkpoint("run-2", "1:1", 0)
+    ledger.save_checkpoint("run-2", "1:1:test:TEST:tick", 0)
 
     result = run_resumable_events(
         BacktestEngine(), events, _strategy,
@@ -72,7 +72,7 @@ def test_resumable_runner_reconstructs_open_position_after_restart(tmp_path):
     assert ledger.count("run-2") == 1
     assert ledger.net_pnl("run-2") == 10.0
     assert result.net_pnl == 10.0
-    assert ledger.checkpoint("run-2")["cursor"] == "2:2"
+    assert ledger.checkpoint("run-2")["cursor"] == "2:2:test:TEST:tick"
 
     # A completed run is restart-safe and must not duplicate the trade.
     rerun = run_resumable_events(
@@ -119,5 +119,5 @@ def test_resumable_runner_rolls_back_trade_when_checkpoint_fails(tmp_path, monke
     )
     assert result.net_pnl == 10.0
     assert ledger.count("atomic-run") == 1
-    assert ledger.checkpoint("atomic-run")["cursor"] == "2:2"
+    assert ledger.checkpoint("atomic-run")["cursor"] == "2:2:test:TEST:tick"
     ledger.close()
