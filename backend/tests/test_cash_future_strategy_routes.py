@@ -3,8 +3,12 @@ from datetime import date, datetime, timedelta
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.backtesting.cash_future_strategy_routes import router
+from app.backtesting.cash_future_strategy_routes import (
+    _gap_threshold_implementation_hash,
+    router,
+)
 from app.backtesting.ledger import BacktestLedger, LedgerRecord
+from app.backtesting.provenance import provenance_hash
 from app.core.config import settings
 
 
@@ -273,3 +277,98 @@ def test_strategy_run_route_honors_backdate_start_and_end_dates():
         day2.isoformat(),
         (day2 + timedelta(hours=1)).isoformat(),
     ]
+
+def test_strategy_run_resume_route_continues_from_checkpoint_without_duplicates(monkeypatch, tmp_path):
+    ledger_db = str(tmp_path / "resume-api.db")
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", ledger_db)
+    start = datetime(2026, 9, 2, 10, 0)
+    points = [
+        payload(gap=10, timestamp=start),
+        payload(gap=8, timestamp=start + timedelta(hours=1)),
+        payload(gap=4, timestamp=start + timedelta(hours=2)),
+    ]
+    fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": points})
+    config = CashFutureStrategyConfig(
+        initial_capital=10_000_000,
+        start_date=start.date(),
+        end_date=start.date(),
+        checkpoint_interval=2,
+    )
+    ledger = BacktestLedger(ledger_db)
+    try:
+        run_cash_future_strategy(
+            tuple(CashFutureHistoryPoint(**item) for item in points[:2]),
+            lambda current, history: "BUY" if current.gap > 0 else "HOLD",
+            strategy_id="gap_threshold",
+            strategy_version="1",
+            config=config,
+            ledger=ledger,
+            run_id="cash-future-resume-api",
+            strategy_hash=_gap_threshold_implementation_hash(),
+            strategy_config_hash=provenance_hash({
+                "cash_side": "BUY", "future_side": "SELL", "stop_loss": None, "target": 5.0
+            }),
+            data_source_fingerprint=fingerprint,
+        )
+    finally:
+        ledger.close()
+
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run/cash-future-resume-api/resume",
+        json={
+            "strategy_id": "gap_threshold",
+            "strategy_version": "1",
+            "start_date": start.date().isoformat(),
+            "end_date": start.date().isoformat(),
+            "initial_capital": 10_000_000,
+            "target": 5.0,
+            "checkpoint_interval": 2,
+            "points": points,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["signal_count"] == 2
+    assert body["trade_count"] == 1
+    assert body["net_profit"] == 600.0
+    assert len(body["signals"]) == 2
+    assert len(body["trades"]) == 1
+
+
+def test_strategy_run_resume_route_rejects_mismatched_data(monkeypatch, tmp_path):
+    ledger_db = str(tmp_path / "resume-mismatch.db")
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", ledger_db)
+    start = datetime(2026, 9, 2, 10, 0)
+    points = [payload(gap=10, timestamp=start), payload(gap=8, timestamp=start + timedelta(hours=1))]
+    fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": points})
+    ledger = BacktestLedger(ledger_db)
+    try:
+        run_cash_future_strategy(
+            tuple(CashFutureHistoryPoint(**item) for item in points),
+            lambda current, history: "NONE",
+            strategy_id="gap_threshold",
+            strategy_version="1",
+            config=CashFutureStrategyConfig(initial_capital=10_000_000, checkpoint_interval=1),
+            ledger=ledger,
+            run_id="resume-mismatch",
+            strategy_hash=_gap_threshold_implementation_hash(),
+            data_source_fingerprint=fingerprint,
+        )
+    finally:
+        ledger.close()
+
+    changed = [dict(item) for item in points]
+    changed[1]["gap"] = 7.0
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run/resume-mismatch/resume",
+        json={
+            "strategy_id": "gap_threshold",
+            "strategy_version": "1",
+            "initial_capital": 10_000_000,
+            "checkpoint_interval": 1,
+            "points": changed,
+        },
+    )
+    assert response.status_code == 422
+    assert "data source fingerprint" in response.json()["detail"]
