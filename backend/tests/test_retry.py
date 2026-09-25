@@ -13,7 +13,7 @@ def test_retry_succeeds_before_exhaustion():
             raise RuntimeError("temporary")
         return "ok"
 
-    assert execute_with_retry(operation, RetryPolicy(max_attempts=2)) == "ok"
+    assert execute_with_retry(operation, RetryPolicy(max_attempts=2, retryable=True)) == "ok"
     assert calls == 2
 
 
@@ -25,7 +25,7 @@ def test_fallback_runs_after_primary_attempts_fail():
         calls += 1
         raise RuntimeError("primary down")
 
-    assert execute_with_retry(operation, RetryPolicy(max_attempts=2), lambda: "fallback") == "fallback"
+    assert execute_with_retry(operation, RetryPolicy(max_attempts=2, retryable=True), lambda: "fallback") == "fallback"
     assert calls == 2
 
 
