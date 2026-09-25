@@ -16,13 +16,16 @@ def _stored_identity_matches(metadata:Mapping[str,Any],config:CashFutureStrategy
     if mismatches: raise ValueError(f"unsafe Cash-Future resume: execution configuration mismatch: {mismatches}")
 
 
-def resume_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy:CashFutureStrategy,*,ledger,run_id:str,strategy_id:str,strategy_version:str="1",config:CashFutureStrategyConfig|None=None,strategy_hash:str|None=None,data_source_fingerprint:str|None=None)->CashFutureStrategyRun:
+def resume_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy:CashFutureStrategy,*,ledger,run_id:str,strategy_id:str,strategy_version:str="1",config:CashFutureStrategyConfig|None=None,strategy_hash:str|None=None,strategy_config_hash:str|None=None,data_source_fingerprint:str|None=None)->CashFutureStrategyRun:
     config=config or CashFutureStrategyConfig(); checkpoint_row=ledger.load_checkpoint(run_id)
     checkpoint=load_validated_cash_future_checkpoint(ledger,run_id=run_id,strategy_id=strategy_id,strategy_version=strategy_version,strategy_hash=strategy_hash,data_source_fingerprint=data_source_fingerprint)
     metadata=ledger.run_metadata(run_id) or {}; initial_capital=float(metadata.get("initial_capital",config.initial_capital))
     if not isfinite(initial_capital) or initial_capital<=0: raise ValueError("unsafe Cash-Future resume: stored initial_capital is invalid")
     if config.initial_capital!=initial_capital: raise ValueError(f"unsafe Cash-Future resume: initial_capital mismatch (stored={initial_capital!r}, requested={config.initial_capital!r})")
     _stored_identity_matches(metadata,config)
+    stored_strategy_config_hash=(metadata.get("metadata") or {}).get("strategy_config_hash")
+    if stored_strategy_config_hash != strategy_config_hash:
+        raise ValueError(f"unsafe Cash-Future resume: strategy configuration hash mismatch (stored={stored_strategy_config_hash!r}, requested={strategy_config_hash!r})")
     if checkpoint_row is None: raise ValueError("unsafe Cash-Future resume: checkpoint is required")
     checkpoint_time=datetime.fromisoformat(checkpoint.last_timestamp)
     if checkpoint.selected_contract and config.contract_month and checkpoint.selected_contract!=config.contract_month:
