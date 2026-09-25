@@ -50,17 +50,17 @@ def _payload(symbol, net_profit, weighted_gap, trading_day=date(2026, 1, 5)):
     }
 
 
-def test_monthly_top10_ranks_by_net_profit_not_weighted_gap(monkeypatch):
+def test_monthly_top10_ranks_by_weighted_gap(monkeypatch):
     rows = [{"trading_date": date(2026, 1, 5), "symbol": "A", "lot_size": 100}, {"trading_date": date(2026, 1, 5), "symbol": "B", "lot_size": 100}]
     payloads = [_payload("A", 1000.0, 9000.0), _payload("B", 2000.0, 1000.0)]
     monkeypatch.setattr(routes, "_downloaded_cash_future_symbols", lambda *args, **kwargs: [])
     monkeypatch.setattr(routes, "_cash_future_shorting_payloads", lambda *args, **kwargs: payloads)
     response = routes.monthly_gap_top10(2026, 1, "STOCK", None, _Db(rows))
-    assert response["ranking_metric"] == "net_profit"
-    assert response["data"][0]["symbol"] == "B"
+    assert response["ranking_metric"] == "weighted_gap"
+    assert response["data"][0]["symbol"] == "A"
     assert response["data"][0]["rank"] == 1
     assert [item["rank"] for item in response["data"]] == list(range(1, len(response["data"]) + 1))
-    assert response["data"][0]["net_profit"] == 2000.0
+    assert response["data"][0]["net_profit"] == 1000.0
 
 
 def test_monthly_top10_unions_partial_db_with_downloaded_catalog(monkeypatch):
