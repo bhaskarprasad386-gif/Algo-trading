@@ -332,10 +332,13 @@ class EventBacktestEngine:
                 self.portfolio.release_margin(order.order_id); self._reserved_margin.pop(order.order_id, None); self._open_orders.pop(order.order_id, None); self._dynamic_queue_ahead.pop(order.order_id, None); self._queue_lifecycles.pop(order.order_id, None)
             return ()
         filled_by_order: dict[str, int] = {}
-        for fill in fills: filled_by_order[fill.order_id] = filled_by_order.get(fill.order_id, 0) + fill.quantity
+        fills_by_order: dict[str, list[SimFill]] = {}
+        for fill in fills:
+            filled_by_order[fill.order_id] = filled_by_order.get(fill.order_id, 0) + fill.quantity
+            fills_by_order.setdefault(fill.order_id, []).append(fill)
         for order, _, _ in candidates:
             lifecycle = lifecycles[order.order_id]
-            for fill in (f for f in fills if f.order_id == order.order_id): lifecycle.apply_fill(fill); self._journal_lifecycle(lifecycle.state.events[-1]); self._journal_fill(fill)
+            for fill in fills_by_order.get(order.order_id, ()): lifecycle.apply_fill(fill); self._journal_lifecycle(lifecycle.state.events[-1]); self._journal_fill(fill)
             result = results.get(order.order_id)
             if not lifecycle.state.terminal and result is not None:
                 if order.time_in_force == TimeInForce.IOC: lifecycle.cancel(event.timestamp_ns, result.reason or "IOC residual cancelled"); self._journal_lifecycle(lifecycle.state.events[-1])
