@@ -153,3 +153,41 @@ def test_pipeline_does_not_allow_unknown_price_payload():
             default_lot_size=25, entry_timestamp_ns=TEST_T1,
             exit_timestamp_ns=TEST_T2,
         )
+
+
+def test_pipeline_reads_only_requested_history_range(tmp_path):
+    class RangeOnlyCatalog(HistoricalCatalog):
+        def records(self, **kwargs):
+            raise AssertionError("pipeline must use bounded iter_records")
+
+    catalog = RangeOnlyCatalog(tmp_path / "range.sqlite")
+    catalog.ingest([
+        HistoricalRecord("test", "SPOT", "1s", TEST_T1 - 10_000_000_000, {"close": 99}),
+        HistoricalRecord("test", "SPOT", "1s", TEST_T1, {"close": 100}),
+        HistoricalRecord("test", "NIFTY-CURRENT", "1s", TEST_T1, {"close": 105}),
+        HistoricalRecord("test", "NIFTY-CURRENT", "1s", TEST_T1 + 1_000_000_000, {"close": 104}),
+        HistoricalRecord("test", "NIFTY-CURRENT", "1s", TEST_T2, {"close": 101}),
+    ])
+    pipeline = CashFutureBacktestPipeline(
+        contract_catalog=FakeContractCatalog(),
+        historical_catalog=catalog,
+        readiness=FakeReadiness(),
+    )
+    result = pipeline.run(
+        exchange="NSE",
+        underlying="NIFTY",
+        start=datetime.fromtimestamp(TEST_T1 / 1_000_000_000, tz=timezone.utc),
+        end=datetime.fromtimestamp(TEST_T2 / 1_000_000_000, tz=timezone.utc),
+        mode="CURRENT",
+        source="test",
+        timeframe="1s",
+        interval_ns=1_000_000_000,
+        queue=object(),
+        spot_instrument="SPOT",
+        quantity=1,
+        default_lot_size=25,
+        entry_timestamp_ns=TEST_T1,
+        exit_timestamp_ns=TEST_T2,
+    )
+    assert len(result.bars) == 1
+    catalog.close()
