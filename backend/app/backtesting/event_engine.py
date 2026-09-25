@@ -376,7 +376,7 @@ class EventBacktestEngine:
                     observed = self._latest_events.get(order.instrument); reference = self._order_reference_price(order, observed) if observed is not None else None
                     if reference is None: continue
                     reservation = order.quantity * reference * self.portfolio.risk_config.initial_margin_rate
-                    self.portfolio.reserve_margin(order.order_id, reservation); self._reserved_margin[order.order_id] = reservation
+                    self.portfolio.reserve_margin(order.order_id, reservation, self._current_marks()); self._reserved_margin[order.order_id] = reservation
                 self._open_orders[order.order_id] = order; self._queue_lifecycles.setdefault(order.order_id, QueueLifecycleState(order.queue_ahead_quantity)); self._dynamic_queue_ahead[order.order_id] = self._queue_lifecycles[order.order_id].queue_ahead_quantity; effective_orders.append(order)
         except RiskViolation:
             self._risk_blocks += 1
