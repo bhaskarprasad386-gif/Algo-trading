@@ -41,8 +41,8 @@ def test_entry_cost_is_reserved_and_total_cost_is_not_double_charged():
     config = BacktestConfig(initial_capital=1000.0, transaction_cost_rate=0.01)
     engine = BacktestEngine(config)
     events = [
-        SimpleNamespace(timestamp_ns=1, sequence=0, source="test", instrument="X", timeframe="tick", payload={"price": 100}),
-        SimpleNamespace(timestamp_ns=2, sequence=0, source="test", instrument="X", timeframe="tick", payload={"price": 110}),
+        HistoricalRecord("test", "X", "tick", 1, {"price": 100}, 0),
+        HistoricalRecord("test", "X", "tick", 2, {"price": 110}, 0),
     ]
     result = engine.run_events(events, lambda c: EventSignal("BUY") if c.timestamp_ns == 1 else EventSignal("SELL"))
     assert result.trades[0].gross_pnl == pytest.approx(10.0)
