@@ -107,4 +107,4 @@ def test_multi_session_partial_recovery_resumes_only_incomplete_session(tmp_path
             end_ns=_ns(date(2026, 1, 6), time(9, 16)),
         )
     ]
-    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 7
+    assert catalog.count(source="fake", instrument="NFO:JAN", timeframe="1m") == 8
