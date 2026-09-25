@@ -485,6 +485,10 @@ class BacktestResultLedger:
         self._require_run(run_id)
         return int(self._db.execute("SELECT COUNT(*) FROM backtest_trades WHERE run_id=?", (run_id,)).fetchone()[0])
 
+    def count_equity(self, run_id: str) -> int:
+        self._require_run(run_id)
+        return int(self._db.execute("SELECT COUNT(*) FROM backtest_equity WHERE run_id=?", (run_id,)).fetchone()[0])
+
     def trade_net_pnl(self, run_id: str) -> float:
         self._require_run(run_id)
         row = self._db.execute("SELECT COALESCE(SUM(net_pnl), 0.0) FROM backtest_trades WHERE run_id=?", (run_id,)).fetchone()
