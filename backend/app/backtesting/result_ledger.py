@@ -324,7 +324,8 @@ class BacktestResultLedger:
 
     def claim_recoverable(self, run_id: str) -> bool:
         """Atomically claim an explicitly recoverable run for a new worker."""
-        self._require_run(run_id)
+        if self._db.execute("SELECT 1 FROM backtest_runs WHERE run_id=?", (run_id,)).fetchone() is None:
+            return False
         with self.transaction():
             cursor = self._db.execute(
                 "UPDATE backtest_runs SET status=? WHERE run_id=? AND status=?",
