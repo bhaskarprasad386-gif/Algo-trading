@@ -420,15 +420,15 @@ class BacktestResultLedger:
         inserted = 0
         with (self._db if self._transaction_depth == 0 else nullcontext()):
             for point in points:
-                existing = self._db.execute(
-                    """SELECT equity, realized_pnl, unrealized_pnl, drawdown
-                       FROM backtest_equity
-                       WHERE run_id=? AND timestamp_ns=?
-                       ORDER BY equity_id""",
-                    (run_id, point.timestamp_ns),
-                ).fetchall()
                 values = (point.equity, point.realized_pnl, point.unrealized_pnl, point.drawdown)
-                if any(tuple(row) == values for row in existing):
+                existing = self._db.execute(
+                    """SELECT 1 FROM backtest_equity
+                       WHERE run_id=? AND timestamp_ns=?
+                         AND equity=? AND realized_pnl=? AND unrealized_pnl=? AND drawdown=?
+                       LIMIT 1""",
+                    (run_id, point.timestamp_ns, *values),
+                ).fetchone()
+                if existing is not None:
                     continue
                 self._db.execute(
                     """INSERT INTO backtest_equity
