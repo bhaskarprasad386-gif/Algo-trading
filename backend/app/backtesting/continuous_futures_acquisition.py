@@ -132,7 +132,34 @@ def _runner(catalog: HistoricalCatalog, source: HistoricalSource, interval_ns: i
 
 
 def acquire_continuous_futures_history(catalog: HistoricalCatalog, source: HistoricalSource, windows: tuple[FNORolloverWindow, ...] | list[FNORolloverWindow], *, source_name: str, timeframe: str, interval_ns: int, calendar: TradingCalendar, max_request_ns: int, executor: ResumableHistoricalExecutor | None = None, job_store: HistoricalJobStore | None = None, job_id: str | None = None, run_id: str | None = None) -> ContinuousFuturesAcquisitionReport:
-    windows = tuple(windows); plan = build_continuous_futures_acquisition_plan(windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns, calendar=calendar, max_request_ns=max_request_ns); runner = _runner(catalog, source, interval_ns, executor); gap_aware_source = _MissingRangeSource(catalog, source, interval_ns); should_skip = lambda request: _complete(catalog, request, interval_ns); should_accept = lambda request, result: _complete(catalog, request, interval_ns)
+    windows = tuple(windows)
+    if job_store is not None and job_id and run_id:
+        try:
+            existing = job_store.get(job_id)
+        except KeyError:
+            existing = None
+        if existing is not None:
+            if existing.run_id != run_id:
+                raise ValueError("existing historical job does not match run or plan")
+            persisted = job_store.plan_metadata(job_id)
+            plan = _plan_from_metadata(persisted) if persisted is not None else build_continuous_futures_acquisition_plan(
+                windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns,
+                calendar=calendar, max_request_ns=max_request_ns
+            )
+        else:
+            plan = build_continuous_futures_acquisition_plan(
+                windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns,
+                calendar=calendar, max_request_ns=max_request_ns
+            )
+    else:
+        plan = build_continuous_futures_acquisition_plan(
+            windows, source=source_name, timeframe=timeframe, interval_ns=interval_ns,
+            calendar=calendar, max_request_ns=max_request_ns
+        )
+    runner = _runner(catalog, source, interval_ns, executor)
+    gap_aware_source = _MissingRangeSource(catalog, source, interval_ns)
+    should_skip = lambda request: _complete(catalog, request, interval_ns)
+    should_accept = lambda request, result: _complete(catalog, request, interval_ns)
     if job_store is None:
         if job_id is not None or run_id is not None: raise ValueError("job_id and run_id require job_store")
         execution = runner.run(gap_aware_source, plan, should_skip=should_skip, should_accept=should_accept)
