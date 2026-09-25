@@ -144,6 +144,7 @@ def strategy_run_resume(run_id: str, request: StrategyRunRequest):
         points = _scale_points(points, request.cash_lots)
         ledger = BacktestLedger(settings.BACKTEST_LEDGER_DB)
         strategy_hash = _gap_threshold_implementation_hash() if request.strategy_id == "gap_threshold" else None
+        strategy_config_hash = provenance_hash({"cash_side": request.cash_side, "future_side": request.future_side, "stop_loss": request.stop_loss, "target": request.target})
         config = CashFutureStrategyConfig(
             initial_capital=request.initial_capital, execution_model=request.execution_model,
             charges_per_trade=request.charges_per_trade, funding_cost_per_trade=request.funding_cost_per_trade,
@@ -154,7 +155,7 @@ def strategy_run_resume(run_id: str, request: StrategyRunRequest):
         result = resume_cash_future_strategy(
             points, strategy, ledger=ledger, run_id=run_id, strategy_id=request.strategy_id,
             strategy_version=request.strategy_version, config=config, strategy_hash=strategy_hash,
-            data_source_fingerprint=data_source_fingerprint,
+            strategy_config_hash=strategy_config_hash, data_source_fingerprint=data_source_fingerprint,
         )
         payload = _serialise_run(ledger, run_id)
         report = build_cash_future_report(result.initial_capital, payload["trades"], payload["equity_curve"])
