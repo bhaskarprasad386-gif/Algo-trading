@@ -165,7 +165,7 @@ def test_pipeline_reads_only_requested_history_range(tmp_path):
         HistoricalRecord("test", "SPOT", "1s", TEST_T1 - 10_000_000_000, {"close": 99}),
         HistoricalRecord("test", "SPOT", "1s", TEST_T1, {"close": 100}),
         HistoricalRecord("test", "NIFTY-CURRENT", "1s", TEST_T1, {"close": 105}),
-        HistoricalRecord("test", "NIFTY-CURRENT", "1s", TEST_T1 + 1_000_000_000, {"close": 104}),
+        HistoricalRecord("test", "NIFTY-CURRENT", "1s", TEST_T2 + 10_000_000_000, {"close": 104}),
         HistoricalRecord("test", "NIFTY-CURRENT", "1s", TEST_T2, {"close": 101}),
     ])
     pipeline = CashFutureBacktestPipeline(
