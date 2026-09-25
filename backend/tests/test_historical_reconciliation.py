@@ -48,7 +48,7 @@ def test_durable_resume_reopens_completed_chunk_when_catalog_data_is_missing():
 
     catalog._db.execute(
         "DELETE FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? AND timestamp_ns=?",
-        ("fake", "NFO:JAN", "1m", _ns(date(2026, 1, 2), time(9, 16))),
+        ("fake", "NFO:JAN", "1m", calendar.session_for(date(2026, 1, 2)).start_ns + INTERVAL_NS),
     )
     catalog._db.commit()
 
