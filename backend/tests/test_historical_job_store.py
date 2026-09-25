@@ -23,7 +23,7 @@ def test_job_store_persists_chunk_progress_and_resume_indices(tmp_path):
     assert job.state == "progress"
     assert job.completed_chunks == 1
     assert job.skipped_chunks == 0
-    assert resumed.pending_indices("job-1") == (1, 2)
+    assert store.pending_indices("job-1") == (1, 2)
     assert resumed.chunk_state("job-1", 1) == ("recoverable", 1, "provider timeout")
 
 
@@ -78,7 +78,7 @@ def test_recover_running_chunks_after_worker_crash(tmp_path):
 
     resumed = HistoricalJobStore(path)
     assert resumed.recover_running_chunks("job-1") == (0, 1)
-    assert resumed.pending_indices("job-1") == (0, 1, 2)
+    assert store.pending_indices("job-1") == (0, 1, 2)
     assert resumed.chunk_state("job-1", 0) == (
         "recoverable", 1, "recovered after interrupted run"
     )
