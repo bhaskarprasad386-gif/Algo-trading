@@ -138,6 +138,32 @@ class ContractMasterCatalog:
             AND instrument_type=? AND expiry>=? ORDER BY expiry, token, symbol""", (snapshot, exchange, underlying, instrument_type, as_of.isoformat())).fetchall()
         return tuple(ContractRecord(r[0], r[1], r[2], date.fromisoformat(r[3]), r[4], r[5], int(r[6]), date.fromisoformat(snapshot), None if r[7] is None else float(r[7])) for r in rows)
 
+    def available_underlyings(self, *, as_of: date, exchanges: tuple[str, ...] = ("NFO", "MCX"), instrument_types: tuple[str, ...] = ("INDEX_FUTURE", "STOCK_FUTURE", "COMMODITY_FUTURE")) -> tuple[ContractRecord, ...]:
+        """Return active point-in-time futures grouped by underlying, preserving contract identity."""
+        row = self._db.execute(
+            "SELECT snapshot_date FROM contract_master_snapshots WHERE snapshot_date<=? ORDER BY snapshot_date DESC LIMIT 1",
+            (as_of.isoformat(),),
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"no historical contract-master snapshot for {as_of.isoformat()}")
+        snapshot = row[0]
+        placeholders_ex = ",".join("?" for _ in exchanges)
+        placeholders_ty = ",".join("?" for _ in instrument_types)
+        rows = self._db.execute(
+            f"""SELECT exchange,symbol,token,expiry,instrument_type,underlying,lot_size,tick_size
+                FROM derivative_contracts
+                WHERE snapshot_date=? AND exchange IN ({placeholders_ex})
+                  AND instrument_type IN ({placeholders_ty}) AND expiry>=?
+                ORDER BY CASE instrument_type WHEN 'INDEX_FUTURE' THEN 0 WHEN 'STOCK_FUTURE' THEN 1 WHEN 'COMMODITY_FUTURE' THEN 2 ELSE 9 END,
+                         underlying, expiry, token, symbol""",
+            (snapshot, *exchanges, *instrument_types, as_of.isoformat()),
+        ).fetchall()
+        return tuple(
+            ContractRecord(r[0], r[1], r[2], date.fromisoformat(r[3]), r[4], r[5], int(r[6]),
+                           date.fromisoformat(snapshot), None if r[7] is None else float(r[7]))
+            for r in rows
+        )
+
     def resolve(self, *, exchange: str, underlying: str, as_of: date, mode: str, max_snapshot_age_days: int | None = None) -> ContractRecord:
         if not isinstance(mode, str):
             raise ValueError("mode must be CURRENT or NEAR")
