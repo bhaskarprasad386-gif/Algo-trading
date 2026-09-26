@@ -346,6 +346,13 @@ class LiveCashFutureScanner:
         stability_key = (symbol, month)
 
         with self._lock:
+            # Only the active trading date is needed for day high/low.
+            # Drop prior dates so a long-running process cannot accumulate
+            # one permanent entry per symbol per day.
+            self._session_extremes = {
+                key: value for key, value in self._session_extremes.items()
+                if key[1] == ts_date.isoformat()
+            }
             ext = self._session_extremes.setdefault(extreme_key, {
                 "cash_high": cash["ltp"], "cash_low": cash["ltp"],
                 "future_high": future["ltp"], "future_low": future["ltp"],
@@ -381,6 +388,7 @@ class LiveCashFutureScanner:
         alert_lots = min(configured_lots, capacity_lots) if capacity_lots is not None else None
         gross_profit = gap * lot * alert_lots if lot and alert_lots else None
         net_profit = net_gap * lot * alert_lots if lot and alert_lots else None
+        actionable_lots = alert_lots is not None and alert_lots >= 1
         eligible = (
             gap > 0
             and net_gap > 0
@@ -389,6 +397,7 @@ class LiveCashFutureScanner:
         )
         alert_eligible = (
             eligible
+            and actionable_lots
             and (
                 float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GROSS_PROFIT) <= 0
                 or (gross_profit is not None and gross_profit >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GROSS_PROFIT))
