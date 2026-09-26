@@ -100,3 +100,50 @@ def test_calendar_spread_strategy_run_respects_exact_timestamp_window(tmp_path, 
     assert result["completed_trades"] == 1
     assert result["start_timestamp"].startswith("2026-09-24T09:15:01")
     assert result["end_timestamp"].startswith("2026-09-24T09:15:02")
+
+
+def test_calendar_spread_replay_exposes_only_source_supported_timeframes():
+    from app.backtesting.calendar_spread_strategy_routes import calendar_spread_replay
+
+    result = calendar_spread_replay(
+        __import__("app.backtesting.calendar_spread_strategy_routes", fromlist=["CalendarSpreadReplayRequest"]).CalendarSpreadReplayRequest(
+            trading_date=datetime(2026, 9, 24, tzinfo=timezone.utc).date(),
+            underlying="SBIN",
+            timeframe="1s",
+            points=[
+                point("2026-09-24T09:15:00+00:00"),
+                point("2026-09-24T09:15:01+00:00"),
+                point("2026-09-24T09:15:02+00:00"),
+            ],
+        )
+    )
+
+    assert result["source_min_interval_seconds"] == 1.0
+    assert result["available_replay_intervals"] == [
+        "1s", "30s", "1m", "5m", "15m", "30m", "1h"
+    ]
+    assert result["count"] == 3
+
+
+def test_calendar_spread_replay_minute_source_does_not_claim_1s():
+    from app.backtesting.calendar_spread_strategy_routes import (
+        CalendarSpreadReplayRequest,
+        calendar_spread_replay,
+    )
+
+    result = calendar_spread_replay(
+        CalendarSpreadReplayRequest(
+            trading_date=datetime(2026, 9, 24, tzinfo=timezone.utc).date(),
+            underlying="SBIN",
+            timeframe="1m",
+            points=[
+                point("2026-09-24T09:15:00+00:00"),
+                point("2026-09-24T09:16:00+00:00"),
+            ],
+        )
+    )
+
+    assert result["source_min_interval_seconds"] == 60.0
+    assert result["available_replay_intervals"] == [
+        "1m", "5m", "15m", "30m", "1h"
+    ]
