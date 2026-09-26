@@ -359,3 +359,34 @@ def test_calendar_spread_auto_contract_discovery_prioritizes_index_then_supports
     assert gold["instrument_type"] == "COMMODITY_FUTURE"
     assert gold["exchange"] == "MCX"
     assert [row["contract_month"] for row in gold["contracts"]] == ["2026-09", "2026-10"]
+
+def test_calendar_spread_instruments_returns_index_stock_and_commodity_with_index_priority(tmp_path, monkeypatch):
+    from app.backtesting.calendar_spread_strategy_routes import (
+        CalendarSpreadInstrumentUniverseRequest,
+        calendar_spread_instruments,
+    )
+    from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
+
+    db = tmp_path / "universe.sqlite"
+    monkeypatch.setattr("app.backtesting.calendar_spread_strategy_routes.settings.BACKTEST_CONTRACT_DB", str(db))
+    snapshot = date(2026, 9, 24)
+    catalog = ContractMasterCatalog(str(db))
+    catalog.upsert_snapshot(snapshot, [
+        ContractRecord("NFO", "NIFTY30SEP2026FUT", "2001", date(2026, 9, 30), "INDEX_FUTURE", "NIFTY", 75, snapshot),
+        ContractRecord("NFO", "NIFTY29OCT2026FUT", "2002", date(2026, 10, 29), "INDEX_FUTURE", "NIFTY", 75, snapshot),
+        ContractRecord("NFO", "SBIN30SEP2026FUT", "3001", date(2026, 9, 30), "STOCK_FUTURE", "SBIN", 150, snapshot),
+        ContractRecord("NFO", "SBIN29OCT2026FUT", "3002", date(2026, 10, 29), "STOCK_FUTURE", "SBIN", 150, snapshot),
+        ContractRecord("MCX", "GOLD30SEP2026FUT", "4001", date(2026, 9, 30), "COMMODITY_FUTURE", "GOLD", 100, snapshot),
+        ContractRecord("MCX", "GOLD30OCT2026FUT", "4002", date(2026, 10, 30), "COMMODITY_FUTURE", "GOLD", 100, snapshot),
+    ])
+    catalog.close()
+
+    result = calendar_spread_instruments(CalendarSpreadInstrumentUniverseRequest(as_of=snapshot))
+
+    assert result["count"] == 3
+    assert [item["instrument_type"] for item in result["instruments"]] == [
+        "INDEX_FUTURE", "STOCK_FUTURE", "COMMODITY_FUTURE"
+    ]
+    assert [item["underlying"] for item in result["instruments"]] == ["NIFTY", "SBIN", "GOLD"]
+    assert result["instruments"][0]["near_contract_month"] == "2026-09"
+    assert result["instruments"][0]["far_contract_month"] == "2026-10"
