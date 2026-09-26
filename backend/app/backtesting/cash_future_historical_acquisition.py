@@ -153,17 +153,9 @@ class CashFutureHistoricalAcquisitionService:
             spot_sessions=spot_sessions,
             future_sessions=future_sessions,
         )
-        repair_instruments = self._manifest_repair_instruments(
-            coverage_store=coverage_store,
-            source=source,
-            timeframe=timeframe,
-            plan=plan,
-        )
-        if coverage_store is not None:
-            plan = HistoricalSyncPlan(tuple(
-                request for request in plan.requests
-                if request.instrument in repair_instruments
-            ))
+        # The catalog-backed gap planner is the acquisition source of truth.
+        # A persisted manifest is derived state and may be stale after an
+        # external catalog/data change; it must never suppress a catalog gap.
         return queue, plan
 
     def _audit(
