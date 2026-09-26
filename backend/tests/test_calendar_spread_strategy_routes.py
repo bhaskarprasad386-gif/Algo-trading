@@ -323,3 +323,39 @@ def test_calendar_spread_contract_month_discovery_uses_point_in_time_snapshot(tm
     ))
     assert [row["contract_month"] for row in result["contracts"]] == ["2026-09", "2026-10"]
     assert [row["lot_size"] for row in result["contracts"]] == [150, 150]
+
+
+def test_calendar_spread_auto_contract_discovery_prioritizes_index_then_supports_commodity(tmp_path, monkeypatch):
+    from app.backtesting.calendar_spread_strategy_routes import (
+        CalendarSpreadContractMonthsRequest,
+        calendar_spread_contract_months,
+    )
+    from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
+
+    db = tmp_path / "priority-contracts.sqlite"
+    monkeypatch.setattr("app.backtesting.calendar_spread_strategy_routes.settings.BACKTEST_CONTRACT_DB", str(db))
+    snapshot = date(2026, 9, 24)
+    catalog = ContractMasterCatalog(str(db))
+    catalog.upsert_snapshot(snapshot, [
+        ContractRecord("NFO", "NIFTY30SEP2026FUT", "1101", date(2026, 9, 30), "INDEX_FUTURE", "NIFTY", 75, snapshot),
+        ContractRecord("NFO", "NIFTY29OCT2026FUT", "1102", date(2026, 10, 29), "INDEX_FUTURE", "NIFTY", 75, snapshot),
+        ContractRecord("NFO", "SBIN30SEP2026FUT", "1201", date(2026, 9, 30), "STOCK_FUTURE", "SBIN", 150, snapshot),
+        ContractRecord("NFO", "SBIN29OCT2026FUT", "1202", date(2026, 10, 29), "STOCK_FUTURE", "SBIN", 150, snapshot),
+        ContractRecord("MCX", "GOLD30SEP2026FUT", "1301", date(2026, 9, 30), "COMMODITY_FUTURE", "GOLD", 100, snapshot),
+        ContractRecord("MCX", "GOLD30OCT2026FUT", "1302", date(2026, 10, 30), "COMMODITY_FUTURE", "GOLD", 100, snapshot),
+    ])
+    catalog.close()
+
+    nifty = calendar_spread_contract_months(CalendarSpreadContractMonthsRequest(
+        underlying="NIFTY", as_of=snapshot,
+    ))
+    assert nifty["instrument_type"] == "INDEX_FUTURE"
+    assert nifty["exchange"] == "NFO"
+    assert [row["contract_month"] for row in nifty["contracts"]] == ["2026-09", "2026-10"]
+
+    gold = calendar_spread_contract_months(CalendarSpreadContractMonthsRequest(
+        underlying="GOLD", as_of=snapshot,
+    ))
+    assert gold["instrument_type"] == "COMMODITY_FUTURE"
+    assert gold["exchange"] == "MCX"
+    assert [row["contract_month"] for row in gold["contracts"]] == ["2026-09", "2026-10"]
