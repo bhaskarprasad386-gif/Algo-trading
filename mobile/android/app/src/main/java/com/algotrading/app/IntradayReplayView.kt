@@ -157,22 +157,25 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
     fun replayIntervalMinutes() = (replayStepSeconds / 60L).toInt()
 
     fun resetReplay() {
-        visiblePoints = if (points.isEmpty()) 0 else 1
-        replayTime = points.getOrNull(visiblePoints - 1)?.let(::timeOf) ?: "--:--:--"
+        val count = if (calendarMode) calendarPoints.size else points.size
+        visiblePoints = if (count == 0) 0 else 1
+        replayTime = if (calendarMode) calendarPoints.getOrNull(visiblePoints - 1)?.timestamp?.let(::timeOfTimestamp) ?: "--:--:--" else points.getOrNull(visiblePoints - 1)?.let(::timeOf) ?: "--:--:--"
         rootView.findViewById<Button>(R.id.btnIntradayReplayPlay)?.text = "PLAY ${labelFor(replayStepSeconds)}"
         invalidate()
     }
 
     fun stepReplay(): Boolean {
-        if (visiblePoints >= points.size) return false
-        val current = parseEpochSeconds(points[visiblePoints - 1].timestamp)
+        val count = if (calendarMode) calendarPoints.size else points.size
+        if (visiblePoints >= count) return false
+        val currentTs = if (calendarMode) calendarPoints[visiblePoints - 1].timestamp else points[visiblePoints - 1].timestamp
+        val current = parseEpochSeconds(currentTs)
         val target = current + replayStepSeconds
         var next = visiblePoints
-        while (next < points.size && parseEpochSeconds(points[next].timestamp) < target) next++
-        visiblePoints = if (next < points.size) next + 1 else points.size
-        replayTime = points.getOrNull(visiblePoints - 1)?.let(::timeOf) ?: "--:--:--"
+        while (next < count) { val ts = if (calendarMode) calendarPoints[next].timestamp else points[next].timestamp; if (parseEpochSeconds(ts) >= target) break; next++ }
+        visiblePoints = if (next < count) next + 1 else count
+        replayTime = if (calendarMode) calendarPoints.getOrNull(visiblePoints - 1)?.timestamp?.let(::timeOfTimestamp) ?: "--:--:--" else points.getOrNull(visiblePoints - 1)?.let(::timeOf) ?: "--:--:--"
         invalidate()
-        return visiblePoints < points.size
+        return visiblePoints < count
     }
 
     fun stepOneMinute() = stepReplay()
@@ -180,7 +183,10 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
     fun isComplete() = points.isNotEmpty() && visiblePoints >= points.size
 
     private fun timeOf(p: CashFutureReplayPoint): String {
-        val s = p.timestamp
+        return timeOfTimestamp(p.timestamp)
+    }
+
+    private fun timeOfTimestamp(s: String): String {
         if (s.length < 16) return "--:--:--"
         return if (s.length >= 19) s.substring(11, 19) else s.substring(11, 16) + ":00"
     }
@@ -236,7 +242,8 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
         val key=localTimestampKey(timestamp); val idx=v.indexOfFirst{localTimestampKey(it.timestamp)==key}.takeIf{it>=0} ?: v.indexOfLast{localTimestampKey(it.timestamp)<=key}.takeIf{it>=0} ?: return
         val px=x(idx); val y=sy(price); val paint=if(label=="ENTRY")buyPaint else sellPaint
         canvas.drawCircle(px,y,7f,paint); canvas.drawText(label,px+10f,if(label=="ENTRY")max(top+18f,y-12f) else min(bottom-12f,y+22f),paint)
-        if(label=="EXIT"){val pnl="P&L "+if(strategyTrades.firstOrNull{it.exit_time==timestamp}?.net_profit ?: 0.0 >= 0) "+" else ""+"₹"+String.format("%.2f",strategyTrades.firstOrNull{it.exit_time==timestamp}?.net_profit ?: 0.0);canvas.drawText(pnl,min(px+10f,width-180f),min(bottom-2f,max(top+35f,y+35f)),pnlPaint)}
+        if(label=="EXIT"){val tradePnl = strategyTrades.firstOrNull { localTimestampKey(it.exit_time) == localTimestampKey(timestamp) }?.net_profit ?: 0.0
+            val pnl="P&L "+(if(tradePnl >= 0) "+" else "")+"₹"+String.format("%.2f",tradePnl);canvas.drawText(pnl,min(px+10f,width-180f),min(bottom-2f,max(top+35f,y+35f)),pnlPaint)}
     }
 
     private fun drawPaired(canvas: Canvas, v: List<CashFutureReplayPoint>) {
