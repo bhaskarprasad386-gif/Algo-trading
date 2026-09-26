@@ -2,6 +2,7 @@ from time import time
 
 import pytest
 
+from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
 
 
 def test_live_scanner_pairs_same_second_cash_and_future():
