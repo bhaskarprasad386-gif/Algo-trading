@@ -170,3 +170,37 @@ def test_live_scanner_liquidity_filter_requires_all_four_depth_sides(monkeypatch
         "ltp": 101, "bid": 100.8, "ask": 101,
         "bid_qty": 200, "source_timestamp_ns": ts,
     }) is None
+
+
+def test_live_scanner_custom_gross_profit_filter_controls_alert(monkeypatch):
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_ALERT_MIN_GROSS_PROFIT", 100.0)
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_ALERT_LOTS", 2)
+    scanner = LiveCashFutureScanner()
+    ts = 1_000_000_000
+    scanner.observe({
+        "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
+        "source_timestamp_ns": ts,
+    })
+    below = scanner.observe({
+        "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
+        "ltp": 101, "bid": 100.4, "ask": 101, "lot_size": 100,
+        "expiry": "30SEP2026", "source_timestamp_ns": ts,
+    })
+    assert below is not None
+    assert below.gross_profit == 80.0
+    assert below.alert_event is None
+
+    ts += 1_000_000_000
+    scanner.observe({
+        "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
+        "source_timestamp_ns": ts,
+    })
+    above = scanner.observe({
+        "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
+        "ltp": 102, "bid": 101, "ask": 102, "lot_size": 100,
+        "expiry": "30SEP2026", "source_timestamp_ns": ts,
+    })
+    assert above is not None
+    assert above.gross_profit == 200.0
+    assert above.alert_lots == 2
+    assert above.alert_event == "NEW"
