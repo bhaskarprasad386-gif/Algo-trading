@@ -151,7 +151,7 @@ def strategy_run_resume(run_id: str, request: StrategyRunRequest):
         config = CashFutureStrategyConfig(
             initial_capital=request.initial_capital, execution_model=request.execution_model,
             charges_per_trade=request.charges_per_trade, funding_cost_per_trade=request.funding_cost_per_trade,
-            start_date=request.start_date, end_date=request.end_date, contract_month=request.contract_month,
+            start_date=request.start_date, end_date=request.end_date, start_timestamp=request.start_timestamp, end_timestamp=request.end_timestamp, contract_month=request.contract_month,
             history_window=request.history_window, checkpoint_interval=request.checkpoint_interval,
             cash_side=request.cash_side, future_side=request.future_side, slippage_per_share=request.slippage_per_share,
         )
