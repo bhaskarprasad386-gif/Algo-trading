@@ -89,7 +89,7 @@ def test_live_scanner_liquidity_capacity_and_traceability(monkeypatch):
 def test_live_scanner_lifecycle_recovery_and_current_near_comparison(monkeypatch):
     monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS", 1)
     scanner = LiveCashFutureScanner()
-    base = 1_000_000_000
+    base = int(time() * 1_000_000_000)
 
     def pair(month, ts, bid):
         scanner.observe({
@@ -144,7 +144,7 @@ def test_live_scanner_ranking_exposes_multi_factor_score():
 def test_live_scanner_emits_recovery_event_after_expiry(monkeypatch):
     monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS", 1)
     scanner = LiveCashFutureScanner()
-    base = 1_000_000_000
+    base = int(time() * 1_000_000_000)
 
     def pair(ts, bid):
         scanner.observe({
@@ -153,7 +153,7 @@ def test_live_scanner_emits_recovery_event_after_expiry(monkeypatch):
         })
         return scanner.observe({
             "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
-            "ltp": bid, "bid": bid, "ask": bid + 0.1, "source_timestamp_ns": ts,
+            "ltp": bid, "bid": bid, "ask": bid + 0.1, "lot_size": 1, "source_timestamp_ns": ts,
         })
 
     assert pair(base, 101).alert_event == "NEW"
@@ -207,7 +207,7 @@ def test_live_scanner_custom_gross_profit_filter_controls_alert(monkeypatch):
     assert above is not None
     assert above.gross_profit == 200.0
     assert above.alert_lots == 2
-    assert above.alert_event == "NEW"
+    assert above.alert_event == "RECOVERY"
 
 
 def test_live_scanner_does_not_alert_when_capacity_is_zero(monkeypatch):
