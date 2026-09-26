@@ -191,12 +191,23 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
         return if (s.length >= 19) s.substring(11, 19) else s.substring(11, 16) + ":00"
     }
 
+    /** Absolute epoch seconds so positional replay can cross trading days without
+     * resetting at midnight. ISO timestamps are treated as historical instants;
+     * timezone offsets are parsed when present, otherwise IST is used.
+     */    
     private fun parseEpochSeconds(s: String): Long {
-        if (s.length < 16) return 0L
-        val h = s.substring(11, 13).toLongOrNull() ?: 0L
-        val m = s.substring(14, 16).toLongOrNull() ?: 0L
-        val sec = if (s.length >= 19) s.substring(17, 19).toLongOrNull() ?: 0L else 0L
-        return h * 3600L + m * 60L + sec
+        val text = s.trim()
+        return try {
+            java.time.OffsetDateTime.parse(text).toEpochSecond()
+        } catch (_: Exception) {
+            try {
+                java.time.LocalDateTime.parse(text.take(19))
+                    .atZone(java.time.ZoneId.of("Asia/Kolkata"))
+                    .toEpochSecond()
+            } catch (_: Exception) {
+                0L
+            }
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -228,7 +239,7 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
         canvas.drawText("NEAR",left,24f,axisPaint); canvas.drawText("FAR",left+100f,24f,axisPaint); canvas.drawText("EXECUTABLE EDGE",left+180f,24f,axisPaint)
         canvas.drawText(String.format("%.2f",pMax),4f,top+10f,axisPaint); canvas.drawText(String.format("%.2f",pMin),4f,priceBottom,axisPaint)
         canvas.drawText("Edge ₹"+String.format("%.2f",sMax)+" → ₹"+String.format("%.2f",sMin),left,bottom+20f,axisPaint)
-        canvas.drawText(labelFor(replayStepSeconds)+" • "+replayTime,left,height-8f,axisPaint)
+        canvas.drawText("POSITIONAL • "+labelFor(replayStepSeconds)+" • "+replayTime,left,height-8f,axisPaint)
         val np=Path(); val fp=Path(); val sp=Path()
         v.forEachIndexed{i,p->val px=x(i);val n=near[i];val fa=far[i];val s=spread[i];if(i==0){np.moveTo(px,py(n));fp.moveTo(px,py(fa));sp.moveTo(px,sy(s))}else{np.lineTo(px,py(n));fp.lineTo(px,py(fa));sp.lineTo(px,sy(s))}}
         canvas.drawPath(np,cashPaint); canvas.drawPath(fp,futurePaint); canvas.drawPath(sp,gapPaint)
