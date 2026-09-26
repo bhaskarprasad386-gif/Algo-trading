@@ -92,9 +92,16 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
     fun setTimeframeChangedListener(listener: (String) -> Unit) { timeframeChangedListener = listener }
 
     fun setFocusTimestamp(timestamp: String?) {
-        focusTimestamp = timestamp?.takeIf { it.isNotBlank() }
+        focusTimestamp = timestamp?.let(::localTimestampKey)?.takeIf { it.isNotBlank() }
         invalidate()
     }
+
+    /** Compare historical timestamps at market-local second precision.
+     * Backend replay returns ISO timestamps with +05:30 while the strategy
+     * form intentionally sends a local, timezone-naive historical timestamp.
+     */
+    private fun localTimestampKey(timestamp: String): String =
+        timestamp.trim().let { if (it.length >= 19) it.substring(0, 19) else it }
 
     fun focusedTimestamp(): String? = focusTimestamp
 
@@ -232,7 +239,7 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
         drawTradeMarkers(canvas, v, left, right, top, priceBottom, pMin, pRange, ::x, ::py)
 
         val fallbackIndex = points.indices.maxByOrNull { index -> points[index].gap }
-        val focusedIndex = focusTimestamp?.let { timestamp -> points.indexOfFirst { it.timestamp == timestamp }.takeIf { it >= 0 } }
+        val focusedIndex = focusTimestamp?.let { timestamp -> points.indexOfFirst { localTimestampKey(it.timestamp) == timestamp }.takeIf { it >= 0 } }
         val gapHighIndex = focusedIndex ?: fallbackIndex
         if (gapHighIndex != null && gapHighIndex < visiblePoints) {
             val highPoint = points[gapHighIndex]
@@ -281,8 +288,8 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
         top: Float,
         priceBottom: Float,
     ) {
-        val index = visible.indexOfFirst { it.timestamp == timestamp }.takeIf { it >= 0 }
-            ?: visible.indexOfLast { it.timestamp <= timestamp }.takeIf { it >= 0 }
+        val index = visible.indexOfFirst { localTimestampKey(it.timestamp) == localTimestampKey(timestamp) }.takeIf { it >= 0 }
+            ?: visible.indexOfLast { localTimestampKey(it.timestamp) <= localTimestampKey(timestamp) }.takeIf { it >= 0 }
             ?: return
         val px = x(index)
         val y = py(price)
