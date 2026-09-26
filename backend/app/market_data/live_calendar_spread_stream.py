@@ -61,6 +61,14 @@ class LiveCalendarSpreadOneSecondCollector:
         t=(now or datetime.now(IST))
         return t.weekday()<5 and ((time(9,15)<=t.time()<=time(15,30)) or (time(9,0)<=t.time()<=time(23,30)))
 
+    @staticmethod
+    def _exchange_open(exchange: str, value: datetime) -> bool:
+        if value.weekday() >= 5:
+            return False
+        if exchange.upper() == "MCX":
+            return time(9, 0) <= value.time() <= time(23, 30)
+        return time(9, 15) <= value.time() <= time(15, 30)
+
     def _contracts(self)->list[dict[str,Any]]:
         today=datetime.now(IST).date(); grouped={}
         for row in self.instrument_master.download():
@@ -101,6 +109,8 @@ class LiveCalendarSpreadOneSecondCollector:
                     token=str(message.get("token") or "").strip(); meta=token_meta.get(token); ts=_timestamp_ns(message)
                     if not meta or ts is None:continue
                     sec=ts//1_000_000_000*1_000_000_000
+                    local_timestamp=datetime.fromtimestamp(sec/1_000_000_000, tz=ZoneInfo("UTC")).astimezone(IST)
+                    if not self._exchange_open(meta["exchange"], local_timestamp): continue
                     previous=latest.get(token)
                     if previous and previous[0]!=sec:
                         try:written+=catalog.ingest(HistoricalRecord(SOURCE,f'{meta["exchange"]}:{token}:{meta["symbol"]}',TIMEFRAME,previous[0],previous[1]))
