@@ -12,6 +12,7 @@ import requests
 
 from .contract_master import ContractMasterCatalog, ContractRecord
 from .index_contracts import IndexContractMaster
+from .commodity_contracts import CommodityContractMaster
 
 ANGEL_ONE_MASTER_URL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
 MARKET_TIMEZONE = ZoneInfo("Asia/Kolkata")
@@ -84,7 +85,7 @@ class AngelOneContractMasterSource:
         snapshot = snapshot_date or self.market_date()
         canonical = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         digest = hashlib.sha256(canonical).hexdigest()
-        records = self.normalize_futures(rows) + self.normalize_index_futures(rows)
+        records = self.normalize_futures(rows) + self.normalize_index_futures(rows) + CommodityContractMaster.normalize(rows)
         return catalog.upsert_snapshot(snapshot, records, payload_sha256=digest, fetched_at=datetime.now(MARKET_TIMEZONE).replace(tzinfo=None))
 
     def sync_index_futures(self, catalog: ContractMasterCatalog, *, snapshot_date: date | None = None) -> int:
@@ -93,4 +94,4 @@ class AngelOneContractMasterSource:
         snapshot = snapshot_date or self.market_date()
         canonical = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         digest = hashlib.sha256(canonical).hexdigest()
-        return catalog.merge_snapshot(snapshot, self.normalize_index_futures(rows), payload_sha256=digest, fetched_at=datetime.now(MARKET_TIMEZONE).replace(tzinfo=None))
+        return catalog.merge_snapshot(snapshot, self.normalize_index_futures(rows) + CommodityContractMaster.normalize(rows), payload_sha256=digest, fetched_at=datetime.now(MARKET_TIMEZONE).replace(tzinfo=None))
