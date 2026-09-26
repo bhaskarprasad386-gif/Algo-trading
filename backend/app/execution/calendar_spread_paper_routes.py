@@ -9,6 +9,15 @@ router=APIRouter(prefix="/api/v1/execution/paper/calendar-spread",tags=["Calenda
 class Entry(BaseModel):
  underlying:str=Field(min_length=1); exchange:str=Field(min_length=1); direction:str; near_contract_month:str; far_contract_month:str; lot_size:int=Field(gt=0); lots:int=Field(gt=0); near_price:float=Field(gt=0); far_price:float=Field(gt=0)
 class Exit(BaseModel): near_price:float=Field(gt=0); far_price:float=Field(gt=0)
+class ScannerEntry(Entry):
+    long_edge:float|None=None; short_edge:float|None=None; liquidity_qty:float=Field(default=0,ge=0)
+
+@router.post("/from-scanner")
+def from_scanner(req:ScannerEntry,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
+    edge=req.long_edge if req.direction=="LONG_NEAR_SHORT_FAR" else req.short_edge
+    if edge is None or edge<=0: raise HTTPException(409,detail="scanner edge is not positive")
+    if req.liquidity_qty < req.lot_size*req.lots: raise HTTPException(409,detail="scanner liquidity is below requested quantity")
+    return entry(req,user,db)
 def _acct(db,user):
  a=db.query(TradingAccount).filter(TradingAccount.user_id==user).first()
  if not a or not a.is_active or a.mode.upper()!="PAPER":raise HTTPException(409,detail="paper account unavailable")
