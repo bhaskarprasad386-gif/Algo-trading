@@ -135,15 +135,24 @@ class LiveCashFutureOneSecondCollector:
         return selected, list(cash.values())
 
     @staticmethod
-    def _best_side(message: dict[str, Any], key: str) -> float | None:
+    def _best_side_detail(message: dict[str, Any], key: str) -> tuple[float | None, float | None]:
         levels = message.get(key)
         if not isinstance(levels, list) or not levels or not isinstance(levels[0], dict):
-            return None
+            return None, None
+        level = levels[0]
         try:
-            value = float(levels[0].get("price")) / 100.0
+            value = float(level.get("price")) / 100.0
         except (TypeError, ValueError):
-            return None
-        return value if value > 0 else None
+            value = 0.0
+        try:
+            quantity = float(level.get("quantity"))
+        except (TypeError, ValueError):
+            quantity = 0.0
+        return (value if value > 0 else None, quantity if quantity > 0 else None)
+
+    @staticmethod
+    def _best_side(message: dict[str, Any], key: str) -> float | None:
+        return LiveCashFutureOneSecondCollector._best_side_detail(message, key)[0]
 
     def _run_market_session(self) -> None:
         futures, cash = self._contracts()
@@ -259,6 +268,8 @@ class LiveCashFutureOneSecondCollector:
                         "lot_size": meta["lot_size"],
                         "bid": self._best_side(message, "best_5_buy_data"),
                         "ask": self._best_side(message, "best_5_sell_data"),
+                        "bid_qty": self._best_side_detail(message, "best_5_buy_data")[1],
+                        "ask_qty": self._best_side_detail(message, "best_5_sell_data")[1],
                         "received_at_ns": time_module.time_ns(),
                     })
                     latest[token] = (second_ns, payload)
