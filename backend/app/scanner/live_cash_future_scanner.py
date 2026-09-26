@@ -386,12 +386,18 @@ class LiveCashFutureScanner:
         )
         alert_eligible = (
             eligible
-            and gross_profit is not None
-            and gross_profit >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GROSS_PROFIT)
-            and net_profit is not None
-            and net_profit >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_NET_PROFIT)
-            and annualized is not None
-            and annualized >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_ANNUALIZED_GAP_PCT)
+            and (
+                float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GROSS_PROFIT) <= 0
+                or (gross_profit is not None and gross_profit >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GROSS_PROFIT))
+            )
+            and (
+                float(settings.LIVE_CASH_FUTURE_ALERT_MIN_NET_PROFIT) <= 0
+                or (net_profit is not None and net_profit >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_NET_PROFIT))
+            )
+            and (
+                float(settings.LIVE_CASH_FUTURE_ALERT_MIN_ANNUALIZED_GAP_PCT) <= 0
+                or (annualized is not None and annualized >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_ANNUALIZED_GAP_PCT))
+            )
         )
         if previous_signal is None:
             lifecycle = "NEW" if eligible else "EXPIRED"
