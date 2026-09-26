@@ -1,40 +1,42 @@
 import inspect
+from datetime import date, datetime
 
+from app.models.cash_future_history import CashFutureHistory
 from app.scanner import auto_routes
 
 
-def test_cash_future_auto_route_passes_quote_freshness_controls(monkeypatch):
-    captured = {}
-
+def test_cash_future_auto_route_uses_persisted_feed_and_exposes_freshness_controls(monkeypatch):
     monkeypatch.setattr(auto_routes, "discover_cash_future_symbols", lambda limit: ["ABC"])
-
-    class FakeCollector:
-        def __init__(self, symbols, config=None, max_quote_age_seconds=None, max_quote_timestamp_skew_seconds=None):
-            captured["symbols"] = symbols
-            captured["max_quote_age_seconds"] = max_quote_age_seconds
-            captured["max_quote_timestamp_skew_seconds"] = max_quote_timestamp_skew_seconds
-
-        def collect(self, db):
-            return {
-                "collected": [{"symbol": "ABC", "executable": True, "net_profit": 10.0, "roi_pct": 1.0}],
-                "errors": [],
-            }
-
-    monkeypatch.setattr(auto_routes, "CashFutureHistoryCollector", FakeCollector)
+    db = type("DB", (), {})()
+    row = CashFutureHistory(
+        symbol="ABC",
+        contract_month="CURRENT",
+        timestamp=datetime.now(),
+        expiry_date=date.today(),
+        cash_price=100.0,
+        future_price=106.0,
+        gap=6.0,
+        gap_pct=6.0,
+        lot_size=10,
+        margin_required=1000.0,
+        volume=5000,
+        oi=20000,
+        cash_bid=99.9,
+        cash_ask=100.0,
+        future_bid=106.0,
+        future_ask=106.1,
+    )
+    db.scalars = lambda stmt: type("Result", (), {"all": lambda self: [row]})()
 
     result = auto_routes.cash_future_live_auto_scanner(
         limit=1,
         max_quote_age_seconds=12.5,
         max_quote_timestamp_skew_seconds=4.5,
-        db=object(),
+        db=db,
     )
 
     assert result["opportunity_count"] == 1
-    assert captured == {
-        "symbols": ["ABC"],
-        "max_quote_age_seconds": 12.5,
-        "max_quote_timestamp_skew_seconds": 4.5,
-    }
+    assert result["data"][0]["source"] == "stored-live-feed"
     assert result["filters"]["max_quote_age_seconds"] == 12.5
     assert result["filters"]["max_quote_timestamp_skew_seconds"] == 4.5
 
