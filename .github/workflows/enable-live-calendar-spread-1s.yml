@@ -15,7 +15,7 @@ jobs:
       VPS_USER: ${{ secrets.VPS_USER }}
       VPS_SSH_KEY_B64: ${{ secrets.VPS_SSH_KEY }}
     steps:
-      - name: Enable Calendar Spread collector and restart service
+      - name: Enable collector and restart service
         shell: bash
         run: |
           set -euo pipefail
@@ -38,9 +38,7 @@ jobs:
           if grep -q '^LIVE_CALENDAR_SPREAD_DATA_ENABLED=' "$ENV_FILE"; then
             sed -i 's/^LIVE_CALENDAR_SPREAD_DATA_ENABLED=.*/LIVE_CALENDAR_SPREAD_DATA_ENABLED=true/' "$ENV_FILE"
           else
-            printf '
-LIVE_CALENDAR_SPREAD_DATA_ENABLED=true
-' >> "$ENV_FILE"
+            printf '\nLIVE_CALENDAR_SPREAD_DATA_ENABLED=true\n' >> "$ENV_FILE"
           fi
           systemctl restart algo-trading.service
           sleep 3
