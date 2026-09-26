@@ -1,0 +1,64 @@
+name: Inspect Cash-Future VPS State
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY_B64: ${{ secrets.VPS_SSH_KEY }}
+    steps:
+      - name: Inspect contract-master and Cash-Future databases
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_KEY_B64"
+
+          printf '%s' "$VPS_SSH_KEY_B64" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+
+          APP_DIR=/opt/Algo-Trading
+          BACKEND_DIR="$APP_DIR/backend"
+          PYTHON="$APP_DIR/.venv/bin/python"
+
+          test -x "$PYTHON"
+          cd "$BACKEND_DIR"
+
+          "$PYTHON" - <<'PY'
+          from app.backtesting.contract_master import ContractMasterCatalog
+          from app.core.config import settings
+          from pathlib import Path
+
+          def abs_db(value: str) -> str:
+              p = Path(value)
+              return str((Path.cwd() / p).resolve()) if not p.is_absolute() else str(p)
+
+          contract_db = abs_db(settings.BACKTEST_CONTRACT_DB)
+          data_db = abs_db(settings.BACKTEST_DATA_DB)
+          status_db = abs_db(settings.BACKTEST_STATUS_DB)
+
+          catalog = ContractMasterCatalog(contract_db)
+          dates = catalog.snapshot_dates()
+
+          print(f"CONTRACT_DB={contract_db}")
+          print(f"DATA_DB={data_db}")
+          print(f"STATUS_DB={status_db}")
+          print(f"CONTRACT_SNAPSHOT_COUNT={len(dates)}")
+          print("CONTRACT_SNAPSHOT_DATES=" + ",".join(d.isoformat() for d in dates))
+          print(f"CASH_FUTURE_HISTORY_ENABLED={settings.CASH_FUTURE_HISTORY_ENABLED}")
+          print("LIVE_TRADING=OFF")
+          PY
+          REMOTE
