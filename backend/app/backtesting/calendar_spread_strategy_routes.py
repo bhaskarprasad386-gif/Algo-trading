@@ -343,6 +343,46 @@ def _historical_point_row(point):
     }
 
 
+class CalendarSpreadContractMonthsRequest(BaseModel):
+    underlying: str = Field(min_length=1)
+    exchange: str = Field(default="NFO", min_length=1)
+    as_of: date
+
+
+@router.post("/contract-months")
+def calendar_spread_contract_months(request: CalendarSpreadContractMonthsRequest):
+    from app.backtesting.contract_master import ContractMasterCatalog
+    catalog = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
+    try:
+        contracts = catalog.contracts(
+            exchange=request.exchange.strip().upper(),
+            underlying=request.underlying.strip().upper(),
+            as_of=request.as_of,
+            instrument_type="STOCK_FUTURE",
+        )
+        if len(contracts) < 2:
+            raise HTTPException(status_code=422, detail="fewer than two active historical stock-future contracts")
+        return {
+            "status": "success",
+            "underlying": request.underlying.strip().upper(),
+            "as_of": request.as_of.isoformat(),
+            "contracts": [
+                {
+                    "contract_month": f"{contract.expiry.year:04d}-{contract.expiry.month:02d}",
+                    "symbol": contract.symbol,
+                    "token": contract.token,
+                    "expiry": contract.expiry.isoformat(),
+                    "lot_size": contract.lot_size,
+                }
+                for contract in contracts[:2]
+            ],
+        }
+    except LookupError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        catalog.close()
+
+
 @router.post("/historical-replay")
 def calendar_spread_historical_replay(request: CalendarSpreadHistoricalReplayRequest):
     from app.backtesting.calendar_spread_historical_loader import (
