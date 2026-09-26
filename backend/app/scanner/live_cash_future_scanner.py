@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
-from app.models import LiveCashFutureScannerResult, User
+from app.models import LiveCashFutureAlertHistory, LiveCashFutureScannerResult, User
 from app.notifications.service import LiveCashFutureAlert, NotificationService
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -41,6 +41,9 @@ class LiveCashFutureSignal:
     future_day_low: float
     lot_size: int | None
     gross_lot_value: float | None
+    alert_lots: int | None
+    gross_profit: float | None
+    net_profit: float | None
     estimated_cost: float
     net_gap: float
     net_gap_pct: float
@@ -116,6 +119,10 @@ class LiveCashFutureScanner:
                     gap=signal.gap,
                     gap_pct=signal.gap_pct,
                     timestamp_ns=signal.timestamp_ns,
+                    lot_size=signal.lot_size,
+                    alert_lots=signal.alert_lots,
+                    gross_profit=signal.gross_profit,
+                    net_profit=signal.net_profit,
                 )
                 for user in users:
                     self.notifier.notify_user(user, alert)
@@ -177,6 +184,50 @@ class LiveCashFutureScanner:
                     reason_codes=",".join(signal.reason_codes),
                     observation_ref=signal.observation_ref,
                     alert_event=signal.alert_event,
+                ))
+                db.commit()
+        except Exception:
+            return
+
+
+    def _persist_alert(self, session_factory, signal: LiveCashFutureSignal) -> None:
+        if session_factory is None or not signal.alert_event:
+            return
+        try:
+            now = datetime.now(IST).replace(tzinfo=None)
+            retention_days = max(1, int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
+            with session_factory() as db:
+                cutoff = now - timedelta(days=retention_days)
+                db.query(LiveCashFutureAlertHistory).filter(
+                    LiveCashFutureAlertHistory.observed_at < cutoff
+                ).delete(synchronize_session=False)
+                exists = db.query(LiveCashFutureAlertHistory.id).filter(
+                    LiveCashFutureAlertHistory.symbol == signal.symbol,
+                    LiveCashFutureAlertHistory.contract_month == signal.contract_month,
+                    LiveCashFutureAlertHistory.timestamp_ns == signal.timestamp_ns,
+                    LiveCashFutureAlertHistory.event == signal.alert_event,
+                ).first()
+                if exists:
+                    return
+                db.add(LiveCashFutureAlertHistory(
+                    observed_at=now,
+                    timestamp_ns=signal.timestamp_ns,
+                    symbol=signal.symbol,
+                    contract_month=signal.contract_month,
+                    event=signal.alert_event,
+                    cash_ask=float(signal.cash_ask),
+                    future_bid=float(signal.future_bid),
+                    gap=signal.gap,
+                    gap_pct=signal.gap_pct,
+                    lot_size=signal.lot_size,
+                    alert_lots=signal.alert_lots,
+                    gross_profit=signal.gross_profit,
+                    estimated_cost=signal.estimated_cost,
+                    net_profit=signal.net_profit,
+                    net_gap_pct=signal.net_gap_pct,
+                    annualized_gap_pct=signal.annualized_gap_pct,
+                    liquidity_qty=signal.liquidity_qty,
+                    stable_observations=signal.stable_observations,
                 ))
                 db.commit()
         except Exception:
@@ -323,10 +374,17 @@ class LiveCashFutureScanner:
             capacity_notional = capacity_lots * cash_ask * lot
 
         min_stable = max(1, int(settings.LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS))
+        configured_lots = max(1, int(settings.LIVE_CASH_FUTURE_ALERT_LOTS))
+        alert_lots = min(configured_lots, capacity_lots) if capacity_lots is not None else None
+        gross_profit = gap * lot * alert_lots if lot and alert_lots else None
+        net_profit = net_gap * lot * alert_lots if lot and alert_lots else None
         eligible = (
             gap > 0
             and net_gap > 0
             and gap_pct >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT)
+            and (gross_profit is not None and gross_profit >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GROSS_PROFIT))
+            and (net_profit is not None and net_profit >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_NET_PROFIT))
+            and (annualized is not None and annualized >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_ANNUALIZED_GAP_PCT))
             and stable >= min_stable
         )
         if previous_signal is None:
@@ -385,6 +443,9 @@ class LiveCashFutureScanner:
             future_day_low=ext["future_low"],
             lot_size=lot,
             gross_lot_value=gross_lot_value,
+            alert_lots=alert_lots,
+            gross_profit=gross_profit,
+            net_profit=net_profit,
             estimated_cost=estimated_cost,
             net_gap=net_gap,
             net_gap_pct=net_gap_pct,
@@ -403,6 +464,7 @@ class LiveCashFutureScanner:
         if eligible and session_factory is not None:
             self._result_executor.submit(self._persist_result, session_factory, signal)
         if alert_event and session_factory is not None:
+            self._persist_alert(session_factory, signal)
             self._alert_executor.submit(self._notify_users, session_factory, signal)
         return signal
 
