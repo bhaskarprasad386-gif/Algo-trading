@@ -105,6 +105,20 @@ data class CashFutureStrategyRunResponse(
     val equity_curve: List<Map<String, Any?>> = emptyList(),
 )
 
+data class CalendarSpreadContractMonth(
+    val contract_month: String = "",
+    val symbol: String = "",
+    val token: String = "",
+    val expiry: String = "",
+    val lot_size: Int = 0,
+)
+data class CalendarSpreadContractMonthsResponse(
+    val status: String = "",
+    val underlying: String = "",
+    val as_of: String = "",
+    val contracts: List<CalendarSpreadContractMonth> = emptyList(),
+)
+
 data class CalendarSpreadReplayPoint(
     val timestamp: String = "",
     val underlying: String = "",
@@ -198,6 +212,8 @@ interface ApiInterface {
     @GET("/api/v1/backtesting/results/monthly-gap") suspend fun monthlyGapSearch(@Query("year") year: Int, @Query("month") month: Int, @Query("mode") mode: String = "opening", @Query("instrument_type") instrumentType: String = "STOCK", @Query("symbol") symbol: String? = null, @Query("contract_month") contractMonth: String? = null): MonthlyGapSearchResponse
     @GET("/api/v1/backtesting/results/monthly-gap-top10") suspend fun monthlyGapTop10(@Query("year") year: Int, @Query("month") month: Int, @Query("instrument_type") instrumentType: String = "STOCK", @Query("contract_month") contractMonth: String? = null): MonthlyGapTop10Response
     @GET("/api/v1/backtesting/results/monthly-graph") suspend fun monthlyGraph(@Query("year") year: Int, @Query("month") month: Int, @Query("symbol") symbol: String, @Query("instrument_type") instrumentType: String = "STOCK", @Query("contract_month") contractMonth: String? = null): MonthlyGraphResponse
+    @POST("/api/v1/backtesting/calendar-spread/contract-months")
+    suspend fun calendarSpreadContractMonths(@Body request: Map<String, Any?>): CalendarSpreadContractMonthsResponse
     @POST("/api/v1/backtesting/calendar-spread/historical-replay")
     suspend fun calendarSpreadHistoricalReplay(@Body request: Map<String, Any?>): CalendarSpreadHistoricalReplayResponse
     @POST("/api/v1/backtesting/calendar-spread/historical-strategy-run")
