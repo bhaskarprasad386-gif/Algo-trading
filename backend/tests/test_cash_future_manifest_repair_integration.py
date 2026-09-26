@@ -66,7 +66,7 @@ class _RepairSource:
             yield HistoricalRecord(request.source, request.instrument, request.timeframe, timestamp_ns, {"close": 100.0})
 
 
-def test_complete_manifest_skips_provider_repair_even_when_catalog_has_a_gap(tmp_path):
+def test_stale_complete_manifest_does_not_suppress_catalog_gap_repair(tmp_path):
     service, catalog = _service(tmp_path, object())
     session = _session()
     catalog.ingest([HistoricalRecord("angelone", "NSE:3045:SBIN", "1m", session.start_ns, {"close": 100.0})])
@@ -80,7 +80,8 @@ def test_complete_manifest_skips_provider_repair_even_when_catalog_has_a_gap(tmp
         mode="CURRENT", coverage_store=store,
     )
 
-    assert plan.requests == ()
+    assert plan.requests
+    assert any(request.instrument == "NSE:3045:SBIN" for request in plan.requests)
 
 
 def test_incomplete_manifest_allows_only_unfinished_instrument_into_provider_plan(tmp_path):
