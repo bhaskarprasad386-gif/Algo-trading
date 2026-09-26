@@ -1,0 +1,44 @@
+name: Probe Expired Cash-Future History
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_contracts:
+        description: "Number of expired stock-future contracts to probe"
+        required: true
+        default: "20"
+      days_around_expiry:
+        description: "1-minute days ending at each contract expiry"
+        required: true
+        default: "5"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      MAX_CONTRACTS: ${{ inputs.max_contracts }}
+      DAYS_AROUND_EXPIRY: ${{ inputs.days_around_expiry }}
+    steps:
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${MAX_CONTRACTS}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${DAYS_AROUND_EXPIRY}" =~ ^[1-9][0-9]*$ ]]
+
+      - name: Prepare SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "${VPS_SSH_KEY}" | base64 -d > "${RUNNER_TEMP}/vps_key"
+          chmod 600 "${RUNNER_TEMP}/vps_key"
+
+      - name: Run expired-future probe on VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "${RUNNER_TEMP}/vps_key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no "${VPS_USER}@${VPS_HOST}"             "cd /opt/Algo-Trading/backend && export PYTHONPATH=/opt/Algo-Trading/backend && /opt/Algo-Trading/.venv/bin/python scripts/probe_expired_cash_future_history.py --max-contracts '${MAX_CONTRACTS}' --days-around-expiry '${DAYS_AROUND_EXPIRY}'"
