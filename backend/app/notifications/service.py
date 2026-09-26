@@ -55,8 +55,11 @@ class NotificationService:
             previous = self._last_alert_ns.get(key, 0)
             if alert.timestamp_ns - previous < cooldown_ns:
                 return False
-            self._last_alert_ns[key] = alert.timestamp_ns
-        return self._notifier.send_text(user.mobile_number, self._message(alert))
+        sent = self._notifier.send_text(user.mobile_number, self._message(alert))
+        if sent:
+            with self._lock:
+                self._last_alert_ns[key] = alert.timestamp_ns
+        return sent
 
     @property
     def whatsapp_configured(self) -> bool:
