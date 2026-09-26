@@ -23,6 +23,8 @@ class CalendarSpreadStrategyBuilderView @JvmOverloads constructor(context: Conte
     private val far = field("Far contract YYYY-MM")
     private val instrumentSpinner = Spinner(context)
     private var universe = emptyList<CalendarSpreadInstrument>()
+    private var selectedExchange = "AUTO"
+    private var selectedInstrumentType = "AUTO"
     private val status = TextView(context).apply { setTextColor(0xFFE8F1FF.toInt()); textSize=11f; setPadding(10,8,10,8) }
     private val replay = TextView(context).apply { setTextColor(0xFFBFD4EF.toInt()); textSize=10f; setPadding(10,8,10,8) }
     private var direction="LONG_NEAR_SHORT_FAR"
@@ -65,6 +67,8 @@ class CalendarSpreadStrategyBuilderView @JvmOverloads constructor(context: Conte
         if(index !in universe.indices) return
         val item=universe[index]
         underlying.setText(item.underlying)
+        selectedExchange=item.exchange
+        selectedInstrumentType=item.instrument_type
         if(item.far_contract_month != null){
             near.setText(item.near_contract_month)
             far.setText(item.far_contract_month)
@@ -78,7 +82,7 @@ class CalendarSpreadStrategyBuilderView @JvmOverloads constructor(context: Conte
         status.text="Loading point-in-time Near/Far contracts…"
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val r=ApiService.retrofitService.calendarSpreadContractMonths(mapOf("underlying" to s,"exchange" to "NFO","as_of" to d))
+                val r=ApiService.retrofitService.calendarSpreadContractMonths(mapOf("underlying" to s,"exchange" to selectedExchange,"instrument_type" to selectedInstrumentType,"as_of" to d))
                 withContext(Dispatchers.Main) {
                     if(r.contracts.size>=2){
                         near.setText(r.contracts[0].contract_month)
