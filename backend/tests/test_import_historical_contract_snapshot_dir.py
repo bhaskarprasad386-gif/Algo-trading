@@ -27,8 +27,8 @@ def _write(path: Path, snapshot_date: str, token: str) -> None:
 def test_directory_import_uses_explicit_dates_from_filenames(tmp_path: Path, capsys) -> None:
     source = tmp_path / "snapshots"
     source.mkdir()
-    _write(source / "2025-09-26.json", "9001", "2025-09-26")
-    _write(source / "2025-09-29.json", "9002", "2025-09-29")
+    _write(source / "2025-09-26.json", "2025-09-26", "9001")
+    _write(source / "2025-09-29.json", "2025-09-29", "9002")
     db = tmp_path / "contracts.sqlite3"
 
     assert main(["--directory", str(source), "--contract-db", str(db)]) == 0
@@ -43,7 +43,7 @@ def test_directory_import_uses_explicit_dates_from_filenames(tmp_path: Path, cap
 def test_imported_snapshot_feeds_historical_contract_resolution(tmp_path: Path) -> None:
     source = tmp_path / "snapshots"
     source.mkdir()
-    _write(source / "2025-09-26.json", "9001", "2025-09-26")
+    _write(source / "2025-09-26.json", "2025-09-26", "9001")
     db = tmp_path / "contracts.sqlite3"
 
     assert main(["--directory", str(source), "--contract-db", str(db)]) == 0
@@ -62,7 +62,7 @@ def test_imported_snapshot_feeds_historical_contract_resolution(tmp_path: Path) 
 def test_directory_import_rejects_non_dated_filename(tmp_path: Path) -> None:
     source = tmp_path / "snapshots"
     source.mkdir()
-    _write(source / "historical.json", "9001", "2025-09-26")
+    _write(source / "historical.json", "2025-09-26", "9001")
 
     try:
         main(["--directory", str(source), "--contract-db", str(tmp_path / "db.sqlite3")])
