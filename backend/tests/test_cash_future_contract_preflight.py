@@ -129,3 +129,38 @@ def test_preflight_with_real_catalog_stays_fail_closed_before_first_snapshot(tmp
     assert not report.complete
     assert report.gaps[0].kind == "SNAPSHOT"
     assert report.missing_snapshot_dates == (date(2026, 1, 2),)
+
+
+def test_preflight_both_mode_crosses_expiry_into_distinct_current_near_contracts(tmp_path):
+    from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
+
+    db = tmp_path / "contracts.sqlite3"
+    with ContractMasterCatalog(str(db)) as catalog:
+        catalog.upsert_snapshot(
+            date(2026, 1, 1),
+            (
+                ContractRecord("NFO", "ABC26JANFUT", "1001", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 100),
+                ContractRecord("NFO", "ABC26FEBFUT", "1002", date(2026, 2, 26), "STOCK_FUTURE", "ABC", 100),
+                ContractRecord("NFO", "ABC26MARFUT", "1003", date(2026, 3, 26), "STOCK_FUTURE", "ABC", 100),
+            ),
+        )
+        before = (
+            catalog.resolve(exchange="NFO", underlying="ABC", as_of=date(2026, 1, 28), mode="CURRENT"),
+            catalog.resolve(exchange="NFO", underlying="ABC", as_of=date(2026, 1, 28), mode="NEAR"),
+        )
+        after = (
+            catalog.resolve(exchange="NFO", underlying="ABC", as_of=date(2026, 1, 30), mode="CURRENT"),
+            catalog.resolve(exchange="NFO", underlying="ABC", as_of=date(2026, 1, 30), mode="NEAR"),
+        )
+        report = CashFutureContractPreflight(catalog).check(
+            exchange="NFO", underlying="ABC",
+            start=date(2026, 1, 28), end=date(2026, 1, 30), mode="BOTH",
+        )
+
+    assert report.complete
+    assert before[0].token == "1001"
+    assert before[1].token == "1002"
+    assert after[0].token == "1002"
+    assert after[1].token == "1003"
+    assert before[0].token != before[1].token
+    assert after[0].token != after[1].token
