@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     CASH_FUTURE_HISTORY_SYMBOLS: str = ""
     CASH_FUTURE_HISTORY_INTERVAL_SECONDS: int = 60
 
+    # Continuous one-second live Cash-Future feed for backtesting
+    LIVE_CASH_FUTURE_DATA_ENABLED: bool = False
+
     # Durable historical-download progress database
     BACKTEST_STATUS_DB: str = "./backtest_download_status.sqlite3"
 
