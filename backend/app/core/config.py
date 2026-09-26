@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     LIVE_CASH_FUTURE_DATA_ENABLED: bool = False
     LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT: float = 0.0
     LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS: float = 60.0
+    LIVE_CASH_FUTURE_ESTIMATED_COST_PER_LOT: float = 0.0
+    LIVE_CASH_FUTURE_SLIPPAGE_PER_LOT: float = 0.0
+    LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS: int = 1
 
     # WhatsApp Cloud API alerts; disabled until deployment credentials are supplied.
     WHATSAPP_ENABLED: bool = False
