@@ -305,7 +305,7 @@ def test_strategy_run_resume_route_continues_from_checkpoint_without_duplicates(
         payload(gap=8, timestamp=start + timedelta(hours=1)),
         payload(gap=4, timestamp=start + timedelta(hours=2)),
     ]
-    fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": points})
+    fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": [StrategyPointRequest(**item).model_dump(mode="json") for item in points]})
     config = CashFutureStrategyConfig(
         initial_capital=10_000_000,
         start_date=start.date(),
@@ -385,6 +385,7 @@ def test_strategy_run_resume_route_rejects_mismatched_data(monkeypatch, tmp_path
         ledger.close()
 
     changed = [dict(item) for item in points]
+    changed[1]["future_price"] = 107.0
     changed[1]["gap"] = 7.0
     response = client().post(
         "/api/v1/backtesting/cash-future/strategy-run/resume-mismatch/resume",
