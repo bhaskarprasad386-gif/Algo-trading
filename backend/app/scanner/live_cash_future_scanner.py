@@ -479,7 +479,9 @@ class LiveCashFutureScanner:
         if eligible and session_factory is not None:
             self._result_executor.submit(self._persist_result, session_factory, signal)
         if alert_event and session_factory is not None:
-            self._persist_alert(session_factory, signal)
+            # Keep database I/O off the market-data callback path just like
+            # notification delivery; scanner latency must not depend on SQLite.
+            self._result_executor.submit(self._persist_alert, session_factory, signal)
             self._alert_executor.submit(self._notify_users, session_factory, signal)
         return signal
 
