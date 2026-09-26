@@ -44,7 +44,7 @@ def test_live_feed_sends_one_tick_to_storage_and_strategy(tmp_path):
     rows = catalog.events(
         source="angelone-live",
         instrument="SBIN-EQ|101",
-        timeframe="event",
+        timeframe="tick",
     )
     assert len(rows) == 1
     assert engine.started["exchange_type"] == 1
@@ -62,5 +62,5 @@ def test_live_feed_close_flushes_before_socket_close(tmp_path):
     feed.close()
 
     assert engine.closed is True
-    assert catalog.count(source="angelone-live", instrument="SBINFUT|202", timeframe="event") == 1
+    assert catalog.count(source="angelone-live", instrument="SBINFUT|202", timeframe="tick") == 1
     catalog.close()
