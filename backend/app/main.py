@@ -17,6 +17,8 @@ from app.core.exceptions import TradingAppException, trading_exception_handler, 
 from app.core.database import engine, Base, SessionLocal, check_database
 from app.core.schema_migrations import run_schema_migrations
 from app.models import User, Instrument, Order, Session, Position, SystemLog
+from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
+from app.models.live_calendar_spread_paper_position import LiveCalendarSpreadPaperPosition
 from app.auth.routes import router as auth_router
 from app.algo.auth import AngelOneAuth
 from app.market_data.websocket import MarketDataWebSocket
@@ -30,6 +32,9 @@ from app.market_data.routes import router as market_data_router
 from app.scanner.routes import router as scanner_router
 from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
 from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
+from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
+from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner
+from app.execution.calendar_spread_paper_routes import router as calendar_spread_paper_router
 from app.execution.paper_routes import router as paper_execution_router
 from app.execution.live_paper_routes import router as live_paper_execution_router
 from app.scanner.cash_future_collector import CashFutureHistoryCollector
@@ -53,6 +58,8 @@ Base.metadata.create_all(bind=engine)
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
 live_cash_future_scanner = LiveCashFutureScanner()
+live_calendar_spread_scanner = LiveCalendarSpreadScanner()
+configure_calendar_spread_scanner(live_calendar_spread_scanner)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -104,6 +111,8 @@ app.include_router(scanner_router)
 app.include_router(auto_scanner_router)
 app.include_router(paper_execution_router)
 app.include_router(live_paper_execution_router)
+app.include_router(calendar_spread_paper_router)
+app.include_router(calendar_spread_scanner_router)
 app.include_router(monthly_results_router)
 app.include_router(cash_future_strategy_router)
 app.include_router(calendar_spread_strategy_router)
@@ -327,6 +336,7 @@ async def _live_calendar_spread_loop() -> None:
         settings.BACKTEST_DATA_DB,
         auth=AngelOneAuth(),
         instrument_master=instrument_master,
+        on_observation=lambda payload: live_calendar_spread_scanner.observe(payload, session_factory=SessionLocal),
     )
     try:
         await asyncio.to_thread(collector.run_forever)
