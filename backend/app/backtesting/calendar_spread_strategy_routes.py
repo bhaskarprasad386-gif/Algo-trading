@@ -231,4 +231,75 @@ def strategy_run_result(run_id: str):
         ledger.close()
 
 
-__all__ = ["router"]
+
+REPLAY_TIMEFRAMES = ("1s", "30s", "1m", "5m", "15m", "30m", "1h")
+_REPLAY_SECONDS = {"1s": 1, "30s": 30, "1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600}
+
+
+class CalendarSpreadReplayRequest(BaseModel):
+    trading_date: date
+    underlying: str = Field(min_length=1)
+    timeframe: str = Field(default="1m")
+    points: list[CalendarSpreadPointRequest]
+
+    @model_validator(mode="after")
+    def validate_replay(self):
+        if self.timeframe not in REPLAY_TIMEFRAMES:
+            raise ValueError("invalid replay timeframe")
+        if not self.points:
+            raise ValueError("points cannot be empty")
+        return self
+
+
+def _replay_deltas(points: list[CalendarSpreadPointRequest]) -> list[float]:
+    ordered = sorted((_normalise_timestamp(point.timestamp) for point in points))
+    return [
+        (current - previous).total_seconds()
+        for previous, current in zip(ordered, ordered[1:])
+        if current > previous
+    ]
+
+
+def _available_replay_intervals(points: list[CalendarSpreadPointRequest]) -> list[str]:
+    deltas = _replay_deltas(points)
+    if not deltas:
+        return ["1m", "5m", "15m", "30m", "1h"]
+    minimum = min(deltas)
+    return [name for name, seconds in _REPLAY_SECONDS.items() if minimum <= seconds]
+
+
+@router.post("/replay")
+def calendar_spread_replay(request: CalendarSpreadReplayRequest):
+    points = sorted(request.points, key=lambda point: _normalise_timestamp(point.timestamp))
+    available = _available_replay_intervals(points)
+    return {
+        "status": "success",
+        "trading_date": request.trading_date,
+        "underlying": request.underlying.strip().upper(),
+        "timeframe": request.timeframe,
+        "source_timeframe": "1s" if "1s" in available and _replay_deltas(points) and min(_replay_deltas(points)) < 30 else (
+            "30s" if "30s" in available and _replay_deltas(points) and min(_replay_deltas(points)) < 60 else "1m"
+        ),
+        "source_min_interval_seconds": min(_replay_deltas(points)) if _replay_deltas(points) else None,
+        "available_replay_intervals": available,
+        "count": len(points),
+        "series": [
+            {
+                "timestamp": _normalise_timestamp(point.timestamp).isoformat(),
+                "underlying": point.underlying,
+                "near_expiry": point.near_expiry,
+                "far_expiry": point.far_expiry,
+                "near_bid": point.near_bid,
+                "near_ask": point.near_ask,
+                "far_bid": point.far_bid,
+                "far_ask": point.far_ask,
+                "lot_size": point.lot_size,
+                "strike": point.strike,
+                "option_type": point.option_type,
+            }
+            for point in points
+        ],
+    }
+
+
+__all__ = ["router", "REPLAY_TIMEFRAMES"]
