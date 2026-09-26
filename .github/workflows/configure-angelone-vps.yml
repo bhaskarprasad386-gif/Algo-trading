@@ -1,0 +1,85 @@
+name: Configure Angel One VPS
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: vps-angelone-config
+  cancel-in-progress: false
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Configure credentials and verify Angel One login
+        env:
+          VPS_KEY_B64: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
+          ANGEL_CLIENT_ID: ${{ secrets.ANGEL_CLIENT_ID }}
+          ANGEL_PASSWORD: ${{ secrets.ANGEL_PASSWORD }}
+          ANGEL_TOTP_SECRET: ${{ secrets.ANGEL_TOTP_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_KEY_B64"
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          test -n "$ANGEL_API_KEY"
+          test -n "$ANGEL_CLIENT_ID"
+          test -n "$ANGEL_PASSWORD"
+          test -n "$ANGEL_TOTP_SECRET"
+
+          printf '%s' "$VPS_KEY_B64" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+          export CONFIG_PAYLOAD_B64="$(
+            printf '%s\\n' \
+              'APP_NAME="Algo Trading Platform"' \
+              'ENVIRONMENT=production' \
+              'DEBUG=False' \
+              'DATABASE_URL=sqlite:///./algo_trading.db' \
+              'CASH_FUTURE_HISTORY_ENABLED=false' \
+              'CASH_FUTURE_HISTORY_INTERVAL_SECONDS=60' \
+              "ANGEL_API_KEY=$ANGEL_API_KEY" \
+              "ANGEL_CLIENT_ID=$ANGEL_CLIENT_ID" \
+              "ANGEL_PASSWORD=$ANGEL_PASSWORD" \
+              "ANGEL_TOTP_SECRET=$ANGEL_TOTP_SECRET" \
+            | base64 -w 0
+          )"
+
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes "$VPS_USER@$VPS_HOST" \
+            "CONFIG_PAYLOAD_B64='$CONFIG_PAYLOAD_B64' bash -s" <<'REMOTE'
+          set -Eeuo pipefail
+          APP_DIR="/opt/Algo-Trading"
+          ENV_FILE="$APP_DIR/backend/.env"
+          umask 077
+          mkdir -p "$APP_DIR/backend"
+
+          tmp_file="$(mktemp "$APP_DIR/backend/.env.tmp.XXXXXX")"
+          trap 'rm -f "$tmp_file"' EXIT
+          printf '%s' "$CONFIG_PAYLOAD_B64" | base64 --decode > "$tmp_file"
+          test -s "$tmp_file"
+          grep -q '^ANGEL_API_KEY=.' "$tmp_file"
+          grep -q '^ANGEL_CLIENT_ID=.' "$tmp_file"
+          grep -q '^ANGEL_PASSWORD=.' "$tmp_file"
+          grep -q '^ANGEL_TOTP_SECRET=.' "$tmp_file"
+          mv -f "$tmp_file" "$ENV_FILE"
+          chmod 600 "$ENV_FILE"
+
+          systemctl restart algo-trading.service
+          for i in {1..20}; do
+            if systemctl is-active --quiet algo-trading.service && curl --fail --silent --show-error http://127.0.0.1:8000/health >/tmp/algo_health.json; then
+              break
+            fi
+            sleep 1
+          done
+
+          systemctl is-active --quiet algo-trading.service
+          curl --fail --silent --show-error http://127.0.0.1:8000/health
+          printf '\nCONFIGURED_CREDENTIAL_FIELDS=4\n'
+          printf 'LIVE_TRADING=OFF\n'
+          REMOTE
