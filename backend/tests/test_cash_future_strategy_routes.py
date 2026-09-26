@@ -315,7 +315,7 @@ def test_strategy_run_resume_route_continues_from_checkpoint_without_duplicates(
     ledger = BacktestLedger(ledger_db)
     try:
         run_cash_future_strategy(
-            tuple(CashFutureHistoryPoint(**item) for item in points[:2]),
+            tuple(CashFutureHistoryPoint(**{**item, "timestamp": datetime.fromisoformat(item["timestamp"])}) for item in points[:2]),
             _build_builder_strategy(StrategyRunRequest(
                 strategy_id="gap_threshold",
                 initial_capital=10_000_000,
@@ -370,7 +370,7 @@ def test_strategy_run_resume_route_rejects_mismatched_data(monkeypatch, tmp_path
     ledger = BacktestLedger(ledger_db)
     try:
         run_cash_future_strategy(
-            tuple(CashFutureHistoryPoint(**item) for item in points),
+            tuple(CashFutureHistoryPoint(**{**item, "timestamp": datetime.fromisoformat(item["timestamp"])}) for item in points),
             lambda current, history: "NONE",
             strategy_id="gap_threshold",
             strategy_version="1",
@@ -409,7 +409,7 @@ def test_strategy_run_resume_route_rejects_mismatched_strategy_configuration(mon
     stored_config_hash = provenance_hash({"cash_side": "BUY", "future_side": "SELL", "stop_loss": None, "target": 5.0})
     ledger = BacktestLedger(ledger_db)
     try:
-        run_cash_future_strategy(tuple(CashFutureHistoryPoint(**item) for item in points), _build_builder_strategy(StrategyRunRequest(strategy_id="gap_threshold", initial_capital=10_000_000, target=5.0, points=points)), strategy_id="gap_threshold", strategy_version="1", config=CashFutureStrategyConfig(initial_capital=10_000_000, checkpoint_interval=1), ledger=ledger, run_id="resume-config-mismatch", strategy_hash=_gap_threshold_implementation_hash(), strategy_config_hash=stored_config_hash, data_source_fingerprint=fingerprint)
+        run_cash_future_strategy(tuple(CashFutureHistoryPoint(**{**item, "timestamp": datetime.fromisoformat(item["timestamp"])}) for item in points), _build_builder_strategy(StrategyRunRequest(strategy_id="gap_threshold", initial_capital=10_000_000, target=5.0, points=points)), strategy_id="gap_threshold", strategy_version="1", config=CashFutureStrategyConfig(initial_capital=10_000_000, checkpoint_interval=1), ledger=ledger, run_id="resume-config-mismatch", strategy_hash=_gap_threshold_implementation_hash(), strategy_config_hash=stored_config_hash, data_source_fingerprint=fingerprint)
     finally:
         ledger.close()
     response = client().post("/api/v1/backtesting/cash-future/strategy-run/resume-config-mismatch/resume", json={"strategy_id": "gap_threshold", "strategy_version": "1", "initial_capital": 10_000_000, "checkpoint_interval": 1, "points": points})
