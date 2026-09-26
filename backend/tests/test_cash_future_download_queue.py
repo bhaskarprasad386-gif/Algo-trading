@@ -73,3 +73,23 @@ def test_queue_preserves_requested_session_days_across_rollover():
         "NFO:101:SBINJAN",
         "NFO:102:SBINFEB",
     ]
+
+
+def test_queue_both_mode_keeps_current_and_near_legs_distinct_across_rollover():
+    queue = build_rollover_download_queue(
+        catalog=_catalog(), spot_instrument="NSE:3045:SBIN",
+        exchange="NFO", underlying="SBIN",
+        start=datetime(2026, 1, 28, tzinfo=timezone.utc),
+        end=datetime(2026, 1, 30, tzinfo=timezone.utc),
+        timeframe="1m", mode="BOTH",
+        session_days=(date(2026, 1, 28), date(2026, 1, 29), date(2026, 1, 30)),
+    )
+
+    instruments = [item.request.instrument for item in queue.futures]
+    assert instruments == [
+        "NFO:101:SBINJAN",
+        "NFO:102:SBINFEB",
+        "NFO:102:SBINFEB",
+        "NFO:103:SBINMAR",
+    ]
+    assert len({item.request.instrument for item in queue.futures}) == 3
