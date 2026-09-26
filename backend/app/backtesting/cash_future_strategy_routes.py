@@ -62,6 +62,19 @@ def _result_page(ledger:BacktestLedger,run_id:str,record_type:str,limit:int,afte
     page=ledger.record_page(run_id,record_type,limit=limit,after_id=after_id)
     return {"status":"success","run_id":run_id,"record_type":record_type,"data":[dict(record.payload) for record in page.records],"total":ledger.record_count(run_id,record_type),"next_cursor":page.next_cursor}
 
+def _strategy_config_payload(request: StrategyRunRequest) -> dict[str, Any]:
+    payload = {
+        "cash_side": request.cash_side,
+        "future_side": request.future_side,
+        "stop_loss": request.stop_loss,
+        "target": request.target,
+    }
+    if request.start_timestamp is not None:
+        payload["start_timestamp"] = request.start_timestamp.isoformat()
+    if request.end_timestamp is not None:
+        payload["end_timestamp"] = request.end_timestamp.isoformat()
+    return payload
+
 def _build_builder_strategy(request:StrategyRunRequest):
     orientation=1.0 if (request.cash_side,request.future_side)==("BUY","SELL") else -1.0; stop,target=request.stop_loss,request.target; state={"entry_gap":None}
     def strategy(current:CashFutureHistoryPoint,history:tuple[CashFutureHistoryPoint,...]):
@@ -107,7 +120,7 @@ def strategy_run(request:StrategyRunRequest):
             data_source_fingerprint=loader.dataset_fingerprint(selection)
         points=_scale_points(points,request.cash_lots); ledger=BacktestLedger(settings.BACKTEST_LEDGER_DB)
         strategy_hash=_gap_threshold_implementation_hash() if request.strategy_id=="gap_threshold" else None
-        strategy_config_hash=provenance_hash({"cash_side":request.cash_side,"future_side":request.future_side,"stop_loss":request.stop_loss,"target":request.target,"start_timestamp":request.start_timestamp.isoformat() if request.start_timestamp else None,"end_timestamp":request.end_timestamp.isoformat() if request.end_timestamp else None})
+        strategy_config_hash=provenance_hash(_strategy_config_payload(request))
         result=run_cash_future_strategy(points,strategy,strategy_id=request.strategy_id,strategy_version=request.strategy_version,config=CashFutureStrategyConfig(initial_capital=request.initial_capital,execution_model=request.execution_model,charges_per_trade=request.charges_per_trade,funding_cost_per_trade=request.funding_cost_per_trade,start_date=request.start_date,end_date=request.end_date,contract_month=request.contract_month,cash_side=request.cash_side,future_side=request.future_side,slippage_per_share=request.slippage_per_share,history_window=request.history_window,checkpoint_interval=request.checkpoint_interval,start_timestamp=request.start_timestamp,end_timestamp=request.end_timestamp),ledger=ledger,run_id=run_id,strategy_hash=strategy_hash,strategy_config_hash=strategy_config_hash,data_source_fingerprint=data_source_fingerprint)
         payload=_serialise_run(ledger,run_id); report=build_cash_future_report(result.initial_capital,payload["trades"],payload["equity_curve"]); profit_factor=report.profit_factor if isfinite(report.profit_factor) else None
         payload["analysis"]={"initial_capital":result.initial_capital,"final_equity":report.final_equity,"net_pnl":payload["net_profit"],"roi":payload["net_profit"]/result.initial_capital,"max_drawdown":report.max_drawdown,"max_drawdown_pct":report.max_drawdown_pct,"win_rate":report.win_rate,"profit_factor":profit_factor,"turnover":report.turnover,"wins":report.wins,"losses":report.losses,"trade_count":payload["trade_count"],"monthly_pnl":dict(report.monthly_pnl),"yearly_pnl":dict(report.yearly_pnl)}
