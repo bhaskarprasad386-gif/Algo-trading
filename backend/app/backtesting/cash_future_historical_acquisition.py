@@ -79,45 +79,6 @@ class CashFutureHistoricalAcquisitionService:
             for session in sessions
         }))
 
-    @staticmethod
-    def _request_is_fully_covered(
-        request,
-        ranges,
-    ) -> bool:
-        """Return true when one persisted complete range covers this exact request."""
-        return any(
-            item.instrument == request.instrument
-            and item.complete
-            and item.missing_points == 0
-            and item.start_ns <= request.start_ns
-            and item.end_ns >= request.end_ns
-            for item in ranges
-        )
-
-    def _manifest_repair_instruments(
-        self,
-        *,
-        coverage_store: CashFutureCoverageManifestStore | None,
-        source: str,
-        timeframe: str,
-        plan: HistoricalSyncPlan,
-    ) -> set[str]:
-        """Keep planned requests unless their exact range is already durably covered.
-
-        Manifest state is range-scoped. A complete historical range for an
-        instrument must never suppress a new request for a different period.
-        """
-        if coverage_store is None:
-            return {request.instrument for request in plan.requests}
-        ranges = coverage_store.ranges(source=source, timeframe=timeframe)
-        if not ranges:
-            return {request.instrument for request in plan.requests}
-        return {
-            request.instrument
-            for request in plan.requests
-            if not self._request_is_fully_covered(request, ranges)
-        }
-
     def prepare(
         self,
         *,
