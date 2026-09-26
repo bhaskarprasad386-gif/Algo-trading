@@ -162,7 +162,7 @@ def test_cash_future_replay_returns_full_paired_series(monkeypatch):
     assert result["count"] == 2
     assert result["contracts_seen"] == ["2026-09"]
     assert result["source_min_interval_seconds"] == 60.0
-    assert result["available_replay_intervals"] == ["1m", "5m", "15m", "30m"]
+    assert result["available_replay_intervals"] == ["1m", "5m", "15m", "30m", "1h"]
 
     first, second = result["series"]
     assert first["timestamp"] < second["timestamp"]
