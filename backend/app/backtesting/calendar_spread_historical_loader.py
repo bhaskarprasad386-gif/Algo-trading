@@ -36,13 +36,13 @@ class CalendarSpreadHistoryPoint:
 class CalendarSpreadHistorySelection:
     underlying: str
     exchange: str
-    instrument_type: str = "AUTO"
     start_date: date
     end_date: date
     near_contract_month: str
     far_contract_month: str
     timeframe: str = "1m"
     source: str = "angelone"
+    instrument_type: str = "AUTO"
 
     def __post_init__(self) -> None:
         if not self.underlying.strip() or not self.exchange.strip():
