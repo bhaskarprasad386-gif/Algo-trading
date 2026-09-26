@@ -40,6 +40,7 @@ from app.backtesting.contract_master import ContractMasterCatalog
 from app.backtesting.contract_master_sync import DailyContractMasterSync
 from app.backtesting.monthly_results_routes import router as monthly_results_router
 from app.backtesting.cash_future_strategy_routes import router as cash_future_strategy_router
+from app.backtesting.calendar_spread_strategy_routes import router as calendar_spread_strategy_router
 from app.backtesting.universal_factory import create_universal_ledger
 from app.backtesting.universal_result_routes import create_universal_result_router
 from app.backtesting.universal_result_service import UniversalResultService
@@ -101,6 +102,7 @@ app.include_router(paper_execution_router)
 app.include_router(live_paper_execution_router)
 app.include_router(monthly_results_router)
 app.include_router(cash_future_strategy_router)
+app.include_router(calendar_spread_strategy_router)
 
 # Durable backtesting-download status is kept in its own SQLite file so API
 # requests never depend on an in-memory status object. The path can be
