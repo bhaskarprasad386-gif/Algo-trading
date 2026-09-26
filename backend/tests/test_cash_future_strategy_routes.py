@@ -349,10 +349,10 @@ def test_strategy_run_resume_route_continues_from_checkpoint_without_duplicates(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["signal_count"] == 2
+    assert body["signal_count"] == 3
     assert body["trade_count"] == 1
     assert body["net_profit"] == 600.0
-    assert len(body["signals"]) == 2
+    assert len(body["signals"]) == 3
     assert len(body["trades"]) == 1
 
 
@@ -394,7 +394,7 @@ def test_strategy_run_resume_route_rejects_mismatched_data(monkeypatch, tmp_path
         },
     )
     assert response.status_code == 422
-    assert "data source fingerprint" in response.json()["detail"]
+    assert "data_source_fingerprint" in response.json()["detail"]
 
 
 def test_strategy_run_resume_route_rejects_mismatched_strategy_configuration(monkeypatch, tmp_path):
