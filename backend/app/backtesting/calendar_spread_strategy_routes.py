@@ -305,7 +305,8 @@ def calendar_spread_replay(request: CalendarSpreadReplayRequest):
 
 class CalendarSpreadHistoricalReplayRequest(BaseModel):
     underlying: str = Field(min_length=1)
-    exchange: str = Field(default="NFO", min_length=1)
+    exchange: str = Field(default="AUTO", min_length=1)
+    instrument_type: str = Field(default="AUTO", min_length=1)
     start_date: date
     end_date: date
     near_contract_month: str
@@ -345,7 +346,8 @@ def _historical_point_row(point):
 
 class CalendarSpreadContractMonthsRequest(BaseModel):
     underlying: str = Field(min_length=1)
-    exchange: str = Field(default="NFO", min_length=1)
+    exchange: str = Field(default="AUTO", min_length=1)
+    instrument_type: str = Field(default="AUTO", min_length=1)
     as_of: date
 
 
@@ -354,25 +356,42 @@ def calendar_spread_contract_months(request: CalendarSpreadContractMonthsRequest
     from app.backtesting.contract_master import ContractMasterCatalog
     catalog = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
     try:
-        contracts = catalog.contracts(
-            exchange=request.exchange.strip().upper(),
-            underlying=request.underlying.strip().upper(),
-            as_of=request.as_of,
-            instrument_type="STOCK_FUTURE",
-        )
+        requested_type = request.instrument_type.strip().upper()
+        if requested_type not in {"AUTO", "INDEX_FUTURE", "STOCK_FUTURE", "COMMODITY_FUTURE"}:
+            raise HTTPException(status_code=422, detail="invalid instrument_type")
+        requested_exchange = request.exchange.strip().upper()
+        if requested_exchange == "AUTO":
+            candidates = (("INDEX_FUTURE", "NFO"), ("STOCK_FUTURE", "NFO"), ("COMMODITY_FUTURE", "MCX"))
+        else:
+            candidates = ((requested_type if requested_type != "AUTO" else "INDEX_FUTURE", requested_exchange),
+                          ("STOCK_FUTURE", requested_exchange),
+                          ("COMMODITY_FUTURE", requested_exchange)) if requested_type == "AUTO" else ((requested_type, requested_exchange),)
+        contracts = ()
+        selected_type = requested_type
+        selected_exchange = requested_exchange
+        for instrument_type, exchange in candidates:
+            found = catalog.contracts(
+                exchange=exchange, underlying=request.underlying.strip().upper(),
+                as_of=request.as_of, instrument_type=instrument_type,
+            )
+            if len(found) >= 2:
+                contracts, selected_type, selected_exchange = found, instrument_type, exchange
+                break
         if len(contracts) < 2:
-            raise HTTPException(status_code=422, detail="fewer than two active historical stock-future contracts")
+            raise HTTPException(status_code=422, detail="fewer than two active historical Calendar Spread contracts")
         return {
             "status": "success",
             "underlying": request.underlying.strip().upper(),
             "as_of": request.as_of.isoformat(),
+            "instrument_type": selected_type,
+            "exchange": selected_exchange,
+            "priority": "INDEX_FUTURE > STOCK_FUTURE > COMMODITY_FUTURE",
             "contracts": [
                 {
                     "contract_month": f"{contract.expiry.year:04d}-{contract.expiry.month:02d}",
-                    "symbol": contract.symbol,
-                    "token": contract.token,
-                    "expiry": contract.expiry.isoformat(),
-                    "lot_size": contract.lot_size,
+                    "symbol": contract.symbol, "token": contract.token,
+                    "expiry": contract.expiry.isoformat(), "lot_size": contract.lot_size,
+                    "instrument_type": contract.instrument_type, "exchange": contract.exchange,
                 }
                 for contract in contracts[:2]
             ],
@@ -401,6 +420,7 @@ def calendar_spread_historical_replay(request: CalendarSpreadHistoricalReplayReq
         far_contract_month=request.far_contract_month.strip(),
         timeframe=request.source_timeframe,
         source=request.source.strip(),
+        instrument_type=request.instrument_type.strip().upper(),
     )
     data_catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
     contract_catalog = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
