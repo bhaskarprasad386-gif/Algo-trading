@@ -204,3 +204,32 @@ def test_live_scanner_custom_gross_profit_filter_controls_alert(monkeypatch):
     assert above.gross_profit == 200.0
     assert above.alert_lots == 2
     assert above.alert_event == "NEW"
+
+
+def test_live_scanner_does_not_alert_when_capacity_is_zero(monkeypatch):
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_CAPITAL", 50.0)
+    scanner = LiveCashFutureScanner()
+    ts = 1_000_000_000
+    scanner.observe({
+        "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
+        "source_timestamp_ns": ts,
+    })
+    signal = scanner.observe({
+        "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
+        "ltp": 101, "bid": 100.8, "ask": 101, "lot_size": 100,
+        "expiry": "30SEP2026", "source_timestamp_ns": ts,
+    })
+    assert signal is not None
+    assert signal.capacity_lots == 0
+    assert signal.alert_lots == 0
+    assert signal.alert_event is None
+
+
+def test_live_scanner_keeps_only_active_day_extremes():
+    scanner = LiveCashFutureScanner()
+    ts = 1_000_000_000
+    scanner.observe({"leg":"CASH","underlying":"OLD","ltp":100,"ask":100,"source_timestamp_ns":ts})
+    scanner.observe({"leg":"FUTURE","underlying":"OLD","contract_month":"CURRENT","ltp":101,"bid":100.8,"ask":101,"source_timestamp_ns":ts})
+    old_key = next(iter(scanner._session_extremes))
+    scanner.observe({"leg":"CASH","underlying":"NEW","ltp":200,"ask":200,"source_timestamp_ns":ts + 86_400_000_000_000})
+    assert old_key not in scanner._session_extremes
