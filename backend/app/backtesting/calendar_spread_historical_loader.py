@@ -68,7 +68,12 @@ def _ns(value: datetime) -> int:
     return int(value.astimezone(timezone.utc).timestamp() * 1_000_000_000)
 
 
-def _bounds(day: date) -> tuple[int, int]:
+def _bounds(day: date, exchange: str) -> tuple[int, int]:
+    if exchange.upper() == "MCX":
+        return (
+            _ns(datetime.combine(day, time(9, 0), tzinfo=MARKET_TZ)),
+            _ns(datetime.combine(day, time(23, 30), tzinfo=MARKET_TZ)),
+        )
     return (
         _ns(datetime.combine(day, time(9, 15), tzinfo=MARKET_TZ)),
         _ns(datetime.combine(day, time(15, 30), tzinfo=MARKET_TZ)),
@@ -113,7 +118,7 @@ def _pair(near_records: Iterator[HistoricalRecord], far_records: Iterator[Histor
             continue
         timestamp_ns = max(near_row.timestamp_ns, far_row.timestamp_ns)
         local = _datetime_from_ns(timestamp_ns)
-        if local.weekday() >= 5 or not (time(9, 15) <= local.time() <= time(15, 30)):
+        if local.weekday() >= 5 or (near.exchange.upper() == "MCX" and not (time(9, 0) <= local.time() <= time(23, 30))) or (near.exchange.upper() != "MCX" and not (time(9, 15) <= local.time() <= time(15, 30)):
             if near_row.timestamp_ns <= timestamp_ns:
                 near_row = next(near_records, None)
             if far_row.timestamp_ns <= timestamp_ns:
@@ -182,7 +187,7 @@ class CalendarSpreadHistoricalLoader:
                 except LookupError:
                     day = date.fromordinal(day.toordinal() + 1)
                     continue
-                start_ns, end_ns = _bounds(day)
+                start_ns, end_ns = _bounds(day, near.exchange)
                 near_instrument = f"{near.exchange}:{near.token}:{near.symbol}"
                 far_instrument = f"{far.exchange}:{far.token}:{far.symbol}"
                 near_records = self.catalog.iter_records(source=selection.source, instrument=near_instrument, timeframe=selection.timeframe, start_ns=start_ns, end_ns=end_ns)
