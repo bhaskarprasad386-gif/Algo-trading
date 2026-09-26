@@ -52,11 +52,20 @@ class LiveCalendarSpreadScanner:
         except Exception:return None
     def snapshot(self,limit=50):
         rows=[]
-        for bucket in self._latest.values():
+        for (underlying, exchange), bucket in self._latest.items():
             if len(bucket)<2:continue
             near_m,far_m=sorted(bucket,key=lambda m:bucket[m][5])[:2]; n=bucket[near_m]; f=bucket[far_m]
-            if n[0]!=f[0]:continue
+            if n[0]!=f[0] or n[4]!=f[4] or n[3]!=f[3]:continue
             base=(n[2]+f[2])/2
             if base<=0:continue
-            rows.append(CalendarSpreadSignal(n and next(iter(self._latest))[0] or "", "", n[4], near_m, far_m,n[0],n[1],n[2],f[1],f[2],n[3],f[1]-n[2],n[1]-f[2],(f[1]-n[2])/base*100,(n[1]-f[2])/base*100,min(n[6],n[7],f[6],f[7]),0,max(f[1]-n[2],n[1]-f[2])/base))
+            long_edge=f[1]-n[2]; short_edge=n[1]-f[2]
+            liquidity=min(n[6],n[7],f[6],f[7])
+            capacity=int(settings.LIVE_CASH_FUTURE_CAPITAL/(base*n[3])) if getattr(settings,"LIVE_CASH_FUTURE_CAPITAL",0)>0 else 0
+            rows.append(CalendarSpreadSignal(
+                underlying, exchange, n[4], near_m, far_m, n[0],
+                n[1], n[2], f[1], f[2], n[3],
+                long_edge, short_edge,
+                long_edge/base*100, short_edge/base*100,
+                liquidity, capacity, max(long_edge,short_edge)/base,
+            ))
         return sorted(rows,key=lambda x:x.rank_score,reverse=True)[:limit]
