@@ -117,7 +117,7 @@ def test_cash_future_replay_returns_full_paired_series(monkeypatch):
             cash_price=801.0,
             future_price=814.0,
             gap=13.0,
-            gap_pct=1.622971,
+            gap_pct=13.0 / 801.0 * 100.0,
             lot_size=750,
             margin_required=150000.0,
             volume=13000.0,
