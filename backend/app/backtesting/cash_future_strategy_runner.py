@@ -4,6 +4,7 @@ from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from typing import Callable, Iterable, Iterator, Mapping, Any
 import json, math
 from app.backtesting.provenance import provenance_hash
@@ -16,7 +17,7 @@ CashFutureStrategy = Callable[[CashFutureHistoryPoint, tuple[CashFutureHistoryPo
 
 @dataclass(frozen=True)
 class CashFutureStrategyConfig:
-    initial_capital: float=100_000_000.0; execution_model:str="gap"; charges_per_trade:float=0.0; funding_cost_per_trade:float=0.0; start_date:date|None=None; end_date:date|None=None; contract_month:str|None=None; history_window:int|None=None; checkpoint_interval:int|None=None; cash_side:str="BUY"; future_side:str="SELL"; slippage_per_share:float=0.0
+    initial_capital: float=100_000_000.0; execution_model:str="gap"; charges_per_trade:float=0.0; funding_cost_per_trade:float=0.0; start_date:date|None=None; end_date:date|None=None; start_timestamp:datetime|None=None; end_timestamp:datetime|None=None; contract_month:str|None=None; history_window:int|None=None; checkpoint_interval:int|None=None; cash_side:str="BUY"; future_side:str="SELL"; slippage_per_share:float=0.0
     def __post_init__(self)->None:
         for value,name in ((self.initial_capital,"initial_capital"),(self.charges_per_trade,"charges_per_trade"),(self.funding_cost_per_trade,"funding_cost_per_trade"),(self.slippage_per_share,"slippage_per_share")):
             if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(float(value)): raise ValueError(f"{name} must be a finite number")
@@ -26,6 +27,7 @@ class CashFutureStrategyConfig:
         if self.cash_side not in {"BUY","SELL"} or self.future_side not in {"BUY","SELL"} or self.cash_side==self.future_side: raise ValueError("cash_side and future_side must be opposite BUY/SELL sides")
         if self.slippage_per_share<0: raise ValueError("slippage_per_share must be non-negative")
         if self.start_date is not None and self.end_date is not None and self.end_date<self.start_date: raise ValueError("end_date cannot be before start_date")
+        if self.start_timestamp is not None and self.end_timestamp is not None and self.end_timestamp<self.start_timestamp: raise ValueError("end_timestamp cannot be before start_timestamp")
         for value,name in ((self.history_window,"history_window"),(self.checkpoint_interval,"checkpoint_interval")):
             if value is not None and (isinstance(value,bool) or not isinstance(value,int) or value<=0): raise ValueError(f"{name} must be a positive integer when provided")
 
@@ -79,7 +81,7 @@ def _trade_gross_profit(entry,exit_point,config)->float:
     return gross-config.slippage_per_share*entry.lot_size*2.0
 
 def _execution_metadata(config:CashFutureStrategyConfig)->dict[str,Any]:
-    return {"execution_model":config.execution_model,"charges_per_trade":config.charges_per_trade,"funding_cost_per_trade":config.funding_cost_per_trade,"start_date":config.start_date.isoformat() if config.start_date else None,"end_date":config.end_date.isoformat() if config.end_date else None,"contract_month":config.contract_month,"history_window":config.history_window,"checkpoint_interval":config.checkpoint_interval,"cash_side":config.cash_side,"future_side":config.future_side,"slippage_per_share":config.slippage_per_share}
+    return {"execution_model":config.execution_model,"charges_per_trade":config.charges_per_trade,"funding_cost_per_trade":config.funding_cost_per_trade,"start_date":config.start_date.isoformat() if config.start_date else None,"end_date":config.end_date.isoformat() if config.end_date else None,"start_timestamp":config.start_timestamp.isoformat() if config.start_timestamp else None,"end_timestamp":config.end_timestamp.isoformat() if config.end_timestamp else None,"contract_month":config.contract_month,"history_window":config.history_window,"checkpoint_interval":config.checkpoint_interval,"cash_side":config.cash_side,"future_side":config.future_side,"slippage_per_share":config.slippage_per_share}
 
 def _persist(ledger,run_id,record_type,point,payload,pending=None):
     record=LedgerRecord(run_id,record_type,_timestamp_ns(point.timestamp),payload)
@@ -90,7 +92,7 @@ def _timestamp_ns(value:datetime)->int: return int(value.timestamp()*1_000_000_0
 def run_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy:CashFutureStrategy,*,strategy_id:str,strategy_version:str="1",config:CashFutureStrategyConfig|None=None,ledger=None,run_id:str|None=None,strategy_hash:str|None=None,strategy_config_hash:str|None=None,data_source_fingerprint:str|None=None)->CashFutureStrategyRun:
     if not isinstance(strategy_id,str) or not strategy_id.strip(): raise ValueError("strategy_id is required")
     if not isinstance(strategy_version,str) or not strategy_version.strip(): raise ValueError("strategy_version is required")
-    config=config or CashFutureStrategyConfig(); selected_contract=config.contract_month; selected_symbol=None; event_index=0; previous_timestamp=None
+    config=config or CashFutureStrategyConfig(); start_timestamp=_normalize_bound(config.start_timestamp); end_timestamp=_normalize_bound(config.end_timestamp); selected_contract=config.contract_month; selected_symbol=None; event_index=0; previous_timestamp=None
     if ledger is not None:
         if not run_id or not run_id.strip(): raise ValueError("run_id is required when ledger persistence is enabled")
         ledger.start_run(run_id,strategy_id,strategy_version,config.initial_capital,strategy_hash=strategy_hash,data_source_fingerprint=data_source_fingerprint,metadata={"domain":"cash_future","strategy_config_hash":strategy_config_hash,**_execution_metadata(config)})
@@ -101,6 +103,7 @@ def run_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy:Ca
         if previous_timestamp is not None and point.timestamp<previous_timestamp: raise ValueError("Cash-Future strategy input must be ordered by timestamp")
         previous_timestamp=point.timestamp
         if config.end_date is not None and point_date>config.end_date: break
+        if end_timestamp is not None and point.timestamp>end_timestamp: break
         # A configured contract month is a hard point-in-time universe boundary.
         if config.contract_month is not None and point.contract_month != config.contract_month:
             continue
@@ -113,7 +116,7 @@ def run_cash_future_strategy(points:Iterable[CashFutureHistoryPoint],strategy:Ca
         if selected_symbol is None: selected_symbol=point.symbol
         elif point.symbol!=selected_symbol: raise ValueError("Cash-Future strategy input contains multiple symbols")
         event_index+=1
-        if config.start_date is not None and point_date<config.start_date:
+        if (config.start_date is not None and point_date<config.start_date) or (start_timestamp is not None and point.timestamp<start_timestamp):
             if ledger is not None: _maybe_checkpoint(ledger,config,run_id,event_index,point,selected_contract,capital_ledger,entry,strategy,strategy_id,strategy_version,strategy_hash,data_source_fingerprint,pending_records)
             continue
         last_point=point; history.append(point); visible_history=tuple(history); raw_signal=strategy(point,visible_history); action="NONE" if raw_signal is None else str(raw_signal).strip().upper()
@@ -175,5 +178,12 @@ def _serialize_entry(entry):
     return {"timestamp":entry.timestamp.isoformat(),"symbol":entry.symbol,"contract_month":entry.contract_month,"cash_price":entry.cash_price,"future_price":entry.future_price,"gap":entry.gap,"gap_pct":entry.gap_pct,"lot_size":entry.lot_size,"margin_required":entry.margin_required,"volume":entry.volume,"oi":entry.oi,"cash_bid":entry.cash_bid,"cash_ask":entry.cash_ask,"future_bid":entry.future_bid,"future_ask":entry.future_ask,"cash_bid_qty":entry.cash_bid_qty,"cash_ask_qty":entry.cash_ask_qty,"future_bid_qty":entry.future_bid_qty,"future_ask_qty":entry.future_ask_qty,"charges":entry.charges,"funding_cost":entry.funding_cost,"net_profit":entry.net_profit,"roi_pct":entry.roi_pct,"expiry_date":entry.expiry_date.isoformat() if entry.expiry_date else None}
 
 def _point_date(point): return point.timestamp.date() if isinstance(point.timestamp,datetime) else point.timestamp
+
+def _normalize_bound(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value
+    return value.astimezone(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
 
 __all__=["CashFutureStrategyConfig","CashFutureCapitalLedger","CashFutureStrategyRun","run_cash_future_strategy"]
