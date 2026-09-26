@@ -448,22 +448,10 @@ def test_strategy_run_route_honors_exact_backdated_time_window():
 
 def test_strategy_run_route_reconciles_backdated_cash_buy_future_sell_with_scaled_lots():
     start = datetime(2026, 9, 2, 10, 0)
-    entry = payload(
-        gap=10,
-        timestamp=start,
-        cash_bid=99.0,
-        cash_ask=101.0,
-        future_bid=109.0,
-        future_ask=111.0,
-    )
-    exit_point = payload(
-        gap=4,
-        timestamp=start + timedelta(minutes=1),
-        cash_bid=102.0,
-        cash_ask=103.0,
-        future_bid=104.0,
-        future_ask=105.0,
-    )
+    entry = payload(gap=10, timestamp=start)
+    entry.update({"cash_bid": 99.0, "cash_ask": 101.0, "future_bid": 109.0, "future_ask": 111.0})
+    exit_point = payload(gap=4, timestamp=start + timedelta(minutes=1))
+    exit_point.update({"cash_bid": 102.0, "cash_ask": 103.0, "future_bid": 104.0, "future_ask": 105.0})
     response = client().post(
         "/api/v1/backtesting/cash-future/strategy-run",
         json={
