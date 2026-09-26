@@ -10,6 +10,7 @@ from app.market_data.instruments import InstrumentMaster
 from app.models.cash_future_history import CashFutureHistory
 from app.scanner.cash_future import CashFutureConfig, CashQuote, FutureQuote, calculate_cash_future
 from app.backtesting.daily_gap import build_daily_gap_observations
+from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
 
 router = APIRouter(prefix="/api/v1/scanner", tags=["Scanner"])
 IST = ZoneInfo("Asia/Kolkata")
@@ -88,6 +89,23 @@ def _stored_live_observations(db: Session, symbols: list[str], config: CashFutur
 
 def _filtered(data: list[dict]) -> list[dict]:
     return [item for item in data if item.get("executable") is True]
+
+@router.get("/cash-future/live/fast")
+def cash_future_live_fast_scanner(
+    max_age_seconds: float = Query(5.0, gt=0, le=30),
+    limit: int = Query(50, ge=1, le=50),
+):
+    """Return signals produced directly by the one-second WebSocket scanner."""
+    # The process-level scanner is installed by app.main; importing the singleton
+    # here avoids a second market-data subscription.
+    from app.main import live_cash_future_scanner
+    return {
+        "status": "success",
+        "scanner": "cash-future",
+        "mode": "live-fast",
+        "data": live_cash_future_scanner.snapshot(max_age_seconds=max_age_seconds, limit=limit),
+    }
+
 
 @router.get("/cash-future/live/auto")
 def cash_future_live_auto_scanner(
