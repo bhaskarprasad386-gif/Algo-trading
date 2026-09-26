@@ -36,6 +36,7 @@ class CalendarSpreadHistoryPoint:
 class CalendarSpreadHistorySelection:
     underlying: str
     exchange: str
+    instrument_type: str = "AUTO"
     start_date: date
     end_date: date
     near_contract_month: str
@@ -50,6 +51,8 @@ class CalendarSpreadHistorySelection:
             raise TypeError("start_date and end_date must be dates")
         if self.end_date < self.start_date:
             raise ValueError("end_date cannot be before start_date")
+        if self.instrument_type.strip().upper() not in {"AUTO", "INDEX_FUTURE", "STOCK_FUTURE", "COMMODITY_FUTURE"}:
+            raise ValueError("instrument_type must be AUTO, INDEX_FUTURE, STOCK_FUTURE or COMMODITY_FUTURE")
         if not self.timeframe.strip() or not self.source.strip():
             raise ValueError("timeframe and source are required")
         for value, name in ((self.near_contract_month, "near_contract_month"), (self.far_contract_month, "far_contract_month")):
@@ -140,23 +143,35 @@ class CalendarSpreadHistoricalLoader:
         self.contract_catalog = contract_catalog
 
     def _contracts(self, selection: CalendarSpreadHistorySelection, day: date) -> tuple[ContractRecord, ContractRecord]:
-        near = self.contract_catalog.resolve_contract_month(
-            exchange=selection.exchange,
-            underlying=selection.underlying.upper(),
-            contract_month=selection.near_contract_month,
-            as_of=day,
-        )
-        far = self.contract_catalog.resolve_contract_month(
-            exchange=selection.exchange,
-            underlying=selection.underlying.upper(),
-            contract_month=selection.far_contract_month,
-            as_of=day,
-        )
-        if far.expiry <= near.expiry:
-            raise LookupError("historical far contract must expire after near contract")
-        if near.lot_size != far.lot_size:
-            raise ValueError("historical Near/Far lot sizes differ")
-        return near, far
+        requested_type = selection.instrument_type.strip().upper()
+        types = (
+            ("INDEX_FUTURE", "NFO"),
+            ("STOCK_FUTURE", "NFO"),
+            ("COMMODITY_FUTURE", "MCX"),
+        ) if requested_type == "AUTO" else ((requested_type, selection.exchange.upper()),)
+        errors: list[str] = []
+        for instrument_type, default_exchange in types:
+            exchange = selection.exchange.upper() if selection.exchange.upper() != "AUTO" else default_exchange
+            try:
+                near = self.contract_catalog.resolve_contract_month(
+                    exchange=exchange, underlying=selection.underlying.upper(),
+                    contract_month=selection.near_contract_month, as_of=day,
+                    instrument_type=instrument_type,
+                )
+                far = self.contract_catalog.resolve_contract_month(
+                    exchange=exchange, underlying=selection.underlying.upper(),
+                    contract_month=selection.far_contract_month, as_of=day,
+                    instrument_type=instrument_type,
+                )
+                if far.expiry <= near.expiry:
+                    raise LookupError("historical far contract must expire after near contract")
+                if near.lot_size != far.lot_size:
+                    raise ValueError("historical Near/Far lot sizes differ")
+                return near, far
+            except LookupError as exc:
+                errors.append(str(exc))
+                continue
+        raise LookupError(errors[-1] if errors else "no historical Calendar Spread contracts found")
 
     def iter_points(self, selection: CalendarSpreadHistorySelection) -> Iterable[CalendarSpreadHistoryPoint]:
         day = selection.start_date
