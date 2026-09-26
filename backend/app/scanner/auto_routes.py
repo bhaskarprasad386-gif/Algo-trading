@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.market_data.instruments import InstrumentMaster
 from app.models.cash_future_history import CashFutureHistory
+from app.models.live_cash_future_scanner_result import LiveCashFutureScannerResult
 from app.scanner.cash_future import CashFutureConfig, CashQuote, FutureQuote, calculate_cash_future
 from app.backtesting.daily_gap import build_daily_gap_observations
 from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
@@ -104,6 +105,36 @@ def cash_future_live_fast_scanner(
         "scanner": "cash-future",
         "mode": "live-fast",
         "data": live_cash_future_scanner.snapshot(max_age_seconds=max_age_seconds, limit=limit),
+    }
+
+
+@router.get("/cash-future/live/history")
+def cash_future_live_scanner_history(
+    days: int = Query(30, ge=1, le=30),
+    limit: int = Query(1000, ge=1, le=5000),
+    db: Session = Depends(get_db),
+):
+    """Return persisted eligible live scanner results for up to the last 30 days."""
+    cutoff = datetime.now(IST).replace(tzinfo=None) - timedelta(days=int(days))
+    rows = db.scalars(
+        select(LiveCashFutureScannerResult)
+        .where(LiveCashFutureScannerResult.observed_at >= cutoff)
+        .order_by(LiveCashFutureScannerResult.observed_at.desc())
+        .limit(int(limit))
+    ).all()
+    return {
+        "status": "success",
+        "scanner": "cash-future",
+        "mode": "live-result-history",
+        "days": int(days),
+        "count": len(rows),
+        "data": [
+            {
+                **{k: v for k, v in row.__dict__.items() if not k.startswith("_")},
+                "reason_codes": tuple(filter(None, row.reason_codes.split(","))),
+            }
+            for row in rows
+        ],
     }
 
 
