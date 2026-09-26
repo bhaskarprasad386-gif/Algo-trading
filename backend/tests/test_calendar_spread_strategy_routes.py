@@ -298,3 +298,28 @@ def test_calendar_spread_historical_strategy_run_executes_catalog_data(tmp_path,
     assert result["completed_trades"] == 1
     assert result["trade_count"] == 1
     assert result["net_profit"] == 500.0
+
+
+def test_calendar_spread_contract_month_discovery_uses_point_in_time_snapshot(tmp_path, monkeypatch):
+    from app.backtesting.calendar_spread_strategy_routes import (
+        CalendarSpreadContractMonthsRequest,
+        calendar_spread_contract_months,
+    )
+    from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
+
+    db = tmp_path / "contracts.sqlite"
+    monkeypatch.setattr("app.backtesting.calendar_spread_strategy_routes.settings.BACKTEST_CONTRACT_DB", str(db))
+    catalog = ContractMasterCatalog(str(db))
+    snapshot = date(2026, 9, 24)
+    catalog.upsert_snapshot(snapshot, [
+        ContractRecord("NFO", "SBIN30SEP2026FUT", "1001", date(2026, 9, 30), "STOCK_FUTURE", "SBIN", 150, snapshot),
+        ContractRecord("NFO", "SBIN29OCT2026FUT", "1002", date(2026, 10, 29), "STOCK_FUTURE", "SBIN", 150, snapshot),
+        ContractRecord("NFO", "SBIN26NOV2026FUT", "1003", date(2026, 11, 26), "STOCK_FUTURE", "SBIN", 150, snapshot),
+    ])
+    catalog.close()
+
+    result = calendar_spread_contract_months(CalendarSpreadContractMonthsRequest(
+        underlying="sbin", exchange="nfo", as_of=snapshot,
+    ))
+    assert [row["contract_month"] for row in result["contracts"]] == ["2026-09", "2026-10"]
+    assert [row["lot_size"] for row in result["contracts"]] == [150, 150]
