@@ -93,7 +93,7 @@ jobs:
               CashFutureUniverseItem,
           )
           from app.backtesting.contract_master import ContractMasterCatalog
-          from app.backtesting.contract_master_preflight import CashFutureContractPreflight
+          from app.backtesting.cash_future_contract_preflight import CashFutureContractPreflight
           from app.backtesting.historical_catalog import HistoricalCatalog
           from app.backtesting.historical_ingest import HistoricalIngestionService
           from app.backtesting.historical_job_store import HistoricalJobStore
