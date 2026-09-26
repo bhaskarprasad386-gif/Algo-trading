@@ -100,12 +100,15 @@ def test_live_scanner_lifecycle_recovery_and_current_near_comparison(monkeypatch
 
     first = pair("CURRENT", base, 101)
     assert first.lifecycle == "NEW"
+    assert first.alert_event == "NEW"
     second = pair("CURRENT", base + 1_000_000_000, 101)
     assert second.lifecycle == "ACTIVE"
+    assert second.alert_event is None
     weakening = pair("CURRENT", base + 2_000_000_000, 100.5)
     assert weakening.lifecycle == "WEAKENING"
     expired = pair("CURRENT", base + 3_000_000_000, 99.5)
     assert expired.lifecycle == "EXPIRED"
+    assert expired.alert_event is None
 
     near = pair("NEAR", base + 3_000_000_000, 100.2)
     assert near is not None
@@ -132,3 +135,23 @@ def test_live_scanner_ranking_exposes_multi_factor_score():
     assert rows
     assert all(0.0 <= row["rank_score"] <= 1.0 for row in rows)
     assert "rank_factors" in rows[0]
+
+
+def test_live_scanner_emits_recovery_event_after_expiry(monkeypatch):
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS", 1)
+    scanner = LiveCashFutureScanner()
+    base = 1_000_000_000
+
+    def pair(ts, bid):
+        scanner.observe({
+            "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
+            "source_timestamp_ns": ts,
+        })
+        return scanner.observe({
+            "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
+            "ltp": bid, "bid": bid, "ask": bid + 0.1, "source_timestamp_ns": ts,
+        })
+
+    assert pair(base, 101).alert_event == "NEW"
+    assert pair(base + 1_000_000_000, 99).alert_event is None
+    assert pair(base + 2_000_000_000, 101).alert_event == "RECOVERY"
