@@ -1,0 +1,47 @@
+name: Cash-Future Available History Probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: "Calendar days to probe backward from today"
+        required: true
+        default: "365"
+      chunk_days:
+        description: "Bounded Angel One request chunk (max 30 days)"
+        required: true
+        default: "30"
+      max_underlyings:
+        description: "0 = all currently published stock futures"
+        required: true
+        default: "0"
+
+concurrency:
+  group: cash-future-available-history-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1440
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      LOOKBACK_DAYS: ${{ inputs.lookback_days }}
+      CHUNK_DAYS: ${{ inputs.chunk_days }}
+      MAX_UNDERLYINGS: ${{ inputs.max_underlyings }}
+
+    steps:
+      - name: Prepare SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "${VPS_SSH_KEY}" | base64 -d > "${RUNNER_TEMP}/vps_key"
+          chmod 600 "${RUNNER_TEMP}/vps_key"
+
+      - name: Run available-history probe on VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "${RUNNER_TEMP}/vps_key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no             "${VPS_USER}@${VPS_HOST}"             "cd /opt/Algo-Trading/backend && export PYTHONPATH=/opt/Algo-Trading/backend && /opt/Algo-Trading/.venv/bin/python scripts/probe_available_cash_future_history.py --lookback-days '${LOOKBACK_DAYS}' --chunk-days '${CHUNK_DAYS}' --max-underlyings '${MAX_UNDERLYINGS}' --db backtest_market_data.sqlite3"
