@@ -138,7 +138,7 @@ class ContractMasterCatalog:
             AND instrument_type=? AND expiry>=? ORDER BY expiry, token, symbol""", (snapshot, exchange, underlying, instrument_type, as_of.isoformat())).fetchall()
         return tuple(ContractRecord(r[0], r[1], r[2], date.fromisoformat(r[3]), r[4], r[5], int(r[6]), date.fromisoformat(snapshot), None if r[7] is None else float(r[7])) for r in rows)
 
-    def available_underlyings(self, *, as_of: date, exchanges: tuple[str, ...] = ("NFO", "MCX"), instrument_types: tuple[str, ...] = ("INDEX_FUTURE", "STOCK_FUTURE", "COMMODITY_FUTURE")) -> tuple[ContractRecord, ...]:
+    def available_underlyings(self, *, as_of: date, exchanges: tuple[str, ...] = ("NFO", "BFO", "MCX"), instrument_types: tuple[str, ...] = ("INDEX_FUTURE", "STOCK_FUTURE", "COMMODITY_FUTURE")) -> tuple[ContractRecord, ...]:
         """Return active point-in-time futures grouped by underlying, preserving contract identity."""
         row = self._db.execute(
             "SELECT snapshot_date FROM contract_master_snapshots WHERE snapshot_date<=? ORDER BY snapshot_date DESC LIMIT 1",
