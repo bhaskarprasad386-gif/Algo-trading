@@ -9,7 +9,7 @@ def test_live_scanner_pairs_same_second_cash_and_future():
     }
     future = {
         "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
-        "ltp": 101.0, "bid": 100.8, "ask": 101.0, "source_timestamp_ns": 1_000_000_000,
+        "ltp": 101.0, "bid": 100.8, "ask": 101.0, "bid_qty": 800, "ask_qty": 700, "source_timestamp_ns": 1_000_000_000,
     }
     assert scanner.observe(cash) is None
     signal = scanner.observe(future)
@@ -22,7 +22,7 @@ def test_live_scanner_does_not_pair_different_seconds():
     scanner = LiveCashFutureScanner()
     assert scanner.observe({
         "leg": "CASH", "underlying": "ABC", "ltp": 100.0,
-        "bid": 99.9, "ask": 100.0, "source_timestamp_ns": 1_000_000_000,
+        "bid": 99.9, "ask": 100.0, "bid_qty": 1000, "ask_qty": 900, "source_timestamp_ns": 1_000_000_000,
     }) is None
     assert scanner.observe({
         "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
@@ -59,3 +59,76 @@ def test_live_scanner_advanced_metrics(monkeypatch):
     assert signal.future_day_low == 101
     assert signal.stable_observations == 1
     assert signal.annualized_gap_pct is not None
+
+
+def test_live_scanner_liquidity_capacity_and_traceability(monkeypatch):
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_MIN_LIQUIDITY_QTY", 500)
+    scanner = LiveCashFutureScanner()
+    ts = 1_000_000_000
+    scanner.observe({
+        "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
+        "bid_qty": 1000, "ask_qty": 900, "source_timestamp_ns": ts,
+    })
+    signal = scanner.observe({
+        "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
+        "ltp": 101, "bid": 100.8, "ask": 101, "bid_qty": 800, "ask_qty": 700,
+        "lot_size": 100, "expiry": "30SEP2026", "source_timestamp_ns": ts,
+    })
+    assert signal is not None
+    assert signal.liquidity_qty == 700
+    assert signal.capacity_lots == 1000
+    assert signal.capacity_notional == 10_000_000
+    assert signal.observation_ref == "ABC:CURRENT:1000000000"
+    assert "LIQUIDITY_MEASURED" in signal.reason_codes
+
+
+def test_live_scanner_lifecycle_recovery_and_current_near_comparison(monkeypatch):
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS", 1)
+    scanner = LiveCashFutureScanner()
+    base = 1_000_000_000
+
+    def pair(month, ts, bid):
+        scanner.observe({
+            "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
+            "source_timestamp_ns": ts,
+        })
+        return scanner.observe({
+            "leg": "FUTURE", "underlying": "ABC", "contract_month": month,
+            "ltp": bid + 0.2, "bid": bid, "ask": bid + 0.2,
+            "source_timestamp_ns": ts,
+        })
+
+    first = pair("CURRENT", base, 101)
+    assert first.lifecycle == "NEW"
+    second = pair("CURRENT", base + 1_000_000_000, 101)
+    assert second.lifecycle == "ACTIVE"
+    weakening = pair("CURRENT", base + 2_000_000_000, 100.5)
+    assert weakening.lifecycle == "WEAKENING"
+    expired = pair("CURRENT", base + 3_000_000_000, 99.5)
+    assert expired.lifecycle == "EXPIRED"
+
+    near = pair("NEAR", base + 3_000_000_000, 100.2)
+    assert near is not None
+    rows = scanner.snapshot(max_age_seconds=10_000, limit=10)
+    current = next(row for row in rows if row["contract_month"] == "CURRENT")
+    assert current["peer_contract_month"] == "NEAR"
+    assert current["gap_pct_delta_vs_peer"] is not None
+    assert current["is_best_contract_month"] is False
+
+
+def test_live_scanner_ranking_exposes_multi_factor_score():
+    scanner = LiveCashFutureScanner()
+    ts = 1_000_000_000
+    for month, bid in (("CURRENT", 102.0), ("NEAR", 101.0)):
+        scanner.observe({
+            "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
+            "source_timestamp_ns": ts,
+        })
+        scanner.observe({
+            "leg": "FUTURE", "underlying": "ABC", "contract_month": month,
+            "ltp": bid, "bid": bid, "ask": bid + 0.1, "source_timestamp_ns": ts,
+        })
+    rows = scanner.snapshot(max_age_seconds=10_000, limit=10)
+    assert rows
+    assert all(0.0 <= row["rank_score"] <= 1.0 for row in rows)
+    assert "rank_factors" in rows[0]
