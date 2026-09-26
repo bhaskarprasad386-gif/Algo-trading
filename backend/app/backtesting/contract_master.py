@@ -147,7 +147,13 @@ class ContractMasterCatalog:
         contracts = self.contracts(exchange=exchange, underlying=underlying, as_of=as_of, max_snapshot_age_days=max_snapshot_age_days)
         if not contracts:
             raise LookupError(f"no historical stock futures contract for {underlying} on {as_of.isoformat()}")
-        return contracts[0] if mode == "CURRENT" else (contracts[1] if len(contracts) > 1 else contracts[0])
+        if mode == "CURRENT":
+            return contracts[0]
+        if len(contracts) < 2:
+            raise LookupError(
+                f"no historical near-month stock futures contract for {underlying} on {as_of.isoformat()}"
+            )
+        return contracts[1]
 
     def resolve_contract_month(self, *, exchange: str, underlying: str, contract_month: str, as_of: date, instrument_type: str = "STOCK_FUTURE", max_snapshot_age_days: int | None = None) -> ContractRecord:
         """Resolve the exact historical futures contract for a YYYY-MM expiry month without returning an expired contract."""
