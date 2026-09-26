@@ -19,11 +19,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           test -n "$VPS_HOST"
           test -n "$VPS_USER"
           test -n "$VPS_SSH_KEY_B64"
-
           printf '%s' "$VPS_SSH_KEY_B64" | base64 --decode > /tmp/vps_key
           chmod 600 /tmp/vps_key
           mkdir -p ~/.ssh
@@ -31,16 +29,22 @@ jobs:
 
           ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
-
           APP_DIR=/opt/Algo-Trading
           BACKEND_DIR="$APP_DIR/backend"
           PYTHON="$APP_DIR/.venv/bin/python"
-
           test -x "$PYTHON"
           cd "$BACKEND_DIR"
 
+          echo "=== SERVICE STATUS ==="
+          systemctl is-active algo-trading.service || true
+          systemctl --no-pager --full status algo-trading.service | sed -n '1,35p' || true
+
+          echo "=== RECENT CONTRACT-MASTER LOGS ==="
+          journalctl -u algo-trading.service --no-pager -n 120 2>/dev/null | grep -Ei 'contract|master|sync|angel' | tail -80 || true
+
           "$PYTHON" - <<'PY'
           from app.backtesting.contract_master import ContractMasterCatalog
+          from app.backtesting.contract_master_sync import DailyContractMasterSync
           from app.core.config import settings
           from pathlib import Path
 
@@ -52,15 +56,27 @@ jobs:
           data_db = abs_db(settings.BACKTEST_DATA_DB)
           status_db = abs_db(settings.BACKTEST_STATUS_DB)
 
-          catalog = ContractMasterCatalog(contract_db)
-          dates = catalog.snapshot_dates()
-
+          print("=== CONFIG / DATABASES ===")
           print(f"CONTRACT_DB={contract_db}")
           print(f"DATA_DB={data_db}")
           print(f"STATUS_DB={status_db}")
-          print(f"CONTRACT_SNAPSHOT_COUNT={len(dates)}")
-          print("CONTRACT_SNAPSHOT_DATES=" + ",".join(d.isoformat() for d in dates))
+          print(f"BACKTEST_CONTRACT_MASTER_AUTO_SYNC={settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC}")
           print(f"CASH_FUTURE_HISTORY_ENABLED={settings.CASH_FUTURE_HISTORY_ENABLED}")
           print("LIVE_TRADING=OFF")
+
+          catalog = ContractMasterCatalog(contract_db)
+          before = catalog.snapshot_dates()
+          print(f"CONTRACT_SNAPSHOT_COUNT_BEFORE={len(before)}")
+          print("CONTRACT_SNAPSHOT_DATES_BEFORE=" + ",".join(d.isoformat() for d in before))
+
+          print("=== MANUAL CURRENT SNAPSHOT SYNC ===")
+          result = DailyContractMasterSync(catalog).sync()
+          print(f"CONTRACT_SNAPSHOT_DATE={result.snapshot_date.isoformat()}")
+          print(f"CONTRACT_SNAPSHOT_RECORDS={result.records}")
+          print(f"CONTRACT_SNAPSHOT_SKIPPED={result.skipped}")
+
+          after = catalog.snapshot_dates()
+          print(f"CONTRACT_SNAPSHOT_COUNT_AFTER={len(after)}")
+          print("CONTRACT_SNAPSHOT_DATES_AFTER=" + ",".join(d.isoformat() for d in after))
           PY
           REMOTE
