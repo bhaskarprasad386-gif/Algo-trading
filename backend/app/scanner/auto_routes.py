@@ -139,7 +139,7 @@ def cash_future_live_auto_scanner(
     )
     stored_data, errors = _stored_live_observations(db, symbols, config, max_quote_age_seconds)
     opportunities = _filtered(stored_data)
-    opportunities.sort(key=lambda item: (item.get("net_profit", 0), item.get("roi_pct", 0)), reverse=True)
+    opportunities.sort(key=lambda item: (-float(item.get("net_profit", 0)), -float(item.get("roi_pct", 0)), str(item.get("symbol", ""))))
     return {
         "status": "success",
         "scanner": "cash-future",
