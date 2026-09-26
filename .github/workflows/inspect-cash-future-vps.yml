@@ -26,6 +26,8 @@ jobs:
 
           printf '%s' "$VPS_SSH_KEY_B64" | base64 --decode > /tmp/vps_key
           chmod 600 /tmp/vps_key
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
 
           ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
