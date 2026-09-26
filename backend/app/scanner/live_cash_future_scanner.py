@@ -290,6 +290,18 @@ class LiveCashFutureScanner:
         if capacity_lots is not None:
             reasons.append("CAPACITY_ESTIMATED")
 
+        state_key = (symbol, month)
+        with self._lock:
+            previous_alert_state = self._alert_state.get(state_key)
+            if eligible and previous_alert_state != "ACTIVE":
+                alert_event = "RECOVERY" if previous_alert_state else "NEW"
+                self._alert_state[state_key] = "ACTIVE"
+            elif not eligible:
+                self._alert_state[state_key] = "WEAKENING" if previous_alert_state == "ACTIVE" else "INACTIVE"
+                alert_event = None
+            else:
+                alert_event = None
+
         signal = LiveCashFutureSignal(
             symbol=symbol,
             contract_month=month,
@@ -323,22 +335,12 @@ class LiveCashFutureScanner:
             lifecycle=lifecycle,
             reason_codes=tuple(reasons),
             observation_ref=f"{symbol}:{month}:{timestamp_ns}",
-            alert_event=alert_state,
+            alert_event=alert_event,
         )
         with self._lock:
             self._signals[(signal.symbol, signal.contract_month)] = signal
-            state_key = (signal.symbol, signal.contract_month)
-            previous_alert_state = self._alert_state.get(state_key)
-            if eligible and previous_alert_state != "ACTIVE":
-                alert_state = "RECOVERY" if previous_alert_state else "NEW"
-                self._alert_state[state_key] = "ACTIVE"
-            elif not eligible:
-                self._alert_state[state_key] = "WEAKENING" if previous_alert_state == "ACTIVE" else "INACTIVE"
-                alert_state = None
-            else:
-                alert_state = None
 
-        if alert_state and session_factory is not None:
+        if alert_event and session_factory is not None:
             self._alert_executor.submit(self._notify_users, session_factory, signal)
         return signal
 
