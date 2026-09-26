@@ -93,3 +93,32 @@ def test_manifest_store_accepts_split_adjacent_requested_interval(tmp_path):
         source="angelone",
         requests=(("FUT", 0, 10),),
     ) is True
+
+
+def test_manifest_store_replaces_stale_overlapping_range(tmp_path):
+    store = CashFutureCoverageManifestStore(tmp_path / "coverage.sqlite")
+    store.upsert(
+        build_coverage_manifest(
+            source="angelone",
+            generated_at=7,
+            ranges=(CoverageRange("FUT", 0, 10, 11, 11, 0, True),),
+        )
+    )
+
+    # Refreshed catalog snapshot only covers the first half. The old complete
+    # range must not survive and falsely certify the missing tail.
+    store.upsert(
+        build_coverage_manifest(
+            source="angelone",
+            generated_at=8,
+            ranges=(CoverageRange("FUT", 0, 5, 6, 6, 0, True),),
+        )
+    )
+
+    assert store.ranges(source="angelone", instrument="FUT") == (
+        CoverageRange("FUT", 0, 5, 6, 6, 0, True),
+    )
+    assert store.is_complete_for_requests(
+        source="angelone",
+        requests=(("FUT", 0, 10),),
+    ) is False
