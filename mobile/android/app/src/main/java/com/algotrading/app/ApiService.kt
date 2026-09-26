@@ -105,6 +105,61 @@ data class CashFutureStrategyRunResponse(
     val equity_curve: List<Map<String, Any?>> = emptyList(),
 )
 
+data class CalendarSpreadReplayPoint(
+    val timestamp: String = "",
+    val underlying: String = "",
+    val near_expiry: String = "",
+    val far_expiry: String = "",
+    val near_bid: Double = 0.0,
+    val near_ask: Double = 0.0,
+    val far_bid: Double = 0.0,
+    val far_ask: Double = 0.0,
+    val lot_size: Double = 0.0,
+    val strike: Double? = null,
+    val option_type: String? = null,
+)
+
+data class CalendarSpreadHistoricalReplayResponse(
+    val status: String = "",
+    val underlying: String = "",
+    val near_contract_month: String = "",
+    val far_contract_month: String = "",
+    val source_timeframe: String = "",
+    val replay_timeframe: String = "",
+    val source_min_interval_seconds: Int? = null,
+    val available_replay_intervals: List<String> = emptyList(),
+    val count: Int = 0,
+    val series: List<CalendarSpreadReplayPoint> = emptyList(),
+)
+
+data class CalendarSpreadTradeMarker(
+    val entry_time: String = "",
+    val exit_time: String = "",
+    val symbol: String = "",
+    val lot_size: Double = 0.0,
+    val quantity: Double = 0.0,
+    val entry_price: Double = 0.0,
+    val exit_price: Double = 0.0,
+    val gross_profit: Double = 0.0,
+    val fees: Double = 0.0,
+    val net_profit: Double = 0.0,
+)
+
+data class CalendarSpreadStrategyRunResponse(
+    val status: String = "",
+    val run_id: String = "",
+    val strategy_id: String = "",
+    val strategy_version: String = "1",
+    val direction: String = "",
+    val start_timestamp: String = "",
+    val end_timestamp: String = "",
+    val completed_trades: Int = 0,
+    val unresolved_trades: Int = 0,
+    val net_profit: Double = 0.0,
+    val trade_count: Int = 0,
+    val trades: List<CalendarSpreadTradeMarker> = emptyList(),
+)
+
 data class CashFutureReplayResponse(val status: String = "", val trading_date: String = "", val symbol: String = "", val contract_month: String? = null, val contracts_seen: List<String> = emptyList(), val mode: String = "CURRENT", val timeframe: String = "1m", val source: String = "", val count: Int = 0, val first_timestamp: String = "", val last_timestamp: String = "", val source_min_interval_seconds: Int? = null, val available_replay_intervals: List<String> = emptyList(), val series: List<CashFutureReplayPoint> = emptyList(), val graph: List<CashFutureGraphPoint> = emptyList())
 data class IntradayReplayResponse(val status: String = "", val trading_date: String = "", val symbol: String = "", val instrument_type: String = "CASH_FUTURE", val source_interval_minutes: Int = 1, val chart_interval_minutes: Int = 15, val count: Int = 0, val series: List<IntradayReplayPoint> = emptyList())
 data class DateGapResponse(val status: String = "", val trading_date: String = "", val mode: String = "shorting", val instrument_type: String = "STOCK", val count: Int = 0, val top: DailyGapCalendarItem? = null, val data: List<DailyGapCalendarItem> = emptyList())
@@ -143,6 +198,10 @@ interface ApiInterface {
     @GET("/api/v1/backtesting/results/monthly-gap") suspend fun monthlyGapSearch(@Query("year") year: Int, @Query("month") month: Int, @Query("mode") mode: String = "opening", @Query("instrument_type") instrumentType: String = "STOCK", @Query("symbol") symbol: String? = null, @Query("contract_month") contractMonth: String? = null): MonthlyGapSearchResponse
     @GET("/api/v1/backtesting/results/monthly-gap-top10") suspend fun monthlyGapTop10(@Query("year") year: Int, @Query("month") month: Int, @Query("instrument_type") instrumentType: String = "STOCK", @Query("contract_month") contractMonth: String? = null): MonthlyGapTop10Response
     @GET("/api/v1/backtesting/results/monthly-graph") suspend fun monthlyGraph(@Query("year") year: Int, @Query("month") month: Int, @Query("symbol") symbol: String, @Query("instrument_type") instrumentType: String = "STOCK", @Query("contract_month") contractMonth: String? = null): MonthlyGraphResponse
+    @POST("/api/v1/backtesting/calendar-spread/historical-replay")
+    suspend fun calendarSpreadHistoricalReplay(@Body request: Map<String, Any?>): CalendarSpreadHistoricalReplayResponse
+    @POST("/api/v1/backtesting/calendar-spread/historical-strategy-run")
+    suspend fun calendarSpreadHistoricalStrategyRun(@Body request: Map<String, Any?>): CalendarSpreadStrategyRunResponse
     @GET("/api/v1/backtesting/cash-future/replay") suspend fun cashFutureReplay(@Query("trading_date") tradingDate: String, @Query("symbol") symbol: String, @Query("contract_month") contractMonth: String? = null, @Query("timeframe") timeframe: String = "1m", @Query("mode") mode: String = "CURRENT", @Query("source") source: String = "angelone", @Query("spot_instrument") spotInstrument: String? = null, @Query("exchange") exchange: String = "NSE"): CashFutureReplayResponse
     @GET("/api/v1/backtesting/cash-future/strategy-run/{run_id}") suspend fun cashFutureStrategyRun(@Path("run_id") runId: String): CashFutureStrategyRunResponse
     @POST("/api/v1/backtesting/full-fno/start") suspend fun startFullFnoJob(@Body request: FullFnoJobRequest = FullFnoJobRequest()): FullFnoJobAcceptedResponse
