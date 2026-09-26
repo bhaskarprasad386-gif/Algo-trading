@@ -40,6 +40,12 @@ jobs:
           printf '%s' "${VPS_SSH_KEY}" | base64 -d > "${RUNNER_TEMP}/vps_key"
           chmod 600 "${RUNNER_TEMP}/vps_key"
 
+      - name: Sync latest main to VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "${RUNNER_TEMP}/vps_key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no "${VPS_USER}@${VPS_HOST}" 'cd /opt/Algo-Trading && git fetch origin main && git merge --ff-only origin/main && test -f backend/scripts/probe_available_cash_future_history.py'
+
       - name: Run available-history probe on VPS
         shell: bash
         run: |
