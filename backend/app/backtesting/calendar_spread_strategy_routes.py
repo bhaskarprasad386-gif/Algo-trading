@@ -407,7 +407,7 @@ def calendar_spread_contract_months(request: CalendarSpreadContractMonthsRequest
             raise HTTPException(status_code=422, detail="invalid instrument_type")
         requested_exchange = request.exchange.strip().upper()
         if requested_exchange == "AUTO":
-            candidates = (("INDEX_FUTURE", "NFO"), ("STOCK_FUTURE", "NFO"), ("COMMODITY_FUTURE", "MCX"))
+            candidates = (("INDEX_FUTURE", "NFO"), ("INDEX_FUTURE", "BFO"), ("STOCK_FUTURE", "NFO"), ("STOCK_FUTURE", "BFO"), ("COMMODITY_FUTURE", "MCX"))
         else:
             candidates = ((requested_type if requested_type != "AUTO" else "INDEX_FUTURE", requested_exchange),
                           ("STOCK_FUTURE", requested_exchange),
