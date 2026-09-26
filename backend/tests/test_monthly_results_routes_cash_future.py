@@ -384,6 +384,6 @@ def test_cash_future_shorting_payload_uses_genuine_daily_cash_and_future_ohlc(mo
     assert result[0]["future_high"] == 120.0
     assert result[0]["future_low"] == 100.0
     assert result[0]["future_close"] == 118.0
-    assert result[0]["gap_high_timestamp"] == "2026-09-10T11:15:00"
+    assert result[0]["gap_high_timestamp"] == "2026-09-10T11:15:00+05:30"
     assert result[0]["cash_price_at_gap_high"] == 105.0
     assert result[0]["future_price_at_gap_high"] == 122.0
