@@ -390,3 +390,64 @@ def test_calendar_spread_instruments_returns_index_stock_and_commodity_with_inde
     assert [item["underlying"] for item in result["instruments"]] == ["NIFTY", "SBIN", "GOLD"]
     assert result["instruments"][0]["near_contract_month"] == "2026-09"
     assert result["instruments"][0]["far_contract_month"] == "2026-10"
+
+
+def test_calendar_spread_instrument_universe_prioritizes_index_and_includes_bfo_and_commodity(tmp_path, monkeypatch):
+    from app.backtesting.calendar_spread_strategy_routes import (
+        CalendarSpreadInstrumentUniverseRequest,
+        calendar_spread_instruments,
+    )
+    from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
+
+    db = tmp_path / "universe.sqlite"
+    monkeypatch.setattr("app.backtesting.calendar_spread_strategy_routes.settings.BACKTEST_CONTRACT_DB", str(db))
+    catalog = ContractMasterCatalog(str(db))
+    snapshot = date(2026, 9, 24)
+    catalog.upsert_snapshot(snapshot, [
+        ContractRecord("NFO", "NIFTY30SEP2026FUT", "2001", date(2026, 9, 30), "INDEX_FUTURE", "NIFTY", 75, snapshot),
+        ContractRecord("NFO", "NIFTY29OCT2026FUT", "2002", date(2026, 10, 29), "INDEX_FUTURE", "NIFTY", 75, snapshot),
+        ContractRecord("BFO", "SENSEX30SEP2026FUT", "3001", date(2026, 9, 30), "INDEX_FUTURE", "SENSEX", 20, snapshot),
+        ContractRecord("BFO", "SENSEX30OCT2026FUT", "3002", date(2026, 10, 30), "INDEX_FUTURE", "SENSEX", 20, snapshot),
+        ContractRecord("NFO", "SBIN30SEP2026FUT", "1001", date(2026, 9, 30), "STOCK_FUTURE", "SBIN", 150, snapshot),
+        ContractRecord("NFO", "SBIN29OCT2026FUT", "1002", date(2026, 10, 29), "STOCK_FUTURE", "SBIN", 150, snapshot),
+        ContractRecord("MCX", "CRUDEOIL30SEP2026FUT", "4001", date(2026, 9, 30), "COMMODITY_FUTURE", "CRUDEOIL", 100, snapshot),
+        ContractRecord("MCX", "CRUDEOIL19OCT2026FUT", "4002", date(2026, 10, 19), "COMMODITY_FUTURE", "CRUDEOIL", 100, snapshot),
+    ])
+    catalog.close()
+
+    result = calendar_spread_instruments(CalendarSpreadInstrumentUniverseRequest(as_of=snapshot))
+
+    assert result["priority"] == "INDEX_FUTURE > STOCK_FUTURE > COMMODITY_FUTURE"
+    assert [(row["instrument_type"], row["underlying"]) for row in result["instruments"]] == [
+        ("INDEX_FUTURE", "NIFTY"),
+        ("INDEX_FUTURE", "SENSEX"),
+        ("STOCK_FUTURE", "SBIN"),
+        ("COMMODITY_FUTURE", "CRUDEOIL"),
+    ]
+    assert result["instruments"][0]["near_contract_month"] == "2026-09"
+    assert result["instruments"][0]["far_contract_month"] == "2026-10"
+
+
+def test_calendar_spread_contract_month_auto_supports_bfo_index(tmp_path, monkeypatch):
+    from app.backtesting.calendar_spread_strategy_routes import (
+        CalendarSpreadContractMonthsRequest,
+        calendar_spread_contract_months,
+    )
+    from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
+
+    db = tmp_path / "bfo-contracts.sqlite"
+    monkeypatch.setattr("app.backtesting.calendar_spread_strategy_routes.settings.BACKTEST_CONTRACT_DB", str(db))
+    catalog = ContractMasterCatalog(str(db))
+    snapshot = date(2026, 9, 24)
+    catalog.upsert_snapshot(snapshot, [
+        ContractRecord("BFO", "SENSEX30SEP2026FUT", "3001", date(2026, 9, 30), "INDEX_FUTURE", "SENSEX", 20, snapshot),
+        ContractRecord("BFO", "SENSEX30OCT2026FUT", "3002", date(2026, 10, 30), "INDEX_FUTURE", "SENSEX", 20, snapshot),
+    ])
+    catalog.close()
+
+    result = calendar_spread_contract_months(CalendarSpreadContractMonthsRequest(
+        underlying="SENSEX", exchange="AUTO", instrument_type="AUTO", as_of=snapshot,
+    ))
+    assert result["exchange"] == "BFO"
+    assert result["instrument_type"] == "INDEX_FUTURE"
+    assert [row["contract_month"] for row in result["contracts"]] == ["2026-09", "2026-10"]
