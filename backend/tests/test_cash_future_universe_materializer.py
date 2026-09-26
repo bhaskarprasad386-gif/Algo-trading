@@ -3,10 +3,14 @@ from datetime import date, datetime, timezone
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+import pytest
+
 from app.backtesting.cash_future_universe import CashFutureFnoUniverse, CashFutureUniverseItem
 from app.backtesting.cash_future_universe_download_plan import build_cash_future_universe_download_plan
 from app.backtesting.cash_future_universe_materializer import materialize_cash_future_universe_history
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
+from app.backtesting.historical_ingest import HistoricalFetchRequest
+from app.backtesting.historical_sync import HistoricalSyncPlan
 from app.core.database import Base
 from app.models.cash_future_history import CashFutureHistory
 
@@ -46,3 +50,33 @@ def test_materializes_each_contract_without_cross_contract_mixing():
     assert [(row.contract_month, row.future_price) for row in rows] == [("2026-10", 105.0), ("2026-10", 106.0), ("2026-11", 107.0)]
     assert all(row.lot_size == 125 for row in rows)
     catalog.close()
+
+
+
+def test_materializer_rejects_future_token_symbol_mismatch_before_persist(monkeypatch):
+    called = False
+
+    def fail_if_persisted(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("mismatched future must not reach persistence")
+
+    monkeypatch.setattr(
+        "app.backtesting.cash_future_universe_materializer.materialize_cash_future_history",
+        fail_if_persisted,
+    )
+
+    universe = CashFutureFnoUniverse(stocks=(
+        CashFutureUniverseItem("ABC", "2026-10", "101", "ABC26OCT", date(2026, 10, 29), 125),
+    ), indices=())
+    spot = HistoricalFetchRequest("angelone", "NSE:11:ABC-EQ", "1m", 1, 2)
+    bad_future = HistoricalFetchRequest("angelone", "NFO:101:WRONG-SYMBOL", "1m", 1, 2)
+    job = type("Job", (), {"underlying": "ABC", "spot": spot, "futures": (bad_future,)})()
+    plan = type("Plan", (), {"jobs": (job,)})()
+
+    with pytest.raises(ValueError, match="token/symbol mismatch"):
+        materialize_cash_future_universe_history(
+            object(), object(), download_plan=plan, universe=universe,
+        )
+
+    assert called is False
