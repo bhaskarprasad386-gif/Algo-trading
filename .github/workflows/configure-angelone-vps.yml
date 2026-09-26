@@ -80,6 +80,14 @@ jobs:
 
           systemctl is-active --quiet algo-trading.service
           curl --fail --silent --show-error http://127.0.0.1:8000/health
+
+          cd "$APP_DIR/backend"
+          login_output="$(./.venv/bin/python -c 'from app.algo.auth import AngelOneAuth; r=AngelOneAuth().login(); print("ANGEL_LOGIN_STATUS=" + str(r.get("status", ""))); print("ANGEL_LOGIN_CLIENT_CODE=" + str(r.get("client_code", "")))')"
+          case "$login_output" in
+            *"ANGEL_LOGIN_STATUS=success"*) ;;
+            *) echo "Angel One login verification failed" >&2; exit 1 ;;
+          esac
+          printf '%s\\n' "$login_output"
           printf '\nCONFIGURED_CREDENTIAL_FIELDS=4\n'
           printf 'LIVE_TRADING=OFF\n'
           REMOTE
