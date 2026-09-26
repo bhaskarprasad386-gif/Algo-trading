@@ -57,6 +57,7 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
         300L -> "5 MIN"
         900L -> "15 MIN"
         1800L -> "30 MIN"
+        3600L -> "1 HOUR"
         else -> "${seconds}s"
     }
 
