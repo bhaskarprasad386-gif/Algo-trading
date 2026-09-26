@@ -21,6 +21,7 @@ from app.auth.routes import router as auth_router
 from app.algo.auth import AngelOneAuth
 from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.live_cash_future_stream import LiveCashFutureOneSecondCollector
+from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
 from app.market_data.instruments import InstrumentMaster
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
@@ -55,7 +56,7 @@ live_cash_future_scanner = LiveCashFutureScanner()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task
+    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     # Recovery is intentionally deferred until application startup so the schema
     # migration module has no dependency on scanner/backtest job modules.
@@ -67,10 +68,12 @@ async def lifespan(app: FastAPI):
         _history_collector_task = asyncio.create_task(_cash_future_history_loop())
     if settings.LIVE_CASH_FUTURE_DATA_ENABLED and _live_cash_future_task is None:
         _live_cash_future_task = asyncio.create_task(_live_cash_future_loop())
+    if settings.LIVE_CALENDAR_SPREAD_DATA_ENABLED and _live_calendar_spread_task is None:
+        _live_calendar_spread_task = asyncio.create_task(_live_calendar_spread_loop())
     try:
         yield
     finally:
-        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task):
+        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task):
             if task is not None:
                 task.cancel()
         for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task):
@@ -82,6 +85,7 @@ async def lifespan(app: FastAPI):
         _history_collector_task = None
         _contract_master_sync_task = None
         _live_cash_future_task = None
+        _live_calendar_spread_task = None
         backtest_download_manager.close()
         backtest_status_store.close()
         universal_result_ledger.close()
@@ -251,6 +255,7 @@ async def market_data_websocket(websocket: WebSocket, symbol: str):
 _history_collector_task: asyncio.Task | None = None
 _contract_master_sync_task: asyncio.Task | None = None
 _live_cash_future_task: asyncio.Task | None = None
+_live_calendar_spread_task: asyncio.Task | None = None
 IST = ZoneInfo("Asia/Kolkata")
 MARKET_OPEN = time(9, 15)
 MARKET_CLOSE = time(15, 30)
@@ -316,6 +321,18 @@ async def _live_cash_future_loop() -> None:
         await asyncio.to_thread(collector.run_forever)
     finally:
         collector.stop()
+
+async def _live_calendar_spread_loop() -> None:
+    collector = LiveCalendarSpreadOneSecondCollector(
+        settings.BACKTEST_DATA_DB,
+        auth=AngelOneAuth(),
+        instrument_master=instrument_master,
+    )
+    try:
+        await asyncio.to_thread(collector.run_forever)
+    finally:
+        collector.stop()
+
 
 def _sync_contract_master_snapshot(database_path: str, snapshot_date):
     catalog = ContractMasterCatalog(database_path)
