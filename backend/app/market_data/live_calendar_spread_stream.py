@@ -111,13 +111,14 @@ class LiveCalendarSpreadOneSecondCollector:
                     sec=ts//1_000_000_000*1_000_000_000
                     local_timestamp=datetime.fromtimestamp(sec/1_000_000_000, tz=ZoneInfo("UTC")).astimezone(IST)
                     if not self._exchange_open(meta["exchange"], local_timestamp): continue
-                    previous=latest.get((exchange_type,token))
+                    resolved_exchange_type=EXCHANGE_TYPES[meta["exchange"]]
+                    previous=latest.get((resolved_exchange_type,token))
                     if previous and previous[0]!=sec:
                         try:written+=catalog.ingest(HistoricalRecord(SOURCE,f'{meta["exchange"]}:{token}:{meta["symbol"]}',TIMEFRAME,previous[0],previous[1]))
                         except ValueError as exc:app_logger.error(f"Calendar 1-second record rejected {token}: {exc}")
                     bid,bq=_side(message,"best_5_buy_data"); ask,aq=_side(message,"best_5_sell_data")
                     payload=dict(message); payload.update({"ltp":float(message["last_traded_price"])/100.0 if message.get("last_traded_price") is not None else None,"bid":bid,"ask":ask,"bid_qty":bq,"ask_qty":aq,"underlying":meta["underlying"],"leg":"FUTURE","instrument_type":meta["kind"],"exchange":meta["exchange"],"contract_month":f'{meta["expiry"].year:04d}-{meta["expiry"].month:02d}',"expiry":meta["expiry"].isoformat(),"lot_size":meta["lot_size"]})
-                    latest[(exchange_type,token)]=(sec,payload)
+                    latest[(resolved_exchange_type,token)]=(sec,payload)
             for (exchange_type,token),(ts,payload) in latest.items():
                 meta=token_meta[(exchange_type,token)]; written+=catalog.ingest(HistoricalRecord(SOURCE,f'{meta["exchange"]}:{token}:{meta["symbol"]}',TIMEFRAME,ts,payload))
         finally:
