@@ -528,8 +528,11 @@ class CalendarSpreadStrategyAdapter:
         reverse = "SHORT_NEAR_LONG_FAR" if self.direction == "LONG_NEAR_SHORT_FAR" else "LONG_NEAR_SHORT_FAR"
         opportunity = CalendarSpreadBacktester.evaluate(near, far, direction=reverse, fees_per_unit=0.0)
         if opportunity is None: return None
+        # Calendar P&L is the entry spread edge plus the executable
+        # reverse edge at exit, scaled by the opened lot quantity.
+        gross_pnl = (position.entry_price + opportunity.executable_edge) * position.quantity
         return ExitExecution(opportunity.timestamp_ns, opportunity.executable_edge,
-            position.entry_price + opportunity.executable_edge,
+            gross_pnl,
             fees=2.0 * self.fees_per_unit * position.quantity,
             metadata={"strategy": "CALENDAR", "close_direction": reverse,
                       "near_expiry": near.expiry, "far_expiry": far.expiry})
