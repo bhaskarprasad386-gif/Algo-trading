@@ -91,13 +91,8 @@ def _cash_future_daily_ohlc(loader: CashFutureHistoricalLoader, selection: CashF
     if len(segments) != 1:
         return None
     segment_start, segment_end, contract = segments[0]
-    start_ns, _ = loader._market_bounds(segment_start) if hasattr(loader, "_market_bounds") else (None, None)
-    if start_ns is None:
-        from app.backtesting.cash_future_historical_loader import _market_bounds
-        start_ns, _ = _market_bounds(segment_start)
-        _, end_ns = _market_bounds(segment_end)
-    else:
-        _, end_ns = loader._market_bounds(segment_end)
+    start_ns, _ = _market_bounds(segment_start)
+    _, end_ns = _market_bounds(segment_end)
     cash_instrument = loader._resolve_spot_instrument(
         selection.underlying.upper(), start_ns, end_ns, selection.spot_instrument,
         selection.source, selection.timeframe,
@@ -138,7 +133,6 @@ def _cash_future_daily_ohlc(loader: CashFutureHistoricalLoader, selection: CashF
         "future_open": future["open"], "future_high": future["high"], "future_low": future["low"], "future_close": future["close"],
     }
 
-
 def _cash_future_shorting_payloads(trading_date: date, symbols: list[str], *, contract_month: str | None = None, source: str = "angelone", mode: str = "CURRENT") -> list[dict]:
     catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
     contracts = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
@@ -153,7 +147,10 @@ def _cash_future_shorting_payloads(trading_date: date, symbols: list[str], *, co
             top = max(points, key=lambda point: (point.gap, point.timestamp))
             if top.lot_size <= 0:
                 continue
-            result.append({"trading_date": trading_date, "symbol": symbol, "direction": "UP" if top.gap > 0 else "DOWN" if top.gap < 0 else "FLAT", "gap": top.gap, "gap_percent": top.gap_pct, "weighted_gap": top.gap * top.lot_size, "previous_close": 0.0, "open": top.cash_price, "high": top.future_price, "low": top.cash_price, "close": top.future_price, "lot_size": top.lot_size, "contract_month": top.contract_month, "instrument_key": f"NFO:{top.contract_month}", "gap_high_timestamp": _market_timestamp_iso(top.timestamp), "cash_price_at_gap_high": top.cash_price, "future_price_at_gap_high": top.future_price, "expiry_date": top.expiry_date, "is_expiry_day": trading_date == top.expiry_date, "margin_required": top.margin_required, "charges": top.charges, "funding_cost": top.funding_cost, "net_profit": top.net_profit, "roi_pct": top.roi_pct})
+            daily_ohlc = _cash_future_daily_ohlc(loader, selection)
+            if daily_ohlc is None:
+                continue
+            result.append({"trading_date": trading_date, "symbol": symbol, "direction": "UP" if top.gap > 0 else "DOWN" if top.gap < 0 else "FLAT", "gap": top.gap, "gap_percent": top.gap_pct, "weighted_gap": top.gap * top.lot_size, "previous_close": 0.0, "open": daily_ohlc["cash_open"], "high": daily_ohlc["cash_high"], "low": daily_ohlc["cash_low"], "close": daily_ohlc["cash_close"], "cash_open": daily_ohlc["cash_open"], "cash_high": daily_ohlc["cash_high"], "cash_low": daily_ohlc["cash_low"], "cash_close": daily_ohlc["cash_close"], "future_open": daily_ohlc["future_open"], "future_high": daily_ohlc["future_high"], "future_low": daily_ohlc["future_low"], "future_close": daily_ohlc["future_close"], "lot_size": top.lot_size, "contract_month": top.contract_month, "instrument_key": f"NFO:{top.contract_month}", "gap_high_timestamp": _market_timestamp_iso(top.timestamp), "cash_price_at_gap_high": top.cash_price, "future_price_at_gap_high": top.future_price, "expiry_date": top.expiry_date, "is_expiry_day": trading_date == top.expiry_date, "margin_required": top.margin_required, "charges": top.charges, "funding_cost": top.funding_cost, "net_profit": top.net_profit, "roi_pct": top.roi_pct})
     finally:
         catalog.close()
         contracts.close()
