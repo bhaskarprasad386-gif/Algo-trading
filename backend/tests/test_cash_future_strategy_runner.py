@@ -152,3 +152,49 @@ def test_strategy_closes_open_position_at_observed_historical_expiry():
     assert result.trades[0]["exit_reason"] == "expiry"
     assert result.trades[0]["exit_time"] == expiry_point.isoformat()
     assert result.net_profit == 600.0
+
+
+def test_strategy_honors_exact_backdated_time_window_without_lookahead():
+    day = datetime(2026, 9, 2, 10, 0)
+    points = [
+        point(day, 10),
+        point(day + timedelta(minutes=30), 8),
+        point(day + timedelta(hours=1), 4),
+        point(day + timedelta(hours=2), 2),
+    ]
+    seen = []
+    def strategy(current, history):
+        seen.append(current.timestamp)
+        return "BUY" if current.gap >= 10 else "SELL" if current.gap <= 4 else "HOLD"
+    result = run_cash_future_strategy(
+        points,
+        strategy,
+        strategy_id="exact-time-window",
+        config=CashFutureStrategyConfig(
+            start_date=day.date(), end_date=day.date(),
+            start_timestamp=day + timedelta(minutes=30),
+            end_timestamp=day + timedelta(hours=1),
+        ),
+    )
+    assert seen == [day + timedelta(minutes=30), day + timedelta(hours=1)]
+    assert result.trades == ()
+    assert result.signals[0]["action"] == "HOLD"
+    assert result.signals[1]["action"] == "SELL"
+
+
+def test_strategy_time_bounds_are_recorded_in_run_metadata(tmp_path):
+    ledger = BacktestLedger(str(tmp_path / "time-window.db"))
+    start = datetime(2026, 9, 2, 10, 15)
+    end = datetime(2026, 9, 2, 11, 15)
+    run_cash_future_strategy(
+        [point(start, 10), point(end, 4)],
+        lambda current, history: "NONE",
+        strategy_id="time-metadata",
+        config=CashFutureStrategyConfig(start_date=start.date(), end_date=end.date(), start_timestamp=start, end_timestamp=end),
+        ledger=ledger,
+        run_id="time-metadata-run",
+    )
+    metadata = ledger.run_metadata("time-metadata-run")
+    assert metadata["metadata"]["start_timestamp"] == start.isoformat()
+    assert metadata["metadata"]["end_timestamp"] == end.isoformat()
+    ledger.close()
