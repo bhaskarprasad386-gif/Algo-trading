@@ -19,6 +19,10 @@ class LiveCashFutureAlert:
     gap: float
     gap_pct: float
     timestamp_ns: int
+    lot_size: int | None = None
+    alert_lots: int | None = None
+    gross_profit: float | None = None
+    net_profit: float | None = None
 
 
 class NotificationService:
@@ -43,7 +47,7 @@ class NotificationService:
             f"{alert.symbol} {alert.contract_month}\\n"
             f"Cash Ask: ₹{alert.cash_ask:.2f}\\n"
             f"Future Bid: ₹{alert.future_bid:.2f}\\n"
-            f"Spread: ₹{alert.gap:.2f} ({alert.gap_pct:.3f}%)"
+            f"Spread: ₹{alert.gap:.2f} ({alert.gap_pct:.3f}%)\\n"\n            f"Lot Size: {alert.lot_size or 0} | Lots: {alert.alert_lots or 0}\\n"\n            f"Gross Profit: ₹{(alert.gross_profit or 0.0):.2f}\\n"\n            f"Net Profit: ₹{(alert.net_profit or 0.0):.2f}"
         )
 
     def notify_user(self, user: User, alert: LiveCashFutureAlert) -> bool:
