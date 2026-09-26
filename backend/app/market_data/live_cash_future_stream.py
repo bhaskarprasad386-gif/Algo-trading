@@ -11,7 +11,7 @@ from datetime import date, datetime, time
 from queue import Empty, Queue
 import threading
 import time as time_module
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from app.algo.auth import AngelOneAuth
@@ -71,6 +71,7 @@ class LiveCashFutureOneSecondCollector:
         auth: AngelOneAuth | None = None,
         instrument_master: InstrumentMaster | None = None,
         poll_seconds: float = 0.25,
+        on_observation: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         if poll_seconds <= 0:
             raise ValueError("poll_seconds must be positive")
@@ -78,6 +79,7 @@ class LiveCashFutureOneSecondCollector:
         self.auth = auth or AngelOneAuth()
         self.instrument_master = instrument_master or InstrumentMaster()
         self.poll_seconds = poll_seconds
+        self.on_observation = on_observation
         self.stop_event = threading.Event()
         self._sockets: list[MarketDataWebSocket] = []
 
@@ -132,6 +134,17 @@ class LiveCashFutureOneSecondCollector:
             }
         return selected, list(cash.values())
 
+    @staticmethod
+    def _best_side(message: dict[str, Any], key: str) -> float | None:
+        levels = message.get(key)
+        if not isinstance(levels, list) or not levels or not isinstance(levels[0], dict):
+            return None
+        try:
+            value = float(levels[0].get("price")) / 100.0
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
     def _run_market_session(self) -> None:
         futures, cash = self._contracts()
         if not futures:
@@ -147,6 +160,7 @@ class LiveCashFutureOneSecondCollector:
                 "symbol": item["symbol"],
                 "contract_month": None,
                 "expiry": None,
+                "lot_size": None,
             }
         for item in futures:
             token_meta[str(item["token"])] = {
@@ -155,6 +169,7 @@ class LiveCashFutureOneSecondCollector:
                 "symbol": str(item["symbol"]),
                 "contract_month": item["_contract_month"],
                 "expiry": item["_expiry"].isoformat(),
+                "lot_size": int(item.get("lotsize") or item.get("lotSize") or 0) or None,
             }
 
         queue: Queue[dict[str, Any]] = Queue()
@@ -172,7 +187,7 @@ class LiveCashFutureOneSecondCollector:
                 target=lambda: nse_socket.connect(
                     exchange_type=1,
                     tokens=[item["token"] for item in cash],
-                    mode=1,
+                    mode=3,
                     correlation_id="cf-live-nse",
                     on_data=receive,
                     reconnect_attempts=3,
@@ -185,7 +200,7 @@ class LiveCashFutureOneSecondCollector:
                 target=lambda: nfo_socket.connect(
                     exchange_type=2,
                     tokens=[str(item["token"]) for item in futures],
-                    mode=1,
+                    mode=3,
                     correlation_id="cf-live-nfo",
                     on_data=receive,
                     reconnect_attempts=3,
@@ -236,12 +251,20 @@ class LiveCashFutureOneSecondCollector:
                         "leg": meta["leg"],
                         "contract_month": meta["contract_month"],
                         "expiry": meta["expiry"],
+                        "lot_size": meta["lot_size"],
+                        "bid": self._best_side(message, "best_5_buy_data"),
+                        "ask": self._best_side(message, "best_5_sell_data"),
                         "received_at_ns": time_module.time_ns(),
                     })
                     latest[token] = (second_ns, payload)
             for token, (second_ns, payload) in latest.items():
                 meta = token_meta[token]
                 try:
+                    if self.on_observation is not None:
+                        try:
+                            self.on_observation(dict(payload))
+                        except Exception as exc:
+                            app_logger.error(f"1-second live scanner final callback failed {token}: {exc}")
                     written += catalog.ingest(HistoricalRecord(
                         source=SOURCE,
                         instrument=f"{meta['symbol']}|{token}",
