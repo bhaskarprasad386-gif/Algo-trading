@@ -6,11 +6,12 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import math
 import threading
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
-from app.models import User
+from app.models import LiveCashFutureScannerResult, User
 from app.notifications.service import LiveCashFutureAlert, NotificationService
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -65,6 +66,8 @@ class LiveCashFutureScanner:
         self._stability: dict[tuple[str, str], tuple[int, int]] = {}
         self._alert_state: dict[tuple[str, str], str] = {}
         self._alert_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cf-alert")
+        self._result_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cf-result")
+        self._last_result_cleanup = 0.0
 
     @staticmethod
     def _price(payload: dict, key: str, divisor: float = 1.0) -> float | None:
@@ -116,6 +119,66 @@ class LiveCashFutureScanner:
                 )
                 for user in users:
                     self.notifier.notify_user(user, alert)
+        except Exception:
+            return
+
+    def _persist_result(self, session_factory, signal: LiveCashFutureSignal) -> None:
+        if session_factory is None or not signal.lifecycle:
+            return
+        try:
+            now = datetime.now(IST).replace(tzinfo=None)
+            retention_days = max(1, int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
+            with session_factory() as db:
+                cutoff = now - timedelta(days=retention_days)
+                if time.monotonic() - self._last_result_cleanup >= 60.0:
+                    db.query(LiveCashFutureScannerResult).filter(
+                        LiveCashFutureScannerResult.observed_at < cutoff
+                    ).delete(synchronize_session=False)
+                    self._last_result_cleanup = time.monotonic()
+                existing = db.query(LiveCashFutureScannerResult.id).filter(
+                    LiveCashFutureScannerResult.symbol == signal.symbol,
+                    LiveCashFutureScannerResult.contract_month == signal.contract_month,
+                    LiveCashFutureScannerResult.timestamp_ns == signal.timestamp_ns,
+                ).first()
+                if existing:
+                    return
+                db.add(LiveCashFutureScannerResult(
+                    symbol=signal.symbol,
+                    contract_month=signal.contract_month,
+                    timestamp_ns=signal.timestamp_ns,
+                    observed_at=now,
+                    cash_ltp=signal.cash_ltp,
+                    future_ltp=signal.future_ltp,
+                    cash_bid=signal.cash_bid,
+                    cash_ask=signal.cash_ask,
+                    future_bid=signal.future_bid,
+                    future_ask=signal.future_ask,
+                    cash_bid_qty=signal.cash_bid_qty,
+                    cash_ask_qty=signal.cash_ask_qty,
+                    future_bid_qty=signal.future_bid_qty,
+                    future_ask_qty=signal.future_ask_qty,
+                    liquidity_qty=signal.liquidity_qty,
+                    gap=signal.gap,
+                    gap_pct=signal.gap_pct,
+                    cash_day_high=signal.cash_day_high,
+                    cash_day_low=signal.cash_day_low,
+                    future_day_high=signal.future_day_high,
+                    future_day_low=signal.future_day_low,
+                    lot_size=signal.lot_size,
+                    gross_lot_value=signal.gross_lot_value,
+                    estimated_cost=signal.estimated_cost,
+                    net_gap=signal.net_gap,
+                    net_gap_pct=signal.net_gap_pct,
+                    annualized_gap_pct=signal.annualized_gap_pct,
+                    stable_observations=signal.stable_observations,
+                    capacity_lots=signal.capacity_lots,
+                    capacity_notional=signal.capacity_notional,
+                    lifecycle=signal.lifecycle,
+                    reason_codes=",".join(signal.reason_codes),
+                    observation_ref=signal.observation_ref,
+                    alert_event=signal.alert_event,
+                ))
+                db.commit()
         except Exception:
             return
 
@@ -337,6 +400,8 @@ class LiveCashFutureScanner:
         with self._lock:
             self._signals[(signal.symbol, signal.contract_month)] = signal
 
+        if eligible and session_factory is not None:
+            self._result_executor.submit(self._persist_result, session_factory, signal)
         if alert_event and session_factory is not None:
             self._alert_executor.submit(self._notify_users, session_factory, signal)
         return signal
