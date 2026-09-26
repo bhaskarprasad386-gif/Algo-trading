@@ -162,6 +162,11 @@ class Order(Base):
     user_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
     pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    order_type: Mapped[str] = mapped_column(String(16), default="MARKET", nullable=False)
+    trigger_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    filled_quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    average_fill_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    time_in_force: Mapped[str] = mapped_column(String(16), default="DAY", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
