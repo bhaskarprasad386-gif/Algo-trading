@@ -141,6 +141,9 @@ class LiveCashFutureScanner:
                     db.query(LiveCashFutureScannerResult).filter(
                         LiveCashFutureScannerResult.observed_at < cutoff
                     ).delete(synchronize_session=False)
+                    db.query(LiveCashFutureAlertHistory).filter(
+                        LiveCashFutureAlertHistory.observed_at < cutoff
+                    ).delete(synchronize_session=False)
                     self._last_result_cleanup = time.monotonic()
                 existing = db.query(LiveCashFutureScannerResult.id).filter(
                     LiveCashFutureScannerResult.symbol == signal.symbol,
