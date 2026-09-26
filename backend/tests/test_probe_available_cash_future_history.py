@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-from app.scripts.probe_available_cash_future_history import _published_futures
+from scripts.probe_available_cash_future_history import _published_futures
 
 
 def _future(underlying: str, token: str, expiry: date):
