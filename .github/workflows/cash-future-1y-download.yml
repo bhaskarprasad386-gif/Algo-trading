@@ -1,0 +1,299 @@
+name: Cash-Future 1Y Historical Download
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "First market date (YYYY-MM-DD)"
+        required: true
+        default: "2025-09-26"
+      end_date:
+        description: "Last market date (YYYY-MM-DD)"
+        required: true
+        default: "2026-09-25"
+      batch_size:
+        description: "Stock underlyings per durable batch"
+        required: true
+        default: "10"
+      chunk_days:
+        description: "Historical request chunk size in days"
+        required: true
+        default: "30"
+
+concurrency:
+  group: cash-future-1y-download
+  cancel-in-progress: false
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1440
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      START_DATE: ${{ inputs.start_date }}
+      END_DATE: ${{ inputs.end_date }}
+      BATCH_SIZE: ${{ inputs.batch_size }}
+      CHUNK_DAYS: ${{ inputs.chunk_days }}
+
+    steps:
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${START_DATE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+          [[ "${END_DATE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+          [[ "${BATCH_SIZE}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${CHUNK_DAYS}" =~ ^[1-9][0-9]*$ ]]
+
+      - name: Prepare SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "${VPS_SSH_KEY}" | base64 -d > "${RUNNER_TEMP}/vps_key"
+          chmod 600 "${RUNNER_TEMP}/vps_key"
+
+      - name: Run durable 1Y Cash-Future download on VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "${RUNNER_TEMP}/vps_key" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=no \
+            "${VPS_USER}@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+
+          APP_DIR=/opt/Algo-Trading
+          BACKEND_DIR="${APP_DIR}/backend"
+          PYTHON="${APP_DIR}/.venv/bin/python"
+
+          cd "${BACKEND_DIR}"
+          export PYTHONPATH="${BACKEND_DIR}"
+
+          test -x "${PYTHON}"
+          test -f .env
+
+          "${PYTHON}" - <<'PY'
+          from __future__ import annotations
+
+          import os
+          from datetime import date, datetime, timezone
+          from types import SimpleNamespace
+          from zoneinfo import ZoneInfo
+
+          from app.algo.auth import AngelOneAuth
+          from app.backtesting.angelone_cash_future_batch_runner import (
+              run_angelone_cash_future_history_in_batches,
+          )
+          from app.backtesting.angelone_cash_future_runner import AngelOneCashFutureRunConfig
+          from app.backtesting.cash_future_universe import (
+              CashFutureFnoUniverse,
+              CashFutureUniverseItem,
+          )
+          from app.backtesting.contract_master import ContractMasterCatalog
+          from app.backtesting.contract_master_preflight import CashFutureContractPreflight
+          from app.backtesting.historical_catalog import HistoricalCatalog
+          from app.backtesting.historical_ingest import HistoricalIngestionService
+          from app.backtesting.historical_job_store import HistoricalJobStore
+          from app.backtesting.nse_session_calendars import nse_session_windows
+          from app.backtesting.provider_retry import build_provider_retry_policy
+          from app.backtesting.cash_future_coverage_manifest_store import (
+              CashFutureCoverageManifestStore,
+          )
+          from app.core.config import settings
+          from app.core.database import SessionLocal
+          from app.market_data.instruments import InstrumentMaster
+
+          MARKET_TZ = ZoneInfo("Asia/Kolkata")
+          INTERVAL_NS = 60 * 1_000_000_000
+          MAX_REQUEST_NS = 24 * 60 * 60 * 1_000_000_000
+
+          start_date = date.fromisoformat(os.environ["START_DATE"])
+          end_date = date.fromisoformat(os.environ["END_DATE"])
+          batch_size = int(os.environ["BATCH_SIZE"])
+          chunk_days = int(os.environ["CHUNK_DAYS"])
+
+          if start_date > end_date:
+              raise SystemExit("START_DATE must be <= END_DATE")
+
+          start = datetime.combine(start_date, datetime.min.time(), tzinfo=MARKET_TZ)
+          end = datetime.combine(end_date, datetime.max.time(), tzinfo=MARKET_TZ)
+
+          contract_db = settings.BACKTEST_CONTRACT_DB
+          data_db = settings.BACKTEST_DATA_DB
+          status_db = settings.BACKTEST_STATUS_DB
+
+          contract_catalog = ContractMasterCatalog(contract_db)
+          snapshot_dates = contract_catalog.snapshot_dates()
+
+          print(f"DOWNLOAD_WINDOW={start_date.isoformat()}..{end_date.isoformat()}")
+          print(f"CONTRACT_SNAPSHOT_COUNT={len(snapshot_dates)}")
+          print(f"CONTRACT_SNAPSHOT_FIRST={snapshot_dates[0] if snapshot_dates else 'NONE'}")
+          print(f"CONTRACT_SNAPSHOT_LAST={snapshot_dates[-1] if snapshot_dates else 'NONE'}")
+
+          if not snapshot_dates or snapshot_dates[0] > start_date:
+              raise SystemExit(
+                  "FAIL_CLOSED: historical contract-master snapshots do not cover "
+                  "the requested start date; current Angel One master must not be "
+                  "labelled as historical data."
+              )
+
+          # Verify point-in-time contract coverage for every trading day and
+          # every discovered stock underlying before any market-data request.
+          preflight = CashFutureContractPreflight(contract_catalog)
+          probe = preflight.check(
+              exchange="NFO",
+              underlying="__ALL_STOCKS__",
+              start=start_date,
+              end=end_date,
+              mode="BOTH",
+          )
+          # The aggregate probe is informational; per-underlying checks below
+          # are authoritative because contract resolution is underlying-specific.
+          print(f"CONTRACT_PREFLIGHT_AGGREGATE_GAPS={len(probe.gaps)}")
+
+          master_rows = tuple(InstrumentMaster().download())
+
+          # Build a point-in-time-safe stock inventory from every stored snapshot.
+          # Duplicate (underlying, expiry-month) contracts are collapsed.
+          items = {}
+          for snapshot in snapshot_dates:
+              if snapshot > end_date:
+                  break
+              for record in contract_catalog.all_contracts(snapshot_date=snapshot):
+                  if record.exchange.upper() != "NFO":
+                      continue
+                  if record.instrument_type.upper() != "STOCK_FUTURE":
+                      continue
+                  if record.expiry < start_date:
+                      continue
+                  key = (record.underlying.upper(), record.expiry.strftime("%Y-%m"))
+                  items.setdefault(
+                      key,
+                      CashFutureUniverseItem(
+                          underlying=record.underlying.upper(),
+                          contract_month=record.expiry.strftime("%Y-%m"),
+                          future_token=str(record.token),
+                          future_symbol=record.symbol,
+                          expiry=record.expiry,
+                          lot_size=record.lot_size,
+                      ),
+                  )
+
+          stocks = tuple(sorted(items.values(), key=lambda x: (x.underlying, x.expiry, x.future_token)))
+          if not stocks:
+              raise SystemExit("FAIL_CLOSED: no historical stock-future contracts found")
+
+          universe = CashFutureFnoUniverse(stocks=stocks, indices=())
+
+          # Authoritative per-underlying contract preflight.
+          underlyings = sorted({item.underlying for item in stocks})
+          for underlying in underlyings:
+              report = CashFutureContractPreflight(contract_catalog).check(
+                  exchange="NFO",
+                  underlying=underlying,
+                  start=start_date,
+                  end=end_date,
+                  mode="BOTH",
+              )
+              if report.gaps:
+                  raise SystemExit(
+                      f"FAIL_CLOSED: contract coverage gap for {underlying}: "
+                      f"{len(report.gaps)} gaps"
+                  )
+
+          def windows(instrument: str):
+              request = SimpleNamespace(
+                  instrument=instrument,
+                  timeframe="1m",
+                  start_ns=int(start.timestamp() * 1_000_000_000),
+                  end_ns=int(end.timestamp() * 1_000_000_000),
+              )
+              return nse_session_windows(request)
+
+          spot_sessions = {
+              underlying: windows(f"NSE:0:{underlying}")
+              for underlying in underlyings
+          }
+          future_sessions = {
+              f"NFO:{item.future_token}:{item.future_symbol}": windows(
+                  f"NFO:{item.future_token}:{item.future_symbol}"
+              )
+              for item in stocks
+          }
+
+          if any(not value for value in spot_sessions.values()):
+              raise SystemExit("FAIL_CLOSED: one or more stock NSE session calendars are empty")
+
+          history = HistoricalCatalog(data_db)
+          ingestion = HistoricalIngestionService(history)
+          jobs = HistoricalJobStore(status_db)
+          coverage = CashFutureCoverageManifestStore(status_db)
+
+          run_id = (
+              f"cash-future-1y-{start_date.isoformat()}-"
+              f"{end_date.isoformat()}-1m"
+          )
+          config = AngelOneCashFutureRunConfig(
+              interval_ns=INTERVAL_NS,
+              max_request_ns=MAX_REQUEST_NS,
+              timeframe="1m",
+              mode="BOTH",
+              chunk_days=chunk_days,
+              retry_attempts=3,
+              retry_delay_seconds=1.0,
+              max_repair_passes=3,
+          )
+
+          def progress(underlying, event):
+              report = event.coverage
+              print(
+                  f"PROGRESS underlying={underlying} pass={event.pass_index} "
+                  f"completed={event.completed_chunks} pending={event.pending_chunks} "
+                  f"coverage_status={report.status} missing_points={report.missing_points}"
+              )
+
+          auth = AngelOneAuth()
+          auth.get_client()
+          print("ANGEL_LOGIN_STATUS=success")
+          print("LIVE_TRADING=OFF")
+
+          db = SessionLocal()
+          try:
+              results = run_angelone_cash_future_history_in_batches(
+                  ingestion=ingestion,
+                  contract_master=contract_catalog,
+                  universe=universe,
+                  master_rows=master_rows,
+                  start=start,
+                  end=end,
+                  spot_sessions_by_underlying=spot_sessions,
+                  future_sessions_by_instrument=future_sessions,
+                  db=db,
+                  catalog=history,
+                  config=config,
+                  batch_size=batch_size,
+                  job_store=jobs,
+                  run_id=run_id,
+                  auth=auth,
+                  retry_policy=build_provider_retry_policy("angelone"),
+                  on_progress=progress,
+                  coverage_store=coverage,
+                  margin_required=0.0,
+                  materialize_batch_size=1000,
+              )
+          finally:
+              db.close()
+
+          if len(results) != len(tuple(sorted(set(underlyings))) + tuple()):
+              raise SystemExit(
+                  f"FAIL_CLOSED: completed batch count {len(results)} does not match "
+                  f"stock batch count"
+              )
+
+          print(f"BATCH_RESULTS={len(results)}")
+          print("CASH_FUTURE_1Y_DOWNLOAD_STATUS=COMPLETE")
+          PY
+          REMOTE
