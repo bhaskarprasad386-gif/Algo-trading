@@ -101,3 +101,64 @@ def test_live_scanner_alert_history_is_retained_for_30_days(monkeypatch, tmp_pat
         assert len(rows) == 1
         assert rows[0].timestamp_ns == recovered.timestamp_ns
         assert rows[0].event == "RECOVERY"
+
+
+def test_live_alert_history_route_returns_persisted_alerts(tmp_path):
+    from datetime import datetime
+    from app.scanner.auto_routes import cash_future_live_alert_history
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'scanner-routes.sqlite3'}")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        db.add(LiveCashFutureAlertHistory(
+            observed_at=datetime.now(), timestamp_ns=1_000_000_000,
+            symbol="ABC", contract_month="CURRENT", event="NEW",
+            cash_ask=100.0, future_bid=101.0, gap=1.0, gap_pct=1.0,
+            lot_size=100, alert_lots=2, gross_profit=200.0,
+            estimated_cost=0.0, net_profit=200.0, net_gap_pct=1.0,
+            annualized_gap_pct=10.0, liquidity_qty=500.0, stable_observations=3,
+        ))
+        db.commit()
+        response = cash_future_live_alert_history(days=30, limit=10, db=db)
+
+    assert response["mode"] == "live-alert-history"
+    assert response["count"] == 1
+    assert response["data"][0]["event"] == "NEW"
+    assert response["data"][0]["gross_profit"] == 200.0
+
+
+def test_live_scanner_history_route_excludes_expired_rows(tmp_path):
+    from datetime import datetime
+
+    from app.scanner.auto_routes import cash_future_live_scanner_history
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'scanner-history-route.sqlite3'}")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        db.add(LiveCashFutureScannerResult(
+            symbol="OLD", contract_month="CURRENT", timestamp_ns=1,
+            observed_at=datetime.now() - timedelta(days=31),
+            cash_ltp=100, future_ltp=101, gap=1, gap_pct=1,
+            cash_day_high=100, cash_day_low=100,
+            future_day_high=101, future_day_low=101,
+            estimated_cost=0, net_gap=1, net_gap_pct=1,
+            stable_observations=1, lifecycle="NEW",
+            reason_codes="STABLE", observation_ref="OLD:CURRENT:1",
+        ))
+        db.add(LiveCashFutureScannerResult(
+            symbol="NEW", contract_month="CURRENT", timestamp_ns=2,
+            observed_at=datetime.now(),
+            cash_ltp=100, future_ltp=101, gap=1, gap_pct=1,
+            cash_day_high=100, cash_day_low=100,
+            future_day_high=101, future_day_low=101,
+            estimated_cost=0, net_gap=1, net_gap_pct=1,
+            stable_observations=1, lifecycle="NEW",
+            reason_codes="STABLE", observation_ref="NEW:CURRENT:2",
+        ))
+        db.commit()
+        response = cash_future_live_scanner_history(days=30, limit=10, db=db)
+
+    assert response["count"] == 1
+    assert response["data"][0]["symbol"] == "NEW"
