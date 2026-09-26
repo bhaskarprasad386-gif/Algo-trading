@@ -12,7 +12,7 @@ from app.backtesting.historical_catalog import HistoricalCatalog
 from app.core.config import settings
 from app.scanner.cash_future_history import build_graph_series
 
-REPLAY_TIMEFRAMES = ("1s", "1m", "5m", "15m", "30m")
+REPLAY_TIMEFRAMES = ("1s", "30s", "1m", "5m", "15m", "30m", "1h")
 
 router = APIRouter(tags=["Cash-Future Backtesting"])
 
@@ -31,9 +31,9 @@ def _available_replay_intervals(points) -> list[str]:
     deltas = _replay_deltas(points)
     min_delta = min(deltas) if deltas else None
     if min_delta is None:
-        return ["1m", "5m", "15m", "30m"]
+        return ["1m", "5m", "15m", "30m", "1h"]
     available: list[str] = []
-    cadence_seconds = {"1s": 1, "1m": 60, "5m": 300, "15m": 900, "30m": 1800}
+    cadence_seconds = {"1s": 1, "30s": 30, "1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600}
     for interval, seconds in cadence_seconds.items():
         if min_delta <= seconds:
             available.append(interval)
@@ -45,7 +45,7 @@ def cash_future_replay(
     trading_date: date = Query(...),
     symbol: str = Query(..., min_length=1),
     contract_month: str | None = Query(None),
-    timeframe: str = Query("1m", pattern="^(1s|1m|5m|15m|30m)$"),
+    timeframe: str = Query("1m", pattern="^(1s|30s|1m|5m|15m|30m|1h)$"),
     mode: str = Query("CURRENT", pattern="^(CURRENT|NEAR)$"),
     source: str = Query("angelone", min_length=1),
     spot_instrument: str | None = Query(None),
