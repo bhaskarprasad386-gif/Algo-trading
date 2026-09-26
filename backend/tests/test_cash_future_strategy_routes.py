@@ -444,3 +444,55 @@ def test_strategy_run_route_honors_exact_backdated_time_window():
     assert body["trades"][0]["entry_time"] == (day + timedelta(minutes=30)).isoformat()
     assert body["trades"][0]["exit_time"] == (day + timedelta(hours=1)).isoformat()
     assert body["net_profit"] == 200.0
+
+
+def test_strategy_run_route_reconciles_backdated_cash_buy_future_sell_with_scaled_lots():
+    start = datetime(2026, 9, 2, 10, 0)
+    entry = payload(
+        gap=10,
+        timestamp=start,
+        cash_bid=99.0,
+        cash_ask=101.0,
+        future_bid=109.0,
+        future_ask=111.0,
+    )
+    exit_point = payload(
+        gap=4,
+        timestamp=start + timedelta(minutes=1),
+        cash_bid=102.0,
+        cash_ask=103.0,
+        future_bid=104.0,
+        future_ask=105.0,
+    )
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "gap_threshold",
+            "strategy_version": "1",
+            "start_date": start.date().isoformat(),
+            "end_date": start.date().isoformat(),
+            "start_timestamp": start.isoformat(),
+            "end_timestamp": (start + timedelta(minutes=1)).isoformat(),
+            "initial_capital": 10_000_000,
+            "execution_model": "bid_ask",
+            "charges_per_trade": 25.0,
+            "funding_cost_per_trade": 15.0,
+            "slippage_per_share": 0.50,
+            "cash_lots": 2,
+            "future_lots": 2,
+            "target": 2.0,
+            "points": [entry, exit_point],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["trade_count"] == 1
+    assert body["analysis"]["net_pnl"] == 720.0
+    trade = body["trades"][0]
+    assert trade["cash_side"] == "BUY"
+    assert trade["future_side"] == "SELL"
+    assert trade["lot_size"] == 200
+    assert trade["gross_profit"] == 800.0
+    assert trade["net_profit"] == 720.0
+    assert trade["entry_time"] == start.isoformat()
+    assert trade["exit_time"] == (start + timedelta(minutes=1)).isoformat()
