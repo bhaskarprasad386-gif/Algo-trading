@@ -1,0 +1,48 @@
+package com.algotrading.app
+
+import android.content.Context
+import android.util.AttributeSet
+import android.view.Gravity
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.TextView
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+class CalendarSpreadStrategyBuilderView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) : LinearLayout(context, attrs) {
+    private val underlying = field("Underlying (e.g. SBIN)")
+    private val date = field("Trading date YYYY-MM-DD")
+    private val start = field("Start HH:mm:ss").apply { setText("09:15:00") }
+    private val end = field("End HH:mm:ss").apply { setText("15:30:00") }
+    private val near = field("Near contract YYYY-MM")
+    private val far = field("Far contract YYYY-MM")
+    private val status = TextView(context).apply { setTextColor(0xFFE8F1FF.toInt()); textSize=11f; setPadding(10,8,10,8) }
+    private val replay = TextView(context).apply { setTextColor(0xFFBFD4EF.toInt()); textSize=10f; setPadding(10,8,10,8) }
+    private var direction="LONG_NEAR_SHORT_FAR"
+    private var timeframe="1s"
+    init {
+        orientation=VERTICAL; setPadding(12,12,12,12); setBackgroundColor(0xFF0C1728.toInt())
+        addView(label("CALENDAR SPREAD • HISTORICAL STRATEGY")); addRow(underlying,date); addRow(start,end); addRow(near,far)
+        val row=LinearLayout(context).apply{orientation=HORIZONTAL}
+        val long=button("LONG NEAR / SHORT FAR"); val short=button("SHORT NEAR / LONG FAR")
+        row.addView(long,LayoutParams(0,44,1f)); row.addView(short,LayoutParams(0,44,1f)); addView(row)
+        long.setOnClickListener{direction="LONG_NEAR_SHORT_FAR";long.alpha=1f;short.alpha=.55f}; short.setOnClickListener{direction="SHORT_NEAR_LONG_FAR";short.alpha=1f;long.alpha=.55f}; long.performClick()
+        addView(button("RUN HISTORICAL CALENDAR SPREAD").apply{setOnClickListener{runStrategy()}})
+        addView(label("REPLAY TIMEFRAME"))
+        val tfRow=LinearLayout(context).apply{orientation=HORIZONTAL}
+        listOf("1s","30s","1m","5m","15m","30m","1h").forEach{tf->tfRow.addView(button(tf).apply{setOnClickListener{timeframe=tf;update(tfRow,tf)}},LayoutParams(0,40,1f))}; addView(tfRow); update(tfRow,"1s")
+        addView(button("LOAD HISTORICAL REPLAY").apply{setOnClickListener{loadReplay()}}); addView(status); addView(replay)
+    }
+    private fun runStrategy(){ val s=underlying.text.toString().trim().uppercase(); val d=date.text.toString().trim(); val n=near.text.toString().trim(); val f=far.text.toString().trim(); val a=stamp(d,start.text.toString()); val z=stamp(d,end.text.toString()); if(s.isBlank()||!month(n)||!month(f)||f<=n||a==null||z==null||a>z){status.text="Enter valid symbol/date/time and Near < Far YYYY-MM.";return}; status.text="Running durable Calendar Spread…"; CoroutineScope(Dispatchers.IO).launch{try{val r=ApiService.retrofitService.calendarSpreadHistoricalStrategyRun(mapOf("underlying" to s,"exchange" to "NFO","start_date" to d,"end_date" to d,"near_contract_month" to n,"far_contract_month" to f,"source_timeframe" to "1s","replay_timeframe" to timeframe,"start_timestamp" to a,"end_timestamp" to z,"direction" to direction,"fees_per_unit" to 0.0,"initial_capital" to 100_000_000.0));withContext(Dispatchers.Main){status.text="${r.status.uppercase()} • ${r.run_id}\n${r.direction} • Trades ${r.trade_count}\nCompleted ${r.completed_trades} • Unresolved ${r.unresolved_trades}\nNet P&L ₹${"%.2f".format(r.net_profit)}"}}catch(e:Exception){withContext(Dispatchers.Main){status.text="Calendar strategy failed • ${e.message ?: "API error"}"}}}}
+    private fun loadReplay(){val s=underlying.text.toString().trim().uppercase();val d=date.text.toString().trim();val n=near.text.toString().trim();val f=far.text.toString().trim();if(s.isBlank()||!month(n)||!month(f)||f<=n){replay.text="Enter symbol/date and ordered Near/Far months.";return};CoroutineScope(Dispatchers.IO).launch{try{val r=ApiService.retrofitService.calendarSpreadHistoricalReplay(mapOf("underlying" to s,"exchange" to "NFO","start_date" to d,"end_date" to d,"near_contract_month" to n,"far_contract_month" to f,"source_timeframe" to "1s","replay_timeframe" to timeframe));withContext(Dispatchers.Main){replay.text="${r.replay_timeframe.uppercase()} • source ${r.source_timeframe}\nPoints ${r.count} • min interval ${r.source_min_interval_seconds ?: "-"} sec\nAvailable: ${r.available_replay_intervals.joinToString(", ")}"}}catch(e:Exception){withContext(Dispatchers.Main){replay.text="Replay failed • ${e.message ?: "API error"}"}}}}
+    private fun update(row:LinearLayout,selected:String){for(i in 0 until row.childCount)row.getChildAt(i).alpha=if((row.getChildAt(i) as Button).text.toString()==selected)1f else .55f}
+    private fun month(v:String)=Regex("^\\d{4}-\\d{2}$").matches(v)&&v.substring(5,7).toIntOrNull() in 1..12
+    private fun stamp(d:String,t:String):String?{if(!Regex("^\\d{4}-\\d{2}-\\d{2}$").matches(d)||!Regex("^\\d{2}:\\d{2}:\\d{2}$").matches(t))return null;val p=t.split(":").mapNotNull{it.toIntOrNull()};return if(p.size==3&&p[0] in 0..23&&p[1] in 0..59&&p[2] in 0..59)"${d}T${t}" else null}
+    private fun label(t:String)=TextView(context).apply{text=t;setTextColor(0xFF62B0FF.toInt());textSize=11f;gravity=Gravity.CENTER_VERTICAL}
+    private fun field(h:String)=EditText(context).apply{hint=h;setTextColor(0xFFE8F1FF.toInt());textSize=12f;setBackgroundColor(0xFF14253A.toInt())}
+    private fun button(t:String)=Button(context).apply{text=t;setTextColor(0xFFFFFFFF.toInt());textSize=9f;stateListAnimator=null}
+    private fun addRow(a:EditText,b:EditText){val r=LinearLayout(context).apply{orientation=HORIZONTAL};r.addView(a,LayoutParams(0,50,1f));r.addView(b,LayoutParams(0,50,1f));addView(r)}
+}
