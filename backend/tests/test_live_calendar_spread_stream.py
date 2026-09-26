@@ -52,3 +52,7 @@ def test_calendar_live_timestamp_and_expiry_normalization():
     assert _expiry("2026-09-30").isoformat() == "2026-09-30"
     assert _timestamp_ns({"exchange_timestamp": 1727000000}) == 1727000000 * 1_000_000_000
     assert _timestamp_ns({"exchange_timestamp": 1727000000000}) == 1727000000000 * 1_000_000
+
+
+def test_calendar_live_timestamp_normalization_accepts_nanoseconds():
+    assert _timestamp_ns({"exchange_timestamp": 1727000000000000000}) == 1727000000000000000
