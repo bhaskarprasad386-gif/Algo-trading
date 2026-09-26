@@ -26,7 +26,7 @@ from app.strategy_engine.routes import router as arbitrage_router
 from app.order_engine.routes import router as orders_router
 from app.market_data.routes import router as market_data_router
 from app.scanner.routes import router as scanner_router
-from app.scanner.auto_routes import router as auto_scanner_router
+from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
 from app.execution.paper_routes import router as paper_execution_router
 from app.scanner.cash_future_collector import CashFutureHistoryCollector
 from app.brokers.routes import router as brokers_router
@@ -250,7 +250,14 @@ def _collector_enabled() -> bool:
 
 
 def _collector_symbols() -> list[str]:
-    return [item.strip().upper() for item in settings.CASH_FUTURE_HISTORY_SYMBOLS.split(",") if item.strip()]
+    configured = [item.strip().upper() for item in settings.CASH_FUTURE_HISTORY_SYMBOLS.split(",") if item.strip()]
+    if configured:
+        return configured
+    try:
+        return discover_cash_future_symbols(limit=50)
+    except Exception as exc:
+        app_logger.warning(f"Cash-Future dynamic symbol discovery failed: {exc}")
+        return []
 
 
 def _collector_interval() -> int:
@@ -262,26 +269,26 @@ def _market_is_open(now: datetime) -> bool:
 
 
 async def _cash_future_history_loop() -> None:
-    symbols = _collector_symbols()
-    if not symbols:
-        app_logger.warning("Cash-Future history collector enabled but no symbols configured")
-        return
     interval = _collector_interval()
-    collector = CashFutureHistoryCollector(symbols)
-    app_logger.info(f"Cash-Future history collector started: {len(symbols)} symbols, {interval}s interval")
+    app_logger.info(f"Cash-Future history collector started: {interval}s interval")
     while True:
         try:
             now_ist = datetime.now(IST)
             if _market_is_open(now_ist):
-                db = SessionLocal()
-                try:
-                    result = await asyncio.to_thread(collector.collect, db)
-                    app_logger.info(
-                        f"Cash-Future history cycle complete: {len(result['collected'])} observations, "
-                        f"{len(result['errors'])} errors"
-                    )
-                finally:
-                    db.close()
+                symbols = _collector_symbols()
+                if not symbols:
+                    app_logger.warning("Cash-Future history collector has no active symbols")
+                else:
+                    collector = CashFutureHistoryCollector(symbols)
+                    db = SessionLocal()
+                    try:
+                        result = await asyncio.to_thread(collector.collect, db)
+                        app_logger.info(
+                            f"Cash-Future history cycle complete: {len(result['collected'])} observations, "
+                            f"{len(result['errors'])} errors"
+                        )
+                    finally:
+                        db.close()
             else:
                 app_logger.debug("Cash-Future history collector sleeping outside NSE market hours")
         except asyncio.CancelledError:
