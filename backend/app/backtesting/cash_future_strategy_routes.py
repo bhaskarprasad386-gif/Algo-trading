@@ -160,7 +160,7 @@ def strategy_run_resume(run_id: str, request: StrategyRunRequest):
         points = _scale_points(points, request.cash_lots)
         ledger = BacktestLedger(settings.BACKTEST_LEDGER_DB)
         strategy_hash = _gap_threshold_implementation_hash() if request.strategy_id == "gap_threshold" else None
-        strategy_config_hash = provenance_hash({"cash_side": request.cash_side, "future_side": request.future_side, "stop_loss": request.stop_loss, "target": request.target, "start_timestamp": request.start_timestamp.isoformat() if request.start_timestamp else None, "end_timestamp": request.end_timestamp.isoformat() if request.end_timestamp else None})
+        strategy_config_hash = provenance_hash(_strategy_config_payload(request))
         config = CashFutureStrategyConfig(
             initial_capital=request.initial_capital, execution_model=request.execution_model,
             charges_per_trade=request.charges_per_trade, funding_cost_per_trade=request.funding_cost_per_trade,
