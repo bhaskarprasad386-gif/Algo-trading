@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from calendar import monthrange
 from datetime import date, datetime, timedelta
+import math
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.backtesting.cash_future_historical_loader import CashFutureHistoricalLoader, CashFutureHistorySelection
+from app.backtesting.cash_future_historical_loader import CashFutureHistoricalLoader, CashFutureHistorySelection, _market_bounds
 from app.backtesting.contract_master import ContractMasterCatalog
 from app.backtesting.historical_catalog import HistoricalCatalog
 from app.core.config import settings
@@ -111,7 +112,7 @@ def _cash_future_daily_ohlc(loader: CashFutureHistoricalLoader, selection: CashF
                 values = {key: float(payload[key]) for key in ("open", "high", "low", "close")}
             except (KeyError, TypeError, ValueError):
                 continue
-            if not all(__import__("math").isfinite(value) for value in values.values()):
+            if not all(math.isfinite(value) for value in values.values()):
                 continue
             if first_open is None:
                 first_open = values["open"]
