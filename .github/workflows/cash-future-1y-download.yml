@@ -79,7 +79,7 @@ jobs:
           from __future__ import annotations
 
           import os
-          from datetime import date, datetime, timezone
+          from datetime import date, datetime, time, timezone
           from types import SimpleNamespace
           from zoneinfo import ZoneInfo
 
@@ -139,20 +139,6 @@ jobs:
                   "the requested start date; current Angel One master must not be "
                   "labelled as historical data."
               )
-
-          # Verify point-in-time contract coverage for every trading day and
-          # every discovered stock underlying before any market-data request.
-          preflight = CashFutureContractPreflight(contract_catalog)
-          probe = preflight.check(
-              exchange="NFO",
-              underlying="__ALL_STOCKS__",
-              start=start_date,
-              end=end_date,
-              mode="BOTH",
-          )
-          # The aggregate probe is informational; per-underlying checks below
-          # are authoritative because contract resolution is underlying-specific.
-          print(f"CONTRACT_PREFLIGHT_AGGREGATE_GAPS={len(probe.gaps)}")
 
           master_rows = tuple(InstrumentMaster().download())
 
