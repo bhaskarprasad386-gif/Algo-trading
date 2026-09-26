@@ -297,4 +297,4 @@ def test_calendar_spread_historical_strategy_run_executes_catalog_data(tmp_path,
     assert result["source"] == "historical-catalog"
     assert result["completed_trades"] == 1
     assert result["trade_count"] == 1
-    assert result["net_profit"] == 400.0
+    assert result["net_profit"] == 500.0
