@@ -93,11 +93,25 @@ def acquire_cash_future_universe(
         if not sessions:
             raise ValueError(f"missing spot sessions for {job.underlying}")
 
+        if job.futures:
+            if future_sessions_by_instrument is None:
+                raise ValueError(
+                    f"missing future sessions for {job.underlying}: "
+                    f"{job.futures[0].instrument}"
+                )
+            missing_future_sessions = tuple(
+                request.instrument
+                for request in job.futures
+                if not future_sessions_by_instrument.get(request.instrument)
+            )
+            if missing_future_sessions:
+                raise ValueError(
+                    f"missing future sessions for {job.underlying}: "
+                    + ", ".join(missing_future_sessions)
+                )
         future_sessions = {
             request.instrument: future_sessions_by_instrument[request.instrument]
             for request in job.futures
-            if future_sessions_by_instrument
-            and request.instrument in future_sessions_by_instrument
         }
 
         # Download-plan jobs historically exposed ``spot`` directly as a
