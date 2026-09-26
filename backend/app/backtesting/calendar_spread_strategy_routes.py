@@ -351,6 +351,52 @@ class CalendarSpreadContractMonthsRequest(BaseModel):
     as_of: date
 
 
+class CalendarSpreadInstrumentUniverseRequest(BaseModel):
+    as_of: date
+
+
+@router.post("/instruments")
+def calendar_spread_instruments(request: CalendarSpreadInstrumentUniverseRequest):
+    from app.backtesting.contract_master import ContractMasterCatalog
+    catalog = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
+    try:
+        records = catalog.available_underlyings(as_of=request.as_of)
+        # Keep every tradable underlying once, while retaining its highest-priority
+        # derivative class and the nearest two active expiries.
+        priority = {"INDEX_FUTURE": 0, "STOCK_FUTURE": 1, "COMMODITY_FUTURE": 2}
+        grouped: dict[tuple[str, str, str], list] = {}
+        for record in records:
+            key = (record.exchange, record.instrument_type, record.underlying.upper())
+            grouped.setdefault(key, []).append(record)
+        instruments = []
+        for (exchange, instrument_type, underlying), contracts in grouped.items():
+            contracts = sorted(contracts, key=lambda item: (item.expiry, item.symbol))
+            instruments.append({
+                "underlying": underlying,
+                "exchange": exchange,
+                "instrument_type": instrument_type,
+                "priority": priority.get(instrument_type, 9),
+                "active_contract_count": len(contracts),
+                "near_contract_month": f"{contracts[0].expiry.year:04d}-{contracts[0].expiry.month:02d}",
+                "far_contract_month": f"{contracts[1].expiry.year:04d}-{contracts[1].expiry.month:02d}" if len(contracts) > 1 else None,
+                "near_symbol": contracts[0].symbol,
+                "far_symbol": contracts[1].symbol if len(contracts) > 1 else None,
+                "lot_size": contracts[0].lot_size,
+            })
+        instruments.sort(key=lambda item: (item["priority"], item["underlying"], item["exchange"]))
+        return {
+            "status": "success",
+            "as_of": request.as_of.isoformat(),
+            "priority": "INDEX_FUTURE > STOCK_FUTURE > COMMODITY_FUTURE",
+            "count": len(instruments),
+            "instruments": instruments,
+        }
+    except LookupError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        catalog.close()
+
+
 @router.post("/contract-months")
 def calendar_spread_contract_months(request: CalendarSpreadContractMonthsRequest):
     from app.backtesting.contract_master import ContractMasterCatalog
