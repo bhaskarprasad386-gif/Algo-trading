@@ -151,7 +151,9 @@ class CalendarSpreadHistoricalLoader:
         requested_type = selection.instrument_type.strip().upper()
         types = (
             ("INDEX_FUTURE", "NFO"),
+            ("INDEX_FUTURE", "BFO"),
             ("STOCK_FUTURE", "NFO"),
+            ("STOCK_FUTURE", "BFO"),
             ("COMMODITY_FUTURE", "MCX"),
         ) if requested_type == "AUTO" else ((requested_type, selection.exchange.upper()),)
         errors: list[str] = []
