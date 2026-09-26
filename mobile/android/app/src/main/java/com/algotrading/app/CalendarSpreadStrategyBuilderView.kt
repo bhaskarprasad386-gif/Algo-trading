@@ -7,6 +7,8 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Spinner
+import android.widget.ArrayAdapter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -19,23 +21,55 @@ class CalendarSpreadStrategyBuilderView @JvmOverloads constructor(context: Conte
     private val end = field("End HH:mm:ss").apply { setText("15:30:00") }
     private val near = field("Near contract YYYY-MM")
     private val far = field("Far contract YYYY-MM")
+    private val instrumentSpinner = Spinner(context)
+    private var universe = emptyList<CalendarSpreadInstrument>()
     private val status = TextView(context).apply { setTextColor(0xFFE8F1FF.toInt()); textSize=11f; setPadding(10,8,10,8) }
     private val replay = TextView(context).apply { setTextColor(0xFFBFD4EF.toInt()); textSize=10f; setPadding(10,8,10,8) }
     private var direction="LONG_NEAR_SHORT_FAR"
     private var timeframe="1s"
     init {
         orientation=VERTICAL; setPadding(12,12,12,12); setBackgroundColor(0xFF0C1728.toInt())
-        addView(label("CALENDAR SPREAD • HISTORICAL STRATEGY")); addRow(underlying,date); addRow(start,end); addRow(near,far)
+        addView(label("CALENDAR SPREAD • HISTORICAL STRATEGY")); addRow(underlying,date); addView(instrumentSpinner); addView(button("LOAD ALL INDEX / F&O UNIVERSE").apply{setOnClickListener{loadUniverse()}}); addRow(start,end); addRow(near,far)
         val row=LinearLayout(context).apply{orientation=HORIZONTAL}
         val long=button("LONG NEAR / SHORT FAR"); val short=button("SHORT NEAR / LONG FAR")
         row.addView(long,LayoutParams(0,44,1f)); row.addView(short,LayoutParams(0,44,1f)); addView(row)
         long.setOnClickListener{direction="LONG_NEAR_SHORT_FAR";long.alpha=1f;short.alpha=.55f}; short.setOnClickListener{direction="SHORT_NEAR_LONG_FAR";short.alpha=1f;long.alpha=.55f}; long.performClick()
-        addView(button("AUTO-LOAD NEAR / FAR CONTRACTS").apply{setOnClickListener{loadContracts()}})
+        addView(button("AUTO-LOAD NEAR / FAR CONTRACTS").apply{setOnClickListener{loadContracts()}})\n        instrumentSpinner.onItemSelectedListener=object: android.widget.AdapterView.OnItemSelectedListener { override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {} override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long){ applyInstrument(position) } }
         addView(button("RUN HISTORICAL CALENDAR SPREAD").apply{setOnClickListener{runStrategy()}})
         addView(label("REPLAY TIMEFRAME"))
         val tfRow=LinearLayout(context).apply{orientation=HORIZONTAL}
         listOf("1s","30s","1m","5m","15m","30m","1h").forEach{tf->tfRow.addView(button(tf).apply{setOnClickListener{timeframe=tf;update(tfRow,tf)}},LayoutParams(0,40,1f))}; addView(tfRow); update(tfRow,"1s")
         addView(button("LOAD HISTORICAL REPLAY").apply{setOnClickListener{loadReplay()}}); addView(status); addView(replay)
+    }
+    private fun loadUniverse(){
+        val d=date.text.toString().trim()
+        if(!Regex("^\\d{4}-\\d{2}-\\d{2}$").matches(d)){ status.text="Enter trading date first."; return }
+        status.text="Loading Angel One historical Index / Stock F&O / Commodity universe..."
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val r=ApiService.retrofitService.calendarSpreadInstruments(mapOf("as_of" to d))
+                withContext(Dispatchers.Main) {
+                    universe=r.instruments
+                    val labels=universe.map { it.underlying+" • "+it.instrument_type.replace("_"," ")+" • "+it.exchange+" • "+it.near_contract_month+"/"+(it.far_contract_month ?: "-") }
+                    instrumentSpinner.adapter=ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, labels)
+                    status.text="Universe "+r.count+" • priority: INDEX > STOCK > COMMODITY. Select instrument to auto-fill Near/Far."
+                    if(universe.isNotEmpty()) applyInstrument(0)
+                }
+            } catch(e:Exception) {
+                withContext(Dispatchers.Main){ status.text="Universe load failed • "+(e.message ?: "API error") }
+            }
+        }
+    }
+
+    private fun applyInstrument(index:Int){
+        if(index !in universe.indices) return
+        val item=universe[index]
+        underlying.setText(item.underlying)
+        if(item.far_contract_month != null){
+            near.setText(item.near_contract_month)
+            far.setText(item.far_contract_month)
+        }
+        status.text=item.instrument_type+" • "+item.exchange+" • "+item.near_symbol+" + "+(item.far_symbol ?: "no Far")+" • lot "+item.lot_size
     }
     private fun loadContracts(){
         val s=underlying.text.toString().trim().uppercase()
