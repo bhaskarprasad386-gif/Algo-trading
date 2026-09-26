@@ -28,6 +28,7 @@ from app.order_engine.routes import router as orders_router
 from app.market_data.routes import router as market_data_router
 from app.scanner.routes import router as scanner_router
 from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
+from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
 from app.execution.paper_routes import router as paper_execution_router
 from app.execution.live_paper_routes import router as live_paper_execution_router
 from app.scanner.cash_future_collector import CashFutureHistoryCollector
@@ -49,6 +50,7 @@ Base.metadata.create_all(bind=engine)
 # Reuse one process-local instrument-master manager for all dashboard/API WebSockets.
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
+live_cash_future_scanner = LiveCashFutureScanner()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
