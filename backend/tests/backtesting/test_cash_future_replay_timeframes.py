@@ -43,4 +43,4 @@ def test_replay_intervals_preserve_sub_second_source_cadence():
 
 def test_replay_intervals_allow_30_seconds_only_with_sub_minute_source():
     points = [_point(0), _point(30), _point(60)]
-    assert _available_replay_intervals(points) == ["1s", "30s", "1m", "5m", "15m", "30m", "1h"]
+    assert _available_replay_intervals(points) == ["30s", "1m", "5m", "15m", "30m", "1h"]
