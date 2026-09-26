@@ -116,6 +116,9 @@ data class CalendarSpreadContractMonthsResponse(
     val status: String = "",
     val underlying: String = "",
     val as_of: String = "",
+    val instrument_type: String = "",
+    val exchange: String = "",
+    val priority: String = "",
     val contracts: List<CalendarSpreadContractMonth> = emptyList(),
 )
 
