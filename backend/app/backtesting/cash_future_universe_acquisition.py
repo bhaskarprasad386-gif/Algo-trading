@@ -87,12 +87,12 @@ def acquire_cash_future_universe(
         ),
     )
 
-    results: list[CashFutureAcquisitionResult] = []
+    # Validate the complete multi-stock plan before starting any acquisition.
+    # This prevents one late missing-session mapping from leaving earlier stocks
+    # partially persisted while the overall batch is reported as failed.
     for job in plan.jobs:
-        sessions = spot_sessions_by_underlying.get(job.underlying)
-        if not sessions:
+        if not spot_sessions_by_underlying.get(job.underlying):
             raise ValueError(f"missing spot sessions for {job.underlying}")
-
         if job.futures:
             if future_sessions_by_instrument is None:
                 raise ValueError(
@@ -109,6 +109,10 @@ def acquire_cash_future_universe(
                     f"missing future sessions for {job.underlying}: "
                     + ", ".join(missing_future_sessions)
                 )
+
+    results: list[CashFutureAcquisitionResult] = []
+    for job in plan.jobs:
+        sessions = spot_sessions_by_underlying[job.underlying]
         future_sessions = {
             request.instrument: future_sessions_by_instrument[request.instrument]
             for request in job.futures
