@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.backtesting.cash_future_strategy_routes import (
+    StrategyPointRequest,
     StrategyRunRequest,
     _build_builder_strategy,
     _gap_threshold_implementation_hash,
@@ -19,12 +20,6 @@ from app.backtesting.provenance import provenance_hash
 from app.core.config import settings
 
 
-from app.backtesting.cash_future_strategy_routes import (
-    StrategyRunRequest,
-    _build_builder_strategy,
-    _gap_threshold_implementation_hash,
-    router,
-)
 from app.backtesting.ledger import BacktestLedger, LedgerRecord
 from app.backtesting.provenance import provenance_hash
 from app.core.config import settings
@@ -366,7 +361,7 @@ def test_strategy_run_resume_route_rejects_mismatched_data(monkeypatch, tmp_path
     monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", ledger_db)
     start = datetime(2026, 9, 2, 10, 0)
     points = [payload(gap=10, timestamp=start), payload(gap=8, timestamp=start + timedelta(hours=1))]
-    fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": points})
+    fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": [StrategyPointRequest(**item).model_dump(mode="json") for item in points]})
     ledger = BacktestLedger(ledger_db)
     try:
         run_cash_future_strategy(
@@ -406,7 +401,7 @@ def test_strategy_run_resume_route_rejects_mismatched_strategy_configuration(mon
     monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", ledger_db)
     start = datetime(2026, 9, 2, 10, 0)
     points = [payload(gap=10, timestamp=start), payload(gap=8, timestamp=start + timedelta(hours=1))]
-    fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": points})
+    fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": [StrategyPointRequest(**item).model_dump(mode="json") for item in points]})
     stored_config_hash = provenance_hash({"cash_side": "BUY", "future_side": "SELL", "stop_loss": None, "target": 5.0})
     ledger = BacktestLedger(ledger_db)
     try:
