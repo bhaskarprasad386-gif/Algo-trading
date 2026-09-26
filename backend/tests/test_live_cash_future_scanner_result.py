@@ -162,3 +162,11 @@ def test_live_scanner_history_route_excludes_expired_rows(tmp_path):
 
     assert response["count"] == 1
     assert response["data"][0]["symbol"] == "NEW"
+
+
+def test_live_scanner_history_and_alert_routes_are_registered():
+    from app.main import app
+
+    paths = app.openapi().get("paths", {})
+    assert "/api/v1/scanner/cash-future/live/history" in paths
+    assert "/api/v1/scanner/cash-future/live/alerts" in paths
