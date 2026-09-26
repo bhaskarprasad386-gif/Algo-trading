@@ -307,3 +307,83 @@ def test_monthly_graph_preserves_daily_ohlc_lot_and_contract_filter():
     assert point["close"] == 105.0
     assert point["lot_size"] == 500.0
     assert point["contract_month"] == "2026-09"
+
+
+def test_cash_future_shorting_payload_uses_genuine_daily_cash_and_future_ohlc(monkeypatch):
+    trading_day = date(2026, 9, 10)
+
+    class Record:
+        def __init__(self, timestamp_ns, payload):
+            self.timestamp_ns = timestamp_ns
+            self.payload = payload
+
+    class Catalog:
+        def iter_records(self, **kwargs):
+            if kwargs["instrument"] == "NSE:500":
+                return iter([
+                    Record(1, {"open": 100.0, "high": 105.0, "low": 99.0, "close": 103.0}),
+                    Record(2, {"open": 103.0, "high": 110.0, "low": 101.0, "close": 108.0}),
+                ])
+            return iter([
+                Record(1, {"open": 102.0, "high": 106.0, "low": 100.0, "close": 104.0}),
+                Record(2, {"open": 104.0, "high": 120.0, "low": 103.0, "close": 118.0}),
+            ])
+
+    class Contracts:
+        def close(self):
+            pass
+
+    class Loader:
+        def __init__(self, catalog, contracts):
+            self.catalog = catalog
+
+        def iter_points(self, selection):
+            from types import SimpleNamespace
+            return iter([
+                SimpleNamespace(
+                    timestamp=__import__("datetime").datetime(2026, 9, 10, 11, 15),
+                    symbol="A",
+                    contract_month="2026-09",
+                    cash_price=105.0,
+                    future_price=122.0,
+                    gap=17.0,
+                    gap_pct=16.1904761905,
+                    lot_size=500,
+                    expiry_date=date(2026, 9, 24),
+                    margin_required=150000.0,
+                    charges=25.0,
+                    funding_cost=10.0,
+                    net_profit=8465.0,
+                    roi_pct=5.6433333333,
+                )
+            ])
+
+        def _contracts_by_segment(self, selection):
+            return [(trading_day, trading_day, __import__("types").SimpleNamespace(
+                exchange="NFO", token="9001", symbol="A-FUT"
+            ))]
+
+        def _resolve_spot_instrument(self, *args):
+            return "NSE:500"
+
+    monkeypatch.setattr(routes, "HistoricalCatalog", lambda *args, **kwargs: Catalog())
+    monkeypatch.setattr(routes, "ContractMasterCatalog", lambda *args, **kwargs: Contracts())
+    monkeypatch.setattr(routes, "CashFutureHistoricalLoader", Loader)
+
+    result = routes._cash_future_shorting_payloads(trading_day, ["A"])
+
+    assert result[0]["open"] == 100.0
+    assert result[0]["high"] == 110.0
+    assert result[0]["low"] == 99.0
+    assert result[0]["close"] == 108.0
+    assert result[0]["cash_open"] == 100.0
+    assert result[0]["cash_high"] == 110.0
+    assert result[0]["cash_low"] == 99.0
+    assert result[0]["cash_close"] == 108.0
+    assert result[0]["future_open"] == 102.0
+    assert result[0]["future_high"] == 120.0
+    assert result[0]["future_low"] == 100.0
+    assert result[0]["future_close"] == 118.0
+    assert result[0]["gap_high_timestamp"] == "2026-09-10T11:15:00"
+    assert result[0]["cash_price_at_gap_high"] == 105.0
+    assert result[0]["future_price_at_gap_high"] == 122.0
