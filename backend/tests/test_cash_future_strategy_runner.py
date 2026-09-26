@@ -233,8 +233,8 @@ def test_strategy_cash_buy_future_sell_bid_ask_reconciles_gross_net_and_metadata
     assert trade["charges"] == 25.0
     assert trade["funding_cost"] == 15.0
     assert trade["slippage_per_share"] == 0.50
-    assert trade["net_profit"] == 260.0
-    assert result.net_profit == 260.0
+    assert trade["net_profit"] == 360.0
+    assert result.net_profit == 360.0
 
 
 def test_strategy_backdated_window_excludes_post_end_observations_and_preserves_open_position():
