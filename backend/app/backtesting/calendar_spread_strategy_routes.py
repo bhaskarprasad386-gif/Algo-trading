@@ -212,116 +212,6 @@ def strategy_run(request: CalendarSpreadRunRequest):
 
 
 
-def _run_calendar_points(request: CalendarSpreadRunRequest):
-    start = _normalise_timestamp(request.start_timestamp) if request.start_timestamp else min(
-        (_normalise_timestamp(point.timestamp) for point in request.points)
-    )
-    end = _normalise_timestamp(request.end_timestamp) if request.end_timestamp else max(
-        (_normalise_timestamp(point.timestamp) for point in request.points)
-    )
-    points = [point for point in request.points if start <= _normalise_timestamp(point.timestamp) <= end]
-    if not points:
-        raise HTTPException(status_code=422, detail="no calendar-spread points inside requested timestamp window")
-
-    timestamps = [_ns(point.timestamp) for point in points]
-    start_ns, end_ns = min(timestamps), max(timestamps)
-    resolution = BacktestResolution(
-        resolution="s",
-        source="provided-calendar-spread-points",
-        start_ns=start_ns,
-        end_ns=end_ns,
-    )
-    run_id = f"calendar-spread-{uuid4().hex}"
-    spec = BacktestRunSpec(
-        run_id=run_id,
-        strategy_id="calendar-spread",
-        strategy_version=request.strategy_version,
-        instrument=points[0].underlying,
-        start_ns=start_ns,
-        end_ns=end_ns,
-        resolution=resolution,
-        parameters={"direction": request.direction, "fees_per_unit": request.fees_per_unit,
-                    "start_timestamp": start.isoformat(), "end_timestamp": end.isoformat()},
-        initial_capital=request.initial_capital,
-    )
-    ledger = BacktestResultLedger(settings.BACKTEST_RESULT_LEDGER_DB)
-    writer = BacktestRunWriter(ledger, spec)
-    service = HistoricalArbitrageBacktestService(writer)
-
-    def events():
-        for point in sorted(points, key=lambda item: _ns(item.timestamp)):
-            ts = _ns(point.timestamp)
-            yield {
-                "timestamp_ns": ts,
-                "data_resolution": "s",
-                "near": {"timestamp_ns": ts, "underlying": point.underlying, "expiry": point.near_expiry,
-                         "bid": point.near_bid, "ask": point.near_ask, "lot_size": point.lot_size,
-                         "strike": point.strike, "option_type": point.option_type},
-                "far": {"timestamp_ns": ts, "underlying": point.underlying, "expiry": point.far_expiry,
-                        "bid": point.far_bid, "ask": point.far_ask, "lot_size": point.lot_size,
-                        "strike": point.strike, "option_type": point.option_type},
-            }
-
-    try:
-        result = service.run_strategy("calendar-spread", events(),
-            parameters={"direction": request.direction, "fees_per_unit": request.fees_per_unit})
-        trades = [_serialise_row(row) for row in ledger.trades(run_id)]
-        return {
-            "status": "success", "run_id": run_id, "strategy_id": "calendar-spread",
-            "strategy_version": request.strategy_version, "direction": request.direction,
-            "start_timestamp": start.isoformat(), "end_timestamp": end.isoformat(),
-            "completed_trades": result.completed_trades, "unresolved_trades": result.unresolved_trades,
-            "net_profit": result.realized_pnl, "trade_count": len(trades), "trades": trades,
-        }
-    except (ValueError, LookupError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    finally:
-        ledger.close()
-
-
-class CalendarSpreadHistoricalStrategyRunRequest(CalendarSpreadHistoricalReplayRequest):
-    direction: str = "LONG_NEAR_SHORT_FAR"
-    fees_per_unit: float = Field(default=0.0, ge=0)
-    initial_capital: float = Field(default=100_000_000.0, gt=0)
-
-    @model_validator(mode="after")
-    def validate_strategy(self):
-        if self.direction not in {"LONG_NEAR_SHORT_FAR", "SHORT_NEAR_LONG_FAR"}:
-            raise ValueError("invalid calendar spread direction")
-        return self
-
-
-@router.post("/historical-strategy-run")
-def calendar_spread_historical_strategy_run(request: CalendarSpreadHistoricalStrategyRunRequest):
-    replay = calendar_spread_historical_replay(request)
-    points = [
-        CalendarSpreadPointRequest(
-            timestamp=datetime.fromisoformat(row["timestamp"]),
-            underlying=row["underlying"],
-            near_expiry=date.fromisoformat(row["near_expiry"]).toordinal(),
-            far_expiry=date.fromisoformat(row["far_expiry"]).toordinal(),
-            near_bid=row["near_bid"], near_ask=row["near_ask"],
-            far_bid=row["far_bid"], far_ask=row["far_ask"],
-            lot_size=row["lot_size"], strike=row["strike"], option_type=row["option_type"],
-        )
-        for row in replay["series"]
-    ]
-    result = _run_calendar_points(CalendarSpreadRunRequest(
-        strategy_id="calendar-spread",
-        strategy_version="1",
-        start_timestamp=request.start_timestamp,
-        end_timestamp=request.end_timestamp,
-        direction=request.direction,
-        fees_per_unit=request.fees_per_unit,
-        initial_capital=request.initial_capital,
-        points=points,
-    ))
-    result["source"] = "historical-catalog"
-    result["source_timeframe"] = request.source_timeframe
-    result["replay_timeframe"] = request.replay_timeframe
-    return result
-
-
 @router.get("/strategy-run/{run_id}")
 def strategy_run_result(run_id: str):
     ledger = BacktestResultLedger(settings.BACKTEST_RESULT_LEDGER_DB)
@@ -526,6 +416,117 @@ def calendar_spread_historical_replay(request: CalendarSpreadHistoricalReplayReq
         "count": len(points),
         "series": [_historical_point_row(point) for point in points],
     }
+
+
+def _run_calendar_points(request: CalendarSpreadRunRequest):
+    start = _normalise_timestamp(request.start_timestamp) if request.start_timestamp else min(
+        (_normalise_timestamp(point.timestamp) for point in request.points)
+    )
+    end = _normalise_timestamp(request.end_timestamp) if request.end_timestamp else max(
+        (_normalise_timestamp(point.timestamp) for point in request.points)
+    )
+    points = [point for point in request.points if start <= _normalise_timestamp(point.timestamp) <= end]
+    if not points:
+        raise HTTPException(status_code=422, detail="no calendar-spread points inside requested timestamp window")
+
+    timestamps = [_ns(point.timestamp) for point in points]
+    start_ns, end_ns = min(timestamps), max(timestamps)
+    resolution = BacktestResolution(
+        resolution="s",
+        source="provided-calendar-spread-points",
+        start_ns=start_ns,
+        end_ns=end_ns,
+    )
+    run_id = f"calendar-spread-{uuid4().hex}"
+    spec = BacktestRunSpec(
+        run_id=run_id,
+        strategy_id="calendar-spread",
+        strategy_version=request.strategy_version,
+        instrument=points[0].underlying,
+        start_ns=start_ns,
+        end_ns=end_ns,
+        resolution=resolution,
+        parameters={"direction": request.direction, "fees_per_unit": request.fees_per_unit,
+                    "start_timestamp": start.isoformat(), "end_timestamp": end.isoformat()},
+        initial_capital=request.initial_capital,
+    )
+    ledger = BacktestResultLedger(settings.BACKTEST_RESULT_LEDGER_DB)
+    writer = BacktestRunWriter(ledger, spec)
+    service = HistoricalArbitrageBacktestService(writer)
+
+    def events():
+        for point in sorted(points, key=lambda item: _ns(item.timestamp)):
+            ts = _ns(point.timestamp)
+            yield {
+                "timestamp_ns": ts,
+                "data_resolution": "s",
+                "near": {"timestamp_ns": ts, "underlying": point.underlying, "expiry": point.near_expiry,
+                         "bid": point.near_bid, "ask": point.near_ask, "lot_size": point.lot_size,
+                         "strike": point.strike, "option_type": point.option_type},
+                "far": {"timestamp_ns": ts, "underlying": point.underlying, "expiry": point.far_expiry,
+                        "bid": point.far_bid, "ask": point.far_ask, "lot_size": point.lot_size,
+                        "strike": point.strike, "option_type": point.option_type},
+            }
+
+    try:
+        result = service.run_strategy("calendar-spread", events(),
+            parameters={"direction": request.direction, "fees_per_unit": request.fees_per_unit})
+        trades = [_serialise_row(row) for row in ledger.trades(run_id)]
+        return {
+            "status": "success", "run_id": run_id, "strategy_id": "calendar-spread",
+            "strategy_version": request.strategy_version, "direction": request.direction,
+            "start_timestamp": start.isoformat(), "end_timestamp": end.isoformat(),
+            "completed_trades": result.completed_trades, "unresolved_trades": result.unresolved_trades,
+            "net_profit": result.realized_pnl, "trade_count": len(trades), "trades": trades,
+        }
+    except (ValueError, LookupError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        ledger.close()
+
+
+class CalendarSpreadHistoricalStrategyRunRequest(CalendarSpreadHistoricalReplayRequest):
+    direction: str = "LONG_NEAR_SHORT_FAR"
+    fees_per_unit: float = Field(default=0.0, ge=0)
+    initial_capital: float = Field(default=100_000_000.0, gt=0)
+
+    @model_validator(mode="after")
+    def validate_strategy(self):
+        if self.direction not in {"LONG_NEAR_SHORT_FAR", "SHORT_NEAR_LONG_FAR"}:
+            raise ValueError("invalid calendar spread direction")
+        return self
+
+
+@router.post("/historical-strategy-run")
+def calendar_spread_historical_strategy_run(request: CalendarSpreadHistoricalStrategyRunRequest):
+    replay = calendar_spread_historical_replay(request)
+    points = [
+        CalendarSpreadPointRequest(
+            timestamp=datetime.fromisoformat(row["timestamp"]),
+            underlying=row["underlying"],
+            near_expiry=date.fromisoformat(row["near_expiry"]).toordinal(),
+            far_expiry=date.fromisoformat(row["far_expiry"]).toordinal(),
+            near_bid=row["near_bid"], near_ask=row["near_ask"],
+            far_bid=row["far_bid"], far_ask=row["far_ask"],
+            lot_size=row["lot_size"], strike=row["strike"], option_type=row["option_type"],
+        )
+        for row in replay["series"]
+    ]
+    result = _run_calendar_points(CalendarSpreadRunRequest(
+        strategy_id="calendar-spread",
+        strategy_version="1",
+        start_timestamp=request.start_timestamp,
+        end_timestamp=request.end_timestamp,
+        direction=request.direction,
+        fees_per_unit=request.fees_per_unit,
+        initial_capital=request.initial_capital,
+        points=points,
+    ))
+    result["source"] = "historical-catalog"
+    result["source_timeframe"] = request.source_timeframe
+    result["replay_timeframe"] = request.replay_timeframe
+    return result
+
 
 
 __all__ = ["router", "REPLAY_TIMEFRAMES"]
