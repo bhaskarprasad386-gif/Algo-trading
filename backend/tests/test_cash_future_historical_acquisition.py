@@ -364,8 +364,11 @@ def test_durable_rollover_gap_repair_reuses_completed_plan_without_redownloading
 
 
 def test_acquisition_fails_closed_when_planned_future_has_no_session_mapping(tmp_path, monkeypatch):
-    from app.backtesting.cash_future_universe_download_plan import CashFutureUniverseDownloadJob
-    from app.backtesting.cash_future_universe_download_plan import CashFutureUniverseDownloadPlan
+    from app.backtesting.cash_future_universe import CashFutureFnoUniverse
+    from app.backtesting.cash_future_universe_download_plan import (
+        CashFutureUniverseDownloadJob,
+        CashFutureUniverseDownloadPlan,
+    )
     from app.backtesting.historical_ingest import HistoricalFetchRequest
     from app.backtesting.historical_sync import HistoricalSyncPlan
 
@@ -384,15 +387,17 @@ def test_acquisition_fails_closed_when_planned_future_has_no_session_mapping(tmp
         lambda **_: planned,
     )
 
+    universe = CashFutureFnoUniverse(stocks=(), indices=())
     with pytest.raises(ValueError, match="missing future sessions for SBIN: NFO:101:SBINJAN"):
-        service.acquire(
-            spot_instrument="NSE:3045:SBIN",
-            exchange="NFO",
-            underlying="SBIN",
+        from app.backtesting.cash_future_universe_acquisition import acquire_cash_future_universe
+        acquire_cash_future_universe(
+            service=service,
+            universe=universe,
+            master_rows=(),
             start=datetime(2026, 1, 29, tzinfo=timezone.utc),
             end=datetime(2026, 1, 29, 0, 3, tzinfo=timezone.utc),
-            spot_sessions=(session,),
-            future_sessions={},
+            spot_sessions_by_underlying={"SBIN": (session,)},
+            future_sessions_by_instrument={},
             timeframe="1m",
             mode="BOTH",
             retry_attempts=1,
@@ -427,7 +432,7 @@ def test_universe_acquisition_validates_all_jobs_before_first_persisted_write(tm
             CashFutureUniverseDownloadJob("ABC", first_spot, (first_future,)),
             CashFutureUniverseDownloadJob("XYZ", second_spot, (second_future,)),
         ),
-        sync_plan=HistoricalSyncPlan((first_spot, first_future, second_spot, second_future)),
+        plan=HistoricalSyncPlan((first_spot, first_future, second_spot, second_future)),
     )
     monkeypatch.setattr(
         "app.backtesting.cash_future_universe_acquisition.build_cash_future_universe_download_plan",
