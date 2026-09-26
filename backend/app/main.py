@@ -300,22 +300,30 @@ async def _cash_future_history_loop() -> None:
         await asyncio.sleep(interval)
 
 
+def _sync_contract_master_snapshot(database_path: str, snapshot_date):
+    catalog = ContractMasterCatalog(database_path)
+    try:
+        syncer = DailyContractMasterSync(catalog)
+        return syncer.sync(snapshot_date=snapshot_date)
+    finally:
+        catalog.close()
+
+
 async def _contract_master_sync_loop() -> None:
     interval = max(3600, settings.BACKTEST_CONTRACT_MASTER_SYNC_INTERVAL_SECONDS)
     app_logger.info(f"Contract-master auto-sync started: every {interval}s")
     while True:
         try:
             now = datetime.now(IST)
-            catalog = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
-            try:
-                syncer = DailyContractMasterSync(catalog)
-                result = await asyncio.to_thread(syncer.sync, snapshot_date=now.date())
-                if result.skipped:
-                    app_logger.debug(f"Contract-master snapshot already present for {result.snapshot_date}")
-                else:
-                    app_logger.info(f"Contract-master snapshot saved: {result.snapshot_date} ({result.records} stock futures)")
-            finally:
-                catalog.close()
+            result = await asyncio.to_thread(
+                _sync_contract_master_snapshot,
+                settings.BACKTEST_CONTRACT_DB,
+                now.date(),
+            )
+            if result.skipped:
+                app_logger.debug(f"Contract-master snapshot already present for {result.snapshot_date}")
+            else:
+                app_logger.info(f"Contract-master snapshot saved: {result.snapshot_date} ({result.records} stock futures)")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
