@@ -103,3 +103,17 @@ def test_contract_month_resolution_is_deterministic_for_same_expiry():
         exchange="NFO", underlying="ABC", contract_month="2026-09", as_of=date(2026, 9, 7)
     ).token == "101"
     catalog.close()
+
+
+
+def test_near_requires_distinct_second_active_contract():
+    catalog = ContractMasterCatalog()
+    catalog.upsert_snapshot(
+        date(2026, 9, 7),
+        [
+            ContractRecord("NFO", "ABC26SEP", "101", date(2026, 9, 24), "STOCK_FUTURE", "ABC", 100),
+        ],
+    )
+    with pytest.raises(LookupError, match="near-month"):
+        catalog.resolve(exchange="NFO", underlying="ABC", as_of=date(2026, 9, 7), mode="NEAR")
+    catalog.close()
