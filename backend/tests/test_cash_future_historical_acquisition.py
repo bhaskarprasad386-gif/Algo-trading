@@ -397,3 +397,62 @@ def test_acquisition_fails_closed_when_planned_future_has_no_session_mapping(tmp
             mode="BOTH",
             retry_attempts=1,
         )
+
+
+def test_universe_acquisition_validates_all_jobs_before_first_persisted_write(tmp_path, monkeypatch):
+    from app.backtesting.cash_future_universe import CashFutureFnoUniverse, CashFutureUniverseItem
+    from app.backtesting.cash_future_universe_acquisition import acquire_cash_future_universe
+    from app.backtesting.cash_future_universe_download_plan import (
+        CashFutureUniverseDownloadJob,
+        CashFutureUniverseDownloadPlan,
+    )
+    from app.backtesting.historical_ingest import HistoricalFetchRequest
+    from app.backtesting.historical_sync import HistoricalSyncPlan
+
+    session = _window()
+    first_spot = HistoricalFetchRequest(
+        "angelone", "NSE:11:ABC-EQ", "1m", session.start_ns, session.end_ns
+    )
+    first_future = HistoricalFetchRequest(
+        "angelone", "NFO:101:ABC26OCT", "1m", session.start_ns, session.end_ns
+    )
+    second_spot = HistoricalFetchRequest(
+        "angelone", "NSE:22:XYZ-EQ", "1m", session.start_ns, session.end_ns
+    )
+    second_future = HistoricalFetchRequest(
+        "angelone", "NFO:202:XYZ26OCT", "1m", session.start_ns, session.end_ns
+    )
+    plan = CashFutureUniverseDownloadPlan(
+        jobs=(
+            CashFutureUniverseDownloadJob("ABC", first_spot, (first_future,)),
+            CashFutureUniverseDownloadJob("XYZ", second_spot, (second_future,)),
+        ),
+        sync_plan=HistoricalSyncPlan((first_spot, first_future, second_spot, second_future)),
+    )
+    monkeypatch.setattr(
+        "app.backtesting.cash_future_universe_acquisition.build_cash_future_universe_download_plan",
+        lambda **_: plan,
+    )
+
+    class MustNotAcquire:
+        def acquire(self, **kwargs):
+            raise AssertionError("acquisition must not start before full-plan validation")
+
+    universe = CashFutureFnoUniverse(
+        stocks=(
+            CashFutureUniverseItem("ABC", "2026-10", "101", "ABC26OCT", date(2026, 10, 29), 100),
+            CashFutureUniverseItem("XYZ", "2026-10", "202", "XYZ26OCT", date(2026, 10, 29), 100),
+        ),
+        indices=(),
+    )
+
+    with pytest.raises(ValueError, match="missing future sessions for XYZ: NFO:202:XYZ26OCT"):
+        acquire_cash_future_universe(
+            service=MustNotAcquire(),
+            universe=universe,
+            master_rows=(),
+            start=datetime(2026, 1, 29, tzinfo=timezone.utc),
+            end=datetime(2026, 1, 29, 0, 3, tzinfo=timezone.utc),
+            spot_sessions_by_underlying={"ABC": (session,), "XYZ": (session,)},
+            future_sessions_by_instrument={"NFO:101:ABC26OCT": (session,)},
+        )
