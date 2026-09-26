@@ -152,7 +152,9 @@ def _cash_future_shorting_payloads(trading_date: date, symbols: list[str], *, co
                 continue
             result.append({"trading_date": trading_date, "symbol": symbol, "direction": "UP" if top.gap > 0 else "DOWN" if top.gap < 0 else "FLAT", "gap": top.gap, "gap_percent": top.gap_pct, "weighted_gap": top.gap * top.lot_size, "previous_close": 0.0, "open": daily_ohlc["cash_open"], "high": daily_ohlc["cash_high"], "low": daily_ohlc["cash_low"], "close": daily_ohlc["cash_close"], "cash_open": daily_ohlc["cash_open"], "cash_high": daily_ohlc["cash_high"], "cash_low": daily_ohlc["cash_low"], "cash_close": daily_ohlc["cash_close"], "future_open": daily_ohlc["future_open"], "future_high": daily_ohlc["future_high"], "future_low": daily_ohlc["future_low"], "future_close": daily_ohlc["future_close"], "lot_size": top.lot_size, "contract_month": top.contract_month, "instrument_key": f"NFO:{top.contract_month}", "gap_high_timestamp": _market_timestamp_iso(top.timestamp), "cash_price_at_gap_high": top.cash_price, "future_price_at_gap_high": top.future_price, "expiry_date": top.expiry_date, "is_expiry_day": trading_date == top.expiry_date, "margin_required": top.margin_required, "charges": top.charges, "funding_cost": top.funding_cost, "net_profit": top.net_profit, "roi_pct": top.roi_pct})
     finally:
-        catalog.close()
+        close_catalog = getattr(catalog, "close", None)
+        if close_catalog is not None:
+            close_catalog()
         contracts.close()
     return result
 

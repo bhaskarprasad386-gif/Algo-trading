@@ -364,7 +364,7 @@ def test_durable_rollover_gap_repair_reuses_completed_plan_without_redownloading
 
 
 def test_acquisition_fails_closed_when_planned_future_has_no_session_mapping(tmp_path, monkeypatch):
-    from app.backtesting.cash_future_universe import CashFutureUniverseDownloadJob
+    from app.backtesting.cash_future_universe_download_plan import CashFutureUniverseDownloadJob
     from app.backtesting.cash_future_universe_download_plan import CashFutureUniverseDownloadPlan
     from app.backtesting.historical_ingest import HistoricalFetchRequest
     from app.backtesting.historical_sync import HistoricalSyncPlan
@@ -378,7 +378,7 @@ def test_acquisition_fails_closed_when_planned_future_has_no_session_mapping(tmp
         "angelone", "NFO:101:SBINJAN", "1m", session.start_ns, session.end_ns
     )
     job = CashFutureUniverseDownloadJob("SBIN", spot, (future,))
-    planned = CashFutureUniverseDownloadPlan((job,), HistoricalSyncPlan((spot, future)))
+    planned = CashFutureUniverseDownloadPlan(jobs=(job,), plan=HistoricalSyncPlan((spot, future)))
     monkeypatch.setattr(
         "app.backtesting.cash_future_universe_acquisition.build_cash_future_universe_download_plan",
         lambda **_: planned,

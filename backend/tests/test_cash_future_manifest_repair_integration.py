@@ -84,7 +84,7 @@ def test_stale_complete_manifest_does_not_suppress_catalog_gap_repair(tmp_path):
     assert any(request.instrument == "NSE:3045:SBIN" for request in plan.requests)
 
 
-def test_incomplete_manifest_allows_only_unfinished_instrument_into_provider_plan(tmp_path):
+def test_incomplete_manifest_does_not_suppress_catalog_gap_for_other_leg(tmp_path):
     service, catalog = _service(tmp_path, object())
     session = _session()
     catalog.ingest([HistoricalRecord("angelone", "NSE:3045:SBIN", "1m", session.start_ns, {"close": 100.0})])
@@ -99,7 +99,7 @@ def test_incomplete_manifest_allows_only_unfinished_instrument_into_provider_pla
     )
 
     assert plan.requests
-    assert {request.instrument for request in plan.requests} == {"NSE:3045:SBIN"}
+    assert {request.instrument for request in plan.requests} == {"NSE:3045:SBIN", "NFO:101:SBINJAN"}
 
 
 def test_failed_provider_repair_keeps_manifest_incomplete_and_returns_failed_execution(tmp_path):

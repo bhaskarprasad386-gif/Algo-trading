@@ -63,14 +63,14 @@ def test_monthly_calendar_top10_reads_downloaded_catalog_without_market_bars(mon
                     instrument="NSE:999:AAA",
                     timeframe="1m",
                     timestamp_ns=timestamp_ns,
-                    payload={"close": 100.0},
+                    payload={"open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0},
                 ),
                 HistoricalRecord(
                     source="angelone",
                     instrument="NFO:101:AAA-FUT",
                     timeframe="1m",
                     timestamp_ns=timestamp_ns,
-                    payload={"close": 112.0, "margin_required": 125000.0},
+                    payload={"open": 112.0, "high": 112.0, "low": 112.0, "close": 112.0, "margin_required": 125000.0},
                 ),
             ]
         )
