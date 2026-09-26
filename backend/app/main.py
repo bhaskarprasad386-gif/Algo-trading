@@ -309,7 +309,7 @@ async def _cash_future_history_loop() -> None:
 
 
 async def _live_cash_future_loop() -> None:
-    collector = LiveCashFutureOneSecondCollector(settings.BACKTEST_DATA_DB)
+    collector = LiveCashFutureOneSecondCollector(settings.BACKTEST_DATA_DB, auth=AngelOneAuth(), instrument_master=instrument_master, on_observation=lambda payload: live_cash_future_scanner.observe(payload, session_factory=SessionLocal))
     try:
         await asyncio.to_thread(collector.run_forever)
     finally:
