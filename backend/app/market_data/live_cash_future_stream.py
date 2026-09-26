@@ -234,6 +234,11 @@ class LiveCashFutureOneSecondCollector:
                     if previous is not None and previous[0] != second_ns:
                         previous_payload = previous[1]
                         previous_payload["source_timestamp_ns"] = previous[0]
+                        if self.on_observation is not None:
+                            try:
+                                self.on_observation(dict(previous_payload))
+                            except Exception as exc:
+                                app_logger.error(f"1-second live scanner callback failed {token}: {exc}")
                         try:
                             written += catalog.ingest(HistoricalRecord(
                                 source=SOURCE,
