@@ -1,4 +1,4 @@
-ffrom datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -18,10 +18,6 @@ from app.scanner.cash_future_history import CashFutureHistoryPoint
 from app.backtesting.provenance import provenance_hash
 from app.core.config import settings
 
-rom datetime import date, datetime, timedelta
-
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 from app.backtesting.cash_future_strategy_routes import (
     StrategyRunRequest,
