@@ -38,6 +38,7 @@ class LiveCashFutureScanner:
         self.notifier = notifier or NotificationService()
         self._lock = threading.Lock()
         self._latest: dict[tuple[str, int], dict[str, dict]] = {}
+        self._signals: dict[tuple[str, str], LiveCashFutureSignal] = {}
 
     @staticmethod
     def _price(payload: dict, key: str, divisor: float = 1.0) -> float | None:
@@ -121,6 +122,16 @@ class LiveCashFutureScanner:
             gap_pct=gap_pct,
             timestamp_ns=timestamp_ns,
         )
+        with self._lock:
+            self._signals[(signal.symbol, signal.contract_month)] = signal
         if gap > 0 and gap_pct >= settings.LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT:
             self._notify_users(session_factory, signal)
         return signal
+
+    def snapshot(self, *, max_age_seconds: float = 5.0, limit: int = 50) -> list[dict]:
+        now_ns = datetime.now(IST).timestamp() * 1_000_000_000
+        cutoff = int(now_ns - max_age_seconds * 1_000_000_000)
+        with self._lock:
+            signals = [signal for signal in self._signals.values() if signal.timestamp_ns >= cutoff]
+        signals.sort(key=lambda item: (-item.gap_pct, item.symbol, item.contract_month))
+        return [signal.__dict__.copy() for signal in signals[:limit]]
