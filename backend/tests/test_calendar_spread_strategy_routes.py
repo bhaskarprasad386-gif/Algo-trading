@@ -247,3 +247,54 @@ def test_calendar_spread_historical_replay_respects_exact_time_window(tmp_path, 
     assert result["count"] == 2
     assert result["series"][0]["timestamp"].startswith("2026-09-24T14:45:01")
     assert result["series"][-1]["timestamp"].startswith("2026-09-24T14:45:02")
+
+
+def test_calendar_spread_historical_strategy_run_executes_catalog_data(tmp_path, monkeypatch):
+    from app.backtesting.calendar_spread_strategy_routes import (
+        CalendarSpreadHistoricalStrategyRunRequest,
+        calendar_spread_historical_strategy_run,
+    )
+    from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
+    from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
+
+    data_db = tmp_path / "strategy-data.sqlite"
+    contract_db = tmp_path / "strategy-contracts.sqlite"
+    result_db = tmp_path / "strategy-results.sqlite"
+    monkeypatch.setattr("app.backtesting.calendar_spread_strategy_routes.settings.BACKTEST_DATA_DB", str(data_db))
+    monkeypatch.setattr("app.backtesting.calendar_spread_strategy_routes.settings.BACKTEST_CONTRACT_DB", str(contract_db))
+    monkeypatch.setattr("app.backtesting.calendar_spread_strategy_routes.settings.BACKTEST_RESULT_LEDGER_DB", str(result_db))
+
+    snapshot = date(2026, 9, 24)
+    contracts = ContractMasterCatalog(str(contract_db))
+    contracts.upsert_snapshot(snapshot, [
+        ContractRecord("NFO", "SBIN30SEP2026FUT", "1001", date(2026, 9, 30), "STOCK_FUTURE", "SBIN", 100, snapshot),
+        ContractRecord("NFO", "SBIN29OCT2026FUT", "1002", date(2026, 10, 29), "STOCK_FUTURE", "SBIN", 100, snapshot),
+    ])
+    contracts.close()
+
+    base = int(datetime(2026, 9, 24, 9, 15, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+    data = HistoricalCatalog(str(data_db))
+    data.ingest([
+        HistoricalRecord("angelone", "NFO:1001:SBIN30SEP2026FUT", "1s", base, {"bid": 99, "ask": 100}),
+        HistoricalRecord("angelone", "NFO:1002:SBIN29OCT2026FUT", "1s", base, {"bid": 103, "ask": 104}),
+        HistoricalRecord("angelone", "NFO:1001:SBIN30SEP2026FUT", "1s", base + 1_000_000_000, {"bid": 102, "ask": 103}),
+        HistoricalRecord("angelone", "NFO:1002:SBIN29OCT2026FUT", "1s", base + 1_000_000_000, {"bid": 98, "ask": 99}),
+    ])
+    data.close()
+
+    result = calendar_spread_historical_strategy_run(CalendarSpreadHistoricalStrategyRunRequest(
+        underlying="SBIN",
+        exchange="NFO",
+        start_date=snapshot,
+        end_date=snapshot,
+        near_contract_month="2026-09",
+        far_contract_month="2026-10",
+        source_timeframe="1s",
+        replay_timeframe="1s",
+        fees_per_unit=0.5,
+    ))
+
+    assert result["source"] == "historical-catalog"
+    assert result["completed_trades"] == 1
+    assert result["trade_count"] == 1
+    assert result["net_profit"] == 400.0
