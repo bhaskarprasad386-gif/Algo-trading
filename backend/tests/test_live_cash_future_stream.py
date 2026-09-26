@@ -71,3 +71,14 @@ def test_live_same_second_record_identity_is_second_bucketed():
     second = (first // 1_000_000_000) * 1_000_000_000
     assert second == 1_762_234_836_000_000_000
     assert (second // 1_000_000_000) == (first // 1_000_000_000)
+
+
+def test_live_best_side_includes_price_and_quantity():
+    collector = LiveCashFutureOneSecondCollector(":memory:")
+    message = {
+        "best_5_buy_data": [{"price": "10000", "quantity": "250"}],
+        "best_5_sell_data": [{"price": "10100", "quantity": "175"}],
+    }
+    assert collector._best_side(message, "best_5_buy_data") == 100.0
+    assert collector._best_side_detail(message, "best_5_buy_data") == (100.0, 250.0)
+    assert collector._best_side_detail(message, "best_5_sell_data") == (101.0, 175.0)
