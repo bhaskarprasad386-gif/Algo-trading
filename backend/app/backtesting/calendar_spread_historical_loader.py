@@ -13,7 +13,7 @@ from .contract_master import ContractMasterCatalog, ContractRecord
 from .historical_catalog import HistoricalCatalog, HistoricalRecord
 
 MARKET_TZ = ZoneInfo("Asia/Kolkata")
-PAIR_TOLERANCE_NS = 60 * 1_000_000_000
+PAIR_TOLERANCE_NS = 0
 LOADER_IDENTITY = "calendar_spread_historical_loader:v1"
 
 
