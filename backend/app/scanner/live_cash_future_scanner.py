@@ -185,20 +185,26 @@ class LiveCashFutureScanner:
             pass
 
         key = (symbol, timestamp_ns)
+        leg_payload = {
+            "ltp": ltp, "bid": bid, "ask": ask,
+            "bid_qty": bid_qty, "ask_qty": ask_qty,
+            "lot_size": lot, "expiry": payload.get("expiry"),
+        }
         with self._lock:
             bucket = self._latest.setdefault(key, {})
-            bucket[leg] = {
-                "ltp": ltp, "bid": bid, "ask": ask,
-                "bid_qty": bid_qty, "ask_qty": ask_qty,
-                "lot_size": lot, "expiry": payload.get("expiry"),
-            }
+            if leg == "CASH":
+                bucket["CASH"] = leg_payload
+            else:
+                futures = bucket.setdefault("FUTURE", {})
+                futures[month] = leg_payload
             self._latest = {
                 k: v for k, v in self._latest.items()
                 if k[1] >= timestamp_ns - 2_000_000_000
             }
-            if "CASH" not in bucket or "FUTURE" not in bucket:
+            futures = bucket.get("FUTURE", {})
+            if "CASH" not in bucket or month not in futures:
                 return None
-            cash, future = bucket["CASH"], bucket["FUTURE"]
+            cash, future = bucket["CASH"], futures[month]
 
         cash_ask, future_bid = cash["ask"], future["bid"]
         if cash_ask is None or future_bid is None:
