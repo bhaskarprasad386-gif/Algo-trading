@@ -47,6 +47,12 @@ def materialize_cash_future_universe_history(
                 raise ValueError(
                     f"download plan future has no universe metadata: {request.instrument}"
                 )
+            expected_instrument = f"NFO:{item.future_token}:{item.future_symbol}"
+            if request.instrument != expected_instrument:
+                raise ValueError(
+                    "download plan future token/symbol mismatch: "
+                    f"got {request.instrument}, expected {expected_instrument}"
+                )
             inserted += materialize_cash_future_history(
                 db,
                 catalog,
