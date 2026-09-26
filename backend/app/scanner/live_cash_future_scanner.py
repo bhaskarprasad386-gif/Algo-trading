@@ -212,15 +212,12 @@ class LiveCashFutureScanner:
             return None
 
         liquidity_values = [
-            value for value in (
-                cash["bid_qty"], cash["ask_qty"],
-                future["bid_qty"], future["ask_qty"],
-            ) if value is not None
+            cash["bid_qty"], cash["ask_qty"],
+            future["bid_qty"], future["ask_qty"],
         ]
-        liquidity_qty = min(liquidity_values) if liquidity_values else None
-        if liquidity_qty is not None and liquidity_qty < max(0, int(settings.LIVE_CASH_FUTURE_MIN_LIQUIDITY_QTY)):
-            return None
-        if liquidity_qty is None and int(settings.LIVE_CASH_FUTURE_MIN_LIQUIDITY_QTY) > 0:
+        liquidity_qty = min(liquidity_values) if all(value is not None for value in liquidity_values) else None
+        min_liquidity = max(0, int(settings.LIVE_CASH_FUTURE_MIN_LIQUIDITY_QTY))
+        if min_liquidity > 0 and (liquidity_qty is None or liquidity_qty < min_liquidity):
             return None
 
         gap = future_bid - cash_ask
