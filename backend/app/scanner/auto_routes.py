@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, func, select
@@ -7,11 +8,11 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.market_data.instruments import InstrumentMaster
 from app.models.cash_future_history import CashFutureHistory
-from app.scanner.cash_future import CashFutureConfig
-from app.scanner.cash_future_collector import CashFutureHistoryCollector
+from app.scanner.cash_future import CashFutureConfig, CashQuote, FutureQuote, calculate_cash_future
 from app.backtesting.daily_gap import build_daily_gap_observations
 
 router = APIRouter(prefix="/api/v1/scanner", tags=["Scanner"])
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def _expiry(value: object) -> date | None:
@@ -51,9 +52,42 @@ def discover_cash_future_symbols(limit: int = 50) -> list[str]:
     return sorted(symbols)[:int(limit)]
 
 
+def _stored_live_observations(db: Session, symbols: list[str], config: CashFutureConfig, max_age_seconds: float | None) -> tuple[list[dict], list[dict]]:
+    """Read the latest persisted live observations; never call the broker."""
+    now = datetime.now(IST).replace(tzinfo=None)
+    cutoff = None if max_age_seconds is None else now - timedelta(seconds=float(max_age_seconds))
+    stmt = select(CashFutureHistory).where(CashFutureHistory.symbol.in_(symbols), CashFutureHistory.timestamp <= now)
+    if cutoff is not None:
+        stmt = stmt.where(CashFutureHistory.timestamp >= cutoff)
+    rows = db.scalars(stmt.order_by(CashFutureHistory.timestamp.desc())).all()
+    latest: dict[tuple[str, str], CashFutureHistory] = {}
+    for row in rows:
+        latest.setdefault((row.symbol.upper(), row.contract_month), row)
+    data: list[dict] = []
+    errors: list[dict] = []
+    for row in latest.values():
+        try:
+            result = calculate_cash_future(
+                CashQuote(symbol=row.symbol, ltp=row.cash_price, bid=row.cash_bid, ask=row.cash_ask),
+                FutureQuote(symbol=row.symbol, contract_month=row.contract_month, ltp=row.future_price,
+                            lot_size=int(row.lot_size), margin_required=row.margin_required,
+                            volume=int(row.volume or 0), oi=int(row.oi or 0), bid=row.future_bid,
+                            ask=row.future_ask, expiry=row.expiry_date),
+                config,
+            )
+            item = result.__dict__.copy()
+            item.update({"timestamp": row.timestamp.isoformat(), "source": "stored-live-feed",
+                         "cash_bid_qty": row.cash_bid_qty, "cash_ask_qty": row.cash_ask_qty,
+                         "future_bid_qty": row.future_bid_qty, "future_ask_qty": row.future_ask_qty,
+                         "volume": row.volume, "oi": row.oi})
+            data.append(item)
+        except Exception as exc:
+            errors.append({"symbol": row.symbol, "contract_month": row.contract_month, "error": str(exc)})
+    return data, errors
+
+
 def _filtered(data: list[dict]) -> list[dict]:
     return [item for item in data if item.get("executable") is True]
-
 
 @router.get("/cash-future/live/auto")
 def cash_future_live_auto_scanner(
@@ -103,23 +137,18 @@ def cash_future_live_auto_scanner(
         funding_cost=funding_cost,
         require_two_sided_quotes=True,
     )
-    result = CashFutureHistoryCollector(
-        symbols,
-        config=config,
-        max_quote_age_seconds=max_quote_age_seconds,
-        max_quote_timestamp_skew_seconds=max_quote_timestamp_skew_seconds,
-    ).collect(db)
-    opportunities = _filtered(result["collected"])
+    stored_data, errors = _stored_live_observations(db, symbols, config, max_quote_age_seconds)
+    opportunities = _filtered(stored_data)
     opportunities.sort(key=lambda item: (item.get("net_profit", 0), item.get("roi_pct", 0)), reverse=True)
     return {
         "status": "success",
         "scanner": "cash-future",
         "mode": "live-auto",
         "symbols_requested": symbols,
-        "scanned_observations": len(result["collected"]),
+        "scanned_observations": len(stored_data),
         "opportunity_count": len(opportunities),
         "data": opportunities,
-        "errors": result["errors"],
+        "errors": errors,
         "filters": {
             "min_gap": min_gap,
             "min_gap_pct": min_gap_pct,
