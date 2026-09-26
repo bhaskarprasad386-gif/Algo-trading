@@ -51,10 +51,10 @@ def _side(message:dict[str,Any],key:str)->tuple[float|None,float|None]:
 class LiveCalendarSpreadOneSecondCollector:
     """Collect all supported futures at 1-second source resolution."""
 
-    def __init__(self,data_db:str,*,auth:AngelOneAuth|None=None,instrument_master:InstrumentMaster|None=None,poll_seconds:float=.25)->None:
+    def __init__(self,data_db:str,*,auth:AngelOneAuth|None=None,instrument_master:InstrumentMaster|None=None,poll_seconds:float=.25,on_observation=None)->None:
         if poll_seconds<=0:raise ValueError("poll_seconds must be positive")
         self.data_db=data_db; self.auth=auth or AngelOneAuth(); self.instrument_master=instrument_master or InstrumentMaster()
-        self.poll_seconds=poll_seconds; self.stop_event=threading.Event(); self._sockets=[]
+        self.poll_seconds=poll_seconds; self.on_observation=on_observation; self.stop_event=threading.Event(); self._sockets=[]
 
     @staticmethod
     def market_open(now:datetime|None=None)->bool:
@@ -119,6 +119,9 @@ class LiveCalendarSpreadOneSecondCollector:
                     bid,bq=_side(message,"best_5_buy_data"); ask,aq=_side(message,"best_5_sell_data")
                     payload=dict(message); payload.update({"ltp":float(message["last_traded_price"])/100.0 if message.get("last_traded_price") is not None else None,"bid":bid,"ask":ask,"bid_qty":bq,"ask_qty":aq,"underlying":meta["underlying"],"leg":"FUTURE","instrument_type":meta["kind"],"exchange":meta["exchange"],"contract_month":f'{meta["expiry"].year:04d}-{meta["expiry"].month:02d}',"expiry":meta["expiry"].isoformat(),"lot_size":meta["lot_size"]})
                     latest[(resolved_exchange_type,token)]=(sec,payload)
+                    if self.on_observation is not None:
+                        try: self.on_observation(dict(payload, timestamp_ns=sec))
+                        except Exception as exc: app_logger.warning(f"Calendar Spread live scanner callback failed: {exc}")
             for (exchange_type,token),(ts,payload) in latest.items():
                 meta=token_meta[(exchange_type,token)]; written+=catalog.ingest(HistoricalRecord(SOURCE,f'{meta["exchange"]}:{token}:{meta["symbol"]}',TIMEFRAME,ts,payload))
         finally:
