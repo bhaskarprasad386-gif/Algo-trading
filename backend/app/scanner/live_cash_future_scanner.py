@@ -308,7 +308,16 @@ class LiveCashFutureScanner:
             "bid_qty": bid_qty, "ask_qty": ask_qty,
             "lot_size": lot, "expiry": payload.get("expiry"),
         }
+        ts_date = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, IST).date()
+        ts_date_key = ts_date.isoformat()
         with self._lock:
+            # Prune stale trading-day extremes on every valid observation,
+            # including unmatched legs, so an inactive day cannot survive
+            # merely because the next day's cash/future pair is incomplete.
+            self._session_extremes = {
+                key: value for key, value in self._session_extremes.items()
+                if key[1] == ts_date_key
+            }
             bucket = self._latest.setdefault(key, {})
             if leg == "CASH":
                 bucket["CASH"] = leg_payload
@@ -339,20 +348,12 @@ class LiveCashFutureScanner:
 
         gap = future_bid - cash_ask
         gap_pct = gap / cash_ask * 100.0
-        ts_date = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, IST).date()
         expiry = self._parse_expiry(future.get("expiry"))
         days = max(1, (expiry - ts_date).days) if expiry else None
         extreme_key = (symbol, ts_date.isoformat())
         stability_key = (symbol, month)
 
         with self._lock:
-            # Only the active trading date is needed for day high/low.
-            # Drop prior dates so a long-running process cannot accumulate
-            # one permanent entry per symbol per day.
-            self._session_extremes = {
-                key: value for key, value in self._session_extremes.items()
-                if key[1] == ts_date.isoformat()
-            }
             ext = self._session_extremes.setdefault(extreme_key, {
                 "cash_high": cash["ltp"], "cash_low": cash["ltp"],
                 "future_high": future["ltp"], "future_low": future["ltp"],
