@@ -130,18 +130,6 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
         replayStepSeconds = v
         resetReplay()
         refreshModeButtons()
-        timeframeChangedListener?.invoke(
-            when (v) {
-                1L -> "1s"
-                30L -> "30s"
-                60L -> "1m"
-                300L -> "5m"
-                900L -> "15m"
-                1800L -> "30m"
-                3600L -> "1h"
-                else -> "1m"
-            }
-        )
     }
 
     fun setReplayMode(seconds: Int) = setReplayMode(seconds.toLong())
