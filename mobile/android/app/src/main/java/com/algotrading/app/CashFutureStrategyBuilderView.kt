@@ -39,8 +39,8 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
     private val futureLots = field("Future lots", integer = true).apply { setText("1") }
     private val futureQty = quantityField("Future quantity • auto")
     private val lotSize = field("Historical lot size", integer = true)
-    private val entryTime = field("Entry time HH:mm:ss").apply { setText("09:15:00") }
-    private val exitTime = field("Exit time HH:mm:ss").apply { setText("15:30:00") }
+    private val entryTime = field("Entry time HH:mm:ss").apply { inputType = android.text.InputType.TYPE_CLASS_DATETIME; setText("09:15:00") }
+    private val exitTime = field("Exit time HH:mm:ss").apply { inputType = android.text.InputType.TYPE_CLASS_DATETIME; setText("15:30:00") }
     private val capital = field("Capital ₹").apply { setText("10000000") }
     private val stopLoss = field("Stop-loss ₹")
     private val target = field("Target ₹")
