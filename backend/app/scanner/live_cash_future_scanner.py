@@ -37,7 +37,7 @@ class LiveCashFutureScanner:
     def __init__(self, *, notifier: NotificationService | None = None) -> None:
         self.notifier = notifier or NotificationService()
         self._lock = threading.Lock()
-        self._latest: dict[tuple[str, str, int], dict[str, dict]] = {}
+        self._latest: dict[tuple[str, int], dict[str, dict]] = {}
 
     @staticmethod
     def _price(payload: dict, key: str, divisor: float = 1.0) -> float | None:
@@ -93,7 +93,7 @@ class LiveCashFutureScanner:
             return None
         bid = self._price(payload, "bid")
         ask = self._price(payload, "ask")
-        key = (symbol, month if leg == "FUTURE" else "ALL", timestamp_ns)
+        key = (symbol, timestamp_ns)
         with self._lock:
             bucket = self._latest.setdefault(key, {})
             bucket[leg] = {"ltp": ltp, "bid": bid, "ask": ask}
