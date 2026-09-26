@@ -88,7 +88,7 @@ class LiveCashFutureOneSecondCollector:
 
     def _contracts(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         rows = self.instrument_master.download()
-        today = date.today()
+        today = datetime.now(IST).date()
         futures: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
         for item in rows:
