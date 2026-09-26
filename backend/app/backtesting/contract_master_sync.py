@@ -29,5 +29,5 @@ class DailyContractMasterSync:
             return ContractMasterSyncResult(target, 0, skipped=True)
         records = self.source.sync(self.catalog, snapshot_date=target)
         if records <= 0:
-            raise ValueError(f"Angel One contract master returned no stock futures for {target.isoformat()}")
+            raise ValueError(f"Angel One contract master returned no supported futures for {target.isoformat()}")
         return ContractMasterSyncResult(target, records)
