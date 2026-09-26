@@ -31,6 +31,8 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
     private var timeframeChangedListener: ((String) -> Unit)? = null
     private var focusTimestamp: String? = null
     private var strategyTrades: List<CashFutureTradeMarker> = emptyList()
+    private var calendarPoints: List<CalendarSpreadReplayPoint> = emptyList()
+    private var calendarMode = false
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
@@ -104,6 +106,16 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
         timestamp.trim().let { if (it.length >= 19) it.substring(0, 19) else it }
 
     fun focusedTimestamp(): String? = focusTimestamp
+
+    fun setCalendarSpreadData(newPoints: List<CalendarSpreadReplayPoint>, intervals: List<String>) {
+        calendarPoints = newPoints.sortedBy { it.timestamp }
+        calendarMode = true
+        availableIntervals = intervals.map(::normalizeInterval).toSet()
+        resetReplay()
+        refreshModeButtons()
+    }
+
+    fun clearCalendarSpreadData() { calendarPoints = emptyList(); calendarMode = false; invalidate() }
 
     fun setCashFutureData(newPoints: List<CashFutureReplayPoint>, intervals: List<String>) {
         points = newPoints.sortedBy { it.timestamp }
@@ -183,12 +195,48 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        if (calendarMode) {
+            val visibleCalendar = calendarPoints.take(visiblePoints)
+            if (visibleCalendar.isEmpty()) { canvas.drawText("Load Calendar Spread replay", 18f, 42f, axisPaint); return }
+            drawCalendarSpread(canvas, visibleCalendar)
+            return
+        }
         val visible = points.take(visiblePoints)
         if (visible.isEmpty()) {
             canvas.drawText("Select GRAPH from a calendar row", 18f, 42f, axisPaint)
             return
         }
         drawPaired(canvas, visible)
+    }
+
+    private fun drawCalendarSpread(canvas: Canvas, v: List<CalendarSpreadReplayPoint>) {
+        val left=72f; val right=width-18f; val top=38f; val bottom=height-48f; val priceBottom=bottom-72f; val spreadTop=priceBottom-18f
+        val near= v.map{(it.near_bid+it.near_ask)/2.0}; val far=v.map{(it.far_bid+it.far_ask)/2.0}
+        val spread=v.map{it.far_bid-it.near_ask}
+        val pMin=min(near.minOrNull() ?: 0.0, far.minOrNull() ?: 0.0); val pMax=max(near.maxOrNull() ?: 1.0, far.maxOrNull() ?: 1.0); val range=max(0.000001,pMax-pMin)
+        val sMin=spread.minOrNull() ?: 0.0; val sMax=spread.maxOrNull() ?: 1.0; val sRange=max(0.000001,sMax-sMin)
+        fun x(i:Int)=if(v.size==1)left else left+(right-left)*i/(v.size-1)
+        fun py(n:Double)=(priceBottom-(n-pMin)/range*(priceBottom-top)).toFloat()
+        fun sy(n:Double)=(bottom-4f-(n-sMin)/sRange*(bottom-spreadTop)).toFloat()
+        canvas.drawLine(left,top,right,top,gridPaint); canvas.drawLine(left,priceBottom,right,priceBottom,gridPaint); canvas.drawLine(left,spreadTop,right,spreadTop,gridPaint)
+        canvas.drawText("NEAR",left,24f,axisPaint); canvas.drawText("FAR",left+100f,24f,axisPaint); canvas.drawText("EXECUTABLE EDGE",left+180f,24f,axisPaint)
+        canvas.drawText(String.format("%.2f",pMax),4f,top+10f,axisPaint); canvas.drawText(String.format("%.2f",pMin),4f,priceBottom,axisPaint)
+        canvas.drawText("Edge ₹"+String.format("%.2f",sMax)+" → ₹"+String.format("%.2f",sMin),left,bottom+20f,axisPaint)
+        canvas.drawText(labelFor(replayStepSeconds)+" • "+replayTime,left,height-8f,axisPaint)
+        val np=Path(); val fp=Path(); val sp=Path()
+        v.forEachIndexed{i,p->val px=x(i);val n=near[i];val fa=far[i];val s=spread[i];if(i==0){np.moveTo(px,py(n));fp.moveTo(px,py(fa));sp.moveTo(px,sy(s))}else{np.lineTo(px,py(n));fp.lineTo(px,py(fa));sp.lineTo(px,sy(s))}}
+        canvas.drawPath(np,cashPaint); canvas.drawPath(fp,futurePaint); canvas.drawPath(sp,gapPaint)
+        strategyTrades.forEach{trade->
+            drawCalendarMarker(canvas,v,trade.entry_time,trade.entry_price,"ENTRY",x,sy,spreadTop,bottom)
+            drawCalendarMarker(canvas,v,trade.exit_time,trade.exit_price,"EXIT",x,sy,spreadTop,bottom)
+        }
+    }
+
+    private fun drawCalendarMarker(canvas:Canvas,v:List<CalendarSpreadReplayPoint>,timestamp:String,price:Double,label:String,x:(Int)->Float,sy:(Double)->Float,top:Float,bottom:Float){
+        val key=localTimestampKey(timestamp); val idx=v.indexOfFirst{localTimestampKey(it.timestamp)==key}.takeIf{it>=0} ?: v.indexOfLast{localTimestampKey(it.timestamp)<=key}.takeIf{it>=0} ?: return
+        val px=x(idx); val y=sy(price); val paint=if(label=="ENTRY")buyPaint else sellPaint
+        canvas.drawCircle(px,y,7f,paint); canvas.drawText(label,px+10f,if(label=="ENTRY")max(top+18f,y-12f) else min(bottom-12f,y+22f),paint)
+        if(label=="EXIT"){val pnl="P&L "+if(strategyTrades.firstOrNull{it.exit_time==timestamp}?.net_profit ?: 0.0 >= 0) "+" else ""+"₹"+String.format("%.2f",strategyTrades.firstOrNull{it.exit_time==timestamp}?.net_profit ?: 0.0);canvas.drawText(pnl,min(px+10f,width-180f),min(bottom-2f,max(top+35f,y+35f)),pnlPaint)}
     }
 
     private fun drawPaired(canvas: Canvas, v: List<CashFutureReplayPoint>) {
