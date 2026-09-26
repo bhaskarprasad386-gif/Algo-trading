@@ -107,14 +107,14 @@ class LiveCalendarSpreadOneSecondCollector:
                 while time_module.monotonic()<deadline:
                     try:message=queue.get(timeout=max(.01,deadline-time_module.monotonic()))
                     except Empty:break
-                     token=str(message.get("token") or "").strip()
-                     try: exchange_type=int(message.get("exchange_type"))
-                     except (TypeError,ValueError): exchange_type=None
-                     meta=token_meta.get((exchange_type,token)) if exchange_type is not None else None
-                     if meta is None and exchange_type is None:
-                         matches=[r for (et,tk),r in token_meta.items() if tk==token]
-                         meta=matches[0] if len(matches)==1 else None
-                     ts=_timestamp_ns(message)
+                    token=str(message.get("token") or "").strip()
+                    try: exchange_type=int(message.get("exchange_type"))
+                    except (TypeError,ValueError): exchange_type=None
+                    meta=token_meta.get((exchange_type,token)) if exchange_type is not None else None
+                    if meta is None and exchange_type is None:
+                        matches=[r for (et,tk),r in token_meta.items() if tk==token]
+                        meta=matches[0] if len(matches)==1 else None
+                    ts=_timestamp_ns(message)
                     if not meta or ts is None:continue
                     sec=ts//1_000_000_000*1_000_000_000
                     local_timestamp=datetime.fromtimestamp(sec/1_000_000_000, tz=ZoneInfo("UTC")).astimezone(IST)
