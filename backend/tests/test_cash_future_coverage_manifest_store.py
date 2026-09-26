@@ -122,3 +122,42 @@ def test_manifest_store_replaces_stale_overlapping_range(tmp_path):
         source="angelone",
         requests=(("FUT", 0, 10),),
     ) is False
+
+
+def test_manifest_store_isolates_same_timestamp_by_instrument_and_contract_range(tmp_path):
+    store = CashFutureCoverageManifestStore(tmp_path / "coverage.sqlite")
+    store.upsert(
+        build_coverage_manifest(
+            source="angelone",
+            generated_at=9,
+            ranges=(
+                CoverageRange("NSE:1:ABC-EQ", 100, 200, 2, 2, 0, True),
+                CoverageRange("NSE:2:XYZ-EQ", 100, 200, 2, 2, 0, True),
+                CoverageRange("NFO:101:ABC26OCT", 100, 200, 2, 2, 0, True),
+                CoverageRange("NFO:102:ABC26NOV", 100, 200, 2, 2, 0, True),
+            ),
+        )
+    )
+
+    assert store.is_complete_for_requests(
+        source="angelone",
+        requests=(("NSE:1:ABC-EQ", 100, 200),),
+    )
+    assert store.is_complete_for_requests(
+        source="angelone",
+        requests=(("NSE:2:XYZ-EQ", 100, 200),),
+    )
+    assert store.is_complete_for_requests(
+        source="angelone",
+        requests=(("NFO:101:ABC26OCT", 100, 200),),
+    )
+    assert store.is_complete_for_requests(
+        source="angelone",
+        requests=(("NFO:102:ABC26NOV", 100, 200),),
+    )
+
+    # Same timestamps on another instrument/contract cannot satisfy this request.
+    assert not store.is_complete_for_requests(
+        source="angelone",
+        requests=(("NFO:999:ABC26DEC", 100, 200),),
+    )
