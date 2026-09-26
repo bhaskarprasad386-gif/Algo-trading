@@ -91,7 +91,7 @@ class LiveCalendarSpreadOneSecondCollector:
         if not contracts:
             app_logger.warning("Calendar Spread live collector found no eligible futures"); time_module.sleep(30); return
         self.auth.login(); queue=Queue(); self._sockets=[]
-        token_meta={r["token"]:r for r in contracts}
+        token_meta={(EXCHANGE_TYPES[r["exchange"]],r["token"]):r for r in contracts}
         grouped={}
         for r in contracts:grouped.setdefault(EXCHANGE_TYPES[r["exchange"]],[]).append(r["token"])
         def receive(message):
@@ -106,20 +106,20 @@ class LiveCalendarSpreadOneSecondCollector:
                 while time_module.monotonic()<deadline:
                     try:message=queue.get(timeout=max(.01,deadline-time_module.monotonic()))
                     except Empty:break
-                    token=str(message.get("token") or "").strip(); meta=token_meta.get(token); ts=_timestamp_ns(message)
+                    token=str(message.get("token") or "").strip()\n                    try: exchange_type=int(message.get("exchange_type"))\n                    except (TypeError,ValueError): exchange_type=None\n                    meta=token_meta.get((exchange_type,token)) if exchange_type is not None else None\n                    if meta is None and exchange_type is None:\n                        matches=[r for (et,tk),r in token_meta.items() if tk==token]\n                        meta=matches[0] if len(matches)==1 else None\n                    ts=_timestamp_ns(message)
                     if not meta or ts is None:continue
                     sec=ts//1_000_000_000*1_000_000_000
                     local_timestamp=datetime.fromtimestamp(sec/1_000_000_000, tz=ZoneInfo("UTC")).astimezone(IST)
                     if not self._exchange_open(meta["exchange"], local_timestamp): continue
-                    previous=latest.get(token)
+                    previous=latest.get((exchange_type,token))
                     if previous and previous[0]!=sec:
                         try:written+=catalog.ingest(HistoricalRecord(SOURCE,f'{meta["exchange"]}:{token}:{meta["symbol"]}',TIMEFRAME,previous[0],previous[1]))
                         except ValueError as exc:app_logger.error(f"Calendar 1-second record rejected {token}: {exc}")
                     bid,bq=_side(message,"best_5_buy_data"); ask,aq=_side(message,"best_5_sell_data")
                     payload=dict(message); payload.update({"ltp":float(message["last_traded_price"])/100.0 if message.get("last_traded_price") is not None else None,"bid":bid,"ask":ask,"bid_qty":bq,"ask_qty":aq,"underlying":meta["underlying"],"leg":"FUTURE","instrument_type":meta["kind"],"exchange":meta["exchange"],"contract_month":f'{meta["expiry"].year:04d}-{meta["expiry"].month:02d}',"expiry":meta["expiry"].isoformat(),"lot_size":meta["lot_size"]})
-                    latest[token]=(sec,payload)
-            for token,(ts,payload) in latest.items():
-                meta=token_meta[token]; written+=catalog.ingest(HistoricalRecord(SOURCE,f'{meta["exchange"]}:{token}:{meta["symbol"]}',TIMEFRAME,ts,payload))
+                    latest[(exchange_type,token)]=(sec,payload)
+            for (exchange_type,token),(ts,payload) in latest.items():
+                meta=token_meta[(exchange_type,token)]; written+=catalog.ingest(HistoricalRecord(SOURCE,f'{meta["exchange"]}:{token}:{meta["symbol"]}',TIMEFRAME,ts,payload))
         finally:
             catalog.close()
             for socket in self._sockets:socket.close()
