@@ -382,10 +382,16 @@ class LiveCashFutureScanner:
             gap > 0
             and net_gap > 0
             and gap_pct >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT)
-            and (gross_profit is not None and gross_profit >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GROSS_PROFIT))
-            and (net_profit is not None and net_profit >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_NET_PROFIT))
-            and (annualized is not None and annualized >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_ANNUALIZED_GAP_PCT))
             and stable >= min_stable
+        )
+        alert_eligible = (
+            eligible
+            and gross_profit is not None
+            and gross_profit >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GROSS_PROFIT)
+            and net_profit is not None
+            and net_profit >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_NET_PROFIT)
+            and annualized is not None
+            and annualized >= float(settings.LIVE_CASH_FUTURE_ALERT_MIN_ANNUALIZED_GAP_PCT)
         )
         if previous_signal is None:
             lifecycle = "NEW" if eligible else "EXPIRED"
@@ -411,10 +417,10 @@ class LiveCashFutureScanner:
         state_key = (symbol, month)
         with self._lock:
             previous_alert_state = self._alert_state.get(state_key)
-            if eligible and previous_alert_state != "ACTIVE":
+            if alert_eligible and previous_alert_state != "ACTIVE":
                 alert_event = "RECOVERY" if previous_alert_state else "NEW"
                 self._alert_state[state_key] = "ACTIVE"
-            elif not eligible:
+            elif not alert_eligible:
                 self._alert_state[state_key] = "WEAKENING" if previous_alert_state == "ACTIVE" else "INACTIVE"
                 alert_event = None
             else:
