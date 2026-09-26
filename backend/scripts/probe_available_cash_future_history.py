@@ -140,7 +140,17 @@ def main() -> int:
                     )
                 day = window_start - timedelta(days=1)
 
-            cash_instrument = instruments.resolve_cash_instrument(contract.underlying, "NSE")
+            try:
+                cash_instrument = instruments.resolve_cash_instrument(contract.underlying, "NSE")
+            except (LookupError, ValueError) as exc:
+                # The Angel master can contain non-tradable/test future rows with
+                # no matching NSE cash leg. They are not Cash-Future candidates;
+                # skip them rather than aborting the entire probe.
+                print(
+                    f"FUTURE_SKIP_NO_CASH underlying={contract.underlying} "
+                    f"token={contract.token} reason={exc}"
+                )
+                continue
             cash_token = str(cash_instrument["token"])
             cash_key = f"NSE:{cash_token}:{contract.underlying}"
             if cash_key not in cash_done:
