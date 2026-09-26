@@ -2,7 +2,7 @@ from datetime import date
 from pathlib import Path
 
 from app.backtesting.contract_master import ContractMasterCatalog
-from app.scripts.import_historical_contract_snapshot import main
+from scripts.import_historical_contract_snapshot import main
 
 
 def _write_snapshot(path: Path) -> None:
