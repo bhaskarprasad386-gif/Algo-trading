@@ -289,7 +289,11 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) throw IllegalStateException("strategy API ${response.code}: ${response.body?.string() ?: "error"}")
                     val run = Gson().fromJson(response.body?.string().orEmpty(), CashFutureStrategyRunResponse::class.java)
-                    val replay = ApiService.retrofitService.cashFutureReplay(date, selected, contractMonth = contract, timeframe = "1m", mode = mode)
+                    val replay = runCatching {
+                        ApiService.retrofitService.cashFutureReplay(date, selected, contractMonth = contract, timeframe = "1s", mode = mode)
+                    }.getOrElse {
+                        ApiService.retrofitService.cashFutureReplay(date, selected, contractMonth = contract, timeframe = "1m", mode = mode)
+                    }
                     withContext(Dispatchers.Main) {
                         val replayView = rootView.findViewById<IntradayReplayView>(R.id.intradayReplayView)
                         replayView.setFocusTimestamp(startTimestamp)
