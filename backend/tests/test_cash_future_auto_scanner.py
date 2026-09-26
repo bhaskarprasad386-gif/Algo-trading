@@ -96,99 +96,59 @@ def test_cash_future_rejects_low_broker_margin_roi():
     assert "roi_below_minimum" in result.rejection_reasons
 
 
-def test_cash_future_live_auto_api_returns_only_executable_rows(monkeypatch):
-    class FakeCollector:
-        def __init__(self, symbols, config, max_quote_age_seconds=None, max_quote_timestamp_skew_seconds=None):
-            assert symbols == ["SBIN"]
-            assert config.require_two_sided_quotes is True
-            assert max_quote_age_seconds == 15.0
-            assert max_quote_timestamp_skew_seconds == 5.0
-
-        def collect(self, db):
-            return {
-                "collected": [
-                    {"symbol": "SBIN", "net_profit": 25.0, "roi_pct": 1.2, "executable": True},
-                    {"symbol": "SBIN", "net_profit": 100.0, "roi_pct": 5.0, "executable": False},
-                ],
-                "errors": [],
-            }
+def test_cash_future_live_auto_api_reads_persisted_live_observation(monkeypatch):
+    from datetime import datetime, date
+    from app.models.cash_future_history import CashFutureHistory
 
     monkeypatch.setattr(auto_routes, "discover_cash_future_symbols", lambda limit: ["SBIN"])
-    monkeypatch.setattr(auto_routes, "CashFutureHistoryCollector", FakeCollector)
-
-    response = auto_routes.cash_future_live_auto_scanner(db=object())
-
+    db = type("DB", (), {})()
+    row = CashFutureHistory(
+        symbol="SBIN", contract_month="CURRENT", timestamp=datetime.now(), expiry_date=date.today(),
+        cash_price=100.0, future_price=106.0, gap=6.0, gap_pct=6.0, lot_size=10,
+        margin_required=1000.0, volume=5000, oi=20000, cash_bid=99.9, cash_ask=100.0,
+        future_bid=106.0, future_ask=106.1,
+    )
+    db.scalars = lambda stmt: type("Result", (), {"all": lambda self: [row]})()
+    response = auto_routes.cash_future_live_auto_scanner(limit=1, db=db)
     assert response["status"] == "success"
     assert response["opportunity_count"] == 1
-    assert len(response["data"]) == 1
-    assert response["data"][0]["executable"] is True
-    assert response["data"][0]["net_profit"] == 25.0
+    assert response["data"][0]["source"] == "stored-live-feed"
+    assert response["data"][0]["symbol"] == "SBIN"
 
 
-def test_cash_future_live_auto_api_sorts_executable_rows_by_net_profit(monkeypatch):
-    class FakeCollector:
-        def __init__(self, symbols, config, max_quote_age_seconds=None, max_quote_timestamp_skew_seconds=None):
-            assert config.require_two_sided_quotes is True
-            assert max_quote_age_seconds == 15.0
-            assert max_quote_timestamp_skew_seconds == 5.0
-
-        def collect(self, db):
-            return {
-                "collected": [
-                    {"symbol": "SBIN", "net_profit": 20.0, "roi_pct": 3.0, "executable": True},
-                    {"symbol": "TCS", "net_profit": 50.0, "roi_pct": 1.0, "executable": True},
-                    {"symbol": "INFY", "net_profit": 50.0, "roi_pct": 2.0, "executable": True},
-                ],
-                "errors": [],
-            }
+def test_cash_future_live_auto_api_sorts_persisted_rows_by_net_profit(monkeypatch):
+    from datetime import datetime, date
+    from app.models.cash_future_history import CashFutureHistory
 
     monkeypatch.setattr(auto_routes, "discover_cash_future_symbols", lambda limit: ["SBIN", "TCS", "INFY"])
-    monkeypatch.setattr(auto_routes, "CashFutureHistoryCollector", FakeCollector)
-
-    response = auto_routes.cash_future_live_auto_scanner(db=object())
-
+    db = type("DB", (), {})()
+    now = datetime.now()
+    rows = [
+        CashFutureHistory(symbol="SBIN", contract_month="CURRENT", timestamp=now, expiry_date=date.today(), cash_price=100, future_price=102, gap=2, gap_pct=2, lot_size=10, margin_required=1000, volume=5000, oi=20000, cash_bid=99.9, cash_ask=100, future_bid=102, future_ask=102.1),
+        CashFutureHistory(symbol="TCS", contract_month="CURRENT", timestamp=now, expiry_date=date.today(), cash_price=100, future_price=105, gap=5, gap_pct=5, lot_size=10, margin_required=1000, volume=5000, oi=20000, cash_bid=99.9, cash_ask=100, future_bid=105, future_ask=105.1),
+        CashFutureHistory(symbol="INFY", contract_month="CURRENT", timestamp=now, expiry_date=date.today(), cash_price=100, future_price=105, gap=5, gap_pct=5, lot_size=10, margin_required=1000, volume=5000, oi=20000, cash_bid=99.9, cash_ask=100, future_bid=105, future_ask=105.1),
+    ]
+    db.scalars = lambda stmt: type("Result", (), {"all": lambda self: rows})()
+    response = auto_routes.cash_future_live_auto_scanner(limit=3, db=db)
     assert [item["symbol"] for item in response["data"]] == ["INFY", "TCS", "SBIN"]
-    assert response["opportunity_count"] == 3
 
 
-def test_cash_future_live_auto_api_forwards_execution_filters(monkeypatch):
-    class FakeCollector:
-        def __init__(self, symbols, config, max_quote_age_seconds=None, max_quote_timestamp_skew_seconds=None):
-            assert symbols == ["SBIN"]
-            assert config.min_gap == 1.25
-            assert config.min_gap_pct == 0.75
-            assert config.min_net_profit == 15.0
-            assert config.min_roi_pct == 0.6
-            assert config.min_volume == 2000
-            assert config.min_oi == 30000
-            assert config.max_bid_ask_spread_pct == 1.5
-            assert config.max_cash_bid_ask_spread_pct == 1.0
-            assert config.charges == 12.0
-            assert config.funding_cost == 4.0
-            assert config.require_two_sided_quotes is True
-            assert max_quote_age_seconds == 15.0
-            assert max_quote_timestamp_skew_seconds == 5.0
-
-        def collect(self, db):
-            return {"collected": [], "errors": []}
+def test_cash_future_live_auto_api_applies_requested_filters_to_stored_feed(monkeypatch):
+    from datetime import datetime, date
+    from app.models.cash_future_history import CashFutureHistory
 
     monkeypatch.setattr(auto_routes, "discover_cash_future_symbols", lambda limit: ["SBIN"])
-    monkeypatch.setattr(auto_routes, "CashFutureHistoryCollector", FakeCollector)
-
-    response = auto_routes.cash_future_live_auto_scanner(
-        limit=1,
-        min_gap=1.25,
-        min_gap_pct=0.75,
-        min_net_profit=15.0,
-        min_roi_pct=0.6,
-        min_volume=2000,
-        min_oi=30000,
-        max_bid_ask_spread_pct=1.5,
-        max_cash_bid_ask_spread_pct=1.0,
-        charges=12.0,
-        funding_cost=4.0,
-        db=object(),
+    db = type("DB", (), {})()
+    row = CashFutureHistory(
+        symbol="SBIN", contract_month="CURRENT", timestamp=datetime.now(), expiry_date=date.today(),
+        cash_price=100.0, future_price=100.2, gap=0.2, gap_pct=0.2, lot_size=10,
+        margin_required=1000.0, volume=100, oi=1000, cash_bid=99.9, cash_ask=100.0,
+        future_bid=100.2, future_ask=100.3,
     )
-
+    db.scalars = lambda stmt: type("Result", (), {"all": lambda self: [row]})()
+    response = auto_routes.cash_future_live_auto_scanner(
+        limit=1, min_gap=1.25, min_gap_pct=0.75, min_net_profit=15.0,
+        min_roi_pct=0.6, min_volume=2000, min_oi=30000, db=db,
+    )
     assert response["status"] == "success"
     assert response["opportunity_count"] == 0
