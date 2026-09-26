@@ -84,6 +84,60 @@ def _gap_payload(row: dict, mode: str) -> dict:
     return {"trading_date": row["trading_date"], "symbol": row["symbol"], "direction": "UP" if gap > 0 else "DOWN" if gap < 0 else "FLAT", "gap": gap, "gap_percent": gap_percent, "weighted_gap": gap * lot, "previous_close": row["previous_close"] or 0.0, "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"], "lot_size": row["lot_size"], "contract_month": row["contract_month"], "instrument_key": row["instrument_key"]}
 
 
+def _cash_future_daily_ohlc(loader: CashFutureHistoricalLoader, selection: CashFutureHistorySelection) -> dict[str, float] | None:
+    """Aggregate genuine session OHLC for the selected cash and future legs."""
+    segments = loader._contracts_by_segment(selection)
+    if len(segments) != 1:
+        return None
+    segment_start, segment_end, contract = segments[0]
+    start_ns, _ = loader._market_bounds(segment_start) if hasattr(loader, "_market_bounds") else (None, None)
+    if start_ns is None:
+        from app.backtesting.cash_future_historical_loader import _market_bounds
+        start_ns, _ = _market_bounds(segment_start)
+        _, end_ns = _market_bounds(segment_end)
+    else:
+        _, end_ns = loader._market_bounds(segment_end)
+    cash_instrument = loader._resolve_spot_instrument(
+        selection.underlying.upper(), start_ns, end_ns, selection.spot_instrument,
+        selection.source, selection.timeframe,
+    )
+    future_instrument = f"{contract.exchange}:{contract.token}:{contract.symbol}"
+
+    def aggregate(records):
+        first_open = last_close = day_high = day_low = None
+        for record in records:
+            payload = record.payload
+            try:
+                values = {key: float(payload[key]) for key in ("open", "high", "low", "close")}
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not all(__import__("math").isfinite(value) for value in values.values()):
+                continue
+            if first_open is None:
+                first_open = values["open"]
+            last_close = values["close"]
+            day_high = values["high"] if day_high is None else max(day_high, values["high"])
+            day_low = values["low"] if day_low is None else min(day_low, values["low"])
+        if first_open is None or last_close is None or day_high is None or day_low is None:
+            return None
+        return {"open": first_open, "high": day_high, "low": day_low, "close": last_close}
+
+    cash = aggregate(loader.catalog.iter_records(
+        source=selection.source, instrument=cash_instrument, timeframe=selection.timeframe,
+        start_ns=start_ns, end_ns=end_ns,
+    ))
+    future = aggregate(loader.catalog.iter_records(
+        source=selection.source, instrument=future_instrument, timeframe=selection.timeframe,
+        start_ns=start_ns, end_ns=end_ns,
+    ))
+    if cash is None or future is None:
+        return None
+    return {
+        "cash_open": cash["open"], "cash_high": cash["high"], "cash_low": cash["low"], "cash_close": cash["close"],
+        "future_open": future["open"], "future_high": future["high"], "future_low": future["low"], "future_close": future["close"],
+    }
+
+
 def _cash_future_shorting_payloads(trading_date: date, symbols: list[str], *, contract_month: str | None = None, source: str = "angelone", mode: str = "CURRENT") -> list[dict]:
     catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
     contracts = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
