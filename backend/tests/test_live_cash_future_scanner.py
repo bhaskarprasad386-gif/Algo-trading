@@ -155,3 +155,18 @@ def test_live_scanner_emits_recovery_event_after_expiry(monkeypatch):
     assert pair(base, 101).alert_event == "NEW"
     assert pair(base + 1_000_000_000, 99).alert_event is None
     assert pair(base + 2_000_000_000, 101).alert_event == "RECOVERY"
+
+
+def test_live_scanner_liquidity_filter_requires_all_four_depth_sides(monkeypatch):
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_MIN_LIQUIDITY_QTY", 100)
+    scanner = LiveCashFutureScanner()
+    ts = 1_000_000_000
+    scanner.observe({
+        "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
+        "bid_qty": 200, "ask_qty": 200, "source_timestamp_ns": ts,
+    })
+    assert scanner.observe({
+        "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
+        "ltp": 101, "bid": 100.8, "ask": 101,
+        "bid_qty": 200, "source_timestamp_ns": ts,
+    }) is None
