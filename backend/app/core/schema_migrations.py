@@ -32,7 +32,16 @@ def run_schema_migrations() -> None:
 
         if "orders" in account_tables:
             order_columns = {column["name"] for column in inspect(connection).get_columns("orders")}
-            for name, definition in {"user_id": "INTEGER", "price": "FLOAT", "pnl": "FLOAT"}.items():
+            for name, definition in {
+                "user_id": "INTEGER",
+                "price": "FLOAT",
+                "pnl": "FLOAT",
+                "order_type": "VARCHAR(16) DEFAULT 'MARKET'",
+                "trigger_price": "FLOAT",
+                "filled_quantity": "INTEGER DEFAULT 0",
+                "average_fill_price": "FLOAT",
+                "time_in_force": "VARCHAR(16) DEFAULT 'DAY'",
+            }.items():
                 if name not in order_columns:
                     connection.execute(text(f"ALTER TABLE orders ADD COLUMN {name} {definition}"))
 
