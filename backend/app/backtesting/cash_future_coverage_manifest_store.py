@@ -75,6 +75,23 @@ class CashFutureCoverageManifestStore:
         if not timeframe:
             raise ValueError("timeframe must not be empty")
         with self._connect() as conn:
+            # A newer catalog-derived range supersedes stale overlapping
+            # manifest ranges for the same source/timeframe/instrument.
+            # Without this, an old complete [0,10] range could survive a
+            # refreshed [0,5] snapshot and falsely certify the missing tail.
+            for item in manifest.ranges:
+                conn.execute(
+                    f"""DELETE FROM {self._TABLE}
+                    WHERE source=? AND timeframe=? AND instrument=?
+                      AND start_ns <= ? AND end_ns >= ?""",
+                    (
+                        manifest.source,
+                        timeframe,
+                        item.instrument,
+                        item.end_ns,
+                        item.start_ns,
+                    ),
+                )
             conn.executemany(
                 f"""INSERT INTO {self._TABLE}
                 (source,timeframe,instrument,start_ns,end_ns,expected_points,observed_points,
