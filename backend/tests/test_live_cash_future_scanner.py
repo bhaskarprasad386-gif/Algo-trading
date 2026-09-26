@@ -1,4 +1,7 @@
-from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
+from time import time
+
+import pytest
+
 
 
 def test_live_scanner_pairs_same_second_cash_and_future():
@@ -14,7 +17,7 @@ def test_live_scanner_pairs_same_second_cash_and_future():
     assert scanner.observe(cash) is None
     signal = scanner.observe(future)
     assert signal is not None
-    assert signal.gap == 0.8
+    assert signal.gap == pytest.approx(0.8)
     assert round(signal.gap_pct, 3) == 0.8
 
 
@@ -51,7 +54,7 @@ def test_live_scanner_advanced_metrics(monkeypatch):
                               "ltp":101,"bid":100.8,"ask":101,"lot_size":100,
                               "expiry":"30SEP2026","source_timestamp_ns":ts})
     assert signal is not None
-    assert signal.gross_lot_value == 80.0
+    assert signal.gross_lot_value == pytest.approx(80.0)
     assert signal.net_gap == signal.gap
     assert signal.cash_day_high == 100
     assert signal.cash_day_low == 100
@@ -94,7 +97,7 @@ def test_live_scanner_lifecycle_recovery_and_current_near_comparison(monkeypatch
         })
         return scanner.observe({
             "leg": "FUTURE", "underlying": "ABC", "contract_month": month,
-            "ltp": bid + 0.2, "bid": bid, "ask": bid + 0.2,
+            "ltp": bid + 0.2, "bid": bid, "ask": bid + 0.2, "lot_size": 1,
             "source_timestamp_ns": ts,
         })
 
@@ -121,7 +124,7 @@ def test_live_scanner_lifecycle_recovery_and_current_near_comparison(monkeypatch
 
 def test_live_scanner_ranking_exposes_multi_factor_score():
     scanner = LiveCashFutureScanner()
-    ts = 1_000_000_000
+    ts = int(time() * 1_000_000_000)
     for month, bid in (("CURRENT", 102.0), ("NEAR", 101.0)):
         scanner.observe({
             "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
@@ -129,7 +132,7 @@ def test_live_scanner_ranking_exposes_multi_factor_score():
         })
         scanner.observe({
             "leg": "FUTURE", "underlying": "ABC", "contract_month": month,
-            "ltp": bid, "bid": bid, "ask": bid + 0.1, "source_timestamp_ns": ts,
+            "ltp": bid, "bid": bid, "ask": bid + 0.1, "lot_size": 1, "source_timestamp_ns": ts,
         })
     rows = scanner.snapshot(max_age_seconds=10_000, limit=10)
     assert rows
@@ -187,7 +190,7 @@ def test_live_scanner_custom_gross_profit_filter_controls_alert(monkeypatch):
         "expiry": "30SEP2026", "source_timestamp_ns": ts,
     })
     assert below is not None
-    assert below.gross_profit == 80.0
+    assert below.gross_profit == pytest.approx(80.0)
     assert below.alert_event is None
 
     ts += 1_000_000_000
