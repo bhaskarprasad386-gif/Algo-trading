@@ -198,3 +198,67 @@ def test_strategy_time_bounds_are_recorded_in_run_metadata(tmp_path):
     assert metadata["metadata"]["start_timestamp"] == start.isoformat()
     assert metadata["metadata"]["end_timestamp"] == end.isoformat()
     ledger.close()
+
+
+def test_strategy_cash_buy_future_sell_bid_ask_reconciles_gross_net_and_metadata():
+    from datetime import timedelta
+
+    start = datetime(2026, 9, 2, 10, 0)
+    entry = point(
+        start, 10,
+        cash_bid=99.0, cash_ask=101.0,
+        future_bid=109.0, future_ask=111.0,
+    )
+    exit_point = point(
+        start + timedelta(minutes=1), 4,
+        cash_bid=102.0, cash_ask=103.0,
+        future_bid=104.0, future_ask=105.0,
+    )
+    result = run_cash_future_strategy(
+        [entry, exit_point],
+        lambda current, history: "BUY" if current is entry else "SELL",
+        strategy_id="cash-buy-future-sell-e2e",
+        config=CashFutureStrategyConfig(
+            execution_model="bid_ask",
+            charges_per_trade=25.0,
+            funding_cost_per_trade=15.0,
+            slippage_per_share=0.50,
+        ),
+    )
+    trade = result.trades[0]
+    assert trade["cash_side"] == "BUY"
+    assert trade["future_side"] == "SELL"
+    assert trade["lot_size"] == 100
+    assert trade["gross_profit"] == 500.0
+    assert trade["charges"] == 25.0
+    assert trade["funding_cost"] == 15.0
+    assert trade["slippage_per_share"] == 0.50
+    assert trade["net_profit"] == 360.0
+    assert result.net_profit == 360.0
+
+
+def test_strategy_backdated_window_excludes_post_end_observations_and_preserves_open_position():
+    day = datetime(2026, 9, 2, 10, 0)
+    points = [point(day, 10), point(day + timedelta(minutes=1), 8), point(day + timedelta(minutes=2), 4)]
+    seen = []
+
+    def strategy(current, history):
+        seen.append(current.timestamp)
+        return "BUY" if current.timestamp == day else "HOLD"
+
+    result = run_cash_future_strategy(
+        points,
+        strategy,
+        strategy_id="bounded-open-position",
+        config=CashFutureStrategyConfig(
+            start_date=day.date(),
+            end_date=day.date(),
+            start_timestamp=day,
+            end_timestamp=day + timedelta(minutes=1),
+        ),
+    )
+    assert seen == [day, day + timedelta(minutes=1)]
+    assert result.trades == ()
+    assert result.final_reserved_margin == 10000.0
+    assert result.final_available_capital == 99_990_000.0
+    assert result.equity_curve[-1]["unrealized_pnl"] == 200.0
