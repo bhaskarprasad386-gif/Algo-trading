@@ -180,7 +180,7 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
 
     fun stepOneMinute() = stepReplay()
     fun currentTime() = replayTime
-    fun isComplete() = points.isNotEmpty() && visiblePoints >= points.size
+    fun isComplete() = (if (calendarMode) calendarPoints.isNotEmpty() && visiblePoints >= calendarPoints.size else points.isNotEmpty() && visiblePoints >= points.size)
 
     private fun timeOf(p: CashFutureReplayPoint): String {
         return timeOfTimestamp(p.timestamp)
@@ -233,8 +233,10 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
         v.forEachIndexed{i,p->val px=x(i);val n=near[i];val fa=far[i];val s=spread[i];if(i==0){np.moveTo(px,py(n));fp.moveTo(px,py(fa));sp.moveTo(px,sy(s))}else{np.lineTo(px,py(n));fp.lineTo(px,py(fa));sp.lineTo(px,sy(s))}}
         canvas.drawPath(np,cashPaint); canvas.drawPath(fp,futurePaint); canvas.drawPath(sp,gapPaint)
         strategyTrades.forEach{trade->
-            drawCalendarMarker(canvas,v,trade.entry_time,trade.entry_price,"ENTRY",x,sy,spreadTop,bottom)
-            drawCalendarMarker(canvas,v,trade.exit_time,trade.exit_price,"EXIT",x,sy,spreadTop,bottom)
+            val entryPrice = if (trade.entry_future_price != 0.0) trade.entry_future_price - trade.entry_cash_price else trade.entry_cash_price
+            val exitPrice = if (trade.exit_future_price != 0.0) trade.exit_future_price - trade.exit_cash_price else trade.exit_cash_price
+            drawCalendarMarker(canvas,v,trade.entry_time,entryPrice,"ENTRY",x,sy,spreadTop,bottom)
+            drawCalendarMarker(canvas,v,trade.exit_time,exitPrice,"EXIT",x,sy,spreadTop,bottom)
         }
     }
 
