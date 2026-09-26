@@ -40,6 +40,11 @@ class PasswordResetRequest(BaseModel):
     identifier: str
 
 
+class MobileNumberUpdateRequest(BaseModel):
+    mobile_number: str
+    current_password: str
+
+
 class PasswordResetConfirmRequest(BaseModel):
     token: str
     new_password: str
@@ -218,6 +223,23 @@ def me(token: str = Depends(oauth2_scheme), db: DBSession = Depends(get_db)):
     account = _ensure_account(db, user)
     db.commit()
     return {"id": user.id, "email": None if user.email.endswith("@accounts.local") else user.email, "mobile_number": user.mobile_number, "full_name": user.full_name, "account": {"id": account.id, "mode": account.mode, "virtual_balance": account.virtual_balance, "realized_pnl": account.realized_pnl, "is_active": account.is_active}}
+
+
+@router.patch("/me/mobile")
+def update_mobile_number(payload: MobileNumberUpdateRequest, token: str = Depends(oauth2_scheme), db: DBSession = Depends(get_db)):
+    user_id = _require_active_token(db, token)
+    user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not verify_password(payload.current_password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    mobile = _normalize_mobile(payload.mobile_number)
+    existing = db.query(User).filter(User.mobile_number == mobile, User.id != user_id).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Mobile number is already registered")
+    user.mobile_number = mobile
+    db.commit()
+    return {"status": "updated", "mobile_number": user.mobile_number}
 
 
 @router.post("/logout")
