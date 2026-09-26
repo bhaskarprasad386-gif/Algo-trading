@@ -37,7 +37,7 @@ jobs:
           ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
 
           export CONFIG_PAYLOAD_B64="$(
-            printf '%s\\n' \
+            printf '%s\n' \
               'APP_NAME="Algo Trading Platform"' \
               'ENVIRONMENT=production' \
               'DEBUG=False' \
@@ -72,7 +72,7 @@ jobs:
 
           # Production requires a 32+ character SECRET_KEY; keep it only on the VPS.
           secret_key="$(openssl rand -hex 32)"
-          printf 'SECRET_KEY=%s\\n' "$secret_key" >> "$ENV_FILE"
+          printf 'SECRET_KEY=%s\n' "$secret_key" >> "$ENV_FILE"
           chmod 600 "$ENV_FILE"
 
           systemctl restart algo-trading.service
@@ -92,7 +92,7 @@ jobs:
             *"ANGEL_LOGIN_STATUS=success"*) ;;
             *) echo "Angel One login verification failed" >&2; exit 1 ;;
           esac
-          printf '%s\\n' "$login_output"
+          printf '%s\n' "$login_output"
           printf '\nCONFIGURED_CREDENTIAL_FIELDS=4\n'
           printf 'LIVE_TRADING=OFF\n'
           REMOTE
