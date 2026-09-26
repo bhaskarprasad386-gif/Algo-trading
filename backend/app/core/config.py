@@ -28,6 +28,14 @@ class Settings(BaseSettings):
 
     # Continuous one-second live Cash-Future feed for backtesting
     LIVE_CASH_FUTURE_DATA_ENABLED: bool = False
+    LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT: float = 0.0
+    LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS: float = 60.0
+
+    # WhatsApp Cloud API alerts; disabled until deployment credentials are supplied.
+    WHATSAPP_ENABLED: bool = False
+    WHATSAPP_ACCESS_TOKEN: str = ""
+    WHATSAPP_PHONE_NUMBER_ID: str = ""
+    WHATSAPP_GRAPH_API_VERSION: str = "v23.0"
 
     # Durable historical-download progress database
     BACKTEST_STATUS_DB: str = "./backtest_download_status.sqlite3"
