@@ -13,6 +13,7 @@ class LiveCashFutureAlertHistory(Base):
     __table_args__ = (
         Index("ix_live_cf_alert_observed_at", "observed_at"),
         Index("ix_live_cf_alert_symbol_month", "symbol", "contract_month", "observed_at"),
+        Index("uq_live_cf_alert_identity", "symbol", "contract_month", "timestamp_ns", "event", unique=True),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
