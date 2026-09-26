@@ -287,10 +287,11 @@ jobs:
           finally:
               db.close()
 
-          if len(results) != len(tuple(sorted(set(underlyings))) + tuple()):
+          expected_batches = (len(underlyings) + batch_size - 1) // batch_size
+          if len(results) != expected_batches:
               raise SystemExit(
-                  f"FAIL_CLOSED: completed batch count {len(results)} does not match "
-                  f"stock batch count"
+                  f"FAIL_CLOSED: completed batch count {len(results)} != "
+                  f"expected {expected_batches}"
               )
 
           print(f"BATCH_RESULTS={len(results)}")
