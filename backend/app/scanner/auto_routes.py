@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.market_data.instruments import InstrumentMaster
 from app.models.cash_future_history import CashFutureHistory
 from app.models.live_cash_future_scanner_result import LiveCashFutureScannerResult
+from app.models.live_cash_future_alert_history import LiveCashFutureAlertHistory
 from app.scanner.cash_future import CashFutureConfig, CashQuote, FutureQuote, calculate_cash_future
 from app.backtesting.daily_gap import build_daily_gap_observations
 from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
@@ -133,6 +134,33 @@ def cash_future_live_scanner_history(
                 **{k: v for k, v in row.__dict__.items() if not k.startswith("_")},
                 "reason_codes": tuple(filter(None, row.reason_codes.split(","))),
             }
+            for row in rows
+        ],
+    }
+
+
+@router.get("/cash-future/live/alerts")
+def cash_future_live_alert_history(
+    days: int = Query(30, ge=1, le=30),
+    limit: int = Query(500, ge=1, le=5000),
+    db: Session = Depends(get_db),
+):
+    """Return scanner-generated customized alerts retained for up to 30 days."""
+    cutoff = datetime.now(IST).replace(tzinfo=None) - timedelta(days=int(days))
+    rows = db.scalars(
+        select(LiveCashFutureAlertHistory)
+        .where(LiveCashFutureAlertHistory.observed_at >= cutoff)
+        .order_by(LiveCashFutureAlertHistory.observed_at.desc())
+        .limit(int(limit))
+    ).all()
+    return {
+        "status": "success",
+        "scanner": "cash-future",
+        "mode": "live-alert-history",
+        "days": int(days),
+        "count": len(rows),
+        "data": [
+            {k: v for k, v in row.__dict__.items() if not k.startswith("_")}
             for row in rows
         ],
     }
