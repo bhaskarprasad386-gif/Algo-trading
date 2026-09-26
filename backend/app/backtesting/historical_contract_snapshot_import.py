@@ -41,13 +41,8 @@ def parse_historical_contract_records(
     *,
     source_date: date,
 ) -> tuple[ContractRecord, ...]:
-    """Validate normalized historical rows without inventing missing metadata.
-
-    source_date is the date asserted by the external historical source.
-    Every row must carry the same explicit snapshot_date; callers cannot use
-    today's date as an implicit historical date.
-    """
-    if not isinstance(source_date, date):
+    """Validate normalized historical rows without inventing missing metadata."""
+    if type(source_date) is not date:
         raise TypeError("source_date must be a date")
     if not rows:
         raise ValueError("historical contract source is empty")
@@ -67,20 +62,36 @@ def parse_historical_contract_records(
                 f"does not match source_date {source_date.isoformat()}"
             )
 
+        expiry = _date(row["expiry"], "expiry")
+        if expiry < snapshot_date:
+            raise ValueError(
+                f"row {index} expiry must be on or after snapshot_date"
+            )
+
+        lot_size = row["lot_size"]
+        if type(lot_size) is not int or lot_size <= 0:
+            raise ValueError("lot_size must be a positive integer")
+
+        exchange = str(row["exchange"]).strip().upper()
+        symbol = str(row["symbol"]).strip()
+        token = str(row["token"]).strip()
+        instrument_type = str(row["instrument_type"]).strip().upper()
+        underlying = str(row["underlying"]).strip().upper()
+        if not all((exchange, symbol, token, instrument_type, underlying)):
+            raise ValueError(f"row {index} contains an empty contract identity field")
+
         records.append(
             ContractRecord(
-                exchange=str(row["exchange"]).strip().upper(),
-                symbol=str(row["symbol"]).strip(),
-                token=str(row["token"]).strip(),
-                expiry=_date(row["expiry"], "expiry"),
-                instrument_type=str(row["instrument_type"]).strip().upper(),
-                underlying=str(row["underlying"]).strip().upper(),
-                lot_size=int(row["lot_size"]),
+                exchange=exchange,
+                symbol=symbol,
+                token=token,
+                expiry=expiry,
+                instrument_type=instrument_type,
+                underlying=underlying,
+                lot_size=lot_size,
                 snapshot_date=snapshot_date,
                 tick_size=(
-                    None
-                    if row.get("tick_size") is None
-                    else float(row["tick_size"])
+                    None if row.get("tick_size") is None else float(row["tick_size"])
                 ),
             )
         )
@@ -98,18 +109,12 @@ def import_historical_contract_snapshot(
     source_date: date,
     payload: bytes | None = None,
 ) -> int:
-    """Persist one externally sourced, explicitly dated historical snapshot."""
     records = parse_historical_contract_records(rows, source_date=source_date)
     digest = None if payload is None else hashlib.sha256(payload).hexdigest()
-    return catalog.upsert_snapshot(
-        source_date,
-        records,
-        payload_sha256=digest,
-    )
+    return catalog.upsert_snapshot(source_date, records, payload_sha256=digest)
 
 
 def load_json_snapshot(path: str | Path, *, source_date: date) -> list[Mapping[str, Any]]:
-    """Load a normalized JSON array; no date or contract data is synthesized."""
     payload = Path(path).read_bytes()
     decoded = json.loads(payload)
     if not isinstance(decoded, list):
