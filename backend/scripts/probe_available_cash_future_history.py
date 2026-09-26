@@ -70,11 +70,19 @@ def main() -> int:
     today = datetime.now(IST).date()
     start_limit = today - timedelta(days=args.lookback_days)
     master_rows = InstrumentMaster().download()
-    futures = _published_futures(master_rows, today)
+    published = _published_futures(master_rows, today)
+    # Keep CURRENT + NEAR semantics: at most the first two published expiries
+    # per stock. This avoids multiplying API calls across far contracts.
+    selected: list[object] = []
+    by_underlying: dict[str, list[object]] = {}
+    for record in published:
+        by_underlying.setdefault(record.underlying, []).append(record)
+    ordered_underlyings = sorted(by_underlying)
     if args.max_underlyings:
-        allowed = {r.underlying for r in futures[:]}
-        ordered = sorted(allowed)[: args.max_underlyings]
-        futures = tuple(r for r in futures if r.underlying in set(ordered))
+        ordered_underlyings = ordered_underlyings[: args.max_underlyings]
+    for underlying in ordered_underlyings:
+        selected.extend(by_underlying[underlying][:2])
+    futures = tuple(selected)
     if not futures:
         raise SystemExit("No currently published stock-future contracts found")
 
@@ -122,6 +130,9 @@ def main() -> int:
                             f"FUTURE_WINDOW_UNAVAILABLE {contract.underlying} "
                             f"{window_start}..{day}"
                         )
+                        # Moving farther back cannot recover a contract before
+                        # its first published/traded history; stop this token.
+                        break
                 except Exception as exc:
                     print(
                         f"FUTURE_WINDOW_ERROR {contract.underlying} "
