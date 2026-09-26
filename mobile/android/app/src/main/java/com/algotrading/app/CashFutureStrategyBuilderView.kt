@@ -317,7 +317,7 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         if (!Regex("^\\d{2}:\\d{2}:\\d{2}$").matches(time)) return null
         val parts = time.split(":").mapNotNull { it.toIntOrNull() }
         if (parts.size != 3 || parts[0] !in 0..23 || parts[1] !in 0..59 || parts[2] !in 0..59) return null
-        return "\${date}T\${time}"
+        return "${date}T${time}"
     }
 
     private fun field(hint: String, integer: Boolean = false) = EditText(context).apply {
