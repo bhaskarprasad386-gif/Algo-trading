@@ -1,0 +1,48 @@
+name: Enable Live Cash-Future 1s Collector
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  enable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY_B64: ${{ secrets.VPS_SSH_KEY }}
+    steps:
+      - name: Enable collector and restart service
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_KEY_B64"
+          printf '%s' "$VPS_SSH_KEY_B64" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          APP_DIR=/opt/Algo-Trading
+          ENV_FILE="$APP_DIR/backend/.env"
+          cd "$APP_DIR"
+          git fetch origin main
+          git merge --ff-only origin/main
+          test -f "$ENV_FILE"
+          if grep -q '^LIVE_CASH_FUTURE_DATA_ENABLED=' "$ENV_FILE"; then
+            sed -i 's/^LIVE_CASH_FUTURE_DATA_ENABLED=.*/LIVE_CASH_FUTURE_DATA_ENABLED=true/' "$ENV_FILE"
+          else
+            printf '\nLIVE_CASH_FUTURE_DATA_ENABLED=true\n' >> "$ENV_FILE"
+          fi
+          systemctl restart algo-trading.service
+          sleep 3
+          systemctl is-active --quiet algo-trading.service
+          echo "LIVE_CASH_FUTURE_DATA_ENABLED=true"
+          echo "LIVE_TRADING=OFF"
+          REMOTE
