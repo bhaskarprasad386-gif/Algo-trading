@@ -382,6 +382,7 @@ def test_strategy_run_resume_route_rejects_mismatched_data(monkeypatch, tmp_path
     changed = [dict(item) for item in points]
     changed[1]["future_price"] = 107.0
     changed[1]["gap"] = 7.0
+    changed[1]["gap_pct"] = 7.0
     response = client().post(
         "/api/v1/backtesting/cash-future/strategy-run/resume-mismatch/resume",
         json={
