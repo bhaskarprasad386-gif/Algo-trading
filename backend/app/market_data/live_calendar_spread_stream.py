@@ -37,9 +37,10 @@ def _timestamp_ns(message: dict[str,Any])->int|None:
     try:n=int(float(message.get("exchange_timestamp")))
     except (TypeError,ValueError):return None
     if n<=0:return None
-    if n<10_000_000_000:return n*1_000_000_000
-    if n<10_000_000_000_000:return n*1_000_000
-    return n*1_000
+    if n<100_000_000_000:return n*1_000_000_000
+    if n<100_000_000_000_000:return n*1_000_000
+    if n<100_000_000_000_000_000:return n*1_000
+    return n
 
 def _side(message:dict[str,Any],key:str)->tuple[float|None,float|None]:
     levels=message.get(key)
