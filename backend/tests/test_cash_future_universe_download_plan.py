@@ -80,3 +80,82 @@ def test_plan_order_is_deterministic():
     first = build_cash_future_universe_download_plan(**kwargs)
     second = build_cash_future_universe_download_plan(**kwargs)
     assert first.requests == second.requests
+
+
+def test_historical_resolver_output_feeds_exact_plan_token(tmp_path):
+    from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
+    from app.backtesting.historical_contract_resolver import HistoricalContractResolver
+
+    db = tmp_path / "contracts.sqlite3"
+    with ContractMasterCatalog(str(db)) as catalog:
+        catalog.upsert_snapshot(
+            date(2026, 9, 1),
+            (
+                ContractRecord("NFO", "ABC26OCT", "7101", date(2026, 10, 29), "STOCK_FUTURE", "ABC", 125),
+            ),
+        )
+        selected = HistoricalContractResolver(catalog).resolve_future(
+            underlying="ABC", contract_month="2026-10", as_of=date(2026, 9, 10)
+        )
+        universe = CashFutureFnoUniverse(
+            stocks=(
+                CashFutureUniverseItem(
+                    selected.underlying,
+                    selected.contract_month,
+                    selected.token,
+                    selected.symbol,
+                    selected.record.expiry,
+                    selected.lot_size,
+                ),
+            ),
+            indices=(),
+        )
+
+    result = build_cash_future_universe_download_plan(
+        universe=universe,
+        master_rows=_master_rows(),
+        start=START,
+        end=END,
+        session_days=(date(2026, 10, 29),),
+    )
+
+    assert [request.instrument for request in result.jobs[0].futures] == [
+        "NFO:7101:ABC26OCT"
+    ]
+
+
+def test_historical_snapshot_switch_changes_pit_token_in_download_plan(tmp_path):
+    from backend.app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
+    from backend.app.backtesting.historical_contract_resolver import HistoricalContractResolver
+
+    db = tmp_path / "contracts.sqlite3"
+    with ContractMasterCatalog(str(db)) as catalog:
+        catalog.upsert_snapshot(
+            date(2026, 9, 1),
+            (ContractRecord("NFO", "ABC26OCT", "7101", date(2026, 10, 29), "STOCK_FUTURE", "ABC", 125),),
+        )
+        catalog.upsert_snapshot(
+            date(2026, 9, 15),
+            (ContractRecord("NFO", "ABC26OCT", "7201", date(2026, 10, 29), "STOCK_FUTURE", "ABC", 125),),
+        )
+        resolver = HistoricalContractResolver(catalog)
+        before = resolver.resolve_future(underlying="ABC", contract_month="2026-10", as_of=date(2026, 9, 10))
+        after = resolver.resolve_future(underlying="ABC", contract_month="2026-10", as_of=date(2026, 9, 20))
+
+        def plan_for(selection):
+            return build_cash_future_universe_download_plan(
+                universe=CashFutureFnoUniverse(
+                    stocks=(CashFutureUniverseItem(
+                        selection.underlying, selection.contract_month, selection.token,
+                        selection.symbol, selection.record.expiry, selection.lot_size
+                    ),),
+                    indices=(),
+                ),
+                master_rows=_master_rows(),
+                start=START,
+                end=END,
+                session_days=(date(2026, 10, 29),),
+            )
+
+        assert plan_for(before).jobs[0].futures[0].instrument == "NFO:7101:ABC26OCT"
+        assert plan_for(after).jobs[0].futures[0].instrument == "NFO:7201:ABC26OCT"
