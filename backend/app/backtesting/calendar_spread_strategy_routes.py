@@ -302,4 +302,119 @@ def calendar_spread_replay(request: CalendarSpreadReplayRequest):
     }
 
 
+class CalendarSpreadHistoricalReplayRequest(BaseModel):
+    underlying: str = Field(min_length=1)
+    exchange: str = Field(default="NFO", min_length=1)
+    start_date: date
+    end_date: date
+    near_contract_month: str
+    far_contract_month: str
+    source: str = Field(default="angelone", min_length=1)
+    source_timeframe: str = Field(default="1s", min_length=1)
+    replay_timeframe: str = Field(default="1s")
+    start_timestamp: datetime | None = None
+    end_timestamp: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_historical_replay(self):
+        if self.end_date < self.start_date:
+            raise ValueError("end_date cannot be before start_date")
+        if self.replay_timeframe not in REPLAY_TIMEFRAMES:
+            raise ValueError("invalid replay timeframe")
+        if self.start_timestamp and self.end_timestamp and self.end_timestamp < self.start_timestamp:
+            raise ValueError("end_timestamp cannot be before start_timestamp")
+        return self
+
+
+def _historical_point_row(point):
+    return {
+        "timestamp": point.timestamp.isoformat(),
+        "underlying": point.underlying,
+        "near_expiry": point.near_expiry.isoformat(),
+        "far_expiry": point.far_expiry.isoformat(),
+        "near_bid": point.near_bid,
+        "near_ask": point.near_ask,
+        "far_bid": point.far_bid,
+        "far_ask": point.far_ask,
+        "lot_size": point.lot_size,
+        "strike": point.strike,
+        "option_type": point.option_type,
+    }
+
+
+@router.post("/historical-replay")
+def calendar_spread_historical_replay(request: CalendarSpreadHistoricalReplayRequest):
+    from app.backtesting.calendar_spread_historical_loader import (
+        CalendarSpreadHistoricalLoader,
+        CalendarSpreadHistorySelection,
+    )
+    from app.backtesting.contract_master import ContractMasterCatalog
+    from app.backtesting.historical_catalog import HistoricalCatalog
+
+    selection = CalendarSpreadHistorySelection(
+        underlying=request.underlying.strip().upper(),
+        exchange=request.exchange.strip().upper(),
+        start_date=request.start_date,
+        end_date=request.end_date,
+        near_contract_month=request.near_contract_month.strip(),
+        far_contract_month=request.far_contract_month.strip(),
+        timeframe=request.source_timeframe,
+        source=request.source.strip(),
+    )
+    data_catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
+    contract_catalog = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
+    try:
+        loader = CalendarSpreadHistoricalLoader(data_catalog, contract_catalog)
+        points = list(loader.iter_points(selection))
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        data_catalog.close()
+        contract_catalog.close()
+
+    start = _normalise_timestamp(request.start_timestamp) if request.start_timestamp else None
+    end = _normalise_timestamp(request.end_timestamp) if request.end_timestamp else None
+    if start is not None:
+        points = [point for point in points if point.timestamp >= start]
+    if end is not None:
+        points = [point for point in points if point.timestamp <= end]
+    if not points:
+        raise HTTPException(status_code=422, detail="no historical Calendar Spread points inside requested window")
+
+    source_points = [
+        CalendarSpreadPointRequest(
+            timestamp=point.timestamp,
+            underlying=point.underlying,
+            near_expiry=point.near_expiry.toordinal(),
+            far_expiry=point.far_expiry.toordinal(),
+            near_bid=point.near_bid,
+            near_ask=point.near_ask,
+            far_bid=point.far_bid,
+            far_ask=point.far_ask,
+            lot_size=point.lot_size,
+            strike=point.strike,
+            option_type=point.option_type,
+        )
+        for point in points
+    ]
+    available = _available_replay_intervals(source_points)
+    if request.replay_timeframe not in available:
+        raise HTTPException(
+            status_code=422,
+            detail=f"replay timeframe {request.replay_timeframe} is not supported by source cadence; available={available}",
+        )
+    return {
+        "status": "success",
+        "underlying": selection.underlying,
+        "near_contract_month": selection.near_contract_month,
+        "far_contract_month": selection.far_contract_month,
+        "source_timeframe": request.source_timeframe,
+        "replay_timeframe": request.replay_timeframe,
+        "source_min_interval_seconds": min(_replay_deltas(source_points)) if len(source_points) > 1 else None,
+        "available_replay_intervals": available,
+        "count": len(points),
+        "series": [_historical_point_row(point) for point in points],
+    }
+
+
 __all__ = ["router", "REPLAY_TIMEFRAMES"]
