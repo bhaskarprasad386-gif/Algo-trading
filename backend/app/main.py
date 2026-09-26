@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
         for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task):
             if task is not None:
                 task.cancel()
-        for task in (_history_collector_task, _contract_master_sync_task):
+        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task):
             if task is not None:
                 try:
                     await task
