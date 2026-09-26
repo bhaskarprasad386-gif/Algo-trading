@@ -50,6 +50,7 @@ class LiveCashFutureSignal:
     lifecycle: str
     reason_codes: tuple[str, ...]
     observation_ref: str
+    alert_event: str | None
 
 
 class LiveCashFutureScanner:
@@ -322,6 +323,7 @@ class LiveCashFutureScanner:
             lifecycle=lifecycle,
             reason_codes=tuple(reasons),
             observation_ref=f"{symbol}:{month}:{timestamp_ns}",
+            alert_event=alert_state,
         )
         with self._lock:
             self._signals[(signal.symbol, signal.contract_month)] = signal
