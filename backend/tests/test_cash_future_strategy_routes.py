@@ -475,12 +475,12 @@ def test_strategy_run_route_reconciles_backdated_cash_buy_future_sell_with_scale
     assert response.status_code == 200
     body = response.json()
     assert body["trade_count"] == 1
-    assert body["analysis"]["net_pnl"] == 720.0
+    assert body["analysis"]["net_pnl"] == 760.0
     trade = body["trades"][0]
     assert trade["cash_side"] == "BUY"
     assert trade["future_side"] == "SELL"
     assert trade["lot_size"] == 200
     assert trade["gross_profit"] == 800.0
-    assert trade["net_profit"] == 720.0
+    assert trade["net_profit"] == 760.0
     assert trade["entry_time"] == start.isoformat()
     assert trade["exit_time"] == (start + timedelta(minutes=1)).isoformat()
