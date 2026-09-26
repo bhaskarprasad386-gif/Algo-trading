@@ -62,7 +62,8 @@ jobs:
             -o IdentitiesOnly=yes \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=no \
-            "${VPS_USER}@${VPS_HOST}" 'bash -s' <<'REMOTE'
+            "${VPS_USER}@${VPS_HOST}" \
+            "env START_DATE='${START_DATE}' END_DATE='${END_DATE}' BATCH_SIZE='${BATCH_SIZE}' CHUNK_DAYS='${CHUNK_DAYS}' bash -s" <<'REMOTE'
           set -euo pipefail
 
           APP_DIR=/opt/Algo-Trading
@@ -79,7 +80,7 @@ jobs:
           from __future__ import annotations
 
           import os
-          from datetime import date, datetime, time, timezone
+          from datetime import date, datetime
           from types import SimpleNamespace
           from zoneinfo import ZoneInfo
 
@@ -142,8 +143,6 @@ jobs:
 
           master_rows = tuple(InstrumentMaster().download())
 
-          # Build a point-in-time-safe stock inventory from every stored snapshot.
-          # Duplicate (underlying, expiry-month) contracts are collapsed.
           items = {}
           for snapshot in snapshot_dates:
               if snapshot > end_date:
@@ -174,7 +173,6 @@ jobs:
 
           universe = CashFutureFnoUniverse(stocks=stocks, indices=())
 
-          # Authoritative per-underlying contract preflight.
           underlyings = sorted({item.underlying for item in stocks})
           for underlying in underlyings:
               report = CashFutureContractPreflight(contract_catalog).check(
