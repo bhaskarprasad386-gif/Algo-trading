@@ -79,3 +79,53 @@ def test_preflight_rejects_unsupported_exchange_via_calendar():
         CashFutureContractPreflight(FakeCatalog()).check(
             exchange="BSE", underlying="ABC", start=date(2026, 1, 2), end=date(2026, 1, 2), mode="CURRENT"
         )
+
+
+def test_preflight_uses_real_historical_catalog_snapshot_for_both_legs(tmp_path):
+    from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
+
+    db = tmp_path / "contracts.sqlite3"
+    with ContractMasterCatalog(str(db)) as catalog:
+        catalog.upsert_snapshot(
+            date(2026, 1, 1),
+            (
+                ContractRecord("NFO", "ABC26JANFUT", "1001", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 100),
+                ContractRecord("NFO", "ABC26FEBFUT", "1002", date(2026, 2, 26), "STOCK_FUTURE", "ABC", 100),
+            ),
+        )
+        report = CashFutureContractPreflight(catalog).check(
+            exchange="NFO",
+            underlying="ABC",
+            start=date(2026, 1, 1),
+            end=date(2026, 1, 2),
+            mode="BOTH",
+        )
+
+    assert report.complete
+    assert report.checked_trading_days == 2
+    assert report.gaps == ()
+
+
+def test_preflight_with_real_catalog_stays_fail_closed_before_first_snapshot(tmp_path):
+    from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
+
+    db = tmp_path / "contracts.sqlite3"
+    with ContractMasterCatalog(str(db)) as catalog:
+        catalog.upsert_snapshot(
+            date(2026, 1, 5),
+            (
+                ContractRecord("NFO", "ABC26JANFUT", "1001", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 100),
+                ContractRecord("NFO", "ABC26FEBFUT", "1002", date(2026, 2, 26), "STOCK_FUTURE", "ABC", 100),
+            ),
+        )
+        report = CashFutureContractPreflight(catalog).check(
+            exchange="NFO",
+            underlying="ABC",
+            start=date(2026, 1, 2),
+            end=date(2026, 1, 2),
+            mode="CURRENT",
+        )
+
+    assert not report.complete
+    assert report.gaps[0].kind == "SNAPSHOT"
+    assert report.missing_snapshot_dates == (date(2026, 1, 2),)
