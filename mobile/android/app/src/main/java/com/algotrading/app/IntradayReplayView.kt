@@ -35,10 +35,12 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         bindModeButton(R.id.btnReplay1s, 1L)
+        bindModeButton(R.id.btnReplay30s, 30L)
         bindModeButton(R.id.btnReplay1m, 60L)
         bindModeButton(R.id.btnReplay5m, 300L)
         bindModeButton(R.id.btnReplay15m, 900L)
         bindModeButton(R.id.btnReplay30m, 1800L)
+        bindModeButton(R.id.btnReplay1h, 3600L)
         refreshModeButtons()
     }
 
@@ -50,6 +52,7 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
 
     private fun labelFor(seconds: Long): String = when (seconds) {
         1L -> "1 SEC"
+        30L -> "30 SEC"
         60L -> "1 MIN"
         300L -> "5 MIN"
         900L -> "15 MIN"
@@ -59,20 +62,24 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
 
     private fun normalizeInterval(value: String): String = when (value.trim().lowercase()) {
         "1s", "1 sec", "1 second", "1 seconds" -> "1 SEC"
+        "30s", "30 sec", "30 second", "30 seconds" -> "30 SEC"
         "1m", "1 min", "1 minute", "1 minutes" -> "1 MIN"
         "5m", "5 min", "5 minute", "5 minutes" -> "5 MIN"
         "15m", "15 min", "15 minute", "15 minutes" -> "15 MIN"
         "30m", "30 min", "30 minute", "30 minutes" -> "30 MIN"
+        "1h", "1 hr", "1 hour", "1 hours" -> "1 HOUR"
         else -> value.trim().uppercase()
     }
 
     private fun refreshModeButtons() {
         listOf(
             R.id.btnReplay1s to "1 SEC",
+            R.id.btnReplay30s to "30 SEC",
             R.id.btnReplay1m to "1 MIN",
             R.id.btnReplay5m to "5 MIN",
             R.id.btnReplay15m to "15 MIN",
-            R.id.btnReplay30m to "30 MIN"
+            R.id.btnReplay30m to "30 MIN",
+            R.id.btnReplay1h to "1 HOUR"
         ).forEach { (id, label) ->
             rootView.findViewById<Button>(id)?.apply {
                 alpha = if (labelFor(replayStepSeconds) == label) 1f else 0.62f
@@ -118,7 +125,7 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
     }
 
     fun setReplayMode(seconds: Long) {
-        val v = listOf(1L, 60L, 300L, 900L, 1800L).minByOrNull { kotlin.math.abs(it - seconds) } ?: 60L
+        val v = listOf(1L, 30L, 60L, 300L, 900L, 1800L, 3600L).minByOrNull { kotlin.math.abs(it - seconds) } ?: 60L
         if (availableIntervals.isNotEmpty() && labelFor(v) !in availableIntervals) return
         replayStepSeconds = v
         resetReplay()
@@ -126,10 +133,12 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
         timeframeChangedListener?.invoke(
             when (v) {
                 1L -> "1s"
+                30L -> "30s"
                 60L -> "1m"
                 300L -> "5m"
                 900L -> "15m"
                 1800L -> "30m"
+                3600L -> "1h"
                 else -> "1m"
             }
         )
