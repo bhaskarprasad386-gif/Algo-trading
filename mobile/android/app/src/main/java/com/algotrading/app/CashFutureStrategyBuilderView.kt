@@ -39,6 +39,8 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
     private val futureLots = field("Future lots", integer = true).apply { setText("1") }
     private val futureQty = quantityField("Future quantity • auto")
     private val lotSize = field("Historical lot size", integer = true)
+    private val entryTime = field("Entry time HH:mm:ss").apply { setText("09:15:00") }
+    private val exitTime = field("Exit time HH:mm:ss").apply { setText("15:30:00") }
     private val capital = field("Capital ₹").apply { setText("10000000") }
     private val stopLoss = field("Stop-loss ₹")
     private val target = field("Target ₹")
@@ -88,6 +90,11 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
             setTextColor(0xFF8FA7C4.toInt()); textSize = 10f
         }, LayoutParams(-1, 28))
         addRow(symbol, lotSize)
+        addRow(entryTime, exitTime)
+        addView(TextView(context).apply {
+            text = "BACKDATED WINDOW • exact time is point-in-time; no look-ahead"
+            setTextColor(0xFFFFC857.toInt()); textSize = 10f
+        }, LayoutParams(-1, 24))
         addView(TextView(context).apply {
             text = "CASH LEG • ORDER SIDE"
             setTextColor(0xFF8FF0C5.toInt()); textSize = 11f; typeface = Typeface.DEFAULT_BOLD
@@ -227,6 +234,16 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
         val mode = if (futureMode == "NEAR FUTURE") "NEAR" else "CURRENT"
         val contract = if (mode == "NEAR") nearContract else currentContract
         val capitalValue = capital.text.toString().toDoubleOrNull() ?: 100_000_000.0
+        val startTimestamp = historicalTimestamp(date, entryTime.text.toString().trim())
+        val endTimestamp = historicalTimestamp(date, exitTime.text.toString().trim())
+        if (startTimestamp == null || endTimestamp == null) {
+            summary.text = "$selected • $date • enter valid HH:mm:ss start/end times."
+            return
+        }
+        if (startTimestamp > endTimestamp) {
+            summary.text = "$selected • $date • entry time must be before exit time."
+            return
+        }
         val chargesValue = charges.text.toString().toDoubleOrNull() ?: 0.0
         val stopLossValue = stopLoss.text.toString().toDoubleOrNull()
         val targetValue = target.text.toString().toDoubleOrNull()
@@ -240,6 +257,8 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
                     "strategy_version" to "1",
                     "start_date" to date,
                     "end_date" to date,
+                    "start_timestamp" to startTimestamp,
+                    "end_timestamp" to endTimestamp,
                     "contract_month" to contract,
                     "execution_model" to "gap",
                     "charges_per_trade" to chargesValue,
@@ -273,7 +292,7 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
                     val replay = ApiService.retrofitService.cashFutureReplay(date, selected, contractMonth = contract, timeframe = "1m", mode = mode)
                     withContext(Dispatchers.Main) {
                         val replayView = rootView.findViewById<IntradayReplayView>(R.id.intradayReplayView)
-                        replayView.setFocusTimestamp(null)
+                        replayView.setFocusTimestamp(startTimestamp)
                         replayView.setCashFutureData(replay.series, replay.available_replay_intervals)
                         replayView.setStrategyTrades(run.trades.filter { trade ->
                             trade.symbol.equals(selected, ignoreCase = true) &&
@@ -290,6 +309,15 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
                 }
             }
         }
+    }
+
+
+    private fun historicalTimestamp(date: String, time: String): String? {
+        if (!Regex("^\\d{4}-\\d{2}-\\d{2}$").matches(date)) return null
+        if (!Regex("^\\d{2}:\\d{2}:\\d{2}$").matches(time)) return null
+        val parts = time.split(":").mapNotNull { it.toIntOrNull() }
+        if (parts.size != 3 || parts[0] !in 0..23 || parts[1] !in 0..59 || parts[2] !in 0..59) return null
+        return "\${date}T\${time}"
     }
 
     private fun field(hint: String, integer: Boolean = false) = EditText(context).apply {
