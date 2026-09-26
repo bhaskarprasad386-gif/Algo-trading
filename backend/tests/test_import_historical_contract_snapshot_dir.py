@@ -2,7 +2,8 @@ from datetime import date
 from pathlib import Path
 
 from app.backtesting.contract_master import ContractMasterCatalog
-from app.scripts.import_historical_contract_snapshot_dir import main
+from app.backtesting.historical_contract_resolver import HistoricalContractResolver
+from scripts.import_historical_contract_snapshot_dir import main
 
 
 def _write(path: Path, snapshot_date: str, token: str) -> None:
@@ -31,16 +32,31 @@ def test_directory_import_uses_explicit_dates_from_filenames(tmp_path: Path, cap
     db = tmp_path / "contracts.sqlite3"
 
     assert main(["--directory", str(source), "--contract-db", str(db)]) == 0
-
     output = capsys.readouterr().out
     assert "FILES=2" in output
     assert "COUNT=2" in output
 
     with ContractMasterCatalog(str(db)) as catalog:
-        assert catalog.snapshot_dates() == (
-            date(2025, 9, 26),
-            date(2025, 9, 29),
+        assert catalog.snapshot_dates() == (date(2025, 9, 26), date(2025, 9, 29))
+
+
+def test_imported_snapshot_feeds_historical_contract_resolution(tmp_path: Path) -> None:
+    source = tmp_path / "snapshots"
+    source.mkdir()
+    _write(source / "2025-09-26.json", "9001", "2025-09-26")
+    db = tmp_path / "contracts.sqlite3"
+
+    assert main(["--directory", str(source), "--contract-db", str(db)]) == 0
+
+    with ContractMasterCatalog(str(db)) as catalog:
+        selection = HistoricalContractResolver(catalog).resolve_future(
+            underlying="ABC",
+            contract_month="2025-10",
+            as_of=date(2025, 9, 29),
         )
+        assert selection.token == "9001"
+        assert selection.symbol == "ABC25OCTFUT"
+        assert selection.lot_size == 100
 
 
 def test_directory_import_rejects_non_dated_filename(tmp_path: Path) -> None:
