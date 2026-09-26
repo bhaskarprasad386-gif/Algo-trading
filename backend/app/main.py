@@ -20,6 +20,7 @@ from app.models import User, Instrument, Order, Session, Position, SystemLog
 from app.auth.routes import router as auth_router
 from app.algo.auth import AngelOneAuth
 from app.market_data.websocket import MarketDataWebSocket
+from app.market_data.live_cash_future_stream import LiveCashFutureOneSecondCollector
 from app.market_data.instruments import InstrumentMaster
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
@@ -51,7 +52,7 @@ instrument_master = InstrumentMaster()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _history_collector_task, _contract_master_sync_task
+    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     # Recovery is intentionally deferred until application startup so the schema
     # migration module has no dependency on scanner/backtest job modules.
@@ -61,10 +62,12 @@ async def lifespan(app: FastAPI):
         _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
     if _collector_enabled() and _history_collector_task is None:
         _history_collector_task = asyncio.create_task(_cash_future_history_loop())
+    if settings.LIVE_CASH_FUTURE_DATA_ENABLED and _live_cash_future_task is None:
+        _live_cash_future_task = asyncio.create_task(_live_cash_future_loop())
     try:
         yield
     finally:
-        for task in (_history_collector_task, _contract_master_sync_task):
+        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task):
             if task is not None:
                 task.cancel()
         for task in (_history_collector_task, _contract_master_sync_task):
@@ -75,6 +78,7 @@ async def lifespan(app: FastAPI):
                     pass
         _history_collector_task = None
         _contract_master_sync_task = None
+        _live_cash_future_task = None
         backtest_download_manager.close()
         backtest_status_store.close()
         universal_result_ledger.close()
@@ -242,6 +246,7 @@ async def market_data_websocket(websocket: WebSocket, symbol: str):
 
 _history_collector_task: asyncio.Task | None = None
 _contract_master_sync_task: asyncio.Task | None = None
+_live_cash_future_task: asyncio.Task | None = None
 IST = ZoneInfo("Asia/Kolkata")
 MARKET_OPEN = time(9, 15)
 MARKET_CLOSE = time(15, 30)
@@ -299,6 +304,14 @@ async def _cash_future_history_loop() -> None:
             app_logger.error(f"Cash-Future history cycle failed: {exc}")
         await asyncio.sleep(interval)
 
+
+
+async def _live_cash_future_loop() -> None:
+    collector = LiveCashFutureOneSecondCollector(settings.BACKTEST_DATA_DB)
+    try:
+        await asyncio.to_thread(collector.run_forever)
+    finally:
+        collector.stop()
 
 def _sync_contract_master_snapshot(database_path: str, snapshot_date):
     catalog = ContractMasterCatalog(database_path)
