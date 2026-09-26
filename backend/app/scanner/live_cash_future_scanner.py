@@ -102,7 +102,7 @@ class LiveCashFutureScanner:
                 return None
             cash = bucket["CASH"]
             future = bucket["FUTURE"]
-            self._latest = {k: v for k, v in self._latest.items() if k[2] >= timestamp_ns - 2_000_000_000}
+            self._latest = {k: v for k, v in self._latest.items() if k[1] >= timestamp_ns - 2_000_000_000}
         cash_ask = cash["ask"]
         future_bid = future["bid"]
         if cash_ask is None or future_bid is None or cash_ask <= 0 or future_bid <= 0:
