@@ -10,11 +10,14 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 
+EVENT_TIMEFRAME = "tick"
+
+
 @dataclass(frozen=True)
 class EventDataSpec:
     """Describe event/tick data without assuming a fixed cadence."""
 
-    timeframe: str = "tick"
+    timeframe: str = EVENT_TIMEFRAME
     timestamp_unit: str = "ns"
     ordered_by_sequence: bool = True
 
