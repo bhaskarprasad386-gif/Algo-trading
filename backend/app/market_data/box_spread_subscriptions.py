@@ -53,7 +53,7 @@ def select_box_contracts(master: InstrumentMaster, *, underlying: str, instrumen
             token = str(item.get("token","")).strip()
             if not token: continue
             subscriptions.append(SyntheticSubscription(
-                2, token, str(item.get("symbol","")).strip(), symbol, cls,
+                exchange_type, token, str(item.get("symbol","")).strip(), symbol, cls,
                 str(item.get("expiry","")).strip(), suffix, strike,
                 int(float(item.get("lotsize",0) or 0)) or None
             ))
