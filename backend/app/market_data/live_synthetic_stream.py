@@ -23,7 +23,7 @@ from app.market_data.websocket import MarketDataWebSocket
 
 IST = ZoneInfo("Asia/Kolkata")
 OPEN = time(9, 15)
-CLOSE = time(15, 30)
+CLOSE = time(15, 40)
 
 
 @dataclass(frozen=True)
