@@ -24,6 +24,7 @@ from app.algo.auth import AngelOneAuth
 from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.live_cash_future_stream import LiveCashFutureOneSecondCollector
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
+from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget
 from app.market_data.instruments import InstrumentMaster
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
@@ -34,6 +35,7 @@ from app.scanner.auto_routes import router as auto_scanner_router, discover_cash
 from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
 from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
 from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner
+from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic
 from app.execution.calendar_spread_paper_routes import router as calendar_spread_paper_router
 from app.execution.paper_routes import router as paper_execution_router
 from app.execution.live_paper_routes import router as live_paper_execution_router
@@ -60,10 +62,13 @@ instrument_master = InstrumentMaster()
 live_cash_future_scanner = LiveCashFutureScanner()
 live_calendar_spread_scanner = LiveCalendarSpreadScanner()
 configure_calendar_spread_scanner(live_calendar_spread_scanner)
+live_synthetic_latest_results: tuple = ()
+live_synthetic_runner: LiveSyntheticRunner | None = None
+configure_live_synthetic(lambda: live_synthetic_latest_results)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task
+    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     # Recovery is intentionally deferred until application startup so the schema
     # migration module has no dependency on scanner/backtest job modules.
@@ -77,10 +82,13 @@ async def lifespan(app: FastAPI):
         _live_cash_future_task = asyncio.create_task(_live_cash_future_loop())
     if settings.LIVE_CALENDAR_SPREAD_DATA_ENABLED and _live_calendar_spread_task is None:
         _live_calendar_spread_task = asyncio.create_task(_live_calendar_spread_loop())
+    if settings.LIVE_SYNTHETIC_DATA_ENABLED and _live_synthetic_task is None:
+        _live_synthetic_task = asyncio.create_task(_live_synthetic_loop())
+        _live_calendar_spread_task = asyncio.create_task(_live_calendar_spread_loop())
     try:
         yield
     finally:
-        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task):
+        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task):
             if task is not None:
                 task.cancel()
         for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task):
@@ -93,6 +101,7 @@ async def lifespan(app: FastAPI):
         _contract_master_sync_task = None
         _live_cash_future_task = None
         _live_calendar_spread_task = None
+        _live_synthetic_task = None
         backtest_download_manager.close()
         backtest_status_store.close()
         universal_result_ledger.close()
@@ -113,6 +122,7 @@ app.include_router(paper_execution_router)
 app.include_router(live_paper_execution_router)
 app.include_router(calendar_spread_paper_router)
 app.include_router(calendar_spread_scanner_router)
+app.include_router(live_synthetic_router)
 app.include_router(monthly_results_router)
 app.include_router(cash_future_strategy_router)
 app.include_router(calendar_spread_strategy_router)
@@ -266,6 +276,7 @@ _contract_master_sync_task: asyncio.Task | None = None
 _live_cash_future_task: asyncio.Task | None = None
 _live_calendar_spread_task: asyncio.Task | None = None
 IST = ZoneInfo("Asia/Kolkata")
+_live_synthetic_task: asyncio.Task | None = None
 MARKET_OPEN = time(9, 15)
 MARKET_CLOSE = time(15, 30)
 
@@ -331,7 +342,69 @@ async def _live_cash_future_loop() -> None:
     finally:
         collector.stop()
 
-async async def _live_calendar_spread_loop() -> None:
+async def _live_synthetic_loop() -> None:
+    global live_synthetic_runner, live_synthetic_latest_results
+    master = InstrumentMaster()
+    try:
+        master.download()
+        today = datetime.now(IST).date()
+        stock_symbols = set()
+        index_symbols = set()
+        for item in master.instruments:
+            if str(item.get("exch_seg", "")).upper() != "NFO":
+                continue
+            instrument_type = str(item.get("instrumenttype", "")).upper()
+            expiry_text = str(item.get("expiry", "")).strip()
+            if not expiry_text:
+                continue
+            try:
+                expiry = datetime.strptime(expiry_text.upper(), "%d%b%Y").date()
+            except ValueError:
+                try:
+                    expiry = datetime.strptime(expiry_text.upper(), "%d%b%y").date()
+                except ValueError:
+                    continue
+            if expiry < today:
+                continue
+            name = str(item.get("name", "")).strip().upper()
+            if not name:
+                continue
+            if instrument_type == "FUTSTK":
+                stock_symbols.add(name)
+            elif instrument_type == "FUTIDX":
+                index_symbols.add(name)
+        stock_symbols = sorted(stock_symbols)[:50]
+        targets = tuple(
+            [SyntheticLiveTarget(symbol, "STOCK") for symbol in stock_symbols]
+            + [SyntheticLiveTarget(symbol, "INDEX") for symbol in sorted(index_symbols)]
+        )
+        if not targets:
+            app_logger.warning("Synthetic Cash-Carry live runner found no current F&O targets")
+            return
+        runner = LiveSyntheticRunner(
+            settings.BACKTEST_DATA_DB,
+            targets,
+            allowed_stock_symbols=frozenset(stock_symbols),
+            instrument_master=master,
+            auth=AngelOneAuth(),
+            stock_universe_provider=lambda: tuple(stock_symbols),
+            on_results=lambda results: _update_live_synthetic_results(results),
+        )
+        live_synthetic_runner = runner
+        await asyncio.to_thread(runner.run_forever)
+    finally:
+        runner = live_synthetic_runner
+        if runner is not None:
+            runner.stop()
+        live_synthetic_runner = None
+
+
+def _update_live_synthetic_results(results: tuple) -> None:
+    global live_synthetic_latest_results
+    live_synthetic_latest_results = tuple(results)
+
+
+async def _live_calendar_spread_loop() -> None:
     collector = LiveCalendarSpreadOneSecondCollector(
         settings.BACKTEST_DATA_DB,
         auth=AngelOneAuth(),
