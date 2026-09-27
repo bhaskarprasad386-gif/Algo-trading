@@ -9,7 +9,7 @@ ATM +/- 5 actual chain positions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Mapping
+from typing import Iterable
 
 from app.backtesting.arbitrage_backtester import (
     FutureQuote,
