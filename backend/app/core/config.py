@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
     SECRET_KEY: str = ""
+    GOOGLE_WEB_CLIENT_ID: str = ""
     DATABASE_URL: str = "sqlite:///./algo_trading.db"
 
     # Trading safety limits
