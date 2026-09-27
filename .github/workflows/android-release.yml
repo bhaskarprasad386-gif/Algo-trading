@@ -47,18 +47,48 @@ jobs:
           test -n "$KEY_PASSWORD" || { echo "::error::ANDROID_KEY_PASSWORD is missing"; exit 1; }
           printf '%s' "$KEYSTORE_B64" | base64 --decode > release.keystore
           keytool -list -keystore release.keystore -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
-          keytool -importkeystore \
-            -srckeystore release.keystore \
-            -srcstorepass "$KEYSTORE_PASSWORD" \
-            -srcalias "$KEY_ALIAS" \
-            -srckeypass "$KEY_PASSWORD" \
-            -destkeystore signing-validation.p12 \
-            -deststoretype PKCS12 \
-            -deststorepass "$KEY_PASSWORD" \
-            -destkeypass "$KEY_PASSWORD" \
-            -noprompt >/dev/null
-          rm -f signing-validation.p12
-          echo "Android signing keystore and private-key validation passed."
+
+          cat > ValidateSigningKey.java <<'JAVA'
+          import java.io.FileInputStream;
+          import java.security.Key;
+          import java.security.KeyStore;
+
+          public final class ValidateSigningKey {
+              public static void main(String[] args) throws Exception {
+                  String path = args[0];
+                  char[] storePassword = args[1].toCharArray();
+                  String alias = args[2];
+                  char[] keyPassword = args[3].toCharArray();
+
+                  Exception last = null;
+                  for (String type : new String[]{"JKS", "PKCS12"}) {
+                      try (FileInputStream in = new FileInputStream(path)) {
+                          KeyStore ks = KeyStore.getInstance(type);
+                          ks.load(in, storePassword);
+                          Key key = ks.getKey(alias, keyPassword);
+                          if (key == null) {
+                              throw new IllegalStateException("Signing key is missing for alias: " + alias);
+                          }
+                          if (!(key instanceof java.security.PrivateKey)) {
+                              throw new IllegalStateException("Alias does not contain a private key: " + alias);
+                          }
+                          System.out.println("Android signing keystore/private-key validation passed (" + type + ").");
+                          return;
+                      } catch (Exception e) {
+                          last = e;
+                      }
+                  }
+                  throw new IllegalStateException(
+                      "Unable to decrypt the signing private key with ANDROID_KEY_PASSWORD; " +
+                      "verify the keystore, alias, store password, and key password.",
+                      last
+                  );
+              }
+          }
+          JAVA
+          javac ValidateSigningKey.java
+          java ValidateSigningKey release.keystore "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"
+          rm -f ValidateSigningKey.java ValidateSigningKey.class
       - name: Decode signing key
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
