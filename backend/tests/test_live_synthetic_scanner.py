@@ -19,7 +19,9 @@ def test_live_synthetic_scanner_assembles_real_ce_pe_and_future():
         "expiry":"30SEP2026","bid":115.0,"ask":116.0,"lot_size":1,
         "source_timestamp_ns":ts,"symbol":"NIFTYFUT"
     })
-    assert result == ()
+    assert result
+    assert result[0].option.strike == 100.0
+    assert result[0].future.bid == 115.0
 
 
 def test_live_synthetic_scanner_rejects_missing_timestamp():
