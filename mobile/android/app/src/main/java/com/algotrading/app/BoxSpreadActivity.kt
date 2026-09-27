@@ -61,7 +61,7 @@ class BoxSpreadActivity : AppCompatActivity() {
                         append("#").append(j["id"] ?: "-").append(" ").append(j["event"] ?: "EVENT")
                             .append(" • ").append(j["created_at"] ?: "").append("\n")
                     }
-                }n                    append("\\nJOURNAL (").append(x.journal.count).append(")\\n")\n                    x.journal.items.take(10).forEach { j ->\n                        append("#").append(j["id"] ?: "-").append(" ").append(j["event"] ?: "EVENT")\n                            .append(" • ").append(j["created_at"] ?: "").append("\\n")\n                    }\n                }
+                }            }n                    append("\\nJOURNAL (").append(x.journal.count).append(")\\n")\n                    x.journal.items.take(10).forEach { j ->\n                        append("#").append(j["id"] ?: "-").append(" ").append(j["event"] ?: "EVENT")\n                            .append(" • ").append(j["created_at"] ?: "").append("\\n")\n                    }\n                }
             }
         } catch(e: Exception) { withContext(Dispatchers.Main) { tvSummary.text="LOAD FAILED\n"+(e.message ?: "API error") } }
     }
