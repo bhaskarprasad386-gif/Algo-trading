@@ -198,7 +198,7 @@ class LiveSyntheticOptionFutureRecorder:
         try:
             while not self.stop_event.is_set() and self.market_open():
                 deadline = monotonic() + self.poll_seconds
-                while monotonic() < deadline:
+                while not self.stop_event.is_set() and monotonic() < deadline:
                     try:
                         exchange_type, raw = queue.get(
                             timeout=max(0.01, deadline - monotonic())
