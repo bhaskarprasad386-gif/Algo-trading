@@ -2,8 +2,8 @@
 
 This module composes the already-tested contract selector, bounded Angel One
 WebSocket recorder, live scanner and durable alert pipeline. It does not place
-broker orders. The caller must provide the authoritative stock universe and
-current ATM values; this module never invents either.
+broker orders. The caller may provide the authoritative stock universe; automatic ATM values
+come from the real underlying feed and concrete option chain.
 """
 
 from __future__ import annotations
@@ -52,11 +52,13 @@ class LiveSyntheticRunner:
         policy: ScanPolicy | None = None,
         on_results=None,
         underlying_feed: LiveSyntheticUnderlyingFeed | None = None,
+        stock_universe_provider: Callable[[], Iterable[str]] | None = None,
     ) -> None:
         self.data_db = data_db
         self.targets = tuple(targets)
         if not self.targets:
             raise ValueError("at least one live synthetic target is required")
+        self.stock_universe_provider = stock_universe_provider
         self.allowed_stock_symbols = frozenset(
             str(symbol).strip().upper()
             for symbol in allowed_stock_symbols
@@ -78,6 +80,17 @@ class LiveSyntheticRunner:
         self._recorder: LiveSyntheticOptionFutureRecorder | None = None
         self._refresh_requested = Event()
 
+
+    def _refresh_stock_universe(self) -> None:
+        """Refresh the authoritative stock universe before each subscription build."""
+        if self.stock_universe_provider is None:
+            return
+        symbols = self.stock_universe_provider()
+        self.allowed_stock_symbols = frozenset(
+            str(symbol).strip().upper()
+            for symbol in symbols
+            if str(symbol).strip()
+        )
 
     def concrete_atm_strikes(self) -> dict[str, tuple[float, ...]]:
         """Return concrete option strikes from the selected target expiries."""
@@ -133,6 +146,7 @@ class LiveSyntheticRunner:
 
     def build_subscriptions(self) -> tuple:
         """Resolve concrete current/near contracts from the Angel One master."""
+        self._refresh_stock_universe()
         atm_provider = self._ensure_atm_provider()
         self.instrument_master.download()
         subscriptions = []
