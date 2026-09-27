@@ -32,7 +32,12 @@ def run_schema_migrations() -> None:
             if "box_spread_auto_lots" not in account_columns:
                 connection.execute(text("ALTER TABLE trading_accounts ADD COLUMN box_spread_auto_lots INTEGER DEFAULT 1"))
 
-        if "live_box_spread_paper_positions" in account_tables:\n            box_columns = {column["name"] for column in inspect(connection).get_columns("live_box_spread_paper_positions")}\n            if "closed_at" not in box_columns:\n                connection.execute(text("ALTER TABLE live_box_spread_paper_positions ADD COLUMN closed_at DATETIME"))\n\n        if "orders" in account_tables:
+        if "live_box_spread_paper_positions" in account_tables:
+            box_columns = {column["name"] for column in inspect(connection).get_columns("live_box_spread_paper_positions")}
+            if "closed_at" not in box_columns:
+                connection.execute(text("ALTER TABLE live_box_spread_paper_positions ADD COLUMN closed_at DATETIME"))
+
+        if "orders" in account_tables:
             order_columns = {column["name"] for column in inspect(connection).get_columns("orders")}
             for name, definition in {
                 "user_id": "INTEGER",
