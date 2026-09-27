@@ -142,7 +142,7 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
     )
 
     assert collector._run_session() == 2
-    assert observed == [1_750_000_000_000_000_000]
+    assert observed == [1_750_000_000_000_000_000, 1_750_000_001_000_000_000]
 
     from app.backtesting.historical_catalog import HistoricalCatalog
 
