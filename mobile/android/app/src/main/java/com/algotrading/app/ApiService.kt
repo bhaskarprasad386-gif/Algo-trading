@@ -226,6 +226,7 @@ data class BoxSpreadPositionSummary(
     val low_strike: Double = 0.0, val high_strike: Double = 0.0, val direction: String = "",
     val lot_size: Int = 0, val lots: Int = 0, val realized_pnl: Double = 0.0, val is_open: Boolean = false
 )
+data class BoxSpreadAutoCycleSettings(val status:String="", val mode:String="paper", val lots:Int=1)
 data class BoxSpreadOverview(
     val status: String = "", val strategy: String = "", val mode: String = "",
     val account: BoxSpreadAccount? = null, val open_position: BoxSpreadPositionSummary? = null,
@@ -280,6 +281,11 @@ interface ApiInterface {
     @GET("/api/v1/backtesting/cash-future/downloads/{job_id}") suspend fun cashFutureDownloadStatus(@Path("job_id") jobId: String): CashFutureDownloadStatusResponse
     @POST("/api/v1/backtesting/cash-future/downloads/{job_id}/resume") suspend fun resumeCashFutureDownload(@Path("job_id") jobId: String, @Query("retry_attempts") retryAttempts: Int = 3): CashFutureDownloadAcceptedResponse
     @GET("/api/v1/execution/paper/box-spread/overview") suspend fun boxSpreadOverview(@Query("limit") limit: Int = 20, @Query("history_limit") historyLimit: Int = 10, @Query("journal_limit") journalLimit: Int = 20): BoxSpreadOverview
+    @GET("/api/v1/execution/paper/box-spread/auto-cycle-settings") suspend fun boxSpreadAutoCycleSettings(): BoxSpreadAutoCycleSettings
+    @retrofit2.http.PUT("/api/v1/execution/paper/box-spread/auto-cycle-settings") suspend fun updateBoxSpreadAutoCycleSettings(@Body request: Map<String, Int>): BoxSpreadAutoCycleSettings
+    @POST("/api/v1/execution/paper/box-spread/auto-entry") suspend fun boxSpreadAutoEntry(@Query("lots") lots: Int = 1): Map<String, Any?>
+    @POST("/api/v1/execution/paper/box-spread/auto-exit") suspend fun boxSpreadAutoExit(@Query("min_pnl") minPnl: Double = 0.0): Map<String, Any?>
+    @POST("/api/v1/execution/paper/box-spread/cycle") suspend fun boxSpreadCycle(@Query("lots") lots: Int = 1, @Query("min_pnl") minPnl: Double = 0.0): Map<String, Any?>
 }
 
 object ApiService {
