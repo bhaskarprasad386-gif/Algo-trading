@@ -31,6 +31,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnRunScanner: Button
     private lateinit var btnScannerPaperExecute: Button
     private lateinit var btnFullFnoBacktest: Button
+    private lateinit var btnBoxSpread: Button
     private lateinit var cbScannerAutoRefresh: CheckBox
     private lateinit var etScannerRefreshSeconds: EditText
     private lateinit var btnPaperEntry: Button
@@ -74,6 +75,7 @@ class MainActivity : AppCompatActivity() {
         btnRunScanner = findViewById(R.id.btnRunScanner)
         btnScannerPaperExecute = findViewById(R.id.btnScannerPaperExecute)
         btnFullFnoBacktest = findViewById(R.id.btnFullFnoBacktest)
+        btnBoxSpread = findViewById(R.id.btnBoxSpread)
         cbScannerAutoRefresh = findViewById(R.id.cbScannerAutoRefresh)
         etScannerRefreshSeconds = findViewById(R.id.etScannerRefreshSeconds)
         btnPaperEntry = findViewById(R.id.btnPaperEntry)
@@ -111,6 +113,7 @@ class MainActivity : AppCompatActivity() {
         btnRunScanner.setOnClickListener { runCashFutureScanner() }
         btnScannerPaperExecute.setOnClickListener { paperExecuteScannerOpportunity() }
         btnFullFnoBacktest.setOnClickListener { startActivity(Intent(this, FullFnoBacktestActivity::class.java)) }
+        btnBoxSpread.setOnClickListener { startActivity(Intent(this, BoxSpreadActivity::class.java)) }
         cbScannerAutoRefresh.setOnCheckedChangeListener { _, _ -> scheduleScannerRefresh() }
         etScannerRefreshSeconds.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) scheduleScannerRefresh() }
         btnPaperEntry.setOnClickListener { paperEntry() }; btnPaperPosition.setOnClickListener { paperPosition() }; btnPaperExit.setOnClickListener { paperExit() }
