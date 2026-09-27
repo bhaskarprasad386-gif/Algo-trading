@@ -4,6 +4,8 @@ import android.os.Bundle
 import android.widget.TextView
 import android.widget.EditText
 import android.widget.Button
+import android.os.Handler
+import android.os.Looper
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +20,8 @@ class BoxSpreadActivity : AppCompatActivity() {
     private lateinit var etLots: EditText
     private lateinit var etMinPnl: EditText
     private lateinit var tvAction: TextView
+    private val refreshHandler = Handler(Looper.getMainLooper())
+    private val refreshTask = object : Runnable { override fun run() { loadOverview(); refreshHandler.postDelayed(this, 5000L) } }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_box_spread)
@@ -31,6 +35,7 @@ class BoxSpreadActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnBoxCycle).setOnClickListener { runAction { ApiService.retrofitService.boxSpreadCycle(lots(), minPnl()) } }
         findViewById<android.widget.Button>(R.id.btnBoxRefresh).setOnClickListener { loadOverview() }
         loadOverview()
+        refreshHandler.postDelayed(refreshTask, 5000L)
     }
     private fun lots(): Int = etLots.text.toString().toIntOrNull()?.coerceAtLeast(1) ?: 1
     private fun minPnl(): Double = etMinPnl.text.toString().toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
