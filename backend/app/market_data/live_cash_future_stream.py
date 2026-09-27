@@ -242,7 +242,6 @@ class LiveCashFutureOneSecondCollector:
                     previous = latest.get(token)
                     if previous is not None and previous[0] != second_ns:
                         previous_payload = previous[1]
-                        previous_payload["source_timestamp_ns"] = previous[0]
                         if self.on_observation is not None:
                             try:
                                 self.on_observation(dict(previous_payload))
@@ -260,6 +259,7 @@ class LiveCashFutureOneSecondCollector:
                             app_logger.error(f"1-second live record rejected {token}: {exc}")
                     payload = dict(message)
                     payload.update({
+                        "source_timestamp_ns": second_ns,
                         "ltp": _ltp(message),
                         "underlying": meta["underlying"],
                         "leg": meta["leg"],
