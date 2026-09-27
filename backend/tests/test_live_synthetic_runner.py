@@ -19,6 +19,14 @@ def _master():
          "symbol":"NIFTY30SEP2695CE","expiry":"30SEP2026","strike":"9500","lotsize":"50"},
         {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"p95","name":"NIFTY",
          "symbol":"NIFTY30SEP2695PE","expiry":"30SEP2026","strike":"9500","lotsize":"50"},
+        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"c90","name":"NIFTY",
+         "symbol":"NIFTY30SEP2690CE","expiry":"30SEP2026","strike":"9000","lotsize":"50"},
+        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"p90","name":"NIFTY",
+         "symbol":"NIFTY30SEP2690PE","expiry":"30SEP2026","strike":"9000","lotsize":"50"},
+        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"c110","name":"NIFTY",
+         "symbol":"NIFTY30SEP26110CE","expiry":"30SEP2026","strike":"11000","lotsize":"50"},
+        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"p110","name":"NIFTY",
+         "symbol":"NIFTY30SEP26110PE","expiry":"30SEP2026","strike":"11000","lotsize":"50"},
     ]
     master._loaded = True
     return master
