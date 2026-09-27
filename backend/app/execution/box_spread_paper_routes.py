@@ -5,6 +5,7 @@ from app.core.database import get_db
 from app.execution.paper_routes import current_user_id
 from app.models import TradingAccount
 from app.models.live_box_spread_paper_position import LiveBoxSpreadPaperPosition
+from app.risk.engine import RiskLimits
 
 router=APIRouter(prefix="/api/v1/execution/paper/box-spread",tags=["Box Spread Paper"])
 
@@ -28,6 +29,11 @@ def _validate(req):
  if req.direction not in {"LONG","SHORT"}:raise HTTPException(422,detail="invalid direction")
  if req.instrument_class.upper() not in {"STOCK","INDEX"}:raise HTTPException(422,detail="invalid instrument class")
  if req.high_strike<=req.low_strike:raise HTTPException(422,detail="high strike must exceed low strike")
+ if req.lots > RiskLimits().max_position_quantity // req.lot_size:raise HTTPException(422,detail="position quantity exceeds risk limit")
+ from datetime import date,datetime
+ try: expiry=date.fromisoformat(req.expiry[:4]+"-"+req.expiry[4:6]+"-"+req.expiry[6:8])
+ except (ValueError,IndexError): raise HTTPException(422,detail="invalid expiry")
+ if expiry <= datetime.now().date():raise HTTPException(422,detail="entry not allowed on or after expiry")
 
 def _entry_cashflow(req:Entry)->float:
  low=req.low_call_price+req.low_put_price
@@ -45,6 +51,7 @@ def _scanner_entry_request(match, lots=1):
 @router.post("/auto-entry")
 def auto_entry(lots:int=1,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
  if lots<=0: raise HTTPException(422,detail="lots must be positive")
+ if lots > RiskLimits().max_position_quantity: raise HTTPException(422,detail="lots exceed risk limit")
  if db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first(): raise HTTPException(409,detail="box spread paper position already open")
  from app.scanner import live_box_spread_routes as scanner
  rows=list(scanner._latest()) if callable(scanner._latest) else list(scanner._latest)
