@@ -17,7 +17,7 @@ def test_box_runner_uses_resolved_expiry_when_target_has_none(monkeypatch):
         raise RuntimeError("stop-after-selection")
 
     monkeypatch.setattr(mod, "select_box_contracts", select)
-    monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {})
+    monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {"ABC": (100.0, 110.0)})
     monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", lambda *a, **k: type("F", (), {"run_forever":lambda self: None, "stop":lambda self: None})())
     runner = mod.LiveBoxSpreadRunner(
         object(),
