@@ -136,6 +136,8 @@ def test_box_spread_cycle_holds_open_position_below_target(monkeypatch):
         def first(self): return position
     class DB:
         def query(self, model): return Query()
+        def add(self, obj): pass
+        def commit(self): pass
     low=SimpleNamespace(underlying="SENSEX",instrument_class="INDEX",expiry="20990101",strike=80000.0,call_bid=100,call_ask=101,put_bid=110,put_ask=111)
     high=SimpleNamespace(strike=80100.0,call_bid=90,call_ask=91,put_bid=120,put_ask=121)
     monkeypatch.setattr(routes,"_current_scanner_match",lambda p: SimpleNamespace(low=low,high=high))
