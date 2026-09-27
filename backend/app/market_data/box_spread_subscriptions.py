@@ -28,7 +28,7 @@ def select_box_contracts(master: InstrumentMaster, *, underlying: str, instrumen
     symbol, cls = underlying.strip().upper(), instrument_class.strip().upper()
     if cls not in {"STOCK", "INDEX"}: raise ValueError("instrument_class must be STOCK or INDEX")
     if cls == "STOCK" and symbol not in {s.strip().upper() for s in allowed_stock_symbols}:
-        raise ValueError("stock is outside the configured NIFTY-50 universe")
+        raise ValueError("stock is outside the configured Box Spread stock universe")
     rows = [x for x in master.instruments if str(x.get("exch_seg","")).upper()=="NFO" and str(x.get("name","")).strip().upper()==symbol]
     options = [x for x in rows if str(x.get("instrumenttype","")).upper() in {"OPTSTK","OPTIDX"}]
     futures = [x for x in rows if str(x.get("instrumenttype","")).upper()==("FUTSTK" if cls=="STOCK" else "FUTIDX")]
