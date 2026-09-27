@@ -15,6 +15,7 @@ def concrete_strikes_from_master(
     *,
     symbols: tuple[str, ...],
     expiry: str,
+    exchange_segment: str = "NFO",
 ) -> dict[str, tuple[float, ...]]:
     """Extract only concrete option strikes for the requested live expiry."""
     requested = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
