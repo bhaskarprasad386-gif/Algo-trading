@@ -34,6 +34,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.2'
+
       - name: Validate Android signing secrets
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -44,7 +45,6 @@ jobs:
           test -n "$KEYSTORE_B64" || { echo "::error::ANDROID_KEYSTORE_BASE64 is missing"; exit 1; }
           test -n "$KEYSTORE_PASSWORD" || { echo "::error::ANDROID_KEYSTORE_PASSWORD is missing"; exit 1; }
           test -n "$KEY_ALIAS" || { echo "::error::ANDROID_KEY_ALIAS is missing"; exit 1; }
-          test -n "$KEY_PASSWORD" || { echo "::error::ANDROID_KEY_PASSWORD is missing"; exit 1; }
           printf '%s' "$KEYSTORE_B64" | base64 --decode > release.keystore
           keytool -list -keystore release.keystore -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
 
@@ -54,45 +54,75 @@ jobs:
           import java.security.KeyStore;
 
           public final class ValidateSigningKey {
+              private static boolean privateKeyWorks(KeyStore ks, String alias, char[] password) {
+                  try {
+                      Key key = ks.getKey(alias, password);
+                      return key instanceof java.security.PrivateKey;
+                  } catch (Exception ignored) {
+                      return false;
+                  }
+              }
+
               public static void main(String[] args) throws Exception {
                   String path = args[0];
                   char[] storePassword = args[1].toCharArray();
                   String alias = args[2];
-                  char[] keyPassword = args[3].toCharArray();
+                  String suppliedKeyPassword = args[3];
 
-                  Exception last = null;
                   for (String type : new String[]{"JKS", "PKCS12"}) {
                       try (FileInputStream in = new FileInputStream(path)) {
                           KeyStore ks = KeyStore.getInstance(type);
                           ks.load(in, storePassword);
-                          Key key = ks.getKey(alias, keyPassword);
-                          if (key == null) {
-                              throw new IllegalStateException("Signing key is missing for alias: " + alias);
+
+                          if (!suppliedKeyPassword.isEmpty()
+                                  && privateKeyWorks(ks, alias, suppliedKeyPassword.toCharArray())) {
+                              System.out.println("SECRET");
+                              return;
                           }
-                          if (!(key instanceof java.security.PrivateKey)) {
-                              throw new IllegalStateException("Alias does not contain a private key: " + alias);
+
+                          if (privateKeyWorks(ks, alias, storePassword)) {
+                              System.out.println("STORE");
+                              return;
                           }
-                          System.out.println("Android signing keystore/private-key validation passed (" + type + ").");
-                          return;
-                      } catch (Exception e) {
-                          last = e;
+                      } catch (Exception ignored) {
+                          // Try the other supported keystore type.
                       }
                   }
+
                   throw new IllegalStateException(
-                      "Unable to decrypt the signing private key with ANDROID_KEY_PASSWORD; " +
-                      "verify the keystore, alias, store password, and key password.",
-                      last
+                      "Unable to decrypt the signing private key with either " +
+                      "ANDROID_KEY_PASSWORD or ANDROID_KEYSTORE_PASSWORD. " +
+                      "The existing GitHub secrets do not match the private-key password."
                   );
               }
           }
           JAVA
+
           javac ValidateSigningKey.java
-          java ValidateSigningKey release.keystore "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"
+          PASSWORD_SOURCE=$(java ValidateSigningKey release.keystore "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD")
+
+          case "$PASSWORD_SOURCE" in
+            SECRET)
+              echo "ANDROID_KEY_PASSWORD_SOURCE=SECRET" >> "$GITHUB_ENV"
+              echo "Android signing private-key validation passed."
+              ;;
+            STORE)
+              echo "ANDROID_KEY_PASSWORD_SOURCE=STORE" >> "$GITHUB_ENV"
+              echo "::warning::Private key is unlocked by the keystore password; Gradle will use the keystore password for the key password."
+              ;;
+            *)
+              echo "::error::Unexpected signing-key validation result"
+              exit 1
+              ;;
+          esac
+
           rm -f ValidateSigningKey.java ValidateSigningKey.class
+
       - name: Decode signing key
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: printf '%s' "$KEYSTORE_B64" | base64 --decode > release.keystore
+
       - name: Build signed release APK
         env:
           BACKEND_BASE_URL: https://algo-trading-backend-2.onrender.com/
@@ -101,6 +131,12 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          if [ "$ANDROID_KEY_PASSWORD_SOURCE" = "STORE" ]; then
+            SIGNING_KEY_PASSWORD="$KEYSTORE_PASSWORD"
+          else
+            SIGNING_KEY_PASSWORD="$KEY_PASSWORD"
+          fi
+
           gradle assembleRelease --no-daemon \
             -PappVersionCode='${{ inputs.version_code }}' \
             -PappVersionName='${{ inputs.version_name }}' \
@@ -109,9 +145,11 @@ jobs:
             -PandroidKeystorePath="$PWD/release.keystore" \
             -PandroidKeystorePassword="$KEYSTORE_PASSWORD" \
             -PandroidKeyAlias="$KEY_ALIAS" \
-            -PandroidKeyPassword="$KEY_PASSWORD"
+            -PandroidKeyPassword="$SIGNING_KEY_PASSWORD"
+
       - name: Rename release APK
         run: cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/algo-trading-release.apk
+
       - name: Publish GitHub release
         working-directory: .
         env:
@@ -121,6 +159,7 @@ jobs:
             mobile/android/app/build/outputs/apk/release/algo-trading-release.apk \
             --title "Android v${{ inputs.version_name }}" \
             --notes "${{ inputs.release_notes }}"
+
       - name: Publish update manifest
         working-directory: .
         env:
@@ -149,6 +188,7 @@ jobs:
           git add backend/app/app_update_manifest.json
           git commit -m "chore(android): publish update manifest v${{ inputs.version_name }}" || exit 0
           git push origin main
+
       - name: Remove signing key
         if: always()
         run: rm -f release.keystore
