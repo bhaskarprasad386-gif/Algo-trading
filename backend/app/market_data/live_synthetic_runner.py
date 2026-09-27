@@ -20,6 +20,7 @@ from app.market_data.live_synthetic_stream import LiveSyntheticOptionFutureRecor
 from app.market_data.synthetic_subscriptions import select_synthetic_contracts
 from app.market_data.live_synthetic_underlying import LiveSyntheticUnderlyingFeed
 from app.market_data.live_synthetic_atm import LiveSyntheticAtmTracker, concrete_strikes_from_master
+from app.notifications.synthetic_alerts import SyntheticAlertService
 from app.scanner.live_synthetic_pipeline import LiveSyntheticScanPipeline
 from app.scanner.live_synthetic_scanner import LiveSyntheticScanner
 from app.scanner.synthetic_cash_carry import SyntheticScanConfig
@@ -53,6 +54,7 @@ class LiveSyntheticRunner:
         on_results=None,
         underlying_feed: LiveSyntheticUnderlyingFeed | None = None,
         stock_universe_provider: Callable[[], Iterable[str]] | None = None,
+        alerts: SyntheticAlertService | None = None,
     ) -> None:
         self.data_db = data_db
         self.targets = tuple(targets)
@@ -75,6 +77,7 @@ class LiveSyntheticRunner:
         self.policy = policy or ScanPolicy()
         self.on_results = on_results
         self.underlying_feed = underlying_feed
+        self.alerts = alerts or SyntheticAlertService()
         self._atm_tracker: LiveSyntheticAtmTracker | None = None
         self._atm_provider = atm_provider
         self._recorder: LiveSyntheticOptionFutureRecorder | None = None
@@ -208,6 +211,15 @@ class LiveSyntheticRunner:
             + ", ".join(sorted(set(missing)))
         )
 
+    def _build_pipeline(self, scanner: LiveSyntheticScanner) -> LiveSyntheticScanPipeline:
+        """Build a scanner pipeline while retaining alert cooldown across refreshes."""
+        return LiveSyntheticScanPipeline(
+            scanner=scanner,
+            session_factory=self.session_factory,
+            alerts=self.alerts,
+            on_results=self.on_results,
+        )
+
     def run_forever(self) -> None:
         atm_provider = self._ensure_atm_provider()
         feed = self._ensure_underlying_feed()
@@ -229,11 +241,7 @@ class LiveSyntheticRunner:
                     atm_provider=atm_provider,
                     config_provider=self.scan_config_provider,
                 )
-                pipeline = LiveSyntheticScanPipeline(
-                    scanner=scanner,
-                    session_factory=self.session_factory,
-                    on_results=self.on_results,
-                )
+                pipeline = self._build_pipeline(scanner)
                 initial_atm = {
                     target.underlying: atm_provider(
                         target.underlying, time_ns()
