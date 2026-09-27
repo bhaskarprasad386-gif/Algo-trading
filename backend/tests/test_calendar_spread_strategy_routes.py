@@ -240,13 +240,13 @@ def test_calendar_spread_historical_replay_respects_exact_time_window(tmp_path, 
         far_contract_month="2026-10",
         source_timeframe="1s",
         replay_timeframe="1s",
-        start_timestamp=datetime(2026, 9, 24, 14, 45, 1, tzinfo=timezone.utc),
-        end_timestamp=datetime(2026, 9, 24, 14, 45, 2, tzinfo=timezone.utc),
+        start_timestamp=datetime(2026, 9, 24, 9, 15, 1, tzinfo=timezone.utc),
+        end_timestamp=datetime(2026, 9, 24, 9, 15, 2, tzinfo=timezone.utc),
     ))
 
     assert result["count"] == 2
-    assert result["series"][0]["timestamp"].startswith("2026-09-24T14:45:01")
-    assert result["series"][-1]["timestamp"].startswith("2026-09-24T14:45:02")
+    assert result["series"][0]["timestamp"].startswith("2026-09-24T09:15:01")
+    assert result["series"][-1]["timestamp"].startswith("2026-09-24T09:15:02")
 
 
 def test_calendar_spread_historical_strategy_run_executes_catalog_data(tmp_path, monkeypatch):
