@@ -52,3 +52,18 @@ def test_live_recorder_requires_an_instrument(tmp_path):
     else:
         raise AssertionError("missing instrument must be rejected")
     catalog.close()
+
+
+def test_timestamp_normalization_accepts_seconds_milliseconds_microseconds_and_ns():
+    fallback = 9_000_000_000_000_000_000
+    assert LiveMarketDataRecorder._timestamp_ns({"timestamp": 1_750_000_000}, fallback) == 1_750_000_000_000_000_000
+    assert LiveMarketDataRecorder._timestamp_ns({"timestamp": 1_750_000_000_000}, fallback) == 1_750_000_000_000_000_000
+    assert LiveMarketDataRecorder._timestamp_ns({"timestamp": 1_750_000_000_000_000}, fallback) == 1_750_000_000_000_000_000
+    assert LiveMarketDataRecorder._timestamp_ns({"timestamp": 1_750_000_000_000_000_000}, fallback) == 1_750_000_000_000_000_000
+
+
+def test_timestamp_normalization_skips_invalid_values_and_uses_fallback():
+    fallback = 1_234_567_890
+    assert LiveMarketDataRecorder._timestamp_ns({"timestamp": "bad"}, fallback) == fallback
+    assert LiveMarketDataRecorder._timestamp_ns({"timestamp": 0}, fallback) == fallback
+    assert LiveMarketDataRecorder._timestamp_ns({"timestamp": -1}, fallback) == fallback
