@@ -4,30 +4,18 @@ from app.market_data.live_synthetic_runner import LiveSyntheticRunner, Synthetic
 
 def _master():
     master = InstrumentMaster()
-    master.instruments = [
+    items = [
         {"exch_seg":"NFO","instrumenttype":"FUTIDX","token":"f1","name":"NIFTY",
          "symbol":"NIFTY30SEP26FUT","expiry":"30SEP2026","lotsize":"50"},
-        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"c100","name":"NIFTY",
-         "symbol":"NIFTY30SEP26100CE","expiry":"30SEP2026","strike":"10000","lotsize":"50"},
-        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"p100","name":"NIFTY",
-         "symbol":"NIFTY30SEP26100PE","expiry":"30SEP2026","strike":"10000","lotsize":"50"},
-        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"c105","name":"NIFTY",
-         "symbol":"NIFTY30SEP26105CE","expiry":"30SEP2026","strike":"10500","lotsize":"50"},
-        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"p105","name":"NIFTY",
-         "symbol":"NIFTY30SEP26105PE","expiry":"30SEP2026","strike":"10500","lotsize":"50"},
-        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"c95","name":"NIFTY",
-         "symbol":"NIFTY30SEP2695CE","expiry":"30SEP2026","strike":"9500","lotsize":"50"},
-        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"p95","name":"NIFTY",
-         "symbol":"NIFTY30SEP2695PE","expiry":"30SEP2026","strike":"9500","lotsize":"50"},
-        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"c90","name":"NIFTY",
-         "symbol":"NIFTY30SEP2690CE","expiry":"30SEP2026","strike":"9000","lotsize":"50"},
-        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"p90","name":"NIFTY",
-         "symbol":"NIFTY30SEP2690PE","expiry":"30SEP2026","strike":"9000","lotsize":"50"},
-        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"c110","name":"NIFTY",
-         "symbol":"NIFTY30SEP26110CE","expiry":"30SEP2026","strike":"11000","lotsize":"50"},
-        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"p110","name":"NIFTY",
-         "symbol":"NIFTY30SEP26110PE","expiry":"30SEP2026","strike":"11000","lotsize":"50"},
     ]
+    for i, strike in enumerate(range(50, 151, 5)):
+        items.extend([
+            {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":f"c{i}","name":"NIFTY",
+             "symbol":f"NIFTY30SEP26{strike}CE","expiry":"30SEP2026","strike":str(strike * 100),"lotsize":"50"},
+            {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":f"p{i}","name":"NIFTY",
+             "symbol":f"NIFTY30SEP26{strike}PE","expiry":"30SEP2026","strike":str(strike * 100),"lotsize":"50"},
+        ])
+    master.instruments = items
     master._loaded = True
     return master
 
@@ -107,7 +95,7 @@ def test_runner_exposes_concrete_atm_strikes_from_master():
         instrument_master=master,
         atm_provider=lambda _s, _t: 100.0,
     )
-    assert runner.concrete_atm_strikes() == {"NIFTY": (95.0, 100.0, 105.0)}
+    assert runner.concrete_atm_strikes() == {"NIFTY": tuple(float(strike) for strike in range(50, 151, 5))}
 
 
 def test_runner_refresh_snapshot_uses_automatic_atm_provider(monkeypatch):
