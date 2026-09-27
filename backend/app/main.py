@@ -445,7 +445,7 @@ async def _live_box_spread_loop() -> None:
                 stock_symbols.add(name)
             elif typ == "FUTIDX":
                 index_symbols.add(name)
-        stock_symbols = sorted(stock_symbols)[:50]
+        stock_symbols = sorted(stock_symbols)
         targets = tuple(
             [BoxSpreadLiveTarget(x, "STOCK") for x in stock_symbols]
             + [BoxSpreadLiveTarget(x, "INDEX") for x in sorted(index_symbols)]
