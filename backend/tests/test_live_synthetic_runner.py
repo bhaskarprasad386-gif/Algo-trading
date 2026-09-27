@@ -56,19 +56,39 @@ def test_runner_build_subscriptions_follow_live_atm():
     assert first != second
 
 
-def test_runner_requires_real_atm_provider():
+def test_runner_builds_automatic_atm_tracker_from_real_chain():
     master = _master()
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", None, "30SEP2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=master,
+    )
+    provider = runner._ensure_atm_provider()
+    assert provider("NIFTY", 0) is None
+    assert runner._atm_tracker is not None
+    assert runner._atm_tracker.update("NIFTY", 103.0) == 105.0
+    assert provider("NIFTY", 0) == 105.0
+    subscriptions = runner.build_subscriptions()
+    assert {item.token for item in subscriptions} >= {
+        "f1", "c95", "p95", "c100", "p100", "c105", "p105"
+    }
+
+
+def test_runner_requires_live_atm_when_automatic_tracker_has_no_price():
+    master = _master()
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", None, "30SEP2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=master,
+    )
     try:
-        LiveSyntheticRunner(
-            ":memory:",
-            [SyntheticLiveTarget("NIFTY", "INDEX", 100.0)],
-            allowed_stock_symbols=frozenset(),
-            instrument_master=master,
-        )
-    except ValueError as exc:
-        assert "atm_provider" in str(exc)
+        runner.build_subscriptions()
+    except LookupError as exc:
+        assert "live ATM price" in str(exc)
     else:
-        raise AssertionError("expected ValueError")
+        raise AssertionError("expected LookupError")
 
 def test_runner_exposes_concrete_atm_strikes_from_master():
     master = _master()
