@@ -29,12 +29,24 @@ android {
         throw new GradleException("emulator-only backend host 10.0.2.2 is not allowed")
     }
 
+    if (project.hasProperty("androidKeystorePath")) {
+        signingConfigs {
+            release {
+                storeFile file(project.property("androidKeystorePath"))
+                storePassword project.property("androidKeystorePassword")
+                keyAlias project.property("androidKeyAlias")
+                keyPassword project.property("androidKeyPassword")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             buildConfigField 'String', 'BACKEND_BASE_URL', "\"${backendBaseUrl}\""
             buildConfigField 'String', 'BACKEND_WS_URL', "\"${backendWsUrl}\""
         }
         release {
+            if (project.hasProperty("androidKeystorePath")) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             buildConfigField 'String', 'BACKEND_BASE_URL', "\"${backendBaseUrl}\""
