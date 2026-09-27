@@ -24,6 +24,7 @@ class LiveSyntheticUnderlyingFeed:
         instrument_master: InstrumentMaster | None = None,
         auth: AngelOneAuth | None = None,
         on_price: Callable[[str, float, int | None], None] | None = None,
+        concrete_tokens: dict[str, str] | None = None,
     ) -> None:
         if not symbols:
             raise ValueError("at least one underlying symbol is required")
@@ -34,6 +35,7 @@ class LiveSyntheticUnderlyingFeed:
         self.instrument_master = instrument_master or InstrumentMaster()
         self.auth = auth or AngelOneAuth()
         self.on_price = on_price
+        self.concrete_tokens = {str(k).strip().upper(): str(v).strip() for k, v in (concrete_tokens or {}).items() if str(k).strip() and str(v).strip()}
         self.stop_event = Event()
         self._socket: MarketDataWebSocket | None = None
 
@@ -63,6 +65,10 @@ class LiveSyntheticUnderlyingFeed:
         self.instrument_master.download()
         result: dict[str, str] = {}
         for symbol in self.symbols:
+            token = self.concrete_tokens.get(symbol)
+            if token:
+                result[symbol] = token
+                continue
             instrument = self.instrument_master.resolve_cash_instrument(symbol, "NSE")
             result[symbol] = str(instrument["token"])
         return result
