@@ -263,3 +263,146 @@ def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypa
     ]
     assert [record.payload["ltp"] for record in ce] == [123.45, 123.55]
     assert [record.payload["ltp"] for record in pe] == [223.45, 223.55]
+
+
+def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
+    from app.market_data import live_synthetic_stream as stream
+
+    collector = LiveSyntheticOptionFutureRecorder(
+        str(tmp_path / "synthetic.db"),
+        [SyntheticSubscription(
+            2, "101", "NIFTY30SEP26CE", "NIFTY", "INDEX",
+            "30SEP2026", "CE", 100.0, 75,
+        )],
+        batch_size=1,
+        poll_seconds=0.05,
+    )
+
+    class FakeAuth:
+        def login(self):
+            return None
+
+    collector.auth = FakeAuth()
+    observations = []
+
+    def on_observation(payload):
+        observations.append(payload["ltp"])
+        collector.stop_event.set()
+
+    collector.on_observation = on_observation
+
+    class FakeSocket:
+        def __init__(self, *, auth):
+            self.auth = auth
+
+        def connect(self, **kwargs):
+            on_data = kwargs["on_data"]
+            on_data({
+                "token": "101",
+                "symbol": "NIFTY30SEP26CE",
+                "exchange_timestamp": "1750000000000000000",
+                "last_traded_price": "12345",
+            })
+            on_data({
+                "token": "101",
+                "symbol": "NIFTY30SEP26CE",
+                "exchange_timestamp": "1750000009000000000",
+                "last_traded_price": "12456",
+            })
+            on_data({
+                "token": "101",
+                "symbol": "NIFTY30SEP26CE",
+                "exchange_timestamp": "1750000001000000000",
+                "last_traded_price": "12567",
+            })
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(stream, "MarketDataWebSocket", FakeSocket)
+    monkeypatch.setattr(
+        stream.LiveSyntheticOptionFutureRecorder,
+        "market_open",
+        staticmethod(lambda now=None: True),
+    )
+
+    assert collector._run_session() == 2
+    assert observations == [124.56, 125.67]
+
+    from app.backtesting.historical_catalog import HistoricalCatalog
+
+    catalog = HistoricalCatalog(str(tmp_path / "synthetic.db"))
+    try:
+        records = catalog.records(
+            source=collector.SOURCE,
+            instrument="NIFTY30SEP26CE|101",
+            timeframe="1s",
+        )
+    finally:
+        catalog.close()
+
+    assert [record.timestamp_ns for record in records] == [
+        1_750_000_000_000_000_000,
+        1_750_000_001_000_000_000,
+    ]
+    assert [record.payload["ltp"] for record in records] == [124.56, 125.67]
+
+
+def test_stream_ignores_unsubscribed_tokens_without_persisting(tmp_path, monkeypatch):
+    from app.market_data import live_synthetic_stream as stream
+
+    collector = LiveSyntheticOptionFutureRecorder(
+        str(tmp_path / "synthetic.db"),
+        [SyntheticSubscription(
+            2, "101", "NIFTY30SEP26CE", "NIFTY", "INDEX",
+            "30SEP2026", "CE", 100.0, 75,
+        )],
+        batch_size=1,
+        poll_seconds=0.05,
+    )
+
+    class FakeAuth:
+        def login(self):
+            return None
+
+    collector.auth = FakeAuth()
+
+    class FakeSocket:
+        def __init__(self, *, auth):
+            self.auth = auth
+
+        def connect(self, **kwargs):
+            on_data = kwargs["on_data"]
+            on_data({
+                "token": "999",
+                "symbol": "UNSUBSCRIBED",
+                "exchange_timestamp": "1750000000000000000",
+                "last_traded_price": "99999",
+            })
+            collector.stop_event.set()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(stream, "MarketDataWebSocket", FakeSocket)
+    monkeypatch.setattr(
+        stream.LiveSyntheticOptionFutureRecorder,
+        "market_open",
+        staticmethod(lambda now=None: True),
+    )
+
+    assert collector._run_session() == 0
+
+    from app.backtesting.historical_catalog import HistoricalCatalog
+
+    catalog = HistoricalCatalog(str(tmp_path / "synthetic.db"))
+    try:
+        records = catalog.records(
+            source=collector.SOURCE,
+            instrument="UNSUBSCRIBED|999",
+            timeframe="1s",
+        )
+    finally:
+        catalog.close()
+
+    assert records == []
