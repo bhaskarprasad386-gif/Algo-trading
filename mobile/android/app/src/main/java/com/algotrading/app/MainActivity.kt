@@ -50,6 +50,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnDisableRealTrading: Button
     private lateinit var btnKillSwitch: Button
     private lateinit var btnLogout: Button
+    private lateinit var btnAppUpdate: Button
+    private lateinit var btnStrategies: Button
 
     private val scannerRefreshHandler = Handler(Looper.getMainLooper())
     private lateinit var scannerRefreshRunnable: Runnable
@@ -94,6 +96,8 @@ class MainActivity : AppCompatActivity() {
         btnDisableRealTrading = findViewById(R.id.btnDisableRealTrading)
         btnKillSwitch = findViewById(R.id.btnKillSwitch)
         btnLogout = findViewById(R.id.btnLogout)
+        btnAppUpdate = findViewById(R.id.btnAppUpdate)
+        btnStrategies = findViewById(R.id.btnStrategies)
         btnScannerPaperExecute.isEnabled = false
         scannerRefreshRunnable = Runnable { runCashFutureScanner() }
         scannerCountdownRunnable = object : Runnable {
@@ -110,6 +114,8 @@ class MainActivity : AppCompatActivity() {
         }
         updateScannerAutoRefreshStatus(); checkServerStatus(); checkBrokerStatus(); checkSafetyStatus()
         btnLogout.setOnClickListener { confirmLogout() }
+        btnAppUpdate.setOnClickListener { startActivity(Intent(this, UpdateActivity::class.java)) }
+        btnStrategies.setOnClickListener { startActivity(Intent(this, StrategyRegistryActivity::class.java)) }
         btnRunScanner.setOnClickListener { runCashFutureScanner() }
         btnScannerPaperExecute.setOnClickListener { paperExecuteScannerOpportunity() }
         btnFullFnoBacktest.setOnClickListener { startActivity(Intent(this, FullFnoBacktestActivity::class.java)) }
