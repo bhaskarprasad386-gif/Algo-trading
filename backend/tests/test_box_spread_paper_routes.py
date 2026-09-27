@@ -237,3 +237,40 @@ def test_box_spread_journal_returns_structured_lifecycle_event():
     assert item["event"]=="EXIT"
     assert item["position_id"]==9
     assert item["gross_pnl"]==125.5
+
+
+def test_box_spread_overview_consolidates_user_scoped_dashboard_data(monkeypatch):
+    from app.execution import box_spread_paper_routes as routes
+    from types import SimpleNamespace
+    import json
+    account=SimpleNamespace(virtual_balance=9990000.0,realized_pnl=1000.0,box_spread_auto_lots=2,is_active=True,mode="PAPER")
+    position=SimpleNamespace(id=9,underlying="SENSEX",instrument_class="INDEX",expiry="20990101",low_strike=80000.0,high_strike=80100.0,direction="LONG",lot_size=20,lots=1,low_call_entry=101.0,low_put_entry=111.0,high_call_entry=90.0,high_put_entry=120.0,realized_pnl=0.0,created_at="t1",closed_at=None,is_open=1)
+    history=SimpleNamespace(id=8,underlying="NIFTY",instrument_class="INDEX",expiry="20990101",low_strike=24000.0,high_strike=24100.0,direction="SHORT",lot_size=25,lots=1,realized_pnl=50.0,created_at="t0",closed_at="t0x",is_open=0)
+    log=SimpleNamespace(id=3,created_at="t3",details=json.dumps({"event":"ENTRY","user_id":7,"position_id":9}))
+    class Query:
+        def __init__(self, rows=None, first=None): self.rows=rows or []; self.first_value=first
+        def filter(self,*args): return self
+        def filter_by(self,**kwargs): return self
+        def order_by(self,*args): return self
+        def limit(self,n): return self
+        def all(self): return self.rows
+        def first(self): return self.first_value
+    class DB:
+        def query(self,model):
+            name=getattr(model,"__name__","")
+            if name=="TradingAccount": return Query(first=account)
+            if name=="LiveBoxSpreadPaperPosition":
+                return Query(first=position,rows=[position,history])
+            return Query(rows=[log])
+    low=SimpleNamespace(underlying="SENSEX",instrument_class="INDEX",expiry="20990101",strike=80000.0,timestamp_ns=1,call_bid=100.0,call_ask=101.0,put_bid=110.0,put_ask=111.0,volume=50,lot_size=20)
+    high=SimpleNamespace(strike=80100.0,call_bid=90.0,call_ask=91.0,put_bid=120.0,put_ask=121.0,volume=40)
+    match=SimpleNamespace(low=low,high=high,direction="LONG",executable_edge=10.0,edge_per_lot=200.0,gross_pnl=200.0,strike_distance=100.0)
+    monkeypatch.setattr(routes, "_acct", lambda db,user: account)
+    monkeypatch.setattr(__import__("app.scanner.live_box_spread_routes",fromlist=["x"]), "_latest", lambda:(match,))
+    result=routes.overview(limit=10,history_limit=10,journal_limit=10,user=7,db=DB())
+    assert result["account"]["auto_cycle_lots"]==2
+    assert result["open_position"]["id"]==9
+    assert result["live_opportunities"]["count"]==1
+    assert result["live_opportunities"]["data"][0]["low_call_price"]==101.0
+    assert result["history"]["count"]==2
+    assert result["journal"]["items"][0]["event"]=="ENTRY"
