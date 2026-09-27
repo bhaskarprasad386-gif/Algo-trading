@@ -29,7 +29,7 @@ class BoxSpreadAlertService:
         if not results or not self._notifier.configured:return 0
         sent=0
         for r in results:
-            key=(r.low.underlying,r.low.strike,r.high.strike,r.direction)
+            key=(r.low.underlying,r.low.expiry,r.low.strike,r.high.strike,r.direction)
             for user in db.query(User).filter(User.is_active.is_(True),User.mobile_number.isnot(None)).all():
                 k=(int(user.id),*key); previous=self._last_sent.get(k,0)
                 if r.low.timestamp_ns-previous < int(float(settings.LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS)*1_000_000_000):continue
