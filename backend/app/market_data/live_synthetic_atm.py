@@ -34,7 +34,7 @@ def concrete_strikes_from_master(
             raw = float(item.get("strike"))
         except (TypeError, ValueError):
             continue
-        strike = raw / 100.0 if abs(raw) >= 10000 else raw
+        strike = raw / 100.0
         if strike > 0:
             result[symbol].add(strike)
     return {symbol: tuple(sorted(values)) for symbol, values in result.items() if values}
