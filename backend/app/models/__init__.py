@@ -15,9 +15,11 @@ from app.models.historical_market_bar import HistoricalMarketBar
 from app.models.backtest_data_coverage import BacktestDataCoverage
 from app.models.live_cash_future_scanner_result import LiveCashFutureScannerResult
 from app.models.live_cash_future_alert_history import LiveCashFutureAlertHistory
+from app.models.live_synthetic_alert_history import LiveSyntheticAlertHistory
 
 __all__ = [
     "User", "TradingAccount", "Session", "Instrument", "Tick", "Candle", "CashFutureHistory",
     "Order", "Position", "SystemLog", "BacktestJob", "BacktestJobResultChunk", "PasswordResetToken",
     "HistoricalMarketBar", "BacktestDataCoverage", "LiveCashFutureScannerResult", "LiveCashFutureAlertHistory",
+    "LiveSyntheticAlertHistory",
 ]
