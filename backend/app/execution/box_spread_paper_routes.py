@@ -96,7 +96,9 @@ def auto_entry(lots:int=1,user:int=Depends(current_user_id),db:Session=Depends(g
  eligible=[r for r in rows if r.executable_edge>0 and min(r.low.volume,r.high.volume)>=r.low.lot_size*lots]
  if not eligible: raise HTTPException(409,detail="no executable box spread opportunity available")
  match=max(eligible,key=lambda r:r.executable_edge)
- return _entry(_scanner_entry_request(match,lots),user,db)
+ req=_scanner_entry_request(match,lots)
+ _validate(req)
+ return _entry(req,user,db)
 
 @router.post("/from-scanner")
 def from_scanner(req:ScannerEntry,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
