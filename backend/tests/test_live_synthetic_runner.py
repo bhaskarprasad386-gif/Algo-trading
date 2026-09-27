@@ -8,7 +8,7 @@ def _master():
         {"exch_seg":"NFO","instrumenttype":"FUTIDX","token":"f1","name":"NIFTY",
          "symbol":"NIFTY30SEP26FUT","expiry":"30SEP2026","lotsize":"50"},
     ]
-    for i, strike in enumerate(range(0, 201, 5)):
+    for i, strike in enumerate(range(5, 201, 5)):
         items.extend([
             {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":f"c{strike}","name":"NIFTY",
              "symbol":f"NIFTY30SEP26{strike}CE","expiry":"30SEP2026","strike":str(strike * 100),"lotsize":"50"},
@@ -95,7 +95,7 @@ def test_runner_exposes_concrete_atm_strikes_from_master():
         instrument_master=master,
         atm_provider=lambda _s, _t: 100.0,
     )
-    assert runner.concrete_atm_strikes() == {"NIFTY": tuple(float(strike) for strike in range(0, 201, 5))}
+    assert runner.concrete_atm_strikes() == {"NIFTY": tuple(float(strike) for strike in range(5, 201, 5))}
 
 
 def test_runner_refresh_snapshot_uses_automatic_atm_provider(monkeypatch):
