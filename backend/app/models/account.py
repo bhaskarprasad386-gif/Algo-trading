@@ -20,5 +20,6 @@ class TradingAccount(Base):
     virtual_balance = Column(Float, nullable=False, default=PAPER_STARTING_BALANCE)
     realized_pnl = Column(Float, nullable=False, default=0.0)
     is_active = Column(Boolean, default=True, nullable=False)
+    box_spread_auto_lots = Column(Integer, nullable=False, default=1)
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
