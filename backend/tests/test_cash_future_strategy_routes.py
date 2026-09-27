@@ -326,7 +326,8 @@ def test_strategy_run_resume_route_continues_from_checkpoint_without_duplicates(
             run_id="cash-future-resume-api",
             strategy_hash=_gap_threshold_implementation_hash(),
             strategy_config_hash=provenance_hash({
-                "cash_side": "BUY", "future_side": "SELL", "stop_loss": None, "target": 5.0
+                "cash_side": "BUY", "future_side": "SELL", "holding_mode": "POSITIONAL",
+                "stop_loss": None, "target": 5.0
             }),
             data_source_fingerprint=fingerprint,
         )
