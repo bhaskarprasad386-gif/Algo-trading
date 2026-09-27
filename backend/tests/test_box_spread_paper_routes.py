@@ -218,3 +218,22 @@ def test_box_spread_history_is_user_scoped_and_returns_lifecycle_fields():
     assert item["realized_pnl"]==760.0
     assert item["is_open"] is False
     assert item["created_at"]=="t1" and item["closed_at"]=="t2"
+
+
+def test_box_spread_journal_returns_structured_lifecycle_event():
+    from app.execution import box_spread_paper_routes as routes
+    from types import SimpleNamespace
+    import json
+    row=SimpleNamespace(id=3,created_at="t3",message="user=7 event=EXIT",
+        details=json.dumps({"event":"EXIT","user_id":7,"position_id":9,"gross_pnl":125.5,"lots":2}))
+    class Query:
+        def filter(self,*args): return self
+        def order_by(self,*args): return self
+        def limit(self,n): return self
+        def all(self): return [row]
+    class DB:
+        def query(self,model): return Query()
+    item=routes.journal(limit=10,user=7,db=DB())["items"][0]
+    assert item["event"]=="EXIT"
+    assert item["position_id"]==9
+    assert item["gross_pnl"]==125.5
