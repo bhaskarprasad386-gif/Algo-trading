@@ -138,18 +138,21 @@ class LiveSyntheticRunner:
         subscriptions = []
         seen: set[tuple[int, str]] = set()
         for target in self.targets:
+            live_atm = atm_provider(target.underlying, time_ns())
+            atm_strike = (
+                live_atm
+                if self._atm_tracker is not None
+                else (live_atm or target.atm_strike)
+            )
+            if atm_strike is None:
+                raise LookupError(
+                    f"live ATM price is not available for {target.underlying}"
+                )
             selection = select_synthetic_contracts(
                 self.instrument_master,
                 underlying=target.underlying,
                 instrument_class=target.instrument_class,
-                atm_strike=(
-                    atm_provider(target.underlying, time_ns())
-                    if self._atm_tracker is not None
-                    else (
-                        atm_provider(target.underlying, time_ns())
-                        or target.atm_strike
-                    )
-                ),
+                atm_strike=atm_strike,
                 expiry=target.expiry,
                 allowed_stock_symbols=self.allowed_stock_symbols,
                 policy=self.policy,
