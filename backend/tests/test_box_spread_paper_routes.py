@@ -130,7 +130,7 @@ def test_box_spread_entry_rejects_expired_contract_and_excess_quantity():
 def test_box_spread_cycle_holds_open_position_below_target(monkeypatch):
     from app.execution import box_spread_paper_routes as routes
     from types import SimpleNamespace
-    position=SimpleNamespace(id=7,is_active=True,lot_size=20,lots=1,direction="LONG",high_call_entry=90,high_put_entry=120,low_call_entry=101,low_put_entry=111,underlying="SENSEX",instrument_class="INDEX",expiry="20990101",low_strike=80000.0,high_strike=80100.0)
+    position=SimpleNamespace(id=7,is_active=True,mode="PAPER",lot_size=20,lots=1,direction="LONG",high_call_entry=90,high_put_entry=120,low_call_entry=101,low_put_entry=111,underlying="SENSEX",instrument_class="INDEX",expiry="20990101",low_strike=80000.0,high_strike=80100.0)
     class Query:
         def filter_by(self, **kwargs): return self
         def first(self): return position
