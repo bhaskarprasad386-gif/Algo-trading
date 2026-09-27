@@ -441,7 +441,6 @@ def _run_box_spread_paper_cycle_once() -> int:
                     db=db,
                 )
                 processed += 1
-                db.commit()
                 app_logger.debug("Box Spread paper cycle user=%s: %s", account.user_id, result.get("status", "unknown"))
             except Exception as exc:
                 db.rollback()
