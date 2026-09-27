@@ -213,15 +213,19 @@ class LiveSyntheticOptionFutureRecorder:
                     second = (timestamp // 1_000_000_000) * 1_000_000_000
                     key = (exchange_type, token)
                     previous = latest.get(key)
-                    if previous is not None and previous[0] != second:
-                        payload = dict(previous[1])
-                        payload["source_timestamp_ns"] = previous[0]
-                        written += recorder.on_tick(payload)
-                        if self.on_observation is not None:
-                            try:
-                                self.on_observation(dict(payload))
-                            except Exception:
-                                pass
+                    if previous is not None:
+                        previous_second = previous[0]
+                        if second < previous_second:
+                            continue
+                        if second != previous_second:
+                            payload = dict(previous[1])
+                            payload["source_timestamp_ns"] = previous_second
+                            written += recorder.on_tick(payload)
+                            if self.on_observation is not None:
+                                try:
+                                    self.on_observation(dict(payload))
+                                except Exception:
+                                    pass
                     latest[key] = (second, self._normalize(raw, meta))
             for _, (timestamp, payload) in latest.items():
                 payload["source_timestamp_ns"] = timestamp
