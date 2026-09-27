@@ -415,3 +415,9 @@ def test_stream_ignores_unsubscribed_tokens_without_persisting(tmp_path, monkeyp
         catalog.close()
 
     assert not records
+
+def test_market_open_keeps_equity_derivatives_open_until_1540():
+    ist = ZoneInfo("Asia/Kolkata")
+    assert LiveSyntheticOptionFutureRecorder.market_open(datetime(2026, 9, 28, 15, 39, 59, tzinfo=ist))
+    assert LiveSyntheticOptionFutureRecorder.market_open(datetime(2026, 9, 28, 15, 40, 0, tzinfo=ist))
+    assert not LiveSyntheticOptionFutureRecorder.market_open(datetime(2026, 9, 28, 15, 40, 1, tzinfo=ist))
