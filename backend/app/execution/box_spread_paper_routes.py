@@ -74,15 +74,33 @@ def _entry(req,user,db):
 def entry(req:Entry,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
  _validate(req); return _entry(req,user,db)
 
+def _current_scanner_match(p):
+ from app.scanner import live_box_spread_routes as scanner
+ rows=list(scanner._latest()) if callable(scanner._latest) else list(scanner._latest)
+ return next((r for r in rows if r.low.underlying.upper()==p.underlying and r.low.instrument_class.upper()==p.instrument_class and str(r.low.expiry)==str(p.expiry) and float(r.low.strike)==float(p.low_strike) and float(r.high.strike)==float(p.high_strike)),None)
+
+def _scanner_exit_request(p,match):
+ return Exit(low_call_price=match.low.call_bid if p.direction=="LONG" else match.low.call_ask,low_put_price=match.low.put_bid if p.direction=="LONG" else match.low.put_ask,high_call_price=match.high.call_ask if p.direction=="LONG" else match.high.call_bid,high_put_price=match.high.put_ask if p.direction=="LONG" else match.high.put_bid)
+
 @router.post("/exit-from-scanner")
 def exit_from_scanner(user:int=Depends(current_user_id),db:Session=Depends(get_db)):
  p=db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first()
  if not p:raise HTTPException(404,detail="no active box spread paper position")
- from app.scanner import live_box_spread_routes as scanner
- rows=list(scanner._latest()) if callable(scanner._latest) else list(scanner._latest)
- match=next((r for r in rows if r.low.underlying.upper()==p.underlying and r.low.instrument_class.upper()==p.instrument_class and str(r.low.expiry)==str(p.expiry) and float(r.low.strike)==float(p.low_strike) and float(r.high.strike)==float(p.high_strike)),None)
+ match=_current_scanner_match(p)
  if match is None:raise HTTPException(409,detail="live scanner quote unavailable for open box position")
- req=Exit(low_call_price=match.low_call_bid if p.direction=="LONG" else match.low_call_ask,low_put_price=match.low_put_bid if p.direction=="LONG" else match.low_put_ask,high_call_price=match.high_call_ask if p.direction=="LONG" else match.high_call_bid,high_put_price=match.high_put_ask if p.direction=="LONG" else match.high_put_bid)
+ return exit(_scanner_exit_request(p,match),user,db)
+
+@router.post("/auto-exit")
+def auto_exit(min_pnl:float=0.0,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
+ if min_pnl<0:raise HTTPException(422,detail="min_pnl must be non-negative")
+ p=db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first()
+ if not p:raise HTTPException(404,detail="no active box spread paper position")
+ match=_current_scanner_match(p)
+ if match is None:raise HTTPException(409,detail="live scanner quote unavailable for open box position")
+ req=_scanner_exit_request(p,match);q=p.lot_size*p.lots
+ entry_cashflow=(p.high_call_entry+p.high_put_entry-p.low_call_entry-p.low_put_entry) if p.direction=="LONG" else (p.low_call_entry+p.low_put_entry-p.high_call_entry-p.high_put_entry)
+ pnl=(entry_cashflow+_exit_cashflow(p,req))*q
+ if pnl<min_pnl:return {"status":"hold","mode":"paper","position_id":p.id,"gross_pnl":round(pnl,8),"min_pnl":min_pnl}
  return exit(req,user,db)
 
 @router.post("/exit")
