@@ -9,7 +9,7 @@ current ATM values; this module never invents either.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from threading import Thread
+from threading import Event, Thread
 from time import time_ns
 from typing import Callable, Iterable
 
@@ -76,6 +76,7 @@ class LiveSyntheticRunner:
         self.on_results = on_results
         self.underlying_feed = underlying_feed
         self._recorder: LiveSyntheticOptionFutureRecorder | None = None
+        self._refresh_requested = Event()
 
     def build_subscriptions(self) -> tuple:
         """Resolve concrete current/near contracts from the Angel One master."""
@@ -110,6 +111,7 @@ class LiveSyntheticRunner:
             feed_thread.start()
         try:
             while self._recorder is None or not self._recorder.stop_event.is_set():
+                self._refresh_requested.clear()
                 subscriptions = self.build_subscriptions()
                 scanner = LiveSyntheticScanner(
                     atm_provider=self.atm_provider,
@@ -135,6 +137,7 @@ class LiveSyntheticRunner:
                         return
                     latest = self.atm_provider(symbol, time_ns())
                     if latest is not None and latest != current and self._recorder is not None:
+                        self._refresh_requested.set()
                         self._recorder.stop()
 
                 self._recorder = LiveSyntheticOptionFutureRecorder(
@@ -144,6 +147,11 @@ class LiveSyntheticRunner:
                     on_observation=observe,
                 )
                 self._recorder.run_forever()
+                refresh_requested = self._refresh_requested.is_set()
+                if refresh_requested:
+                    self._refresh_requested.clear()
+                    self._recorder = None
+                    continue
                 if self._recorder.stop_event.is_set() and (
                     self.underlying_feed is None
                     or self.underlying_feed.stop_event.is_set()
