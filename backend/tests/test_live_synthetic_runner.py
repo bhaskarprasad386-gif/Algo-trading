@@ -8,7 +8,7 @@ def _master():
         {"exch_seg":"NFO","instrumenttype":"FUTIDX","token":"f1","name":"NIFTY",
          "symbol":"NIFTY30SEP26FUT","expiry":"30SEP2026","lotsize":"50"},
     ]
-    for i, strike in enumerate(range(50, 151, 5)):
+    for i, strike in enumerate(range(0, 201, 5)):
         items.extend([
             {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":f"c{strike}","name":"NIFTY",
              "symbol":f"NIFTY30SEP26{strike}CE","expiry":"30SEP2026","strike":str(strike * 100),"lotsize":"50"},
