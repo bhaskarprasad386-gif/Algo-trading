@@ -44,11 +44,17 @@ class LiveBoxSpreadScanner:
                 ce,pe=bucket.get((s,"CE")),bucket.get((s,"PE"))
                 if ce is None or pe is None: continue
                 try:
+                    ce_expiry = self._expiry(ce.get("expiry"))
+                    pe_expiry = self._expiry(pe.get("expiry"))
+                    ce_lot = int(float(ce.get("lot_size") or 0))
+                    pe_lot = int(float(pe.get("lot_size") or 0))
+                    if ce_expiry != pe_expiry or ce_lot <= 0 or ce_lot != pe_lot:
+                        continue
                     grouped.append(OptionQuote(
-                        ts,symbol,self._expiry(ce.get("expiry")),s,
+                        ts,symbol,ce_expiry,s,
                         self._price(ce.get("bid")) or 0,self._price(ce.get("ask")) or 0,
                         self._price(pe.get("bid")) or 0,self._price(pe.get("ask")) or 0,
-                        int(float(ce.get("lot_size") or 0)),cls,
+                        ce_lot,cls,
                         int(float(ce.get("volume") or 0)),int(float(ce.get("oi") or 0))
                     ))
                 except (ValueError,TypeError): continue
