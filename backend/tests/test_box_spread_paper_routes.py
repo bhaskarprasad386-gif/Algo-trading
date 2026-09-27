@@ -141,3 +141,28 @@ def test_box_spread_cycle_holds_open_position_below_target(monkeypatch):
     monkeypatch.setattr(routes,"_current_scanner_match",lambda p: SimpleNamespace(low=low,high=high))
     result=routes.cycle(lots=1,min_pnl=0,user=1,db=DB())
     assert result["status"]=="hold" and result["position_id"]==7
+
+
+def test_box_spread_auto_cycle_settings_update_and_limit(monkeypatch):
+    from app.execution import box_spread_paper_routes as routes
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+
+    account = SimpleNamespace(is_active=True, mode="PAPER", box_spread_auto_lots=1)
+    class DB:
+        def query(self, model):
+            class Query:
+                def filter(self, *args): return self
+                def first(self): return account
+            return Query()
+        def commit(self): pass
+
+    result = routes.update_auto_cycle_settings(routes.AutoCycleSettings(lots=3), user=1, db=DB())
+    assert result["lots"] == 3
+    assert account.box_spread_auto_lots == 3
+
+    try:
+        routes.update_auto_cycle_settings(routes.AutoCycleSettings(lots=5001), user=1, db=DB())
+        assert False
+    except HTTPException as exc:
+        assert exc.status_code == 422
