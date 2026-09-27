@@ -166,3 +166,33 @@ def test_box_spread_auto_cycle_settings_update_and_limit(monkeypatch):
         assert False
     except HTTPException as exc:
         assert exc.status_code == 422
+
+
+def test_box_spread_journal_is_user_scoped_and_limited():
+    from app.execution import box_spread_paper_routes as routes
+    from types import SimpleNamespace
+
+    rows=[
+        SimpleNamespace(id=2,created_at="t2",message="user=7 status=exit",details="pnl"),
+        SimpleNamespace(id=1,created_at="t1",message="user=7 status=hold",details=""),
+    ]
+    class Query:
+        def filter(self,*args): return self
+        def order_by(self,*args): return self
+        def limit(self,n): return self
+        def all(self): return rows
+    class DB:
+        def query(self,model): return Query()
+    result=routes.journal(limit=2,user=7,db=DB())
+    assert result["count"]==2
+    assert result["items"][0]["id"]==2
+
+
+def test_box_spread_journal_rejects_invalid_limit():
+    from app.execution import box_spread_paper_routes as routes
+    from fastapi import HTTPException
+    try:
+        routes.journal(limit=201,user=7,db=None)
+        assert False
+    except HTTPException as exc:
+        assert exc.status_code==422
