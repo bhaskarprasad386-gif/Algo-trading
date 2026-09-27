@@ -27,7 +27,7 @@ from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSec
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget
 from app.market_data.instruments import InstrumentMaster
-from app.market_data.nifty50_universe import NIFTY50_STOCK_SYMBOLS, NIFTY50_INDEX_SYMBOLS
+from app.market_data.nifty50_universe import NIFTY50_STOCK_SYMBOLS, NIFTY50_INDEX_SYMBOLS\n\nBSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
 from app.order_engine.routes import router as orders_router
