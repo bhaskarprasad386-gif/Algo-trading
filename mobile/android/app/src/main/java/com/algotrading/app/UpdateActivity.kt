@@ -1,6 +1,8 @@
 package com.algotrading.app
 
 import android.content.Intent
+import android.os.Build
+import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.widget.Button
@@ -57,6 +59,12 @@ class UpdateActivity : AppCompatActivity() {
         val apk = File(dir, "algo-trading-${remote.version_name}.apk")
         URL(remote.apk_url).openStream().use { input -> apk.outputStream().use { output -> input.copyTo(output) } }
         if (remote.sha256.isNotBlank() && sha256(apk) != remote.sha256.lowercase()) { apk.delete(); throw IllegalStateException("Downloaded APK checksum verification failed") }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+                status.text = "Allow this app to install updates, then tap UPDATE NOW again."
+                startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + packageName)))
+                update.isEnabled = true
+                return@withContext
+            }
         withContext(Dispatchers.Main) {
             val uri = FileProvider.getUriForFile(this@UpdateActivity, "$packageName.fileprovider", apk)
             startActivity(Intent(Intent.ACTION_VIEW).apply { setDataAndType(uri, "application/vnd.android.package-archive"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK) })
