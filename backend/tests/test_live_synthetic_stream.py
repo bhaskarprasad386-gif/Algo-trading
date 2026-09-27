@@ -405,4 +405,4 @@ def test_stream_ignores_unsubscribed_tokens_without_persisting(tmp_path, monkeyp
     finally:
         catalog.close()
 
-    assert records == []
+    assert not records
