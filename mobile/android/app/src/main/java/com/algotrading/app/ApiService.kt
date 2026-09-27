@@ -206,6 +206,32 @@ data class CashFutureDownloadAcceptedResponse(val job_id: String, val status: St
 data class CashFutureDownloadJob(val job_id: String = "", val source: String = "", val mode: String = "", val timeframe: String = "", val spot_instrument: String = "", val exchange: String = "", val underlying: String = "", val start_ns: Long = 0L, val end_ns: Long = 0L, val status: String = "", val requested_chunks: Int = 0, val completed_chunks: Int = 0, val skipped_chunks: Int = 0, val failed_chunks: Int = 0, val catalog_count: Int = 0, val fetched_records: Int = 0, val inserted_records: Int = 0, val updated_at_ns: Long = 0L, val error: String? = null)
 data class CashFutureDownloadChunk(val sequence: Int = 0, val instrument: String = "", val status: String = "", val attempts: Int = 0, val expected_timestamps: Int = 0, val actual_timestamps: Int = 0, val missing_timestamps: Int = 0, val fetched_records: Int = 0, val inserted_records: Int = 0, val error: String? = null)
 data class CashFutureDownloadStatusResponse(val job: CashFutureDownloadJob, val chunks: List<CashFutureDownloadChunk> = emptyList())
+data class BoxSpreadOpportunity(
+    val underlying: String = "", val instrument_class: String = "", val expiry: String = "",
+    val low_strike: Double = 0.0, val high_strike: Double = 0.0, val direction: String = "",
+    val timestamp: String = "", val executable_edge: Double = 0.0, val edge_per_lot: Double = 0.0,
+    val gross_pnl: Double = 0.0, val lot_size: Int = 0, val strike_distance: Double = 0.0,
+    val liquidity_qty: Double = 0.0,
+    val low_call_bid: Double? = null, val low_call_ask: Double? = null,
+    val low_put_bid: Double? = null, val low_put_ask: Double? = null,
+    val high_call_bid: Double? = null, val high_call_ask: Double? = null,
+    val high_put_bid: Double? = null, val high_put_ask: Double? = null,
+    val executable_low_call: Double? = null, val executable_low_put: Double? = null,
+    val executable_high_call: Double? = null, val executable_high_put: Double? = null
+)
+data class BoxSpreadLiveOpportunities(val count: Int = 0, val data: List<BoxSpreadOpportunity> = emptyList())
+data class BoxSpreadAccount(val virtual_balance: Double = 0.0, val realized_pnl: Double = 0.0, val auto_cycle_lots: Int = 1)
+data class BoxSpreadPositionSummary(
+    val id: Int = 0, val underlying: String = "", val instrument_class: String = "", val expiry: String = "",
+    val low_strike: Double = 0.0, val high_strike: Double = 0.0, val direction: String = "",
+    val lot_size: Int = 0, val lots: Int = 0, val realized_pnl: Double = 0.0, val is_open: Boolean = false
+)
+data class BoxSpreadOverview(
+    val status: String = "", val strategy: String = "", val mode: String = "",
+    val account: BoxSpreadAccount? = null, val open_position: BoxSpreadPositionSummary? = null,
+    val live_opportunities: BoxSpreadLiveOpportunities = BoxSpreadLiveOpportunities(),
+    val history: Map<String, Any?>? = null, val journal: Map<String, Any?>? = null
+)
 
 interface ApiInterface {
     @GET("/") suspend fun getRootStatus(): MarketStatus
@@ -253,6 +279,7 @@ interface ApiInterface {
     @POST("/api/v1/backtesting/cash-future/downloads") suspend fun startCashFutureDownload(@Body request: CashFutureDownloadRequest): CashFutureDownloadAcceptedResponse
     @GET("/api/v1/backtesting/cash-future/downloads/{job_id}") suspend fun cashFutureDownloadStatus(@Path("job_id") jobId: String): CashFutureDownloadStatusResponse
     @POST("/api/v1/backtesting/cash-future/downloads/{job_id}/resume") suspend fun resumeCashFutureDownload(@Path("job_id") jobId: String, @Query("retry_attempts") retryAttempts: Int = 3): CashFutureDownloadAcceptedResponse
+    @GET("/api/v1/execution/paper/box-spread/overview") suspend fun boxSpreadOverview(@Query("limit") limit: Int = 20, @Query("history_limit") historyLimit: Int = 10, @Query("journal_limit") journalLimit: Int = 20): BoxSpreadOverview
 }
 
 object ApiService {
