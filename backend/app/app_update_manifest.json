@@ -1,9 +1,9 @@
 {
   "platform": "android",
-  "version_code": 1,
-  "version_name": "1.0",
-  "release_notes": "Initial Android release",
+  "version_code": 2,
+  "version_name": "1.1",
+  "release_notes": "Google Login + Android app update support",
   "apk_url": "https://github.com/bhaskarprasad386-gif/Algo-trading/releases/latest/download/algo-trading-release.apk",
-  "sha256": "dd4cf947439617620e42bb4a7b2246ec128d51b1fa0f20aa5e3eb5a75d44abeb",
+  "sha256": "3b6313ef98e88b19e36ebddc3d2bbeb779de20345d5f73c5e4ff599cda35e89a",
   "mandatory": false
 }
