@@ -53,7 +53,7 @@ jobs:
         run: |
           gradle assembleDebug --no-daemon \
             -PbackendBaseUrl="$BACKEND_BASE_URL" \
-            -PbackendWsUrl="$BACKEND_WS_URL" -PgoogleWebClientId="$GOOGLE_WEB_CLIENT_ID" -PgoogleWebClientId="$GOOGLE_WEB_CLIENT_ID"
+            -PbackendWsUrl="$BACKEND_WS_URL" -PgoogleWebClientId="$GOOGLE_WEB_CLIENT_ID"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
