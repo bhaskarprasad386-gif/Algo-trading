@@ -59,11 +59,11 @@ class UpdateActivity : AppCompatActivity() {
         val apk = File(dir, "algo-trading-${remote.version_name}.apk")
         URL(remote.apk_url).openStream().use { input -> apk.outputStream().use { output -> input.copyTo(output) } }
         if (remote.sha256.isNotBlank() && sha256(apk) != remote.sha256.lowercase()) { apk.delete(); throw IllegalStateException("Downloaded APK checksum verification failed") }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
-                status.text = "Allow this app to install updates, then tap UPDATE NOW again."
-                startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + packageName)))
-                update.isEnabled = true
-                return@withContext
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            withContext(Dispatchers.Main) { status.text = "Allow this app to install updates, then tap UPDATE NOW again." }
+            withContext(Dispatchers.Main) { startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + packageName))) }
+            withContext(Dispatchers.Main) { update.isEnabled = true }
+            return
             }
         withContext(Dispatchers.Main) {
             val uri = FileProvider.getUriForFile(this@UpdateActivity, "$packageName.fileprovider", apk)
