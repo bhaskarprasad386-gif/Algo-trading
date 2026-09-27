@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     LIVE_CALENDAR_SPREAD_DATA_ENABLED: bool = False
     LIVE_SYNTHETIC_DATA_ENABLED: bool = False
     LIVE_BOX_SPREAD_DATA_ENABLED: bool = False
-    LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT: float = 0.0
+    # Box-Spread paper automation is opt-in and only touches active PAPER accounts.\n    PAPER_BOX_SPREAD_AUTO_CYCLE_ENABLED: bool = False\n    PAPER_BOX_SPREAD_AUTO_CYCLE_INTERVAL_SECONDS: int = 5\n    PAPER_BOX_SPREAD_AUTO_CYCLE_MIN_PNL: float = 0.0\n    LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT: float = 0.0
     LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS: float = 60.0
     LIVE_CASH_FUTURE_ESTIMATED_COST_PER_LOT: float = 0.0
     LIVE_CASH_FUTURE_SLIPPAGE_PER_LOT: float = 0.0
