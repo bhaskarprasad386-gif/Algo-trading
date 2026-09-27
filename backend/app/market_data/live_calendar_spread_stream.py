@@ -125,7 +125,7 @@ class LiveCalendarSpreadOneSecondCollector:
                         try:written+=catalog.ingest(HistoricalRecord(SOURCE,f'{meta["exchange"]}:{token}:{meta["symbol"]}',TIMEFRAME,previous[0],previous[1]))
                         except ValueError as exc:app_logger.error(f"Calendar 1-second record rejected {token}: {exc}")
                     bid,bq=_side(message,"best_5_buy_data"); ask,aq=_side(message,"best_5_sell_data")
-                    payload=dict(message); payload.update({"ltp":float(message["last_traded_price"])/100.0 if message.get("last_traded_price") is not None else None,"bid":bid,"ask":ask,"bid_qty":bq,"ask_qty":aq,"underlying":meta["underlying"],"leg":"FUTURE","instrument_type":meta["kind"],"exchange":meta["exchange"],"contract_month":f'{meta["expiry"].year:04d}-{meta["expiry"].month:02d}',"expiry":meta["expiry"].isoformat(),"lot_size":meta["lot_size"]})
+                    payload=dict(message); payload.update({"source_timestamp_ns":sec,"ltp":float(message["last_traded_price"])/100.0 if message.get("last_traded_price") is not None else None,"bid":bid,"ask":ask,"bid_qty":bq,"ask_qty":aq,"underlying":meta["underlying"],"leg":"FUTURE","instrument_type":meta["kind"],"exchange":meta["exchange"],"contract_month":f'{meta["expiry"].year:04d}-{meta["expiry"].month:02d}',"expiry":meta["expiry"].isoformat(),"lot_size":meta["lot_size"]})
                     latest[(resolved_exchange_type,token)]=(sec,payload)
                     if self.on_observation is not None:
                         try: self.on_observation(dict(payload, timestamp_ns=sec))
