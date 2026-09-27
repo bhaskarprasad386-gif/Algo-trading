@@ -48,3 +48,16 @@ def test_box_spread_bse_index_cashflow_uses_scanner_executable_prices():
     req.underlying = "SENSEX"
     req.instrument_class = "INDEX"
     assert _entry_cashflow(req) == -2.0
+
+
+def test_box_spread_paper_mark_to_market_uses_reverse_executable_prices():
+    entry = _entry("LONG")
+    position = type("P", (), {
+        "direction": "LONG", "lot_size": 10, "lots": 1,
+        "high_call_entry": entry.high_call_price, "high_put_entry": entry.high_put_price,
+        "low_call_entry": entry.low_call_price, "low_put_entry": entry.low_put_price,
+    })()
+    # Closing a LONG buys high strikes at ask and sells low strikes at bid.
+    close = _exit(12, 1, 10, 2)
+    assert _exit_cashflow(position, close) == 1.0
+    assert (_entry_cashflow(entry) + _exit_cashflow(position, close)) * 10 == 10.0
