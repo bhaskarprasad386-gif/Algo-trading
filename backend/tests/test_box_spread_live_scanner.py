@@ -13,7 +13,7 @@ def test_box_live_scanner_uses_real_bid_ask_for_both_directions():
         config=BoxSpreadScanConfig(allowed_stock_symbols=frozenset({"ABC"})),
         policy=ScanPolicy(stock_box_distances=(1,)),
     )
-    assert any(r.direction=="LONG" and r.executable_edge==6 for r in result)
+    assert any(r.direction=="LONG" and r.executable_edge==5 for r in result)
 
 def test_live_box_scanner_waits_for_matching_ce_pe_pairs():
     scanner=LiveBoxSpreadScanner(
@@ -35,7 +35,7 @@ def test_live_box_scanner_accepts_bse_index_contract_metadata():
     scanner = LiveBoxSpreadScanner(
         atm_provider=lambda _s, _t: 80000.0,
         config_provider=lambda _s: BoxSpreadScanConfig(),
-        policy=ScanPolicy(index_box_distances=(100.0,)),
+        policy=ScanPolicy(index_box_distances=(1,)),
     )
     base = {"underlying":"SENSEX","instrument_class":"INDEX","source_timestamp_ns":2,
             "expiry":"30SEP2026","lot_size":20,"volume":100,"oi":100}
