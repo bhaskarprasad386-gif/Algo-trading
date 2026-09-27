@@ -116,3 +116,17 @@ def test_runner_refresh_snapshot_uses_automatic_atm_provider(monkeypatch):
     assert observed == 105.0
     # Regression guard: automatic mode must not access the removed legacy attribute.
     assert not hasattr(runner, "atm_provider")
+
+
+def test_runner_refreshes_authoritative_stock_universe_before_selection():
+    master = _master()
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("ABC", "STOCK", 100.0, "30SEP2026")],
+        allowed_stock_symbols=frozenset(),
+        stock_universe_provider=lambda: ("ABC",),
+        instrument_master=master,
+    )
+    assert runner.allowed_stock_symbols == frozenset()
+    runner._refresh_stock_universe()
+    assert runner.allowed_stock_symbols == frozenset({"ABC"})
