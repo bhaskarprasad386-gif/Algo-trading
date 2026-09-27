@@ -1,4 +1,4 @@
-"""Locked Box Spread universe: current Nifty 50 stocks plus NIFTY index."""
+"""Locked Box Spread universe: Nifty 50 stocks plus NSE/BSE F&O indices."""
 
 NIFTY50_STOCK_SYMBOLS = frozenset({
     "ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT", "AXISBANK",
