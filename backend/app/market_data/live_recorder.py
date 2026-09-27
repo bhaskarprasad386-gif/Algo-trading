@@ -121,7 +121,8 @@ class LiveMarketDataRecorder:
                 return 0
             batch = tuple(self._pending)
             self._pending.clear()
-        return self.catalog.ingest_events(batch, ingested_at_ns=time_ns())
+        ingest = self.catalog.ingest_events if is_event_timeframe(self.timeframe) else self.catalog.ingest
+        return ingest(batch, ingested_at_ns=time_ns())
 
     def pending_count(self) -> int:
         with self._lock:
