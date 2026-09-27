@@ -19,7 +19,10 @@ def test_box_scanner_does_not_mix_call_and_put_expiries():
 
 
 def test_box_scanner_assembles_matching_expiry_call_put():
-    scanner = LiveBoxSpreadScanner(atm_provider=lambda _s, _t: 100)
+    scanner = LiveBoxSpreadScanner(
+        atm_provider=lambda _s, _t: 100,
+        config_provider=lambda _s: __import__("app.scanner.box_spread", fromlist=["BoxSpreadScanConfig"]).BoxSpreadScanConfig(allowed_stock_symbols=frozenset({"ABC"})),
+    )
     base = {
         "underlying": "ABC",
         "instrument_class": "STOCK",
