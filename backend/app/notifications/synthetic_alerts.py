@@ -54,8 +54,6 @@ class SyntheticAlertService:
         return sent
 
     def persist(self, db, results) -> int:
-        if not results:
-            return 0
         retention_days = max(1, int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
         cutoff = datetime.utcnow() - timedelta(days=retention_days)
         db.query(LiveSyntheticAlertHistory).filter(LiveSyntheticAlertHistory.observed_at < cutoff).delete(synchronize_session=False)
@@ -86,6 +84,6 @@ class SyntheticAlertService:
                 lot_size=f.lot_size,
             ))
             added += 1
-        if added:
+        if added or not results:
             db.commit()
         return added
