@@ -1,4 +1,5 @@
 from fastapi import APIRouter,Depends,HTTPException
+import json
 from pydantic import BaseModel,Field
 from sqlalchemy.orm import Session
 from app.core.database import get_db
@@ -45,7 +46,17 @@ def journal(limit:int=50,user:int=Depends(current_user_id),db:Session=Depends(ge
        .filter(SystemLog.message.like(f"user={user} %"))
        .order_by(SystemLog.created_at.desc())
        .limit(limit).all())
- return {"status":"success","mode":"paper","count":len(rows),"items":[{"id":r.id,"created_at":r.created_at,"message":r.message,"details":r.details} for r in rows]}
+ items=[]
+ for r in rows:
+  try: details=json.loads(r.details or "{}")
+  except (TypeError,ValueError): details={"raw":r.details}
+  items.append({"id":r.id,"created_at":r.created_at,**details})
+ return {"status":"success","mode":"paper","count":len(items),"items":items}
+
+
+def _audit(db,user,event,**fields):
+    payload={"event":event,"user_id":user,**fields}
+    db.add(SystemLog(level="INFO",module="box_spread_paper_cycle",message=f"user={user} event={event}",details=json.dumps(payload,sort_keys=True,default=str)))
 
 def _acct(db,user):
  a=db.query(TradingAccount).filter(TradingAccount.user_id==user).first()
@@ -101,7 +112,7 @@ def _entry(req,user,db):
  cashflow=_entry_cashflow(req)*q
  if cashflow<0 and a.virtual_balance < -cashflow:raise HTTPException(400,detail="insufficient paper balance")
  p=LiveBoxSpreadPaperPosition(user_id=user,underlying=req.underlying.upper(),instrument_class=req.instrument_class.upper(),expiry=req.expiry,low_strike=req.low_strike,high_strike=req.high_strike,direction=req.direction,lot_size=req.lot_size,lots=req.lots,low_call_entry=req.low_call_price,low_put_entry=req.low_put_price,high_call_entry=req.high_call_price,high_put_entry=req.high_put_price)
- db.add(p);a.virtual_balance=round(a.virtual_balance+cashflow,8);db.commit()
+ db.add(p);a.virtual_balance=round(a.virtual_balance+cashflow,8);db.flush();_audit(db,user,"ENTRY",position_id=p.id,underlying=p.underlying,instrument_class=p.instrument_class,expiry=p.expiry,direction=p.direction,low_strike=p.low_strike,high_strike=p.high_strike,lots=p.lots,quantity=q,low_call_price=req.low_call_price,low_put_price=req.low_put_price,high_call_price=req.high_call_price,high_put_price=req.high_put_price,entry_cashflow=cashflow);db.commit()
  return {"status":"success","mode":"paper","position_id":p.id,"position":p.__dict__|{"_sa_instance_state":None},"virtual_balance":a.virtual_balance}
 
 @router.post("/entry")
@@ -131,11 +142,17 @@ def cycle(lots:int=1,min_pnl:float=0.0,user:int=Depends(current_user_id),db:Sess
  p=db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first()
  if p:
   match=_current_scanner_match(p)
-  if match is None:return {"status":"hold","mode":"paper","reason":"live scanner quote unavailable","position_id":p.id}
+  if match is None:
+   _audit(db,user,"HOLD",position_id=p.id,reason="live scanner quote unavailable",lots=p.lots)
+   db.commit()
+   return {"status":"hold","mode":"paper","reason":"live scanner quote unavailable","position_id":p.id}
   req=_scanner_exit_request(p,match);q=p.lot_size*p.lots
   entry_cashflow=(p.high_call_entry+p.high_put_entry-p.low_call_entry-p.low_put_entry) if p.direction=="LONG" else (p.low_call_entry+p.low_put_entry-p.high_call_entry-p.high_put_entry)
   pnl=(entry_cashflow+_exit_cashflow(p,req))*q
-  if pnl<min_pnl:return {"status":"hold","mode":"paper","position_id":p.id,"gross_pnl":round(pnl,8),"min_pnl":min_pnl}
+  if pnl<min_pnl:
+   _audit(db,user,"HOLD",position_id=p.id,gross_pnl=round(pnl,8),min_pnl=min_pnl,lots=p.lots)
+   db.commit()
+   return {"status":"hold","mode":"paper","position_id":p.id,"gross_pnl":round(pnl,8),"min_pnl":min_pnl}
   return exit(req,user,db)
  return auto_entry(lots=lots,user=user,db=db)
 
@@ -163,6 +180,7 @@ def exit(req:Exit,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
  a.virtual_balance=round(a.virtual_balance+close_cashflow*q,8);a.realized_pnl=round(a.realized_pnl+pnl,8);p.realized_pnl=pnl;p.is_open=0
  from datetime import datetime,timezone
  p.closed_at=datetime.now(timezone.utc).replace(tzinfo=None)
+ _audit(db,user,"EXIT",position_id=p.id,underlying=p.underlying,instrument_class=p.instrument_class,expiry=p.expiry,direction=p.direction,low_strike=p.low_strike,high_strike=p.high_strike,lots=p.lots,quantity=q,low_call_price=req.low_call_price,low_put_price=req.low_put_price,high_call_price=req.high_call_price,high_put_price=req.high_put_price,gross_pnl=round(pnl,8),realized_pnl=a.realized_pnl)
  db.commit()
  return {"status":"success","mode":"paper","position_id":p.id,"gross_pnl":round(pnl,8),"realized_pnl":a.realized_pnl,"virtual_balance":a.virtual_balance}
 
