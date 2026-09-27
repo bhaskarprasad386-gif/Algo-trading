@@ -287,7 +287,7 @@ def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
 
     def on_observation(payload):
         observations.append(payload["ltp"])
-        if len(observations) == 3:
+        if len(observations) == 2:
             collector.stop_event.set()
 
     collector.on_observation = on_observation
