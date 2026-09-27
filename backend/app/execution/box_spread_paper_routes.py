@@ -83,6 +83,11 @@ def _exit_cashflow(p,req:Exit)->float:
         return req.low_call_price-req.low_put_price-req.high_call_price+req.high_put_price
     return req.low_put_price-req.low_call_price+req.high_call_price-req.high_put_price
 
+def _position_entry_cashflow(p):
+    if p.direction=="LONG":
+        return p.high_call_entry+p.low_put_entry-p.low_call_entry-p.high_put_entry
+    return p.low_call_entry+p.high_put_entry-p.high_call_entry-p.low_put_entry
+
 def _scanner_entry_request(match, lots=1):
     return ScannerEntry(underlying=match.low.underlying,instrument_class=match.low.instrument_class,expiry=str(match.low.expiry),low_strike=match.low.strike,high_strike=match.high.strike,direction=match.direction,lot_size=match.low.lot_size,lots=lots,low_call_price=match.low.call_ask if match.direction=="LONG" else match.low.call_bid,low_put_price=match.low.put_ask if match.direction=="LONG" else match.low.put_bid,high_call_price=match.high.call_bid if match.direction=="LONG" else match.high.call_ask,high_put_price=match.high.put_bid if match.direction=="LONG" else match.high.put_ask,executable_edge=match.executable_edge,edge_per_lot=match.edge_per_lot,liquidity_qty=min(match.low.volume,match.high.volume))
 
@@ -150,7 +155,7 @@ def cycle(lots:int=1,min_pnl:float=0.0,user:int=Depends(current_user_id),db:Sess
    db.commit()
    return {"status":"hold","mode":"paper","reason":"live scanner quote unavailable","position_id":p.id}
   req=_scanner_exit_request(p,match);q=p.lot_size*p.lots
-  entry_cashflow=(p.high_call_entry+p.high_put_entry-p.low_call_entry-p.low_put_entry) if p.direction=="LONG" else (p.low_call_entry+p.low_put_entry-p.high_call_entry-p.high_put_entry)
+  entry_cashflow=_position_entry_cashflow(p)
   pnl=(entry_cashflow+_exit_cashflow(p,req))*q
   if pnl<min_pnl:
    _audit(db,user,"HOLD",position_id=p.id,gross_pnl=round(pnl,8),min_pnl=min_pnl,lots=p.lots)
@@ -167,7 +172,7 @@ def auto_exit(min_pnl:float=0.0,user:int=Depends(current_user_id),db:Session=Dep
  match=_current_scanner_match(p)
  if match is None:raise HTTPException(409,detail="live scanner quote unavailable for open box position")
  req=_scanner_exit_request(p,match);q=p.lot_size*p.lots
- entry_cashflow=(p.high_call_entry+p.high_put_entry-p.low_call_entry-p.low_put_entry) if p.direction=="LONG" else (p.low_call_entry+p.low_put_entry-p.high_call_entry-p.high_put_entry)
+ entry_cashflow=_position_entry_cashflow(p)
  pnl=(entry_cashflow+_exit_cashflow(p,req))*q
  if pnl<min_pnl:return {"status":"hold","mode":"paper","position_id":p.id,"gross_pnl":round(pnl,8),"min_pnl":min_pnl}
  return exit(req,user,db)
@@ -177,7 +182,7 @@ def exit(req:Exit,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
  p=db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first()
  if not p:raise HTTPException(404,detail="no active box spread paper position")
  a=_acct(db,user);q=p.lot_size*p.lots
- entry_cashflow=(p.high_call_entry+p.high_put_entry-p.low_call_entry-p.low_put_entry) if p.direction=="LONG" else (p.low_call_entry+p.low_put_entry-p.high_call_entry-p.high_put_entry)
+ entry_cashflow=_position_entry_cashflow(p)
  close_cashflow=_exit_cashflow(p,req)
  pnl=(entry_cashflow+close_cashflow)*q
  a.virtual_balance=round(a.virtual_balance+close_cashflow*q,8);a.realized_pnl=round(a.realized_pnl+pnl,8);p.realized_pnl=pnl;p.is_open=0
@@ -192,7 +197,7 @@ def mark(req:Exit,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
  p=db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first()
  if not p:raise HTTPException(404,detail="no active box spread paper position")
  q=p.lot_size*p.lots
- entry_cashflow=(p.high_call_entry+p.high_put_entry-p.low_call_entry-p.low_put_entry) if p.direction=="LONG" else (p.low_call_entry+p.low_put_entry-p.high_call_entry-p.high_put_entry)
+ entry_cashflow=_position_entry_cashflow(p)
  mark_cashflow=_exit_cashflow(p,req)
  unrealized_pnl=round((entry_cashflow+mark_cashflow)*q,8)
  return {"status":"active","mode":"paper","position_id":p.id,"direction":p.direction,"quantity":q,"unrealized_pnl":unrealized_pnl,"exit_executable_cashflow_per_unit":mark_cashflow}
