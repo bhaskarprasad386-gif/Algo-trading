@@ -69,20 +69,26 @@ jobs:
       - name: Publish update manifest
         working-directory: .
         env:
-          GH_TOKEN: ${{ github.token }}
+          VERSION_CODE: ${{ inputs.version_code }}
+          VERSION_NAME: ${{ inputs.version_name }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
         run: |
           SHA256=$(sha256sum mobile/android/app/build/outputs/apk/release/algo-trading-release.apk | awk '{print $1}')
-          cat > backend/app/app_update_manifest.json <<EOF
-          {
-            "platform": "android",
-            "version_code": ${{ inputs.version_code }},
-            "version_name": "${{ inputs.version_name }}",
-            "release_notes": "${{ inputs.release_notes }}",
-            "apk_url": "https://github.com/bhaskarprasad386-gif/Algo-trading/releases/latest/download/algo-trading-release.apk",
-            "sha256": "$SHA256",
-            "mandatory": false
+          python - <<'PY'
+          import json, os
+          payload = {
+              "platform": "android",
+              "version_code": int(os.environ["VERSION_CODE"]),
+              "version_name": os.environ["VERSION_NAME"],
+              "release_notes": os.environ["RELEASE_NOTES"],
+              "apk_url": "https://github.com/bhaskarprasad386-gif/Algo-trading/releases/latest/download/algo-trading-release.apk",
+              "sha256": os.environ["SHA256"],
+              "mandatory": False,
           }
-          EOF
+          with open("backend/app/app_update_manifest.json", "w", encoding="utf-8") as f:
+              json.dump(payload, f, indent=2)
+              f.write("\n")
+          PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add backend/app/app_update_manifest.json
