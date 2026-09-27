@@ -24,7 +24,7 @@ def concrete_strikes_from_master(
         symbol = str(item.get("name") or "").strip().upper()
         if symbol not in result:
             continue
-        if str(item.get("exch_seg") or "").strip().upper() != "NFO":
+        if str(item.get("exch_seg") or "").strip().upper() != str(exchange_segment).strip().upper():
             continue
         if str(item.get("expiry") or "").strip().upper() != expiry_key:
             continue
