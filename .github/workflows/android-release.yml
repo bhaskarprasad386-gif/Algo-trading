@@ -127,6 +127,7 @@ jobs:
         env:
           BACKEND_BASE_URL: https://algo-trading-backend-2.onrender.com/
           BACKEND_WS_URL: wss://algo-trading-backend-2.onrender.com
+          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -142,6 +143,7 @@ jobs:
             -PappVersionName='${{ inputs.version_name }}' \
             -PbackendBaseUrl="$BACKEND_BASE_URL" \
             -PbackendWsUrl="$BACKEND_WS_URL" \
+            -PgoogleWebClientId="$GOOGLE_WEB_CLIENT_ID" \
             -PandroidKeystorePath="$PWD/release.keystore" \
             -PandroidKeystorePassword="$KEYSTORE_PASSWORD" \
             -PandroidKeyAlias="$KEY_ALIAS" \
