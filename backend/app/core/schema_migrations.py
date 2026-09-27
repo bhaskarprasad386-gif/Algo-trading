@@ -29,6 +29,8 @@ def run_schema_migrations() -> None:
             account_columns = {column["name"] for column in inspect(connection).get_columns("trading_accounts")}
             if "realized_pnl" not in account_columns:
                 connection.execute(text("ALTER TABLE trading_accounts ADD COLUMN realized_pnl FLOAT DEFAULT 0.0"))
+            if "box_spread_auto_lots" not in account_columns:
+                connection.execute(text("ALTER TABLE trading_accounts ADD COLUMN box_spread_auto_lots INTEGER DEFAULT 1"))
 
         if "orders" in account_tables:
             order_columns = {column["name"] for column in inspect(connection).get_columns("orders")}
