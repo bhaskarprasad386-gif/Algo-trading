@@ -314,7 +314,9 @@ object ApiService {
         OkHttpClient.Builder().addInterceptor(Interceptor { chain ->
             val request = chain.request()
             val path = request.url.encodedPath
-            val publicAuthEndpoint = path == "/api/v1/auth/login" || path == "/api/v1/auth/register"
+            val publicAuthEndpoint = path == "/api/v1/auth/login" ||
+                path == "/api/v1/auth/register" ||
+                path == "/api/v1/auth/google"
             val token = AppContextHolder.context?.let { getToken(it) }
             val authenticated = if (publicAuthEndpoint || token.isNullOrBlank()) request else request.newBuilder().addHeader("Authorization", "Bearer $token").build()
             val response = chain.proceed(authenticated)
