@@ -1,0 +1,53 @@
+from app.market_data.instruments import InstrumentMaster
+from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget
+
+
+def _master():
+    master = InstrumentMaster()
+    master.instruments = [
+        {"exch_seg":"NFO","instrumenttype":"FUTIDX","token":"f1","name":"NIFTY",
+         "symbol":"NIFTY30SEP26FUT","expiry":"30SEP2026","lotsize":"50"},
+        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"c100","name":"NIFTY",
+         "symbol":"NIFTY30SEP26100CE","expiry":"30SEP2026","strike":"10000","lotsize":"50"},
+        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"p100","name":"NIFTY",
+         "symbol":"NIFTY30SEP26100PE","expiry":"30SEP2026","strike":"10000","lotsize":"50"},
+        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"c105","name":"NIFTY",
+         "symbol":"NIFTY30SEP26105CE","expiry":"30SEP2026","strike":"10500","lotsize":"50"},
+        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"p105","name":"NIFTY",
+         "symbol":"NIFTY30SEP26105PE","expiry":"30SEP2026","strike":"10500","lotsize":"50"},
+        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"c95","name":"NIFTY",
+         "symbol":"NIFTY30SEP2695CE","expiry":"30SEP2026","strike":"9500","lotsize":"50"},
+        {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":"p95","name":"NIFTY",
+         "symbol":"NIFTY30SEP2695PE","expiry":"30SEP2026","strike":"9500","lotsize":"50"},
+    ]
+    master._loaded = True
+    return master
+
+
+def test_runner_builds_concrete_real_tokens_without_duplicates():
+    master = _master()
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "30SEP2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=master,
+        atm_provider=lambda _s, _t: 100.0,
+    )
+    subscriptions = runner.build_subscriptions()
+    tokens = {item.token for item in subscriptions}
+    assert {"f1", "c100", "p100", "c105", "p105", "c95", "p95"} <= tokens
+
+
+def test_runner_requires_real_atm_provider():
+    master = _master()
+    try:
+        LiveSyntheticRunner(
+            ":memory:",
+            [SyntheticLiveTarget("NIFTY", "INDEX", 100.0)],
+            allowed_stock_symbols=frozenset(),
+            instrument_master=master,
+        )
+    except ValueError as exc:
+        assert "atm_provider" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
