@@ -287,7 +287,7 @@ def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
 
     def on_observation(payload):
         observations.append(payload["ltp"])
-        if len(observations) == 2:
+        if len(observations) == 3:
             collector.stop_event.set()
 
     collector.on_observation = on_observation
@@ -332,8 +332,8 @@ def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
         staticmethod(lambda now=None: True),
     )
 
-    assert collector._run_session() == 2
-    assert observations == [124.56, 125.67]
+    assert collector._run_session() == 3
+    assert observations == [124.56, 125.67, 126.78]
 
     from app.backtesting.historical_catalog import HistoricalCatalog
 
