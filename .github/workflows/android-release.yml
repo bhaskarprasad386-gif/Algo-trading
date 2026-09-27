@@ -47,7 +47,18 @@ jobs:
           test -n "$KEY_PASSWORD" || { echo "::error::ANDROID_KEY_PASSWORD is missing"; exit 1; }
           printf '%s' "$KEYSTORE_B64" | base64 --decode > release.keystore
           keytool -list -keystore release.keystore -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
-          echo "Android signing keystore validation passed."
+          keytool -importkeystore \
+            -srckeystore release.keystore \
+            -srcstorepass "$KEYSTORE_PASSWORD" \
+            -srcalias "$KEY_ALIAS" \
+            -srckeypass "$KEY_PASSWORD" \
+            -destkeystore signing-validation.p12 \
+            -deststoretype PKCS12 \
+            -deststorepass "$KEY_PASSWORD" \
+            -destkeypass "$KEY_PASSWORD" \
+            -noprompt >/dev/null
+          rm -f signing-validation.p12
+          echo "Android signing keystore and private-key validation passed."
       - name: Decode signing key
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
