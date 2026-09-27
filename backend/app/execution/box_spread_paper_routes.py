@@ -75,13 +75,13 @@ def _validate(req):
 
 def _entry_cashflow(req:Entry)->float:
     if req.direction=="LONG":
-        return req.high_call_price+req.low_put_price-req.low_call_price-req.high_put_price
-    return req.low_call_price+req.high_put_price-req.high_call_price-req.low_put_price
+        return req.high_call_price+req.high_put_price-req.low_call_price-req.low_put_price
+    return req.low_call_price+req.low_put_price-req.high_call_price-req.high_put_price
 
 def _exit_cashflow(p,req:Exit)->float:
     if p.direction=="LONG":
-        return req.low_call_price-req.low_put_price-req.high_call_price+req.high_put_price
-    return req.low_put_price-req.low_call_price+req.high_call_price-req.high_put_price
+        return req.low_call_price+req.low_put_price-req.high_call_price-req.high_put_price
+    return req.high_call_price+req.high_put_price-req.low_call_price-req.low_put_price
 
 def _position_entry_cashflow(p):
     if p.direction=="LONG":
@@ -89,13 +89,12 @@ def _position_entry_cashflow(p):
     return p.low_call_entry+p.low_put_entry-p.high_call_entry-p.high_put_entry
 
 def _scanner_entry_request(match, lots=1):
-    return ScannerEntry(underlying=match.low.underlying,instrument_class=match.low.instrument_class,expiry=str(match.low.expiry),low_strike=match.low.strike,high_strike=match.high.strike,direction=match.direction,lot_size=match.low.lot_size,lots=lots,low_call_price=match.low.call_ask if match.direction=="LONG" else match.low.call_bid,low_put_price=match.low.put_bid if match.direction=="LONG" else match.low.put_ask,high_call_price=match.high.call_bid if match.direction=="LONG" else match.high.call_ask,high_put_price=match.high.put_ask if match.direction=="LONG" else match.high.put_bid,executable_edge=match.executable_edge,edge_per_lot=match.edge_per_lot,liquidity_qty=min(match.low.volume,match.high.volume))
+    return ScannerEntry(underlying=match.low.underlying,instrument_class=match.low.instrument_class,expiry=str(match.low.expiry),low_strike=match.low.strike,high_strike=match.high.strike,direction=match.direction,lot_size=match.low.lot_size,lots=lots,low_call_price=match.low.call_ask if match.direction=="LONG" else match.low.call_bid,low_put_price=match.low.put_ask if match.direction=="LONG" else match.low.put_bid,high_call_price=match.high.call_bid if match.direction=="LONG" else match.high.call_ask,high_put_price=match.high.put_bid if match.direction=="LONG" else match.high.put_ask,executable_edge=match.executable_edge,edge_per_lot=match.edge_per_lot,liquidity_qty=min(match.low.volume,match.high.volume))
 
 @router.post("/auto-entry")
 def auto_entry(lots:int=1,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
  if lots<=0: raise HTTPException(422,detail="lots must be positive")
  if lots > RiskLimits().max_position_quantity: raise HTTPException(422,detail="lots exceed risk limit")
- if db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first(): raise HTTPException(409,detail="box spread paper position already open")
  from app.scanner import live_box_spread_routes as scanner
  rows=list(scanner._latest()) if callable(scanner._latest) else list(scanner._latest)
  eligible=[r for r in rows if r.executable_edge>0 and min(r.low.volume,r.high.volume)>=r.low.lot_size*lots]
@@ -103,6 +102,7 @@ def auto_entry(lots:int=1,user:int=Depends(current_user_id),db:Session=Depends(g
  match=max(eligible,key=lambda r:r.executable_edge)
  req=_scanner_entry_request(match,lots)
  _validate(req)
+ if db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first(): raise HTTPException(409,detail="box spread paper position already open")
  return _entry(req,user,db)
 
 @router.post("/from-scanner")
