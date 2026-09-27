@@ -27,3 +27,14 @@ def test_box_alert_message_contains_exact_bid_ask_snapshot():
     assert "HIGH CE Bid/Ask: ₹8.00/₹9.00" in message
     assert "HIGH PE Bid/Ask: ₹2.00/₹3.00" in message
     assert "Executable Edge: ₹6.0000" in message
+
+
+def test_box_alert_cooldown_identity_includes_expiry():
+    result = _result()
+    service = BoxSpreadAlertService()
+    key_a = (result.low.underlying, result.low.expiry, result.low.strike, result.high.strike, result.direction)
+    result.low.expiry = "30JAN2027"
+    key_b = (result.low.underlying, result.low.expiry, result.low.strike, result.high.strike, result.direction)
+    assert key_a != key_b
+    assert key_a not in service._last_sent
+    assert key_b not in service._last_sent
