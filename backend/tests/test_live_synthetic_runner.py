@@ -86,6 +86,7 @@ def test_runner_requires_live_atm_when_automatic_tracker_has_no_price():
     else:
         raise AssertionError("expected LookupError")
 
+
 def test_runner_exposes_concrete_atm_strikes_from_master():
     master = _master()
     runner = LiveSyntheticRunner(
@@ -179,3 +180,23 @@ def test_runner_stop_stops_auto_created_underlying_feed():
 
     assert runner._stop_requested.is_set()
     assert feed.stopped is True
+
+
+def test_runner_reuses_alert_service_across_pipeline_refreshes():
+    master = _master()
+    alerts = object()
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "30SEP2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=master,
+        atm_provider=lambda _s, _t: 100.0,
+        alerts=alerts,
+    )
+
+    first = runner._build_pipeline(object())
+    second = runner._build_pipeline(object())
+
+    assert first.alerts is alerts
+    assert second.alerts is alerts
+    assert first.alerts is second.alerts
