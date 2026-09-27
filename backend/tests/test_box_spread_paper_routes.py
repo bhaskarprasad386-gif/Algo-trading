@@ -274,3 +274,20 @@ def test_box_spread_overview_consolidates_user_scoped_dashboard_data(monkeypatch
     assert result["live_opportunities"]["data"][0]["low_call_price"]==101.0
     assert result["history"]["count"]==2
     assert result["journal"]["items"][0]["event"]=="ENTRY"
+
+
+def test_box_spread_auto_entry_reuses_common_entry_validation(monkeypatch):
+    from app.execution import box_spread_paper_routes as routes
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+
+    low=SimpleNamespace(underlying="SENSEX",instrument_class="INDEX",expiry="20200101",strike=80000.0,lot_size=20,call_bid=100.0,call_ask=101.0,put_bid=110.0,put_ask=111.0,volume=50)
+    high=SimpleNamespace(strike=80100.0,call_bid=90.0,call_ask=91.0,put_bid=120.0,put_ask=121.0,volume=40)
+    match=SimpleNamespace(low=low,high=high,direction="LONG",executable_edge=10.0,edge_per_lot=200.0)
+    monkeypatch.setattr(routes, "_acct", lambda db,user: SimpleNamespace(is_active=True,mode="PAPER"))
+    monkeypatch.setattr(routes.scanner if hasattr(routes, "scanner") else __import__("app.scanner.live_box_spread_routes", fromlist=["x"]), "_latest", lambda: (match,), raising=False)
+    try:
+        routes.auto_entry(lots=1,user=7,db=object())
+        assert False
+    except HTTPException as exc:
+        assert exc.status_code == 422 and "expiry" in exc.detail
