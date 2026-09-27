@@ -71,7 +71,15 @@ class LiveBoxSpreadRunner:
                     policy=self.policy,
                 )
                 pipeline=LiveBoxSpreadPipeline(scanner,SessionLocal,on_results=self.on_results)
-                self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=pipeline.observe)
+                initial_atm={s:self.tracker.atm(s,time_ns()) for s in symbols}
+                def observe(payload):
+                    pipeline.observe(payload)
+                    symbol=str(payload.get("underlying") or "").upper()
+                    previous=initial_atm.get(symbol)
+                    current=self.tracker.atm(symbol,time_ns())
+                    if previous is not None and current is not None and current != previous and self.recorder is not None:
+                        self.recorder.stop()
+                self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe)
                 self.recorder.run_forever()
                 self.recorder=None
         finally:
