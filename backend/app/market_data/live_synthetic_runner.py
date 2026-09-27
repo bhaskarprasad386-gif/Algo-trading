@@ -19,7 +19,7 @@ from app.market_data.instruments import InstrumentMaster
 from app.market_data.live_synthetic_stream import LiveSyntheticOptionFutureRecorder
 from app.market_data.synthetic_subscriptions import select_synthetic_contracts
 from app.market_data.live_synthetic_underlying import LiveSyntheticUnderlyingFeed
-from app.market_data.live_synthetic_atm import concrete_strikes_from_master
+from app.market_data.live_synthetic_atm import LiveSyntheticAtmTracker, concrete_strikes_from_master
 from app.scanner.live_synthetic_pipeline import LiveSyntheticScanPipeline
 from app.scanner.live_synthetic_scanner import LiveSyntheticScanner
 from app.scanner.synthetic_cash_carry import SyntheticScanConfig
@@ -31,7 +31,7 @@ class SyntheticLiveTarget:
 
     underlying: str
     instrument_class: str
-    atm_strike: float
+    atm_strike: float | None = None
     expiry: str | None = None
 
 
@@ -69,13 +69,12 @@ class LiveSyntheticRunner:
                 allowed_stock_symbols=self.allowed_stock_symbols
             )
         )
-        if atm_provider is None:
-            raise ValueError("atm_provider is required for live synthetic scanning")
-        self.atm_provider = atm_provider
         self.session_factory = session_factory
         self.policy = policy or ScanPolicy()
         self.on_results = on_results
         self.underlying_feed = underlying_feed
+        self._atm_tracker: LiveSyntheticAtmTracker | None = None
+        self._atm_provider = atm_provider
         self._recorder: LiveSyntheticOptionFutureRecorder | None = None
         self._refresh_requested = Event()
 
@@ -96,8 +95,45 @@ class LiveSyntheticRunner:
                 )
             )
         return result
+    def _ensure_atm_provider(self) -> Callable[[str, int], float | None]:
+        """Build a source-backed ATM provider when the caller did not supply one."""
+        if self._atm_provider is not None:
+            return self._atm_provider
+        strikes = self.concrete_atm_strikes()
+        missing = [
+            target.underlying
+            for target in self.targets
+            if target.underlying.strip().upper() not in strikes
+        ]
+        if missing:
+            raise LookupError(
+                "no concrete option strikes found for live expiry: "
+                + ", ".join(sorted(set(missing)))
+            )
+        self._atm_tracker = LiveSyntheticAtmTracker(strikes_by_symbol=strikes)
+        return self._atm_tracker.atm
+
+    def _ensure_underlying_feed(self) -> LiveSyntheticUnderlyingFeed | None:
+        """Create the real underlying feed for automatic ATM tracking."""
+        if self.underlying_feed is not None or self._atm_tracker is None:
+            return self.underlying_feed
+        symbols = tuple(dict.fromkeys(target.underlying.strip().upper() for target in self.targets))
+        index_symbols = frozenset(
+            target.underlying.strip().upper()
+            for target in self.targets
+            if target.instrument_class.strip().upper() == "INDEX"
+        )
+        return LiveSyntheticUnderlyingFeed(
+            symbols,
+            tracker=self._atm_tracker,
+            instrument_master=self.instrument_master,
+            auth=self.auth,
+            index_symbols=index_symbols,
+        )
+
     def build_subscriptions(self) -> tuple:
         """Resolve concrete current/near contracts from the Angel One master."""
+        atm_provider = self._ensure_atm_provider()
         self.instrument_master.download()
         subscriptions = []
         seen: set[tuple[int, str]] = set()
@@ -106,7 +142,10 @@ class LiveSyntheticRunner:
                 self.instrument_master,
                 underlying=target.underlying,
                 instrument_class=target.instrument_class,
-                atm_strike=(self.atm_provider(target.underlying, time_ns()) or target.atm_strike),
+                atm_strike=(
+                    atm_provider(target.underlying, time_ns())
+                    or target.atm_strike
+                ),
                 expiry=target.expiry,
                 allowed_stock_symbols=self.allowed_stock_symbols,
                 policy=self.policy,
@@ -119,10 +158,12 @@ class LiveSyntheticRunner:
         return tuple(subscriptions)
 
     def run_forever(self) -> None:
+        atm_provider = self._ensure_atm_provider()
+        feed = self._ensure_underlying_feed()
         feed_thread = None
-        if self.underlying_feed is not None:
+        if feed is not None:
             feed_thread = Thread(
-                target=self.underlying_feed.run_forever,
+                target=feed.run_forever,
                 daemon=True,
                 name="synthetic-underlying-feed",
             )
@@ -132,7 +173,7 @@ class LiveSyntheticRunner:
                 self._refresh_requested.clear()
                 subscriptions = self.build_subscriptions()
                 scanner = LiveSyntheticScanner(
-                    atm_provider=self.atm_provider,
+                    atm_provider=atm_provider,
                     config_provider=self.scan_config_provider,
                 )
                 pipeline = LiveSyntheticScanPipeline(
@@ -153,7 +194,7 @@ class LiveSyntheticRunner:
                     current = initial_atm.get(symbol)
                     if current is None:
                         return
-                    latest = self.atm_provider(symbol, time_ns())
+                    latest = atm_provider(symbol, time_ns())
                     if latest is not None and latest != current and self._recorder is not None:
                         self._refresh_requested.set()
                         self._recorder.stop()
@@ -173,8 +214,8 @@ class LiveSyntheticRunner:
                 self._recorder = None
                 break
         finally:
-            if self.underlying_feed is not None:
-                self.underlying_feed.stop()
+            if feed is not None:
+                feed.stop()
             if self._recorder is not None:
                 self._recorder.stop()
                 self._recorder = None
