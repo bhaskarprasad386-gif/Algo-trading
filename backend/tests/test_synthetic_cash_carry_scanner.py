@@ -72,13 +72,17 @@ def test_stock_scan_accepts_only_configured_universe_symbol():
         1, "ABC", 20261231, 95, 8, 9, 6, 7,
         lot_size=10, instrument_class="STOCK", volume=100, oi=100,
     )
+    atm = OptionQuote(
+        1, "ABC", 20261231, 100, 8, 9, 6, 7,
+        lot_size=10, instrument_class="STOCK", volume=100, oi=100,
+    )
     future_quote = FutureQuote(
         1, "ABC", 20261231, 110, 111,
         lot_size=10, instrument_class="STOCK", volume=100, oi=100,
     )
     config = SyntheticScanConfig(allowed_stock_symbols=frozenset({"ABC"}))
     assert scan_synthetic_snapshot(
-        (option,), future_quote, atm_strike=100, config=config,
+        (option, atm), future_quote, atm_strike=100, config=config,
     )
 
 
