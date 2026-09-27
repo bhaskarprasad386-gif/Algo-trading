@@ -10,14 +10,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, time
+from queue import Empty, Queue
 from threading import Event, Thread
-from time import monotonic, sleep
+from time import monotonic, sleep, time_ns
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from app.algo.auth import AngelOneAuth
 from app.backtesting.historical_catalog import HistoricalCatalog
-from app.market_data.instruments import InstrumentMaster
 from app.market_data.live_recorder import LiveMarketDataRecorder
 from app.market_data.websocket import MarketDataWebSocket
 
@@ -161,15 +161,12 @@ class LiveSyntheticOptionFutureRecorder:
             by_exchange.setdefault(item.exchange_type, []).append(item)
             by_token[(item.exchange_type, item.token)] = item
 
-        queue: list[tuple[int, dict[str, Any]]] = []
-        queue_lock = __import__("threading").Lock()
+        queue: Queue[tuple[int, dict[str, Any]]] = Queue()
         sockets: list[MarketDataWebSocket] = []
 
         def receive(exchange_type: int, message: Any) -> None:
-            if not isinstance(message, dict):
-                return
-            with queue_lock:
-                queue.append((exchange_type, message))
+            if isinstance(message, dict):
+                queue.put((exchange_type, message))
 
         for exchange_type, items in sorted(by_exchange.items()):
             socket = MarketDataWebSocket(auth=self.auth)
@@ -202,17 +199,17 @@ class LiveSyntheticOptionFutureRecorder:
             while not self.stop_event.is_set() and self.market_open():
                 deadline = monotonic() + self.poll_seconds
                 while monotonic() < deadline:
-                    with queue_lock:
-                        message = queue.pop(0) if queue else None
-                    if message is None:
-                        sleep(min(0.01, max(0.0, deadline - monotonic())))
+                    try:
+                        exchange_type, raw = queue.get(
+                            timeout=max(0.01, deadline - monotonic())
+                        )
+                    except Empty:
                         continue
-                    exchange_type, raw = message
                     token = str(raw.get("token") or "").strip()
                     meta = by_token.get((exchange_type, token))
                     if meta is None:
                         continue
-                    timestamp = recorder._timestamp_ns(raw, __import__("time").time_ns())
+                    timestamp = recorder._timestamp_ns(raw, time_ns())
                     second = (timestamp // 1_000_000_000) * 1_000_000_000
                     key = (exchange_type, token)
                     previous = latest.get(key)
@@ -221,13 +218,19 @@ class LiveSyntheticOptionFutureRecorder:
                         payload["source_timestamp_ns"] = previous[0]
                         written += recorder.on_tick(payload)
                         if self.on_observation is not None:
-                            self.on_observation(dict(payload))
+                            try:
+                                self.on_observation(dict(payload))
+                            except Exception:
+                                pass
                     latest[key] = (second, self._normalize(raw, meta))
-            for (exchange_type, token), (timestamp, payload) in latest.items():
+            for _, (timestamp, payload) in latest.items():
                 payload["source_timestamp_ns"] = timestamp
                 written += recorder.on_tick(payload)
                 if self.on_observation is not None:
-                    self.on_observation(dict(payload))
+                    try:
+                        self.on_observation(dict(payload))
+                    except Exception:
+                        pass
             written += recorder.flush()
         finally:
             catalog.close()
