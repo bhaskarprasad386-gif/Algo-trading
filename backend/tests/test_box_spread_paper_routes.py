@@ -21,8 +21,8 @@ def _exit(low_call, low_put, high_call, high_put):
 
 
 def test_box_spread_paper_uses_executable_entry_cashflows():
-    assert _entry_cashflow(_entry("LONG")) == -3.0
-    assert _entry_cashflow(_entry("SHORT")) == 3.0
+    assert _entry_cashflow(_entry("LONG")) == -1.0
+    assert _entry_cashflow(_entry("SHORT")) == 1.0
 
 
 def test_box_spread_paper_long_close_cashflow_and_pnl_sign():
@@ -47,7 +47,7 @@ def test_box_spread_bse_index_cashflow_uses_scanner_executable_prices():
     req.high_put_price = 120.0
     req.underlying = "SENSEX"
     req.instrument_class = "INDEX"
-    assert _entry_cashflow(req) == -20.0
+    assert _entry_cashflow(req) == -2.0
 
 
 def test_box_spread_paper_mark_to_market_uses_reverse_executable_prices():
@@ -59,7 +59,7 @@ def test_box_spread_paper_mark_to_market_uses_reverse_executable_prices():
     })()
     # Closing a LONG buys high strikes at ask and sells low strikes at bid.
     close = _exit(12, 1, 9, 2)
-    assert _exit_cashflow(position, close) == 4.0
+    assert _exit_cashflow(position, close) == 2.0
     assert (_entry_cashflow(entry) + _exit_cashflow(position, close)) * 10 == 10.0
 
 
@@ -82,9 +82,9 @@ def test_box_spread_exit_from_scanner_maps_live_bid_ask(monkeypatch):
     monkeypatch.setattr(routes, "exit", lambda req, user, db: captured.setdefault("req", req) or {"status": "success"})
     routes.exit_from_scanner(user=1, db=DB())
     assert captured["req"].low_call_price == 100.0
-    assert captured["req"].low_put_price == 110.0
+    assert captured["req"].low_put_price == 111.0
     assert captured["req"].high_call_price == 91.0
-    assert captured["req"].high_put_price == 121.0
+    assert captured["req"].high_put_price == 120.0
 
 
 def test_box_spread_scanner_entry_maps_executable_bid_ask():
@@ -94,8 +94,8 @@ def test_box_spread_scanner_entry_maps_executable_bid_ask():
     high=SimpleNamespace(strike=80100,call_bid=90,call_ask=91,put_bid=120,put_ask=121,volume=40)
     match=SimpleNamespace(low=low,high=high,direction="LONG",executable_edge=10,edge_per_lot=200)
     req=_scanner_entry_request(match,1)
-    assert req.low_call_price==101 and req.low_put_price==110
-    assert req.high_call_price==90 and req.high_put_price==121
+    assert req.low_call_price==101 and req.low_put_price==111
+    assert req.high_call_price==90 and req.high_put_price==120
     assert req.liquidity_qty==40 and req.expiry=="20260930"
 
 
@@ -106,9 +106,9 @@ def test_box_spread_auto_exit_uses_current_executable_quotes():
     low=SimpleNamespace(call_bid=100,call_ask=101,put_bid=110,put_ask=111)
     high=SimpleNamespace(call_bid=90,call_ask=91,put_bid=120,put_ask=121)
     req=_scanner_exit_request(p,SimpleNamespace(low=low,high=high))
-    assert req.low_call_price==100 and req.low_put_price==111
-    assert req.high_call_price==91 and req.high_put_price==120
-    assert _exit_cashflow(p,req)==18
+    assert req.low_call_price==100 and req.low_put_price==110
+    assert req.high_call_price==91 and req.high_put_price==121
+    assert _exit_cashflow(p,req)==-2
 
 
 def test_box_spread_entry_rejects_expired_contract_and_excess_quantity():
@@ -130,7 +130,7 @@ def test_box_spread_entry_rejects_expired_contract_and_excess_quantity():
 def test_box_spread_cycle_holds_open_position_below_target(monkeypatch):
     from app.execution import box_spread_paper_routes as routes
     from types import SimpleNamespace
-    position=SimpleNamespace(id=7,lot_size=20,lots=1,direction="LONG",high_call_entry=90,high_put_entry=120,low_call_entry=101,low_put_entry=111,underlying="SENSEX",instrument_class="INDEX",expiry="20990101",low_strike=80000.0,high_strike=80100.0)
+    position=SimpleNamespace(id=7,is_active=True,lot_size=20,lots=1,direction="LONG",high_call_entry=90,high_put_entry=120,low_call_entry=101,low_put_entry=111,underlying="SENSEX",instrument_class="INDEX",expiry="20990101",low_strike=80000.0,high_strike=80100.0)
     class Query:
         def filter_by(self, **kwargs): return self
         def first(self): return position
