@@ -84,6 +84,5 @@ class SyntheticAlertService:
                 lot_size=f.lot_size,
             ))
             added += 1
-        if added or not results:
-            db.commit()
+        db.commit()
         return added
