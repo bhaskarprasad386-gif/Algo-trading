@@ -27,7 +27,8 @@ from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSec
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget
 from app.market_data.instruments import InstrumentMaster
-from app.market_data.nifty50_universe import NIFTY50_STOCK_SYMBOLS, NIFTY50_INDEX_SYMBOLS\n\nBSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
+from app.market_data.nifty50_universe import NIFTY50_STOCK_SYMBOLS, NIFTY50_INDEX_SYMBOLS
+BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
 from app.order_engine.routes import router as orders_router
@@ -424,8 +425,7 @@ async def _live_box_spread_loop() -> None:
         today = datetime.now(IST).date()
         stock_symbols, index_symbols = set(), set()
         for item in master.instruments:
-            if str(item.get("exch_seg", "")).upper() != "NFO":
-                continue
+            segment = str(item.get("exch_seg", "")).upper()
             typ = str(item.get("instrumenttype", "")).upper()
             expiry_text = str(item.get("expiry", "")).strip()
             if not expiry_text:
@@ -444,7 +444,7 @@ async def _live_box_spread_loop() -> None:
                 continue
             if typ == "FUTSTK" and name in NIFTY50_STOCK_SYMBOLS:
                 stock_symbols.add(name)
-            elif typ == "FUTIDX" and name in NIFTY50_INDEX_SYMBOLS:
+            elif typ == "FUTIDX" and ((segment == "NFO" and name in {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"}) or (segment == "BFO" and name in BSE_BOX_INDEX_SYMBOLS)):
                 index_symbols.add(name)
         stock_symbols = sorted(stock_symbols)
         targets = tuple(
