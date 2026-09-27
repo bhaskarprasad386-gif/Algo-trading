@@ -52,7 +52,6 @@ android {
             buildConfigField 'String', 'BACKEND_BASE_URL', "\"${backendBaseUrl}\""
             buildConfigField 'String', 'BACKEND_WS_URL', "\"${backendWsUrl}\""
             buildConfigField 'String', 'GOOGLE_WEB_CLIENT_ID', "\"${googleWebClientId}\""
-            buildConfigField 'String', 'GOOGLE_WEB_CLIENT_ID', "\"${googleWebClientId}\""
         }
         release {
             if (project.hasProperty("androidKeystorePath")) signingConfig signingConfigs.release
@@ -60,6 +59,7 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             buildConfigField 'String', 'BACKEND_BASE_URL', "\"${backendBaseUrl}\""
             buildConfigField 'String', 'BACKEND_WS_URL', "\"${backendWsUrl}\""
+            buildConfigField 'String', 'GOOGLE_WEB_CLIENT_ID', "\"${googleWebClientId}\""
         }
     }
 
