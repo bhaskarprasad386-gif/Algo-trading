@@ -18,8 +18,8 @@ def test_box_spread_paper_cycle_processes_only_active_paper_accounts(monkeypatch
 
         def all(self):
             return [
-                SimpleNamespace(user_id=11),
-                SimpleNamespace(user_id=22),
+                SimpleNamespace(user_id=11, is_active=True, mode="PAPER", box_spread_auto_lots=1),
+                SimpleNamespace(user_id=22, is_active=True, mode="PAPER", box_spread_auto_lots=1),
             ]
 
     class FakeDB:
