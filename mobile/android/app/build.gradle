@@ -11,8 +11,10 @@ android {
         applicationId "com.algotrading.app"
         minSdk 24
         targetSdk 34
-        versionCode (project.findProperty("appVersionCode") ?: "1").toInteger()
-        versionName (project.findProperty("appVersionName") ?: "1.0")
+        def configuredVersionCode = project.findProperty("appVersionCode")?.toString()?.trim()
+        def configuredVersionName = project.findProperty("appVersionName")?.toString()?.trim()
+        versionCode (configuredVersionCode ? configuredVersionCode : "1").toInteger()
+        versionName (configuredVersionName ? configuredVersionName : "1.0")
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
