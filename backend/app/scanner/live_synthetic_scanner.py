@@ -80,11 +80,18 @@ class LiveSyntheticScanner:
                 self._prune(timestamp_ns)
                 return ()
             future_payload = bucket["future"]
+            future_expiry = self._expiry(future_payload.get("expiry"))
             strikes = bucket["options"]
             option_quotes: list[OptionQuote] = []
             for option_strike, legs in strikes.items():
                 ce, pe = legs.get("CE"), legs.get("PE")
                 if ce is None or pe is None:
+                    continue
+                # Never combine legs from a different expiry with the future.
+                if (
+                    self._expiry(ce.get("expiry")) != future_expiry
+                    or self._expiry(pe.get("expiry")) != future_expiry
+                ):
                     continue
                 ce_bid, ce_ask = self._price(ce.get("bid")), self._price(ce.get("ask"))
                 pe_bid, pe_ask = self._price(pe.get("bid")), self._price(pe.get("ask"))
@@ -97,7 +104,7 @@ class LiveSyntheticScanner:
                     OptionQuote(
                         timestamp_ns=timestamp_ns,
                         underlying=symbol,
-                        expiry=expiry,
+                        expiry=future_expiry,
                         strike=option_strike,
                         call_bid=ce_bid,
                         call_ask=ce_ask,
@@ -121,7 +128,7 @@ class LiveSyntheticScanner:
             future = FutureQuote(
                 timestamp_ns=timestamp_ns,
                 underlying=symbol,
-                expiry=expiry,
+                expiry=future_expiry,
                 bid=future_bid,
                 ask=future_ask,
                 lot_size=int(float(future_payload.get("lot_size") or 0)),
