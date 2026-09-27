@@ -35,8 +35,8 @@ def _expiry_key(value: object) -> date:
 
 def _strike(value: object) -> float:
     number = float(value)
-    # Angel One option-master strikes are commonly stored in paise.
-    return number / 100.0 if abs(number) >= 10000 else number
+    # Angel One option-master strikes are represented in paise for this feed.
+    return number / 100.0
 
 
 def select_synthetic_contracts(
