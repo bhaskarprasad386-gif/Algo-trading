@@ -37,8 +37,13 @@ class CalendarSpreadStrategyBuilderView @JvmOverloads constructor(context: Conte
         val long=button("LONG NEAR / SHORT FAR"); val short=button("SHORT NEAR / LONG FAR")
         row.addView(long,LayoutParams(0,44,1f)); row.addView(short,LayoutParams(0,44,1f)); addView(row)
         long.setOnClickListener{direction="LONG_NEAR_SHORT_FAR";long.alpha=1f;short.alpha=.55f}; short.setOnClickListener{direction="SHORT_NEAR_LONG_FAR";short.alpha=1f;long.alpha=.55f}; long.performClick()
-        addView(button("AUTO-LOAD NEAR / FAR CONTRACTS").apply{setOnClickListener{loadContracts()}})\n        instrumentSpinner.onItemSelectedListener=object: android.widget.AdapterView.OnItemSelectedListener { override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {} override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long){ applyInstrument(position) } }
-        addView(button("RUN HISTORICAL CALENDAR SPREAD").apply{setOnClickListener{runStrategy()}})
+        addView(button("AUTO-LOAD NEAR / FAR CONTRACTS").apply { setOnClickListener { loadContracts() } })
+        instrumentSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                applyInstrument(position)
+            }
+        }
         addView(label("REPLAY TIMEFRAME"))
         val tfRow=LinearLayout(context).apply{orientation=HORIZONTAL}
         listOf("1s","30s","1m","5m","15m","30m","1h").forEach{tf->tfRow.addView(button(tf).apply{setOnClickListener{timeframe=tf;update(tfRow,tf)}},LayoutParams(0,40,1f))}; addView(tfRow); update(tfRow,"1s")
