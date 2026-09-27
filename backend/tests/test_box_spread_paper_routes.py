@@ -37,3 +37,14 @@ def test_box_spread_paper_short_close_cashflow_and_pnl_sign():
     position = type("P", (), {"direction": "SHORT"})()
     close = _exit(12, 1, 10, 2)
     assert _entry_cashflow(entry) + _exit_cashflow(position, close) == -1.0
+
+
+def test_box_spread_bse_index_cashflow_uses_scanner_executable_prices():
+    req = _entry("LONG")
+    req.low_call_price = 101.0
+    req.low_put_price = 111.0
+    req.high_call_price = 90.0
+    req.high_put_price = 120.0
+    req.underlying = "SENSEX"
+    req.instrument_class = "INDEX"
+    assert _entry_cashflow(req) == -2.0
