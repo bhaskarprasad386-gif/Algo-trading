@@ -654,6 +654,7 @@ def calendar_spread_historical_strategy_run(request: CalendarSpreadHistoricalStr
         points=points,
     ))
     result["source"] = "historical-catalog"
+    result["data_source"] = replay["source"]
     result["source_timeframe"] = request.source_timeframe
     result["replay_timeframe"] = request.replay_timeframe
     return result
