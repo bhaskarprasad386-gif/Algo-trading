@@ -155,3 +155,27 @@ def test_runner_stock_path_uses_provider_and_only_real_plus_minus_5_positions():
     strikes = {item.strike for item in subscriptions if item.strike is not None}
     assert strikes == {75.0, 80.0, 85.0, 90.0, 95.0, 100.0, 105.0, 110.0, 115.0, 120.0, 125.0}
     assert "sf" in {item.token for item in subscriptions}
+
+
+def test_runner_stop_stops_auto_created_underlying_feed():
+    master = _master()
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", None, "30SEP2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=master,
+    )
+
+    class FakeFeed:
+        def __init__(self):
+            self.stopped = False
+
+        def stop(self):
+            self.stopped = True
+
+    feed = FakeFeed()
+    runner._active_underlying_feed = feed
+    runner.stop()
+
+    assert runner._stop_requested.is_set()
+    assert feed.stopped is True
