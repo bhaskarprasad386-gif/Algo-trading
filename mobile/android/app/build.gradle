@@ -8,6 +8,7 @@ def configuredAppVersionName = project.findProperty('appVersionName')?.toString(
 
 def resolvedAppVersionCode = configuredAppVersionCode ?: '1'
 def resolvedAppVersionName = configuredAppVersionName ?: '1.0'
+def googleWebClientId = project.findProperty("googleWebClientId") ?: ""
 
 android {
     namespace 'com.algotrading.app'
@@ -50,6 +51,8 @@ android {
         debug {
             buildConfigField 'String', 'BACKEND_BASE_URL', "\"${backendBaseUrl}\""
             buildConfigField 'String', 'BACKEND_WS_URL', "\"${backendWsUrl}\""
+            buildConfigField 'String', 'GOOGLE_WEB_CLIENT_ID', "\"${googleWebClientId}\""
+            buildConfigField 'String', 'GOOGLE_WEB_CLIENT_ID', "\"${googleWebClientId}\""
         }
         release {
             if (project.hasProperty("androidKeystorePath")) signingConfig signingConfigs.release
@@ -77,6 +80,7 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.4'
     implementation 'com.google.android.material:material:1.12.0'
+    implementation 'com.google.android.gms:play-services-auth:21.2.0'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation 'com.squareup.retrofit2:retrofit:2.11.0'
     implementation 'com.squareup.retrofit2:converter-gson:2.11.0'
