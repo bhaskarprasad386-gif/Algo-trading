@@ -75,13 +75,13 @@ def _validate(req):
 
 def _entry_cashflow(req:Entry)->float:
     if req.direction=="LONG":
-        return req.high_call_price+req.high_put_price-req.low_call_price-req.low_put_price
-    return req.low_call_price+req.low_put_price-req.high_call_price-req.high_put_price
+        return req.high_call_price+req.low_put_price-req.low_call_price-req.high_put_price
+    return req.low_call_price+req.high_put_price-req.high_call_price-req.low_put_price
 
 def _exit_cashflow(p,req:Exit)->float:
     if p.direction=="LONG":
-        return req.low_call_price+req.low_put_price-req.high_call_price-req.high_put_price
-    return req.high_call_price+req.high_put_price-req.low_call_price-req.low_put_price
+        return req.low_call_price-req.low_put_price-req.high_call_price+req.high_put_price
+    return req.low_put_price-req.low_call_price+req.high_call_price-req.high_put_price
 
 def _position_entry_cashflow(p):
     if p.direction=="LONG":
@@ -89,7 +89,7 @@ def _position_entry_cashflow(p):
     return p.low_call_entry+p.low_put_entry-p.high_call_entry-p.high_put_entry
 
 def _scanner_entry_request(match, lots=1):
-    return ScannerEntry(underlying=match.low.underlying,instrument_class=match.low.instrument_class,expiry=str(match.low.expiry),low_strike=match.low.strike,high_strike=match.high.strike,direction=match.direction,lot_size=match.low.lot_size,lots=lots,low_call_price=match.low.call_ask if match.direction=="LONG" else match.low.call_bid,low_put_price=match.low.put_ask if match.direction=="LONG" else match.low.put_bid,high_call_price=match.high.call_bid if match.direction=="LONG" else match.high.call_ask,high_put_price=match.high.put_bid if match.direction=="LONG" else match.high.put_ask,executable_edge=match.executable_edge,edge_per_lot=match.edge_per_lot,liquidity_qty=min(match.low.volume,match.high.volume))
+    return ScannerEntry(underlying=match.low.underlying,instrument_class=match.low.instrument_class,expiry=str(match.low.expiry),low_strike=match.low.strike,high_strike=match.high.strike,direction=match.direction,lot_size=match.low.lot_size,lots=lots,low_call_price=match.low.call_ask if match.direction=="LONG" else match.low.call_bid,low_put_price=match.low.put_bid if match.direction=="LONG" else match.low.put_ask,high_call_price=match.high.call_bid if match.direction=="LONG" else match.high.call_ask,high_put_price=match.high.put_ask if match.direction=="LONG" else match.high.put_bid,executable_edge=match.executable_edge,edge_per_lot=match.edge_per_lot,liquidity_qty=min(match.low.volume,match.high.volume))
 
 @router.post("/auto-entry")
 def auto_entry(lots:int=1,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
@@ -133,7 +133,7 @@ def _current_scanner_match(p):
  return next((r for r in rows if r.low.underlying.upper()==p.underlying and r.low.instrument_class.upper()==p.instrument_class and str(r.low.expiry)==str(p.expiry) and float(r.low.strike)==float(p.low_strike) and float(r.high.strike)==float(p.high_strike)),None)
 
 def _scanner_exit_request(p,match):
- return Exit(low_call_price=match.low.call_bid if p.direction=="LONG" else match.low.call_ask,low_put_price=match.low.put_bid if p.direction=="LONG" else match.low.put_ask,high_call_price=match.high.call_ask if p.direction=="LONG" else match.high.call_bid,high_put_price=match.high.put_ask if p.direction=="LONG" else match.high.put_bid)
+ return Exit(low_call_price=match.low.call_bid if p.direction=="LONG" else match.low.call_ask,low_put_price=match.low.put_ask if p.direction=="LONG" else match.low.put_bid,high_call_price=match.high.call_ask if p.direction=="LONG" else match.high.call_bid,high_put_price=match.high.put_bid if p.direction=="LONG" else match.high.put_ask)
 
 @router.post("/exit-from-scanner")
 def exit_from_scanner(user:int=Depends(current_user_id),db:Session=Depends(get_db)):
