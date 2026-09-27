@@ -10,7 +10,7 @@ from typing import Any, Callable
 from app.algo.auth import AngelOneAuth
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.live_synthetic_atm import LiveSyntheticAtmTracker
-from app.market_data.websocket import MarketDataWebSocket
+from app.market_data.websocket import MarketDataWebSocket\n\nBSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 
 
 class LiveSyntheticUnderlyingFeed:
@@ -72,7 +72,7 @@ class LiveSyntheticUnderlyingFeed:
                 result[symbol] = token
                 continue
             if symbol in self.index_symbols:
-                result[symbol] = self.instrument_master.resolve_index_token(symbol, "NSE")
+                exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS else "NSE"\n                result[symbol] = self.instrument_master.resolve_index_token(symbol, exchange)
             else:
                 instrument = self.instrument_master.resolve_cash_instrument(symbol, "NSE")
                 result[symbol] = str(instrument["token"])
