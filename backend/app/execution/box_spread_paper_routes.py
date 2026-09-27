@@ -74,14 +74,14 @@ def _validate(req):
  if expiry <= datetime.now().date():raise HTTPException(422,detail="entry not allowed on or after expiry")
 
 def _entry_cashflow(req:Entry)->float:
- low=req.low_call_price+req.low_put_price
- high=req.high_call_price+req.high_put_price
- return (high-low) if req.direction=="LONG" else (low-high)
+    if req.direction=="LONG":
+        return req.high_call_price+req.low_put_price-req.low_call_price-req.high_put_price
+    return req.low_call_price+req.high_put_price-req.high_call_price-req.low_put_price
 
 def _exit_cashflow(p,req:Exit)->float:
- low=req.low_call_price+req.low_put_price
- high=req.high_call_price+req.high_put_price
- return (low-high) if p.direction=="LONG" else (high-low)
+    if p.direction=="LONG":
+        return req.low_call_price-req.low_put_price-req.high_call_price+req.high_put_price
+    return req.low_put_price-req.low_call_price+req.high_call_price-req.high_put_price
 
 def _scanner_entry_request(match, lots=1):
     return ScannerEntry(underlying=match.low.underlying,instrument_class=match.low.instrument_class,expiry=str(match.low.expiry),low_strike=match.low.strike,high_strike=match.high.strike,direction=match.direction,lot_size=match.low.lot_size,lots=lots,low_call_price=match.low.call_ask if match.direction=="LONG" else match.low.call_bid,low_put_price=match.low.put_ask if match.direction=="LONG" else match.low.put_bid,high_call_price=match.high.call_bid if match.direction=="LONG" else match.high.call_ask,high_put_price=match.high.put_bid if match.direction=="LONG" else match.high.put_ask,executable_edge=match.executable_edge,edge_per_lot=match.edge_per_lot,liquidity_qty=min(match.low.volume,match.high.volume))
