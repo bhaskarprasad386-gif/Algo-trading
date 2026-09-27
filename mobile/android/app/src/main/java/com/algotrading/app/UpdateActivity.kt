@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
@@ -60,8 +61,8 @@ class UpdateActivity : AppCompatActivity() {
                     remote.version_code <= currentCode -> {
                         status.text = "App is up to date"; update.isEnabled = false
                     }
-                    remote.apk_url.isBlank() -> {
-                        status.text = "Update available, but APK is not published yet."
+                    remote.apk_url.isBlank() || remote.sha256.isBlank() -> {
+                        status.text = "Update is published, but its APK verification data is incomplete."
                         update.isEnabled = false
                     }
                     else -> {
@@ -80,28 +81,89 @@ class UpdateActivity : AppCompatActivity() {
 
     private suspend fun downloadAndInstall(remote: AppUpdateInfo) {
         val apk = cachedApk(remote)
-        if (isVerifiedApk(apk, remote)) { installApk(apk); return }
+        if (isVerifiedApk(apk, remote)) {
+            installApk(apk)
+            return
+        }
 
+        val temp = File(apk.parentFile, "${apk.name}.part")
         withContext(Dispatchers.Main) {
             update.isEnabled = false
             status.text = "Downloading v${remote.version_name}..."
         }
 
         try {
-            apk.parentFile?.mkdirs()
-            URL(remote.apk_url).openStream().use { input ->
-                apk.outputStream().use { output -> input.copyTo(output) }
+            temp.parentFile?.mkdirs()
+            downloadApk(remote.apk_url, temp)
+            withContext(Dispatchers.Main) {
+                status.text = "Download complete • verifying..."
             }
-            if (!isVerifiedApk(apk, remote)) {
-                apk.delete()
+            if (!isVerifiedApk(temp, remote)) {
+                temp.delete()
                 throw IllegalStateException("Downloaded APK checksum verification failed")
+            }
+            if (apk.exists()) apk.delete()
+            if (!temp.renameTo(apk)) {
+                throw IllegalStateException("Could not finalize downloaded APK")
+            }
+            withContext(Dispatchers.Main) {
+                status.text = "Download verified • opening installer..."
             }
             installApk(apk)
         } catch (e: Exception) {
+            temp.delete()
             withContext(Dispatchers.Main) {
                 status.text = "Update failed • ${e.message ?: "download error"}"
                 update.isEnabled = true
             }
+        }
+    }
+
+    private suspend fun downloadApk(url: String, destination: File) = withContext(Dispatchers.IO) {
+        var connection: HttpURLConnection? = null
+        try {
+            connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 15_000
+                readTimeout = 30_000
+                instanceFollowRedirects = true
+                requestMethod = "GET"
+                setRequestProperty("Accept", "application/vnd.android.package-archive")
+                setRequestProperty("User-Agent", "AlgoTradingAndroidUpdater/1")
+            }
+            connection.connect()
+            if (connection.responseCode !in 200..299) {
+                throw IllegalStateException("APK server returned HTTP ${connection.responseCode}")
+            }
+
+            val expectedLength = connection.contentLengthLong
+            var downloaded = 0L
+            connection.inputStream.use { input ->
+                destination.outputStream().use { output ->
+                    val buffer = ByteArray(32 * 1024)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        if (count == 0) continue
+                        output.write(buffer, 0, count)
+                        downloaded += count
+                        if (expectedLength > 0L) {
+                            val percent = (downloaded * 100L / expectedLength).coerceIn(0L, 100L)
+                            withContext(Dispatchers.Main) {
+                                status.text = "Downloading... ${percent}%"
+                            }
+                        }
+                    }
+                    output.flush()
+                }
+            }
+            if (downloaded == 0L) {
+                throw IllegalStateException("APK download was empty")
+            }
+            if (expectedLength > 0L && downloaded != expectedLength) {
+                throw IllegalStateException("APK download incomplete ($downloaded/$expectedLength bytes)")
+            }
+        } finally {
+            connection?.disconnect()
         }
     }
 
@@ -154,7 +216,7 @@ class UpdateActivity : AppCompatActivity() {
     private fun isVerifiedApk(file: File, remote: AppUpdateInfo): Boolean {
         if (!file.isFile || file.length() == 0L) return false
         val expected = remote.sha256.trim().lowercase()
-        if (expected.isBlank()) return true
+        if (expected.isBlank()) return false
         return sha256(file) == expected
     }
 
