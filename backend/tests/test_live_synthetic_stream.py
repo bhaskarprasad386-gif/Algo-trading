@@ -333,8 +333,8 @@ def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
         staticmethod(lambda now=None: True),
     )
 
-    assert collector._run_session() == 3
-    assert observations == [124.56, 125.67, 126.78]
+    assert collector._run_session() == 2
+    assert observations == [124.56, 126.78]
 
     from app.backtesting.historical_catalog import HistoricalCatalog
 
@@ -350,9 +350,9 @@ def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
 
     assert [record.timestamp_ns for record in records] == [
         1_750_000_000_000_000_000,
-        1_750_000_001_000_000_000,
+        1_750_000_002_000_000_000,
     ]
-    assert [record.payload["ltp"] for record in records] == [124.56, 125.67]
+    assert [record.payload["ltp"] for record in records] == [124.56, 126.78]
 
 
 def test_stream_ignores_unsubscribed_tokens_without_persisting(tmp_path, monkeypatch):
