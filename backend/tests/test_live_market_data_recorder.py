@@ -67,3 +67,19 @@ def test_timestamp_normalization_skips_invalid_values_and_uses_fallback():
     assert LiveMarketDataRecorder._timestamp_ns({"timestamp": "bad"}, fallback) == fallback
     assert LiveMarketDataRecorder._timestamp_ns({"timestamp": 0}, fallback) == fallback
     assert LiveMarketDataRecorder._timestamp_ns({"timestamp": -1}, fallback) == fallback
+
+
+def test_live_recorder_persists_cadence_timeframe(tmp_path):
+    catalog = HistoricalCatalog(str(tmp_path / "history.db"))
+    recorder = LiveMarketDataRecorder(catalog, timeframe="1s", batch_size=2)
+
+    assert recorder.on_tick({"token": "303", "symbol": "NIFTY30SEP26CE", "ltp": 123.45}) == 0
+    assert recorder.on_tick({"token": "303", "symbol": "NIFTY30SEP26CE", "ltp": 123.55}) == 2
+
+    rows = catalog.records(
+        source="angelone-live",
+        instrument="NIFTY30SEP26CE|303",
+        timeframe="1s",
+    )
+    assert [row.payload["ltp"] for row in rows] == [123.45, 123.55]
+    catalog.close()
