@@ -322,6 +322,7 @@ def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
                 "exchange_timestamp": "1750000002000000000",
                 "last_traded_price": "12678",
             })
+            collector.stop_event.set()
 
         def close(self):
             return None
