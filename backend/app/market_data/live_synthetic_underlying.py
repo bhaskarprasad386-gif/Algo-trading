@@ -10,7 +10,9 @@ from typing import Any, Callable
 from app.algo.auth import AngelOneAuth
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.live_synthetic_atm import LiveSyntheticAtmTracker
-from app.market_data.websocket import MarketDataWebSocket\n\nBSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
+from app.market_data.websocket import MarketDataWebSocket
+
+BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 
 
 class LiveSyntheticUnderlyingFeed:
@@ -40,6 +42,7 @@ class LiveSyntheticUnderlyingFeed:
         self.index_symbols = frozenset(str(symbol).strip().upper() for symbol in index_symbols if str(symbol).strip())
         self.stop_event = Event()
         self._socket: MarketDataWebSocket | None = None
+        self._sockets: list[MarketDataWebSocket] = []
 
     @staticmethod
     def _price(message: dict[str, Any]) -> float | None:
@@ -72,37 +75,54 @@ class LiveSyntheticUnderlyingFeed:
                 result[symbol] = token
                 continue
             if symbol in self.index_symbols:
-                exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS else "NSE"\n                result[symbol] = self.instrument_master.resolve_index_token(symbol, exchange)
+                exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS else "NSE"
+                result[symbol] = self.instrument_master.resolve_index_token(symbol, exchange)
             else:
                 instrument = self.instrument_master.resolve_cash_instrument(symbol, "NSE")
                 result[symbol] = str(instrument["token"])
         return result
 
+    def _exchange_type(self, symbol: str) -> int:
+        return 4 if symbol in BSE_INDEX_SYMBOLS and symbol in self.index_symbols else 1
+
+    def _subscription_groups(self, tokens: dict[str, str]) -> dict[int, list[str]]:
+        groups: dict[int, list[str]] = {}
+        for symbol, token in tokens.items():
+            groups.setdefault(self._exchange_type(symbol), []).append(token)
+        return groups
+
     def run_forever(self) -> None:
-        token_to_symbol = {token: symbol for symbol, token in self._tokens().items()}
+        tokens = self._tokens()
+        token_to_symbol = {token: symbol for symbol, token in tokens.items()}
         queue: Queue[dict[str, Any]] = Queue()
         self.auth.login()
-        socket = MarketDataWebSocket(auth=self.auth)
-        self._socket = socket
+        sockets: list[MarketDataWebSocket] = []
+        self._sockets = sockets
+        self._socket = None
 
         def receive(message: Any) -> None:
             if isinstance(message, dict):
                 queue.put(message)
 
-        Thread(
-            target=socket.connect,
-            kwargs={
-                "exchange_type": 1,
-                "tokens": list(token_to_symbol),
-                "mode": 3,
-                "correlation_id": "synthetic-atm-underlyings",
-                "on_data": receive,
-                "reconnect_attempts": 3,
-                "reconnect_delay_seconds": 2,
-            },
-            daemon=True,
-            name="synthetic-atm-underlyings",
-        ).start()
+        for exchange_type, grouped_tokens in sorted(self._subscription_groups(tokens).items()):
+            socket = MarketDataWebSocket(auth=self.auth)
+            sockets.append(socket)
+            if self._socket is None:
+                self._socket = socket
+            Thread(
+                target=socket.connect,
+                kwargs={
+                    "exchange_type": exchange_type,
+                    "tokens": list(dict.fromkeys(grouped_tokens)),
+                    "mode": 3,
+                    "correlation_id": f"synthetic-atm-underlyings-{exchange_type}",
+                    "on_data": receive,
+                    "reconnect_attempts": 3,
+                    "reconnect_delay_seconds": 2,
+                },
+                daemon=True,
+                name=f"synthetic-atm-underlyings-{exchange_type}",
+            ).start()
 
         while not self.stop_event.is_set():
             try:
@@ -120,9 +140,10 @@ class LiveSyntheticUnderlyingFeed:
 
     def stop(self) -> None:
         self.stop_event.set()
-        if self._socket is not None:
-            self._socket.close()
-            self._socket = None
+        for socket in self._sockets:
+            socket.close()
+        self._sockets = []
+        self._socket = None
 
 
 __all__ = ["LiveSyntheticUnderlyingFeed"]
