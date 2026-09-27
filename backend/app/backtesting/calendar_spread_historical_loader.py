@@ -118,7 +118,7 @@ def _pair(near_records: Iterator[HistoricalRecord], far_records: Iterator[Histor
             continue
         timestamp_ns = max(near_row.timestamp_ns, far_row.timestamp_ns)
         local = _datetime_from_ns(timestamp_ns)
-        if local.weekday() >= 5 or (near.exchange.upper() == "MCX" and not (time(9, 0) <= local.time() <= time(23, 30))) or (near.exchange.upper() != "MCX" and not (time(9, 15) <= local.time() <= time(15, 30)):
+        if local.weekday() >= 5 or (near.exchange.upper() == "MCX" and not (time(9, 0) <= local.time() <= time(23, 30))) or (near.exchange.upper() != "MCX" and not (time(9, 15) <= local.time() <= time(15, 30))):
             if near_row.timestamp_ns <= timestamp_ns:
                 near_row = next(near_records, None)
             if far_row.timestamp_ns <= timestamp_ns:
