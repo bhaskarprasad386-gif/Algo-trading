@@ -109,3 +109,19 @@ def test_box_spread_auto_exit_uses_current_executable_quotes():
     assert req.low_call_price==100 and req.low_put_price==110
     assert req.high_call_price==91 and req.high_put_price==121
     assert _exit_cashflow(p,req)==-2
+
+
+def test_box_spread_entry_rejects_expired_contract_and_excess_quantity():
+    from app.execution.box_spread_paper_routes import Entry, _validate
+    from fastapi import HTTPException
+    base=dict(underlying="SENSEX",instrument_class="INDEX",low_strike=80000,high_strike=80100,direction="LONG",lot_size=20,lots=1,low_call_price=101,low_put_price=111,high_call_price=90,high_put_price=120)
+    try:
+        _validate(Entry(expiry="20200101",**base))
+        assert False
+    except HTTPException as exc:
+        assert exc.status_code==422 and "expiry" in exc.detail
+    try:
+        _validate(Entry(expiry="20990101",lot_size=1,lots=5001,**{k:v for k,v in base.items() if k!="lot_size" and k!="lots"}))
+        assert False
+    except HTTPException as exc:
+        assert exc.status_code==422 and "risk limit" in exc.detail
