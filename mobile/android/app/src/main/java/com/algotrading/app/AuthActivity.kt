@@ -78,7 +78,17 @@ class AuthActivity : AppCompatActivity() {
                 }
             }
         } catch (error: Exception) {
-            result.text = "Google login cancelled or failed."
+            val statusCode = (error as? com.google.android.gms.common.api.ApiException)?.statusCode
+            val statusText = when (statusCode) {
+                10 -> "DEVELOPER_ERROR"
+                12501 -> "SIGN_IN_CANCELLED"
+                else -> null
+            }
+            result.text = if (statusCode != null) {
+                "Google Sign-In failed: " + (statusText ?: "STATUS_" + statusCode) + " (" + statusCode + ")"
+            } else {
+                "Google Sign-In failed: " + (error.message ?: error.javaClass.simpleName)
+            }
         }
     }
 
