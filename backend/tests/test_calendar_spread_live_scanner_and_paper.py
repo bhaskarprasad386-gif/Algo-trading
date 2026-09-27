@@ -10,7 +10,7 @@ def test_calendar_paper_pnl_formula():
  from app.execution.calendar_spread_paper_routes import Entry,Exit
  # LONG near / SHORT far: near +2, far +3 = +5 per unit
  near_entry,far_entry=100,110; near_exit,far_exit=102,107; lot=75; lots=2
- assert ((near_exit-near_entry)+(far_entry-far_exit))*lot*lots==375
+ assert ((near_exit-near_entry)+(far_entry-far_exit))*lot*lots==750
 
 
 def test_calendar_live_scanner_snapshot_keeps_underlying_and_exchange():
