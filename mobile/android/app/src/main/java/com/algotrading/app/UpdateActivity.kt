@@ -36,7 +36,7 @@ class UpdateActivity : AppCompatActivity() {
         try {
             val remote = ApiService.retrofitService.appUpdate()
             val info = packageManager.getPackageInfo(packageName, 0)
-            val currentCode = info.longVersionCode
+            val currentCode = info.versionCode.toLong()
             withContext(Dispatchers.Main) {
                 notes.text = remote.release_notes.ifBlank { "No release notes." }
                 when {
