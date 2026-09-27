@@ -10,9 +10,9 @@ def _master():
     ]
     for i, strike in enumerate(range(50, 151, 5)):
         items.extend([
-            {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":f"c{i}","name":"NIFTY",
+            {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":f"c{strike}","name":"NIFTY",
              "symbol":f"NIFTY30SEP26{strike}CE","expiry":"30SEP2026","strike":str(strike * 100),"lotsize":"50"},
-            {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":f"p{i}","name":"NIFTY",
+            {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":f"p{strike}","name":"NIFTY",
              "symbol":f"NIFTY30SEP26{strike}PE","expiry":"30SEP2026","strike":str(strike * 100),"lotsize":"50"},
         ])
     master.instruments = items
