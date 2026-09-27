@@ -13,7 +13,7 @@ from time import time_ns
 from typing import Any
 
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
-from app.backtesting.high_resolution import EVENT_TIMEFRAME
+from app.backtesting.high_resolution import EVENT_TIMEFRAME, is_event_timeframe
 
 
 class LiveMarketDataRecorder:
@@ -112,7 +112,8 @@ class LiveMarketDataRecorder:
                 return 0
             batch = tuple(self._pending)
             self._pending.clear()
-        return self.catalog.ingest_events(batch, ingested_at_ns=received_ns)
+        ingest = self.catalog.ingest_events if is_event_timeframe(self.timeframe) else self.catalog.ingest
+        return ingest(batch, ingested_at_ns=received_ns)
 
     def flush(self) -> int:
         """Durably persist all currently buffered ticks and clear the buffer."""
