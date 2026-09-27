@@ -27,7 +27,30 @@ class LiveBoxSpreadRunner:
     def run_forever(self):
         self.master.download()
         symbols=tuple(dict.fromkeys(t.underlying for t in self.targets))
-        strikes=concrete_strikes_from_master(self.master.instruments,symbols=symbols,expiry=None)
+        from datetime import datetime
+        today = datetime.now().date()
+        strikes = {}
+        for target in self.targets:
+            wanted = target.expiry
+            if wanted is None:
+                future_type = "FUTSTK" if target.instrument_class == "STOCK" else "FUTIDX"
+                expiries = []
+                for item in self.master.instruments:
+                    if str(item.get("exch_seg","")).upper() != "NFO" or str(item.get("name","")).strip().upper() != target.underlying:
+                        continue
+                    if str(item.get("instrumenttype","")).upper() != future_type:
+                        continue
+                    text = str(item.get("expiry","")).strip().upper()
+                    for fmt in ("%d%b%Y","%d%b%y","%Y-%m-%d"):
+                        try:
+                            value = datetime.strptime(text, fmt).date()
+                            if value >= today: expiries.append((value, text))
+                            break
+                        except ValueError:
+                            continue
+                if expiries: wanted = min(expiries)[1]
+            if wanted:
+                strikes.update(concrete_strikes_from_master(self.master.instruments,symbols=(target.underlying,),expiry=wanted))
         self.tracker=LiveSyntheticAtmTracker(strikes_by_symbol=strikes)
         index_symbols=frozenset(t.underlying for t in self.targets if t.instrument_class=="INDEX")
         self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,index_symbols=index_symbols)
