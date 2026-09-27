@@ -10,7 +10,7 @@ from app.scanner.cash_future_history import CashFutureHistoryPoint
 
 
 def _stored_identity_matches(metadata:Mapping[str,Any],config:CashFutureStrategyConfig)->None:
-    expected={"execution_model":config.execution_model,"charges_per_trade":config.charges_per_trade,"funding_cost_per_trade":config.funding_cost_per_trade,"start_date":config.start_date.isoformat() if config.start_date else None,"end_date":config.end_date.isoformat() if config.end_date else None,"contract_month":config.contract_month,"history_window":config.history_window,"checkpoint_interval":config.checkpoint_interval,"cash_side":config.cash_side,"future_side":config.future_side,"slippage_per_share":config.slippage_per_share}
+    expected={"execution_model":config.execution_model,"holding_mode":config.holding_mode,"charges_per_trade":config.charges_per_trade,"funding_cost_per_trade":config.funding_cost_per_trade,"start_date":config.start_date.isoformat() if config.start_date else None,"end_date":config.end_date.isoformat() if config.end_date else None,"contract_month":config.contract_month,"history_window":config.history_window,"checkpoint_interval":config.checkpoint_interval,"cash_side":config.cash_side,"future_side":config.future_side,"slippage_per_share":config.slippage_per_share}
     stored=metadata.get("metadata") or {}
     mismatches={k:(stored.get(k),v) for k,v in expected.items() if stored.get(k)!=v}
     if mismatches: raise ValueError(f"unsafe Cash-Future resume: execution configuration mismatch: {mismatches}")
