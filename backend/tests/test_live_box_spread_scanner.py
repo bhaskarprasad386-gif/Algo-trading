@@ -2,7 +2,7 @@ from app.scanner.live_box_spread_scanner import LiveBoxSpreadScanner
 
 
 def test_box_scanner_does_not_mix_call_and_put_expiries():
-    scanner = LiveBoxSpreadScanner(atm_provider=lambda _s, _t: 100)
+    scanner = LiveBoxSpreadScanner(atm_provider=lambda _s, _t: 100, config_provider=lambda _s: __import__("app.scanner.box_spread", fromlist=["BoxSpreadScanConfig"]).BoxSpreadScanConfig(allowed_stock_symbols=frozenset({"ABC"})), policy=__import__("app.backtesting.arbitrage_scan_policy", fromlist=["ScanPolicy"]).ScanPolicy(stock_box_distances=(1,)))
     common = {
         "underlying": "ABC",
         "instrument_class": "STOCK",
