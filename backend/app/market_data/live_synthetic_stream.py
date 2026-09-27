@@ -196,9 +196,9 @@ class LiveSyntheticOptionFutureRecorder:
         latest: dict[tuple[int, str], tuple[int, dict[str, Any]]] = {}
         written = 0
         try:
-            while not self.stop_event.is_set() and self.market_open():
+            while self.market_open() and (not self.stop_event.is_set() or not queue.empty()):
                 deadline = monotonic() + self.poll_seconds
-                while not self.stop_event.is_set() and monotonic() < deadline:
+                while monotonic() < deadline and (not self.stop_event.is_set() or not queue.empty()):
                     try:
                         exchange_type, raw = queue.get(
                             timeout=max(0.01, deadline - monotonic())
