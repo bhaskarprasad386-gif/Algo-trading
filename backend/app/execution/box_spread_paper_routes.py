@@ -29,6 +29,16 @@ def _validate(req):
  if req.instrument_class.upper() not in {"STOCK","INDEX"}:raise HTTPException(422,detail="invalid instrument class")
  if req.high_strike<=req.low_strike:raise HTTPException(422,detail="high strike must exceed low strike")
 
+def _entry_cashflow(req:Entry)->float:
+ low=req.low_call_price+req.low_put_price
+ high=req.high_call_price+req.high_put_price
+ return (high-low) if req.direction=="LONG" else (low-high)
+
+def _exit_cashflow(p,req:Exit)->float:
+ low=req.low_call_price+req.low_put_price
+ high=req.high_call_price+req.high_put_price
+ return (low-high) if p.direction=="LONG" else (high-low)
+
 @router.post("/from-scanner")
 def from_scanner(req:ScannerEntry,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
  _validate(req)
@@ -40,11 +50,10 @@ def _entry(req,user,db):
  a=_acct(db,user)
  if db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first():raise HTTPException(409,detail="box spread paper position already open")
  q=req.lot_size*req.lots
- # Reserve the maximum cash debit for the four executable legs; no live broker order is sent.
- notional=(req.low_call_price+req.low_put_price+req.high_call_price+req.high_put_price)*q
- if a.virtual_balance<notional:raise HTTPException(400,detail="insufficient paper balance")
+ cashflow=_entry_cashflow(req)*q
+ if cashflow<0 and a.virtual_balance < -cashflow:raise HTTPException(400,detail="insufficient paper balance")
  p=LiveBoxSpreadPaperPosition(user_id=user,underlying=req.underlying.upper(),instrument_class=req.instrument_class.upper(),expiry=req.expiry,low_strike=req.low_strike,high_strike=req.high_strike,direction=req.direction,lot_size=req.lot_size,lots=req.lots,low_call_entry=req.low_call_price,low_put_entry=req.low_put_price,high_call_entry=req.high_call_price,high_put_entry=req.high_put_price)
- db.add(p);a.virtual_balance=round(a.virtual_balance-notional,8);db.commit()
+ db.add(p);a.virtual_balance=round(a.virtual_balance+cashflow,8);db.commit()
  return {"status":"success","mode":"paper","position_id":p.id,"position":p.__dict__|{"_sa_instance_state":None},"virtual_balance":a.virtual_balance}
 
 @router.post("/entry")
@@ -56,12 +65,10 @@ def exit(req:Exit,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
  p=db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first()
  if not p:raise HTTPException(404,detail="no active box spread paper position")
  a=_acct(db,user);q=p.lot_size*p.lots
- if p.direction=="LONG":
-  pnl=((p.low_call_entry-req.low_call_price)+(p.low_put_entry-req.low_put_price)+(req.high_call_price-p.high_call_entry)+(req.high_put_price-p.high_put_entry))*q
- else:
-  pnl=((req.low_call_price-p.low_call_entry)+(req.low_put_price-p.low_put_entry)+(p.high_call_entry-req.high_call_price)+(p.high_put_entry-req.high_put_price))*q
- entry_notional=(p.low_call_entry+p.low_put_entry+p.high_call_entry+p.high_put_entry)*q
- a.virtual_balance=round(a.virtual_balance+entry_notional+pnl,8);a.realized_pnl=round(a.realized_pnl+pnl,8);p.realized_pnl=pnl;p.is_open=0;db.commit()
+ entry_cashflow=(p.high_call_entry+p.high_put_entry-p.low_call_entry-p.low_put_entry) if p.direction=="LONG" else (p.low_call_entry+p.low_put_entry-p.high_call_entry-p.high_put_entry)
+ close_cashflow=_exit_cashflow(p,req)
+ pnl=(entry_cashflow+close_cashflow)*q
+ a.virtual_balance=round(a.virtual_balance+close_cashflow*q,8);a.realized_pnl=round(a.realized_pnl+pnl,8);p.realized_pnl=pnl;p.is_open=0;db.commit()
  return {"status":"success","mode":"paper","position_id":p.id,"gross_pnl":round(pnl,8),"realized_pnl":a.realized_pnl,"virtual_balance":a.virtual_balance}
 
 @router.get("/position")
