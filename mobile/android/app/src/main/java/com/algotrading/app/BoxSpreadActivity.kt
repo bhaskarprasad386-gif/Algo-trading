@@ -83,6 +83,11 @@ class BoxSpreadActivity : AppCompatActivity() {
                             .append(" • ").append(j["created_at"] ?: "").append("\n")
                     }
                 }
+            }
         } catch(e: Exception) { withContext(Dispatchers.Main) { tvSummary.text="LOAD FAILED\n"+(e.message ?: "API error") } }
+    }
+    override fun onDestroy() {
+        refreshHandler.removeCallbacks(refreshTask)
+        super.onDestroy()
     }
 }
