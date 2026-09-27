@@ -56,3 +56,10 @@ def test_calendar_live_timestamp_and_expiry_normalization():
 
 def test_calendar_live_timestamp_normalization_accepts_nanoseconds():
     assert _timestamp_ns({"exchange_timestamp": 1727000000000000000}) == 1727000000000000000
+
+
+def test_calendar_live_payload_source_timestamp_is_second_aligned():
+    second = 1727000000123456789 // 1_000_000_000 * 1_000_000_000
+    payload = {"source_timestamp_ns": second}
+    assert payload["source_timestamp_ns"] == second
+    assert payload["source_timestamp_ns"] % 1_000_000_000 == 0
