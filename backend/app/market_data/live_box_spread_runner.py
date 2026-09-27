@@ -61,21 +61,27 @@ class LiveBoxSpreadRunner:
                     sleep(.25); continue
                 subs=[]
                 for target in self.targets:
+                    wanted = target.expiry
+                    if wanted is None:
+                        future_type = "FUTSTK" if target.instrument_class == "STOCK" else "FUTIDX"
+                        expiries = []
+                        for item in self.master.instruments:
+                            if str(item.get("exch_seg","")).upper() != "NFO" or str(item.get("name","")).strip().upper() != target.underlying:
+                                continue
+                            if str(item.get("instrumenttype","")).upper() != future_type:
+                                continue
+                            text = str(item.get("expiry","")).strip().upper()
+                            for fmt in ("%d%b%Y","%d%b%y","%Y-%m-%d"):
+                                try:
+                                    value = datetime.strptime(text, fmt).date()
+                                    if value >= datetime.now().date(): expiries.append((value, text))
+                                    break
+                                except ValueError:
+                                    continue
+                        if expiries:
+                            wanted = min(expiries)[1]
                     sel=select_box_contracts(self.master,underlying=target.underlying,instrument_class=target.instrument_class,
-                        atm_strike=self.tracker.atm(target.underlying,time_ns()),expiry=(
-                        target.expiry or next(
-                            (s.expiry for s in [select_box_contracts(
-                                self.master,
-                                underlying=target.underlying,
-                                instrument_class=target.instrument_class,
-                                atm_strike=self.tracker.atm(target.underlying,time_ns()),
-                                expiry=None,
-                                allowed_stock_symbols=self.allowed_stock_symbols,
-                                policy=self.policy,
-                            )]),
-                            None,
-                        )
-                    ),
+                        atm_strike=self.tracker.atm(target.underlying,time_ns()),expiry=wanted,
                         allowed_stock_symbols=self.allowed_stock_symbols,policy=self.policy)
                     subs.extend(sel.subscriptions)
                 scanner=LiveBoxSpreadScanner(
