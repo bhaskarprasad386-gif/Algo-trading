@@ -4,6 +4,12 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     app_name: str = "Algo Trading Platform"
+    APP_UPDATE_VERSION_CODE: int = 1
+    APP_UPDATE_VERSION_NAME: str = "1.0"
+    APP_UPDATE_NOTES: str = "Initial release"
+    APP_UPDATE_APK_URL: str = ""
+    APP_UPDATE_SHA256: str = ""
+    APP_UPDATE_MANDATORY: bool = False
     environment: str = "development"
     debug: bool = False
     SECRET_KEY: str = ""
