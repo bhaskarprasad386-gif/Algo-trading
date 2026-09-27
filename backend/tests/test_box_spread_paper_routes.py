@@ -196,3 +196,25 @@ def test_box_spread_journal_rejects_invalid_limit():
         assert False
     except HTTPException as exc:
         assert exc.status_code==422
+
+
+def test_box_spread_history_is_user_scoped_and_returns_lifecycle_fields():
+    from app.execution import box_spread_paper_routes as routes
+    from types import SimpleNamespace
+    p=SimpleNamespace(id=9,underlying="SENSEX",instrument_class="INDEX",expiry="20990101",
+        low_strike=80000.0,high_strike=80100.0,direction="LONG",lot_size=20,lots=2,
+        low_call_entry=101.0,low_put_entry=111.0,high_call_entry=90.0,high_put_entry=120.0,
+        realized_pnl=760.0,is_open=0,created_at="t1",closed_at="t2")
+    class Query:
+        def filter(self,*args): return self
+        def order_by(self,*args): return self
+        def limit(self,n): return self
+        def all(self): return [p]
+    class DB:
+        def query(self,model): return Query()
+    result=routes.history(limit=10,user=7,db=DB())
+    item=result["items"][0]
+    assert item["quantity"]==40
+    assert item["realized_pnl"]==760.0
+    assert item["is_open"] is False
+    assert item["created_at"]=="t1" and item["closed_at"]=="t2"
