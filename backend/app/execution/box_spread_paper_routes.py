@@ -59,7 +59,7 @@ def _audit(db,user,event,**fields):
     db.add(SystemLog(level="INFO",module="box_spread_paper_cycle",message=f"user={user} event={event}",details=json.dumps(payload,sort_keys=True,default=str)))
 
 def _acct(db,user):
- a=db.query(TradingAccount).filter(TradingAccount.user_id==user).first()
+ a=db.query(TradingAccount).filter_by(user_id=user).first()
  if not a or not a.is_active or a.mode.upper()!="PAPER":raise HTTPException(409,detail="paper account unavailable")
  return a
 
@@ -75,18 +75,18 @@ def _validate(req):
 
 def _entry_cashflow(req:Entry)->float:
     if req.direction=="LONG":
-        return req.high_call_price+req.low_put_price-req.low_call_price-req.high_put_price
-    return req.low_call_price+req.high_put_price-req.high_call_price-req.low_put_price
+        return req.high_call_price+req.high_put_price-req.low_call_price-req.low_put_price
+    return req.low_call_price+req.low_put_price-req.high_call_price-req.high_put_price
 
 def _exit_cashflow(p,req:Exit)->float:
     if p.direction=="LONG":
-        return req.low_call_price-req.low_put_price-req.high_call_price+req.high_put_price
-    return req.low_put_price-req.low_call_price+req.high_call_price-req.high_put_price
+        return req.low_call_price+req.low_put_price-req.high_call_price-req.high_put_price
+    return req.high_call_price+req.high_put_price-req.low_call_price-req.low_put_price
 
 def _position_entry_cashflow(p):
     if p.direction=="LONG":
-        return p.high_call_entry+p.low_put_entry-p.low_call_entry-p.high_put_entry
-    return p.low_call_entry+p.high_put_entry-p.high_call_entry-p.low_put_entry
+        return p.high_call_entry+p.high_put_entry-p.low_call_entry-p.low_put_entry
+    return p.low_call_entry+p.low_put_entry-p.high_call_entry-p.high_put_entry
 
 def _scanner_entry_request(match, lots=1):
     return ScannerEntry(underlying=match.low.underlying,instrument_class=match.low.instrument_class,expiry=str(match.low.expiry),low_strike=match.low.strike,high_strike=match.high.strike,direction=match.direction,lot_size=match.low.lot_size,lots=lots,low_call_price=match.low.call_ask if match.direction=="LONG" else match.low.call_bid,low_put_price=match.low.put_ask if match.direction=="LONG" else match.low.put_bid,high_call_price=match.high.call_bid if match.direction=="LONG" else match.high.call_ask,high_put_price=match.high.put_bid if match.direction=="LONG" else match.high.put_ask,executable_edge=match.executable_edge,edge_per_lot=match.edge_per_lot,liquidity_qty=min(match.low.volume,match.high.volume))
