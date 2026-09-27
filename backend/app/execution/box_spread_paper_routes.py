@@ -3,7 +3,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.execution.paper_routes import current_user_id
-from app.models import TradingAccount
+from app.models import TradingAccount, SystemLog
 from app.models.live_box_spread_paper_position import LiveBoxSpreadPaperPosition
 from app.risk.engine import RiskLimits
 
@@ -35,6 +35,17 @@ def update_auto_cycle_settings(req:AutoCycleSettings,user:int=Depends(current_us
  a.box_spread_auto_lots=req.lots
  db.commit()
  return {"status":"success","mode":"paper","lots":a.box_spread_auto_lots}
+
+
+@router.get("/journal")
+def journal(limit:int=50,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
+ if limit < 1 or limit > 200: raise HTTPException(422,detail="limit must be between 1 and 200")
+ rows=(db.query(SystemLog)
+       .filter(SystemLog.module=="box_spread_paper_cycle")
+       .filter(SystemLog.message.like(f"user={user} %"))
+       .order_by(SystemLog.created_at.desc())
+       .limit(limit).all())
+ return {"status":"success","mode":"paper","count":len(rows),"items":[{"id":r.id,"created_at":r.created_at,"message":r.message,"details":r.details} for r in rows]}
 
 def _acct(db,user):
  a=db.query(TradingAccount).filter(TradingAccount.user_id==user).first()
