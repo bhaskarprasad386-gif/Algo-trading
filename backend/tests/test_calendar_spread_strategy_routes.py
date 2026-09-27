@@ -245,8 +245,8 @@ def test_calendar_spread_historical_replay_respects_exact_time_window(tmp_path, 
     ))
 
     assert result["count"] == 2
-    assert result["series"][0]["timestamp"].startswith("2026-09-24T09:15:01")
-    assert result["series"][-1]["timestamp"].startswith("2026-09-24T09:15:02")
+    assert result["series"][0]["timestamp"].startswith("2026-09-24T14:45:01+05:30")
+    assert result["series"][-1]["timestamp"].startswith("2026-09-24T14:45:02+05:30")
 
 
 def test_calendar_spread_historical_strategy_run_executes_catalog_data(tmp_path, monkeypatch):
