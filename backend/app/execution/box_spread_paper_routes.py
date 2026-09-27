@@ -97,6 +97,21 @@ def exit_from_scanner(user:int=Depends(current_user_id),db:Session=Depends(get_d
  if match is None:raise HTTPException(409,detail="live scanner quote unavailable for open box position")
  return exit(_scanner_exit_request(p,match),user,db)
 
+@router.post("/cycle")
+def cycle(lots:int=1,min_pnl:float=0.0,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
+ if lots<=0:raise HTTPException(422,detail="lots must be positive")
+ if min_pnl<0:raise HTTPException(422,detail="min_pnl must be non-negative")
+ p=db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first()
+ if p:
+  match=_current_scanner_match(p)
+  if match is None:return {"status":"hold","mode":"paper","reason":"live scanner quote unavailable","position_id":p.id}
+  req=_scanner_exit_request(p,match);q=p.lot_size*p.lots
+  entry_cashflow=(p.high_call_entry+p.high_put_entry-p.low_call_entry-p.low_put_entry) if p.direction=="LONG" else (p.low_call_entry+p.low_put_entry-p.high_call_entry-p.high_put_entry)
+  pnl=(entry_cashflow+_exit_cashflow(p,req))*q
+  if pnl<min_pnl:return {"status":"hold","mode":"paper","position_id":p.id,"gross_pnl":round(pnl,8),"min_pnl":min_pnl}
+  return exit(req,user,db)
+ return auto_entry(lots=lots,user=user,db=db)
+
 @router.post("/auto-exit")
 def auto_exit(min_pnl:float=0.0,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
  if min_pnl<0:raise HTTPException(422,detail="min_pnl must be non-negative")
