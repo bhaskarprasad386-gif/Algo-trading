@@ -29,7 +29,7 @@ android {
         throw new GradleException("emulator-only backend host 10.0.2.2 is not allowed")
     }
 
-    if (project.hasProperty("androidKeystorePath")) {
+    if (project.hasProperty("androidKeystorePath") && project.hasProperty("androidKeystorePassword") && project.hasProperty("androidKeyAlias") && project.hasProperty("androidKeyPassword")) {
         signingConfigs {
             release {
                 storeFile file(project.property("androidKeystorePath"))
