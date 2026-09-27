@@ -121,13 +121,13 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
             on_data({
                 "token": "101",
                 "symbol": "NIFTY30SEP26CE",
-                "exchange_timestamp": "1000000000",
+                "exchange_timestamp": "1750000000000000000",
                 "last_traded_price": "12345",
             })
             on_data({
                 "token": "101",
                 "symbol": "NIFTY30SEP26CE",
-                "exchange_timestamp": "2000000000",
+                "exchange_timestamp": "1750000001000000000",
                 "last_traded_price": "12355",
             })
 
@@ -142,7 +142,7 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
     )
 
     assert collector._run_session() == 2
-    assert observed == [1_000_000_000]
+    assert observed == [1_750_000_000_000_000_000]
 
     from app.backtesting.historical_catalog import HistoricalCatalog
 
@@ -156,9 +156,9 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
     finally:
         catalog.close()
 
-    assert [record.timestamp_ns for record in records] == [1_000_000_000, 2_000_000_000]
+    assert [record.timestamp_ns for record in records] == [1_750_000_000_000_000_000, 1_750_000_001_000_000_000]
     assert [record.payload["ltp"] for record in records] == [123.45, 123.55]
     assert [record.payload["source_timestamp_ns"] for record in records] == [
-        1_000_000_000,
-        2_000_000_000,
+        1_750_000_000_000_000_000,
+        1_750_000_001_000_000_000,
     ]
