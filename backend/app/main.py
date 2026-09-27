@@ -16,7 +16,7 @@ from app.core.logger import app_logger
 from app.core.exceptions import TradingAppException, trading_exception_handler, global_exception_handler
 from app.core.database import engine, Base, SessionLocal, check_database
 from app.core.schema_migrations import run_schema_migrations
-from app.models import User, Instrument, Order, Session, Position, SystemLog
+from app.models import User, Instrument, Order, Session, Position, SystemLog, TradingAccount
 from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
 from app.models.live_calendar_spread_paper_position import LiveCalendarSpreadPaperPosition
 from app.auth.routes import router as auth_router
@@ -41,7 +41,7 @@ from app.scanner.calendar_spread_routes import router as calendar_spread_scanner
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread
 from app.execution.calendar_spread_paper_routes import router as calendar_spread_paper_router
-from app.execution.box_spread_paper_routes import router as box_spread_paper_router
+from app.execution.box_spread_paper_routes import router as box_spread_paper_router, cycle as box_spread_paper_cycle
 from app.execution.paper_routes import router as paper_execution_router
 from app.execution.live_paper_routes import router as live_paper_execution_router
 from app.scanner.cash_future_collector import CashFutureHistoryCollector
@@ -76,7 +76,7 @@ configure_live_box_spread(lambda: live_box_spread_latest_results)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task
+    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _paper_box_spread_cycle_task
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     # Recovery is intentionally deferred until application startup so the schema
     # migration module has no dependency on scanner/backtest job modules.
@@ -94,10 +94,12 @@ async def lifespan(app: FastAPI):
         _live_synthetic_task = asyncio.create_task(_live_synthetic_loop())
     if settings.LIVE_BOX_SPREAD_DATA_ENABLED and _live_box_spread_task is None:
         _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
+    if settings.PAPER_BOX_SPREAD_AUTO_CYCLE_ENABLED and _paper_box_spread_cycle_task is None:
+        _paper_box_spread_cycle_task = asyncio.create_task(_paper_box_spread_cycle_loop())
     try:
         yield
     finally:
-        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task):
+        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _paper_box_spread_cycle_task):
             if task is not None:
                 task.cancel()
         for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task):
@@ -112,6 +114,7 @@ async def lifespan(app: FastAPI):
         _live_calendar_spread_task = None
         _live_synthetic_task = None
         _live_box_spread_task = None
+        _paper_box_spread_cycle_task = None
         backtest_download_manager.close()
         backtest_status_store.close()
         universal_result_ledger.close()
@@ -290,6 +293,7 @@ _live_calendar_spread_task: asyncio.Task | None = None
 IST = ZoneInfo("Asia/Kolkata")
 _live_synthetic_task: asyncio.Task | None = None
 _live_box_spread_task: asyncio.Task | None = None
+_paper_box_spread_cycle_task: asyncio.Task | None = None
 MARKET_OPEN = time(9, 15)
 MARKET_CLOSE = time(15, 30)
 
@@ -415,6 +419,48 @@ async def _live_synthetic_loop() -> None:
 def _update_live_synthetic_results(results: tuple) -> None:
     global live_synthetic_latest_results
     live_synthetic_latest_results = tuple(results)
+
+
+def _run_box_spread_paper_cycle_once() -> int:
+    now = datetime.now(IST)
+    if not (MARKET_OPEN <= now.time() <= MARKET_CLOSE):
+        return 0
+    db = SessionLocal()
+    try:
+        accounts = db.query(TradingAccount).filter(
+            TradingAccount.is_active.is_(True),
+            TradingAccount.mode == "PAPER",
+        ).all()
+        processed = 0
+        for account in accounts:
+            try:
+                result = box_spread_paper_cycle(
+                    lots=1,
+                    min_pnl=settings.PAPER_BOX_SPREAD_AUTO_CYCLE_MIN_PNL,
+                    user=account.user_id,
+                    db=db,
+                )
+                processed += 1
+                app_logger.debug("Box Spread paper cycle user=%s: %s", account.user_id, result.get("status", "unknown"))
+            except Exception as exc:
+                db.rollback()
+                app_logger.error("Box Spread paper cycle failed for user=%s: %s", account.user_id, exc)
+        return processed
+    finally:
+        db.close()
+
+
+async def _paper_box_spread_cycle_loop() -> None:
+    interval = max(1, settings.PAPER_BOX_SPREAD_AUTO_CYCLE_INTERVAL_SECONDS)
+    app_logger.info("Box Spread paper auto-cycle started: every %ss", interval)
+    while True:
+        try:
+            await asyncio.to_thread(_run_box_spread_paper_cycle_once)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            app_logger.error("Box Spread paper auto-cycle failed: %s", exc)
+        await asyncio.sleep(interval)
 
 
 async def _live_box_spread_loop() -> None:
