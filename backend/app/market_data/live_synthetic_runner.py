@@ -19,6 +19,7 @@ from app.market_data.instruments import InstrumentMaster
 from app.market_data.live_synthetic_stream import LiveSyntheticOptionFutureRecorder
 from app.market_data.synthetic_subscriptions import select_synthetic_contracts
 from app.market_data.live_synthetic_underlying import LiveSyntheticUnderlyingFeed
+from app.market_data.live_synthetic_atm import concrete_strikes_from_master
 from app.scanner.live_synthetic_pipeline import LiveSyntheticScanPipeline
 from app.scanner.live_synthetic_scanner import LiveSyntheticScanner
 from app.scanner.synthetic_cash_carry import SyntheticScanConfig
@@ -78,6 +79,23 @@ class LiveSyntheticRunner:
         self._recorder: LiveSyntheticOptionFutureRecorder | None = None
         self._refresh_requested = Event()
 
+
+    def concrete_atm_strikes(self) -> dict[str, tuple[float, ...]]:
+        """Return concrete option strikes from the selected target expiries."""
+        self.instrument_master.download()
+        result: dict[str, tuple[float, ...]] = {}
+        for target in self.targets:
+            expiry = target.expiry
+            if not expiry:
+                continue
+            result.update(
+                concrete_strikes_from_master(
+                    self.instrument_master.instruments,
+                    symbols=(target.underlying,),
+                    expiry=expiry,
+                )
+            )
+        return result
     def build_subscriptions(self) -> tuple:
         """Resolve concrete current/near contracts from the Angel One master."""
         self.instrument_master.download()
