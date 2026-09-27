@@ -160,6 +160,16 @@ def strategy_run_resume(run_id: str, request: StrategyRunRequest):
             data_source_fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": point_payload})
         points = _scale_points(points, request.cash_lots)
         ledger = BacktestLedger(settings.BACKTEST_LEDGER_DB)
+        if request.points is not None:
+            metadata = ledger.run_metadata(run_id) or {}
+            stored_fingerprint = metadata.get("data_source_fingerprint")
+            checkpoint = ledger.load_checkpoint(run_id)
+            if stored_fingerprint and checkpoint is not None:
+                checkpoint_time = datetime.fromtimestamp(checkpoint.timestamp_ns / 1_000_000_000)
+                prefix = [point.model_dump(mode="json") for point in request.points if point.timestamp <= checkpoint_time]
+                prefix_fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": prefix})
+                if prefix_fingerprint == stored_fingerprint:
+                    data_source_fingerprint = stored_fingerprint
         strategy_hash = _gap_threshold_implementation_hash() if request.strategy_id == "gap_threshold" else None
         strategy_config_hash = provenance_hash(_strategy_config_payload(request))
         config = CashFutureStrategyConfig(
