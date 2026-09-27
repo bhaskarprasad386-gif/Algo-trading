@@ -17,13 +17,14 @@ CashFutureStrategy = Callable[[CashFutureHistoryPoint, tuple[CashFutureHistoryPo
 
 @dataclass(frozen=True)
 class CashFutureStrategyConfig:
-    initial_capital: float=100_000_000.0; execution_model:str="gap"; charges_per_trade:float=0.0; funding_cost_per_trade:float=0.0; start_date:date|None=None; end_date:date|None=None; start_timestamp:datetime|None=None; end_timestamp:datetime|None=None; contract_month:str|None=None; history_window:int|None=None; checkpoint_interval:int|None=None; cash_side:str="BUY"; future_side:str="SELL"; slippage_per_share:float=0.0
+    initial_capital: float=100_000_000.0; execution_model:str="gap"; holding_mode:str="POSITIONAL"; charges_per_trade:float=0.0; funding_cost_per_trade:float=0.0; start_date:date|None=None; end_date:date|None=None; start_timestamp:datetime|None=None; end_timestamp:datetime|None=None; contract_month:str|None=None; history_window:int|None=None; checkpoint_interval:int|None=None; cash_side:str="BUY"; future_side:str="SELL"; slippage_per_share:float=0.0
     def __post_init__(self)->None:
         for value,name in ((self.initial_capital,"initial_capital"),(self.charges_per_trade,"charges_per_trade"),(self.funding_cost_per_trade,"funding_cost_per_trade"),(self.slippage_per_share,"slippage_per_share")):
             if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(float(value)): raise ValueError(f"{name} must be a finite number")
         if self.initial_capital<=0: raise ValueError("initial_capital must be positive")
         if self.charges_per_trade<0 or self.funding_cost_per_trade<0: raise ValueError("charges_per_trade and funding_cost_per_trade must be non-negative")
         if self.execution_model not in {"gap","bid_ask"}: raise ValueError("execution_model must be 'gap' or 'bid_ask'")
+        if self.holding_mode not in {"POSITIONAL"}: raise ValueError("holding_mode must be 'POSITIONAL'")
         if self.cash_side not in {"BUY","SELL"} or self.future_side not in {"BUY","SELL"} or self.cash_side==self.future_side: raise ValueError("cash_side and future_side must be opposite BUY/SELL sides")
         if self.slippage_per_share<0: raise ValueError("slippage_per_share must be non-negative")
         if self.start_date is not None and self.end_date is not None and self.end_date<self.start_date: raise ValueError("end_date cannot be before start_date")
@@ -81,7 +82,7 @@ def _trade_gross_profit(entry,exit_point,config)->float:
     return gross-config.slippage_per_share*entry.lot_size*2.0
 
 def _execution_metadata(config:CashFutureStrategyConfig)->dict[str,Any]:
-    return {"execution_model":config.execution_model,"charges_per_trade":config.charges_per_trade,"funding_cost_per_trade":config.funding_cost_per_trade,"start_date":config.start_date.isoformat() if config.start_date else None,"end_date":config.end_date.isoformat() if config.end_date else None,"start_timestamp":config.start_timestamp.isoformat() if config.start_timestamp else None,"end_timestamp":config.end_timestamp.isoformat() if config.end_timestamp else None,"contract_month":config.contract_month,"history_window":config.history_window,"checkpoint_interval":config.checkpoint_interval,"cash_side":config.cash_side,"future_side":config.future_side,"slippage_per_share":config.slippage_per_share}
+    return {"execution_model":config.execution_model,"holding_mode":config.holding_mode,"charges_per_trade":config.charges_per_trade,"funding_cost_per_trade":config.funding_cost_per_trade,"start_date":config.start_date.isoformat() if config.start_date else None,"end_date":config.end_date.isoformat() if config.end_date else None,"start_timestamp":config.start_timestamp.isoformat() if config.start_timestamp else None,"end_timestamp":config.end_timestamp.isoformat() if config.end_timestamp else None,"contract_month":config.contract_month,"history_window":config.history_window,"checkpoint_interval":config.checkpoint_interval,"cash_side":config.cash_side,"future_side":config.future_side,"slippage_per_share":config.slippage_per_share}
 
 def _persist(ledger,run_id,record_type,point,payload,pending=None):
     record=LedgerRecord(run_id,record_type,_timestamp_ns(point.timestamp),payload)
