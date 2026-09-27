@@ -12,6 +12,8 @@ def _base(ts, strike, typ, bid, ask):
 def test_live_synthetic_scanner_assembles_real_ce_pe_and_future():
     ts=1_000_000_000
     scanner=LiveSyntheticScanner(atm_provider=lambda _s,_t: 100.0)
+    scanner.observe(_base(ts, 100.0, "CE", 4.0, 5.0))
+    scanner.observe(_base(ts, 100.0, "PE", 4.0, 5.0))
     scanner.observe(_base(ts, 105.0, "CE", 4.0, 5.0))
     scanner.observe(_base(ts, 105.0, "PE", 4.0, 5.0))
     result=scanner.observe({
