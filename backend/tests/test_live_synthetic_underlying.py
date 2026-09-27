@@ -31,3 +31,26 @@ def test_underlying_feed_accepts_authoritative_index_token_without_cash_lookup()
         concrete_tokens={"NIFTY": "26000"},
     )
     assert feed._tokens() == {"NIFTY": "26000"}
+
+def test_index_token_resolution_uses_exact_master_entry():
+    master = InstrumentMaster()
+    master.instruments = [
+        {"exch_seg": "NSE", "symbol": "NIFTY", "token": "99926000"},
+    ]
+    master._loaded = True
+    assert master.resolve_index_token("NIFTY") == "99926000"
+
+
+def test_index_token_resolution_rejects_ambiguous_master_entries():
+    master = InstrumentMaster()
+    master.instruments = [
+        {"exch_seg": "NSE", "symbol": "NIFTY", "token": "99926000"},
+        {"exch_seg": "NSE", "symbol": "NIFTY", "token": "26000"},
+    ]
+    master._loaded = True
+    try:
+        master.resolve_index_token("NIFTY")
+    except LookupError as exc:
+        assert "expected exactly one index instrument" in str(exc)
+    else:
+        raise AssertionError("expected LookupError")
