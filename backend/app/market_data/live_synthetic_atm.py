@@ -10,6 +10,35 @@ from bisect import bisect_left
 from threading import Lock
 
 
+def concrete_strikes_from_master(
+    instruments: list[dict[str, object]],
+    *,
+    symbols: tuple[str, ...],
+    expiry: str,
+) -> dict[str, tuple[float, ...]]:
+    """Extract only concrete option strikes for the requested live expiry."""
+    requested = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
+    expiry_key = str(expiry).strip().upper()
+    result: dict[str, set[float]] = {symbol: set() for symbol in requested}
+    for item in instruments:
+        symbol = str(item.get("name") or "").strip().upper()
+        if symbol not in result:
+            continue
+        if str(item.get("exch_seg") or "").strip().upper() != "NFO":
+            continue
+        if str(item.get("expiry") or "").strip().upper() != expiry_key:
+            continue
+        if str(item.get("instrumenttype") or "").strip().upper() not in {"OPTSTK", "OPTIDX"}:
+            continue
+        try:
+            raw = float(item.get("strike"))
+        except (TypeError, ValueError):
+            continue
+        strike = raw / 100.0 if abs(raw) >= 10000 else raw
+        if strike > 0:
+            result[symbol].add(strike)
+    return {symbol: tuple(sorted(values)) for symbol, values in result.items() if values}
+
 class LiveSyntheticAtmTracker:
     """Keep the latest underlying price and nearest real chain strike."""
 
@@ -58,4 +87,4 @@ class LiveSyntheticAtmTracker:
         return lower if price - lower <= upper - price else upper
 
 
-__all__ = ["LiveSyntheticAtmTracker"]
+__all__ = ["LiveSyntheticAtmTracker", "concrete_strikes_from_master"]
