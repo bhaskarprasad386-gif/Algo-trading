@@ -20,6 +20,8 @@ class BoxSpreadActivity : AppCompatActivity() {
     private lateinit var etLots: EditText
     private lateinit var etMinPnl: EditText
     private lateinit var tvAction: TextView
+    private lateinit var tvCycleStatus: TextView
+    private lateinit var etAutoLots: EditText
     private val refreshHandler = Handler(Looper.getMainLooper())
     private val refreshTask = object : Runnable { override fun run() { loadOverview(); refreshHandler.postDelayed(this, 5000L) } }
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -28,14 +30,33 @@ class BoxSpreadActivity : AppCompatActivity() {
         tvSummary=findViewById(R.id.tvBoxSummary); tvOpportunities=findViewById(R.id.tvBoxOpportunities)
         tvPosition=findViewById(R.id.tvBoxPosition); tvJournal=findViewById(R.id.tvBoxJournal)
         etLots=findViewById(R.id.etBoxLots); etMinPnl=findViewById(R.id.etBoxMinPnl)
+        tvCycleStatus=findViewById(R.id.tvBoxCycleStatus); etAutoLots=findViewById(R.id.etBoxAutoLots)
         tvAction=TextView(this); tvAction.setTextColor(android.graphics.Color.WHITE)
         (tvJournal.parent as android.view.ViewGroup).addView(tvAction)
+        findViewById<Button>(R.id.btnBoxSaveAutoLots).setOnClickListener { saveAutoLots() }
         findViewById<Button>(R.id.btnBoxAutoEntry).setOnClickListener { runAction { ApiService.retrofitService.boxSpreadAutoEntry(lots()) } }
         findViewById<Button>(R.id.btnBoxAutoExit).setOnClickListener { runAction { ApiService.retrofitService.boxSpreadAutoExit(minPnl()) } }
         findViewById<Button>(R.id.btnBoxCycle).setOnClickListener { runAction { ApiService.retrofitService.boxSpreadCycle(lots(), minPnl()) } }
         findViewById<android.widget.Button>(R.id.btnBoxRefresh).setOnClickListener { loadOverview() }
+        loadAutoSettings()
         loadOverview()
         refreshHandler.postDelayed(refreshTask, 5000L)
+    }
+    private fun autoLots(): Int = etAutoLots.text.toString().toIntOrNull()?.coerceAtLeast(1) ?: 1
+    private fun loadAutoSettings() = lifecycleScope.launch(Dispatchers.IO) {
+        try {
+            val s=ApiService.retrofitService.boxSpreadAutoCycleSettings()
+            withContext(Dispatchers.Main) {
+                etAutoLots.setText(s.lots.toString())
+                tvCycleStatus.text="AUTO-CYCLE: ${s.status} • ${s.mode.uppercase()} • ${s.lots} lot(s)"
+            }
+        } catch(e: Exception) { withContext(Dispatchers.Main) { tvCycleStatus.text="AUTO-CYCLE: LOAD FAILED" } }
+    }
+    private fun saveAutoLots() = lifecycleScope.launch(Dispatchers.IO) {
+        try {
+            val s=ApiService.retrofitService.updateBoxSpreadAutoCycleSettings(mapOf("lots" to autoLots()))
+            withContext(Dispatchers.Main) { etAutoLots.setText(s.lots.toString()); tvCycleStatus.text="AUTO-CYCLE: ${s.status} • ${s.mode.uppercase()} • ${s.lots} lot(s)" }
+        } catch(e: Exception) { withContext(Dispatchers.Main) { tvCycleStatus.text="AUTO-CYCLE: SAVE FAILED\n${e.message ?: "API error"}" } }
     }
     private fun lots(): Int = etLots.text.toString().toIntOrNull()?.coerceAtLeast(1) ?: 1
     private fun minPnl(): Double = etMinPnl.text.toString().toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
