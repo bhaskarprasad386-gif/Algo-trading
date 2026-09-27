@@ -39,6 +39,20 @@ def _exit_cashflow(p,req:Exit)->float:
  high=req.high_call_price+req.high_put_price
  return (low-high) if p.direction=="LONG" else (high-low)
 
+def _scanner_entry_request(match, lots=1):
+    return ScannerEntry(underlying=match.low.underlying,instrument_class=match.low.instrument_class,expiry=str(match.low.expiry),low_strike=match.low.strike,high_strike=match.high.strike,direction=match.direction,lot_size=match.low.lot_size,lots=lots,low_call_price=match.low.call_ask if match.direction=="LONG" else match.low.call_bid,low_put_price=match.low.put_ask if match.direction=="LONG" else match.low.put_bid,high_call_price=match.high.call_bid if match.direction=="LONG" else match.high.call_ask,high_put_price=match.high.put_bid if match.direction=="LONG" else match.high.put_ask,executable_edge=match.executable_edge,edge_per_lot=match.edge_per_lot,liquidity_qty=min(match.low.volume,match.high.volume))
+
+@router.post("/auto-entry")
+def auto_entry(lots:int=1,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
+ if lots<=0: raise HTTPException(422,detail="lots must be positive")
+ if db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first(): raise HTTPException(409,detail="box spread paper position already open")
+ from app.scanner import live_box_spread_routes as scanner
+ rows=list(scanner._latest()) if callable(scanner._latest) else list(scanner._latest)
+ eligible=[r for r in rows if r.executable_edge>0 and min(r.low.volume,r.high.volume)>=r.low.lot_size*lots]
+ if not eligible: raise HTTPException(409,detail="no executable box spread opportunity available")
+ match=max(eligible,key=lambda r:r.executable_edge)
+ return _entry(_scanner_entry_request(match,lots),user,db)
+
 @router.post("/from-scanner")
 def from_scanner(req:ScannerEntry,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
  _validate(req)
