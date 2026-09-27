@@ -1,5 +1,4 @@
 from app.backtesting.arbitrage_backtester import FutureQuote, OptionQuote
-from app.backtesting.arbitrage_scan_policy import ScanPolicy
 from app.scanner.synthetic_cash_carry import (
     SyntheticScanConfig,
     scan_synthetic_snapshot,
@@ -24,7 +23,7 @@ def test_index_scan_keeps_locked_fifteen_position_radius():
     strikes = tuple(float(x) for x in range(100, 201))
     quotes = tuple(option(1, strike) for strike in strikes)
     results = scan_synthetic_snapshot(
-        quotes, future(1), atm_strike=150,
+        quotes, future(1, bid=170, ask=171), atm_strike=150,
         config=SyntheticScanConfig(min_executable_edge=0.0),
     )
     assert results
