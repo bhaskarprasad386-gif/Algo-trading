@@ -20,6 +20,22 @@ class Exit(BaseModel):
 class ScannerEntry(Entry):
  executable_edge:float|None=None; edge_per_lot:float|None=None; liquidity_qty:float=Field(default=0,ge=0)
 
+class AutoCycleSettings(BaseModel):
+ lots:int=Field(default=1,ge=1)
+
+@router.get("/auto-cycle-settings")
+def auto_cycle_settings(user:int=Depends(current_user_id),db:Session=Depends(get_db)):
+ a=_acct(db,user)
+ return {"status":"success","mode":"paper","lots":max(1, int(a.box_spread_auto_lots))}
+
+@router.put("/auto-cycle-settings")
+def update_auto_cycle_settings(req:AutoCycleSettings,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
+ a=_acct(db,user)
+ if req.lots > RiskLimits().max_position_quantity: raise HTTPException(422,detail="lots exceed risk limit")
+ a.box_spread_auto_lots=req.lots
+ db.commit()
+ return {"status":"success","mode":"paper","lots":a.box_spread_auto_lots}
+
 def _acct(db,user):
  a=db.query(TradingAccount).filter(TradingAccount.user_id==user).first()
  if not a or not a.is_active or a.mode.upper()!="PAPER":raise HTTPException(409,detail="paper account unavailable")
