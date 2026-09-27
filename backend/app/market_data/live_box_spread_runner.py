@@ -12,7 +12,7 @@ from app.market_data.live_synthetic_atm import LiveSyntheticAtmTracker, concrete
 from app.market_data.box_spread_subscriptions import select_box_contracts
 from app.scanner.live_box_spread_scanner import LiveBoxSpreadScanner
 from app.scanner.live_box_spread_pipeline import LiveBoxSpreadPipeline
-from app.scanner.box_spread import BoxSpreadScanConfig
+from app.scanner.box_spread import BoxSpreadScanConfig\n\nBSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 
 class BoxSpreadLiveTarget:
     def __init__(self, underlying: str, instrument_class: str, expiry: str|None=None):
@@ -36,7 +36,7 @@ class LiveBoxSpreadRunner:
                 future_type = "FUTSTK" if target.instrument_class == "STOCK" else "FUTIDX"
                 expiries = []
                 for item in self.master.instruments:
-                    if str(item.get("exch_seg","")).upper() != "NFO" or str(item.get("name","")).strip().upper() != target.underlying:
+                    expected_segment = "BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO"\n                    if str(item.get("exch_seg","")).upper() != expected_segment or str(item.get("name","")).strip().upper() != target.underlying:
                         continue
                     if str(item.get("instrumenttype","")).upper() != future_type:
                         continue
@@ -50,7 +50,7 @@ class LiveBoxSpreadRunner:
                             continue
                 if expiries: wanted = min(expiries)[1]
             if wanted:
-                strikes.update(concrete_strikes_from_master(self.master.instruments,symbols=(target.underlying,),expiry=wanted))
+                strikes.update(concrete_strikes_from_master(self.master.instruments,symbols=(target.underlying,),expiry=wanted, exchange_segment=("BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO")))
         self.tracker=LiveSyntheticAtmTracker(strikes_by_symbol=strikes)
         index_symbols=frozenset(t.underlying for t in self.targets if t.instrument_class=="INDEX")
         self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,index_symbols=index_symbols)
@@ -66,7 +66,7 @@ class LiveBoxSpreadRunner:
                         future_type = "FUTSTK" if target.instrument_class == "STOCK" else "FUTIDX"
                         expiries = []
                         for item in self.master.instruments:
-                            if str(item.get("exch_seg","")).upper() != "NFO" or str(item.get("name","")).strip().upper() != target.underlying:
+                            expected_segment = "BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO"\n                            if str(item.get("exch_seg","")).upper() != expected_segment or str(item.get("name","")).strip().upper() != target.underlying:
                                 continue
                             if str(item.get("instrumenttype","")).upper() != future_type:
                                 continue
