@@ -6,6 +6,9 @@ import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInClient
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +16,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class AuthActivity : AppCompatActivity() {
+    private lateinit var googleSignInClient: GoogleSignInClient
     private lateinit var tvMode: TextView
     private lateinit var identifier: EditText
     private lateinit var password: EditText
@@ -35,10 +39,47 @@ class AuthActivity : AppCompatActivity() {
         toggle = findViewById(R.id.btnAuthToggle)
         forgot = findViewById(R.id.btnAuthForgot)
         result = findViewById(R.id.tvAuthResult)
+        val googleButton: Button = findViewById(R.id.btnGoogleSignIn)
+        val googleClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID.trim()
+        if (googleClientId.isBlank()) {
+            googleButton.isEnabled = false
+            googleButton.text = "GOOGLE LOGIN (NOT CONFIGURED)"
+        } else {
+            val options = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                .requestIdToken(googleClientId)
+                .requestEmail()
+                .build()
+            googleSignInClient = GoogleSignIn.getClient(this, options)
+            googleButton.setOnClickListener { startActivityForResult(googleSignInClient.signInIntent, GOOGLE_SIGN_IN_REQUEST) }
+        }
         submit.setOnClickListener { submitAuth() }
         toggle.setOnClickListener { toggleMode() }
         forgot.setOnClickListener { requestPasswordReset() }
         if (!ApiService.getToken(this).isNullOrBlank()) validateExistingSession()
+    }
+
+    @Deprecated("Android Google Sign-In callback")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != GOOGLE_SIGN_IN_REQUEST) return
+        try {
+            val account = GoogleSignIn.getSignedInAccountFromIntent(data).getResult(com.google.android.gms.common.api.ApiException::class.java)
+            val token = account.idToken
+            if (token.isNullOrBlank()) throw IllegalStateException("Google did not return an ID token")
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val response = ApiService.retrofitService.googleLogin(GoogleLoginRequest(token))
+                    ApiService.saveToken(this@AuthActivity, response.access_token)
+                    ApiService.retrofitService.me()
+                    withContext(Dispatchers.Main) { openDashboard() }
+                } catch (error: Exception) {
+                    ApiService.clearToken(this@AuthActivity)
+                    withContext(Dispatchers.Main) { result.text = "Google login failed: ${error.message ?: "API error"}" }
+                }
+            }
+        } catch (error: Exception) {
+            result.text = "Google login cancelled or failed."
+        }
     }
 
     private fun toggleMode() {
@@ -109,4 +150,5 @@ class AuthActivity : AppCompatActivity() {
         startActivity(Intent(this, MainActivity::class.java))
         finish()
     }
+    companion object { private const val GOOGLE_SIGN_IN_REQUEST = 9001 }
 }
