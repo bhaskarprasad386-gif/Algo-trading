@@ -37,6 +37,8 @@ class InstrumentMaster:
     def download(self) -> List[Dict[str, Any]]:
         """Download the latest Angel One instrument master once per process."""
         with self._cache_lock:
+            if self._loaded and self.instruments:
+                return self.instruments
             if self._cached_instruments is not None:
                 self.instruments = self._cached_instruments
                 self._loaded = True
