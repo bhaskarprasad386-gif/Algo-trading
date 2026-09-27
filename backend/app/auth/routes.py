@@ -9,6 +9,8 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 from jose import JWTError, jwt
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
 
 from app.core.database import get_db
 from app.core.security import ALGORITHM, create_access_token, get_password_hash, verify_password
@@ -34,6 +36,10 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     identifier: str
     password: str
+
+
+class GoogleLoginRequest(BaseModel):
+    id_token: str
 
 
 class PasswordResetRequest(BaseModel):
@@ -167,6 +173,50 @@ def register(payload: RegisterRequest, db: DBSession = Depends(get_db)):
         raise HTTPException(status_code=409, detail="Email or mobile number already registered") from exc
     db.refresh(user)
     return _issue_token(db, user, device_info="web")
+
+
+@router.post("/google", response_model=TokenResponse)
+def google_login(payload: GoogleLoginRequest, db: DBSession = Depends(get_db)):
+    from app.core.config import settings
+
+    client_id = settings.GOOGLE_WEB_CLIENT_ID.strip()
+    if not client_id:
+        raise HTTPException(status_code=503, detail="Google login is not configured on the server")
+    raw_token = payload.id_token.strip()
+    if not raw_token:
+        raise HTTPException(status_code=400, detail="Google ID token is required")
+    try:
+        claims = id_token.verify_oauth2_token(raw_token, google_requests.Request(), client_id)
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid Google ID token") from exc
+
+    email = str(claims.get("email", "")).strip().lower()
+    if not email or claims.get("email_verified") is not True:
+        raise HTTPException(status_code=401, detail="Google account email is not verified")
+
+    user = db.query(User).filter(User.email == email).first()
+    if user is None:
+        user = User(
+            email=email,
+            hashed_password=get_password_hash(secrets.token_urlsafe(32)),
+            full_name=str(claims.get("name", "")).strip() or None,
+        )
+        db.add(user)
+        try:
+            db.flush()
+            _ensure_account(db, user)
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            user = db.query(User).filter(User.email == email).first()
+            if user is None:
+                raise HTTPException(status_code=409, detail="Unable to create Google account") from exc
+    elif not user.is_active:
+        raise HTTPException(status_code=403, detail="User account is inactive")
+
+    _ensure_account(db, user)
+    db.commit()
+    return _issue_token(db, user, device_info="android-google")
 
 
 @router.post("/login", response_model=TokenResponse)
