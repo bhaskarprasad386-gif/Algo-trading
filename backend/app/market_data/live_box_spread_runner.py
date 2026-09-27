@@ -62,7 +62,20 @@ class LiveBoxSpreadRunner:
                 subs=[]
                 for target in self.targets:
                     sel=select_box_contracts(self.master,underlying=target.underlying,instrument_class=target.instrument_class,
-                        atm_strike=self.tracker.atm(target.underlying,time_ns()),expiry=target.expiry,
+                        atm_strike=self.tracker.atm(target.underlying,time_ns()),expiry=(
+                        target.expiry or next(
+                            (s.expiry for s in [select_box_contracts(
+                                self.master,
+                                underlying=target.underlying,
+                                instrument_class=target.instrument_class,
+                                atm_strike=self.tracker.atm(target.underlying,time_ns()),
+                                expiry=None,
+                                allowed_stock_symbols=self.allowed_stock_symbols,
+                                policy=self.policy,
+                            )]),
+                            None,
+                        )
+                    ),
                         allowed_stock_symbols=self.allowed_stock_symbols,policy=self.policy)
                     subs.extend(sel.subscriptions)
                 scanner=LiveBoxSpreadScanner(
