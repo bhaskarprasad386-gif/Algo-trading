@@ -307,7 +307,7 @@ def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
             on_data({
                 "token": "101",
                 "symbol": "NIFTY30SEP26CE",
-                "exchange_timestamp": "1750000009000000000",
+                "exchange_timestamp": "1750000000900000000",
                 "last_traded_price": "12456",
             })
             on_data({
