@@ -25,6 +25,7 @@ class LiveSyntheticUnderlyingFeed:
         auth: AngelOneAuth | None = None,
         on_price: Callable[[str, float, int | None], None] | None = None,
         concrete_tokens: dict[str, str] | None = None,
+        index_symbols: frozenset[str] = frozenset(),
     ) -> None:
         if not symbols:
             raise ValueError("at least one underlying symbol is required")
@@ -36,6 +37,7 @@ class LiveSyntheticUnderlyingFeed:
         self.auth = auth or AngelOneAuth()
         self.on_price = on_price
         self.concrete_tokens = {str(k).strip().upper(): str(v).strip() for k, v in (concrete_tokens or {}).items() if str(k).strip() and str(v).strip()}
+        self.index_symbols = frozenset(str(symbol).strip().upper() for symbol in index_symbols if str(symbol).strip())
         self.stop_event = Event()
         self._socket: MarketDataWebSocket | None = None
 
@@ -69,8 +71,11 @@ class LiveSyntheticUnderlyingFeed:
             if token:
                 result[symbol] = token
                 continue
-            instrument = self.instrument_master.resolve_cash_instrument(symbol, "NSE")
-            result[symbol] = str(instrument["token"])
+            if symbol in self.index_symbols:
+                result[symbol] = self.instrument_master.resolve_index_token(symbol, "NSE")
+            else:
+                instrument = self.instrument_master.resolve_cash_instrument(symbol, "NSE")
+                result[symbol] = str(instrument["token"])
         return result
 
     def run_forever(self) -> None:
