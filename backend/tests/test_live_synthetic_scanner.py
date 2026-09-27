@@ -27,3 +27,4 @@ def test_live_synthetic_scanner_assembles_real_ce_pe_and_future():
 def test_live_synthetic_scanner_rejects_missing_timestamp():
     scanner=LiveSyntheticScanner(atm_provider=lambda _s,_t: 100.0)
     assert scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","bid":1,"ask":2}) == ()
+\n\ndef test_live_synthetic_scanner_rejects_mismatched_option_expiry():\n    ts=2_000_000_000\n    scanner=LiveSyntheticScanner(atm_provider=lambda _s,_t: 100.0)\n    scanner.observe(_base(ts, 100.0, "CE", 4.0, 5.0))\n    scanner.observe({**_base(ts, 100.0, "PE", 4.0, 5.0), "expiry":"07OCT2026"})\n    result=scanner.observe({\n        "underlying":"NIFTY","instrument_class":"INDEX","option_type":"",\n        "expiry":"30SEP2026","bid":115.0,"ask":116.0,"lot_size":1,\n        "source_timestamp_ns":ts,"symbol":"NIFTYFUT"\n    })\n    assert result == ()\n
