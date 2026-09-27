@@ -191,3 +191,24 @@ def test_catalog_e2e_missing_exit_never_creates_trade_or_pnl(tmp_path):
     assert result.realized_pnl == 0
     assert ledger.trades("catalog-unresolved") == []
     assert ledger.run("catalog-unresolved")["status"] == "COMPLETED"
+
+
+def test_live_one_second_box_records_replay_only_on_exact_shared_timestamp():
+    catalog = HistoricalCatalog()
+    low = {"timestamp_ns": 1_000_000_000, "underlying": "ABC", "expiry": 20260924, "strike": 25000,
+           "call_bid": 20, "call_ask": 21, "put_bid": 20, "put_ask": 21, "lot_size": 1}
+    high = {"timestamp_ns": 1_000_000_000, "underlying": "ABC", "expiry": 20260924, "strike": 25100,
+            "call_bid": 10, "call_ask": 11, "put_bid": 10, "put_ask": 11, "lot_size": 1}
+    catalog.ingest([
+        HistoricalRecord("angelone-live-synthetic", "ABC-LOW|101", "1s", 1_000_000_000, low),
+        HistoricalRecord("angelone-live-synthetic", "ABC-HIGH|102", "1s", 1_000_000_000, high),
+        HistoricalRecord("angelone-live-synthetic", "ABC-HIGH|102", "1s", 2_000_000_000, {**high, "timestamp_ns": 2_000_000_000}),
+    ])
+    events = list(HistoricalCatalogEventReplay(catalog).events((
+        CatalogReplayLeg("low", "angelone-live-synthetic", "ABC-LOW|101", "1s"),
+        CatalogReplayLeg("high", "angelone-live-synthetic", "ABC-HIGH|102", "1s"),
+    ), start_ns=1_000_000_000, end_ns=2_000_000_000))
+    assert [event["timestamp_ns"] for event in events] == [1_000_000_000]
+    assert events[0]["data_resolution"] == "1s"
+    assert events[0]["low"]["call_ask"] == 21
+    assert events[0]["high"]["call_bid"] == 10
