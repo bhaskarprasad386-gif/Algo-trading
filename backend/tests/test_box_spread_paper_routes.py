@@ -61,3 +61,27 @@ def test_box_spread_paper_mark_to_market_uses_reverse_executable_prices():
     close = _exit(12, 1, 10, 2)
     assert _exit_cashflow(position, close) == 1.0
     assert (_entry_cashflow(entry) + _exit_cashflow(position, close)) * 10 == 10.0
+
+
+
+def test_box_spread_exit_from_scanner_maps_live_bid_ask(monkeypatch):
+    from types import SimpleNamespace
+    from app.execution import box_spread_paper_routes as routes
+
+    position = SimpleNamespace(underlying="SENSEX", instrument_class="INDEX", expiry="20260930", low_strike=80000.0, high_strike=80100.0, direction="LONG")
+    low = SimpleNamespace(underlying="SENSEX", instrument_class="INDEX", expiry="20260930", strike=80000.0, call_bid=100.0, call_ask=101.0, put_bid=110.0, put_ask=111.0)
+    high = SimpleNamespace(strike=80100.0, call_bid=90.0, call_ask=91.0, put_bid=120.0, put_ask=121.0)
+    match = SimpleNamespace(low=low, high=high)
+    class Query:
+        def filter_by(self, **kwargs): return self
+        def first(self): return position
+    class DB:
+        def query(self, model): return Query()
+    monkeypatch.setattr(routes.scanner if hasattr(routes, "scanner") else __import__("app.scanner.live_box_spread_routes", fromlist=["x"]), "_latest", lambda: (match,), raising=False)
+    captured = {}
+    monkeypatch.setattr(routes, "exit", lambda req, user, db: captured.setdefault("req", req) or {"status": "success"})
+    routes.exit_from_scanner(user=1, db=DB())
+    assert captured["req"].low_call_price == 100.0
+    assert captured["req"].low_put_price == 110.0
+    assert captured["req"].high_call_price == 91.0
+    assert captured["req"].high_put_price == 121.0
