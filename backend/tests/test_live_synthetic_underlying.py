@@ -54,3 +54,15 @@ def test_index_token_resolution_rejects_ambiguous_master_entries():
         assert "expected exactly one index instrument" in str(exc)
     else:
         raise AssertionError("expected LookupError")
+
+def test_underlying_feed_resolves_index_from_master_when_declared():
+    master = InstrumentMaster()
+    master.instruments = [
+        {"exch_seg": "NSE", "symbol": "NIFTY", "token": "99926000"},
+    ]
+    master._loaded = True
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0)})
+    feed = LiveSyntheticUnderlyingFeed(
+        ("NIFTY",), tracker=tracker, instrument_master=master, index_symbols=frozenset({"NIFTY"})
+    )
+    assert feed._tokens() == {"NIFTY": "99926000"}
