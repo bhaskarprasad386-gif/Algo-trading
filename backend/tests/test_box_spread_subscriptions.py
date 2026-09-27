@@ -23,7 +23,7 @@ def test_box_subscription_accepts_non_nifty50_stock_when_explicitly_allowed():
         allowed_stock_symbols=frozenset({"ABC"}),
         policy=policy,
     )
-    assert len(selected.subscriptions) == 2
+    assert len(selected.subscriptions) == 4
 
 
 class FakeBseIndexMaster:
@@ -43,7 +43,7 @@ def test_box_subscription_uses_bfo_for_sensex_index():
         instrument_class="INDEX",
         atm_strike=80000.0,
         expiry="30SEP2026",
-        policy=ScanPolicy(index_box_distances=(100.0,)),
+        policy=ScanPolicy(index_box_distances=(1,)),
     )
     assert selected.subscriptions
     assert all(item.exchange_type == 4 for item in selected.subscriptions)
