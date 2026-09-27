@@ -106,6 +106,7 @@ def from_scanner(req:ScannerEntry,user:int=Depends(current_user_id),db:Session=D
  return _entry(req,user,db)
 
 def _entry(req,user,db):
+ _validate(req)
  a=_acct(db,user)
  if db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first():raise HTTPException(409,detail="box spread paper position already open")
  q=req.lot_size*req.lots
