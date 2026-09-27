@@ -71,6 +71,16 @@ def exit(req:Exit,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
  a.virtual_balance=round(a.virtual_balance+close_cashflow*q,8);a.realized_pnl=round(a.realized_pnl+pnl,8);p.realized_pnl=pnl;p.is_open=0;db.commit()
  return {"status":"success","mode":"paper","position_id":p.id,"gross_pnl":round(pnl,8),"realized_pnl":a.realized_pnl,"virtual_balance":a.virtual_balance}
 
+@router.post("/mark")
+def mark(req:Exit,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
+ p=db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first()
+ if not p:raise HTTPException(404,detail="no active box spread paper position")
+ q=p.lot_size*p.lots
+ entry_cashflow=(p.high_call_entry+p.high_put_entry-p.low_call_entry-p.low_put_entry) if p.direction=="LONG" else (p.low_call_entry+p.low_put_entry-p.high_call_entry-p.high_put_entry)
+ mark_cashflow=_exit_cashflow(p,req)
+ unrealized_pnl=round((entry_cashflow+mark_cashflow)*q,8)
+ return {"status":"active","mode":"paper","position_id":p.id,"direction":p.direction,"quantity":q,"unrealized_pnl":unrealized_pnl,"exit_executable_cashflow_per_unit":mark_cashflow}
+
 @router.get("/position")
 def position(user:int=Depends(current_user_id),db:Session=Depends(get_db)):
  p=db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first()
