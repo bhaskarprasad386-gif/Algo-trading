@@ -236,6 +236,9 @@ data class BoxSpreadHistoryItem(
 )
 data class BoxSpreadHistoryPage(val count: Int = 0, val items: List<BoxSpreadHistoryItem> = emptyList())
 data class BoxSpreadJournalPage(val count: Int = 0, val items: List<Map<String, Any?>> = emptyList())
+data class AppUpdateInfo(val platform: String = "android", val version_code: Int = 1, val version_name: String = "1.0", val release_notes: String = "", val apk_url: String = "", val sha256: String = "", val mandatory: Boolean = false)
+data class StrategyRegistryItem(val id: String = "", val name: String = "", val version: String = "1", val enabled: Boolean = true, val screen: String = "backend")
+data class StrategyRegistryResponse(val strategies: List<StrategyRegistryItem> = emptyList())
 data class BoxSpreadOverview(
     val status: String = "", val strategy: String = "", val mode: String = "",
     val account: BoxSpreadAccount? = null, val open_position: BoxSpreadPositionSummary? = null,
@@ -245,6 +248,8 @@ data class BoxSpreadOverview(
 
 interface ApiInterface {
     @GET("/") suspend fun getRootStatus(): MarketStatus
+    @GET("/api/v1/app/update") suspend fun appUpdate(): AppUpdateInfo
+    @GET("/api/v1/app/strategies") suspend fun appStrategies(): StrategyRegistryResponse
     @POST("/api/v1/auth/register") suspend fun register(@Body request: RegisterRequest): TokenResponse
     @POST("/api/v1/auth/login") suspend fun login(@Body request: LoginRequest): TokenResponse
     @POST("/api/v1/auth/password-reset/request") suspend fun requestPasswordReset(@Body request: PasswordResetRequest): PasswordResetResponse
