@@ -79,6 +79,8 @@ class LiveSyntheticRunner:
         self._atm_provider = atm_provider
         self._recorder: LiveSyntheticOptionFutureRecorder | None = None
         self._refresh_requested = Event()
+        self._stop_requested = Event()
+        self._active_underlying_feed: LiveSyntheticUnderlyingFeed | None = None
 
     def _refresh_stock_universe(self) -> None:
         """Refresh the authoritative stock universe before each subscription build."""
@@ -208,6 +210,7 @@ class LiveSyntheticRunner:
         atm_provider = self._ensure_atm_provider()
         feed = self._ensure_underlying_feed()
         feed_thread = None
+        self._active_underlying_feed = feed
         if feed is not None:
             feed_thread = Thread(
                 target=feed.run_forever,
@@ -217,7 +220,7 @@ class LiveSyntheticRunner:
             feed_thread.start()
         try:
             self._wait_for_live_atm(atm_provider)
-            while self._recorder is None or not self._recorder.stop_event.is_set():
+            while not self._stop_requested.is_set() and (self._recorder is None or not self._recorder.stop_event.is_set()):
                 self._refresh_requested.clear()
                 subscriptions = self.build_subscriptions()
                 scanner = LiveSyntheticScanner(
@@ -264,13 +267,16 @@ class LiveSyntheticRunner:
         finally:
             if feed is not None:
                 feed.stop()
+            self._active_underlying_feed = None
             if self._recorder is not None:
                 self._recorder.stop()
                 self._recorder = None
 
     def stop(self) -> None:
-        if self.underlying_feed is not None:
-            self.underlying_feed.stop()
+        self._stop_requested.set()
+        feed = self._active_underlying_feed or self.underlying_feed
+        if feed is not None:
+            feed.stop()
         recorder = self._recorder
         if recorder is not None:
             recorder.stop()
