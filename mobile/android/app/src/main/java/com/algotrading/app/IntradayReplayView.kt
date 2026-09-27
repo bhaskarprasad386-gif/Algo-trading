@@ -246,8 +246,8 @@ class IntradayReplayView @JvmOverloads constructor(context: Context, attrs: Attr
         strategyTrades.forEach{trade->
             val entryPrice = if (trade.entry_future_price != 0.0) trade.entry_future_price - trade.entry_cash_price else trade.entry_cash_price
             val exitPrice = if (trade.exit_future_price != 0.0) trade.exit_future_price - trade.exit_cash_price else trade.exit_cash_price
-            drawCalendarMarker(canvas,v,trade.entry_time,entryPrice,"ENTRY",x,sy,spreadTop,bottom)
-            drawCalendarMarker(canvas,v,trade.exit_time,exitPrice,"EXIT",x,sy,spreadTop,bottom)
+            drawCalendarMarker(canvas,v,trade.entry_time,entryPrice,"ENTRY",::x,::sy,spreadTop,bottom)
+            drawCalendarMarker(canvas,v,trade.exit_time,exitPrice,"EXIT",::x,::sy,spreadTop,bottom)
         }
     }
 
