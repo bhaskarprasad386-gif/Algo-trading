@@ -48,7 +48,16 @@ class BoxSpreadActivity : AppCompatActivity() {
                 tvSummary.text="PAPER • Balance ₹"+(x.account?.virtual_balance ?: 0.0)+"\nRealized P&L ₹"+(x.account?.realized_pnl ?: 0.0)+" • Auto lots "+(x.account?.auto_cycle_lots ?: 1)
                 tvPosition.text=x.open_position?.let { "OPEN: "+it.underlying+" "+it.direction+"\n"+it.low_strike+" / "+it.high_strike+" • "+it.lots+" lot(s)\nRealized P&L ₹"+it.realized_pnl } ?: "OPEN POSITION: NONE"
                 tvOpportunities.text=if(x.live_opportunities.data.isEmpty()) "LIVE OPPORTUNITIES: NONE" else x.live_opportunities.data.joinToString("\n\n") { "${it.underlying} ${it.direction} • ${it.expiry}\n${it.low_strike} → ${it.high_strike} • Edge ₹${it.executable_edge}\nPer lot ₹${it.edge_per_lot} • Liquidity ${it.liquidity_qty}\nBid/Ask: LC ${it.low_call_bid}/${it.low_call_ask} LP ${it.low_put_bid}/${it.low_put_ask} HC ${it.high_call_bid}/${it.high_call_ask} HP ${it.high_put_bid}/${it.high_put_ask}" }
-                tvJournal.text=buildString {\n                    append("HISTORY (").append(x.history.count).append(")\\n")\n                    x.history.items.take(10).forEach { h ->\n                        append("#").append(h.id).append(" ").append(h.underlying).append(" ").append(h.direction)\n                            .append(" ").append(h.low_strike).append("→").append(h.high_strike)\n                            .append(" • ").append(h.lots).append(" lot(s) • P&L ₹").append(h.realized_pnl)\n                            .append(if (h.is_open) " • OPEN" else " • CLOSED").append("\\n")\n                    }\n                    append("\\nJOURNAL (").append(x.journal.count).append(")\\n")\n                    x.journal.items.take(10).forEach { j ->\n                        append("#").append(j["id"] ?: "-").append(" ").append(j["event"] ?: "EVENT")\n                            .append(" • ").append(j["created_at"] ?: "").append("\\n")\n                    }\n                }
+                tvJournal.text=buildString {
+                    append("HISTORY (").append(x.history.count).append(")\
+")
+                    x.history.items.take(10).forEach { h ->
+                        append("#").append(h.id).append(" ").append(h.underlying).append(" ").append(h.direction)
+                            .append(" ").append(h.low_strike).append("→").append(h.high_strike)
+                            .append(" • ").append(h.lots).append(" lot(s) • P&L ₹").append(h.realized_pnl)
+                            .append(if (h.is_open) " • OPEN" else " • CLOSED").append("\
+")
+                    }\n                    append("\\nJOURNAL (").append(x.journal.count).append(")\\n")\n                    x.journal.items.take(10).forEach { j ->\n                        append("#").append(j["id"] ?: "-").append(" ").append(j["event"] ?: "EVENT")\n                            .append(" • ").append(j["created_at"] ?: "").append("\\n")\n                    }\n                }
             }
         } catch(e: Exception) { withContext(Dispatchers.Main) { tvSummary.text="LOAD FAILED\n"+(e.message ?: "API error") } }
     }
