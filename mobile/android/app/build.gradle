@@ -3,6 +3,12 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+def configuredAppVersionCode = project.findProperty('appVersionCode')?.toString()?.trim()
+def configuredAppVersionName = project.findProperty('appVersionName')?.toString()?.trim()
+
+def resolvedAppVersionCode = configuredAppVersionCode ?: '1'
+def resolvedAppVersionName = configuredAppVersionName ?: '1.0'
+
 android {
     namespace 'com.algotrading.app'
     compileSdk 34
@@ -11,10 +17,8 @@ android {
         applicationId "com.algotrading.app"
         minSdk 24
         targetSdk 34
-        def configuredVersionCode = project.findProperty("appVersionCode")?.toString()?.trim()
-        def configuredVersionName = project.findProperty("appVersionName")?.toString()?.trim()
-        versionCode (configuredVersionCode ? configuredVersionCode : "1").toInteger()
-        versionName (configuredVersionName ? configuredVersionName : "1.0")
+        versionCode resolvedAppVersionCode.toInteger()
+        versionName resolvedAppVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
