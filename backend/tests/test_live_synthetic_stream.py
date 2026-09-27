@@ -162,3 +162,104 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
         1_750_000_000_000_000_000,
         1_750_000_001_000_000_000,
     ]
+
+
+def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypatch):
+    from app.market_data import live_synthetic_stream as stream
+
+    collector = LiveSyntheticOptionFutureRecorder(
+        str(tmp_path / "synthetic.db"),
+        [
+            SyntheticSubscription(2, "101", "NIFTY30SEP26CE", "NIFTY", "INDEX", "30SEP2026", "CE", 100.0, 75),
+            SyntheticSubscription(2, "102", "NIFTY30SEP26PE", "NIFTY", "INDEX", "30SEP2026", "PE", 100.0, 75),
+        ],
+        batch_size=2,
+        poll_seconds=0.05,
+    )
+
+    class FakeAuth:
+        def login(self):
+            return None
+
+    observed = []
+
+    def on_observation(payload):
+        observed.append((payload["token"], payload["source_timestamp_ns"]))
+        if len(observed) == 2:
+            collector.stop_event.set()
+
+    collector.auth = FakeAuth()
+    collector.on_observation = on_observation
+
+    class FakeSocket:
+        def __init__(self, *, auth):
+            self.auth = auth
+
+        def connect(self, **kwargs):
+            on_data = kwargs["on_data"]
+            for token, symbol, price in (
+                ("101", "NIFTY30SEP26CE", "12345"),
+                ("102", "NIFTY30SEP26PE", "22345"),
+            ):
+                on_data({
+                    "token": token,
+                    "symbol": symbol,
+                    "exchange_timestamp": "1750000000000000000",
+                    "last_traded_price": price,
+                })
+            for token, symbol, price in (
+                ("101", "NIFTY30SEP26CE", "12355"),
+                ("102", "NIFTY30SEP26PE", "22355"),
+            ):
+                on_data({
+                    "token": token,
+                    "symbol": symbol,
+                    "exchange_timestamp": "1750000001000000000",
+                    "last_traded_price": price,
+                })
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(stream, "MarketDataWebSocket", FakeSocket)
+    monkeypatch.setattr(
+        stream.LiveSyntheticOptionFutureRecorder,
+        "market_open",
+        staticmethod(lambda now=None: True),
+    )
+
+    assert collector._run_session() == 4
+    assert observed == [
+        ("101", 1_750_000_000_000_000_000),
+        ("102", 1_750_000_000_000_000_000),
+        ("101", 1_750_000_001_000_000_000),
+        ("102", 1_750_000_001_000_000_000),
+    ]
+
+    from app.backtesting.historical_catalog import HistoricalCatalog
+
+    catalog = HistoricalCatalog(str(tmp_path / "synthetic.db"))
+    try:
+        ce = catalog.records(
+            source=collector.SOURCE,
+            instrument="NIFTY30SEP26CE|101",
+            timeframe="1s",
+        )
+        pe = catalog.records(
+            source=collector.SOURCE,
+            instrument="NIFTY30SEP26PE|102",
+            timeframe="1s",
+        )
+    finally:
+        catalog.close()
+
+    assert [record.timestamp_ns for record in ce] == [
+        1_750_000_000_000_000_000,
+        1_750_000_001_000_000_000,
+    ]
+    assert [record.timestamp_ns for record in pe] == [
+        1_750_000_000_000_000_000,
+        1_750_000_001_000_000_000,
+    ]
+    assert [record.payload["ltp"] for record in ce] == [123.45, 123.55]
+    assert [record.payload["ltp"] for record in pe] == [223.45, 223.55]
