@@ -91,3 +91,13 @@ def test_websocket_connect_retries_after_start_failure(monkeypatch):
 
     assert calls["count"] == 2
     assert client.connected is True
+
+
+def test_websocket_unexpected_close_schedules_reconnect(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+    scheduled = []
+    monkeypatch.setattr(client, "_schedule_reconnect", lambda: scheduled.append(True))
+    socket = client._build_socket()
+    socket.on_close(socket)
+    assert scheduled == [True]
