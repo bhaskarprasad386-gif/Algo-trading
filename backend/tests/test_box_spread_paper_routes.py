@@ -97,3 +97,15 @@ def test_box_spread_scanner_entry_maps_executable_bid_ask():
     assert req.low_call_price==101 and req.low_put_price==111
     assert req.high_call_price==90 and req.high_put_price==120
     assert req.liquidity_qty==40 and req.expiry=="20260930"
+
+
+def test_box_spread_auto_exit_uses_current_executable_quotes():
+    from app.execution.box_spread_paper_routes import _scanner_exit_request, _exit_cashflow
+    from types import SimpleNamespace
+    p=SimpleNamespace(direction="LONG")
+    low=SimpleNamespace(call_bid=100,call_ask=101,put_bid=110,put_ask=111)
+    high=SimpleNamespace(call_bid=90,call_ask=91,put_bid=120,put_ask=121)
+    req=_scanner_exit_request(p,SimpleNamespace(low=low,high=high))
+    assert req.low_call_price==100 and req.low_put_price==110
+    assert req.high_call_price==91 and req.high_put_price==121
+    assert _exit_cashflow(p,req)==-2
