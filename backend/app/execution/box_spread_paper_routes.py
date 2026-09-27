@@ -160,7 +160,10 @@ def exit(req:Exit,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
  entry_cashflow=(p.high_call_entry+p.high_put_entry-p.low_call_entry-p.low_put_entry) if p.direction=="LONG" else (p.low_call_entry+p.low_put_entry-p.high_call_entry-p.high_put_entry)
  close_cashflow=_exit_cashflow(p,req)
  pnl=(entry_cashflow+close_cashflow)*q
- a.virtual_balance=round(a.virtual_balance+close_cashflow*q,8);a.realized_pnl=round(a.realized_pnl+pnl,8);p.realized_pnl=pnl;p.is_open=0;db.commit()
+ a.virtual_balance=round(a.virtual_balance+close_cashflow*q,8);a.realized_pnl=round(a.realized_pnl+pnl,8);p.realized_pnl=pnl;p.is_open=0
+ from datetime import datetime,timezone
+ p.closed_at=datetime.now(timezone.utc).replace(tzinfo=None)
+ db.commit()
  return {"status":"success","mode":"paper","position_id":p.id,"gross_pnl":round(pnl,8),"realized_pnl":a.realized_pnl,"virtual_balance":a.virtual_balance}
 
 @router.post("/mark")
@@ -172,6 +175,22 @@ def mark(req:Exit,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
  mark_cashflow=_exit_cashflow(p,req)
  unrealized_pnl=round((entry_cashflow+mark_cashflow)*q,8)
  return {"status":"active","mode":"paper","position_id":p.id,"direction":p.direction,"quantity":q,"unrealized_pnl":unrealized_pnl,"exit_executable_cashflow_per_unit":mark_cashflow}
+
+
+@router.get("/history")
+def history(limit:int=50,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
+ if limit < 1 or limit > 200: raise HTTPException(422,detail="limit must be between 1 and 200")
+ rows=(db.query(LiveBoxSpreadPaperPosition)
+       .filter(LiveBoxSpreadPaperPosition.user_id==user)
+       .order_by(LiveBoxSpreadPaperPosition.created_at.desc())
+       .limit(limit).all())
+ return {"status":"success","mode":"paper","count":len(rows),"items":[
+  {"id":p.id,"underlying":p.underlying,"instrument_class":p.instrument_class,"expiry":p.expiry,
+   "low_strike":p.low_strike,"high_strike":p.high_strike,"direction":p.direction,
+   "lot_size":p.lot_size,"lots":p.lots,"quantity":p.lot_size*p.lots,
+   "entry_prices":{"low_call":p.low_call_entry,"low_put":p.low_put_entry,"high_call":p.high_call_entry,"high_put":p.high_put_entry},
+   "realized_pnl":p.realized_pnl or 0.0,"is_open":bool(p.is_open),
+   "created_at":p.created_at,"closed_at":p.closed_at} for p in rows]}
 
 @router.get("/position")
 def position(user:int=Depends(current_user_id),db:Session=Depends(get_db)):
