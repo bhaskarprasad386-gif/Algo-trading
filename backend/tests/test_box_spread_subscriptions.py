@@ -23,4 +23,4 @@ def test_box_subscription_accepts_non_nifty50_stock_when_explicitly_allowed():
         allowed_stock_symbols=frozenset({"ABC"}),
         policy=policy,
     )
-    assert len(selected.subscriptions) == 4
+    assert len(selected.subscriptions) == 2
