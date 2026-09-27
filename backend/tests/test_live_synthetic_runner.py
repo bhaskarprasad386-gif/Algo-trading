@@ -38,6 +38,24 @@ def test_runner_builds_concrete_real_tokens_without_duplicates():
     assert {"f1", "c100", "p100", "c105", "p105", "c95", "p95"} <= tokens
 
 
+def test_runner_build_subscriptions_follow_live_atm():
+    master = _master()
+    current = {"value": 100.0}
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "30SEP2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=master,
+        atm_provider=lambda _s, _t: current["value"],
+    )
+    first = {item.token for item in runner.build_subscriptions()}
+    current["value"] = 105.0
+    second = {item.token for item in runner.build_subscriptions()}
+    assert "c100" in first and "p100" in first
+    assert "c105" in second and "p105" in second
+    assert first != second
+
+
 def test_runner_requires_real_atm_provider():
     master = _master()
     try:
