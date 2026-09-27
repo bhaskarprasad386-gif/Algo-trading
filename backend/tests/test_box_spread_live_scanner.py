@@ -29,3 +29,19 @@ def test_live_box_scanner_waits_for_matching_ce_pe_pairs():
     assert scanner.observe({**upper,"option_type":"CE","bid":8,"ask":9})==()
     result=scanner.observe({**upper,"option_type":"PE","bid":2,"ask":3})
     assert any(r.direction=="LONG" for r in result)
+
+
+def test_live_box_scanner_accepts_bse_index_contract_metadata():
+    scanner = LiveBoxSpreadScanner(
+        atm_provider=lambda _s, _t: 80000.0,
+        config_provider=lambda _s: BoxSpreadScanConfig(),
+        policy=ScanPolicy(index_box_distances=(100.0,)),
+    )
+    base = {"underlying":"SENSEX","instrument_class":"INDEX","source_timestamp_ns":2,
+            "expiry":"30SEP2026","lot_size":20,"volume":100,"oi":100}
+    assert scanner.observe({**base,"strike":80000,"option_type":"CE","bid":100,"ask":101}) == ()
+    assert scanner.observe({**base,"strike":80000,"option_type":"PE","bid":100,"ask":101}) == ()
+    upper={**base,"strike":80100}
+    assert scanner.observe({**upper,"option_type":"CE","bid":90,"ask":91}) == ()
+    result=scanner.observe({**upper,"option_type":"PE","bid":110,"ask":111})
+    assert all(r.low.instrument_class == "INDEX" for r in result)
