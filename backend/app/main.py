@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI):
         for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task):
             if task is not None:
                 task.cancel()
-        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task):
+        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task):
             if task is not None:
                 try:
                     await task
@@ -331,7 +331,7 @@ async def _live_cash_future_loop() -> None:
     finally:
         collector.stop()
 
-async def _live_calendar_spread_loop() -> None:
+async async def _live_calendar_spread_loop() -> None:
     collector = LiveCalendarSpreadOneSecondCollector(
         settings.BACKTEST_DATA_DB,
         auth=AngelOneAuth(),
