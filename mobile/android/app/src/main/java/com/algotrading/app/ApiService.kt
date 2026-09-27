@@ -227,11 +227,19 @@ data class BoxSpreadPositionSummary(
     val lot_size: Int = 0, val lots: Int = 0, val realized_pnl: Double = 0.0, val is_open: Boolean = false
 )
 data class BoxSpreadAutoCycleSettings(val status:String="", val mode:String="paper", val lots:Int=1)
+data class BoxSpreadHistoryItem(
+    val id: Int = 0, val underlying: String = "", val instrument_class: String = "", val expiry: String = "",
+    val low_strike: Double = 0.0, val high_strike: Double = 0.0, val direction: String = "",
+    val lot_size: Int = 0, val lots: Int = 0, val quantity: Int = 0, val realized_pnl: Double = 0.0,
+    val is_open: Boolean = false, val created_at: String = "", val closed_at: String? = null
+)
+data class BoxSpreadHistoryPage(val count: Int = 0, val items: List<BoxSpreadHistoryItem> = emptyList())
+data class BoxSpreadJournalPage(val count: Int = 0, val items: List<Map<String, Any?>> = emptyList())
 data class BoxSpreadOverview(
     val status: String = "", val strategy: String = "", val mode: String = "",
     val account: BoxSpreadAccount? = null, val open_position: BoxSpreadPositionSummary? = null,
     val live_opportunities: BoxSpreadLiveOpportunities = BoxSpreadLiveOpportunities(),
-    val history: Map<String, Any?>? = null, val journal: Map<String, Any?>? = null
+    val history: BoxSpreadHistoryPage = BoxSpreadHistoryPage(), val journal: BoxSpreadJournalPage = BoxSpreadJournalPage()
 )
 
 interface ApiInterface {
