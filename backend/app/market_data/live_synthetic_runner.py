@@ -80,7 +80,6 @@ class LiveSyntheticRunner:
         self._recorder: LiveSyntheticOptionFutureRecorder | None = None
         self._refresh_requested = Event()
 
-
     def _refresh_stock_universe(self) -> None:
         """Refresh the authoritative stock universe before each subscription build."""
         if self.stock_universe_provider is None:
@@ -108,10 +107,13 @@ class LiveSyntheticRunner:
                 )
             )
         return result
+
     def _ensure_atm_provider(self) -> Callable[[str, int], float | None]:
         """Build a source-backed ATM provider when the caller did not supply one."""
         if self._atm_provider is not None:
             return self._atm_provider
+        if self._atm_tracker is not None:
+            return self._atm_tracker.atm
         strikes = self.concrete_atm_strikes()
         missing = [
             target.underlying
