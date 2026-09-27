@@ -85,3 +85,15 @@ def test_box_spread_exit_from_scanner_maps_live_bid_ask(monkeypatch):
     assert captured["req"].low_put_price == 110.0
     assert captured["req"].high_call_price == 91.0
     assert captured["req"].high_put_price == 121.0
+
+
+def test_box_spread_scanner_entry_maps_executable_bid_ask():
+    from app.execution.box_spread_paper_routes import _scanner_entry_request
+    from types import SimpleNamespace
+    low=SimpleNamespace(underlying="SENSEX",instrument_class="INDEX",expiry=20260930,strike=80000,lot_size=20,call_bid=100,call_ask=101,put_bid=110,put_ask=111,volume=50)
+    high=SimpleNamespace(strike=80100,call_bid=90,call_ask=91,put_bid=120,put_ask=121,volume=40)
+    match=SimpleNamespace(low=low,high=high,direction="LONG",executable_edge=10,edge_per_lot=200)
+    req=_scanner_entry_request(match,1)
+    assert req.low_call_price==101 and req.low_put_price==111
+    assert req.high_call_price==90 and req.high_put_price==120
+    assert req.liquidity_qty==40 and req.expiry=="20260930"
