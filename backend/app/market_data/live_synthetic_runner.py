@@ -193,10 +193,12 @@ class LiveSyntheticRunner:
             return
         deadline = time_ns() + int(timeout_seconds * 1_000_000_000)
         symbols = tuple(target.underlying.strip().upper() for target in self.targets)
-        while time_ns() < deadline:
+        while time_ns() < deadline and not self._stop_requested.is_set():
             if all(atm_provider(symbol, time_ns()) is not None for symbol in symbols):
                 return
             sleep(0.25)
+        if self._stop_requested.is_set():
+            return
         missing = [
             symbol for symbol in symbols
             if atm_provider(symbol, time_ns()) is None
