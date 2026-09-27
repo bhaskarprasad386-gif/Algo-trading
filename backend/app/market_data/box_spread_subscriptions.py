@@ -6,6 +6,8 @@ from app.backtesting.arbitrage_scan_policy import ScanPolicy, enumerate_box_pair
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.live_synthetic_stream import SyntheticSubscription
 
+BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
+
 def _expiry(value):
     text = str(value or "").strip().upper()
     for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d"):
@@ -29,7 +31,9 @@ def select_box_contracts(master: InstrumentMaster, *, underlying: str, instrumen
     if cls not in {"STOCK", "INDEX"}: raise ValueError("instrument_class must be STOCK or INDEX")
     if cls == "STOCK" and symbol not in {s.strip().upper() for s in allowed_stock_symbols}:
         raise ValueError("stock is outside the configured Box Spread stock universe")
-    rows = [x for x in master.instruments if str(x.get("exch_seg","")).upper()=="NFO" and str(x.get("name","")).strip().upper()==symbol]
+    exchange_segment = "BFO" if cls == "INDEX" and symbol in BSE_INDEX_SYMBOLS else "NFO"
+    exchange_type = 4 if exchange_segment == "BFO" else 2
+    rows = [x for x in master.instruments if str(x.get("exch_seg","")).upper()==exchange_segment and str(x.get("name","")).strip().upper()==symbol]
     options = [x for x in rows if str(x.get("instrumenttype","")).upper() in {"OPTSTK","OPTIDX"}]
     futures = [x for x in rows if str(x.get("instrumenttype","")).upper()==("FUTSTK" if cls=="STOCK" else "FUTIDX")]
     if not options: raise LookupError(f"no option contracts found for {symbol}")
