@@ -32,6 +32,7 @@ data class CashFutureScanError(val symbol: String = "", val error: String = "")
 data class CashFutureScanResponse(val status: String, val scanner: String, val mode: String, val symbols_requested: List<String> = emptyList(), val scanned_observations: Int = 0, val opportunity_count: Int = 0, val data: List<CashFutureOpportunity> = emptyList(), val errors: List<CashFutureScanError> = emptyList())
 data class RegisterRequest(val email: String? = null, val mobile_number: String? = null, val password: String, val full_name: String? = null)
 data class LoginRequest(val identifier: String, val password: String)
+data class GoogleLoginRequest(val id_token: String)
 data class PasswordResetRequest(val identifier: String)
 data class PasswordResetResponse(val status: String, val message: String)
 data class TokenResponse(val access_token: String, val token_type: String = "bearer")
@@ -252,6 +253,7 @@ interface ApiInterface {
     @GET("/api/v1/app/strategies") suspend fun appStrategies(): StrategyRegistryResponse
     @POST("/api/v1/auth/register") suspend fun register(@Body request: RegisterRequest): TokenResponse
     @POST("/api/v1/auth/login") suspend fun login(@Body request: LoginRequest): TokenResponse
+    @POST("/api/v1/auth/google") suspend fun googleLogin(@Body request: GoogleLoginRequest): TokenResponse
     @POST("/api/v1/auth/password-reset/request") suspend fun requestPasswordReset(@Body request: PasswordResetRequest): PasswordResetResponse
     @GET("/api/v1/auth/me") suspend fun me(): UserInfo
     @POST("/api/v1/auth/logout") suspend fun logout(): Map<String, String>
