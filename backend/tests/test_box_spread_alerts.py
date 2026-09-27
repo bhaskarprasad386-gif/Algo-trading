@@ -38,3 +38,13 @@ def test_box_alert_cooldown_identity_includes_expiry():
     assert key_a != key_b
     assert key_a not in service._last_sent
     assert key_b not in service._last_sent
+
+
+def test_box_alert_message_preserves_bse_index_and_bid_ask_fields():
+    result = _result()
+    result.low.underlying = "SENSEX"
+    result.low.instrument_class = "INDEX"
+    message = BoxSpreadAlertService._message(result)
+    assert "SENSEX INDEX" in message
+    assert "LOW CE Bid/Ask: ₹10.00/₹11.00" in message
+    assert "HIGH PE Bid/Ask: ₹2.00/₹3.00" in message
