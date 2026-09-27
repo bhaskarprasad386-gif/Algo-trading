@@ -384,7 +384,7 @@ async def _live_synthetic_loop() -> None:
                 stock_symbols.add(name)
             elif instrument_type == "FUTIDX":
                 index_symbols.add(name)
-        stock_symbols = sorted(stock_symbols)[:50]
+        stock_symbols = sorted(stock_symbols)
         targets = tuple(
             [SyntheticLiveTarget(symbol, "STOCK") for symbol in stock_symbols]
             + [SyntheticLiveTarget(symbol, "INDEX") for symbol in sorted(index_symbols)]
