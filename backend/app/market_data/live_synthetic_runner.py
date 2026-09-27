@@ -214,7 +214,7 @@ class LiveSyntheticRunner:
                     on_results=self.on_results,
                 )
                 initial_atm = {
-                    target.underlying: self.atm_provider(
+                    target.underlying: atm_provider(
                         target.underlying, time_ns()
                     )
                     for target in self.targets
