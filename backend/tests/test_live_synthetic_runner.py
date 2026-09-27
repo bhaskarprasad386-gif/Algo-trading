@@ -95,7 +95,7 @@ def test_runner_exposes_concrete_atm_strikes_from_master():
         instrument_master=master,
         atm_provider=lambda _s, _t: 100.0,
     )
-    assert runner.concrete_atm_strikes() == {"NIFTY": tuple(float(strike) for strike in range(50, 151, 5))}
+    assert runner.concrete_atm_strikes() == {"NIFTY": tuple(float(strike) for strike in range(0, 201, 5))}
 
 
 def test_runner_refresh_snapshot_uses_automatic_atm_provider(monkeypatch):
