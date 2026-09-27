@@ -435,12 +435,25 @@ def _run_box_spread_paper_cycle_once() -> int:
         for account in accounts:
             try:
                 result = box_spread_paper_cycle(
-                    lots=1,
+                    lots=max(1, int(account.box_spread_auto_lots)),
                     min_pnl=settings.PAPER_BOX_SPREAD_AUTO_CYCLE_MIN_PNL,
                     user=account.user_id,
                     db=db,
                 )
                 processed += 1
+                audit = SystemLog(
+                    level="INFO",
+                    module="box_spread_paper_cycle",
+                    message=f"user={account.user_id} status={result.get('status', 'unknown')}",
+                    details=str({
+                        "position_id": result.get("position_id"),
+                        "gross_pnl": result.get("gross_pnl"),
+                        "lots": max(1, int(account.box_spread_auto_lots)),
+                        "min_pnl": settings.PAPER_BOX_SPREAD_AUTO_CYCLE_MIN_PNL,
+                    }),
+                )
+                db.add(audit)
+                db.commit()
                 app_logger.debug("Box Spread paper cycle user=%s: %s", account.user_id, result.get("status", "unknown"))
             except Exception as exc:
                 db.rollback()
