@@ -1,6 +1,6 @@
 import math
 import time
-from threading import Lock
+from threading import Lock, Thread
 from typing import Callable, Optional
 
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
@@ -24,6 +24,10 @@ class MarketDataWebSocket:
         self._lock = Lock()
         self._connected = False
         self._stopping = False
+        self._reconnect_attempts = 3
+        self._reconnect_delay_seconds = 2.0
+        self._reconnect_thread = None
+        self._reconnect_lock = Lock()
 
     @property
     def connected(self) -> bool:
@@ -59,13 +63,56 @@ class MarketDataWebSocket:
         def handle_close(wsapp):
             with self._lock:
                 self._connected = False
+                stopping = self._stopping
             app_logger.warning("Angel One WebSocket connection closed")
+            if not stopping:
+                self._schedule_reconnect()
 
         socket.on_open = handle_open
         socket.on_data = handle_data
         socket.on_error = handle_error
         socket.on_close = handle_close
         return socket
+
+    def _schedule_reconnect(self) -> None:
+        with self._reconnect_lock:
+            if self._stopping:
+                return
+            if self._reconnect_thread is not None and self._reconnect_thread.is_alive():
+                return
+            self._reconnect_thread = Thread(
+                target=self._reconnect_after_disconnect,
+                name="angel-ws-reconnect",
+                daemon=True,
+            )
+            self._reconnect_thread.start()
+
+    def _reconnect_after_disconnect(self) -> None:
+        with self._lock:
+            exchange_type = self.exchange_type
+            tokens = list(self.tokens)
+            mode = self.mode
+            correlation_id = self.correlation_id
+            on_data = self.on_data
+        if exchange_type is None or not tokens:
+            return
+        try:
+            self.connect(
+                exchange_type=exchange_type,
+                tokens=tokens,
+                mode=mode,
+                correlation_id=correlation_id,
+                on_data=on_data,
+                reconnect_attempts=self._reconnect_attempts,
+                reconnect_delay_seconds=self._reconnect_delay_seconds,
+            )
+        except Exception as exc:
+            app_logger.error(f"Angel One WebSocket reconnect failed: {exc}")
+            with self._lock:
+                stopping = self._stopping
+            if not stopping:
+                time.sleep(self._reconnect_delay_seconds)
+                self._schedule_reconnect()
 
     def connect(self, exchange_type: int, tokens: list[str], mode: int = 1, correlation_id: str = "market-data", on_data: Optional[Callable] = None, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 2.0):
         """Connect and retry failed starts while preserving validated subscriptions."""
@@ -91,6 +138,8 @@ class MarketDataWebSocket:
             self.correlation_id = correlation_id.strip()
             self.on_data = on_data
             self._stopping = False
+            self._reconnect_attempts = reconnect_attempts
+            self._reconnect_delay_seconds = reconnect_delay_seconds
         last_error = None
         for attempt in range(reconnect_attempts + 1):
             with self._lock:
