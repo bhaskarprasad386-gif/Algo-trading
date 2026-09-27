@@ -214,3 +214,25 @@ def history(limit:int=50,user:int=Depends(current_user_id),db:Session=Depends(ge
 def position(user:int=Depends(current_user_id),db:Session=Depends(get_db)):
  p=db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first()
  return {"status":"active" if p else "flat","position":None if not p else {k:getattr(p,k) for k in ("id","underlying","instrument_class","expiry","low_strike","high_strike","direction","lot_size","lots","low_call_entry","low_put_entry","high_call_entry","high_put_entry")}}
+
+
+@router.get("/overview")
+def overview(limit:int=50,history_limit:int=20,journal_limit:int=20,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
+    if limit<1 or limit>100: raise HTTPException(422,detail="limit must be between 1 and 100")
+    if history_limit<1 or history_limit>100: raise HTTPException(422,detail="history_limit must be between 1 and 100")
+    if journal_limit<1 or journal_limit>100: raise HTTPException(422,detail="journal_limit must be between 1 and 100")
+    a=_acct(db,user)
+    p=db.query(LiveBoxSpreadPaperPosition).filter_by(user_id=user,is_open=1).first()
+    position=None if not p else {"id":p.id,"underlying":p.underlying,"instrument_class":p.instrument_class,"expiry":p.expiry,"low_strike":p.low_strike,"high_strike":p.high_strike,"direction":p.direction,"lot_size":p.lot_size,"lots":p.lots,"quantity":p.lot_size*p.lots,"entry_prices":{"low_call":p.low_call_entry,"low_put":p.low_put_entry,"high_call":p.high_call_entry,"high_put":p.high_put_entry},"realized_pnl":p.realized_pnl or 0.0,"created_at":p.created_at}
+    hs=(db.query(LiveBoxSpreadPaperPosition).filter(LiveBoxSpreadPaperPosition.user_id==user).order_by(LiveBoxSpreadPaperPosition.created_at.desc()).limit(history_limit).all())
+    history=[{"id":x.id,"underlying":x.underlying,"instrument_class":x.instrument_class,"expiry":x.expiry,"low_strike":x.low_strike,"high_strike":x.high_strike,"direction":x.direction,"lot_size":x.lot_size,"lots":x.lots,"quantity":x.lot_size*x.lots,"realized_pnl":x.realized_pnl or 0.0,"is_open":bool(x.is_open),"created_at":x.created_at,"closed_at":x.closed_at} for x in hs]
+    js=(db.query(SystemLog).filter(SystemLog.module=="box_spread_paper_cycle").filter(SystemLog.message.like(f"user={user} %")).order_by(SystemLog.created_at.desc()).limit(journal_limit).all())
+    journal=[]
+    for x in js:
+        try: details=json.loads(x.details or "{}")
+        except (TypeError,ValueError): details={"raw":x.details}
+        journal.append({"id":x.id,"created_at":x.created_at,**details})
+    from app.scanner import live_box_spread_routes as scanner
+    rows=list(scanner._latest()) if callable(scanner._latest) else list(scanner._latest)
+    opportunities=[{"symbol":x.low.underlying,"instrument_class":x.low.instrument_class,"expiry":x.low.expiry,"low_strike":x.low.strike,"high_strike":x.high.strike,"direction":x.direction,"timestamp_ns":x.low.timestamp_ns,"low_call_bid":x.low.call_bid,"low_call_ask":x.low.call_ask,"low_put_bid":x.low.put_bid,"low_put_ask":x.low.put_ask,"high_call_bid":x.high.call_bid,"high_call_ask":x.high.call_ask,"high_put_bid":x.high.put_bid,"high_put_ask":x.high.put_ask,"executable_edge":x.executable_edge,"edge_per_lot":x.edge_per_lot,"gross_pnl":x.gross_pnl,"lot_size":x.low.lot_size,"strike_distance":x.strike_distance,"liquidity_qty":min(x.low.volume,x.high.volume),"low_call_price":x.low.call_ask if x.direction=="LONG" else x.low.call_bid,"low_put_price":x.low.put_ask if x.direction=="LONG" else x.low.put_bid,"high_call_price":x.high.call_bid if x.direction=="LONG" else x.high.call_ask,"high_put_price":x.high.put_bid if x.direction=="LONG" else x.high.put_ask} for x in rows[:limit]]
+    return {"status":"success","strategy":"box-spread","mode":"paper","account":{"virtual_balance":a.virtual_balance,"realized_pnl":a.realized_pnl,"auto_cycle_lots":max(1,int(a.box_spread_auto_lots))},"open_position":position,"live_opportunities":{"count":len(opportunities),"data":opportunities},"history":{"count":len(history),"items":history},"journal":{"count":len(journal),"items":journal}}
