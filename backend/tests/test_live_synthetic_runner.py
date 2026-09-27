@@ -130,3 +130,32 @@ def test_runner_refreshes_authoritative_stock_universe_before_selection():
     assert runner.allowed_stock_symbols == frozenset()
     runner._refresh_stock_universe()
     assert runner.allowed_stock_symbols == frozenset({"ABC"})
+
+
+def test_runner_stock_path_uses_provider_and_only_real_plus_minus_5_positions():
+    master = InstrumentMaster()
+    items = [
+        {"exch_seg":"NFO","instrumenttype":"FUTSTK","token":"sf","name":"ABC",
+         "symbol":"ABC30SEP26FUT","expiry":"30SEP2026","lotsize":"10"},
+    ]
+    for i, strike in enumerate(range(70, 131, 5)):
+        items.extend([
+            {"exch_seg":"NFO","instrumenttype":"OPTSTK","token":f"c{i}","name":"ABC",
+             "symbol":f"ABC{strike}CE","expiry":"30SEP2026","strike":str(strike * 100),"lotsize":"10"},
+            {"exch_seg":"NFO","instrumenttype":"OPTSTK","token":f"p{i}","name":"ABC",
+             "symbol":f"ABC{strike}PE","expiry":"30SEP2026","strike":str(strike * 100),"lotsize":"10"},
+        ])
+    master.instruments = items
+    master._loaded = True
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("ABC", "STOCK", 100.0, "30SEP2026")],
+        allowed_stock_symbols=frozenset(),
+        stock_universe_provider=lambda: ("ABC",),
+        instrument_master=master,
+        atm_provider=lambda _s, _t: 100.0,
+    )
+    subscriptions = runner.build_subscriptions()
+    strikes = {item.strike for item in subscriptions if item.strike is not None}
+    assert strikes == {75.0, 80.0, 85.0, 90.0, 95.0, 100.0, 105.0, 110.0, 115.0, 120.0, 125.0}
+    assert "sf" in {item.token for item in subscriptions}
