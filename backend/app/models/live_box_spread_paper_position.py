@@ -21,3 +21,4 @@ class LiveBoxSpreadPaperPosition(Base):
  realized_pnl=Column(Float,default=0.0)
  is_open=Column(Integer,default=1)
  created_at=Column(DateTime,default=lambda:datetime.now(timezone.utc).replace(tzinfo=None))
+ closed_at=Column(DateTime,nullable=True)
