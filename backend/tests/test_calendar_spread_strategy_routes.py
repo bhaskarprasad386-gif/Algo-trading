@@ -193,6 +193,9 @@ def test_calendar_spread_historical_replay_reads_durable_catalog(tmp_path, monke
     result = calendar_spread_historical_replay(request)
 
     assert result["count"] == 2
+    # The default prefers the live 1-second source, but this fixture exercises
+    # the legacy Angel source fallback used by older stored datasets.
+    assert result["source"] == "angelone"
     assert result["source_min_interval_seconds"] == 1.0
     assert result["available_replay_intervals"] == ["1s", "30s", "1m", "5m", "15m", "30m", "1h"]
     assert result["series"][0]["near_expiry"] == "2026-09-30"
@@ -295,6 +298,7 @@ def test_calendar_spread_historical_strategy_run_executes_catalog_data(tmp_path,
     ))
 
     assert result["source"] == "historical-catalog"
+    assert result["data_source"] == "angelone"
     assert result["completed_trades"] == 1
     assert result["trade_count"] == 1
     assert result["net_profit"] == 500.0
