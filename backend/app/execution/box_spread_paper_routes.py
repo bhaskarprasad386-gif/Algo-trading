@@ -28,7 +28,6 @@ def _validate(req):
  if req.direction not in {"LONG","SHORT"}:raise HTTPException(422,detail="invalid direction")
  if req.instrument_class.upper() not in {"STOCK","INDEX"}:raise HTTPException(422,detail="invalid instrument class")
  if req.high_strike<=req.low_strike:raise HTTPException(422,detail="high strike must exceed low strike")
- if req.liquidity_qty if hasattr(req,"liquidity_qty") else False: pass
 
 @router.post("/from-scanner")
 def from_scanner(req:ScannerEntry,user:int=Depends(current_user_id),db:Session=Depends(get_db)):
