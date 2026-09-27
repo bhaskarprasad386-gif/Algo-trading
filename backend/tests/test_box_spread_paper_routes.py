@@ -125,3 +125,19 @@ def test_box_spread_entry_rejects_expired_contract_and_excess_quantity():
         assert False
     except HTTPException as exc:
         assert exc.status_code==422 and "risk limit" in exc.detail
+
+
+def test_box_spread_cycle_holds_open_position_below_target(monkeypatch):
+    from app.execution import box_spread_paper_routes as routes
+    from types import SimpleNamespace
+    position=SimpleNamespace(id=7,lot_size=20,lots=1,direction="LONG",high_call_entry=90,high_put_entry=120,low_call_entry=101,low_put_entry=111,underlying="SENSEX",instrument_class="INDEX",expiry="20990101",low_strike=80000.0,high_strike=80100.0)
+    class Query:
+        def filter_by(self, **kwargs): return self
+        def first(self): return position
+    class DB:
+        def query(self, model): return Query()
+    low=SimpleNamespace(underlying="SENSEX",instrument_class="INDEX",expiry="20990101",strike=80000.0,call_bid=100,call_ask=101,put_bid=110,put_ask=111)
+    high=SimpleNamespace(strike=80100.0,call_bid=90,call_ask=91,put_bid=120,put_ask=121)
+    monkeypatch.setattr(routes,"_current_scanner_match",lambda p: SimpleNamespace(low=low,high=high))
+    result=routes.cycle(lots=1,min_pnl=0,user=1,db=DB())
+    assert result["status"]=="hold" and result["position_id"]==7
