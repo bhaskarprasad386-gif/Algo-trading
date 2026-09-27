@@ -66,3 +66,27 @@ def test_underlying_feed_resolves_index_from_master_when_declared():
         ("NIFTY",), tracker=tracker, instrument_master=master, index_symbols=frozenset({"NIFTY"})
     )
     assert feed._tokens() == {"NIFTY": "99926000"}
+
+
+def test_underlying_feed_routes_bse_indices_to_bfo_exchange_type():
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"SENSEX": (80000.0, 80100.0), "NIFTY": (100.0, 105.0)})
+    feed = LiveSyntheticUnderlyingFeed(
+        ("NIFTY", "SENSEX", "BANKEX"),
+        tracker=tracker,
+        concrete_tokens={"NIFTY": "999", "SENSEX": "1", "BANKEX": "2"},
+        index_symbols=frozenset({"NIFTY", "SENSEX", "BANKEX"}),
+    )
+    groups = feed._subscription_groups(feed._tokens())
+    assert groups[1] == ["999"]
+    assert groups[4] == ["1", "2"]
+
+
+def test_underlying_feed_keeps_bse_exchange_routing_only_for_bse_indices():
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"SENSEX": (80000.0,)})
+    feed = LiveSyntheticUnderlyingFeed(
+        ("SENSEX",), tracker=tracker,
+        concrete_tokens={"SENSEX": "1"},
+        index_symbols=frozenset({"SENSEX"}),
+    )
+    assert feed._exchange_type("SENSEX") == 4
+    assert feed._exchange_type("NIFTY") == 1
