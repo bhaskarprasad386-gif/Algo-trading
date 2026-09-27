@@ -100,3 +100,19 @@ def test_runner_exposes_concrete_atm_strikes_from_master():
         atm_provider=lambda _s, _t: 100.0,
     )
     assert runner.concrete_atm_strikes() == {"NIFTY": (95.0, 100.0, 105.0)}
+
+
+def test_runner_refresh_snapshot_uses_automatic_atm_provider(monkeypatch):
+    master = _master()
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", None, "30SEP2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=master,
+    )
+    provider = runner._ensure_atm_provider()
+    runner._atm_tracker.update("NIFTY", 103.0)
+    observed = provider("NIFTY", 0)
+    assert observed == 105.0
+    # Regression guard: automatic mode must not access the removed legacy attribute.
+    assert not hasattr(runner, "atm_provider")
