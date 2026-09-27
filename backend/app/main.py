@@ -566,6 +566,34 @@ async def _contract_master_sync_loop() -> None:
         await asyncio.sleep(interval)
 
 
+@app.get("/api/v1/app/update")
+def app_update():
+    """Public Android update metadata. APK URL is deployment-configured, never hard-coded."""
+    return {
+        "platform": "android",
+        "version_code": settings.APP_UPDATE_VERSION_CODE,
+        "version_name": settings.APP_UPDATE_VERSION_NAME,
+        "release_notes": settings.APP_UPDATE_NOTES,
+        "apk_url": settings.APP_UPDATE_APK_URL,
+        "sha256": settings.APP_UPDATE_SHA256,
+        "mandatory": settings.APP_UPDATE_MANDATORY,
+    }
+
+
+@app.get("/api/v1/app/strategies")
+def app_strategies():
+    """Backend-owned strategy registry used by the Android shell."""
+    return {
+        "strategies": [
+            {"id": "cash-future", "name": "Cash–Future", "version": "1", "enabled": True, "screen": "cash_future_scanner"},
+            {"id": "calendar-spread", "name": "Calendar Spread", "version": "1", "enabled": True, "screen": "backend"},
+            {"id": "synthetic-future-cash-carry", "name": "Synthetic Future / Cash Carry", "version": "1", "enabled": True, "screen": "backend"},
+            {"id": "box-spread", "name": "Box Spread", "version": "1", "enabled": True, "screen": "box_spread"},
+            {"id": "full-fno", "name": "Full F&O Backtest", "version": "1", "enabled": True, "screen": "full_fno"},
+        ]
+    }
+
+
 @app.get("/")
 def root():
     return {"message": "Algo Trading Platform is running", "environment": settings.environment, "version": "0.1.0"}
