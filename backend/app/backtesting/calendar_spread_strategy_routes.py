@@ -25,6 +25,12 @@ router = APIRouter(
     tags=["Calendar-Spread Backtesting"],
 )
 
+# The live 1-second collector persists Calendar Spread data under this source.
+# Historical replay defaults to that source so the live capture can be replayed
+# without the Android/client having to know an internal storage identifier.
+CALENDAR_SPREAD_LIVE_SOURCE = "angelone-calendar-live-1s"
+LEGACY_CALENDAR_SPREAD_SOURCE = "angelone"
+
 
 class CalendarSpreadPointRequest(BaseModel):
     timestamp: datetime
@@ -311,7 +317,7 @@ class CalendarSpreadHistoricalReplayRequest(BaseModel):
     end_date: date
     near_contract_month: str
     far_contract_month: str
-    source: str = Field(default="angelone", min_length=1)
+    source: str = Field(default=CALENDAR_SPREAD_LIVE_SOURCE, min_length=1)
     source_timeframe: str = Field(default="1s", min_length=1)
     replay_timeframe: str = Field(default="1s")
     start_timestamp: datetime | None = None
@@ -470,9 +476,27 @@ def calendar_spread_historical_replay(request: CalendarSpreadHistoricalReplayReq
     )
     data_catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
     contract_catalog = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
+    source_used = selection.source
     try:
         loader = CalendarSpreadHistoricalLoader(data_catalog, contract_catalog)
         points = list(loader.iter_points(selection))
+        # Keep compatibility with older catalog data written under the generic
+        # Angel source while preferring the current live 1-second source.
+        if not points and selection.source == CALENDAR_SPREAD_LIVE_SOURCE:
+            legacy_selection = CalendarSpreadHistorySelection(
+                underlying=selection.underlying,
+                exchange=selection.exchange,
+                start_date=selection.start_date,
+                end_date=selection.end_date,
+                near_contract_month=selection.near_contract_month,
+                far_contract_month=selection.far_contract_month,
+                timeframe=selection.timeframe,
+                source=LEGACY_CALENDAR_SPREAD_SOURCE,
+                instrument_type=selection.instrument_type,
+            )
+            points = list(loader.iter_points(legacy_selection))
+            if points:
+                source_used = LEGACY_CALENDAR_SPREAD_SOURCE
     except (LookupError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
@@ -515,6 +539,7 @@ def calendar_spread_historical_replay(request: CalendarSpreadHistoricalReplayReq
         "underlying": selection.underlying,
         "near_contract_month": selection.near_contract_month,
         "far_contract_month": selection.far_contract_month,
+        "source": source_used,
         "source_timeframe": request.source_timeframe,
         "replay_timeframe": request.replay_timeframe,
         "source_min_interval_seconds": min(_replay_deltas(source_points)) if len(source_points) > 1 else None,
