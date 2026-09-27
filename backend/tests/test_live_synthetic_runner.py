@@ -69,3 +69,14 @@ def test_runner_requires_real_atm_provider():
         assert "atm_provider" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+def test_runner_exposes_concrete_atm_strikes_from_master():
+    master = _master()
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "30SEP2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=master,
+        atm_provider=lambda _s, _t: 100.0,
+    )
+    assert runner.concrete_atm_strikes() == {"NIFTY": (95.0, 100.0, 105.0)}
