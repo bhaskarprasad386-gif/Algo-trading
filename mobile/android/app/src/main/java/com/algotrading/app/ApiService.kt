@@ -4,6 +4,7 @@ import android.content.Context
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
+import com.google.gson.annotations.SerializedName
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.DELETE
@@ -207,9 +208,9 @@ data class CashFutureDownloadJob(val job_id: String = "", val source: String = "
 data class CashFutureDownloadChunk(val sequence: Int = 0, val instrument: String = "", val status: String = "", val attempts: Int = 0, val expected_timestamps: Int = 0, val actual_timestamps: Int = 0, val missing_timestamps: Int = 0, val fetched_records: Int = 0, val inserted_records: Int = 0, val error: String? = null)
 data class CashFutureDownloadStatusResponse(val job: CashFutureDownloadJob, val chunks: List<CashFutureDownloadChunk> = emptyList())
 data class BoxSpreadOpportunity(
-    val underlying: String = "", val instrument_class: String = "", val expiry: String = "",
+    @SerializedName("symbol") val underlying: String = "", val instrument_class: String = "", val expiry: String = "",
     val low_strike: Double = 0.0, val high_strike: Double = 0.0, val direction: String = "",
-    val timestamp: String = "", val executable_edge: Double = 0.0, val edge_per_lot: Double = 0.0,
+    @SerializedName("timestamp_ns") val timestamp: String = "", val executable_edge: Double = 0.0, val edge_per_lot: Double = 0.0,
     val gross_pnl: Double = 0.0, val lot_size: Int = 0, val strike_distance: Double = 0.0,
     val liquidity_qty: Double = 0.0,
     val low_call_bid: Double? = null, val low_call_ask: Double? = null,
