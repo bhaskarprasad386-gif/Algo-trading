@@ -13,7 +13,10 @@ def test_box_live_scanner_uses_real_bid_ask_for_both_directions():
         config=BoxSpreadScanConfig(allowed_stock_symbols=frozenset({"ABC"})),
         policy=ScanPolicy(stock_box_distances=(1,)),
     )
-    assert any(r.direction=="LONG" and r.executable_edge==8 for r in result)
+    assert len(result) == 2
+    long_results = [r for r in result if r.direction == "LONG"]
+    assert len(long_results) == 1
+    assert long_results[0].executable_edge == 8
 
 def test_live_box_scanner_waits_for_matching_ce_pe_pairs():
     scanner=LiveBoxSpreadScanner(
