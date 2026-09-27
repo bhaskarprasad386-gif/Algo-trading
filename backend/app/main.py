@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from pathlib import Path
+import json
 from pydantic import BaseModel
 import asyncio
 import queue
@@ -566,10 +567,12 @@ async def _contract_master_sync_loop() -> None:
         await asyncio.sleep(interval)
 
 
+APP_UPDATE_MANIFEST = Path(__file__).resolve().parent / "app_update_manifest.json"
+
 @app.get("/api/v1/app/update")
 def app_update():
-    """Public Android update metadata. APK URL is deployment-configured, never hard-coded."""
-    return {
+    """Public Android update metadata. Release automation writes the manifest after publishing."""
+    payload = {
         "platform": "android",
         "version_code": settings.APP_UPDATE_VERSION_CODE,
         "version_name": settings.APP_UPDATE_VERSION_NAME,
@@ -578,6 +581,12 @@ def app_update():
         "sha256": settings.APP_UPDATE_SHA256,
         "mandatory": settings.APP_UPDATE_MANDATORY,
     }
+    if APP_UPDATE_MANIFEST.exists():
+        try:
+            payload.update(json.loads(APP_UPDATE_MANIFEST.read_text(encoding="utf-8")))
+        except (OSError, ValueError) as exc:
+            app_logger.warning("Android update manifest could not be read: %s", exc)
+    return payload
 
 
 @app.get("/api/v1/app/strategies")
