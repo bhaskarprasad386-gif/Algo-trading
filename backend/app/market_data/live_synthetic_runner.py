@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from threading import Event, Thread
-from time import time_ns
+from time import sleep, time_ns
 from typing import Callable, Iterable
 
 from app.backtesting.arbitrage_scan_policy import ScanPolicy
@@ -144,7 +144,11 @@ class LiveSyntheticRunner:
                 instrument_class=target.instrument_class,
                 atm_strike=(
                     atm_provider(target.underlying, time_ns())
-                    or target.atm_strike
+                    if self._atm_tracker is not None
+                    else (
+                        atm_provider(target.underlying, time_ns())
+                        or target.atm_strike
+                    )
                 ),
                 expiry=target.expiry,
                 allowed_stock_symbols=self.allowed_stock_symbols,
@@ -156,6 +160,30 @@ class LiveSyntheticRunner:
                     seen.add(key)
                     subscriptions.append(item)
         return tuple(subscriptions)
+
+    def _wait_for_live_atm(
+        self,
+        atm_provider: Callable[[str, int], float | None],
+        *,
+        timeout_seconds: float = 30.0,
+    ) -> None:
+        """Wait for real underlying ticks before selecting option strikes."""
+        if self._atm_tracker is None:
+            return
+        deadline = time_ns() + int(timeout_seconds * 1_000_000_000)
+        symbols = tuple(target.underlying.strip().upper() for target in self.targets)
+        while time_ns() < deadline:
+            if all(atm_provider(symbol, time_ns()) is not None for symbol in symbols):
+                return
+            sleep(0.25)
+        missing = [
+            symbol for symbol in symbols
+            if atm_provider(symbol, time_ns()) is None
+        ]
+        raise TimeoutError(
+            "timed out waiting for live underlying prices: "
+            + ", ".join(sorted(set(missing)))
+        )
 
     def run_forever(self) -> None:
         atm_provider = self._ensure_atm_provider()
@@ -169,6 +197,7 @@ class LiveSyntheticRunner:
             )
             feed_thread.start()
         try:
+            self._wait_for_live_atm(atm_provider)
             while self._recorder is None or not self._recorder.stop_event.is_set():
                 self._refresh_requested.clear()
                 subscriptions = self.build_subscriptions()
