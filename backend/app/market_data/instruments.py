@@ -135,3 +135,22 @@ class InstrumentMaster:
     def resolve_cash_token(self, tradingsymbol: str, exchange: str = "NSE") -> str:
         """Resolve a validated cash instrument to its Angel One token."""
         return str(self.resolve_cash_instrument(tradingsymbol, exchange).get("token"))
+    def resolve_index_instrument(self, tradingsymbol: str, exchange: str = "NSE") -> Dict[str, Any]:
+        """Resolve exactly one concrete index instrument from Angel One master."""
+        symbol = str(tradingsymbol).strip().upper()
+        exch = str(exchange).strip().upper()
+        if not symbol:
+            raise ValueError("index trading symbol cannot be empty")
+        results = [
+            item for item in self.search(tradingsymbol=symbol, exchange=exch)
+            if str(item.get("token", "")).strip()
+        ]
+        if len(results) != 1:
+            raise LookupError(
+                f"expected exactly one index instrument for {exch}:{symbol}, found {len(results)}"
+            )
+        return results[0]
+
+    def resolve_index_token(self, tradingsymbol: str, exchange: str = "NSE") -> str:
+        """Resolve a concrete Angel One token for an index underlying."""
+        return str(self.resolve_index_instrument(tradingsymbol, exchange)["token"])
