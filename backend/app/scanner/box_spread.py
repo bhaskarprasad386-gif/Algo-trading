@@ -33,7 +33,7 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
     if cls not in {"STOCK", "INDEX"}:
         raise ValueError("box scanner supports only STOCK and INDEX")
     if cls == "STOCK" and quotes[0].underlying.upper() not in {s.upper() for s in config.allowed_stock_symbols}:
-        raise ValueError("stock is outside the configured NIFTY-50 universe")
+        raise ValueError("stock is outside the configured Box Spread stock universe")
     first = quotes[0]
     if any(q.timestamp_ns != first.timestamp_ns for q in quotes):
         raise ValueError("box option quotes must share timestamp")
