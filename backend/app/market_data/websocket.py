@@ -88,6 +88,8 @@ class MarketDataWebSocket:
             self._reconnect_thread.start()
 
     def _reconnect_after_disconnect(self) -> None:
+        with self._reconnect_lock:
+            self._reconnect_thread = None
         with self._lock:
             exchange_type = self.exchange_type
             tokens = list(self.tokens)
