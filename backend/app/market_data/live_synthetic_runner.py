@@ -152,12 +152,8 @@ class LiveSyntheticRunner:
                     self._refresh_requested.clear()
                     self._recorder = None
                     continue
-                if self._recorder.stop_event.is_set() and (
-                    self.underlying_feed is None
-                    or self.underlying_feed.stop_event.is_set()
-                ):
-                    break
                 self._recorder = None
+                break
         finally:
             if self.underlying_feed is not None:
                 self.underlying_feed.stop()
