@@ -49,10 +49,11 @@ jobs:
         env:
           BACKEND_BASE_URL: ${{ github.event.inputs.backend_base_url || 'https://algo-trading-backend-2.onrender.com/' }}
           BACKEND_WS_URL: ${{ github.event.inputs.backend_ws_url || 'wss://algo-trading-backend-2.onrender.com' }}
+          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
         run: |
           gradle assembleDebug --no-daemon \
             -PbackendBaseUrl="$BACKEND_BASE_URL" \
-            -PbackendWsUrl="$BACKEND_WS_URL"
+            -PbackendWsUrl="$BACKEND_WS_URL" -PgoogleWebClientId="$GOOGLE_WEB_CLIENT_ID" -PgoogleWebClientId="$GOOGLE_WEB_CLIENT_ID"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
