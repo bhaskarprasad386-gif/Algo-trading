@@ -1,9 +1,9 @@
 {
   "platform": "android",
-  "version_code": 2,
-  "version_name": "1.4",
-  "release_notes": "Login removed; direct app access enabled.",
+  "version_code": 5,
+  "version_name": "1.5",
+  "release_notes": "update-install fix",
   "apk_url": "https://github.com/bhaskarprasad386-gif/Algo-trading/releases/latest/download/algo-trading-release.apk",
-  "sha256": "736ad77cc9249d34db245a697dbaacd48942c11e35e4dac113f2e0ec557427ab",
+  "sha256": "1bfe01bdbf3199a2dd15a0b3bcd72e615410510a8523aa0cded68f96a42b28cc",
   "mandatory": false
 }
