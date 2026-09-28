@@ -39,8 +39,11 @@ data class LiveCashFutureSignal(
     val lifecycle: String = "", val reason_codes: List<String> = emptyList(), val observation_ref: String = "", val alert_event: String? = null,
     val rank_score: Double = 0.0, val rank_factors: Map<String, Double?> = emptyMap(), val peer_contract_month: String? = null,
     val peer_gap_pct: Double? = null, val gap_pct_delta_vs_peer: Double? = null, val is_best_contract_month: Boolean = false
-)
-data class LiveCashFutureScanResponse(val status: String = "", val scanner: String = "", val mode: String = "", val data: List<LiveCashFutureSignal> = emptyList())
+) {
+    val executable: Boolean get() = lifecycle != "EXPIRED" && gap > 0.0 && net_gap > 0.0 && (cash_ask ?: cash_ltp) > 0.0 && (future_bid ?: future_ltp) > 0.0
+    val roi_pct: Double get() = net_gap_pct
+}
+data class LiveCashFutureScanResponse(val status: String = "", val scanner: String = "", val mode: String = "", val data: List<LiveCashFutureSignal> = emptyList(), val errors: List<CashFutureScanError> = emptyList())
 data class CashFutureScanError(val symbol: String = "", val error: String = "")
 data class CashFutureScanResponse(val status: String, val scanner: String, val mode: String, val symbols_requested: List<String> = emptyList(), val scanned_observations: Int = 0, val opportunity_count: Int = 0, val data: List<CashFutureOpportunity> = emptyList(), val errors: List<CashFutureScanError> = emptyList())
 data class BrokerConnectRequest(val broker: String = "angel_one", val display_name: String? = null, val api_key: String, val client_code: String, val password: String, val totp_secret: String)
