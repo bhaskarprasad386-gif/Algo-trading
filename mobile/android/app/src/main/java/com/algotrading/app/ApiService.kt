@@ -113,6 +113,7 @@ data class CashFutureStrategyRunResponse(
     val signals: List<Map<String, Any?>> = emptyList(),
     val trades: List<CashFutureTradeMarker> = emptyList(),
     val equity_curve: List<Map<String, Any?>> = emptyList(),
+    val analysis: Map<String, Any?> = emptyMap(),
 )
 
 data class CalendarSpreadInstrument(
