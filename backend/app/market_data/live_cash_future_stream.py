@@ -295,7 +295,7 @@ class LiveCashFutureOneSecondCollector:
                             self.on_observation(dict(payload))
                         except Exception as exc:
                             app_logger.error(f"1-second live scanner final callback failed {token}: {exc}")
-                    written += catalog.ingest(HistoricalRecord(
+                    written += _ingest_live_record(catalog, HistoricalRecord(
                         source=SOURCE,
                         instrument=f"{meta['symbol']}|{token}",
                         timeframe=TIMEFRAME,
