@@ -9,14 +9,14 @@ jobs:
     timeout-minutes: 2
 
     steps:
-      - name: Test VPS SSH port
+      - name: Test correct VPS SSH endpoint
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_HOST: 82.41.67.22
         run: |
           set -u
 
-          echo "=== DNS ==="
-          getent hosts "$VPS_HOST" || true
+          echo "=== VPS IP ==="
+          echo "$VPS_HOST"
 
           echo "=== TCP 22 ==="
           if timeout 10 bash -c "</dev/tcp/$VPS_HOST/22"; then
