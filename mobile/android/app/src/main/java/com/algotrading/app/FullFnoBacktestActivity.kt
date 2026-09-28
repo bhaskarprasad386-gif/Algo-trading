@@ -113,9 +113,10 @@ class FullFnoBacktestActivity : AppCompatActivity() {
                     "holding_mode" to "POSITIONAL"
                 )
                 val response = ApiService.retrofitService.startCashFutureStrategyRun(request)
-                val runId = response["run_id"] ?: "-"
+                val runId = response["run_id"]?.toString() ?: "-"
                 withContext(Dispatchers.Main) {
                     tvStatus.text = date + " • " + symbol + " • PAPER RUN STARTED • Run ID " + runId + " • LIVE orders OFF"
+                    if (runId != "-") AlertDialog.Builder(this@FullFnoBacktestActivity).setTitle("Paper Strategy Run Started").setMessage("Run ID: " + runId + "\n\nOpen RESULTS / JOURNAL from the main dashboard to inspect durable results, trades, fills and events.\n\nLive broker orders remain OFF.").setPositiveButton("OK", null).show()
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { tvStatus.text = "LIVE 1s PAPER RUN failed • " + (e.message ?: "API error") }
