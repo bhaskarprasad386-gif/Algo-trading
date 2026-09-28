@@ -17,6 +17,8 @@ from app.backtesting.cash_future_strategy_runner import (
 from app.backtesting.ledger import BacktestLedger, LedgerRecord
 from app.scanner.cash_future_history import CashFutureHistoryPoint
 from app.backtesting.provenance import provenance_hash
+from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
+from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 from app.core.config import settings
 
 
@@ -44,6 +46,52 @@ def client():
     app = FastAPI()
     app.include_router(router)
     return TestClient(app)
+
+
+
+def test_strategy_run_route_executes_accumulated_live_1s_source(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "BACKTEST_DATA_DB", str(tmp_path / "live-data.db"))
+    monkeypatch.setattr(settings, "BACKTEST_CONTRACT_DB", str(tmp_path / "live-contracts.db"))
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", str(tmp_path / "live-ledger.db"))
+    contracts = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
+    data = HistoricalCatalog(settings.BACKTEST_DATA_DB)
+    try:
+        contracts.upsert_snapshot(date(2026, 9, 28), [
+            ContractRecord("NFO", "ABC26SEP FUT", "101", date(2026, 9, 30), "STOCK_FUTURE", "ABC", 75)
+        ])
+        timestamp_ns = int(datetime(2026, 9, 28, 9, 30).timestamp() * 1_000_000_000)
+        data.ingest([
+            HistoricalRecord("angelone-live-1s", "ABC-EQ|1", "1s", timestamp_ns, {"ltp": 100.0, "close": 100.0, "bid": 99.9, "ask": 100.1}),
+            HistoricalRecord("angelone-live-1s", "ABC26SEP FUT|101", "1s", timestamp_ns, {"ltp": 110.0, "close": 110.0, "bid": 109.9, "ask": 110.1}),
+        ])
+    finally:
+        data.close()
+        contracts.close()
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "cash-future",
+            "strategy_version": "1",
+            "start_date": "2026-09-28",
+            "end_date": "2026-09-28",
+            "spot_instrument": "ABC-EQ",
+            "exchange": "NFO",
+            "underlying": "ABC",
+            "timeframe": "1s",
+            "source": "angelone-live-1s",
+            "mode": "CURRENT",
+            "execution_model": "bid_ask",
+            "initial_capital": 10000000,
+            "cash_lots": 1,
+            "future_lots": 1,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["strategy_id"] == "cash-future"
+    assert body["signal_count"] == 1
+    assert body["trade_count"] == 0
+    assert body["signals"][0]["timestamp"].startswith("2026-09-28T15:00:00")
 
 
 def test_strategy_run_route_executes_historical_buy_sell():
