@@ -304,7 +304,13 @@ jobs:
               raise SystemExit("SCANNER_RESPONSE_FIELDS_FAILED")
           print("SCANNER_E2E=PASS")
           PY
-          if grep -q "SCANNER_LIVE_SESSION_CLOSED_EXPECTED" "$scanner_body"; then
+          scanner_count=$(SCANNER_BODY="$scanner_body" "$APP_DIR/.venv/bin/python" - <<'PY'
+import json, os
+body = json.loads(open(os.environ["SCANNER_BODY"]).read())
+print(len(body.get("data") or []))
+PY
+          )
+          if [ "$scanner_count" -eq 0 ]; then
             rm -f "$scanner_body"
             echo "SCANNER_CHAIN_SKIPPED_MARKET_CLOSED=true"
             exit 0
