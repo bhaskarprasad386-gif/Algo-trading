@@ -176,13 +176,15 @@ class MainActivity : AppCompatActivity() {
         try {
             val response = ApiService.retrofitService.liveCashFutureScan(maxAgeSeconds = 5.0, limit = 50)
             val completedAt = currentTimestamp()
-            val sorted = response.data.sortedWith(compareByDescending<LiveCashFutureSignal> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit ?: 0.0 }.thenByDescending { it.rank_score }.thenByDescending { it.gap_pct }.thenBy { it.symbol })
+            val sorted = response.data.sortedWith(compareByDescending<LiveCashFutureSignal> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit }).thenByDescending { it.rank_score }.thenByDescending { it.gap_pct }.thenBy { it.symbol }
             val executable = sorted.firstOrNull { it.executable }
+            val responseDataSize = response.data.size
+            val expiredCount = response.data.count { it.lifecycle == "EXPIRED" }
             val result = buildString {
                 append("LIVE 1s SCAN — \n"); append(if (sorted.isEmpty()) "NO CURRENT SIGNALS" else "SUCCESS"); append("\n")
                 append("Last Scan: $completedAt\n\n")
-                append("Current signals: ${sorted.size}\n")
-                append("Executable positive-gap signals: ${sorted.count { it.executable }}\n")
+                append("Current signals:\n"); append("Current signals: ${sorted.size}\n")
+                append("Executable positive-gap signals: ${sorted.count { it.gap > 0.0 && it.net_gap > 0.0 }}\n")
                 append("Source: Angel One WebSocket → 1s collector → live scanner\n\n")
                 sorted.forEach { item ->
                     append("────────────────────\n")
@@ -193,20 +195,21 @@ class MainActivity : AppCompatActivity() {
                     append("Gross Spread: ₹${item.gross_profit ?: item.gross_lot_value ?: 0.0}\n")
                     append("Margin: ₹${item.capacity_notional ?: 0.0}\n")
                     append("Deployed Capital: ₹${item.capacity_notional ?: 0.0}\n")
-                    append("Net Profit: ₹${item.net_profit}\n")
+                    append("Net Profit: ₹${item.net_profit ?: 0.0}\n")
                     append("ROI: ${item.net_gap_pct}%\n")
                     append("Net Gap: ${item.net_gap_pct}%\n")
                     append("Net Profit: ₹${item.net_profit ?: 0.0} • Lots: ${item.alert_lots ?: 0}\n")
                     append("Cash H/L: ₹${item.cash_day_high} / ₹${item.cash_day_low}\n")
                     append("Future H/L: ₹${item.future_day_high} / ₹${item.future_day_low}\n")
                     append("Liquidity: ${item.liquidity_qty ?: 0.0} • Stable: ${item.stable_observations}s\n")
-                    append("Executable: ${item.lifecycle}\n")
+                    append("Executable: ${item.lifecycle}\n\n")
                     append("Lifecycle: ${item.lifecycle} • Alert: ${item.alert_event ?: "NONE"}\n\n")
                 }
             }
             withContext(Dispatchers.Main) {
                 val errorText = response.errors.joinToString("\n") { error -> "Error: ${error.symbol} • ${error.error}" }
-                lastScannerResult = if (errorText.isBlank()) result else "$result\n$errorText"
+                lastScannerResult = result
+                if (errorText.isNotBlank()) lastScannerResult = "$lastScannerResult\n$errorText"
                 lastExecutableOpportunity = executable
                 tvScannerResult.text = lastScannerResult
                 renderScannerPaperState()
