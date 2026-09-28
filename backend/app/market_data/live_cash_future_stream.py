@@ -275,6 +275,7 @@ class LiveCashFutureOneSecondCollector:
                     payload.update({
                         "source_timestamp_ns": second_ns,
                         "ltp": _ltp(message),
+                        "close": _ltp(message),
                         "underlying": meta["underlying"],
                         "leg": meta["leg"],
                         "contract_month": meta["contract_month"],
