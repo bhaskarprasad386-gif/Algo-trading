@@ -51,6 +51,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnKillSwitch: Button
     private lateinit var btnAppUpdate: Button
     private lateinit var btnStrategies: Button
+    private lateinit var btnResultsJournal: Button
 
     private val scannerRefreshHandler = Handler(Looper.getMainLooper())
     private lateinit var scannerRefreshRunnable: Runnable
@@ -112,6 +113,7 @@ class MainActivity : AppCompatActivity() {
         updateScannerAutoRefreshStatus(); checkServerStatus(); checkBrokerStatus(); checkSafetyStatus()
         btnAppUpdate.setOnClickListener { startActivity(Intent(this, UpdateActivity::class.java)) }
         btnStrategies.setOnClickListener { startActivity(Intent(this, StrategyRegistryActivity::class.java)) }
+        btnResultsJournal.setOnClickListener { startActivity(Intent(this, ResultsJournalActivity::class.java)) }
         btnRunScanner.setOnClickListener { runCashFutureScanner() }
         btnScannerPaperExecute.setOnClickListener { paperExecuteScannerOpportunity() }
         btnFullFnoBacktest.setOnClickListener { startActivity(Intent(this, FullFnoBacktestActivity::class.java)) }
