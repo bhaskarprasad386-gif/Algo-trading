@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
-from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -14,46 +11,11 @@ from app.brokers.angel_one import AngelOneAdapter
 from app.brokers.connections import broker_connections
 from app.brokers.registry import BrokerRegistry
 from app.brokers.safety import trading_safety
-from app.core.config import settings
 from app.core.database import get_db
 from app.core.logger import app_logger
-from app.core.security import ALGORITHM
-from app.models import Session as UserSession
+from app.execution.paper_routes import current_user_id
 
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
-
-
-class ConnectRequest(BaseModel):
-    broker: str = Field(min_length=2, max_length=50)
-    display_name: str | None = Field(default=None, max_length=100)
-    api_key: str = Field(min_length=1, max_length=300)
-    client_code: str = Field(min_length=1, max_length=100)
-    password: str = Field(min_length=1, max_length=300)
-    totp_secret: str = Field(min_length=1, max_length=300)
-
-
-class RealTradingEnableRequest(BaseModel):
-    confirmation: str = Field(min_length=1, max_length=100)
-
-
-_sessions: dict[tuple[int, str], AngelOneAdapter] = {}
-
-
-def current_user_id(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> int:
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = int(payload.get("sub", "0"))
-    except (JWTError, TypeError, ValueError):
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    if user_id <= 0:
-        raise HTTPException(status_code=401, detail="Invalid authenticated user")
-    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    if db.query(UserSession.id).filter(UserSession.token_hash == token_hash).first() is None:
-        raise HTTPException(status_code=401, detail="Token has been logged out or is not an active session")
-    return user_id
-
-
 @router.get("")
 def supported_brokers(user_id: int = Depends(current_user_id)) -> dict:
     return {"brokers": BrokerRegistry().names()}
