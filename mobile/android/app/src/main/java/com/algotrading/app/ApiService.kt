@@ -293,6 +293,11 @@ interface ApiInterface {
     suspend fun calendarSpreadHistoricalStrategyRun(@Body request: Map<String, Any?>): CalendarSpreadStrategyRunResponse
     @GET("/api/v1/backtesting/cash-future/replay") suspend fun cashFutureReplay(@Query("trading_date") tradingDate: String, @Query("symbol") symbol: String, @Query("contract_month") contractMonth: String? = null, @Query("timeframe") timeframe: String = "1m", @Query("mode") mode: String = "CURRENT", @Query("source") source: String = "angelone", @Query("spot_instrument") spotInstrument: String? = null, @Query("exchange") exchange: String = "NSE"): CashFutureReplayResponse
     @GET("/api/v1/backtesting/cash-future/strategy-run/{run_id}") suspend fun cashFutureStrategyRun(@Path("run_id") runId: String): CashFutureStrategyRunResponse
+    @GET("/api/v1/backtesting/universal/runs/{run_id}") suspend fun universalRun(@Path("run_id") runId: String): Map<String, Any?>
+    @GET("/api/v1/backtesting/universal/runs/{run_id}/events") suspend fun universalEvents(@Path("run_id") runId: String, @Query("limit") limit: Int = 100, @Query("after_sequence") afterSequence: Int = -1): Map<String, Any?>
+    @GET("/api/v1/backtesting/universal/runs/{run_id}/fills") suspend fun universalFills(@Path("run_id") runId: String, @Query("limit") limit: Int = 100, @Query("after_sequence") afterSequence: Int = -1): Map<String, Any?>
+    @GET("/api/v1/backtesting/universal/runs/{run_id}/trades") suspend fun universalTrades(@Path("run_id") runId: String, @Query("limit") limit: Int = 100, @Query("after_sequence") afterSequence: Int = -1): Map<String, Any?>
+    @GET("/api/v1/backtesting/universal/runs/{run_id}/equity") suspend fun universalEquity(@Path("run_id") runId: String, @Query("limit") limit: Int = 100): Map<String, Any?>
     @POST("/api/v1/backtesting/full-fno/start") suspend fun startFullFnoJob(@Body request: FullFnoJobRequest = FullFnoJobRequest()): FullFnoJobAcceptedResponse
     @GET("/api/v1/backtesting/full-fno/{job_id}") suspend fun fullFnoJob(@Path("job_id") jobId: String): FullFnoJobStatusResponse
     @POST("/api/v1/backtesting/full-fno/{job_id}/cancel") suspend fun cancelFullFnoJob(@Path("job_id") jobId: String): FullFnoJobControlResponse
