@@ -57,7 +57,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var scannerCountdownRunnable: Runnable
     private var scannerCountdownSeconds = 0L
     private var lastScannerResult: String? = null
-    private var lastExecutableOpportunity: CashFutureOpportunity? = null
+    private var lastExecutableOpportunity: LiveCashFutureSignal? = null
 
     private fun currentTimestamp(): String = SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(Date())
 
@@ -151,26 +151,57 @@ class MainActivity : AppCompatActivity() {
     }
     private fun disconnectAngelOne() = lifecycleScope.launch(Dispatchers.IO) { withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Disconnecting…" }; try { ApiService.retrofitService.disconnectBroker("angel_one"); withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Angel One disconnected • Real Trading OFF" }; checkSafetyStatus() } catch (error: Exception) { withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Disconnect failed • ${error.message ?: "API error"}" } } }
 
-    private fun renderScannerPaperState() { val opportunity = lastExecutableOpportunity; btnScannerPaperExecute.isEnabled = opportunity != null; btnScannerPaperExecute.text = opportunity?.let { "PAPER EXECUTE ${it.symbol} • ₹${it.cash_price}" } ?: "PAPER EXECUTE • NO EXECUTABLE OPPORTUNITY" }
-    private fun openScannerDetail(opportunity: CashFutureOpportunity?) { opportunity ?: return; startActivity(Intent(this, ScannerDetailActivity::class.java).apply { putExtra(ScannerDetailActivity.EXTRA_SYMBOL, opportunity.symbol); putExtra(ScannerDetailActivity.EXTRA_CASH_PRICE, opportunity.cash_price); putExtra(ScannerDetailActivity.EXTRA_FUTURE_PRICE, opportunity.future_price); putExtra(ScannerDetailActivity.EXTRA_GAP, opportunity.gap); putExtra(ScannerDetailActivity.EXTRA_GAP_PCT, opportunity.gap_pct); putExtra(ScannerDetailActivity.EXTRA_GROSS_SPREAD_PROFIT, opportunity.gross_spread_profit); putExtra(ScannerDetailActivity.EXTRA_MARGIN_REQUIRED, opportunity.margin_required); putExtra(ScannerDetailActivity.EXTRA_DEPLOYED_CAPITAL, opportunity.deployed_capital); putExtra(ScannerDetailActivity.EXTRA_NET_PROFIT, opportunity.net_profit); putExtra(ScannerDetailActivity.EXTRA_ROI_PCT, opportunity.roi_pct); putExtra(ScannerDetailActivity.EXTRA_EXECUTABLE, opportunity.executable) }) }
+    private fun renderScannerPaperState() { val opportunity = lastExecutableOpportunity; btnScannerPaperExecute.isEnabled = opportunity != null; btnScannerPaperExecute.text = opportunity?.let { "PAPER EXECUTE ${it.symbol} • ₹${it.cash_ask ?: it.cash_ltp}" } ?: "PAPER EXECUTE • NO EXECUTABLE OPPORTUNITY" }
+    private fun openScannerDetail(opportunity: LiveCashFutureSignal?) {
+        opportunity ?: return
+        val cash = opportunity.cash_ask ?: opportunity.cash_ltp
+        val future = opportunity.future_bid ?: opportunity.future_ltp
+        startActivity(Intent(this, ScannerDetailActivity::class.java).apply {
+            putExtra(ScannerDetailActivity.EXTRA_SYMBOL, opportunity.symbol)
+            putExtra(ScannerDetailActivity.EXTRA_CASH_PRICE, cash)
+            putExtra(ScannerDetailActivity.EXTRA_FUTURE_PRICE, future)
+            putExtra(ScannerDetailActivity.EXTRA_GAP, opportunity.gap)
+            putExtra(ScannerDetailActivity.EXTRA_GAP_PCT, opportunity.gap_pct)
+            putExtra(ScannerDetailActivity.EXTRA_GROSS_SPREAD_PROFIT, opportunity.gross_profit ?: opportunity.gross_lot_value ?: 0.0)
+            putExtra(ScannerDetailActivity.EXTRA_MARGIN_REQUIRED, opportunity.capacity_notional ?: 0.0)
+            putExtra(ScannerDetailActivity.EXTRA_DEPLOYED_CAPITAL, opportunity.capacity_notional ?: 0.0)
+            putExtra(ScannerDetailActivity.EXTRA_NET_PROFIT, opportunity.net_profit ?: 0.0)
+            putExtra(ScannerDetailActivity.EXTRA_ROI_PCT, opportunity.net_gap_pct)
+            putExtra(ScannerDetailActivity.EXTRA_EXECUTABLE, opportunity.lifecycle != "EXPIRED" && opportunity.gap > 0.0 && opportunity.net_gap > 0.0)
+        })
+    }
 
     private fun runCashFutureScanner(): Job = lifecycleScope.launch(Dispatchers.IO) {
-        withContext(Dispatchers.Main) { scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable); scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable); tvScannerNextRefresh.text = "Next Refresh: SCAN IN PROGRESS"; btnRunScanner.isEnabled = false; btnRunScanner.text = "SCANNING..."; btnScannerPaperExecute.isEnabled = false; tvScannerResult.text = lastScannerResult?.let { "$it\n\nREFRESHING SCANNER..." } ?: "SCAN IN PROGRESS\n\nRunning Cash–Future scanner..." }
+        withContext(Dispatchers.Main) { scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable); scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable); tvScannerNextRefresh.text = "Next Refresh: SCAN IN PROGRESS"; btnRunScanner.isEnabled = false; btnRunScanner.text = "SCANNING LIVE..."; btnScannerPaperExecute.isEnabled = false; tvScannerResult.text = lastScannerResult?.let { "$it\n\nREFRESHING LIVE 1s SCANNER..." } ?: "LIVE SCAN IN PROGRESS\n\nReading Cash–Future 1-second signals..." }
         try {
-            val response = ApiService.retrofitService.cashFutureScan()
+            val response = ApiService.retrofitService.liveCashFutureScan(maxAgeSeconds = 5.0, limit = 50)
             val completedAt = currentTimestamp()
-            val executable = response.data.filter { it.executable && it.future_price > it.cash_price && it.net_profit > 0 }.maxWithOrNull(compareBy<CashFutureOpportunity> { it.roi_pct }.thenBy { it.net_profit })
-            val result = if (response.data.isEmpty()) {
-                buildString { append("SCAN COMPLETE — NO OPPORTUNITIES\n"); append("Last Scan: $completedAt\n\n"); append("Symbols requested: ${response.symbols_requested.size}\n"); append("Observations: ${response.scanned_observations}\n"); append("Executable opportunities: 0\n"); append("Errors: ${response.errors.size}\n\n"); append("No executable Cash–Future opportunities found."); if (response.errors.isNotEmpty()) { append("\n\nERRORS (${response.errors.size})\n"); response.errors.forEach { error -> append("${error.symbol}: ${error.error}\n") } } }
-            } else {
-                buildString { append("SCAN COMPLETE — SUCCESS\n"); append("Last Scan: $completedAt\n\n"); append("Symbols requested: ${response.symbols_requested.size}\n"); append("Observations: ${response.scanned_observations}\n"); append("Executable opportunities: ${response.opportunity_count}\n"); append("Errors: ${response.errors.size}\n\n"); append("CASH–FUTURE OPPORTUNITIES (${response.opportunity_count})\n"); append("Priority: EXECUTABLE FIRST\n"); append("Mode: ${response.mode}\n\n"); response.data.sortedWith(compareByDescending<CashFutureOpportunity> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit }).forEach { item -> append("────────────────────\n"); append("${item.symbol}\n"); append("Cash: ₹${item.cash_price}\n"); append("Future: ₹${item.future_price}\n"); append("Gap: ₹${item.gap} (${item.gap_pct}%)\n"); append("Gross Spread: ₹${item.gross_spread_profit}\n"); append("Margin: ₹${item.margin_required}\n"); append("Deployed Capital: ₹${item.deployed_capital}\n"); append("Net Profit: ₹${item.net_profit}\n"); append("ROI: ${item.roi_pct}%\n"); append("Executable: ${if (item.executable) "YES" else "NO"}\n\n") }; if (response.errors.isNotEmpty()) { append("ERRORS (${response.errors.size})\n"); response.errors.forEach { error -> append("${error.symbol}: ${error.error}\n") } } }
+            val sorted = response.data.sortedWith(compareByDescending<LiveCashFutureSignal> { it.rank_score }.thenByDescending { it.gap_pct }.thenBy { it.symbol })
+            val executable = sorted.firstOrNull { it.lifecycle != "EXPIRED" && it.gap > 0.0 && it.net_gap > 0.0 && (it.cash_ask ?: 0.0) > 0.0 && (it.future_bid ?: 0.0) > 0.0 }
+            val result = buildString {
+                append("LIVE 1s SCAN — "); append(if (sorted.isEmpty()) "NO CURRENT SIGNALS" else "SUCCESS"); append("\n")
+                append("Last Scan: $completedAt\n\n")
+                append("Current signals: ${sorted.size}\n")
+                append("Executable positive-gap signals: ${sorted.count { it.gap > 0.0 && it.net_gap > 0.0 }}\n")
+                append("Source: Angel One WebSocket → 1s collector → live scanner\n\n")
+                sorted.forEach { item ->
+                    append("────────────────────\n")
+                    append("${item.symbol} • ${item.contract_month} • Rank ${String.format(Locale.US, "%.3f", item.rank_score)}\n")
+                    append("Cash Ask: ₹${item.cash_ask ?: item.cash_ltp} • Future Bid: ₹${item.future_bid ?: item.future_ltp}\n")
+                    append("Gap: ₹${item.gap} (${item.gap_pct}%) • Net Gap: ${item.net_gap_pct}%\n")
+                    append("Net Profit: ₹${item.net_profit ?: 0.0} • Lots: ${item.alert_lots ?: 0}\n")
+                    append("Cash H/L: ₹${item.cash_day_high} / ₹${item.cash_day_low}\n")
+                    append("Future H/L: ₹${item.future_day_high} / ₹${item.future_day_low}\n")
+                    append("Liquidity: ${item.liquidity_qty ?: 0.0} • Stable: ${item.stable_observations}s\n")
+                    append("Lifecycle: ${item.lifecycle} • Alert: ${item.alert_event ?: "NONE"}\n\n")
+                }
             }
             withContext(Dispatchers.Main) { lastScannerResult = result; lastExecutableOpportunity = executable; tvScannerResult.text = result; renderScannerPaperState() }
         } catch (error: Exception) {
             val failedAt = currentTimestamp()
-            withContext(Dispatchers.Main) { val failure = "SCAN ERROR\n\nLast Scan: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}"; lastScannerResult = failure; tvScannerResult.text = failure; lastExecutableOpportunity = null; renderScannerPaperState() }
+            withContext(Dispatchers.Main) { val failure = "LIVE SCAN ERROR\n\nLast Attempt: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}"; lastScannerResult = failure; tvScannerResult.text = failure; lastExecutableOpportunity = null; renderScannerPaperState() }
         } finally {
-            withContext(Dispatchers.Main) { btnRunScanner.isEnabled = true; btnRunScanner.text = "RUN CASH–FUTURE SCAN"; if (lastScannerResult?.contains("SCAN ERROR") == true) tvScannerResult.text = "REFRESH FAILED\n\nLast Attempt: ${currentTimestamp()}\n\n${lastScannerResult}"; scheduleScannerRefresh() }
+            withContext(Dispatchers.Main) { btnRunScanner.isEnabled = true; btnRunScanner.text = "RUN LIVE CASH–FUTURE SCAN"; if (lastScannerResult?.contains("SCAN ERROR") == true) tvScannerResult.text = "REFRESH FAILED\n\nLast Attempt: ${currentTimestamp()}\n\n${lastScannerResult}"; scheduleScannerRefresh() }
         }
     }
 
