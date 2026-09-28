@@ -40,6 +40,34 @@ def _available_replay_intervals(points) -> list[str]:
     return available
 
 
+@router.get("/live-coverage")
+def cash_future_live_coverage(
+    trading_date: date = Query(...),
+    symbol: str = Query(..., min_length=1),
+):
+    """Report accumulated Angel One live-1s coverage for one underlying/date."""
+    underlying = symbol.strip().upper()
+    catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
+    contracts = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
+    try:
+        loader = CashFutureHistoricalLoader(catalog, contracts)
+        selection = CashFutureHistorySelection(
+            spot_instrument=underlying,
+            exchange="NSE",
+            underlying=underlying,
+            start_date=trading_date,
+            end_date=trading_date,
+            timeframe="1s",
+            source="angelone-live-1s",
+        )
+        return {"status": "success", "coverage": loader.live_coverage(selection)}
+    except (ValueError, LookupError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        catalog.close()
+        contracts.close()
+
+
 @router.get("/replay")
 def cash_future_replay(
     trading_date: date = Query(...),
