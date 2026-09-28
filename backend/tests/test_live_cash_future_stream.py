@@ -1,8 +1,10 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 from app.market_data.live_cash_future_stream import (
     LiveCashFutureOneSecondCollector,
+    _ingest_live_record,
     _ltp,
     _timestamp_ns,
 )
@@ -82,3 +84,26 @@ def test_live_best_side_includes_price_and_quantity():
     assert collector._best_side(message, "best_5_buy_data") == 100.0
     assert collector._best_side_detail(message, "best_5_buy_data") == (100.0, 250.0)
     assert collector._best_side_detail(message, "best_5_sell_data") == (101.0, 175.0)
+
+
+def test_live_persistence_skips_existing_second_bucket_without_conflict():
+    catalog = HistoricalCatalog(":memory:")
+    record = HistoricalRecord(
+        source="angelone-live-1s",
+        instrument="NSE:AAA-EQ|cash-AAA",
+        timeframe="1s",
+        timestamp_ns=1_762_234_836_000_000_000,
+        payload={"ltp": 100.0, "received_at_ns": 1},
+    )
+    assert _ingest_live_record(catalog, record) == 1
+
+    conflicting = HistoricalRecord(
+        source=record.source,
+        instrument=record.instrument,
+        timeframe=record.timeframe,
+        timestamp_ns=record.timestamp_ns,
+        payload={"ltp": 101.0, "received_at_ns": 2},
+    )
+    assert _ingest_live_record(catalog, conflicting) == 0
+    assert catalog.count(source=record.source, instrument=record.instrument, timeframe=record.timeframe) == 1
+    catalog.close()
