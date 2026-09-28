@@ -6,17 +6,17 @@ on:
       version_code:
         description: Android versionCode (must be greater than the currently released APK)
         required: false
-        default: '5'
+        default: '6'
         type: string
       version_name:
         description: Android versionName, e.g. 1.1
         required: false
-        default: '1.5'
+        default: '1.6.1'
         type: string
       release_notes:
         description: Release notes
         required: false
-        default: 'Fix Android update versionCode so v1.3 installs as an update.'
+        default: 'Fix Android in-app update versionCode so v1.5 can update.'
         type: string
 
 permissions:
@@ -128,7 +128,7 @@ jobs:
 
       - name: Validate release versionCode
         run: |
-          test '${{ inputs.version_code }}' -gt 4 || { echo "::error::Android versionCode must be greater than v1.3 versionCode 4"; exit 1; }
+          test '${{ inputs.version_code }}' -gt 5 || { echo "::error::Android versionCode must be greater than v1.5 versionCode 5"; exit 1; }
 
       - name: Build signed release APK
         env:
