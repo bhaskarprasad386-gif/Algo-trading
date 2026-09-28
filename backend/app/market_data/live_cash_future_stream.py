@@ -61,6 +61,20 @@ def _ltp(message: dict[str, Any]) -> float | None:
     return number / 100.0
 
 
+def _ingest_live_record(catalog: HistoricalCatalog, record: HistoricalRecord) -> int:
+    """Persist one second-bucket only when that identity is not already durable."""
+    existing = catalog.timestamps(
+        source=record.source,
+        instrument=record.instrument,
+        timeframe=record.timeframe,
+        start_ns=record.timestamp_ns,
+        end_ns=record.timestamp_ns,
+    )
+    if existing:
+        return 0
+    return catalog.ingest(record)
+
+
 class LiveCashFutureOneSecondCollector:
     """Stream current/near Cash-Future observations into the backtest catalog."""
 
@@ -248,7 +262,7 @@ class LiveCashFutureOneSecondCollector:
                             except Exception as exc:
                                 app_logger.error(f"1-second live scanner callback failed {token}: {exc}")
                         try:
-                            written += catalog.ingest(HistoricalRecord(
+                            written += _ingest_live_record(catalog, HistoricalRecord(
                                 source=SOURCE,
                                 instrument=f"{meta['symbol']}|{token}",
                                 timeframe=TIMEFRAME,
