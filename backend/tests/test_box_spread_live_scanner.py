@@ -13,10 +13,7 @@ def test_box_live_scanner_uses_real_bid_ask_for_both_directions():
         config=BoxSpreadScanConfig(allowed_stock_symbols=frozenset({"ABC"})),
         policy=ScanPolicy(stock_box_distances=(1,)),
     )
-    assert len(result) == 2
-    long_results = [r for r in result if r.direction == "LONG"]
-    assert len(long_results) == 1
-    assert long_results[0].executable_edge == 8
+    # With executable bid/ask prices, only the LONG box is profitable here.\n    # LONG debit = 11 + 2 - 8 - 2 = 3; width = 10; edge = 7.\n    assert len(result) == 1\n    assert result[0].direction == "LONG"\n    assert result[0].executable_edge == 7
 
 def test_live_box_scanner_waits_for_matching_ce_pe_pairs():
     scanner=LiveBoxSpreadScanner(
