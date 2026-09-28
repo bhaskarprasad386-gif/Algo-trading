@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, APIRouter
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from pathlib import Path
 import json
@@ -129,7 +129,7 @@ app.include_router(arbitrage_router)
 app.include_router(instruments_router)
 app.include_router(market_data_router)
 app.include_router(scanner_router)
-include_router(full_fno_router)
+app.include_router(full_fno_router)
 app.include_router(auto_scanner_router)
 app.include_router(paper_execution_router)
 app.include_router(live_paper_execution_router)
