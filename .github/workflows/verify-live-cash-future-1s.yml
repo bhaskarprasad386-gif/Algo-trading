@@ -1,0 +1,57 @@
+name: Verify Live Cash-Future 1s Collector
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VPS_HOST: 82.41.67.22
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY_B64: ${{ secrets.VPS_SSH_KEY }}
+    steps:
+      - name: Verify collector runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_KEY_B64"
+          printf '%s' "$VPS_SSH_KEY_B64" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -u
+          APP_DIR=/opt/Algo-Trading
+          ENV_FILE="$APP_DIR/backend/.env"
+
+          echo "=== DEPLOYMENT ==="
+          echo "COMMIT=$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+          echo "SERVICE=$(systemctl is-active algo-trading.service 2>/dev/null || true)"
+
+          echo "=== FLAGS ==="
+          if grep -E '^(LIVE_CASH_FUTURE_DATA_ENABLED|LIVE_TRADING)=' "$ENV_FILE" 2>/dev/null; then
+            true
+          else
+            echo "FLAGS_NOT_FOUND"
+          fi
+
+          echo "=== COLLECTOR PROCESSES ==="
+          pgrep -af 'cash.*future|future.*cash|live.*collector|collector' 2>/dev/null | head -50 || true
+
+          echo "=== RECENT SERVICE LOG ==="
+          journalctl -u algo-trading.service --no-pager -n 80 2>/dev/null | grep -Ei 'cash.?future|collector|live.*data|websocket|smartapi|error|exception' | tail -50 || true
+
+          echo "=== DATA FILES ==="
+          find "$APP_DIR/backend" -maxdepth 3 -type f \( -iname '*cash*future*' -o -iname '*live*data*' \) -printf '%TY-%Tm-%Td %TH:%TM:%TS %p\n' 2>/dev/null | sort | tail -30 || true
+
+          echo "=== HEALTH ==="
+          code=$(curl -sS --connect-timeout 2 --max-time 5 -o /tmp/health_body -w "%{http_code}" http://127.0.0.1:8000/health 2>/dev/null || true)
+          echo "HEALTH_HTTP=$code"
+          REMOTE
