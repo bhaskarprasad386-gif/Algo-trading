@@ -1,0 +1,27 @@
+name: VPS Port 22 Probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Test VPS SSH port
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -u
+
+          echo "=== DNS ==="
+          getent hosts "$VPS_HOST" || true
+
+          echo "=== TCP 22 ==="
+          if timeout 10 bash -c "</dev/tcp/$VPS_HOST/22"; then
+            echo "TCP_22_REACHABLE=true"
+          else
+            echo "TCP_22_REACHABLE=false"
+            exit 1
+          fi
