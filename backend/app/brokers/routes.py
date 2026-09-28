@@ -18,8 +18,20 @@ from app.execution.paper_routes import current_user_id
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
 
 
+class ConnectRequest(BaseModel):
+    broker: str = Field(min_length=2, max_length=50)
+    display_name: str | None = Field(default=None, max_length=100)
+    api_key: str = Field(min_length=1, max_length=300)
+    client_code: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=300)
+    totp_secret: str = Field(min_length=1, max_length=300)
+
+
 class RealTradingEnableRequest(BaseModel):
     confirmation: str = Field(min_length=1, max_length=100)
+
+
+_sessions: dict[tuple[int, str], AngelOneAdapter] = {}
 @router.get("")
 def supported_brokers(user_id: int = Depends(current_user_id)) -> dict:
     return {"brokers": BrokerRegistry().names()}
