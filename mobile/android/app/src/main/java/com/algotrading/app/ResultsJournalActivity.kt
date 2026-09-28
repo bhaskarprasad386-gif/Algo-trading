@@ -76,7 +76,7 @@ class ResultsJournalActivity : AppCompatActivity() {
                 val cashRun = ApiService.retrofitService.cashFutureStrategyRun(id)
                 if (cashRun.run_id == id) {
                     cashFutureMode = true
-                    run = mapOf("status" to cashRun.status, "run_id" to cashRun.run_id, "strategy_id" to cashRun.strategy_id, "initial_capital" to cashRun.initial_capital, "final_capital" to cashRun.final_capital, "net_profit" to cashRun.net_profit)
+                    run = mapOf("status" to cashRun.status, "run_id" to cashRun.run_id, "strategy_id" to cashRun.strategy_id, "initial_capital" to cashRun.initial_capital, "final_capital" to cashRun.final_capital, "final_equity" to cashRun.final_equity, "net_profit" to cashRun.net_profit, "net_pnl" to cashRun.net_pnl, "roi" to cashRun.roi, "max_drawdown" to cashRun.max_drawdown)
                     appendCashFuturePages(
                         ApiService.retrofitService.cashFutureStrategyResultPage(id, "trade", 50, null),
                         ApiService.retrofitService.cashFutureStrategyResultPage(id, "signal", 50, null),
