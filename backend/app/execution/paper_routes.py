@@ -39,7 +39,6 @@ def current_user_id(db: Session = Depends(get_db)) -> int:
     user = db.query(User).filter(User.is_active.is_(True)).order_by(User.id.asc()).first()
     if user is None:
         user = User(
-            username="system",
             email="system@local.algo-trading",
             hashed_password="",
             full_name="Algo Trading System",
