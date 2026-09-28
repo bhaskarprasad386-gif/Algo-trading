@@ -13,7 +13,7 @@ def test_dashboard_serves_html_and_scanner_connector():
     body = response.body.decode("utf-8")
     assert response.media_type == "text/html"
     assert "Cash–Future Opportunities" in body
-    assert "/api/v1/scanner/cash-future/live/auto" in body
+    assert "/api/v1/scanner/cash-future/live/fast" in body
 
 
 def test_dashboard_contains_paper_execution_connectors():
