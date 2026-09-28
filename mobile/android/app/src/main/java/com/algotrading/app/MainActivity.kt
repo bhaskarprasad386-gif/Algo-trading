@@ -63,7 +63,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        AppContextHolder.context = applicationContext
         setContentView(R.layout.activity_main)
         tvStatus = findViewById(R.id.tvStatus)
         etEntryPrice = findViewById(R.id.etEntryPrice)
