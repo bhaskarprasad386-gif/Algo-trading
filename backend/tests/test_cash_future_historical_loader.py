@@ -90,6 +90,33 @@ def test_loader_rejects_non_finite_close_prices(tmp_path):
     with pytest.raises(ValueError, match="finite and positive"):
         tuple(CashFutureHistoricalLoader(data, contracts).iter_points(selection))
 
+
+def test_loader_reads_accumulated_angelone_live_1s_cash_future_rows(tmp_path):
+    data = HistoricalCatalog(str(tmp_path / "live-data.db"))
+    contracts = ContractMasterCatalog(str(tmp_path / "live-contracts.db"))
+    contracts.upsert_snapshot(date(2026, 9, 28), [
+        ContractRecord("NFO", "ABC26SEP FUT", "101", date(2026, 9, 30), "STOCK_FUTURE", "ABC", 75)
+    ])
+    ts = _ns("2026-09-28T09:30:00")
+    data.ingest([
+        HistoricalRecord("angelone-live-1s", "ABC-EQ|1", "1s", ts, {"ltp": 100.0, "close": 100.0, "bid": 99.9, "ask": 100.1}),
+        HistoricalRecord("angelone-live-1s", "ABC26SEP FUT|101", "1s", ts, {"ltp": 102.0, "close": 102.0, "bid": 101.9, "ask": 102.1}),
+    ])
+    selection = CashFutureHistorySelection("ABC-EQ", "NFO", "ABC", date(2026, 9, 28), date(2026, 9, 28), timeframe="1s", source="angelone-live-1s")
+    points = tuple(CashFutureHistoricalLoader(data, contracts).iter_points(selection))
+    assert len(points) == 1
+    assert points[0].cash_price == 100.0
+    assert points[0].future_price == 102.0
+    assert points[0].gap == 2.0
+    assert points[0].cash_bid == 99.9
+    assert points[0].cash_ask == 100.1
+    assert points[0].future_bid == 101.9
+    assert points[0].future_ask == 102.1
+    assert points[0].contract_month == "2026-09"
+    data.close()
+    contracts.close()
+
+
 def test_loader_dataset_fingerprint_is_stable_and_changes_with_selected_data(tmp_path):
     data = HistoricalCatalog(str(tmp_path / "data.db")); contracts = ContractMasterCatalog(str(tmp_path / "contracts.db"))
     contracts.upsert_snapshot(date(2026, 1, 2), [ContractRecord("NFO", "ABC26JANFUT", "101", date(2026, 1, 29), "STOCK_FUTURE", "ABC", 75)])
