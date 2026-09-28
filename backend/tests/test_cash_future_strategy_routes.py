@@ -94,6 +94,49 @@ def test_strategy_run_route_executes_accumulated_live_1s_source(monkeypatch, tmp
     assert body["signals"][0]["timestamp"].startswith("2026-09-28T15:00:00")
 
 
+
+def test_strategy_run_route_executes_live_1s_bid_ask_trade_and_persists_result(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "BACKTEST_DATA_DB", str(tmp_path / "live-trade-data.db"))
+    monkeypatch.setattr(settings, "BACKTEST_CONTRACT_DB", str(tmp_path / "live-trade-contracts.db"))
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", str(tmp_path / "live-trade-ledger.db"))
+    contracts = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
+    data = HistoricalCatalog(settings.BACKTEST_DATA_DB)
+    try:
+        contracts.upsert_snapshot(date(2026, 9, 28), [
+            ContractRecord("NFO", "ABC26SEP FUT", "101", date(2026, 9, 30), "STOCK_FUTURE", "ABC", 75)
+        ])
+        first_ns = int(datetime(2026, 9, 28, 9, 30, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+        second_ns = first_ns + 1_000_000_000
+        data.ingest([
+            HistoricalRecord("angelone-live-1s", "ABC-EQ|1", "1s", first_ns, {"ltp": 100.0, "close": 100.0, "bid": 99.9, "ask": 100.1}),
+            HistoricalRecord("angelone-live-1s", "ABC26SEP FUT|101", "1s", first_ns, {"ltp": 110.0, "close": 110.0, "bid": 109.9, "ask": 110.1}),
+            HistoricalRecord("angelone-live-1s", "ABC-EQ|1", "1s", second_ns, {"ltp": 102.0, "close": 102.0, "bid": 101.9, "ask": 102.1}),
+            HistoricalRecord("angelone-live-1s", "ABC26SEP FUT|101", "1s", second_ns, {"ltp": 106.0, "close": 106.0, "bid": 105.9, "ask": 106.1}),
+        ])
+    finally:
+        data.close()
+        contracts.close()
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "cash-future", "strategy_version": "1",
+            "start_date": "2026-09-28", "end_date": "2026-09-28",
+            "spot_instrument": "ABC-EQ", "exchange": "NFO", "underlying": "ABC",
+            "timeframe": "1s", "source": "angelone-live-1s", "mode": "CURRENT",
+            "execution_model": "bid_ask", "initial_capital": 10000000,
+            "target": 5.0, "cash_lots": 1, "future_lots": 1,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["strategy_id"] == "cash-future"
+    assert body["signal_count"] == 2
+    assert body["trade_count"] == 1
+    assert body["trades"][0]["execution_model"] == "bid_ask"
+    assert body["trades"][0]["net_profit"] == 435.0
+    assert body["analysis"]["net_pnl"] == 435.0
+
+
 def test_strategy_run_route_executes_historical_buy_sell():
     start = datetime(2026, 9, 2, 10, 0)
     response = client().post(
