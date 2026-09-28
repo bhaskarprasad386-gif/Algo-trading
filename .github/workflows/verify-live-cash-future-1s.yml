@@ -2,6 +2,9 @@ name: Verify Live Cash-Future 1s Collector
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "20 9 * * 1-5"
+      timezone: "Asia/Kolkata"
   push:
     branches:
       - main
@@ -32,7 +35,7 @@ jobs:
           ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
           ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
-          set -u
+          set -euo pipefail
           APP_DIR=/opt/Algo-Trading
           ENV_FILE="$APP_DIR/backend/.env"
 
@@ -275,7 +278,15 @@ jobs:
           if body.get("status") != "success" or body.get("scanner") != "cash-future" or body.get("mode") != "live-fast":
               raise SystemExit("SCANNER_RESPONSE_CONTRACT_FAILED")
           if not data:
-              raise SystemExit("SCANNER_NO_FRESH_SIGNAL")
+              from datetime import datetime
+              from zoneinfo import ZoneInfo
+              now = datetime.now(ZoneInfo("Asia/Kolkata"))
+              market_open = now.weekday() < 5 and (now.hour, now.minute) >= (9, 15) and (now.hour, now.minute) < (15, 30)
+              print(f"SCANNER_MARKET_SESSION_ACTIVE={market_open}")
+              if market_open:
+                  raise SystemExit("SCANNER_NO_FRESH_SIGNAL_DURING_MARKET")
+              print("SCANNER_LIVE_SESSION_CLOSED_EXPECTED")
+              raise SystemExit(0)
           required = {
               "symbol", "contract_month", "cash_ask", "future_bid",
               "gap", "gap_pct", "net_gap_pct", "net_profit",
@@ -294,6 +305,7 @@ jobs:
           print("SCANNER_E2E=PASS")
           PY
           echo "=== SCANNER FILTER / RANK / ALERT CHAIN ==="
+          cd "$APP_DIR/backend"
           SCANNER_BODY="$scanner_body" DATA_DB="$APP_DIR/backend/backtest_market_data.sqlite3" "$APP_DIR/.venv/bin/python" - <<'PY'
           import json
           import math
