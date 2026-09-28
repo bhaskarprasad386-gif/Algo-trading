@@ -118,6 +118,32 @@ jobs:
 
           rm -f ValidateSigningKey.java ValidateSigningKey.class
 
+      - name: Verify Google OAuth release configuration
+        env:
+          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          test -n "$GOOGLE_WEB_CLIENT_ID" || {
+            echo "::error::GOOGLE_WEB_CLIENT_ID secret is missing"
+            exit 1
+          }
+
+          case "$GOOGLE_WEB_CLIENT_ID" in
+            *.apps.googleusercontent.com)
+              echo "Google Web Client ID secret is present and has the expected OAuth client format."
+              ;;
+            *)
+              echo "::error::GOOGLE_WEB_CLIENT_ID does not have the expected *.apps.googleusercontent.com format"
+              exit 1
+              ;;
+          esac
+
+          echo "Release applicationId: com.algotrading.app"
+          echo "Release signing certificate fingerprints (safe public metadata):"
+          keytool -list -v             -keystore release.keystore             -storepass "$KEYSTORE_PASSWORD"             -alias "$KEY_ALIAS" |
+            grep -E '^(Alias name:|Entry type:|Certificate fingerprints:|[[:space:]]+SHA1:|[[:space:]]+SHA256:)'
+
       - name: Decode signing key
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -138,16 +164,7 @@ jobs:
             SIGNING_KEY_PASSWORD="$KEY_PASSWORD"
           fi
 
-          gradle assembleRelease --no-daemon \
-            -PappVersionCode='${{ inputs.version_code }}' \
-            -PappVersionName='${{ inputs.version_name }}' \
-            -PbackendBaseUrl="$BACKEND_BASE_URL" \
-            -PbackendWsUrl="$BACKEND_WS_URL" \
-            -PgoogleWebClientId="$GOOGLE_WEB_CLIENT_ID" \
-            -PandroidKeystorePath="$PWD/release.keystore" \
-            -PandroidKeystorePassword="$KEYSTORE_PASSWORD" \
-            -PandroidKeyAlias="$KEY_ALIAS" \
-            -PandroidKeyPassword="$SIGNING_KEY_PASSWORD"
+          gradle assembleRelease --no-daemon             -PappVersionCode='${{ inputs.version_code }}'             -PappVersionName='${{ inputs.version_name }}'             -PbackendBaseUrl="$BACKEND_BASE_URL"             -PbackendWsUrl="$BACKEND_WS_URL"             -PgoogleWebClientId="$GOOGLE_WEB_CLIENT_ID"             -PandroidKeystorePath="$PWD/release.keystore"             -PandroidKeystorePassword="$KEYSTORE_PASSWORD"             -PandroidKeyAlias="$KEY_ALIAS"             -PandroidKeyPassword="$SIGNING_KEY_PASSWORD"
 
       - name: Rename release APK
         run: cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/algo-trading-release.apk
@@ -157,10 +174,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "android-v${{ inputs.version_name }}" \
-            mobile/android/app/build/outputs/apk/release/algo-trading-release.apk \
-            --title "Android v${{ inputs.version_name }}" \
-            --notes "${{ inputs.release_notes }}"
+          gh release create "android-v${{ inputs.version_name }}"             mobile/android/app/build/outputs/apk/release/algo-trading-release.apk             --title "Android v${{ inputs.version_name }}"             --notes "${{ inputs.release_notes }}"
 
       - name: Publish update manifest
         working-directory: .
