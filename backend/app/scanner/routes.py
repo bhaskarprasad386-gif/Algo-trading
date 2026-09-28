@@ -29,6 +29,7 @@ from app.scanner.backtest_jobs import (
 from app.scanner.result_chunk_store import delete_result_chunks_batched
 
 router = APIRouter(prefix="/api/v1/scanner", tags=["Scanner"])
+full_fno_router = APIRouter(prefix="/api/v1/backtesting/full-fno", tags=["Full F&O Backtest"])
 IST = ZoneInfo("Asia/Kolkata")
 
 
@@ -258,3 +259,65 @@ def cash_future_expiry_close(symbol: str, contract_month: str, expiry_date: date
     if result is None:
         raise HTTPException(status_code=404, detail="no 15:20-15:30 expiry-day observation found")
     return {"status": "success", "scanner": "cash-future", "expiry_close": result}
+@full_fno_router.post("/start")
+def start_full_fno_backtest_job_alias(
+    days: int = Query(365, ge=1, le=3650), min_entry_gap: float = Query(0.0),
+    exit_gap: float = Query(0.0), charges_per_trade: float = Query(0.0, ge=0),
+    funding_cost_per_trade: float = Query(0.0, ge=0), max_holding_days: int = Query(30, ge=1, le=3650),
+    future_selection: str = Query("BOTH", pattern="^(CURRENT|NEAR|BOTH)$"),
+):
+    job = create_full_fno_job(days=days, min_entry_gap=min_entry_gap, exit_gap=exit_gap,
+                               charges_per_trade=charges_per_trade, funding_cost_per_trade=funding_cost_per_trade,
+                               max_holding_days=max_holding_days, future_selection=future_selection)
+    return {"status": "accepted", "universe": "FULL_FNO_STOCK", "future_selection": future_selection,
+            "job": job.job_id}
+
+
+@full_fno_router.get("/{job_id}")
+def full_fno_job_status_alias(job_id: str, db: Session = Depends(get_db)):
+    job = get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="backtest job not found")
+    return {"status": "success", "job": {"job_id": job.job_id, "status": job.status, "symbol": job.symbol,
+        "contract_month": job.contract_month, "requested_days": job.requested_days, "progress_pct": job.progress_pct,
+        "symbols_processed": job.symbols_processed, "symbols_total": job.symbols_total,
+        "result_chunks": result_chunk_count(db, job_id), "message": job.message,
+        "result": json.loads(job.result_json) if job.result_json else None,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "updated_at": job.updated_at.isoformat() if job.updated_at else None}}
+
+
+@full_fno_router.post("/{job_id}/cancel")
+def full_fno_job_cancel_alias(job_id: str, db: Session = Depends(get_db)):
+    if not cancel_job(db, job_id):
+        raise HTTPException(status_code=404, detail="backtest job not found or already finished")
+    return {"status": "success", "job_id": job_id, "job_status": "cancelled"}
+
+
+@full_fno_router.get("/{job_id}/results")
+def full_fno_job_results_alias(job_id: str, offset: int = Query(0, ge=0),
+                                limit: int = Query(50, ge=1, le=200),
+                                after_sequence: int | None = Query(None, ge=-1),
+                                db: Session = Depends(get_db)):
+    job = get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="backtest job not found")
+    chunks = get_result_chunks(db, job_id, offset=offset, limit=limit, after_sequence=after_sequence)
+    next_after_sequence = chunks[-1].sequence if chunks else None
+    return {"status": "success", "job_id": job_id, "offset": offset, "limit": limit,
+            "after_sequence": after_sequence, "next_after_sequence": next_after_sequence,
+            "total": result_chunk_count(db, job_id),
+            "data": [{"sequence": c.sequence, "symbol": c.symbol, "result": json.loads(c.result_json),
+                      "created_at": c.created_at.isoformat() if c.created_at else None} for c in chunks]}
+
+
+@full_fno_router.delete("/{job_id}/results")
+def full_fno_job_purge_alias(job_id: str, db: Session = Depends(get_db)):
+    job = get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="backtest job not found")
+    if job.status not in {"completed", "failed", "cancelled"}:
+        raise HTTPException(status_code=409, detail="result chunks can only be purged for a terminal job")
+    deleted = delete_result_chunks_batched(db, job_id)
+    return {"status": "success", "job_id": job_id, "job_status": job.status, "deleted_chunks": deleted}
+
