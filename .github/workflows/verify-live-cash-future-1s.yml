@@ -374,20 +374,16 @@ jobs:
                   "SUM(CASE WHEN net_gap > 0 THEN 1 ELSE 0 END), "
                   "SUM(CASE WHEN gap_pct >= ? THEN 1 ELSE 0 END), "
                   "SUM(CASE WHEN stable_observations >= ? THEN 1 ELSE 0 END), "
-                  "SUM(CASE WHEN alert_lots IS NOT NULL AND alert_lots >= 1 THEN 1 ELSE 0 END), "
-                  "SUM(CASE WHEN gross_lot_value IS NOT NULL AND gross_lot_value >= ? THEN 1 ELSE 0 END) "
                   "FROM live_cash_future_scanner_results "
                   "WHERE observed_at >= datetime('now','-5 minutes')",
-                  (gap_threshold, min_stable, alert_min_gross),
+                  (gap_threshold, min_stable),
               ).fetchone()
-              p_count, p_gap, p_net, p_threshold, p_stable, p_lots, p_gross = [int(x or 0) for x in persisted]
+              p_count, p_gap, p_net, p_threshold, p_stable = [int(x or 0) for x in persisted]
               print(f"CHAIN_PERSISTED_RESULTS_5M={p_count}")
               print(f"CHAIN_PERSISTED_POSITIVE_GAP_5M={p_gap}")
               print(f"CHAIN_PERSISTED_POSITIVE_NET_GAP_5M={p_net}")
               print(f"CHAIN_PERSISTED_THRESHOLD_OK_5M={p_threshold}")
               print(f"CHAIN_PERSISTED_STABLE_OK_5M={p_stable}")
-              print(f"CHAIN_PERSISTED_ALERT_LOTS_OK_5M={p_lots}")
-              print(f"CHAIN_PERSISTED_GROSS_VALUE_OK_5M={p_gross}")
 
               alerts = conn.execute(
                   "SELECT COUNT(*), "
@@ -395,10 +391,13 @@ jobs:
                   "SUM(CASE WHEN event='RECOVERY' THEN 1 ELSE 0 END) "
                   "FROM live_cash_future_alert_history "
                   "WHERE observed_at >= datetime('now','-5 minutes')"
-              ).fetchone()
+              , (alert_min_gross, alert_min_net, alert_min_annualized)).fetchone()
               print(f"CHAIN_ALERTS_5M={int(alerts[0] or 0)}")
               print(f"CHAIN_NEW_ALERTS_5M={int(alerts[1] or 0)}")
               print(f"CHAIN_RECOVERY_ALERTS_5M={int(alerts[2] or 0)}")
+              print(f"CHAIN_ALERT_GROSS_OK_5M={int(alerts[3] or 0)}")
+              print(f"CHAIN_ALERT_NET_OK_5M={int(alerts[4] or 0)}")
+              print(f"CHAIN_ALERT_ANNUALIZED_OK_5M={int(alerts[5] or 0)}")
 
               bad_persisted = conn.execute(
                   "SELECT COUNT(*) FROM live_cash_future_scanner_results "
