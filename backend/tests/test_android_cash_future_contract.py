@@ -8,32 +8,34 @@ MAIN_ACTIVITY = ANDROID_ROOT / "app" / "src" / "main" / "java" / "com" / "algotr
 
 def test_android_cash_future_api_contract_matches_backend():
     body = API_SERVICE.read_text(encoding="utf-8")
-    assert 'GET("/api/v1/scanner/cash-future/live/auto")' in body
-    assert "val symbols_requested: List<String>" in body
-    assert "val scanned_observations: Int" in body
-    assert "val opportunity_count: Int" in body
-    assert "val gross_spread_profit: Double" in body
-    assert "val deployed_capital: Double" in body
-    assert "data class CashFutureScanError" in body
-    assert "val errors: List<CashFutureScanError>" in body
+    assert 'GET("/api/v1/scanner/cash-future/live/fast")' in body
+    assert "val symbol: String" in body
+    assert "val contract_month: String" in body
+    assert "val cash_ask: Double?" in body
+    assert "val future_bid: Double?" in body
+    assert "val gap: Double" in body
+    assert "val net_gap: Double" in body
+    assert "val net_profit: Double?" in body
+    assert "val lifecycle: String" in body
+    assert "val rank_score: Double" in body
 
 
 def test_android_cash_future_screen_is_wired_to_scanner():
     body = MAIN_ACTIVITY.read_text(encoding="utf-8")
     assert 'btnRunScanner = findViewById(R.id.btnRunScanner)' in body
     assert 'btnRunScanner.setOnClickListener { runCashFutureScanner() }' in body
-    assert 'cashFutureScan()' in body
+    assert 'liveCashFutureScan(maxAgeSeconds = 5.0, limit = 50)' in body
     assert 'btnRunScanner.isEnabled = false' in body
-    assert 'btnRunScanner.text = "SCANNING..."' in body
+    assert 'btnRunScanner.text = "SCANNING LIVE..."' in body
     assert 'btnRunScanner.isEnabled = true' in body
-    assert 'response.symbols_requested.size' in body
-    assert 'response.scanned_observations' in body
-    assert 'response.opportunity_count' in body
-    assert 'response.errors.size' in body
+    assert 'response.data.size' in body
+    assert 'response.data.size' in body
+    assert 'response.data.count { it.gap > 0.0 && it.net_gap > 0.0 }' in body
+    assert 'response.data.count { it.lifecycle == "EXPIRED" }' in body
 
 
 def test_android_cash_future_screen_shows_error_reasons():
     body = MAIN_ACTIVITY.read_text(encoding="utf-8")
-    assert 'response.errors.forEach' in body
-    assert 'error.symbol' in body
-    assert 'error.error' in body
+    assert "item.lifecycle" in body
+    assert "item.alert_event" in body
+    assert "item.stable_observations" in body
