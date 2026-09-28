@@ -141,6 +141,72 @@ jobs:
             echo "LIVE_1S_DB_NOT_FOUND"
           fi
 
+          echo "=== LIVE 1S COVERAGE BY UNDERLYING ==="
+          DATA_DB="$APP_DIR/backend/backtest_market_data.sqlite3"
+          if [ -f "$DATA_DB" ]; then
+            DATA_DB="$DATA_DB" "$APP_DIR/.venv/bin/python" - <<'PY'
+          import json
+          import os
+          import sqlite3
+
+          db = os.environ["DATA_DB"]
+          conn = sqlite3.connect(db)
+          try:
+              max_row = conn.execute(
+                  "SELECT MAX(timestamp_ns) FROM data_catalog WHERE source=? AND timeframe=?",
+                  ("angelone-live-1s", "1s"),
+              ).fetchone()
+              max_ts = max_row[0]
+              if max_ts is None:
+                  raise SystemExit("COVERAGE_NO_LIVE_DATA")
+              start_ts = int(max_ts) - 10_000_000_000
+              rows = conn.execute(
+                  "SELECT timestamp_ns,payload_json FROM data_catalog "
+                  "WHERE source=? AND timeframe=? AND timestamp_ns>=? AND timestamp_ns<=?",
+                  ("angelone-live-1s", "1s", start_ts, int(max_ts)),
+              )
+              cash = set()
+              futures = set()
+              cash_rows = 0
+              future_rows = 0
+              for ts, payload_json in rows:
+                  try:
+                      payload = json.loads(payload_json)
+                  except (TypeError, ValueError):
+                      continue
+                  underlying = str(payload.get("underlying") or "").strip().upper()
+                  leg = str(payload.get("leg") or "").strip().upper()
+                  if not underlying:
+                      continue
+                  if leg == "CASH":
+                      cash.add(underlying)
+                      cash_rows += 1
+                  elif leg == "FUTURE":
+                      futures.add(underlying)
+                      future_rows += 1
+              paired = cash & futures
+              cash_only = cash - futures
+              future_only = futures - cash
+              print(f"COVERAGE_WINDOW_SECONDS=10")
+              print(f"COVERAGE_MAX_TIMESTAMP_NS={max_ts}")
+              print(f"COVERAGE_CASH_ROWS={cash_rows}")
+              print(f"COVERAGE_FUTURE_ROWS={future_rows}")
+              print(f"COVERAGE_CASH_UNDERLYINGS={len(cash)}")
+              print(f"COVERAGE_FUTURE_UNDERLYINGS={len(futures)}")
+              print(f"COVERAGE_PAIRED_UNDERLYINGS={len(paired)}")
+              print(f"COVERAGE_CASH_ONLY={len(cash_only)}")
+              print(f"COVERAGE_FUTURE_ONLY={len(future_only)}")
+              print(f"COVERAGE_CASH_ONLY_SAMPLE={sorted(cash_only)[:20]}")
+              print(f"COVERAGE_FUTURE_ONLY_SAMPLE={sorted(future_only)[:20]}")
+              if not cash or not futures:
+                  raise SystemExit("COVERAGE_LEG_MISSING")
+          finally:
+              conn.close()
+          PY
+          else
+            echo "COVERAGE_DB_NOT_FOUND"
+          fi
+
           echo "=== RECENT CONFLICT CHECK ==="
           conflicts=$(journalctl -u algo-trading.service --no-pager --since "-10 minutes" 2>/dev/null | grep -ci 'conflicting historical record identity' || true)
           echo "RECENT_CONFLICT_ERRORS_LAST_10M=$conflicts"
