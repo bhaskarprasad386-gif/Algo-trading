@@ -14,9 +14,9 @@ def test_android_cash_future_response_fixture_matches_displayed_fields():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
     for field in opportunity:
         assert f"val {field}:" in api
-    for field in ("cash_price", "future_price", "gap", "gap_pct", "gross_spread_profit", "margin_required", "deployed_capital", "net_profit", "roi_pct"):
+    for field in ("cash_ask", "future_bid", "gap", "gap_pct", "net_gap_pct", "net_profit", "cash_day_high", "cash_day_low", "future_day_high", "future_day_low", "liquidity_qty", "stable_observations", "lifecycle", "alert_event"):
         assert f"item.{field}" in ui
-    assert 'if (item.executable) "YES" else "NO"' in ui
+    assert 'item.lifecycle' in ui
 
 
 def test_android_cash_future_error_fixture_is_supported():
@@ -33,38 +33,38 @@ def test_android_cash_future_error_fixture_is_supported():
 
 def test_android_cash_future_scanner_states_are_clear():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
-    assert 'btnRunScanner.text = "SCANNING..."' in ui
-    assert "SCAN IN PROGRESS" in ui
-    assert "Running Cash–Future scanner..." in ui
-    assert 'append("SCAN COMPLETE — SUCCESS\\n")' in ui
-    assert 'append("SCAN COMPLETE — NO OPPORTUNITIES\\n")' in ui
-    assert '"SCAN ERROR\\n\\nLast Scan: $failedAt\\n\\nScanner Failed:' in ui
+    assert 'btnRunScanner.text = "SCANNING LIVE..."' in ui
+    assert "LIVE SCAN IN PROGRESS" in ui
+    assert "Reading Cash–Future 1-second signals..." in ui
+    assert 'append("LIVE 1s SCAN — \\n")' in ui
+    assert 'append("LIVE 1s SCAN — \\n")' in ui
+    assert '"SCAN ERROR\\n\\nLast Attempt: $failedAt\\n\\nScanner Failed:' in ui
 
 
 def test_android_cash_future_scanner_summary_counts_are_clear():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
-    assert 'append("Symbols requested: ${response.symbols_requested.size}\\n")' in ui
-    assert 'append("Observations: ${response.scanned_observations}\\n")' in ui
-    assert 'append("Executable opportunities: ${response.opportunity_count}\\n")' in ui
-    assert 'append("Errors: ${response.errors.size}\\n\\n")' in ui
-    assert 'append("Executable opportunities: 0\\n")' in ui
+    assert 'append("Current signals: ${sorted.size}\\n")' in ui
+    assert 'append("Executable positive-gap signals: ${sorted.count { it.gap > 0.0 && it.net_gap > 0.0 }}\\n")' in ui
+    assert 'append("Source: Angel One WebSocket → 1s collector → live scanner\\n\\n")' in ui
+    assert 'append("Net Profit: ₹${item.net_profit ?: 0.0}' in ui
+    assert 'append("LIVE 1s SCAN — ")' in ui
 
 
 def test_android_cash_future_per_stock_summary_is_clear():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
-    for label in ('append("────────────────────\\n")', 'append("Cash: ₹${item.cash_price}\\n")', 'append("Future: ₹${item.future_price}\\n")', 'append("Gap: ₹${item.gap} (${item.gap_pct}%)\\n")', 'append("Gross Spread: ₹${item.gross_spread_profit}\\n")', 'append("Margin: ₹${item.margin_required}\\n")', 'append("Deployed Capital: ₹${item.deployed_capital}\\n")', 'append("Net Profit: ₹${item.net_profit}\\n")', 'append("ROI: ${item.roi_pct}%\\n")', 'append("Executable: ${if (item.executable) "YES" else "NO"}\\n\\n")'):
+    for label in ('append("────────────────────\\n")', 'append("Cash: ₹${item.cash_ask ?: item.cash_ltp}\\n")', 'append("Future: ₹${item.future_bid ?: item.future_ltp}\\n")', 'append("Gap: ₹${item.gap} (${item.gap_pct}%)\\n")', 'append("Gross Spread: ₹${item.gross_profit ?: item.gross_lot_value ?: 0.0}\\n")', 'append("Margin: ₹${item.capacity_notional ?: 0.0}\\n")', 'append("Deployed Capital: ₹${item.capacity_notional ?: 0.0}\\n")', 'append("Net Profit: ₹${item.net_profit}\\n")', 'append("ROI: ${item.net_gap_pct}%\\n")', 'append("Executable: ${item.lifecycle}\\n\\n")'):
         assert label in ui
 
 
 def test_android_cash_future_opportunities_are_prioritized():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
-    assert 'append("Priority: EXECUTABLE FIRST\\n")' in ui
-    assert '.sortedWith(compareByDescending<CashFutureOpportunity> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit })' in ui
+    assert 'append("Current signals:\\n")' in ui
+    assert '.sortedWith(compareByDescending<LiveCashFutureSignal> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit })' in ui
 
 
 def test_android_cash_future_last_scan_time_is_completion_time():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
-    response_marker = 'val response = ApiService.retrofitService.cashFutureScan()'
+    response_marker = 'val response = ApiService.retrofitService.liveCashFutureScan(maxAgeSeconds = 5.0, limit = 50)'
     completion_marker = 'val completedAt = currentTimestamp()'
     success_marker = 'append("Last Scan: $completedAt\\n\\n")'
     start = ui.index(response_marker)
@@ -77,7 +77,7 @@ def test_android_cash_future_last_scan_time_is_completion_time():
 def test_android_cash_future_error_timestamp_is_recorded_on_failure():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
     assert 'val failedAt = currentTimestamp()' in ui
-    assert 'Last Scan: $failedAt' in ui
+    assert 'Last Attempt: $failedAt' in ui
     assert 'Scanner Failed: ${error.message ?: "API error"}' in ui
 
 
