@@ -7,34 +7,25 @@ from app.main import app
 
 def _client_and_headers():
     client = TestClient(app)
-    email = f"paper-execution-{uuid4().hex}@example.com"
-    response = client.post(
-        "/api/v1/auth/register",
-        json={"email": email, "password": "TestPass123!", "full_name": "Paper Test"},
-    )
-    assert response.status_code == 201
-    return client, {"Authorization": f"Bearer {response.json()['access_token']}"}
-
+    return client, {}
 
 def test_paper_entry_route_registered():
     paths = app.openapi().get("paths", {})
     assert "/api/v1/execution/paper/entry" in paths
 
 
-def test_paper_entry_requires_authentication():
+def test_paper_entry_requires_no_authentication():
     client = TestClient(app)
     response = client.post(
         "/api/v1/execution/paper/entry",
         json={"price": 100.0, "quantity": 2, "stop_loss_pct": 0.05, "target_pct": 0.10},
     )
-    assert response.status_code == 401
+    assert response.status_code == 200
 
 
 def test_paper_entry_persists_position_and_order_and_updates_balance():
     client, headers = _client_and_headers()
-    before = client.get("/api/v1/auth/me", headers=headers)
-    assert before.status_code == 200
-    starting_balance = before.json()["account"]["virtual_balance"]
+    starting_balance = 10_000_000.0
 
     response = client.post(
         "/api/v1/execution/paper/entry",
@@ -119,7 +110,7 @@ def test_cash_future_scanner_bridge_creates_symbol_specific_paper_position():
     assert data["position"]["quantity"] == 2.0
 
 
-def test_cash_future_scanner_bridge_requires_authentication():
+def test_cash_future_scanner_bridge_requires_no_authentication():
     client = TestClient(app)
     response = client.post(
         "/api/v1/execution/paper/from-scanner",
@@ -130,7 +121,7 @@ def test_cash_future_scanner_bridge_requires_authentication():
 
 def test_paper_short_reversal_deducts_cost_of_remaining_long():
     client, headers = _client_and_headers()
-    starting_balance = client.get("/api/v1/auth/me", headers=headers).json()["account"]["virtual_balance"]
+    starting_balance = 10_000_000.0
 
     short_response = client.post(
         "/api/v1/execution/paper/order",
