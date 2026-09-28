@@ -7,118 +7,56 @@ Live broker execution remains disabled behind the broker safety layer.
 
 from __future__ import annotations
 
-import hashlib
 import math
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.security import ALGORITHM
 from app.execution.dual_engine import DualExecutionEngine, ExecutionConfig, ExecutionMode, Fill
 from app.execution.fill_accounting import ExecutedFill, FillAccountingState, apply_executed_fill
 from app.execution.payoff import PayoffLeg, payoff_summary
 from app.execution.strategy_legs import StrategyLegInput, build_cash_future_strategy, build_strategy_legs
-from app.models import Order, Position, Session as UserSession, TradingAccount
+from app.models import Order, Position, TradingAccount, User, PAPER_STARTING_BALANCE
 
 router = APIRouter(prefix="/api/v1/execution", tags=["Execution"])
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+def current_user_id(db: Session = Depends(get_db)) -> int:
+    """Return the single local trading identity; no login or bearer token is required."""
+    account = (
+        db.query(TradingAccount)
+        .filter(TradingAccount.is_active.is_(True), TradingAccount.mode == "PAPER")
+        .order_by(TradingAccount.id.asc())
+        .first()
+    )
+    if account is not None:
+        return int(account.user_id)
 
+    user = db.query(User).filter(User.is_active.is_(True)).order_by(User.id.asc()).first()
+    if user is None:
+        user = User(
+            username="system",
+            email="system@local.algo-trading",
+            hashed_password="",
+            full_name="Algo Trading System",
+            is_active=True,
+        )
+        db.add(user)
+        db.flush()
 
-class PaperEntryRequest(BaseModel):
-    symbol: str = Field("PAPER", min_length=1, max_length=128)
-    price: float = Field(..., gt=0)
-    quantity: float = Field(..., gt=0)
-    stop_loss_pct: float = Field(0.02, ge=0)
-    target_pct: float = Field(0.04, ge=0)
-
-
-class PaperExitRequest(BaseModel):
-    symbol: str | None = Field(default=None, min_length=1, max_length=128)
-    price: float = Field(..., gt=0)
-
-
-class PaperOrderRequest(BaseModel):
-    symbol: str = Field(min_length=1, max_length=128)
-    transaction_type: str = Field(min_length=3, max_length=4)
-    price: float = Field(..., gt=0)
-    quantity: float = Field(..., gt=0)
-    stop_loss_pct: float = Field(0.02, ge=0)
-    target_pct: float = Field(0.04, ge=0)
-
-
-class ScannerPaperEntryRequest(BaseModel):
-    symbol: str = Field(min_length=1, max_length=128)
-    cash_price: float = Field(..., gt=0)
-    quantity: float = Field(..., gt=0)
-    future_price: float | None = Field(default=None, gt=0)
-    gap: float | None = None
-    net_profit: float | None = None
-    executable: bool = True
-    stop_loss_pct: float = Field(0.02, ge=0)
-    target_pct: float = Field(0.04, ge=0)
-
-
-class PaperPayoffLegRequest(BaseModel):
-    kind: str = Field(min_length=4, max_length=8)
-    side: str = Field(min_length=3, max_length=4)
-    strike: float | None = Field(default=None, gt=0)
-    entry_price: float = Field(..., ge=0)
-    quantity: float = Field(..., gt=0)
-    multiplier: float = Field(1.0, gt=0)
-
-
-class PaperPayoffRequest(BaseModel):
-    symbol: str = Field(min_length=1, max_length=128)
-    underlying_prices: list[float] = Field(min_length=2, max_length=201)
-    legs: list[PaperPayoffLegRequest] = Field(min_length=1, max_length=20)
-
-
-class StrategyLegRequest(BaseModel):
-    kind: str = Field(min_length=4, max_length=8)
-    side: str = Field(min_length=3, max_length=4)
-    entry_price: float = Field(..., ge=0)
-    quantity: float = Field(..., gt=0)
-    strike: float | None = Field(default=None, gt=0)
-    multiplier: float = Field(1.0, gt=0)
-
-
-class StrategyPayoffRequest(BaseModel):
-    symbol: str = Field(min_length=1, max_length=128)
-    underlying_prices: list[float] = Field(min_length=2, max_length=201)
-    legs: list[StrategyLegRequest] = Field(min_length=1, max_length=20)
-
-
-class CashFuturePayoffRequest(BaseModel):
-    symbol: str = Field(min_length=1, max_length=128)
-    cash_entry_price: float = Field(..., gt=0)
-    future_entry_price: float = Field(..., gt=0)
-    quantity: float = Field(..., gt=0)
-    underlying_prices: list[float] = Field(min_length=2, max_length=201)
-    multiplier: float = Field(1.0, gt=0)
-
-
-def current_user_id(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> int:
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = int(payload.get("sub", "0"))
-    except (JWTError, TypeError, ValueError):
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    if user_id <= 0:
-        raise HTTPException(status_code=401, detail="Invalid authenticated user")
-    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    session = db.query(UserSession).filter(
-        UserSession.user_id == user_id,
-        UserSession.token_hash == token_hash,
-    ).first()
-    if session is None:
-        raise HTTPException(status_code=401, detail="Session is invalid or logged out")
-    return user_id
+    account = TradingAccount(
+        user_id=user.id,
+        mode="PAPER",
+        virtual_balance=PAPER_STARTING_BALANCE,
+        realized_pnl=0.0,
+        is_active=True,
+    )
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return int(account.user_id)
 
 
 def _paper_fill(mode: ExecutionMode, price: float, quantity: float) -> Fill:
