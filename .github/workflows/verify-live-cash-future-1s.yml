@@ -60,7 +60,7 @@ jobs:
           from zoneinfo import ZoneInfo
           from app.market_data.instruments import InstrumentMaster
           from app.market_data.live_cash_future_stream import LiveCashFutureOneSecondCollector
-          
+
           master = InstrumentMaster()
           rows = master.download()
           today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
@@ -74,6 +74,30 @@ jobs:
           print(f"NFO_FUTSTK_TOTAL={len(fut)}")
           print(f"NFO_FUTSTK_WITH_EXPIRY={len(active)}")
           print(f"MASTER_SAMPLE={fut[:3]}")
+
+          nse_symbols = {
+              str(x.get("symbol") or "").strip().upper()
+              for x in rows
+              if str(x.get("exch_seg","")).upper() == "NSE"
+          }
+          exact = 0
+          suffix_eq = 0
+          unresolved = []
+          for item in fut:
+              underlying = str(item.get("name") or "").strip().upper()
+              if not underlying:
+                  continue
+              if underlying in nse_symbols:
+                  exact += 1
+              elif f"{underlying}-EQ" in nse_symbols:
+                  suffix_eq += 1
+              else:
+                  unresolved.append(underlying)
+          print(f"FUT_UNDERLYINGS_WITH_EXACT_NSE_SYMBOL={exact}")
+          print(f"FUT_UNDERLYINGS_WITH_NSE_EQ_SYMBOL={suffix_eq}")
+          print(f"FUT_UNDERLYINGS_WITHOUT_EXACT_OR_EQ={len(set(unresolved))}")
+          print(f"UNRESOLVED_SAMPLE={sorted(set(unresolved))[:20]}")
+
           collector = LiveCashFutureOneSecondCollector(":memory:", instrument_master=master)
           futures, cash = collector._contracts()
           print(f"COLLECTOR_FUTURES={len(futures)}")
