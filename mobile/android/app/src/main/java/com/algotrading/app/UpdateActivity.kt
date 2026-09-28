@@ -19,12 +19,18 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import org.json.JSONObject
 
 class UpdateActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var notes: TextView
     private lateinit var update: Button
     private var pendingRemote: AppUpdateInfo? = null
+
+    private companion object {
+        const val UPDATE_MANIFEST_URL =
+            "https://raw.githubusercontent.com/bhaskarprasad386-gif/Algo-trading/main/backend/app/app_update_manifest.json"
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,7 +58,7 @@ class UpdateActivity : AppCompatActivity() {
 
     private fun checkForUpdate() = lifecycleScope.launch(Dispatchers.IO) {
         try {
-            val remote = ApiService.retrofitService.appUpdate()
+            val remote = fetchUpdateManifest()
             val currentCode = packageManager.getPackageInfo(packageName, 0).longVersionCode
             withContext(Dispatchers.Main) {
                 pendingRemote = remote
@@ -116,6 +122,37 @@ class UpdateActivity : AppCompatActivity() {
                 status.text = "Update failed • ${e.message ?: "download error"}"
                 update.isEnabled = true
             }
+        }
+    }
+
+    private suspend fun fetchUpdateManifest(): AppUpdateInfo = withContext(Dispatchers.IO) {
+        var connection: HttpURLConnection? = null
+        try {
+            connection = (URL(UPDATE_MANIFEST_URL).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 15_000
+                readTimeout = 15_000
+                instanceFollowRedirects = true
+                requestMethod = "GET"
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("User-Agent", "AlgoTradingAndroidUpdater/1")
+            }
+            connection.connect()
+            if (connection.responseCode !in 200..299) {
+                throw IllegalStateException("Update server returned HTTP ${connection.responseCode}")
+            }
+            val body = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val json = JSONObject(body)
+            AppUpdateInfo(
+                platform = json.optString("platform", "android"),
+                version_code = json.optInt("version_code", 1),
+                version_name = json.optString("version_name", "1.0"),
+                release_notes = json.optString("release_notes", ""),
+                apk_url = json.optString("apk_url", ""),
+                sha256 = json.optString("sha256", ""),
+                mandatory = json.optBoolean("mandatory", false)
+            )
+        } finally {
+            connection?.disconnect()
         }
     }
 
