@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -59,7 +59,7 @@ def test_strategy_run_route_executes_accumulated_live_1s_source(monkeypatch, tmp
         contracts.upsert_snapshot(date(2026, 9, 28), [
             ContractRecord("NFO", "ABC26SEP FUT", "101", date(2026, 9, 30), "STOCK_FUTURE", "ABC", 75)
         ])
-        timestamp_ns = int(datetime(2026, 9, 28, 9, 30).timestamp() * 1_000_000_000)
+        timestamp_ns = int(datetime(2026, 9, 28, 9, 30, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
         data.ingest([
             HistoricalRecord("angelone-live-1s", "ABC-EQ|1", "1s", timestamp_ns, {"ltp": 100.0, "close": 100.0, "bid": 99.9, "ask": 100.1}),
             HistoricalRecord("angelone-live-1s", "ABC26SEP FUT|101", "1s", timestamp_ns, {"ltp": 110.0, "close": 110.0, "bid": 109.9, "ask": 110.1}),
