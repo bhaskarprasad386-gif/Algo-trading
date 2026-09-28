@@ -38,7 +38,7 @@ class StrategyRunRequest(BaseModel):
         elif not self.points: raise ValueError("points cannot be empty")
         return self
 
-def _strategy_registry()->dict[str,Any]: return {"gap_threshold":lambda current,history:"BUY" if current.gap>0 else "SELL" if current.gap<0 else "HOLD"}
+def _strategy_registry()->dict[str,Any]: return {"gap_threshold":lambda current,history:"BUY" if current.gap>0 else "SELL" if current.gap<0 else "HOLD","cash-future":lambda current,history:"BUY" if current.gap>0 else "SELL" if current.gap<0 else "HOLD"}
 
 def _gap_threshold_implementation_hash()->str:
     return provenance_hash({"strategy_id":"gap_threshold","factory_source":inspect.getsource(_build_builder_strategy)})
@@ -105,7 +105,7 @@ def _scale_points(points,lots:int):
 def strategy_run(request:StrategyRunRequest):
     strategy=_strategy_registry().get(request.strategy_id)
     if strategy is None: raise HTTPException(status_code=404,detail=f"unknown Cash-Future strategy: {request.strategy_id}")
-    if request.strategy_id=="gap_threshold": strategy=_build_builder_strategy(request)
+    if request.strategy_id in {"gap_threshold","cash-future"}: strategy=_build_builder_strategy(request)
     catalog=contracts=ledger=None; run_id=f"cash-future-{uuid4().hex}"
     try:
         if request.points is not None:
@@ -120,7 +120,7 @@ def strategy_run(request:StrategyRunRequest):
             points=loader.iter_points(selection)
             data_source_fingerprint=loader.dataset_fingerprint(selection)
         points=_scale_points(points,request.cash_lots); ledger=BacktestLedger(settings.BACKTEST_LEDGER_DB)
-        strategy_hash=_gap_threshold_implementation_hash() if request.strategy_id=="gap_threshold" else None
+        strategy_hash=_gap_threshold_implementation_hash() if request.strategy_id in {"gap_threshold","cash-future"} else None
         strategy_config_hash=provenance_hash(_strategy_config_payload(request))
         result=run_cash_future_strategy(points,strategy,strategy_id=request.strategy_id,strategy_version=request.strategy_version,config=CashFutureStrategyConfig(initial_capital=request.initial_capital,execution_model=request.execution_model,charges_per_trade=request.charges_per_trade,funding_cost_per_trade=request.funding_cost_per_trade,start_date=request.start_date,end_date=request.end_date,contract_month=request.contract_month,cash_side=request.cash_side,future_side=request.future_side,slippage_per_share=request.slippage_per_share,holding_mode=request.holding_mode,history_window=request.history_window,checkpoint_interval=request.checkpoint_interval,start_timestamp=request.start_timestamp,end_timestamp=request.end_timestamp),ledger=ledger,run_id=run_id,strategy_hash=strategy_hash,strategy_config_hash=strategy_config_hash,data_source_fingerprint=data_source_fingerprint)
         payload=_serialise_run(ledger,run_id); report=build_cash_future_report(result.initial_capital,payload["trades"],payload["equity_curve"]); profit_factor=report.profit_factor if isfinite(report.profit_factor) else None
