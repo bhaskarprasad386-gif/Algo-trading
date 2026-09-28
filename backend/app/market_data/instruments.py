@@ -120,8 +120,13 @@ class InstrumentMaster:
         if not exch:
             raise ValueError("cash exchange cannot be empty")
 
+        candidate_symbols = [symbol]
+        if not symbol.endswith("-EQ"):
+            candidate_symbols.append(f"{symbol}-EQ")
         results = [
-            item for item in self.search(tradingsymbol=symbol, exchange=exch)
+            item
+            for candidate in candidate_symbols
+            for item in self.search(tradingsymbol=candidate, exchange=exch)
             if str(item.get("instrumenttype", "")).upper() in {"CASH", "EQ", "EQUITY", ""}
             and str(item.get("exch_seg", "")).upper() == exch
         ]
