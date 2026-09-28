@@ -26,6 +26,20 @@ def test_full_fno_start_api_contract(monkeypatch):
     assert captured["days"] == 365 and captured["min_entry_gap"] == 5.0 and captured["future_selection"] == "NEAR"
 
 
+def test_full_fno_android_start_accepts_json_body(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(routes, "create_full_fno_job", lambda **kwargs: (captured.update(kwargs) or SimpleNamespace(job_id="android-job")))
+    response = client.post("/api/v1/backtesting/full-fno/start", json={
+        "days": 365, "min_entry_gap": 5.0, "exit_gap": 1.0,
+        "charges_per_trade": 10.0, "funding_cost_per_trade": 2.0,
+        "max_holding_days": 30, "future_selection": "NEAR",
+    })
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted", "universe": "FULL_FNO_STOCK", "future_selection": "NEAR", "job": "android-job"}
+    assert captured["days"] == 365 and captured["min_entry_gap"] == 5.0
+    assert captured["future_selection"] == "NEAR"
+
+
 def test_full_fno_start_api_rejects_invalid_selection():
     response = client.post("/api/v1/scanner/cash-future/backtest/full/jobs", params={"future_selection": "INVALID"})
     assert response.status_code == 422
