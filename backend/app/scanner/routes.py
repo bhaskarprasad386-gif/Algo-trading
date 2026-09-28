@@ -4,6 +4,7 @@ import math
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -30,6 +31,16 @@ from app.scanner.result_chunk_store import delete_result_chunks_batched
 
 router = APIRouter(prefix="/api/v1/scanner", tags=["Scanner"])
 full_fno_router = APIRouter(prefix="/api/v1/backtesting/full-fno", tags=["Full F&O Backtest"])
+
+
+class FullFnoJobRequest(BaseModel):
+    days: int = Field(365, ge=1, le=3650)
+    min_entry_gap: float = 0.0
+    exit_gap: float = 0.0
+    charges_per_trade: float = Field(0.0, ge=0)
+    funding_cost_per_trade: float = Field(0.0, ge=0)
+    max_holding_days: int = Field(30, ge=1, le=3650)
+    future_selection: str = "BOTH"
 IST = ZoneInfo("Asia/Kolkata")
 
 
@@ -260,18 +271,12 @@ def cash_future_expiry_close(symbol: str, contract_month: str, expiry_date: date
         raise HTTPException(status_code=404, detail="no 15:20-15:30 expiry-day observation found")
     return {"status": "success", "scanner": "cash-future", "expiry_close": result}
 @full_fno_router.post("/start")
-def start_full_fno_backtest_job_alias(
-    days: int = Query(365, ge=1, le=3650), min_entry_gap: float = Query(0.0),
-    exit_gap: float = Query(0.0), charges_per_trade: float = Query(0.0, ge=0),
-    funding_cost_per_trade: float = Query(0.0, ge=0), max_holding_days: int = Query(30, ge=1, le=3650),
-    future_selection: str = Query("BOTH", pattern="^(CURRENT|NEAR|BOTH)$"),
-):
-    job = create_full_fno_job(days=days, min_entry_gap=min_entry_gap, exit_gap=exit_gap,
-                               charges_per_trade=charges_per_trade, funding_cost_per_trade=funding_cost_per_trade,
-                               max_holding_days=max_holding_days, future_selection=future_selection)
-    return {"status": "accepted", "universe": "FULL_FNO_STOCK", "future_selection": future_selection,
+def start_full_fno_backtest_job_alias(request: FullFnoJobRequest):
+    if request.future_selection not in {"CURRENT", "NEAR", "BOTH"}:
+        raise HTTPException(status_code=422, detail="future_selection must be CURRENT, NEAR, or BOTH")
+    job = create_full_fno_job(**request.model_dump())
+    return {"status": "accepted", "universe": "FULL_FNO_STOCK", "future_selection": request.future_selection,
             "job": job.job_id}
-
 
 @full_fno_router.get("/{job_id}")
 def full_fno_job_status_alias(job_id: str, db: Session = Depends(get_db)):
