@@ -48,6 +48,35 @@ jobs:
           echo "=== RECENT SERVICE LOG ==="
           journalctl -u algo-trading.service --no-pager -n 80 2>/dev/null | grep -Ei 'cash.?future|collector|live.*data|websocket|smartapi|error|exception' | tail -50 || true
 
+          echo "=== CONTRACT DIAGNOSTIC ==="
+          cd "$APP_DIR/backend"
+          "$APP_DIR/.venv/bin/python" - <<'PY'
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from app.market_data.instruments import InstrumentMaster
+from app.market_data.live_cash_future_stream import LiveCashFutureOneSecondCollector
+
+master = InstrumentMaster()
+rows = master.download()
+today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+fut = [
+    x for x in rows
+    if str(x.get("exch_seg","")).upper() == "NFO"
+    and str(x.get("instrumenttype","")).upper() == "FUTSTK"
+]
+active = [x for x in fut if str(x.get("expiry","")).strip()]
+print(f"MASTER_TOTAL={len(rows)}")
+print(f"NFO_FUTSTK_TOTAL={len(fut)}")
+print(f"NFO_FUTSTK_WITH_EXPIRY={len(active)}")
+print(f"MASTER_SAMPLE={fut[:3]}")
+collector = LiveCashFutureOneSecondCollector(":memory:", instrument_master=master)
+futures, cash = collector._contracts()
+print(f"COLLECTOR_FUTURES={len(futures)}")
+print(f"COLLECTOR_CASH={len(cash)}")
+print(f"COLLECTOR_UNDERLYINGS={len({x['_underlying'] for x in futures})}")
+print(f"COLLECTOR_SAMPLE={[(x['_underlying'],x['symbol'],x['_expiry'].isoformat(),x['_contract_month']) for x in futures[:10]]}")
+PY
+          cd "$APP_DIR"
           echo "=== DATA FILES ==="
           find "$APP_DIR/backend" -maxdepth 3 -type f \( -iname '*cash*future*' -o -iname '*live*data*' \) -printf '%TY-%Tm-%Td %TH:%TM:%TS %p\n' 2>/dev/null | sort | tail -30 || true
 
