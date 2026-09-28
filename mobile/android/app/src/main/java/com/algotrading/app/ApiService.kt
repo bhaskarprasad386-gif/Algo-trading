@@ -298,6 +298,7 @@ interface ApiInterface {
     @GET("/api/v1/backtesting/universal/runs/{run_id}/fills") suspend fun universalFills(@Path("run_id") runId: String, @Query("limit") limit: Int = 100, @Query("after_sequence") afterSequence: Int = -1): Map<String, Any?>
     @GET("/api/v1/backtesting/universal/runs/{run_id}/trades") suspend fun universalTrades(@Path("run_id") runId: String, @Query("limit") limit: Int = 100, @Query("after_sequence") afterSequence: Int = -1): Map<String, Any?>
     @GET("/api/v1/backtesting/universal/runs/{run_id}/equity") suspend fun universalEquity(@Path("run_id") runId: String, @Query("limit") limit: Int = 100): Map<String, Any?>
+    @GET("/api/v1/backtesting/universal/runs/{run_id}/events") suspend fun universalEventsPage(@Path("run_id") runId: String, @Query("limit") limit: Int = 100, @Query("after_sequence") afterSequence: Int = -1): Map<String, Any?>
     @POST("/api/v1/backtesting/full-fno/start") suspend fun startFullFnoJob(@Body request: FullFnoJobRequest = FullFnoJobRequest()): FullFnoJobAcceptedResponse
     @GET("/api/v1/backtesting/full-fno/{job_id}") suspend fun fullFnoJob(@Path("job_id") jobId: String): FullFnoJobStatusResponse
     @POST("/api/v1/backtesting/full-fno/{job_id}/cancel") suspend fun cancelFullFnoJob(@Path("job_id") jobId: String): FullFnoJobControlResponse
