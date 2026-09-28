@@ -19,6 +19,15 @@ def test_resolve_cash_instrument_accepts_equity_variants():
     assert master.resolve_cash_token("RELIANCE-EQ") == "2885"
 
 
+def test_resolve_cash_instrument_maps_future_underlying_to_equity_symbol():
+    master = master_with([
+        {"exch_seg": "NSE", "instrumenttype": "EQ", "symbol": "RELIANCE-EQ", "token": "2885"},
+    ])
+    instrument = master.resolve_cash_instrument("RELIANCE")
+    assert instrument["symbol"] == "RELIANCE-EQ"
+    assert instrument["token"] == "2885"
+
+
 def test_resolve_cash_instrument_accepts_empty_instrument_type():
     master = master_with([
         {"exch_seg": "NSE", "instrumenttype": "", "symbol": "SBIN-EQ", "token": "3045"},
