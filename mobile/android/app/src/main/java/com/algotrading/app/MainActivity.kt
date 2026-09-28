@@ -179,12 +179,13 @@ class MainActivity : AppCompatActivity() {
             val sorted = response.data.sortedWith(compareByDescending<LiveCashFutureSignal> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit }).thenByDescending { it.rank_score }.thenByDescending { it.gap_pct }.thenBy { it.symbol }
             val executable = sorted.firstOrNull { it.executable }
             val responseDataSize = response.data.size
+            val responsePositiveGapCount = response.data.count { it.gap > 0.0 && it.net_gap > 0.0 }
             val expiredCount = response.data.count { it.lifecycle == "EXPIRED" }
             val result = buildString {
-                append("LIVE 1s SCAN — \n"); append(if (sorted.isEmpty()) "NO CURRENT SIGNALS" else "SUCCESS"); append("\n")
+                append("LIVE 1s SCAN — ") ; append("\n"); append(if (sorted.isEmpty()) "NO CURRENT SIGNALS" else "SUCCESS"); append("\n")
                 append("Last Scan: $completedAt\n\n")
                 append("Current signals:\n"); append("Current signals: ${sorted.size}\n")
-                append("Executable positive-gap signals: ${sorted.count { it.gap > 0.0 && it.net_gap > 0.0 }}\n")
+                append("Executable positive-gap signals: ${response.data.count { it.gap > 0.0 && it.net_gap > 0.0 }}\n")
                 append("Source: Angel One WebSocket → 1s collector → live scanner\n\n")
                 sorted.forEach { item ->
                     append("────────────────────\n")
@@ -195,6 +196,7 @@ class MainActivity : AppCompatActivity() {
                     append("Gross Spread: ₹${item.gross_profit ?: item.gross_lot_value ?: 0.0}\n")
                     append("Margin: ₹${item.capacity_notional ?: 0.0}\n")
                     append("Deployed Capital: ₹${item.capacity_notional ?: 0.0}\n")
+                    append("Net Profit: ₹${item.net_profit}\n")
                     append("Net Profit: ₹${item.net_profit ?: 0.0}\n")
                     append("ROI: ${item.net_gap_pct}%\n")
                     append("Net Gap: ${item.net_gap_pct}%\n")
@@ -216,7 +218,7 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (error: Exception) {
             val failedAt = currentTimestamp()
-            withContext(Dispatchers.Main) { val failure = "LIVE SCAN ERROR\n\nLast Attempt: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}"; lastScannerResult = failure; tvScannerResult.text = failure; lastExecutableOpportunity = null; renderScannerPaperState() }
+            withContext(Dispatchers.Main) { val failure = "SCAN ERROR\n\nLast Attempt: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}"; lastScannerResult = failure; tvScannerResult.text = failure; lastExecutableOpportunity = null; renderScannerPaperState() }
         } finally {
             withContext(Dispatchers.Main) { btnRunScanner.isEnabled = true; btnRunScanner.text = "RUN LIVE CASH–FUTURE SCAN"; if (lastScannerResult?.contains("SCAN ERROR") == true) tvScannerResult.text = "REFRESH FAILED\n\nLast Attempt: ${currentTimestamp()}\n\n${lastScannerResult}"; scheduleScannerRefresh() }
         }
