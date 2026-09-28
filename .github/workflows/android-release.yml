@@ -5,15 +5,18 @@ on:
     inputs:
       version_code:
         description: Android versionCode (must be greater than the currently released APK)
-        required: true
+        required: false
+        default: '5'
         type: string
       version_name:
         description: Android versionName, e.g. 1.1
-        required: true
+        required: false
+        default: '1.5'
         type: string
       release_notes:
         description: Release notes
-        required: true
+        required: false
+        default: 'Fix Android update versionCode so v1.3 installs as an update.'
         type: string
 
 permissions:
@@ -122,6 +125,10 @@ jobs:
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: printf '%s' "$KEYSTORE_B64" | base64 --decode > release.keystore
+
+      - name: Validate release versionCode
+        run: |
+          test '${{ inputs.version_code }}' -gt 4 || { echo "::error::Android versionCode must be greater than v1.3 versionCode 4"; exit 1; }
 
       - name: Build signed release APK
         env:
