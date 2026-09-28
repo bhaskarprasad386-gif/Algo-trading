@@ -107,3 +107,13 @@ def test_live_persistence_skips_existing_second_bucket_without_conflict():
     assert _ingest_live_record(catalog, conflicting) == 0
     assert catalog.count(source=record.source, instrument=record.instrument, timeframe=record.timeframe) == 1
     catalog.close()
+
+
+def test_live_payload_price_compatibility_supports_ltp_and_close():
+    from app.backtesting.cash_future_historical_loader import _record_price
+
+    old_live = HistoricalRecord("angelone-live-1s", "AAA-EQ|cash-AAA", "1s", 1, {"ltp": 100.25})
+    new_live = HistoricalRecord("angelone-live-1s", "AAA-EQ|cash-AAA", "1s", 2, {"ltp": 101.25, "close": 101.25})
+
+    assert _record_price(old_live) == 100.25
+    assert _record_price(new_live) == 101.25
