@@ -1,0 +1,57 @@
+name: VPS Network Firewall Diagnose
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/vps-network-firewall.yml
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Diagnose and open HTTP/HTTPS on VPS
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$VPS_KEY" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          echo "== FIREWALL BEFORE =="
+          if command -v ufw >/dev/null 2>&1; then
+            ufw status verbose || true
+          else
+            echo "UFW_NOT_INSTALLED"
+          fi
+          echo "== IPTABLES INPUT =="
+          iptables -S INPUT 2>/dev/null || true
+          echo "== NFTABLES =="
+          nft list ruleset 2>/dev/null | head -n 120 || true
+          echo "== LISTEN =="
+          ss -lntp | grep -E ':(80|443) ' || true
+
+          if command -v ufw >/dev/null 2>&1; then
+            ufw allow 80/tcp
+            ufw allow 443/tcp
+            ufw --force enable
+          fi
+
+          echo "== FIREWALL AFTER =="
+          if command -v ufw >/dev/null 2>&1; then ufw status verbose; fi
+          echo "== LISTEN AFTER =="
+          ss -lntp | grep -E ':(80|443) ' || true
+          REMOTE
+          rm -f /tmp/vps_key
+
+      - name: Test VPS public ports from GitHub runner
+        run: |
+          set +e
+          echo "HTTP_PUBLIC=$(curl --connect-timeout 8 -sS -o /dev/null -w '%{http_code}' http://82.41.67.1/.well-known/acme-challenge/probe 2>/dev/null)"
+          echo "HTTPS_PUBLIC=$(curl --connect-timeout 8 -k -sS -o /dev/null -w '%{http_code}' https://82.41.67.1/ 2>/dev/null)"
+          exit 0
