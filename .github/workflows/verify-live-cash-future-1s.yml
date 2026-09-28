@@ -165,10 +165,12 @@ jobs:
                   "WHERE source=? AND timeframe=? AND timestamp_ns>=? AND timestamp_ns<=?",
                   ("angelone-live-1s", "1s", start_ts, int(max_ts)),
               )
+
               cash = set()
               futures = set()
               cash_rows = 0
               future_rows = 0
+              observations = {}
               for ts, payload_json in rows:
                   try:
                       payload = json.loads(payload_json)
@@ -178,16 +180,50 @@ jobs:
                   leg = str(payload.get("leg") or "").strip().upper()
                   if not underlying:
                       continue
+                  key = (underlying, int(ts))
                   if leg == "CASH":
                       cash.add(underlying)
                       cash_rows += 1
+                      observations.setdefault(key, {})["cash"] = payload
                   elif leg == "FUTURE":
                       futures.add(underlying)
                       future_rows += 1
+                      observations.setdefault(key, {}).setdefault("futures", []).append(payload)
+
               paired = cash & futures
               cash_only = cash - futures
               future_only = futures - cash
-              print(f"COVERAGE_WINDOW_SECONDS=10")
+
+              quote_pairs = 0
+              positive_gap_pairs = 0
+              quote_pair_underlyings = set()
+              positive_gap_underlyings = set()
+
+              for (underlying, _ts), legs in observations.items():
+                  cash_payload = legs.get("cash")
+                  if not cash_payload:
+                      continue
+                  try:
+                      cash_ask = float(cash_payload.get("ask"))
+                  except (TypeError, ValueError):
+                      cash_ask = 0.0
+                  if cash_ask <= 0:
+                      continue
+                  for future_payload in legs.get("futures", []):
+                      try:
+                          future_bid = float(future_payload.get("bid"))
+                      except (TypeError, ValueError):
+                          future_bid = 0.0
+                      if future_bid <= 0:
+                          continue
+                      quote_pairs += 1
+                      quote_pair_underlyings.add(underlying)
+                      gap = future_bid - cash_ask
+                      if gap > 0:
+                          positive_gap_pairs += 1
+                          positive_gap_underlyings.add(underlying)
+
+              print("COVERAGE_WINDOW_SECONDS=10")
               print(f"COVERAGE_MAX_TIMESTAMP_NS={max_ts}")
               print(f"COVERAGE_CASH_ROWS={cash_rows}")
               print(f"COVERAGE_FUTURE_ROWS={future_rows}")
@@ -196,6 +232,10 @@ jobs:
               print(f"COVERAGE_PAIRED_UNDERLYINGS={len(paired)}")
               print(f"COVERAGE_CASH_ONLY={len(cash_only)}")
               print(f"COVERAGE_FUTURE_ONLY={len(future_only)}")
+              print(f"COVERAGE_QUOTE_PAIRS={quote_pairs}")
+              print(f"COVERAGE_QUOTE_PAIR_UNDERLYINGS={len(quote_pair_underlyings)}")
+              print(f"COVERAGE_POSITIVE_GAP_PAIRS={positive_gap_pairs}")
+              print(f"COVERAGE_POSITIVE_GAP_UNDERLYINGS={len(positive_gap_underlyings)}")
               print(f"COVERAGE_CASH_ONLY_SAMPLE={sorted(cash_only)[:20]}")
               print(f"COVERAGE_FUTURE_ONLY_SAMPLE={sorted(future_only)[:20]}")
               if not cash or not futures:
