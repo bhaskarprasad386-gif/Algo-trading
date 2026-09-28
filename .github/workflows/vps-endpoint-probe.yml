@@ -1,0 +1,46 @@
+name: VPS Endpoint Probe
+
+on:
+  push:
+    paths:
+      - .github/workflows/vps-endpoint-probe.yml
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe VPS
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$VPS_KEY" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes "$VPS_USER@$VPS_HOST" '
+            set -u
+            echo SSH_OK
+            echo HOST=$(hostname)
+            echo USER=$(id -un)
+            echo PUBLIC_IP=$(curl -4 -sS --max-time 5 https://api.ipify.org || true)
+            echo PORTS
+            ss -ltn 2>/dev/null | grep -E ":(80|443|8000|8080)\\b" || true
+            echo SERVICE
+            systemctl is-active algo-trading.service 2>/dev/null || true
+            systemctl cat algo-trading.service 2>/dev/null | grep -E "^(WorkingDirectory|ExecStart)=" || true
+            echo LOCAL_ENDPOINTS
+            for port in 80 443 8000 8080; do
+              code=$(curl -k -sS --connect-timeout 2 --max-time 5 -o /tmp/body -w "%{http_code}" "http://127.0.0.1:$port/openapi.json" 2>/dev/null || true)
+              echo PORT=$port HTTP=$code
+              if [ "$code" != "000" ]; then grep -q "/api/v1/auth/google" /tmp/body && echo GOOGLE_ROUTE_PRESENT || true; fi
+            done
+            echo PROXY
+            for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/* /etc/caddy/Caddyfile; do
+              [ -f "$f" ] || continue
+              echo CONFIG=$f
+              grep -E "server_name|proxy_pass|reverse_proxy|listen " "$f" | head -100 || true
+            done
+          '
