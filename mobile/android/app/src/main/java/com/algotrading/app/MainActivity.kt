@@ -206,7 +206,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setPaperBusy(busy: Boolean, message: String? = null) { btnPaperEntry.isEnabled = !busy; btnPaperPosition.isEnabled = !busy; btnPaperExit.isEnabled = !busy; if (message != null) tvPaperResult.text = message }
-    private fun paperExecuteScannerOpportunity() { val opportunity = lastExecutableOpportunity ?: return; etEntryPrice.setText(opportunity.cash_price.toString()); etQuantity.setText("1"); tvPaperResult.text = "Selected ${opportunity.symbol} • Paper entry price loaded"; paperEntry() }
+    private fun paperExecuteScannerOpportunity() { val opportunity = lastExecutableOpportunity ?: return; etEntryPrice.setText((opportunity.cash_ask ?: opportunity.cash_ltp).toString()); etQuantity.setText("1"); tvPaperResult.text = "Selected ${opportunity.symbol} • Paper entry price loaded"; paperEntry() }
 
     private fun paperEntry() = lifecycleScope.launch(Dispatchers.IO) {
         withContext(Dispatchers.Main) { setPaperBusy(true, "PAPER ENTRY IN PROGRESS...") }
