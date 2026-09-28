@@ -151,6 +151,9 @@ class CashFutureHistoricalLoader:
         return tuple(segments)
     def _resolve_spot_instrument(self,symbol:str,start_ns:int,end_ns:int,requested:str,source:str,timeframe:str)->str:
         if ":" in requested: return requested
+        if source == "angelone-live-1s":
+            live=[instrument for instrument in self.catalog.instruments(source=source,timeframe=timeframe,start_ns=start_ns,end_ns=end_ns) if instrument.rsplit("|",1)[0].upper() in {symbol.upper(),f"{symbol.upper()}-EQ"}]
+            if live: return live[0]
         exact=[instrument for instrument in self.catalog.instruments(source=source,timeframe=timeframe,start_ns=start_ns,end_ns=end_ns,prefix="NSE:") if instrument.rsplit(":",1)[-1].upper()==symbol.upper()]
         return exact[0] if exact else requested
     def iter_points(self,selection:CashFutureHistorySelection)->Iterable[CashFutureHistoryPoint]:
@@ -159,7 +162,8 @@ class CashFutureHistoricalLoader:
             start_ns,_=_market_bounds(segment_start); _,end_ns=_market_bounds(segment_end)
             cash_instrument=self._resolve_spot_instrument(selection.underlying.upper(),start_ns,end_ns,selection.spot_instrument,selection.source,selection.timeframe)
             cash_iter=self.catalog.iter_records(source=selection.source,instrument=cash_instrument,timeframe=selection.timeframe,start_ns=start_ns,end_ns=end_ns)
-            future_iter=self.catalog.iter_records(source=selection.source,instrument=f"{contract.exchange}:{contract.token}:{contract.symbol}",timeframe=selection.timeframe,start_ns=start_ns,end_ns=end_ns)
+            future_instrument=(f"{contract.exchange}:{contract.token}:{contract.symbol}" if selection.source!="angelone-live-1s" else f"{contract.symbol}|{contract.token}")
+            future_iter=self.catalog.iter_records(source=selection.source,instrument=future_instrument,timeframe=selection.timeframe,start_ns=start_ns,end_ns=end_ns)
             yield from _merge_pair(cash_iter,future_iter,symbol=selection.underlying.upper(),contract=contract)
     def dataset_fingerprint(self, selection: CashFutureHistorySelection) -> str:
         """Hash the exact raw rows and point-in-time contracts selected by this loader."""
