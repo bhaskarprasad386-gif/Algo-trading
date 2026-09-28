@@ -1,0 +1,35 @@
+name: Android APK Verify
+
+on:
+  push:
+    paths:
+      - ".github/workflows/android-apk-verify.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Android v1.4 APK
+        run: |
+          curl -fL --retry 3             "https://github.com/bhaskarprasad386-gif/Algo-trading/releases/download/android-v1.4/algo-trading-release.apk"             -o algo-trading-release.apk
+
+      - name: Verify APK archive
+        run: |
+          file algo-trading-release.apk
+          unzip -t algo-trading-release.apk >/dev/null
+          echo "APK_ARCHIVE_OK"
+
+      - name: Verify APK package metadata
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging algo-trading-release.apk | head -n 5
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging algo-trading-release.apk | grep -E 'package: name=|sdkVersion:|targetSdkVersion:'
+          echo "APK_METADATA_OK"
+
+      - name: Verify APK signature
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs algo-trading-release.apk
+          echo "APK_SIGNATURE_OK"
