@@ -100,7 +100,7 @@ class ResultsJournalActivity : AppCompatActivity() {
                 appendCashFuturePages(
                     ApiService.retrofitService.cashFutureStrategyResultPage(id, "trade", 50, if (tradeCursor >= 0) tradeCursor else null),
                     ApiService.retrofitService.cashFutureStrategyResultPage(id, "signal", 50, if (eventCursor >= 0) eventCursor else null),
-                    ApiService.retrofitService.cashFutureStrategyResultPage(id, "equity", 50, if (equityTimestamp != null) equityTimestamp!!.toInt() else null)
+                    ApiService.retrofitService.cashFutureStrategyResultPage(id, "equity", 50, if (equityId != null) equityId!!.toInt() else null)
                 )
             } else {
                 appendPages(ApiService.retrofitService.universalTrades(id, 50, tradeCursor), ApiService.retrofitService.universalFills(id, 50, fillCursor), ApiService.retrofitService.universalEvents(id, 50, eventCursor), ApiService.retrofitService.universalEquityPage(id, 50, equityTimestamp, equityId))
@@ -115,8 +115,8 @@ class ResultsJournalActivity : AppCompatActivity() {
         equityRows.addAll((equity["data"] as? List<*>)?.filterIsInstance<Map<*, *>>() ?: emptyList())
         tradeCursor = (trades["next_cursor"] as? Number)?.toInt() ?: -1
         eventCursor = (signals["next_cursor"] as? Number)?.toInt() ?: -1
-        equityTimestamp = (equity["next_cursor"] as? Number)?.toLong()
-        equityId = null
+        equityTimestamp = null
+        equityId = (equity["next_cursor"] as? Number)?.toLong()
         fillCursor = -1
     }
 
