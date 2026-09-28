@@ -8,7 +8,7 @@ def test_android_scanner_result_retention_contract():
     body = MAIN_ACTIVITY.read_text(encoding="utf-8")
 
     assert "private var lastScannerResult: String? = null" in body
-    assert "REFRESHING SCANNER..." in body
+    assert "REFRESHING LIVE 1s SCANNER..." in body
     assert "lastScannerResult = result" in body
     assert "REFRESH FAILED" in body
     assert "val failedAt = currentTimestamp()" in body
