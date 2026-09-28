@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version_code:
-        description: Android versionCode
+        description: Android versionCode (must be greater than the currently released APK)
         required: true
         type: string
       version_name:
