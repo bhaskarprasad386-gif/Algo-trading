@@ -170,7 +170,7 @@ def strategy_run_resume(run_id: str, request: StrategyRunRequest):
                 prefix_fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": prefix})
                 if prefix_fingerprint == stored_fingerprint:
                     data_source_fingerprint = stored_fingerprint
-        strategy_hash = _gap_threshold_implementation_hash() if request.strategy_id == "gap_threshold" else None
+        strategy_hash = _gap_threshold_implementation_hash() if request.strategy_id in {"gap_threshold", "cash-future"} else None
         strategy_config_hash = provenance_hash(_strategy_config_payload(request))
         config = CashFutureStrategyConfig(
             initial_capital=request.initial_capital, execution_model=request.execution_model,
