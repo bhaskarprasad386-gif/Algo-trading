@@ -26,6 +26,21 @@ data class PaperOrdersResponse(val mode: String, val orders: List<PaperOrder> = 
 data class ScannerPaperEntryRequest(val symbol: String, val cash_price: Double, val quantity: Double, val future_price: Double? = null, val gap: Double? = null, val net_profit: Double? = null, val executable: Boolean = true, val stop_loss_pct: Double = 0.02, val target_pct: Double = 0.04)
 data class ScannerPaperEntryResponse(val status: String, val mode: String, val source: String, val scanner_entry_price: Double, val order: PaperOrder, val position: PaperPosition? = null, val virtual_balance: Double = 0.0, val realized_pnl: Double = 0.0)
 data class CashFutureOpportunity(val symbol: String, val cash_price: Double = 0.0, val future_price: Double = 0.0, val gap: Double = 0.0, val gap_pct: Double = 0.0, val gross_spread_profit: Double = 0.0, val margin_required: Double = 0.0, val deployed_capital: Double = 0.0, val net_profit: Double = 0.0, val roi_pct: Double = 0.0, val executable: Boolean = false)
+data class LiveCashFutureSignal(
+    val symbol: String = "", val contract_month: String = "", val cash_ltp: Double = 0.0, val future_ltp: Double = 0.0,
+    val cash_bid: Double? = null, val cash_ask: Double? = null, val future_bid: Double? = null, val future_ask: Double? = null,
+    val cash_bid_qty: Double? = null, val cash_ask_qty: Double? = null, val future_bid_qty: Double? = null, val future_ask_qty: Double? = null,
+    val liquidity_qty: Double? = null, val gap: Double = 0.0, val gap_pct: Double = 0.0, val timestamp_ns: Long = 0L,
+    val cash_day_high: Double = 0.0, val cash_day_low: Double = 0.0, val future_day_high: Double = 0.0, val future_day_low: Double = 0.0,
+    val lot_size: Int? = null, val gross_lot_value: Double? = null, val alert_lots: Int? = null,
+    val gross_profit: Double? = null, val net_profit: Double? = null, val estimated_cost: Double = 0.0,
+    val net_gap: Double = 0.0, val net_gap_pct: Double = 0.0, val annualized_gap_pct: Double? = null,
+    val stable_observations: Int = 0, val capacity_lots: Int? = null, val capacity_notional: Double? = null,
+    val lifecycle: String = "", val reason_codes: List<String> = emptyList(), val observation_ref: String = "", val alert_event: String? = null,
+    val rank_score: Double = 0.0, val rank_factors: Map<String, Double?> = emptyMap(), val peer_contract_month: String? = null,
+    val peer_gap_pct: Double? = null, val gap_pct_delta_vs_peer: Double? = null, val is_best_contract_month: Boolean = false
+)
+data class LiveCashFutureScanResponse(val status: String = "", val scanner: String = "", val mode: String = "", val data: List<LiveCashFutureSignal> = emptyList())
 data class CashFutureScanError(val symbol: String = "", val error: String = "")
 data class CashFutureScanResponse(val status: String, val scanner: String, val mode: String, val symbols_requested: List<String> = emptyList(), val scanned_observations: Int = 0, val opportunity_count: Int = 0, val data: List<CashFutureOpportunity> = emptyList(), val errors: List<CashFutureScanError> = emptyList())
 data class BrokerConnectRequest(val broker: String = "angel_one", val display_name: String? = null, val api_key: String, val client_code: String, val password: String, val totp_secret: String)
@@ -255,7 +270,7 @@ interface ApiInterface {
     @POST("/api/v1/execution/paper/exit") suspend fun paperExit(@Body request: PaperExitRequest): PaperExitResponse
     @GET("/api/v1/execution/paper/orders") suspend fun paperOrders(): PaperOrdersResponse
     @GET("/api/v1/market-data/ltp-by-symbol") suspend fun ltpBySymbol(@Query("tradingsymbol") tradingSymbol: String, @Query("exchange") exchange: String = "NSE"): MarketLtpResponse
-    @GET("/api/v1/scanner/cash-future/live/auto") suspend fun cashFutureScan(): CashFutureScanResponse
+    @GET("/api/v1/scanner/cash-future/live/fast") suspend fun liveCashFutureScan(@Query("max_age_seconds") maxAgeSeconds: Double = 5.0, @Query("limit") limit: Int = 50): LiveCashFutureScanResponse\n    @GET("/api/v1/scanner/cash-future/live/auto") suspend fun cashFutureScan(): CashFutureScanResponse
     @GET("/api/v1/scanner/cash-future/calendar/{trading_date}/top-gap") suspend fun dailyGapCalendar(@Path("trading_date") tradingDate: String, @Query("limit") limit: Int = 10): DailyGapCalendarResponse
     @GET("/api/v1/backtesting/results/date-gap") suspend fun dateGapRanking(@Query("trading_date") tradingDate: String, @Query("mode") mode: String = "shorting", @Query("instrument_type") instrumentType: String = "STOCK", @Query("symbol") symbol: String? = null, @Query("contract_month") contractMonth: String? = null, @Query("limit") limit: Int = 200): DateGapResponse
     @GET("/api/v1/backtesting/results/prior-gap") suspend fun priorGapComparison(@Query("trading_date") tradingDate: String, @Query("mode") mode: String = "shorting", @Query("instrument_type") instrumentType: String = "STOCK", @Query("symbol") symbol: String? = null, @Query("contract_month") contractMonth: String? = null, @Query("limit") limit: Int = 5): PriorGapComparisonResponse
