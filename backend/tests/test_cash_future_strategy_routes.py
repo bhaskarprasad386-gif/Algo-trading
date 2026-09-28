@@ -357,6 +357,35 @@ def test_strategy_run_resume_route_continues_from_checkpoint_without_duplicates(
     assert len(body["trades"]) == 1
 
 
+
+def test_strategy_run_resume_route_accepts_cash_future_alias(monkeypatch, tmp_path):
+    ledger_db = str(tmp_path / "resume-cash-future-alias.db")
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", ledger_db)
+    start = datetime(2026, 9, 2, 10, 0)
+    points = [payload(gap=10, timestamp=start), payload(gap=4, timestamp=start + timedelta(hours=1))]
+    fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": [StrategyPointRequest(**item).model_dump(mode="json") for item in points]})
+    ledger = BacktestLedger(ledger_db)
+    try:
+        run_cash_future_strategy(
+            tuple(CashFutureHistoryPoint(**{**item, "timestamp": datetime.fromisoformat(item["timestamp"]), "expiry_date": date.fromisoformat(item["expiry_date"])}) for item in points[:1]),
+            _build_builder_strategy(StrategyRunRequest(strategy_id="cash-future", initial_capital=10_000_000, target=5.0, points=points[:1])),
+            strategy_id="cash-future", strategy_version="1",
+            config=CashFutureStrategyConfig(initial_capital=10_000_000, checkpoint_interval=1),
+            ledger=ledger, run_id="cash-future-resume-alias",
+            strategy_hash=_gap_threshold_implementation_hash(),
+            strategy_config_hash=provenance_hash({"cash_side": "BUY", "future_side": "SELL", "holding_mode": "POSITIONAL", "stop_loss": None, "target": 5.0}),
+            data_source_fingerprint=fingerprint,
+        )
+    finally:
+        ledger.close()
+    response = client().post("/api/v1/backtesting/cash-future/strategy-run/cash-future-resume-alias/resume", json={"strategy_id": "cash-future", "strategy_version": "1", "initial_capital": 10_000_000, "target": 5.0, "checkpoint_interval": 1, "points": points})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["strategy_id"] == "cash-future"
+    assert body["trade_count"] == 1
+    assert body["net_profit"] == 600.0
+
+
 def test_strategy_run_resume_route_rejects_mismatched_data(monkeypatch, tmp_path):
     ledger_db = str(tmp_path / "resume-mismatch.db")
     monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", ledger_db)
