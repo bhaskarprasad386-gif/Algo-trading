@@ -165,6 +165,28 @@ class CashFutureHistoricalLoader:
             future_instrument=(f"{contract.exchange}:{contract.token}:{contract.symbol}" if selection.source!="angelone-live-1s" else f"{contract.symbol}|{contract.token}")
             future_iter=self.catalog.iter_records(source=selection.source,instrument=future_instrument,timeframe=selection.timeframe,start_ns=start_ns,end_ns=end_ns)
             yield from _merge_pair(cash_iter,future_iter,symbol=selection.underlying.upper(),contract=contract)
+    def live_coverage(self, selection: CashFutureHistorySelection) -> dict:
+        """Report accumulated Angel One live-1s coverage without loading all rows."""
+        start_ns, _ = _market_bounds(selection.start_date)
+        _, end_ns = _market_bounds(selection.end_date)
+        instruments = self.catalog.instruments(
+            source="angelone-live-1s",
+            timeframe="1s",
+            start_ns=start_ns,
+            end_ns=end_ns,
+        )
+        cash = [i for i in instruments if "|" in i and i.split("|", 1)[0].upper() in {selection.underlying.upper(), f"{selection.underlying.upper()}-EQ"}]
+        future = [i for i in instruments if "|" in i and i.split("|", 1)[0].upper().startswith(selection.underlying.upper()) and i not in cash]
+        return {
+            "source": "angelone-live-1s",
+            "timeframe": "1s",
+            "start_date": selection.start_date.isoformat(),
+            "end_date": selection.end_date.isoformat(),
+            "cash_instruments": len(cash),
+            "future_instruments": len(future),
+            "records": sum(self.catalog.count(source="angelone-live-1s", instrument=i, timeframe="1s") for i in (*cash, *future)),
+        }
+
     def dataset_fingerprint(self, selection: CashFutureHistorySelection) -> str:
         """Hash the exact raw rows and point-in-time contracts selected by this loader."""
         digest = hashlib.sha256()
