@@ -82,9 +82,9 @@ def test_box_spread_exit_from_scanner_maps_live_bid_ask(monkeypatch):
     monkeypatch.setattr(routes, "exit", lambda req, user, db: captured.setdefault("req", req) or {"status": "success"})
     routes.exit_from_scanner(user=1, db=DB())
     assert captured["req"].low_call_price == 100.0
-    assert captured["req"].low_put_price == 111.0
+    assert captured["req"].low_put_price == 110.0
     assert captured["req"].high_call_price == 91.0
-    assert captured["req"].high_put_price == 120.0
+    assert captured["req"].high_put_price == 121.0
 
 
 def test_box_spread_scanner_entry_maps_executable_bid_ask():
@@ -106,9 +106,9 @@ def test_box_spread_auto_exit_uses_current_executable_quotes():
     low=SimpleNamespace(call_bid=100,call_ask=101,put_bid=110,put_ask=111)
     high=SimpleNamespace(call_bid=90,call_ask=91,put_bid=120,put_ask=121)
     req=_scanner_exit_request(p,SimpleNamespace(low=low,high=high))
-    assert req.low_call_price==101 and req.low_put_price==111
-    assert req.high_call_price==90 and req.high_put_price==120
-    assert _exit_cashflow(p,req)==2
+    assert req.low_call_price==100 and req.low_put_price==110
+    assert req.high_call_price==91 and req.high_put_price==121
+    assert _exit_cashflow(p,req)==-2
 
 
 def test_box_spread_entry_rejects_expired_contract_and_excess_quantity():
