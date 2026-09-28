@@ -16,6 +16,10 @@ from app.core.logger import app_logger
 from app.execution.paper_routes import current_user_id
 
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
+
+
+class RealTradingEnableRequest(BaseModel):
+    confirmation: str = Field(min_length=1, max_length=100)
 @router.get("")
 def supported_brokers(user_id: int = Depends(current_user_id)) -> dict:
     return {"brokers": BrokerRegistry().names()}
