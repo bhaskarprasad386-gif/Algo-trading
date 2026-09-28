@@ -1,13 +1,25 @@
-from uuid import uuid4
-
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.core.database import SessionLocal
+from app.models import Order, Position, TradingAccount
 
 
 def _client_and_headers():
-    client = TestClient(app)
-    return client, {}
+    db = SessionLocal()
+    try:
+        db.query(Position).delete()
+        db.query(Order).delete()
+        accounts = db.query(TradingAccount).all()
+        for account in accounts:
+            account.virtual_balance = 10_000_000.0
+            account.realized_pnl = 0.0
+            account.is_active = True
+            account.mode = "PAPER"
+        db.commit()
+    finally:
+        db.close()
+    return TestClient(app), {}
 
 def test_paper_entry_route_registered():
     paths = app.openapi().get("paths", {})
@@ -15,7 +27,7 @@ def test_paper_entry_route_registered():
 
 
 def test_paper_entry_requires_no_authentication():
-    client = TestClient(app)
+    client, _ = _client_and_headers()
     response = client.post(
         "/api/v1/execution/paper/entry",
         json={"price": 100.0, "quantity": 2, "stop_loss_pct": 0.05, "target_pct": 0.10},
@@ -111,12 +123,12 @@ def test_cash_future_scanner_bridge_creates_symbol_specific_paper_position():
 
 
 def test_cash_future_scanner_bridge_requires_no_authentication():
-    client = TestClient(app)
+    client, _ = _client_and_headers()
     response = client.post(
         "/api/v1/execution/paper/from-scanner",
         json={"symbol": "RELIANCE", "cash_price": 2500.0, "quantity": 2},
     )
-    assert response.status_code == 401
+    assert response.status_code == 200
 
 
 def test_paper_short_reversal_deducts_cost_of_remaining_long():
