@@ -311,11 +311,24 @@ jobs:
           positive_net = count(lambda x: float(x.get("net_gap") or 0) > 0)
           gap_threshold = float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT)
           min_stable = max(1, int(settings.LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS))
-          eligible_shape = count(
+          eligible = count(
               lambda x: float(x.get("gap") or 0) > 0
               and float(x.get("net_gap") or 0) > 0
               and float(x.get("gap_pct") or 0) >= gap_threshold
               and int(x.get("stable_observations") or 0) >= min_stable
+          )
+          alert_min_gross = float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GROSS_PROFIT)
+          alert_min_net = float(settings.LIVE_CASH_FUTURE_ALERT_MIN_NET_PROFIT)
+          alert_min_annualized = float(settings.LIVE_CASH_FUTURE_ALERT_MIN_ANNUALIZED_GAP_PCT)
+          alert_shape = count(
+              lambda x: float(x.get("gap") or 0) > 0
+              and float(x.get("net_gap") or 0) > 0
+              and float(x.get("gap_pct") or 0) >= gap_threshold
+              and int(x.get("stable_observations") or 0) >= min_stable
+              and x.get("alert_lots") is not None and int(x.get("alert_lots") or 0) >= 1
+              and (alert_min_gross <= 0 or (x.get("gross_profit") is not None and float(x.get("gross_profit")) >= alert_min_gross))
+              and (alert_min_net <= 0 or (x.get("net_profit") is not None and float(x.get("net_profit")) >= alert_min_net))
+              and (alert_min_annualized <= 0 or (x.get("annualized_gap_pct") is not None and float(x.get("annualized_gap_pct")) >= alert_min_annualized))
           )
           active = count(lambda x: str(x.get("lifecycle") or "") in {"NEW", "ACTIVE", "WEAKENING"})
           alert_events = count(lambda x: bool(x.get("alert_event")))
@@ -326,7 +339,11 @@ jobs:
           print(f"CHAIN_API_SIGNALS={len(data)}")
           print(f"CHAIN_POSITIVE_GAP={positive_gap}")
           print(f"CHAIN_POSITIVE_NET_GAP={positive_net}")
-          print(f"CHAIN_ELIGIBLE_SHAPE={eligible_shape}")
+          print(f"CHAIN_ELIGIBLE={eligible}")
+          print(f"CHAIN_ALERT_ELIGIBLE={alert_shape}")
+          print(f"CHAIN_ALERT_MIN_GROSS_PROFIT={alert_min_gross}")
+          print(f"CHAIN_ALERT_MIN_NET_PROFIT={alert_min_net}")
+          print(f"CHAIN_ALERT_MIN_ANNUALIZED_GAP_PCT={alert_min_annualized}")
           print(f"CHAIN_ACTIONABLE_LIFECYCLE={active}")
           print(f"CHAIN_ALERT_EVENTS={alert_events}")
           print(f"CHAIN_RANK_FINITE={rank_finite}")
@@ -356,17 +373,21 @@ jobs:
                   "SUM(CASE WHEN gap > 0 THEN 1 ELSE 0 END), "
                   "SUM(CASE WHEN net_gap > 0 THEN 1 ELSE 0 END), "
                   "SUM(CASE WHEN gap_pct >= ? THEN 1 ELSE 0 END), "
-                  "SUM(CASE WHEN stable_observations >= ? THEN 1 ELSE 0 END) "
+                  "SUM(CASE WHEN stable_observations >= ? THEN 1 ELSE 0 END), "
+                  "SUM(CASE WHEN alert_lots IS NOT NULL AND alert_lots >= 1 THEN 1 ELSE 0 END), "
+                  "SUM(CASE WHEN gross_lot_value IS NOT NULL AND gross_lot_value >= ? THEN 1 ELSE 0 END) "
                   "FROM live_cash_future_scanner_results "
                   "WHERE observed_at >= datetime('now','-5 minutes')",
-                  (gap_threshold, min_stable),
+                  (gap_threshold, min_stable, alert_min_gross),
               ).fetchone()
-              p_count, p_gap, p_net, p_threshold, p_stable = [int(x or 0) for x in persisted]
+              p_count, p_gap, p_net, p_threshold, p_stable, p_lots, p_gross = [int(x or 0) for x in persisted]
               print(f"CHAIN_PERSISTED_RESULTS_5M={p_count}")
               print(f"CHAIN_PERSISTED_POSITIVE_GAP_5M={p_gap}")
               print(f"CHAIN_PERSISTED_POSITIVE_NET_GAP_5M={p_net}")
               print(f"CHAIN_PERSISTED_THRESHOLD_OK_5M={p_threshold}")
               print(f"CHAIN_PERSISTED_STABLE_OK_5M={p_stable}")
+              print(f"CHAIN_PERSISTED_ALERT_LOTS_OK_5M={p_lots}")
+              print(f"CHAIN_PERSISTED_GROSS_VALUE_OK_5M={p_gross}")
 
               alerts = conn.execute(
                   "SELECT COUNT(*), "
@@ -382,7 +403,8 @@ jobs:
               bad_persisted = conn.execute(
                   "SELECT COUNT(*) FROM live_cash_future_scanner_results "
                   "WHERE observed_at >= datetime('now','-5 minutes') "
-                  "AND NOT (gap > 0 AND net_gap > 0 AND gap_pct >= ? AND stable_observations >= ?)",
+                  "AND NOT (gap > 0 AND net_gap > 0 AND gap_pct >= ? AND stable_observations >= ? "
+                  "AND lifecycle IN ('NEW','ACTIVE','WEAKENING'))",
                   (gap_threshold, min_stable),
               ).fetchone()[0]
               print(f"CHAIN_INVALID_PERSISTED_RESULTS_5M={int(bad_persisted)}")
