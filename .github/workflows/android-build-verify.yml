@@ -12,7 +12,6 @@ permissions:
 env:
   BACKEND_BASE_URL: https://algo-trading-backend-2.onrender.com/
   BACKEND_WS_URL: wss://algo-trading-backend-2.onrender.com
-  GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
 
 jobs:
   build:
@@ -36,7 +35,7 @@ jobs:
           gradle-version: '8.2'
 
       - name: Run Android unit tests
-        run: gradle testDebugUnitTest --no-daemon -PbackendBaseUrl="$BACKEND_BASE_URL" -PbackendWsUrl="$BACKEND_WS_URL" -PgoogleWebClientId="$GOOGLE_WEB_CLIENT_ID"
+        run: gradle testDebugUnitTest --no-daemon -PbackendBaseUrl="$BACKEND_BASE_URL" -PbackendWsUrl="$BACKEND_WS_URL"
 
       - name: Compile Android debug build
         run: gradle assembleDebug --no-daemon -PbackendBaseUrl="$BACKEND_BASE_URL" -PbackendWsUrl="$BACKEND_WS_URL" -PgoogleWebClientId="$GOOGLE_WEB_CLIENT_ID"
