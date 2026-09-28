@@ -281,9 +281,6 @@ class CashFutureStrategyBuilderView @JvmOverloads constructor(
                 val request = Request.Builder()
                     .url(BuildConfig.BACKEND_BASE_URL + "api/v1/backtesting/cash-future/strategy-run")
                     .post(body)
-                    .apply {
-                        ApiService.getToken(context)?.takeIf { it.isNotBlank() }?.let { addHeader("Authorization", "Bearer $it") }
-                    }
                     .build()
                 val client = okhttp3.OkHttpClient.Builder().build()
                 client.newCall(request).execute().use { response ->
