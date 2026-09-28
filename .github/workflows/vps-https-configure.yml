@@ -78,7 +78,7 @@ jobs:
           systemctl reload nginx
 
           echo "NGINX_HTTP_PROXY_OK"
-          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1/openapi.json)" = "200"
+          test "$(curl -sS -H 'Host: 82.41.67.1' -o /dev/null -w '%{http_code}' http://127.0.0.1/openapi.json)" = "200"
 
           echo "== CERTIFICATE =="
           if [ ! -f "/etc/letsencrypt/live/$IP/fullchain.pem" ]; then
