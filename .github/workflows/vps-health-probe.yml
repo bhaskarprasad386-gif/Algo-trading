@@ -1,0 +1,60 @@
+name: VPS Health Probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check VPS deployment state
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_HOST: 82.41.67.22
+        run: |
+          set -u
+          printf '%s' "$VPS_KEY" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -u
+          echo "=== HOST ==="
+          echo "HOST=$(hostname)"
+          echo "USER=$(id -un)"
+
+          echo "=== APP DIR ==="
+          if [ -d /opt/Algo-Trading/.git ]; then
+            echo "APP_DIR_OK"
+            echo "COMMIT=$(git -C /opt/Algo-Trading rev-parse --short HEAD 2>/dev/null || true)"
+            git -C /opt/Algo-Trading status --short --branch 2>/dev/null || true
+          else
+            echo "APP_DIR_MISSING"
+          fi
+
+          echo "=== ENV ==="
+          if [ -f /opt/Algo-Trading/backend/.env ]; then
+            echo "ENV_OK"
+          else
+            echo "ENV_MISSING"
+          fi
+
+          echo "=== SERVICE ==="
+          echo "ACTIVE=$(systemctl is-active algo-trading.service 2>/dev/null || true)"
+          echo "ENABLED=$(systemctl is-enabled algo-trading.service 2>/dev/null || true)"
+          systemctl cat algo-trading.service 2>/dev/null | grep -E '^(WorkingDirectory|ExecStart)=' || true
+
+          echo "=== LOCAL HEALTH ==="
+          code=$(curl -sS --connect-timeout 2 --max-time 5 -o /tmp/health_body -w "%{http_code}" http://127.0.0.1:8000/health 2>/dev/null || true)
+          echo "HEALTH_HTTP=$code"
+          if [ "$code" != "000" ]; then
+            head -c 500 /tmp/health_body || true
+            echo
+          fi
+
+          echo "=== LISTENING ==="
+          ss -ltn 2>/dev/null | grep -E ':(80|443|8000|8080)\b' || true
+          REMOTE
