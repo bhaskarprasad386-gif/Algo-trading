@@ -116,7 +116,7 @@ jobs:
           import sqlite3
           import time
 
-          db = "backtest_market_data.sqlite3"
+          db = "/opt/Algo-Trading/backend/backtest_market_data.sqlite3"
           conn = sqlite3.connect(db)
           try:
               row = conn.execute(
