@@ -1,0 +1,40 @@
+name: VPS SSH Auth Probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Test SSH authentication
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_HOST: 82.41.67.22
+        run: |
+          set -u
+
+          printf '%s' "$VPS_KEY" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+
+          if ssh-keygen -y -f /tmp/vps_key > /tmp/vps_pub 2>/tmp/key_error; then
+            echo "KEY_PARSE_OK"
+          else
+            echo "KEY_PARSE_FAILED"
+            cat /tmp/key_error
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          echo "=== SSH AUTH ==="
+          if ssh -i /tmp/vps_key             -o IdentitiesOnly=yes             -o BatchMode=yes             -o ConnectTimeout=10             "$VPS_USER@$VPS_HOST" 'echo SSH_OK; echo HOST=$(hostname); echo USER=$(id -un)'; then
+            echo "SSH_AUTH_OK=true"
+          else
+            echo "SSH_AUTH_OK=false"
+            exit 1
+          fi
