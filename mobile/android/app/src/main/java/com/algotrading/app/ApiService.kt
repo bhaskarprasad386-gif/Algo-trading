@@ -259,6 +259,8 @@ interface ApiInterface {
     @GET("/") suspend fun getRootStatus(): MarketStatus
     @GET("/api/v1/app/update") suspend fun appUpdate(): AppUpdateInfo
     @GET("/api/v1/app/strategies") suspend fun appStrategies(): StrategyRegistryResponse
+    @GET("/api/v1/scanner/calendar-spread/live") suspend fun calendarSpreadLive(@Query("limit") limit: Int = 50): Map<String, Any?>
+    @GET("/api/v1/scanner/synthetic-cash-carry/live") suspend fun syntheticCashCarryLive(@Query("limit") limit: Int = 50): Map<String, Any?>
     @GET("/api/v1/brokers/connections") suspend fun brokerConnections(): BrokerConnectionsResponse
     @POST("/api/v1/brokers/connect") suspend fun connectBroker(@Body request: BrokerConnectRequest): BrokerConnectResponse
     @GET("/api/v1/brokers/{broker}/status") suspend fun brokerStatus(@Path("broker") broker: String): BrokerStatusResponse
