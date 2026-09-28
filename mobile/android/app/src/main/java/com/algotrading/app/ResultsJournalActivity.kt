@@ -24,6 +24,7 @@ class ResultsJournalActivity : AppCompatActivity() {
     private var eventCursor = -1
     private var equityTimestamp: Long? = null
     private var equityId: Long? = null
+    private var cashFutureMode = false
     private var tradeRows = mutableListOf<Map<*, *>>()
     private var fillRows = mutableListOf<Map<*, *>>()
     private var eventRows = mutableListOf<Map<*, *>>()
@@ -68,11 +69,26 @@ class ResultsJournalActivity : AppCompatActivity() {
     private fun loadRun(id: String) = lifecycleScope.launch(Dispatchers.IO) {
         withContext(Dispatchers.Main) { status.text = "Loading durable result..." }
         try {
-            currentRunId = id; tradeCursor = -1; fillCursor = -1; eventCursor = -1; equityTimestamp = null; equityId = null
+            currentRunId = id; tradeCursor = -1; fillCursor = -1; eventCursor = -1; equityTimestamp = null; equityId = null; cashFutureMode = false
             tradeRows.clear(); fillRows.clear(); eventRows.clear(); equityRows.clear()
-            val run = ApiService.retrofitService.universalRun(id)
-            appendPages(ApiService.retrofitService.universalTrades(id, 50, -1), ApiService.retrofitService.universalFills(id, 50, -1), ApiService.retrofitService.universalEvents(id, 50, -1), ApiService.retrofitService.universalEquityPage(id, 50))
-            withContext(Dispatchers.Main) { status.text = "RESULT LOADED • " + id; loadMore.isEnabled = hasMore(); output.text = formatResult(id, run) }
+            val run: Map<String, Any?>
+            try {
+                val cashRun = ApiService.retrofitService.cashFutureStrategyRun(id)
+                if (cashRun.run_id == id) {
+                    cashFutureMode = true
+                    run = mapOf("status" to cashRun.status, "run_id" to cashRun.run_id, "strategy_id" to cashRun.strategy_id, "initial_capital" to cashRun.initial_capital, "final_capital" to cashRun.final_capital, "net_profit" to cashRun.net_profit)
+                    appendCashFuturePages(
+                        ApiService.retrofitService.cashFutureStrategyResultPage(id, "trade", 50, null),
+                        ApiService.retrofitService.cashFutureStrategyResultPage(id, "signal", 50, null),
+                        ApiService.retrofitService.cashFutureStrategyResultPage(id, "equity", 50, null)
+                    )
+                } else throw IllegalStateException("run not found")
+            } catch (_: Exception) {
+                cashFutureMode = false
+                run = ApiService.retrofitService.universalRun(id)
+                appendPages(ApiService.retrofitService.universalTrades(id, 50, -1), ApiService.retrofitService.universalFills(id, 50, -1), ApiService.retrofitService.universalEvents(id, 50, -1), ApiService.retrofitService.universalEquityPage(id, 50))
+            }
+            withContext(Dispatchers.Main) { status.text = if (cashFutureMode) "CASH-FUTURE RESULT LOADED • " + id else "UNIVERSAL RESULT LOADED • " + id; loadMore.isEnabled = hasMore(); output.text = formatResult(id, run) }
         } catch (e: Exception) { withContext(Dispatchers.Main) { status.text = "RESULT LOAD FAILED"; loadMore.isEnabled = false; output.text = e.message ?: "API error" } }
     }
 
@@ -80,9 +96,28 @@ class ResultsJournalActivity : AppCompatActivity() {
         val id = currentRunId ?: return@launch
         withContext(Dispatchers.Main) { status.text = "Loading next journal page..." }
         try {
-            appendPages(ApiService.retrofitService.universalTrades(id, 50, tradeCursor), ApiService.retrofitService.universalFills(id, 50, fillCursor), ApiService.retrofitService.universalEvents(id, 50, eventCursor), ApiService.retrofitService.universalEquityPage(id, 50, equityTimestamp, equityId))
+            if (cashFutureMode) {
+                appendCashFuturePages(
+                    ApiService.retrofitService.cashFutureStrategyResultPage(id, "trade", 50, if (tradeCursor >= 0) tradeCursor else null),
+                    ApiService.retrofitService.cashFutureStrategyResultPage(id, "signal", 50, if (eventCursor >= 0) eventCursor else null),
+                    ApiService.retrofitService.cashFutureStrategyResultPage(id, "equity", 50, if (equityTimestamp != null) equityTimestamp!!.toInt() else null)
+                )
+            } else {
+                appendPages(ApiService.retrofitService.universalTrades(id, 50, tradeCursor), ApiService.retrofitService.universalFills(id, 50, fillCursor), ApiService.retrofitService.universalEvents(id, 50, eventCursor), ApiService.retrofitService.universalEquityPage(id, 50, equityTimestamp, equityId))
+            }
             withContext(Dispatchers.Main) { status.text = "JOURNAL PAGE LOADED • " + tradeRows.size + " trades • " + fillRows.size + " fills • " + eventRows.size + " events • " + equityRows.size + " equity"; loadMore.isEnabled = hasMore(); output.text = formatJournal(id) }
         } catch (e: Exception) { withContext(Dispatchers.Main) { status.text = "NEXT PAGE FAILED"; output.text = e.message ?: "API error" } }
+    }
+
+    private fun appendCashFuturePages(trades: Map<String, Any?>, signals: Map<String, Any?>, equity: Map<String, Any?>) {
+        tradeRows.addAll((trades["data"] as? List<*>)?.filterIsInstance<Map<*, *>>() ?: emptyList())
+        eventRows.addAll((signals["data"] as? List<*>)?.filterIsInstance<Map<*, *>>() ?: emptyList())
+        equityRows.addAll((equity["data"] as? List<*>)?.filterIsInstance<Map<*, *>>() ?: emptyList())
+        tradeCursor = (trades["next_cursor"] as? Number)?.toInt() ?: -1
+        eventCursor = (signals["next_cursor"] as? Number)?.toInt() ?: -1
+        equityTimestamp = (equity["next_cursor"] as? Number)?.toLong()
+        equityId = null
+        fillCursor = -1
     }
 
     private fun appendPages(trades: Map<String, Any?>, fills: Map<String, Any?>, events: Map<String, Any?>, equity: Map<String, Any?>) {
