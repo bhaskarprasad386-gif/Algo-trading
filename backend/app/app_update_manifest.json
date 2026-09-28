@@ -1,9 +1,9 @@
 {
   "platform": "android",
   "version_code": 5,
-  "version_name": "1.5",
-  "release_notes": "update-install fix",
+  "version_name": "1.6",
+  "release_notes": "Fix in-app update check and download flow.",
   "apk_url": "https://github.com/bhaskarprasad386-gif/Algo-trading/releases/latest/download/algo-trading-release.apk",
-  "sha256": "1bfe01bdbf3199a2dd15a0b3bcd72e615410510a8523aa0cded68f96a42b28cc",
+  "sha256": "87602bc6930d6784994d438763da49e7be7b1e0190619d70b3e85f0d5690b5c9",
   "mandatory": false
 }
