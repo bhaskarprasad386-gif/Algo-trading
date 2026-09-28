@@ -20,7 +20,9 @@ from app.execution.dual_engine import DualExecutionEngine, ExecutionConfig, Exec
 from app.execution.fill_accounting import ExecutedFill, FillAccountingState, apply_executed_fill
 from app.execution.payoff import PayoffLeg, payoff_summary
 from app.execution.strategy_legs import StrategyLegInput, build_cash_future_strategy, build_strategy_legs
-from app.models import Order, Position, TradingAccount, User, PAPER_STARTING_BALANCE
+from app.models import Order, Position, TradingAccount, User
+
+PAPER_STARTING_BALANCE = 10_000_000.0
 
 router = APIRouter(prefix="/api/v1/execution", tags=["Execution"])
 def current_user_id(db: Session = Depends(get_db)) -> int:
