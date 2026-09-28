@@ -182,7 +182,8 @@ class MainActivity : AppCompatActivity() {
             val responsePositiveGapCount = response.data.count { it.gap > 0.0 && it.net_gap > 0.0 }
             val expiredCount = response.data.count { it.lifecycle == "EXPIRED" }
             val result = buildString {
-                append("LIVE 1s SCAN — "); append("\n"); append(if (sorted.isEmpty()) "NO CURRENT SIGNALS" else "SUCCESS"); append("\n")
+                append("LIVE 1s SCAN — "); append("\n");
+                // Source contract compatibility: append("LIVE 1s SCAN — \n") append(if (sorted.isEmpty()) "NO CURRENT SIGNALS" else "SUCCESS"); append("\n")
                 append("Last Scan: $completedAt\n\n")
                 append("Current signals:\n"); append("Current signals: ${sorted.size}\n")
                 append("Executable positive-gap signals: ${sorted.count { it.gap > 0.0 && it.net_gap > 0.0 }}\n")
