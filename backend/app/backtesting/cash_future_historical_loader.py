@@ -47,7 +47,8 @@ def _ns(dt: datetime) -> int:
 def _market_bounds(day: date) -> tuple[int, int]: return _ns(datetime.combine(day,time(9,15),tzinfo=MARKET_TZ)), _ns(datetime.combine(day,time(15,30),tzinfo=MARKET_TZ))
 
 def _record_price(record: HistoricalRecord) -> float:
-    value=record.payload.get("close")
+    # LIVE 1s rows before the close-field fix contain the same executable price as ltp.
+    value=record.payload.get("close", record.payload.get("ltp"))
     if value is None: raise ValueError(f"historical record has no close price: {record.instrument} @ {record.timestamp_ns}")
     try: price=float(value)
     except (TypeError,ValueError) as exc: raise ValueError(f"historical close price must be numeric: {record.instrument} @ {record.timestamp_ns}") from exc
