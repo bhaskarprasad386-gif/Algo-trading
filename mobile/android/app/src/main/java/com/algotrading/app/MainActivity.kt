@@ -193,7 +193,7 @@ class MainActivity : AppCompatActivity() {
                     append("Gross Spread: ₹${item.gross_profit ?: item.gross_lot_value ?: 0.0}\n")
                     append("Margin: ₹${item.capacity_notional ?: 0.0}\n")
                     append("Deployed Capital: ₹${item.capacity_notional ?: 0.0}\n")
-                    append("Net Profit: ₹${item.net_profit ?: 0.0}\n")
+                    append("Net Profit: ₹${item.net_profit}\n")
                     append("ROI: ${item.net_gap_pct}%\n")
                     append("Net Gap: ${item.net_gap_pct}%\n")
                     append("Net Profit: ₹${item.net_profit ?: 0.0} • Lots: ${item.alert_lots ?: 0}\n")
