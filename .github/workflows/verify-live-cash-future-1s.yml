@@ -293,5 +293,105 @@ jobs:
               raise SystemExit("SCANNER_RESPONSE_FIELDS_FAILED")
           print("SCANNER_E2E=PASS")
           PY
+          echo "=== SCANNER FILTER / RANK / ALERT CHAIN ==="
+          SCANNER_BODY="$scanner_body" DATA_DB="$APP_DIR/backend/backtest_market_data.sqlite3" "$APP_DIR/.venv/bin/python" - <<'PY'
+          import json
+          import math
+          import os
+          import sqlite3
+          from app.core.config import settings
+
+          body = json.loads(open(os.environ["SCANNER_BODY"]).read())
+          data = body.get("data") or []
+
+          def count(pred):
+              return sum(1 for item in data if pred(item))
+
+          positive_gap = count(lambda x: float(x.get("gap") or 0) > 0)
+          positive_net = count(lambda x: float(x.get("net_gap") or 0) > 0)
+          gap_threshold = float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT)
+          min_stable = max(1, int(settings.LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS))
+          eligible_shape = count(
+              lambda x: float(x.get("gap") or 0) > 0
+              and float(x.get("net_gap") or 0) > 0
+              and float(x.get("gap_pct") or 0) >= gap_threshold
+              and int(x.get("stable_observations") or 0) >= min_stable
+          )
+          active = count(lambda x: str(x.get("lifecycle") or "") in {"NEW", "ACTIVE", "WEAKENING"})
+          alert_events = count(lambda x: bool(x.get("alert_event")))
+          rank_values = [float(x.get("rank_score")) for x in data if x.get("rank_score") is not None]
+          rank_finite = all(math.isfinite(x) for x in rank_values)
+          rank_sorted = all(rank_values[i] >= rank_values[i+1] for i in range(len(rank_values)-1))
+
+          print(f"CHAIN_API_SIGNALS={len(data)}")
+          print(f"CHAIN_POSITIVE_GAP={positive_gap}")
+          print(f"CHAIN_POSITIVE_NET_GAP={positive_net}")
+          print(f"CHAIN_ELIGIBLE_SHAPE={eligible_shape}")
+          print(f"CHAIN_ACTIONABLE_LIFECYCLE={active}")
+          print(f"CHAIN_ALERT_EVENTS={alert_events}")
+          print(f"CHAIN_RANK_FINITE={rank_finite}")
+          print(f"CHAIN_RANK_SORTED_DESC={rank_sorted}")
+          print(f"CHAIN_GAP_THRESHOLD_PCT={gap_threshold}")
+          print(f"CHAIN_MIN_STABLE_OBSERVATIONS={min_stable}")
+
+          if not data:
+              raise SystemExit("CHAIN_NO_SCANNER_DATA")
+          if not rank_finite or not rank_sorted:
+              raise SystemExit("CHAIN_RANK_CONTRACT_FAILED")
+
+          db = os.environ["DATA_DB"]
+          conn = sqlite3.connect(db)
+          try:
+              tables = {
+                  row[0] for row in conn.execute(
+                      "SELECT name FROM sqlite_master WHERE type='table'"
+                  )
+              }
+              for required_table in ("live_cash_future_scanner_results", "live_cash_future_alert_history"):
+                  if required_table not in tables:
+                      raise SystemExit(f"CHAIN_TABLE_MISSING={required_table}")
+
+              persisted = conn.execute(
+                  "SELECT COUNT(*), "
+                  "SUM(CASE WHEN gap > 0 THEN 1 ELSE 0 END), "
+                  "SUM(CASE WHEN net_gap > 0 THEN 1 ELSE 0 END), "
+                  "SUM(CASE WHEN gap_pct >= ? THEN 1 ELSE 0 END), "
+                  "SUM(CASE WHEN stable_observations >= ? THEN 1 ELSE 0 END) "
+                  "FROM live_cash_future_scanner_results "
+                  "WHERE observed_at >= datetime('now','-5 minutes')",
+                  (gap_threshold, min_stable),
+              ).fetchone()
+              p_count, p_gap, p_net, p_threshold, p_stable = [int(x or 0) for x in persisted]
+              print(f"CHAIN_PERSISTED_RESULTS_5M={p_count}")
+              print(f"CHAIN_PERSISTED_POSITIVE_GAP_5M={p_gap}")
+              print(f"CHAIN_PERSISTED_POSITIVE_NET_GAP_5M={p_net}")
+              print(f"CHAIN_PERSISTED_THRESHOLD_OK_5M={p_threshold}")
+              print(f"CHAIN_PERSISTED_STABLE_OK_5M={p_stable}")
+
+              alerts = conn.execute(
+                  "SELECT COUNT(*), "
+                  "SUM(CASE WHEN event='NEW' THEN 1 ELSE 0 END), "
+                  "SUM(CASE WHEN event='RECOVERY' THEN 1 ELSE 0 END) "
+                  "FROM live_cash_future_alert_history "
+                  "WHERE observed_at >= datetime('now','-5 minutes')"
+              ).fetchone()
+              print(f"CHAIN_ALERTS_5M={int(alerts[0] or 0)}")
+              print(f"CHAIN_NEW_ALERTS_5M={int(alerts[1] or 0)}")
+              print(f"CHAIN_RECOVERY_ALERTS_5M={int(alerts[2] or 0)}")
+
+              bad_persisted = conn.execute(
+                  "SELECT COUNT(*) FROM live_cash_future_scanner_results "
+                  "WHERE observed_at >= datetime('now','-5 minutes') "
+                  "AND NOT (gap > 0 AND net_gap > 0 AND gap_pct >= ? AND stable_observations >= ?)",
+                  (gap_threshold, min_stable),
+              ).fetchone()[0]
+              print(f"CHAIN_INVALID_PERSISTED_RESULTS_5M={int(bad_persisted)}")
+              if bad_persisted:
+                  raise SystemExit("CHAIN_PERSISTED_ELIGIBILITY_FAILED")
+          finally:
+              conn.close()
+
+          print("SCANNER_FILTER_RANK_ALERT_E2E=PASS")
+          PY
           rm -f "$scanner_body"
           REMOTE
