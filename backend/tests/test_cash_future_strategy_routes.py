@@ -137,6 +137,39 @@ def test_strategy_run_route_executes_live_1s_bid_ask_trade_and_persists_result(m
     assert body["analysis"]["net_pnl"] == 435.0
 
 
+
+def test_strategy_run_result_pages_return_trade_signal_and_equity_with_cursor(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", str(tmp_path / "paged-results.db"))
+    start = datetime(2026, 9, 2, 10, 0)
+    points = [payload(gap=10, timestamp=start), payload(gap=4, timestamp=start + timedelta(minutes=1))]
+    response = client().post("/api/v1/backtesting/cash-future/strategy-run", json={
+        "strategy_id": "cash-future", "strategy_version": "1",
+        "start_date": "2026-09-02", "end_date": "2026-09-02",
+        "initial_capital": 10_000_000, "target": 5.0,
+        "checkpoint_interval": 1, "points": points,
+    })
+    assert response.status_code == 200
+    run_id = response.json()["run_id"]
+
+    trade_page = client().get(f"/api/v1/backtesting/cash-future/strategy-run/{run_id}/results/trade?limit=1")
+    signal_page = client().get(f"/api/v1/backtesting/cash-future/strategy-run/{run_id}/results/signal?limit=1")
+    equity_page = client().get(f"/api/v1/backtesting/cash-future/strategy-run/{run_id}/results/equity?limit=1")
+    assert trade_page.status_code == signal_page.status_code == equity_page.status_code == 200
+    assert trade_page.json()["total"] == 1
+    assert signal_page.json()["total"] == 2
+    assert equity_page.json()["total"] >= 2
+    assert len(trade_page.json()["data"]) == 1
+    assert len(signal_page.json()["data"]) == 1
+    assert len(equity_page.json()["data"]) == 1
+    assert trade_page.json()["next_cursor"] is None
+    assert signal_page.json()["next_cursor"] is not None
+    cursor = signal_page.json()["next_cursor"]
+    next_page = client().get(f"/api/v1/backtesting/cash-future/strategy-run/{run_id}/results/signal?limit=1&after_id={cursor}")
+    assert next_page.status_code == 200
+    assert len(next_page.json()["data"]) == 1
+    assert next_page.json()["next_cursor"] is None
+
+
 def test_strategy_run_route_executes_historical_buy_sell():
     start = datetime(2026, 9, 2, 10, 0)
     response = client().post(
