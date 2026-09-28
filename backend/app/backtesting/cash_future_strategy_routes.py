@@ -138,7 +138,7 @@ def strategy_run_resume(run_id: str, request: StrategyRunRequest):
     strategy = _strategy_registry().get(request.strategy_id)
     if strategy is None:
         raise HTTPException(status_code=404, detail=f"unknown Cash-Future strategy: {request.strategy_id}")
-    if request.strategy_id == "gap_threshold":
+    if request.strategy_id in {"gap_threshold", "cash-future"}:
         strategy = _build_builder_strategy(request)
     catalog = contracts = ledger = None
     try:
