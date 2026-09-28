@@ -148,4 +148,44 @@ jobs:
           echo "=== HEALTH ==="
           code=$(curl -sS --connect-timeout 2 --max-time 5 -o /tmp/health_body -w "%{http_code}" http://127.0.0.1:8000/health 2>/dev/null || true)
           echo "HEALTH_HTTP=$code"
+          echo "=== LIVE SCANNER E2E ==="
+          scanner_body=$(mktemp)
+          scanner_code=$(curl -sS --connect-timeout 2 --max-time 10 -o "$scanner_body" -w "%{http_code}" "http://127.0.0.1:8000/api/v1/scanner/cash-future/live/fast?max_age_seconds=5&limit=50" 2>/dev/null || true)
+          echo "SCANNER_HTTP=$scanner_code"
+          SCANNER_BODY="$scanner_body" "$APP_DIR/.venv/bin/python" - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["SCANNER_BODY"])
+          body = json.loads(path.read_text())
+          data = body.get("data")
+          print(f"SCANNER_STATUS={body.get('status')}")
+          print(f"SCANNER_NAME={body.get('scanner')}")
+          print(f"SCANNER_MODE={body.get('mode')}")
+          print(f"SCANNER_SIGNAL_COUNT={len(data) if isinstance(data, list) else -1}")
+          if not isinstance(data, list):
+              raise SystemExit("SCANNER_DATA_NOT_LIST")
+          if body.get("status") != "success" or body.get("scanner") != "cash-future" or body.get("mode") != "live-fast":
+              raise SystemExit("SCANNER_RESPONSE_CONTRACT_FAILED")
+          if not data:
+              raise SystemExit("SCANNER_NO_FRESH_SIGNAL")
+          required = {
+              "symbol", "contract_month", "cash_ask", "future_bid",
+              "gap", "gap_pct", "net_gap_pct", "net_profit",
+              "cash_day_high", "cash_day_low", "lifecycle", "rank_score",
+          }
+          missing = sorted(required.difference(data[0]))
+          print(f"SCANNER_FIRST_SYMBOL={data[0].get('symbol')}")
+          print(f"SCANNER_FIRST_CONTRACT_MONTH={data[0].get('contract_month')}")
+          print(f"SCANNER_FIRST_GAP_PCT={data[0].get('gap_pct')}")
+          print(f"SCANNER_FIRST_NET_PROFIT={data[0].get('net_profit')}")
+          print(f"SCANNER_FIRST_LIFECYCLE={data[0].get('lifecycle')}")
+          print(f"SCANNER_FIRST_RANK_SCORE={data[0].get('rank_score')}")
+          if missing:
+              print(f"SCANNER_MISSING_FIELDS={missing}")
+              raise SystemExit("SCANNER_RESPONSE_FIELDS_FAILED")
+          print("SCANNER_E2E=PASS")
+          PY
+          rm -f "$scanner_body"
           REMOTE
