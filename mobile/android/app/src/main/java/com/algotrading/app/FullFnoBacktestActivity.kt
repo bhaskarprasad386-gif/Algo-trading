@@ -36,6 +36,7 @@ class FullFnoBacktestActivity : AppCompatActivity() {
     private lateinit var btnPurge: Button
     private lateinit var btnGapCalendar: Button
     private lateinit var btnLive1sReplay: Button
+    private lateinit var btnLive1sStrategyRun: Button
     private lateinit var strategyBuilder: CashFutureStrategyBuilderView
     private var jobId: String? = null
     private var nextSequence: Int? = null
@@ -55,9 +56,9 @@ class FullFnoBacktestActivity : AppCompatActivity() {
         setContentView(R.layout.activity_full_fno_backtest)
         tvStatus = findViewById(R.id.tvFullFnoStatus); tvResults = findViewById(R.id.tvFullFnoResults); tvGapCalendar = findViewById(R.id.tvGapCalendar); gapCalendarRows = findViewById(R.id.llGapCalendarRows); etGapResultSearch = findViewById(R.id.etGapResultSearch); btnGapResultSearch = findViewById(R.id.btnGapResultSearch); replayStatus = findViewById(R.id.tvIntradayReplayStatus); replayView = findViewById(R.id.intradayReplayView)
         replayView.setTimeframeChangedListener { timeframe -> val date = replayTradingDate; val symbol = replaySymbol; if (date != null && symbol != null) loadCashFutureReplay(date, symbol, timeframe, replayMode, replayContractMonth, replayFocusTimestamp) }
-        btnReplayPlay = findViewById(R.id.btnIntradayReplayPlay); btnReplayReset = findViewById(R.id.btnIntradayReplayReset); btnStart = findViewById(R.id.btnFullFnoStart); btnCancel = findViewById(R.id.btnFullFnoCancel); btnLoadMore = findViewById(R.id.btnFullFnoLoadMore); btnPurge = findViewById(R.id.btnFullFnoPurge); btnGapCalendar = findViewById(R.id.btnGapCalendar); btnLive1sReplay = findViewById(R.id.btnLive1sReplay); strategyBuilder = findViewById(R.id.cashFutureStrategyBuilder)
+        btnReplayPlay = findViewById(R.id.btnIntradayReplayPlay); btnReplayReset = findViewById(R.id.btnIntradayReplayReset); btnStart = findViewById(R.id.btnFullFnoStart); btnCancel = findViewById(R.id.btnFullFnoCancel); btnLoadMore = findViewById(R.id.btnFullFnoLoadMore); btnPurge = findViewById(R.id.btnFullFnoPurge); btnGapCalendar = findViewById(R.id.btnGapCalendar); btnLive1sReplay = findViewById(R.id.btnLive1sReplay); btnLive1sStrategyRun = findViewById(R.id.btnLive1sStrategyRun); strategyBuilder = findViewById(R.id.cashFutureStrategyBuilder)
         btnLoadMore.isEnabled = false; btnCancel.isEnabled = false; btnPurge.isEnabled = false; btnReplayPlay.isEnabled = false; btnReplayReset.isEnabled = false
-        btnLive1sReplay.setOnClickListener { openLive1sReplay() }; btnStart.setOnClickListener { startBacktest() }; btnCancel.setOnClickListener { cancelBacktest() }; btnLoadMore.setOnClickListener { loadNextPage() }; btnPurge.setOnClickListener { confirmPurge() }; btnGapCalendar.setOnClickListener { openGapCalendar() }; btnGapResultSearch.setOnClickListener { searchGapResults() }; btnReplayPlay.setOnClickListener { toggleReplay() }; btnReplayReset.setOnClickListener { replayJob?.cancel(); replayView.resetReplay(); btnReplayPlay.text = "PLAY ${replayView.replayIntervalSeconds()} SEC"; updateReplayStatus() }
+        btnLive1sReplay.setOnClickListener { openLive1sReplay() }; btnLive1sStrategyRun.setOnClickListener { startLive1sPaperStrategyRun() }; btnStart.setOnClickListener { startBacktest() }; btnCancel.setOnClickListener { cancelBacktest() }; btnLoadMore.setOnClickListener { loadNextPage() }; btnPurge.setOnClickListener { confirmPurge() }; btnGapCalendar.setOnClickListener { openGapCalendar() }; btnGapResultSearch.setOnClickListener { searchGapResults() }; btnReplayPlay.setOnClickListener { toggleReplay() }; btnReplayReset.setOnClickListener { replayJob?.cancel(); replayView.resetReplay(); btnReplayPlay.text = "PLAY ${replayView.replayIntervalSeconds()} SEC"; updateReplayStatus() }
         if (intent.getBooleanExtra("OPEN_CASH_FUTURE_CALENDAR", false)) tvStatus.post { openGapCalendar() }
     }
     private fun openLive1sReplay() {
@@ -80,6 +81,46 @@ class FullFnoBacktestActivity : AppCompatActivity() {
                 }
             }
         }, now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH)).show()
+    }
+
+    private fun startLive1sPaperStrategyRun() {
+        val symbol = etGapResultSearch.text.toString().trim().uppercase(Locale.ROOT)
+        if (symbol.isEmpty()) { tvStatus.text = "Enter an underlying symbol in SEARCH first."; return }
+        val date = replayTradingDate
+        if (date == null || replaySymbol?.uppercase(Locale.ROOT) != symbol) {
+            tvStatus.text = "Load LIVE 1s replay for this symbol/date first."; return
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { tvStatus.text = date + " • " + symbol + " • starting PAPER strategy on accumulated LIVE 1s data..." }
+            try {
+                val request = mapOf<String, Any?>(
+                    "strategy_id" to "cash-future",
+                    "strategy_version" to "1",
+                    "start_date" to date,
+                    "end_date" to date,
+                    "spot_instrument" to symbol,
+                    "exchange" to "NFO",
+                    "underlying" to symbol,
+                    "timeframe" to "1s",
+                    "source" to "angelone-live-1s",
+                    "mode" to "CURRENT",
+                    "execution_model" to "bid_ask",
+                    "initial_capital" to 100000000.0,
+                    "cash_side" to "BUY",
+                    "future_side" to "SELL",
+                    "cash_lots" to 1,
+                    "future_lots" to 1,
+                    "holding_mode" to "POSITIONAL"
+                )
+                val response = ApiService.retrofitService.startCashFutureStrategyRun(request)
+                val runId = response["run_id"] ?: "-"
+                withContext(Dispatchers.Main) {
+                    tvStatus.text = date + " • " + symbol + " • PAPER RUN STARTED • Run ID " + runId + " • LIVE orders OFF"
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { tvStatus.text = "LIVE 1s PAPER RUN failed • " + (e.message ?: "API error") }
+            }
+        }
     }
 
     private fun startBacktest() = lifecycleScope.launch(Dispatchers.IO) { if (loading) return@launch; loading = true; withContext(Dispatchers.Main) { btnStart.isEnabled = false; btnCancel.isEnabled = true; btnLoadMore.isEnabled = false; btnPurge.isEnabled = false; nextSequence = null; tvResults.text = ""; tvStatus.text = "Starting Full-F&O backtest…" }; try { val accepted = ApiService.retrofitService.startFullFnoJob(); jobId = accepted.job; pollJob(accepted.job) } catch (e: Exception) { withContext(Dispatchers.Main) { tvStatus.text = "Start failed • ${e.message ?: "API error"}"; btnStart.isEnabled = true; btnCancel.isEnabled = false } } finally { loading = false } }
