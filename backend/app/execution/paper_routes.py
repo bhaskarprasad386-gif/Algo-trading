@@ -1,6 +1,6 @@
-"""Authenticated, persistent paper-execution API boundary.
+"""Persistent paper-execution API boundary for the single local trading system.
 
-Paper execution is isolated per authenticated user and persists positions,
+Paper execution persists positions,
 orders, virtual balance, and realized P&L in the application database.
 Live broker execution remains disabled behind the broker safety layer.
 """
@@ -25,6 +25,81 @@ from app.models import Order, Position, TradingAccount, User
 PAPER_STARTING_BALANCE = 10_000_000.0
 
 router = APIRouter(prefix="/api/v1/execution", tags=["Execution"])
+
+
+class PaperEntryRequest(BaseModel):
+    symbol: str = Field("PAPER", min_length=1, max_length=128)
+    price: float = Field(..., gt=0)
+    quantity: float = Field(..., gt=0)
+    stop_loss_pct: float = Field(0.02, ge=0)
+    target_pct: float = Field(0.04, ge=0)
+
+
+class PaperExitRequest(BaseModel):
+    symbol: str | None = Field(default=None, min_length=1, max_length=128)
+    price: float = Field(..., gt=0)
+
+
+class PaperOrderRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=128)
+    transaction_type: str = Field(min_length=3, max_length=4)
+    price: float = Field(..., gt=0)
+    quantity: float = Field(..., gt=0)
+    stop_loss_pct: float = Field(0.02, ge=0)
+    target_pct: float = Field(0.04, ge=0)
+
+
+class ScannerPaperEntryRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=128)
+    cash_price: float = Field(..., gt=0)
+    quantity: float = Field(..., gt=0)
+    future_price: float | None = Field(default=None, gt=0)
+    gap: float | None = None
+    net_profit: float | None = None
+    executable: bool = True
+    stop_loss_pct: float = Field(0.02, ge=0)
+    target_pct: float = Field(0.04, ge=0)
+
+
+class PaperPayoffLegRequest(BaseModel):
+    kind: str = Field(min_length=4, max_length=8)
+    side: str = Field(min_length=3, max_length=4)
+    strike: float | None = Field(default=None, gt=0)
+    entry_price: float = Field(..., ge=0)
+    quantity: float = Field(..., gt=0)
+    multiplier: float = Field(1.0, gt=0)
+
+
+class PaperPayoffRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=128)
+    underlying_prices: list[float] = Field(min_length=2, max_length=201)
+    legs: list[PaperPayoffLegRequest] = Field(min_length=1, max_length=20)
+
+
+class StrategyLegRequest(BaseModel):
+    kind: str = Field(min_length=4, max_length=8)
+    side: str = Field(min_length=3, max_length=4)
+    entry_price: float = Field(..., ge=0)
+    quantity: float = Field(..., gt=0)
+    strike: float | None = Field(default=None, gt=0)
+    multiplier: float = Field(1.0, gt=0)
+
+
+class StrategyPayoffRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=128)
+    underlying_prices: list[float] = Field(min_length=2, max_length=201)
+    legs: list[StrategyLegRequest] = Field(min_length=1, max_length=20)
+
+
+class CashFuturePayoffRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=128)
+    cash_entry_price: float = Field(..., gt=0)
+    future_entry_price: float = Field(..., gt=0)
+    quantity: float = Field(..., gt=0)
+    underlying_prices: list[float] = Field(min_length=2, max_length=201)
+    multiplier: float = Field(1.0, gt=0)
+
+
 def current_user_id(db: Session = Depends(get_db)) -> int:
     """Return the single local trading identity; no login or bearer token is required."""
     account = (
