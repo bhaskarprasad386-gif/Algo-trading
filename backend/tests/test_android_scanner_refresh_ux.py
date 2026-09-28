@@ -23,7 +23,7 @@ def test_android_scanner_refresh_ux_contract():
     scan_block = body.split('private fun runCashFutureScanner()', 1)[1]
     assert 'scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable)' in scan_block
     assert 'scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable)' in scan_block
-    assert 'btnRunScanner.text = "SCANNING..."' in scan_block
+    assert 'btnRunScanner.text = "SCANNING LIVE..."' in scan_block
     assert 'scheduleScannerRefresh()' in scan_block.split('finally', 1)[1]
 
     destroy = body.split('override fun onDestroy()', 1)[1]
