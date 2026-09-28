@@ -48,7 +48,7 @@ def live(limit: int = Query(50, ge=1, le=200)):
         "scanner": "synthetic-cash-carry-live-1s",
         "mode": "paper-safe",
         "data": rows,
-        "opportunity_count": len(rows),
+        "opportunity_count": sum(float(row["executable_edge"] or 0) > 0 for row in rows),
     }
 
 
