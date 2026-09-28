@@ -304,6 +304,11 @@ jobs:
               raise SystemExit("SCANNER_RESPONSE_FIELDS_FAILED")
           print("SCANNER_E2E=PASS")
           PY
+          if grep -q "SCANNER_LIVE_SESSION_CLOSED_EXPECTED" "$scanner_body"; then
+            rm -f "$scanner_body"
+            echo "SCANNER_CHAIN_SKIPPED_MARKET_CLOSED=true"
+            exit 0
+          fi
           echo "=== SCANNER FILTER / RANK / ALERT CHAIN ==="
           cd "$APP_DIR/backend"
           SCANNER_BODY="$scanner_body" DATA_DB="$APP_DIR/backend/backtest_market_data.sqlite3" "$APP_DIR/.venv/bin/python" - <<'PY'
