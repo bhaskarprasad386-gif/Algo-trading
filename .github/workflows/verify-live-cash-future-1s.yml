@@ -305,10 +305,10 @@ jobs:
           print("SCANNER_E2E=PASS")
           PY
           scanner_count=$(SCANNER_BODY="$scanner_body" "$APP_DIR/.venv/bin/python" - <<'PY'
-import json, os
-body = json.loads(open(os.environ["SCANNER_BODY"]).read())
-print(len(body.get("data") or []))
-PY
+          import json, os
+          body = json.loads(open(os.environ["SCANNER_BODY"]).read())
+          print(len(body.get("data") or []))
+          PY
           )
           if [ "$scanner_count" -eq 0 ]; then
             rm -f "$scanner_body"
