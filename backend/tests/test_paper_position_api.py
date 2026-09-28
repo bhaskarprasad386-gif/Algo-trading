@@ -1,20 +1,24 @@
-from uuid import uuid4
-
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.core.database import SessionLocal
+from app.models import Order, Position, TradingAccount
 
 
 def _client_and_headers():
-    client = TestClient(app)
-    email = f"paper-position-{uuid4().hex}@example.com"
-    response = client.post(
-        "/api/v1/auth/register",
-        json={"email": email, "password": "TestPass123!", "full_name": "Paper Test"},
-    )
-    assert response.status_code == 201
-    return client, {"Authorization": f"Bearer {response.json()['access_token']}"}
-
+    db = SessionLocal()
+    try:
+        db.query(Position).delete()
+        db.query(Order).delete()
+        for account in db.query(TradingAccount).all():
+            account.virtual_balance = 10_000_000.0
+            account.realized_pnl = 0.0
+            account.is_active = True
+            account.mode = "PAPER"
+        db.commit()
+    finally:
+        db.close()
+    return TestClient(app), {}
 
 def test_paper_position_lifecycle():
     client, headers = _client_and_headers()
