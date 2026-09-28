@@ -109,6 +109,42 @@ jobs:
           echo "=== DATA FILES ==="
           find "$APP_DIR/backend" -maxdepth 3 -type f \( -iname '*cash*future*' -o -iname '*live*data*' \) -printf '%TY-%Tm-%Td %TH:%TM:%TS %p\n' 2>/dev/null | sort | tail -30 || true
 
+          echo "=== LIVE 1S DATA DIAGNOSTIC ==="
+          DATA_DB="$APP_DIR/backend/backtest_market_data.sqlite3"
+          if [ -f "$DATA_DB" ]; then
+            "$APP_DIR/.venv/bin/python" - <<'PY'
+          import sqlite3
+          import time
+
+          db = "backtest_market_data.sqlite3"
+          conn = sqlite3.connect(db)
+          try:
+              row = conn.execute(
+                  "SELECT COUNT(*), COUNT(DISTINCT instrument), MIN(timestamp_ns), MAX(timestamp_ns) "
+                  "FROM data_catalog WHERE source=? AND timeframe=?",
+                  ("angelone-live-1s", "1s"),
+              ).fetchone()
+              count, instruments, min_ts, max_ts = row
+              print(f"LIVE_1S_ROWS={count}")
+              print(f"LIVE_1S_INSTRUMENTS={instruments}")
+              print(f"LIVE_1S_MIN_TIMESTAMP_NS={min_ts}")
+              print(f"LIVE_1S_MAX_TIMESTAMP_NS={max_ts}")
+              if max_ts is not None:
+                  age_seconds = max(0.0, (time.time_ns() - int(max_ts)) / 1_000_000_000)
+                  print(f"LIVE_1S_LATEST_AGE_SECONDS={age_seconds:.1f}")
+              else:
+                  print("LIVE_1S_LATEST_AGE_SECONDS=NA")
+          finally:
+              conn.close()
+          PY
+          else
+            echo "LIVE_1S_DB_NOT_FOUND"
+          fi
+
+          echo "=== RECENT CONFLICT CHECK ==="
+          conflicts=$(journalctl -u algo-trading.service --no-pager --since "-10 minutes" 2>/dev/null | grep -ci 'conflicting historical record identity' || true)
+          echo "RECENT_CONFLICT_ERRORS_LAST_10M=$conflicts"
+
           echo "=== HEALTH ==="
           code=$(curl -sS --connect-timeout 2 --max-time 5 -o /tmp/health_body -w "%{http_code}" http://127.0.0.1:8000/health 2>/dev/null || true)
           echo "HEALTH_HTTP=$code"
