@@ -1,7 +1,5 @@
 package com.algotrading.app
 
-import android.content.Context
-import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import com.google.gson.annotations.SerializedName
@@ -30,14 +28,6 @@ data class ScannerPaperEntryResponse(val status: String, val mode: String, val s
 data class CashFutureOpportunity(val symbol: String, val cash_price: Double = 0.0, val future_price: Double = 0.0, val gap: Double = 0.0, val gap_pct: Double = 0.0, val gross_spread_profit: Double = 0.0, val margin_required: Double = 0.0, val deployed_capital: Double = 0.0, val net_profit: Double = 0.0, val roi_pct: Double = 0.0, val executable: Boolean = false)
 data class CashFutureScanError(val symbol: String = "", val error: String = "")
 data class CashFutureScanResponse(val status: String, val scanner: String, val mode: String, val symbols_requested: List<String> = emptyList(), val scanned_observations: Int = 0, val opportunity_count: Int = 0, val data: List<CashFutureOpportunity> = emptyList(), val errors: List<CashFutureScanError> = emptyList())
-data class RegisterRequest(val email: String? = null, val mobile_number: String? = null, val password: String, val full_name: String? = null)
-data class LoginRequest(val identifier: String, val password: String)
-data class GoogleLoginRequest(val id_token: String)
-data class PasswordResetRequest(val identifier: String)
-data class PasswordResetResponse(val status: String, val message: String)
-data class TokenResponse(val access_token: String, val token_type: String = "bearer")
-data class AccountInfo(val id: Int, val mode: String, val virtual_balance: Double, val realized_pnl: Double = 0.0, val is_active: Boolean)
-data class UserInfo(val id: Int, val email: String? = null, val mobile_number: String? = null, val full_name: String? = null, val account: AccountInfo)
 data class BrokerConnectRequest(val broker: String = "angel_one", val display_name: String? = null, val api_key: String, val client_code: String, val password: String, val totp_secret: String)
 data class BrokerConnectionInfo(val broker: String, val connected: Boolean, val display_name: String? = null, val connected_at: String? = null)
 data class BrokerConnectionsResponse(val connections: List<BrokerConnectionInfo> = emptyList())
@@ -251,12 +241,6 @@ interface ApiInterface {
     @GET("/") suspend fun getRootStatus(): MarketStatus
     @GET("/api/v1/app/update") suspend fun appUpdate(): AppUpdateInfo
     @GET("/api/v1/app/strategies") suspend fun appStrategies(): StrategyRegistryResponse
-    @POST("/api/v1/auth/register") suspend fun register(@Body request: RegisterRequest): TokenResponse
-    @POST("/api/v1/auth/login") suspend fun login(@Body request: LoginRequest): TokenResponse
-    @POST("/api/v1/auth/google") suspend fun googleLogin(@Body request: GoogleLoginRequest): TokenResponse
-    @POST("/api/v1/auth/password-reset/request") suspend fun requestPasswordReset(@Body request: PasswordResetRequest): PasswordResetResponse
-    @GET("/api/v1/auth/me") suspend fun me(): UserInfo
-    @POST("/api/v1/auth/logout") suspend fun logout(): Map<String, String>
     @GET("/api/v1/brokers/connections") suspend fun brokerConnections(): BrokerConnectionsResponse
     @POST("/api/v1/brokers/connect") suspend fun connectBroker(@Body request: BrokerConnectRequest): BrokerConnectResponse
     @GET("/api/v1/brokers/{broker}/status") suspend fun brokerStatus(@Path("broker") broker: String): BrokerStatusResponse
@@ -305,26 +289,19 @@ interface ApiInterface {
 }
 
 object ApiService {
-    private const val PREFS = "algo_trading_session"
-    private const val TOKEN = "access_token"
-    fun saveToken(context: Context, token: String) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(TOKEN, token).apply()
-    fun getToken(context: Context): String? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(TOKEN, null)
-    fun clearToken(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(TOKEN).apply()
     private val httpClient: OkHttpClient by lazy {
-        OkHttpClient.Builder().addInterceptor(Interceptor { chain ->
-            val request = chain.request()
-            val path = request.url.encodedPath
-            val publicAuthEndpoint = path == "/api/v1/auth/login" ||
-                path == "/api/v1/auth/register" ||
-                path == "/api/v1/auth/google"
-            val token = AppContextHolder.context?.let { getToken(it) }
-            val authenticated = if (publicAuthEndpoint || token.isNullOrBlank()) request else request.newBuilder().addHeader("Authorization", "Bearer $token").build()
-            val response = chain.proceed(authenticated)
-            if (response.code == 401 && !publicAuthEndpoint) AppContextHolder.context?.let { clearToken(it) }
-            response
-        }).connectTimeout(10, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS).build()
+        OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build()
     }
-    val retrofitService: ApiInterface by lazy { Retrofit.Builder().client(httpClient).addConverterFactory(GsonConverterFactory.create()).baseUrl(BuildConfig.BACKEND_BASE_URL).build().create(ApiInterface::class.java) }
+    val retrofitService: ApiInterface by lazy {
+        Retrofit.Builder()
+            .client(httpClient)
+            .addConverterFactory(GsonConverterFactory.create())
+            .baseUrl(BuildConfig.BACKEND_BASE_URL)
+            .build()
+            .create(ApiInterface::class.java)
+    }
 }
-
-object AppContextHolder { var context: Context? = null }
