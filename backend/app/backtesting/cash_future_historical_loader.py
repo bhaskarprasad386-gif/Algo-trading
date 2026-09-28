@@ -211,7 +211,7 @@ class CashFutureHistoricalLoader:
             start_ns, _ = _market_bounds(segment_start); _, end_ns = _market_bounds(segment_end)
             cash_instrument = self._resolve_spot_instrument(selection.underlying.upper(), start_ns, end_ns,
                                                             selection.spot_instrument, selection.source, selection.timeframe)
-            future_instrument = f"{contract.exchange}:{contract.token}:{contract.symbol}"
+            future_instrument = (f"{contract.exchange}:{contract.token}:{contract.symbol}" if selection.source != "angelone-live-1s" else f"{contract.symbol}|{contract.token}")
             for label, instrument in (("cash", cash_instrument), ("future", future_instrument)):
                 add({"leg": label, "instrument": instrument})
                 for record in self.catalog.iter_records(source=selection.source, instrument=instrument,
