@@ -8,15 +8,15 @@ AUTO_ROUTES = Path(__file__).resolve().parents[1] / "app" / "scanner" / "auto_ro
 def test_android_cash_future_executable_contract_matches_backend():
     api = API_SERVICE.read_text(encoding="utf-8")
     backend = AUTO_ROUTES.read_text(encoding="utf-8")
-    assert 'GET("/api/v1/scanner/cash-future/live/auto")' in api
+    assert 'GET("/api/v1/scanner/cash-future/live/fast")' in api
     for field in ("symbols_requested", "scanned_observations", "opportunity_count", "data", "errors", "filters"):
         assert f'"{field}"' in backend
-    for field in ("symbol", "cash_price", "future_price", "gap", "gap_pct", "gross_spread_profit", "margin_required", "deployed_capital", "net_profit", "roi_pct", "executable"):
+    for field in ("symbol", "cash_ask", "future_bid", "gap", "gap_pct", "net_gap", "net_profit", "lifecycle", "rank_score"):
         assert f"val {field}:" in api
 
 def test_android_cash_future_screen_displays_executable_status():
     body = MAIN_ACTIVITY.read_text(encoding="utf-8")
     assert "response.data" in body
-    assert '.sortedWith(compareByDescending<CashFutureOpportunity> { it.executable }' in body
-    assert 'if (item.executable) "YES" else "NO"' in body
-    assert 'append("Executable:' in body
+    assert '.sortedWith(compareByDescending<LiveCashFutureSignal> { it.executable }' in body
+    assert 'lastExecutableOpportunity = executable' in body
+    assert 'renderScannerPaperState()' in body
