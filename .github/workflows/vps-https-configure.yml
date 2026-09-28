@@ -1,0 +1,152 @@
+name: VPS HTTPS + Nginx Configure
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/vps-https-configure.yml
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure HTTPS endpoint on VPS
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$VPS_KEY" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+
+          IP="82.41.67.1"
+          APP_ROOT="/opt/Algo-trading/backend"
+          ACME_ROOT="/var/www/acme"
+          NGINX_SITE="/etc/nginx/sites-available/algo-trading"
+          NGINX_LINK="/etc/nginx/sites-enabled/algo-trading"
+
+          echo "== PRECHECK =="
+          systemctl is-active --quiet algo-trading.service
+          curl -fsS http://127.0.0.1:8000/openapi.json >/dev/null
+          echo "FASTAPI_LOCAL_OK"
+
+          if ! command -v certbot >/dev/null 2>&1 || ! certbot --version 2>&1 | awk '{print $2}' | awk -F. '{exit !($1 > 5 || ($1 == 5 && $2 >= 4))}'; then
+            echo "INSTALLING_CERTBOT"
+            python3 -m venv /opt/certbot
+            /opt/certbot/bin/pip install --upgrade pip certbot >/dev/null
+            ln -sf /opt/certbot/bin/certbot /usr/local/bin/certbot
+          fi
+          certbot --version
+
+          mkdir -p "$ACME_ROOT/.well-known/acme-challenge"
+          chown -R www-data:www-data "$ACME_ROOT"
+
+          if [ ! -f "${NGINX_SITE}.pre-https-backup" ] && [ -f /etc/nginx/sites-enabled/default ]; then
+            cp -a /etc/nginx/sites-enabled/default "${NGINX_SITE}.pre-https-backup"
+          fi
+
+          cat > "$NGINX_SITE" <<'NGINX'
+          server {
+              listen 80;
+              listen [::]:80;
+              server_name 82.41.67.1;
+
+              location ^~ /.well-known/acme-challenge/ {
+                  root /var/www/acme;
+                  default_type text/plain;
+              }
+
+              location / {
+                  proxy_pass http://127.0.0.1:8000;
+                  proxy_http_version 1.1;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+          }
+          NGINX
+
+          ln -sfn "$NGINX_SITE" "$NGINX_LINK"
+          nginx -t
+          systemctl reload nginx
+
+          echo "NGINX_HTTP_PROXY_OK"
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1/openapi.json)" = "200"
+
+          echo "== CERTIFICATE =="
+          if [ ! -f "/etc/letsencrypt/live/$IP/fullchain.pem" ]; then
+            echo "REQUESTING_LETSENCRYPT_IP_CERT_STAGING"
+            certbot certonly --staging --non-interactive --agree-tos --register-unsafely-without-email               --preferred-profile shortlived --webroot --webroot-path "$ACME_ROOT"               --ip-address "$IP"
+            rm -rf "/etc/letsencrypt/live/$IP" "/etc/letsencrypt/archive/$IP" "/etc/letsencrypt/renewal/$IP.conf"
+            echo "REQUESTING_LETSENCRYPT_IP_CERT_PRODUCTION"
+            certbot certonly --non-interactive --agree-tos --register-unsafely-without-email               --preferred-profile shortlived --webroot --webroot-path "$ACME_ROOT"               --ip-address "$IP"
+          else
+            echo "EXISTING_CERT_FOUND"
+          fi
+
+          test -s "/etc/letsencrypt/live/$IP/fullchain.pem"
+          test -s "/etc/letsencrypt/live/$IP/privkey.pem"
+
+          cat > "$NGINX_SITE" <<'NGINX'
+          server {
+              listen 80;
+              listen [::]:80;
+              server_name 82.41.67.1;
+
+              location ^~ /.well-known/acme-challenge/ {
+                  root /var/www/acme;
+                  default_type text/plain;
+              }
+
+              location / {
+                  return 301 https://$host$request_uri;
+              }
+          }
+
+          server {
+              listen 443 ssl;
+              listen [::]:443 ssl;
+              server_name 82.41.67.1;
+
+              ssl_certificate /etc/letsencrypt/live/82.41.67.1/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/82.41.67.1/privkey.pem;
+
+              location / {
+                  proxy_pass http://127.0.0.1:8000;
+                  proxy_http_version 1.1;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+          }
+          NGINX
+
+          nginx -t
+          systemctl reload nginx
+
+          mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+          cat > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh <<'HOOK'
+          #!/bin/sh
+          systemctl reload nginx
+          HOOK
+          chmod 755 /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+
+          echo "== FINAL CHECK =="
+          echo "SERVICE=$(systemctl is-active algo-trading.service)"
+          echo "HTTP=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1/openapi.json || true)"
+          echo "HTTPS=$(curl -k -sS -o /dev/null -w '%{http_code}' https://127.0.0.1/openapi.json || true)"
+          echo "CERT_SUBJECT=$(openssl x509 -in "/etc/letsencrypt/live/$IP/cert.pem" -noout -subject | sed 's/^subject=//')"
+          echo "CERT_EXPIRES=$(openssl x509 -in "/etc/letsencrypt/live/$IP/cert.pem" -noout -enddate | sed 's/^notAfter=//')"
+          echo "PORTS"
+          ss -lntp | grep -E ':(80|443) ' || true
+          REMOTE
+
+          rm -f /tmp/vps_key
