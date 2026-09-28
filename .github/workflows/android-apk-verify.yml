@@ -13,23 +13,33 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - name: Download Android v1.4 APK
+      - name: Download Android v1.3 and v1.4 APKs
         run: |
-          curl -fL --retry 3             "https://github.com/bhaskarprasad386-gif/Algo-trading/releases/download/android-v1.4/algo-trading-release.apk"             -o algo-trading-release.apk
+          curl -fL --retry 3 "https://github.com/bhaskarprasad386-gif/Algo-trading/releases/download/android-v1.3/algo-trading-release.apk" -o android-v1.3.apk
+          curl -fL --retry 3 "https://github.com/bhaskarprasad386-gif/Algo-trading/releases/download/android-v1.4/algo-trading-release.apk" -o android-v1.4.apk
 
-      - name: Verify APK archive
+      - name: Verify APK archives
         run: |
-          file algo-trading-release.apk
-          unzip -t algo-trading-release.apk >/dev/null
-          echo "APK_ARCHIVE_OK"
+          unzip -t android-v1.3.apk >/dev/null
+          unzip -t android-v1.4.apk >/dev/null
+          echo "APK_ARCHIVES_OK"
 
-      - name: Verify APK package metadata
+      - name: Verify APK metadata
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging algo-trading-release.apk | head -n 5
-          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging algo-trading-release.apk | grep -E 'package: name=|sdkVersion:|targetSdkVersion:'
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging android-v1.3.apk | grep -E "package: name=|sdkVersion:|targetSdkVersion:"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging android-v1.4.apk | grep -E "package: name=|sdkVersion:|targetSdkVersion:"
           echo "APK_METADATA_OK"
 
-      - name: Verify APK signature
+      - name: Compare APK signing certificates
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs algo-trading-release.apk
-          echo "APK_SIGNATURE_OK"
+          set -euo pipefail
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs android-v1.3.apk | tee v1.3-signature.txt
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs android-v1.4.apk | tee v1.4-signature.txt
+          cert13=$(grep "Signer #1 certificate SHA-256 digest:" v1.3-signature.txt | sed 's/.*digest: //')
+          cert14=$(grep "Signer #1 certificate SHA-256 digest:" v1.4-signature.txt | sed 's/.*digest: //')
+          echo "V1.3_CERT_SHA256=$cert13"
+          echo "V1.4_CERT_SHA256=$cert14"
+          test -n "$cert13"
+          test -n "$cert14"
+          test "$cert13" = "$cert14"
+          echo "APK_SIGNING_CERT_MATCH_OK"
