@@ -128,6 +128,21 @@ def test_live_alert_history_route_returns_persisted_alerts(tmp_path):
     assert response["data"][0]["gross_profit"] == 200.0
 
 
+def test_live_fast_scanner_route_uses_process_local_snapshot(monkeypatch):
+    from app.scanner.auto_routes import cash_future_live_fast_scanner
+
+    class StubScanner:
+        def snapshot(self, *, max_age_seconds, limit):
+            assert max_age_seconds == 5.0
+            assert limit == 10
+            return [{"symbol": "ABC", "contract_month": "CURRENT", "gap_pct": 1.2}]
+
+    monkeypatch.setattr("app.main.live_cash_future_scanner", StubScanner())
+    response = cash_future_live_fast_scanner(max_age_seconds=5.0, limit=10)
+    assert response["mode"] == "live-fast"
+    assert response["data"][0]["symbol"] == "ABC"
+
+
 def test_live_scanner_history_route_excludes_expired_rows(tmp_path):
     from datetime import datetime
 
