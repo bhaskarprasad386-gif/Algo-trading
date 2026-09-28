@@ -20,7 +20,6 @@ from app.core.schema_migrations import run_schema_migrations
 from app.models import User, Instrument, Order, Session, Position, SystemLog, TradingAccount
 from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
 from app.models.live_calendar_spread_paper_position import LiveCalendarSpreadPaperPosition
-from app.auth.routes import router as auth_router
 from app.algo.auth import AngelOneAuth
 from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.live_cash_future_stream import LiveCashFutureOneSecondCollector
@@ -124,7 +123,6 @@ app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug, li
 app.add_exception_handler(TradingAppException, trading_exception_handler)
 app.add_exception_handler(Exception, global_exception_handler)
 
-app.include_router(auth_router)
 app.include_router(brokers_router)
 app.include_router(orders_router)
 app.include_router(arbitrage_router)
@@ -168,34 +166,14 @@ app.include_router(create_universal_result_router(universal_result_service))
 
 DASHBOARD_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "index.html"
 BROKER_SETTINGS_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "broker.html"
-LOGIN_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "login.html"
 
 
 @app.get("/dashboard", include_in_schema=False)
 def dashboard():
-    """Serve the web dashboard with authentication and Cash-Future scanner connector."""
+    """Serve the web dashboard and Cash-Future scanner connector."""
     html = DASHBOARD_FILE.read_text(encoding="utf-8")
     connector = r'''
 <script>
-(function protectDashboard(){
-  const token=localStorage.getItem('authToken');
-  if(!token){window.location.replace('/dashboard/login');return;}
-  const originalFetch=window.fetch.bind(window);
-  window.fetch=function(input,init){
-    const opts=init?{...init}:{}, headers=new Headers(opts.headers||{});
-    const url=typeof input==='string'?input:(input&&input.url)||'';
-    if(url.includes('/api/v1/')&&!url.includes('/api/v1/auth/')){
-      headers.set('Authorization','Bearer '+token);
-      opts.headers=headers;
-    }
-    return originalFetch(input,opts).then(r=>{
-      if(r.status===401){localStorage.removeItem('authToken');window.location.replace('/dashboard/login');}
-      return r;
-    });
-  };
-  const settingsNav=[...document.querySelectorAll('.nav div')].find(x=>x.textContent.trim().toLowerCase()==='settings');
-  if(settingsNav) settingsNav.onclick=()=>{window.location.href='/dashboard/broker';};
-})();
 
 (async function connectCashFutureScanner(){
   const api=window.location.origin;
@@ -240,12 +218,6 @@ def dashboard():
 '''
     return HTMLResponse(content=html.replace("</body>", connector + "</body>"), media_type="text/html")
 
-
-@app.get("/dashboard/login", include_in_schema=False)
-def dashboard_login():
-    """Serve the web authentication page."""
-    html = LOGIN_FILE.read_text(encoding="utf-8")
-    return HTMLResponse(content=html, media_type="text/html")
 
 
 @app.get("/dashboard/broker", include_in_schema=False)
