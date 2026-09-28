@@ -373,7 +373,7 @@ jobs:
                   "SUM(CASE WHEN gap > 0 THEN 1 ELSE 0 END), "
                   "SUM(CASE WHEN net_gap > 0 THEN 1 ELSE 0 END), "
                   "SUM(CASE WHEN gap_pct >= ? THEN 1 ELSE 0 END), "
-                  "SUM(CASE WHEN stable_observations >= ? THEN 1 ELSE 0 END), "
+                  "SUM(CASE WHEN stable_observations >= ? THEN 1 ELSE 0 END) "
                   "FROM live_cash_future_scanner_results "
                   "WHERE observed_at >= datetime('now','-5 minutes')",
                   (gap_threshold, min_stable),
@@ -388,10 +388,14 @@ jobs:
               alerts = conn.execute(
                   "SELECT COUNT(*), "
                   "SUM(CASE WHEN event='NEW' THEN 1 ELSE 0 END), "
-                  "SUM(CASE WHEN event='RECOVERY' THEN 1 ELSE 0 END) "
+                  "SUM(CASE WHEN event='RECOVERY' THEN 1 ELSE 0 END), "
+                  "SUM(CASE WHEN gross_profit IS NOT NULL AND gross_profit >= ? THEN 1 ELSE 0 END), "
+                  "SUM(CASE WHEN net_profit IS NOT NULL AND net_profit >= ? THEN 1 ELSE 0 END), "
+                  "SUM(CASE WHEN annualized_gap_pct IS NOT NULL AND annualized_gap_pct >= ? THEN 1 ELSE 0 END) "
                   "FROM live_cash_future_alert_history "
-                  "WHERE observed_at >= datetime('now','-5 minutes')"
-              , (alert_min_gross, alert_min_net, alert_min_annualized)).fetchone()
+                  "WHERE observed_at >= datetime('now','-5 minutes')",
+                  (alert_min_gross, alert_min_net, alert_min_annualized),
+              ).fetchone()
               print(f"CHAIN_ALERTS_5M={int(alerts[0] or 0)}")
               print(f"CHAIN_NEW_ALERTS_5M={int(alerts[1] or 0)}")
               print(f"CHAIN_RECOVERY_ALERTS_5M={int(alerts[2] or 0)}")
