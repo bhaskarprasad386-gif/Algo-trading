@@ -30,6 +30,9 @@ TIMEFRAME = "1s"
 NO_DATA_RECONNECT_SECONDS = 30.0
 WRITE_BATCH_SIZE = 100
 WRITE_BATCH_MAX_SECONDS = 5.0
+NO_DATA_RETRY_INITIAL_SECONDS = 10.0
+NO_DATA_RETRY_MAX_SECONDS = 60.0
+WORKER_JOIN_TIMEOUT_SECONDS = 5.0
 
 _STATE_LOCK = threading.Lock()
 _STATE = {"enabled": False, "running": False, "connected": False, "last_observation_ns": None, "written": 0, "rejected": 0, "dropped": 0, "pairs": 0, "observations": 0, "gap_seconds": 0, "coverage": 0, "last_error": None}
@@ -413,6 +416,9 @@ class LiveCashFutureOneSecondCollector:
                 catalog.close()
             for socket in self._sockets:
                 socket.close()
+            for thread in threads:
+                if thread.is_alive():
+                    thread.join(timeout=WORKER_JOIN_TIMEOUT_SECONDS)
             self._sockets = []
         with _STATE_LOCK:
             _STATE["written"] += written
@@ -428,19 +434,23 @@ class LiveCashFutureOneSecondCollector:
 
     def run_forever(self) -> None:
         app_logger.info("1-second live Cash-Future collector started")
+        retry_delay = NO_DATA_RETRY_INITIAL_SECONDS
         while not self.stop_event.is_set():
             try:
                 if self.market_open():
                     self._run_market_session()
+                    retry_delay = NO_DATA_RETRY_INITIAL_SECONDS
                 else:
+                    retry_delay = NO_DATA_RETRY_INITIAL_SECONDS
                     time_module.sleep(5)
             except Exception as exc:
                 with _STATE_LOCK:
                     _STATE["running"] = False
                     _STATE["connected"] = False
                     _STATE["last_error"] = str(exc)
-                app_logger.error(f"1-second live Cash-Future collector failed: {exc}")
-                time_module.sleep(10)
+                app_logger.error(f"1-second live Cash-Future collector failed: {exc}; retrying in {retry_delay:.0f}s")
+                self.stop_event.wait(retry_delay)
+                retry_delay = min(NO_DATA_RETRY_MAX_SECONDS, retry_delay * 2.0)
         app_logger.info("1-second live Cash-Future collector stopped")
 
     def stop(self) -> None:
