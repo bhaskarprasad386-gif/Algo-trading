@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Algo Trading shared visual tokens: keep aligned with web/dashboard/index.html :root -->
+    <color name="algo_bg">#07111F</color>
+    <color name="algo_bg_deep">#06101D</color>
+    <color name="algo_surface">#0D1B2E</color>
+    <color name="algo_surface_alt">#091A2D</color>
+    <color name="algo_surface_elevated">#10243B</color>
+    <color name="algo_border">#1D3552</color>
+    <color name="algo_border_alt">#18314D</color>
+    <color name="algo_text">#EEF5FF</color>
+    <color name="algo_text_secondary">#DCE6F5</color>
+    <color name="algo_muted">#8295AE</color>
+    <color name="algo_positive">#22C55E</color>
+    <color name="algo_negative">#EF4444</color>
+    <color name="algo_warning">#FBBF24</color>
+    <color name="algo_info">#3B82F6</color>
+    <color name="algo_paper_surface">#163B32</color>
+    <color name="algo_paper_text">#4ADE80</color>
+</resources>
