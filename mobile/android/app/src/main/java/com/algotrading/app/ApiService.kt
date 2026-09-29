@@ -304,6 +304,7 @@ interface ApiInterface {
     @POST("/api/v1/execution/paper/exit") suspend fun paperExit(@Body request: PaperExitRequest): PaperExitResponse
     @GET("/api/v1/execution/paper/orders") suspend fun paperOrders(): PaperOrdersResponse
     @GET("/api/v1/market-data/overview") suspend fun marketOverview(): MarketOverviewResponse
+    @GET("/api/v1/market-data/live-cash-future/health") suspend fun liveCashFutureHealth(): Map<String, Any?>
     suspend fun liveDataHealth(): LiveDataHealthResponse
     @GET("/api/v1/market-data/ltp-by-symbol") suspend fun ltpBySymbol(@Query("tradingsymbol") tradingSymbol: String, @Query("exchange") exchange: String = "NSE"): MarketLtpResponse
     @GET("/api/v1/scanner/cash-future/live/fast") suspend fun liveCashFutureScan(@Query("max_age_seconds") maxAgeSeconds: Double = 5.0, @Query("limit") limit: Int = 50): LiveCashFutureScanResponse
