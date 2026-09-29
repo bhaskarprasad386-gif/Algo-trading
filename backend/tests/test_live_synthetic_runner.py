@@ -17,6 +17,7 @@ def _master():
         ])
     master.instruments = items
     master._loaded = True
+    master.download = lambda force=False: master.instruments
     return master
 
 
