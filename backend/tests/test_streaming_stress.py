@@ -67,3 +67,27 @@ def test_latest_message_buffer_preserves_distinct_seconds_and_deduplicates():
     assert len(buffer) == 3
     drained = buffer.drain()
     assert [m["exchange_timestamp"] for m in drained] == [1_000_000_000, 1_001_000_000_000, 1_002_000_000_000]
+
+
+def test_market_collector_retry_backoff_bounds():
+    from app.market_data.live_cash_future_stream import NO_DATA_RETRY_INITIAL_SECONDS, NO_DATA_RETRY_MAX_SECONDS
+    delay = NO_DATA_RETRY_INITIAL_SECONDS
+    values = []
+    for _ in range(20):
+        values.append(delay)
+        delay = min(NO_DATA_RETRY_MAX_SECONDS, delay * 2.0)
+    assert values[:4] == [10.0, 20.0, 40.0, 60.0]
+    assert max(values) == 60.0
+
+
+def test_backtest_worker_cleanup_removes_completed_future():
+    from concurrent.futures import Future
+    from app.scanner import backtest_jobs
+
+    future = Future()
+    future.set_result(None)
+    with backtest_jobs._LOCK:
+        backtest_jobs._FUTURES["finished-test"] = future
+    assert backtest_jobs.cleanup_finished_workers() == 1
+    with backtest_jobs._LOCK:
+        assert "finished-test" not in backtest_jobs._FUTURES
