@@ -19,6 +19,21 @@ data class MarketOverviewRow(
     val close: Double? = null, val change_percent: Double? = null, val volume: Double? = null,
     val oi: Double? = null, val bid: Double? = null, val ask: Double? = null, val status: String = ""
 )
+data class LiveDataHealthResponse(
+    val status: String = "",
+    val market_session: String = "",
+    val checked_at: String = "",
+    val persisted: Boolean = false,
+    val source: String = "",
+    val timeframe: String = "",
+    val records: Long = 0,
+    val instruments: Int = 0,
+    val latest_timestamp_ns: Long? = null,
+    val age_seconds: Double? = null,
+    val feed_status: String = "",
+    val live_orders: String = "OFF"
+)
+
 data class MarketOverviewResponse(
     val status: String = "", val mode: String = "", val indices: List<MarketOverviewRow> = emptyList(),
     val commodities: List<MarketOverviewRow> = emptyList(),
@@ -287,6 +302,7 @@ interface ApiInterface {
     @POST("/api/v1/execution/paper/exit") suspend fun paperExit(@Body request: PaperExitRequest): PaperExitResponse
     @GET("/api/v1/execution/paper/orders") suspend fun paperOrders(): PaperOrdersResponse
     @GET("/api/v1/market-data/overview") suspend fun marketOverview(): MarketOverviewResponse
+    suspend fun liveDataHealth(): LiveDataHealthResponse
     @GET("/api/v1/market-data/ltp-by-symbol") suspend fun ltpBySymbol(@Query("tradingsymbol") tradingSymbol: String, @Query("exchange") exchange: String = "NSE"): MarketLtpResponse
     @GET("/api/v1/scanner/cash-future/live/fast") suspend fun liveCashFutureScan(@Query("max_age_seconds") maxAgeSeconds: Double = 5.0, @Query("limit") limit: Int = 50): LiveCashFutureScanResponse
     @GET("/api/v1/scanner/cash-future/live/auto") suspend fun cashFutureScan(): CashFutureScanResponse
