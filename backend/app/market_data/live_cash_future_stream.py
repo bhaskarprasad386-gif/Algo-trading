@@ -20,7 +20,6 @@ from app.core.logger import app_logger
 from app.core.config import settings
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.websocket import MarketDataWebSocket
-from app.market_data.nifty50_universe import NIFTY50_STOCK_SYMBOLS
 
 IST = ZoneInfo("Asia/Kolkata")
 OPEN = time(9, 15)
@@ -113,7 +112,8 @@ class LiveCashFutureOneSecondCollector:
     def _contracts(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         rows = self.instrument_master.download()
         configured = {item.strip().upper() for item in settings.LIVE_CASH_FUTURE_SYMBOLS.split(",") if item.strip()}
-        universe = configured or set(NIFTY50_STOCK_SYMBOLS)
+        # Empty configuration means the complete current FUTSTK universe; an explicit list can restrict it.
+        universe = configured or None
         today = datetime.now(IST).date()
         futures: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
@@ -121,6 +121,8 @@ class LiveCashFutureOneSecondCollector:
             if str(item.get("exch_seg", "")).upper() != "NFO":
                 continue
             if str(item.get("instrumenttype", "")).upper() != "FUTSTK":
+                continue
+            if universe is not None and str(item.get("name") or "").strip().upper() not in universe:
                 continue
             token = str(item.get("token") or "").strip()
             underlying = str(item.get("name") or "").strip().upper()
