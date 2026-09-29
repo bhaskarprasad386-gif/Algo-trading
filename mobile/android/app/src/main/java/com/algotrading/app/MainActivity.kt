@@ -52,6 +52,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnAppUpdate: Button
     private lateinit var btnStrategies: Button
     private lateinit var btnResultsJournal: Button
+    private lateinit var tvMarketFeedStatus: TextView
+    private lateinit var tvIndexOverview: TextView
+    private lateinit var tvCommodityOverview: TextView
+    private lateinit var btnMarketOverviewRefresh: Button
 
     private val scannerRefreshHandler = Handler(Looper.getMainLooper())
     private lateinit var scannerRefreshRunnable: Runnable
@@ -110,10 +114,11 @@ class MainActivity : AppCompatActivity() {
                 scannerRefreshHandler.postDelayed(this, 1000L)
             }
         }
-        updateScannerAutoRefreshStatus(); checkServerStatus(); checkBrokerStatus(); checkSafetyStatus()
+        updateScannerAutoRefreshStatus(); checkServerStatus(); checkBrokerStatus(); checkSafetyStatus(); loadMarketOverview()
         btnAppUpdate.setOnClickListener { startActivity(Intent(this, UpdateActivity::class.java)) }
         btnStrategies.setOnClickListener { startActivity(Intent(this, StrategyRegistryActivity::class.java)) }
         btnResultsJournal.setOnClickListener { startActivity(Intent(this, ResultsJournalActivity::class.java)) }
+        btnMarketOverviewRefresh.setOnClickListener { loadMarketOverview() }
         btnRunScanner.setOnClickListener { runCashFutureScanner() }
         btnScannerPaperExecute.setOnClickListener { paperExecuteScannerOpportunity() }
         btnFullFnoBacktest.setOnClickListener { startActivity(Intent(this, FullFnoBacktestActivity::class.java)) }
@@ -137,6 +142,35 @@ class MainActivity : AppCompatActivity() {
         scannerRefreshHandler.postDelayed(scannerRefreshRunnable, seconds * 1000L); scannerRefreshHandler.postDelayed(scannerCountdownRunnable, 1000L)
     }
 
+    private fun loadMarketOverview() = lifecycleScope.launch(Dispatchers.IO) {
+        withContext(Dispatchers.Main) {
+            btnMarketOverviewRefresh.isEnabled = false
+            tvMarketFeedStatus.text = "Live feed: READING • Orders: OFF"
+        }
+        try {
+            val response = ApiService.retrofitService.marketOverview()
+            fun fmt(row: MarketOverviewRow): String {
+                val ltp = row.ltp?.let { String.format(Locale.US, "%.2f", it) } ?: "—"
+                val chg = row.change_percent?.let { String.format(Locale.US, "%.2f%%", it) } ?: "—"
+                val hl = if (row.high != null || row.low != null) "${row.high ?: "—"} / ${row.low ?: "—"}" else "—"
+                val ba = "${row.bid ?: "—"} / ${row.ask ?: "—"}"
+                return "${row.exchange}:${row.symbol}  LTP ₹$ltp  CHG $chg  H/L $hl  B/A $ba  ${row.status}"
+            }
+            withContext(Dispatchers.Main) {
+                tvMarketFeedStatus.text = if (response.errors.isEmpty()) "Live feed: ONLINE • Angel One • Orders: OFF" else "Live feed: PARTIAL • ${response.errors.size} quote errors • Orders: OFF"
+                tvIndexOverview.text = "NSE / BSE INDEX DATA\n" + if (response.indices.isEmpty()) "No live index quote available." else response.indices.joinToString("\n") { fmt(it) }
+                tvCommodityOverview.text = "COMMODITY DATA\n" + if (response.commodities.isEmpty()) "No live commodity quote available." else response.commodities.joinToString("\n") { fmt(it) }
+            }
+        } catch (error: Exception) {
+            withContext(Dispatchers.Main) {
+                tvMarketFeedStatus.text = "Live feed: ERROR • Orders: OFF"
+                tvIndexOverview.text = "NSE / BSE INDEX DATA\nMarket quote unavailable: " + (error.message ?: "API error")
+                tvCommodityOverview.text = "COMMODITY DATA\nMarket quote unavailable."
+            }
+        } finally {
+            withContext(Dispatchers.Main) { btnMarketOverviewRefresh.isEnabled = true }
+        }
+    }
     private fun checkServerStatus() = lifecycleScope.launch(Dispatchers.IO) { try { val response = ApiService.retrofitService.getRootStatus(); withContext(Dispatchers.Main) { tvStatus.text = "Server Status: ${response.status}" } } catch (_: Exception) { withContext(Dispatchers.Main) { tvStatus.text = "Server Error: Offline" } } }
     private fun checkBrokerStatus() = lifecycleScope.launch(Dispatchers.IO) { try { val response = ApiService.retrofitService.brokerStatus("angel_one"); withContext(Dispatchers.Main) { tvBrokerStatus.text = if (response.connected) "Broker Status: Angel One CONNECTED • Real Trading ${if (response.real_trading) "ON" else "OFF"}" else "Broker Status: Angel One not connected • Real Trading OFF" } } catch (_: Exception) { withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Unable to check • Real Trading OFF" } } }
     private fun checkSafetyStatus() = lifecycleScope.launch(Dispatchers.IO) { try { val response = ApiService.retrofitService.safetyStatus(); withContext(Dispatchers.Main) { renderSafety(response) } } catch (_: Exception) { withContext(Dispatchers.Main) { tvSafetyStatus.text = "Safety: OFF • Kill Switch: ON"; tvSafetyRouting.text = "Live order routing: DISABLED" } } }
