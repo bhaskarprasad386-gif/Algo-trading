@@ -14,6 +14,8 @@ import threading
 import time
 from typing import Any, Protocol
 
+from app.core.config import settings
+
 
 class MarketDataCache(Protocol):
     def put(self, key: str, value: dict[str, Any], *, timestamp_ns: int | None = None) -> None: ...
@@ -105,7 +107,10 @@ class BoundedMarketDataCache:
             }
 
 
-_SHARED_CACHE = BoundedMarketDataCache()
+_SHARED_CACHE = BoundedMarketDataCache(
+    max_entries=settings.MARKET_DATA_CACHE_MAX_ENTRIES,
+    ttl_seconds=settings.MARKET_DATA_CACHE_TTL_SECONDS,
+)
 
 
 def get_shared_market_data_cache() -> BoundedMarketDataCache:
