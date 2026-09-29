@@ -27,6 +27,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etExitPrice: EditText
     private lateinit var tvPaperResult: TextView
     private lateinit var tvScannerResult: TextView
+    private lateinit var tvAlertCenter: TextView
     private lateinit var tvScannerAutoRefreshStatus: TextView
     private lateinit var tvScannerNextRefresh: TextView
     private lateinit var btnRunScanner: Button
@@ -61,6 +62,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnLiveDataHealthRefresh: Button
     private lateinit var cbShowMarket: CheckBox
     private lateinit var cbShowScanner: CheckBox
+    private lateinit var cbShowAlerts: CheckBox
     private lateinit var cbShowStrategy: CheckBox
     private lateinit var cbShowResults: CheckBox
     private lateinit var cbShowPaper: CheckBox
@@ -86,6 +88,8 @@ class MainActivity : AppCompatActivity() {
         etExitPrice = findViewById(R.id.etExitPrice)
         tvPaperResult = findViewById(R.id.tvPaperResult)
         tvScannerResult = findViewById(R.id.tvScannerResult)
+        tvAlertCenter = findViewById(R.id.tvAlertCenter)
+        cbShowAlerts = findViewById(R.id.cbShowAlerts)
         tvScannerAutoRefreshStatus = findViewById(R.id.tvScannerAutoRefreshStatus)
         tvScannerNextRefresh = findViewById(R.id.tvScannerNextRefresh)
         btnRunScanner = findViewById(R.id.btnRunScanner)
@@ -161,6 +165,7 @@ class MainActivity : AppCompatActivity() {
         val p = dashboardPreferences()
         cbShowMarket.isChecked = p.getBoolean("market", true)
         cbShowScanner.isChecked = p.getBoolean("scanner", true)
+        cbShowAlerts.isChecked = p.getBoolean("alerts", true)
         cbShowStrategy.isChecked = p.getBoolean("strategy", true)
         cbShowResults.isChecked = p.getBoolean("results", true)
         cbShowPaper.isChecked = p.getBoolean("paper", true)
@@ -172,6 +177,7 @@ class MainActivity : AppCompatActivity() {
             .putBoolean("saved", true)
             .putBoolean("market", cbShowMarket.isChecked)
             .putBoolean("scanner", cbShowScanner.isChecked)
+            .putBoolean("alerts", cbShowAlerts.isChecked)
             .putBoolean("strategy", cbShowStrategy.isChecked)
             .putBoolean("results", cbShowResults.isChecked)
             .putBoolean("paper", cbShowPaper.isChecked)
@@ -181,7 +187,7 @@ class MainActivity : AppCompatActivity() {
     }
     private fun resetDashboardLayout() {
         dashboardPreferences().edit().clear().apply()
-        cbShowMarket.isChecked = true; cbShowScanner.isChecked = true; cbShowStrategy.isChecked = true; cbShowResults.isChecked = true; cbShowPaper.isChecked = true
+        cbShowMarket.isChecked = true; cbShowScanner.isChecked = true; cbShowAlerts.isChecked = true; cbShowStrategy.isChecked = true; cbShowResults.isChecked = true; cbShowPaper.isChecked = true
         tvDashboardLayoutStatus.text = "Layout: DEFAULT • saved on this device"
         applyDashboardVisibility()
     }
@@ -195,6 +201,7 @@ class MainActivity : AppCompatActivity() {
         tvIndexOverview.visibility = if (cbShowMarket.isChecked) visible else hidden
         tvCommodityOverview.visibility = if (cbShowMarket.isChecked) visible else hidden
         btnRunScanner.visibility = if (cbShowScanner.isChecked) visible else hidden
+        tvAlertCenter.visibility = if (cbShowAlerts.isChecked) visible else hidden
         tvScannerResult.visibility = if (cbShowScanner.isChecked) visible else hidden
         cbScannerAutoRefresh.visibility = if (cbShowScanner.isChecked) visible else hidden
         etScannerRefreshSeconds.visibility = if (cbShowScanner.isChecked) visible else hidden
@@ -333,7 +340,10 @@ class MainActivity : AppCompatActivity() {
             }
             withContext(Dispatchers.Main) {
                 val errorText = response.errors.joinToString("\n") { error -> "Error: ${error.symbol} • ${error.error}" }
+                val alertEvents = sorted.filter { !it.alert_event.isNullOrBlank() }
+                val alertText = if (alertEvents.isEmpty()) "ALERT CENTER • NO NEW EVENTS\\n\\nNo NEW / RECOVERY alert event in the latest scan." else buildString { append("ALERT CENTER • ${alertEvents.size} EVENT(S)\\n\\n"); alertEvents.take(20).forEach { item -> append("${item.alert_event} • ${item.symbol} • ${item.contract_month}\\nGap ${item.gap_pct}% • Net ${item.net_gap_pct}% • Lifecycle ${item.lifecycle}\\n\\n") } }
                 lastScannerResult = result
+                tvAlertCenter.text = alertText
                 if (errorText.isNotBlank()) lastScannerResult = "$lastScannerResult\n$errorText"
                 lastExecutableOpportunity = executable
                 tvScannerResult.text = lastScannerResult
