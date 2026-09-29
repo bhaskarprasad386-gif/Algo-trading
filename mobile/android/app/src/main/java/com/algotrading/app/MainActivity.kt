@@ -9,6 +9,7 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.TextView
+import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -161,6 +162,7 @@ class MainActivity : AppCompatActivity() {
         cbShowResults.isChecked = p.getBoolean("results", true)
         cbShowPaper.isChecked = p.getBoolean("paper", true)
         tvDashboardLayoutStatus.text = if (p.getBoolean("saved", false)) "Layout: SAVED • this device" else "Layout: DEFAULT • saved on this device"
+        applyDashboardVisibility()
     }
     private fun saveDashboardLayout() {
         dashboardPreferences().edit()
@@ -172,11 +174,33 @@ class MainActivity : AppCompatActivity() {
             .putBoolean("paper", cbShowPaper.isChecked)
             .apply()
         tvDashboardLayoutStatus.text = "Layout: SAVED • this device"
+        applyDashboardVisibility()
     }
     private fun resetDashboardLayout() {
         dashboardPreferences().edit().clear().apply()
         cbShowMarket.isChecked = true; cbShowScanner.isChecked = true; cbShowStrategy.isChecked = true; cbShowResults.isChecked = true; cbShowPaper.isChecked = true
         tvDashboardLayoutStatus.text = "Layout: DEFAULT • saved on this device"
+        applyDashboardVisibility()
+    }
+    private fun applyDashboardVisibility() {
+        val visible = View.VISIBLE
+        val hidden = View.GONE
+        btnMarketOverviewRefresh.visibility = if (cbShowMarket.isChecked) visible else hidden
+        tvMarketFeedStatus.visibility = if (cbShowMarket.isChecked) visible else hidden
+        tvIndexOverview.visibility = if (cbShowMarket.isChecked) visible else hidden
+        tvCommodityOverview.visibility = if (cbShowMarket.isChecked) visible else hidden
+        btnRunScanner.visibility = if (cbShowScanner.isChecked) visible else hidden
+        tvScannerResult.visibility = if (cbShowScanner.isChecked) visible else hidden
+        cbScannerAutoRefresh.visibility = if (cbShowScanner.isChecked) visible else hidden
+        etScannerRefreshSeconds.visibility = if (cbShowScanner.isChecked) visible else hidden
+        btnStrategies.visibility = if (cbShowStrategy.isChecked) visible else hidden
+        btnFullFnoBacktest.visibility = if (cbShowStrategy.isChecked) visible else hidden
+        btnBoxSpread.visibility = if (cbShowStrategy.isChecked) visible else hidden
+        btnResultsJournal.visibility = if (cbShowResults.isChecked) visible else hidden
+        btnPaperEntry.visibility = if (cbShowPaper.isChecked) visible else hidden
+        btnPaperPosition.visibility = if (cbShowPaper.isChecked) visible else hidden
+        btnPaperExit.visibility = if (cbShowPaper.isChecked) visible else hidden
+        tvPaperResult.visibility = if (cbShowPaper.isChecked) visible else hidden
     }
     private fun loadMarketOverview() = lifecycleScope.launch(Dispatchers.IO) {
         withContext(Dispatchers.Main) {
