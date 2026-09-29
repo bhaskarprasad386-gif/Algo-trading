@@ -39,26 +39,6 @@ function saveDashboardWidgets(){
 }
 function resetDashboardWidgets(){localStorage.removeItem(DASHBOARD_WIDGET_KEY);applyDashboardWidgets();document.getElementById('widgetSaveStatus').textContent='Default layout restored'}
 document.addEventListener('DOMContentLoaded',applyDashboardWidgets);
-function dashboardWidgetPrefs(){ return JSON.parse(localStorage.getItem('algoDashboardWidgets')||'{"market":true,"scanner":true,"strategy":true,"results":true,"paper":true,"alerts":true}'); }
-function applyDashboardLayout(prefs){
-  document.querySelectorAll('.dashboard-widget').forEach(el=>{
-    const key=el.dataset.widget;
-    el.style.display = prefs[key] === false ? 'none' : '';
-  });
-  document.querySelectorAll('.widget-toggle').forEach(el=>{ el.checked = prefs[el.dataset.widget] !== false; });
-  const status=document.getElementById('layoutStatus');
-  if(status) status.textContent=localStorage.getItem('algoDashboardWidgets')?'LAYOUT: SAVED':'LAYOUT: DEFAULT';
-}
-function saveDashboardLayout(){
-  const prefs={};
-  document.querySelectorAll('.widget-toggle').forEach(el=>{ prefs[el.dataset.widget]=el.checked; });
-  localStorage.setItem('algoDashboardWidgets',JSON.stringify(prefs));
-  applyDashboardLayout(prefs);
-}
-function resetDashboardLayout(){
-  localStorage.removeItem('algoDashboardWidgets');
-  applyDashboardLayout(dashboardWidgetPrefs());
-}
 async function loadMarketOverview(){
   const api=(document.getElementById('api').value||window.location.origin).replace(/\\/$/,'');
   const status=document.getElementById('marketFeedStatus');
