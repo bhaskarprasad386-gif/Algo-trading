@@ -13,6 +13,17 @@ import retrofit2.http.Query
 import java.util.concurrent.TimeUnit
 
 data class MarketStatus(val status: String, val message: String)
+data class MarketOverviewRow(
+    val exchange: String = "", val symbol: String = "", val token: String = "",
+    val ltp: Double? = null, val open: Double? = null, val high: Double? = null, val low: Double? = null,
+    val close: Double? = null, val change_percent: Double? = null, val volume: Double? = null,
+    val oi: Double? = null, val bid: Double? = null, val ask: Double? = null, val status: String = ""
+)
+data class MarketOverviewResponse(
+    val status: String = "", val mode: String = "", val indices: List<MarketOverviewRow> = emptyList(),
+    val commodities: List<MarketOverviewRow> = emptyList(),
+    val errors: List<Map<String, Any?>> = emptyList()
+)
 data class MarketLtpResponse(val status: Boolean = false, val exchange: String = "", val tradingsymbol: String = "", val symboltoken: String = "", val ltp: Double? = null)
 data class PaperEntryRequest(val price: Double, val quantity: Double, val stop_loss_pct: Double = 0.02, val target_pct: Double = 0.04)
 data class PaperFill(val price: Double, val quantity: Double)
@@ -275,6 +286,7 @@ interface ApiInterface {
     @GET("/api/v1/execution/paper/position") suspend fun paperPosition(): PaperPositionResponse
     @POST("/api/v1/execution/paper/exit") suspend fun paperExit(@Body request: PaperExitRequest): PaperExitResponse
     @GET("/api/v1/execution/paper/orders") suspend fun paperOrders(): PaperOrdersResponse
+    @GET("/api/v1/market-data/overview") suspend fun marketOverview(): MarketOverviewResponse
     @GET("/api/v1/market-data/ltp-by-symbol") suspend fun ltpBySymbol(@Query("tradingsymbol") tradingSymbol: String, @Query("exchange") exchange: String = "NSE"): MarketLtpResponse
     @GET("/api/v1/scanner/cash-future/live/fast") suspend fun liveCashFutureScan(@Query("max_age_seconds") maxAgeSeconds: Double = 5.0, @Query("limit") limit: Int = 50): LiveCashFutureScanResponse
     @GET("/api/v1/scanner/cash-future/live/auto") suspend fun cashFutureScan(): CashFutureScanResponse
