@@ -13,12 +13,12 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 ## Master priority order — execute from top to bottom
 
 ### P0 — Historical Cash-Future strategy application + execution core
-- [ ] Select one historical date or date range.
-- [ ] Select a Cash-Future strategy + configuration.
-- [ ] Load only the requested historical Cash + Future observations/contracts.
-- [ ] Evaluate strategy strictly point-in-time; no look-ahead.
-- [ ] Normalize strategy BUY/SELL signals into historical Cash-Future actions.
-- [ ] Preserve existing convergence strategy and APIs; do not replace them.
+- [x] Select one historical date or date range.
+- [x] Select a Cash-Future strategy + configuration.
+- [x] Load only the requested historical Cash + Future observations/contracts.
+- [x] Evaluate strategy strictly point-in-time; no look-ahead.
+- [x] Normalize strategy BUY/SELL signals into historical Cash-Future actions.
+- [x] Preserve existing convergence strategy and APIs; do not replace them.
 - [x] Execute signals through the existing Cash-Future executable-price model.
 - [x] Apply point-in-time historical lot size, charges, funding, slippage/bid-ask and expiry rules.
 - [x] Persist strategy-run metadata, signals, trades, P&L and equity for comparison/replay.
@@ -51,11 +51,11 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [x] Historical readiness blocks wrong-range, interior-gap, incomplete-manifest and non-materialized requests.
 
 ### P3 — Results / Calendar / Replay completion
-- [ ] Make date/month Results use the same canonical Cash-Future contract identity + point-in-time lot path as the backtest engine.
-- [ ] Switch Android date ranking to canonical `/date-gap` with `mode=shorting`.
-- [ ] Switch monthly search to one `/monthly-gap` request instead of day-by-day looping.
-- [ ] Complete Futures Results UI: instrument selector + contract-month selector + future graph/replay.
-- [ ] Preserve ranking: `(High - Open) × point-in-time historical lot`.
+- [x] Make date/month Results use the same canonical Cash-Future contract identity + point-in-time lot path as the backtest engine.
+- [x] Switch Android date ranking to canonical `/date-gap` with `mode=shorting`.
+- [x] Switch monthly search to one `/monthly-gap` request instead of day-by-day looping.
+- [x] Complete Futures Results UI: instrument selector + contract-month selector + future graph/replay.
+- [x] Preserve ranking: `(High - Open) × point-in-time historical lot`.
 - [x] Intraday replay uses 1-minute source data and displays 15-minute candles with 1-minute stepping.
 - [x] Replay 15-minute buckets align to NSE 09:15 session start: 09:15, 09:30, …, 15:15.
 - [x] Replay cadence/session-start regression coverage added; source cadence is preserved and no finer interval is claimed than the materialized data supports.
@@ -72,7 +72,7 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 ### P5 — Final validation gate
 - [ ] Backend compile.
 - [ ] Cash-Future targeted backend tests.
-- [ ] Android compile/tests for Results/replay and later Cash-Future strategy UI.
+- [ ] Android compile/tests for Results/replay and Cash-Future strategy UI.
 - [ ] Full test suite.
 - [ ] Fresh GitHub Actions run verified PASS.
 - [ ] Only after all applicable P0–P5 items pass: Cash-Future milestone marked complete.
@@ -114,6 +114,8 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [x] Persisted historical-range reconciliation against actual materialized Cash-Future rows.
 - [x] Session-aware interior-gap reconciliation without bridging weekends or closed-market periods.
 - [x] Regression coverage for wrong historical range, interior manifest gaps, split/adjacent coverage, and persisted rows that do not span requested endpoints.
+- [x] Historical strategy-run selection and execution path is wired from Android strategy builder to the Cash-Future strategy-run API.
+- [x] Results/date/month Android paths use the canonical Cash-Future date-gap/monthly-gap APIs, point-in-time lot values, CURRENT/NEAR contract replay, and the Futures results/replay UI.
 
 ## Locked rules
 1. Shorting gap for Results = `High - Open`.
@@ -135,7 +137,7 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 17. Historical forced liquidation may only use a genuine price observation at the liquidation timestamp; never liquidate another position using its stale last price.
 
 ## Current checkpoint
-**Current batch: Cash-Future remaining implementation batch completed. Historical download/6-month/1-year coverage is explicitly out of scope because genuine historical data is unavailable. Remaining gate is compile + targeted tests + full tests + fresh CI verification; no fabricated historical data will be introduced.**
+**Implementation scope: COMPLETE. P0–P4 are now source-verified complete. Historical download/6-month/1-year coverage is explicitly out of scope because genuine historical data is unavailable. Only P5 compile/test/CI verification remains; no fabricated historical data will be introduced.**
 
 The next layer must preserve all P1 execution behavior, point-in-time lot/contract identity, genuine liquidity rules, rollover safety, ₹1 crore portfolio accounting, and no-look-ahead evaluation.
 
