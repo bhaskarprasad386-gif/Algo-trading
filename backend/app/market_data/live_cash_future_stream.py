@@ -128,7 +128,7 @@ class LiveCashFutureOneSecondCollector:
             underlying = str(item.get("name") or "").strip().upper()
             symbol = str(item.get("symbol") or "").strip().upper()
             expiry = _expiry(item.get("expiry"))
-            if not token or not underlying or underlying not in universe or not symbol or expiry is None or expiry < today:
+            if not token or not underlying or (universe is not None and underlying not in universe) or not symbol or expiry is None or expiry < today:
                 continue
             key = (underlying, token)
             if key not in seen:
