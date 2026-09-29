@@ -19,6 +19,7 @@ from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalReco
 from app.core.logger import app_logger
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.websocket import MarketDataWebSocket
+from app.market_data.nifty50_universe import NIFTY50_STOCK_SYMBOLS
 
 IST = ZoneInfo("Asia/Kolkata")
 OPEN = time(9, 15)
@@ -27,7 +28,7 @@ SOURCE = "angelone-live-1s"
 TIMEFRAME = "1s"
 
 _STATE_LOCK = threading.Lock()
-_STATE = {"enabled": False, "running": False, "connected": False, "last_observation_ns": None, "written": 0, "rejected": 0, "gap_seconds": 0, "last_error": None}
+_STATE = {"enabled": False, "running": False, "connected": False, "last_observation_ns": None, "written": 0, "rejected": 0, "dropped": 0, "pairs": 0, "observations": 0, "gap_seconds": 0, "coverage": 0, "last_error": None}
 
 
 def live_cash_future_health() -> dict[str, Any]:
@@ -110,6 +111,8 @@ class LiveCashFutureOneSecondCollector:
 
     def _contracts(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         rows = self.instrument_master.download()
+        configured = {item.strip().upper() for item in settings.LIVE_CASH_FUTURE_SYMBOLS.split(",") if item.strip()}
+        universe = configured or set(NIFTY50_STOCK_SYMBOLS)
         today = datetime.now(IST).date()
         futures: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
@@ -122,7 +125,7 @@ class LiveCashFutureOneSecondCollector:
             underlying = str(item.get("name") or "").strip().upper()
             symbol = str(item.get("symbol") or "").strip().upper()
             expiry = _expiry(item.get("expiry"))
-            if not token or not underlying or not symbol or expiry is None or expiry < today:
+            if not token or not underlying or underlying not in universe or not symbol or expiry is None or expiry < today:
                 continue
             key = (underlying, token)
             if key not in seen:
@@ -249,6 +252,10 @@ class LiveCashFutureOneSecondCollector:
             _STATE["last_error"] = None
         latest: dict[str, tuple[int, dict[str, Any]]] = {}
         written = 0
+        rejected = 0
+        dropped = 0
+        pairs = 0
+        observations = 0
         gap_seconds = 0
         try:
             while not self.stop_event.is_set() and self.market_open():
@@ -262,6 +269,7 @@ class LiveCashFutureOneSecondCollector:
                     meta = token_meta.get(token)
                     ts = _timestamp_ns(message)
                     if not token or meta is None or ts is None:
+                        dropped += 1
                         continue
                     second_ns = (ts // 1_000_000_000) * 1_000_000_000
                     previous = latest.get(token)
@@ -281,6 +289,7 @@ class LiveCashFutureOneSecondCollector:
                                 payload=previous_payload,
                             ))
                         except ValueError as exc:
+                            rejected += 1
                             app_logger.error(f"1-second live record rejected {token}: {exc}")
                     payload = dict(message)
                     payload.update({
@@ -300,10 +309,14 @@ class LiveCashFutureOneSecondCollector:
                     })
                     if previous is not None and second_ns > previous[0] + 1_000_000_000:
                         gap_seconds += int((second_ns - previous[0]) / 1_000_000_000) - 1
+                    observations += 1
                     latest[token] = (second_ns, payload)
                     with _STATE_LOCK:
                         _STATE["last_observation_ns"] = second_ns
                         _STATE["gap_seconds"] = gap_seconds
+                        _STATE["observations"] = observations
+                        _STATE["pairs"] = pairs
+                        _STATE["dropped"] = dropped
                         _STATE["connected"] = any(socket.connected for socket in self._sockets)
             for token, (second_ns, payload) in latest.items():
                 meta = token_meta[token]
@@ -321,6 +334,7 @@ class LiveCashFutureOneSecondCollector:
                         payload=payload,
                     ))
                 except ValueError as exc:
+                    rejected += 1
                     app_logger.error(f"1-second final record rejected {token}: {exc}")
         finally:
             catalog.close()
@@ -329,10 +343,15 @@ class LiveCashFutureOneSecondCollector:
             self._sockets = []
         with _STATE_LOCK:
             _STATE["written"] += written
+            _STATE["rejected"] += rejected
+            _STATE["dropped"] += dropped
+            _STATE["observations"] = observations
+            _STATE["pairs"] = pairs
+            _STATE["coverage"] = len({meta["underlying"] for meta in token_meta.values()})
             _STATE["running"] = False
             _STATE["connected"] = False
             _STATE["gap_seconds"] = gap_seconds
-        app_logger.info(f"1-second live Cash-Future session complete: written={written}, gaps={gap_seconds}")
+        app_logger.info(f"1-second live Cash-Future session complete: written={written}, rejected={rejected}, dropped={dropped}, pairs={pairs}, gaps={gap_seconds}")
 
     def run_forever(self) -> None:
         app_logger.info("1-second live Cash-Future collector started")
