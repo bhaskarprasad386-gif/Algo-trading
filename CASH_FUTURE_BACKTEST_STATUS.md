@@ -58,7 +58,7 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [ ] Preserve ranking: `(High - Open) × point-in-time historical lot`.
 - [x] Intraday replay uses 1-minute source data and displays 15-minute candles with 1-minute stepping.
 - [x] Replay 15-minute buckets align to NSE 09:15 session start: 09:15, 09:30, …, 15:15.
-- [x] Add replay tests for 09:15/09:30/09:45 and session-end behavior.
+- [ ] Add replay tests for 09:15/09:30/09:45 and session-end behavior.
 
 ### P4 — Scanner + paper-trading integration
 - [x] Keep Cash-Future live scanner operational independently of historical backtesting.
@@ -135,11 +135,11 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 17. Historical forced liquidation may only use a genuine price observation at the liquidation timestamp; never liquidate another position using its stale last price.
 
 ## Current checkpoint
-**Next implementation = P0: historical Cash-Future strategy application/execution — select a historical date/date-range and strategy, stream only the requested Cash + Future observations, evaluate strictly point-in-time, normalize BUY/SELL actions, and execute them through the existing Cash-Future portfolio/executable-price model with deterministic persisted results.**
+**Current batch: free historical 1-minute download dependency removed from the user-facing workflow. Next verification is source/test/CI validation of the existing P0/P3/P4 paths using only genuinely materialized data and live Angel One accumulation; no fabricated historical data will be introduced.**
 
 The next layer must preserve all P1 execution behavior, point-in-time lot/contract identity, genuine liquidity rules, rollover safety, ₹1 crore portfolio accounting, and no-look-ahead evaluation.
 
 ## Completion gate
-Cash-Future is complete only when every applicable P0–P5 item is implemented and tested, or explicitly documented as unavailable because genuine historical data does not exist.
+Cash-Future is complete only when every applicable P0–P5 item is implemented and tested, or explicitly documented as unavailable because genuine historical data does not exist. Free historical 1-minute acquisition is **not a completion dependency**; existing genuine stored data and future live accumulation remain valid sources.
 
 Final gate: **Code → Compile → Targeted tests → Full tests → Fresh CI → PASS**.
