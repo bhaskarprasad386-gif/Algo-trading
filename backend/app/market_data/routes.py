@@ -113,13 +113,13 @@ def get_live_data_health():
     """Return bounded live-data persistence and freshness health for the control center."""
     from datetime import datetime, time
     from zoneinfo import ZoneInfo
-    from app.backtesting.historical_catalog import HistoricalCatalog
+    from app.market_data.daily_shard_catalog import DailyMarketDataShardCatalog
     from app.core.config import settings
 
     ist = ZoneInfo("Asia/Kolkata")
     now = datetime.now(ist)
     market_open = now.weekday() < 5 and time(9, 15) <= now.time() <= time(15, 30)
-    catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
+    catalog = DailyMarketDataShardCatalog(settings.BACKTEST_DATA_DB)
     try:
         sources = []
         for source, timeframe in (("angelone-live-1s", "1s"), ("angelone-live", "event")):
