@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@color/algo_bg" android:fillViewport="true">
+<ScrollView android:id="@+id/mainScroll" xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@color/algo_bg" android:fillViewport="true">
 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp">
 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="ALGO TRADING" android:textColor="@color/algo_text" android:textSize="22sp" android:textStyle="bold"/>
 <TextView android:id="@+id/tvStatus" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Checking Server Status..." android:textColor="@color/algo_muted" android:textSize="12sp"/><LinearLayout android:id="@+id/marketControlCenter" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:orientation="vertical" android:background="@color/algo_surface" android:padding="12dp">
