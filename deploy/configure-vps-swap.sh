@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 TARGET_SWAP_BYTES=$((8 * 1024 * 1024 * 1024))
-SWAPFILE="/swapfile-algo-8g"
+SWAPFILE="/swapfile-algo-supplemental"
 
 log() { printf '\n[algo-memory] %s\n' "$*"; }
 die() { printf '\n[algo-memory] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -39,7 +39,7 @@ if ! swapon --show=NAME --noheadings | grep -Fxq "$SWAPFILE"; then
   swapon "$SWAPFILE"
 fi
 
-if ! grep -Eq '^[[:space:]]*/swapfile-algo-8g[[:space:]]+none[[:space:]]+swap[[:space:]]' /etc/fstab; then
+if ! grep -Eq '^[[:space:]]*/swapfile-algo-supplemental[[:space:]]+none[[:space:]]+swap[[:space:]]' /etc/fstab; then
   printf '%s\n' "$SWAPFILE none swap sw 0 0" >> /etc/fstab
 fi
 
