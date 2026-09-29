@@ -178,7 +178,7 @@ class MainActivity : AppCompatActivity() {
         try {
             val response = ApiService.retrofitService.liveCashFutureScan(maxAgeSeconds = 5.0, limit = 50)
             val completedAt = currentTimestamp()
-            val sorted = response.data.sortedWith(compareByDescending<LiveCashFutureSignal> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit }).thenByDescending { it.rank_score }.thenByDescending { it.gap_pct }.thenBy { it.symbol }
+            val sorted = response.data.sortedWith(compareByDescending<LiveCashFutureSignal> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit }.thenByDescending { it.rank_score }.thenByDescending { it.gap_pct }.thenBy { it.symbol })
             val executable = sorted.firstOrNull { it.executable }
             val responseDataSize = response.data.size
             val responsePositiveGapCount = response.data.count { it.gap > 0.0 && it.net_gap > 0.0 }
