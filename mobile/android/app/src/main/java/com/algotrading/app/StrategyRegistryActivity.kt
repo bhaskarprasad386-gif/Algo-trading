@@ -60,13 +60,34 @@ class StrategyRegistryActivity : AppCompatActivity() {
                 "synthetic-future-cash-carry" -> ApiService.retrofitService.syntheticCashCarryLive(50)
                 else -> emptyMap()
             }
-            val rows = (payload["data"] as? List<*>) ?: emptyList<Any?>()
-            val opportunities = (payload["opportunity_count"] as? Number)?.toInt() ?: rows.size
+            val rows = (payload["data"] as? List<*>)?.mapNotNull { it as? Map<*, *> } ?: emptyList()
+            val opportunities = (payload["opportunity_count"] as? Number)?.toInt() ?: rows.count {
+                number(it["executable_edge"] ?: it["long_edge"] ?: it["short_edge"]) > 0.0
+            }
             val mode = payload["mode"]?.toString() ?: "live"
+            val detail = buildString {
+                append(name).append("\n")
+                append("Mode: ").append(mode).append(" • Live rows: ").append(rows.size)
+                    .append(" • Executable: ").append(opportunities).append("\n\n")
+                append("Rank • Underlying • Expiry/Contract • Executable Edge • Gross P&L • Liquidity\n")
+                rows.take(10).forEachIndexed { index, row ->
+                    val underlying = row["underlying"] ?: row["symbol"] ?: "-"
+                    val expiry = row["expiry"] ?: row["near_contract_month"] ?: "-"
+                    val edge = row["executable_edge"] ?: row["long_edge"] ?: row["short_edge"] ?: 0
+                    val gross = row["gross_pnl"] ?: 0
+                    val liquidity = row["liquidity_qty"] ?: row["capacity_lots"] ?: 0
+                    append(index + 1).append(" • ").append(underlying).append(" • ")
+                        .append(expiry).append(" • ₹").append(number(edge).format2())
+                        .append(" • ₹").append(number(gross).format2())
+                        .append(" • ").append(number(liquidity).format2()).append("\n")
+                }
+                if (rows.isEmpty()) append("NO CURRENT LIVE ROWS\n")
+                append("\nBid/ask executable scan • paper-safe • live broker orders OFF")
+            }
             withContext(Dispatchers.Main) {
                 AlertDialog.Builder(this@StrategyRegistryActivity)
                     .setTitle(name)
-                    .setMessage(name + "\nMode: " + mode + "\nLive rows: " + rows.size + "\nExecutable opportunities: " + opportunities + "\n\nBid/ask executable scan • paper-safe • live broker orders OFF")
+                    .setMessage(detail)
                     .setPositiveButton("OK", null)
                     .show()
             }
@@ -80,5 +101,12 @@ class StrategyRegistryActivity : AppCompatActivity() {
             }
         }
     }
+
+    private fun number(value: Any?): Double = when (value) {
+        is Number -> value.toDouble()
+        else -> value?.toString()?.toDoubleOrNull() ?: 0.0
+    }
+
+    private fun Double.format2(): String = String.format(java.util.Locale.US, "%.2f", this)
 
 }
