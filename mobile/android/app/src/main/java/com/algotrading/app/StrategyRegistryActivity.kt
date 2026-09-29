@@ -84,6 +84,17 @@ class StrategyRegistryActivity : AppCompatActivity() {
                             .append(" • L ").append(longPct).append("% / S ").append(shortPct).append("%")
                             .append(" • ").append(liquidity).append("\n")
                     }
+                } else if (id == "synthetic-future-cash-carry") {
+                    append("Rank • Underlying • Expiry • Strike • Direction • Future B/A • Call B/A • Put B/A • Edge • Gross P&L\n")
+                    rows.take(10).forEachIndexed { index, row ->
+                        append(index + 1).append(" • ").append(row["underlying"] ?: "-").append(" • ").append(row["expiry"] ?: "-")
+                            .append(" • ").append(row["strike"] ?: "-").append(" • ").append(row["direction"] ?: "-")
+                            .append(" • F ").append(number(row["future_bid"]).format2()).append("/").append(number(row["future_ask"]).format2())
+                            .append(" • C ").append(number(row["call_bid"]).format2()).append("/").append(number(row["call_ask"]).format2())
+                            .append(" • P ").append(number(row["put_bid"]).format2()).append("/").append(number(row["put_ask"]).format2())
+                            .append(" • ₹").append(number(row["executable_edge"]).format2())
+                            .append(" • ₹").append(number(row["gross_pnl"]).format2()).append("\n")
+                    }
                 } else {
                     append("Rank • Underlying • Expiry/Contract • Executable Edge • Gross P&L • Liquidity\n")
                     rows.take(10).forEachIndexed { index, row ->
