@@ -118,6 +118,8 @@ async def lifespan(app: FastAPI):
         backtest_download_manager.close()
         backtest_status_store.close()
         universal_result_ledger.close()
+        from app.scanner.backtest_jobs import shutdown_workers
+        shutdown_workers()
 
 app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug, lifespan=lifespan)
 app.add_exception_handler(TradingAppException, trading_exception_handler)
