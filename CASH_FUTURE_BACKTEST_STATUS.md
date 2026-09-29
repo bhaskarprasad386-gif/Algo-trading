@@ -19,10 +19,10 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [ ] Evaluate strategy strictly point-in-time; no look-ahead.
 - [ ] Normalize strategy BUY/SELL signals into historical Cash-Future actions.
 - [ ] Preserve existing convergence strategy and APIs; do not replace them.
-- [ ] Execute signals through the existing Cash-Future executable-price model.
-- [ ] Apply point-in-time historical lot size, charges, funding, slippage/bid-ask and expiry rules.
-- [ ] Persist strategy-run metadata, signals, trades, P&L and equity for comparison/replay.
-- [ ] Add Cash-Future strategy-run API.
+- [x] Execute signals through the existing Cash-Future executable-price model.
+- [x] Apply point-in-time historical lot size, charges, funding, slippage/bid-ask and expiry rules.
+- [x] Persist strategy-run metadata, signals, trades, P&L and equity for comparison/replay.
+- [x] Add Cash-Future strategy-run API.
 - [ ] Add targeted tests: date filtering, BUY/SELL, no-look-ahead, deterministic replay and contract isolation.
 
 ### P1 — ₹1 crore portfolio capital + realistic risk/execution
@@ -42,6 +42,7 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [x] Require verified coverage manifests before a historical run is considered complete.
 - [x] Durable full-F&O Cash-Future jobs: progress, cancel, resume, idempotent retry, bounded resources.
 - [ ] Validate 6-month and 1-year runs where genuine data exists, without whole-history RAM materialization.
+- [x] Removed the free historical 1-minute download dependency from the user-facing Cash-Future workflow; runs now consume only genuinely materialized data, while live Angel One data can be accumulated incrementally for future backtests.
 - [x] Data-quality gates: duplicate timestamps, missing sessions, stale/crossed quotes, impossible OHLC, incomplete contracts.
 - [ ] Source → bars → strategy signals → fills → costs → P&L → Results reconciliation.
 - [ ] Preserve genuine finer-resolution data when available; never manufacture millisecond data from minute candles.
@@ -57,10 +58,10 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [ ] Preserve ranking: `(High - Open) × point-in-time historical lot`.
 - [x] Intraday replay uses 1-minute source data and displays 15-minute candles with 1-minute stepping.
 - [x] Replay 15-minute buckets align to NSE 09:15 session start: 09:15, 09:30, …, 15:15.
-- [ ] Add replay tests for 09:15/09:30/09:45 and session-end behavior.
+- [x] Add replay tests for 09:15/09:30/09:45 and session-end behavior.
 
 ### P4 — Scanner + paper-trading integration
-- [ ] Keep Cash-Future live scanner operational independently of historical backtesting.
+- [x] Keep Cash-Future live scanner operational independently of historical backtesting.
 - [ ] Live paper trading for arbitrary strategy BUY/SELL actions.
 - [ ] Paper capital default = ₹1 crore.
 - [ ] Paper fills should behave like real execution using available live prices/bid-ask; no fake market data.
