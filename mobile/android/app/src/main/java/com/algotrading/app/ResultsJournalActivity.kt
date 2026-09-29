@@ -129,7 +129,12 @@ class ResultsJournalActivity : AppCompatActivity() {
         val cursor = equity["next_cursor"] as? Map<*, *>; equityTimestamp = (cursor?.get("timestamp_ns") as? Number)?.toLong(); equityId = (cursor?.get("equity_id") as? Number)?.toLong()
     }
 
-    private fun hasMore(): Boolean = tradeCursor >= 0 || fillCursor >= 0 || eventCursor >= 0 || (equityTimestamp != null && equityId != null)
+    private fun hasMore(): Boolean =
+        if (cashFutureMode) {
+            tradeCursor >= 0 || eventCursor >= 0 || equityId != null
+        } else {
+            tradeCursor >= 0 || fillCursor >= 0 || eventCursor >= 0 || (equityTimestamp != null && equityId != null)
+        }
 
     private fun formatResult(id: String, run: Map<String, Any?>): String = buildString {
         append("RUN: ").append(id).append("\n\n"); append("Status: ").append(run["status"] ?: "-").append("\n"); append("Strategy: ").append(run["strategy_id"] ?: run["strategy"] ?: "-").append("\n"); append("Initial Capital: ₹").append(run["initial_capital"] ?: "-").append("\n"); append("Final Equity: ₹").append(run["final_equity"] ?: run["final_capital"] ?: "-").append("\n"); append("Net P&L: ₹").append(run["net_pnl"] ?: run["net_profit"] ?: "-").append("\n"); append("ROI: ").append(run["roi"] ?: "-").append("\n"); append("Max Drawdown: ").append(run["max_drawdown"] ?: "-").append("\n\n"); append(formatJournal(id))
