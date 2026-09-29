@@ -341,6 +341,17 @@ Before a checkpoint is complete:
 13. Extend the verified core to stock futures, BSE and commodities without duplicating the engine/data layer.
 14. Build live scanners, paper trading and mobile result/analysis screens on the same reusable data and strategy contracts.
 
+## Common Market Data Architecture — Batch H Checkpoint
+
+- [x] Canonical `InstrumentKey` identity: exchange + segment + broker token.
+- [x] Canonical `MarketDataRecord` contract for equity, index, future, option and commodity data.
+- [x] Typed 1-second/event timeframe, nanosecond timestamp and expiry/strike/option metadata fields.
+- [x] Canonical LTP, bid/ask, quantities, volume, OI, OHLC, lot-size and tick-size fields.
+- [x] Executable-quote validation rejects crossed bid/ask values.
+- [x] Immutable record identity and provider-payload preservation for audit/provenance.
+- [x] Regression tests for identity, option metadata, quote validation and instrument-key validation.
+- [ ] Broker connectivity/subscription ownership remains in later Common Market Data batches; Batch H only establishes the stable contract boundary.
+
 ## Development Rule
 **One step → inspect → implement → test → fresh CI → verify PASS → update roadmap/checkpoint.**
 
