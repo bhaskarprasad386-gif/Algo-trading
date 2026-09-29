@@ -149,3 +149,8 @@ def test_live_cash_future_gap_detection_is_explicit_in_collector_source():
     text = source.read_text(encoding="utf-8")
     assert "gap_seconds" in text
     assert "second_ns > previous[0] + 1_000_000_000" in text
+
+
+def test_live_feed_silence_watchdog_triggers_only_after_timeout():
+    assert not LiveCashFutureOneSecondCollector._feed_silent(100.0, 129.9)
+    assert LiveCashFutureOneSecondCollector._feed_silent(100.0, 130.0)
