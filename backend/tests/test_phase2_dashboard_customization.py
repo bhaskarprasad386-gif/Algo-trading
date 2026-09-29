@@ -21,7 +21,7 @@ def test_phase2_android_persistent_dashboard_preferences():
     main = ANDROID_MAIN.read_text(encoding="utf-8")
     for marker in ("dashboardCustomization", "cbShowMarket", "cbShowScanner", "cbShowStrategy", "cbShowResults", "cbShowPaper", "btnSaveDashboardLayout", "btnResetDashboardLayout"):
         assert marker in layout
-    assert "getSharedPreferences("dashboard_layout"" in main
+    assert 'getSharedPreferences("dashboard_layout"' in main
     assert "saveDashboardLayout" in main
     assert "resetDashboardLayout" in main
     assert "applyDashboardVisibility" in main
