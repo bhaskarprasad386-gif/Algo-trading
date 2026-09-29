@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models import Order, Position, TradingAccount
+from app.risk.engine import RiskEngine, RiskLimits
 
 
 @dataclass(frozen=True)
@@ -50,8 +51,11 @@ class PaperQuote:
                     return value
             return None
 
-        return cls(symbol=symbol, ltp=ltp, bid=num("bid", "best_bid", "best_bid_price"),
-                   ask=num("ask", "best_ask", "best_ask_price"),
+        bid = num("bid", "best_bid", "best_bid_price")
+        ask = num("ask", "best_ask", "best_ask_price")
+        if bid is not None and ask is not None and bid > ask:
+            raise ValueError("tick bid cannot exceed ask")
+        return cls(symbol=symbol, ltp=ltp, bid=bid, ask=ask,
                    timestamp=datetime.now(timezone.utc))
 
 
@@ -60,6 +64,30 @@ class LivePaperExecution:
 
     VALID_TYPES = {"MARKET", "LIMIT", "SL"}
     VALID_SIDES = {"BUY", "SELL"}
+
+    def __init__(self, risk_limits: RiskLimits | None = None) -> None:
+        self.risk = RiskEngine(risk_limits)
+
+    def _risk_check(self, db: Session, *, user_id: int, symbol: str, side: str, quantity: int) -> None:
+        position = (db.query(Position).filter(
+            Position.user_id == user_id,
+            Position.symbol == symbol,
+            Position.quantity != 0,
+        ).order_by(Position.id.desc()).first())
+        current = int(position.quantity) if position else 0
+        signed = quantity if side == "BUY" else -quantity
+        allowed, reason = self.risk.check(quantity, current_position=current,
+                                          realized_pnl=self._realized_pnl(db, user_id))
+        if not allowed:
+            raise ValueError(reason)
+        projected = current + signed
+        if abs(projected) > self.risk.limits.max_position_quantity:
+            raise ValueError("position limit exceeded")
+
+    @staticmethod
+    def _realized_pnl(db: Session, user_id: int) -> float:
+        account = db.query(TradingAccount).filter(TradingAccount.user_id == user_id).first()
+        return float(account.realized_pnl or 0.0) if account else 0.0
 
     def place(self, db: Session, *, user_id: int, symbol: str, side: str,
               quantity: int, order_type: str = "MARKET", price: float | None = None,
@@ -81,6 +109,7 @@ class LivePaperExecution:
                     if client_order_id else None)
         if existing is not None:
             return existing
+        self._risk_check(db, user_id=user_id, symbol=symbol, side=side, quantity=quantity)
         order = Order(order_id=client_order_id or f"LIVE-PAPER-{user_id}-{uuid.uuid4().hex[:16]}",
                       symbol=symbol, quantity=quantity, transaction_type=side, status="OPEN",
                       user_id=user_id, price=price, pnl=0.0, order_type=order_type,
