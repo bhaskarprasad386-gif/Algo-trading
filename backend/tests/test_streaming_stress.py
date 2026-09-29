@@ -39,3 +39,31 @@ def test_large_stream_is_consumed_incrementally(tmp_path):
     # The replay layer must not retain O(n) Python event history.
     assert peak < 32 * 1024 * 1024
     conn.close()
+
+
+def test_historical_catalog_bounded_batch_is_atomic_and_deduplicated(tmp_path):
+    from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
+
+    catalog = HistoricalCatalog(str(tmp_path / "batch.sqlite3"))
+    records = [
+        HistoricalRecord("angelone-live-1s", "ABC|1", "1s", i * 1_000_000_000, {"ltp": i})
+        for i in range(100)
+    ]
+    assert catalog.ingest_if_absent_batch(records) == 100
+    assert catalog.ingest_if_absent_batch(records) == 0
+    assert catalog.count(source="angelone-live-1s", instrument="ABC|1", timeframe="1s") == 100
+    assert catalog._db.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+    assert catalog._db.execute("PRAGMA synchronous").fetchone()[0] == 1
+    assert catalog._db.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+    catalog.close()
+
+
+def test_latest_message_buffer_preserves_distinct_seconds_and_deduplicates():
+    from app.market_data.live_cash_future_stream import _LatestMessageBuffer
+
+    buffer = _LatestMessageBuffer()
+    for timestamp in (1_000_000_000, 1_001_000_000_000, 1_001_000_000_000, 1_002_000_000_000):
+        buffer.put({"token": "101", "exchange_timestamp": timestamp, "last_traded_price": "10000"})
+    assert len(buffer) == 3
+    drained = buffer.drain()
+    assert [m["exchange_timestamp"] for m in drained] == [1_000_000_000, 1_001_000_000_000, 1_002_000_000_000]
