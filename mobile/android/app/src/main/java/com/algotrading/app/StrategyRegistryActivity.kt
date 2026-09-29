@@ -102,7 +102,9 @@ class StrategyRegistryActivity : AppCompatActivity() {
             }
             val mode = payload["mode"]?.toString() ?: "live"
             val detail = buildString {
-                append(name).append(" • v").append(item.version).append("\n")\n                append("Data: ").append(item.data_mode).append(" • Execution: ").append(item.execution_mode)\n                    .append(" • Live orders: ").append(if (item.live_orders) "ON" else "OFF").append("\n")\n                append("Capabilities: ").append(item.capabilities.joinToString(" • ")).append("\n")
+                append(name).append(" • v").append(item.version).append("\n")
+                append("Data: ").append(item.data_mode).append(" • Execution: ").append(item.execution_mode)\n                    .append(" • Live orders: ").append(if (item.live_orders) "ON" else "OFF").append("\n")
+                append("Capabilities: ").append(item.capabilities.joinToString(" • ")).append("\n")
                 append("Mode: ").append(mode).append(" • Live rows: ").append(rows.size)
                     .append(" • Executable: ").append(opportunities).append("\n\n")
                 if (id == "calendar-spread") {
