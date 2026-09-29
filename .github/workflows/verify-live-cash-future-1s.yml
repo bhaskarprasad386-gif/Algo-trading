@@ -252,6 +252,84 @@ jobs:
             echo "COVERAGE_DB_NOT_FOUND"
           fi
 
+          echo "=== TODAY 12:00-15:30 CONTINUITY ==="
+          DATA_DB="$APP_DIR/backend/backtest_market_data.sqlite3"
+          if [ -f "$DATA_DB" ]; then
+            DATA_DB="$DATA_DB" "$APP_DIR/.venv/bin/python" - <<'PY'
+          import os
+          import sqlite3
+          from datetime import date, datetime, time
+          from zoneinfo import ZoneInfo
+
+          db = os.environ["DATA_DB"]
+          ist = ZoneInfo("Asia/Kolkata")
+          today = date.today()
+          start = datetime.combine(today, time(12, 0), tzinfo=ist)
+          end = datetime.combine(today, time(15, 30), tzinfo=ist)
+          start_ns = int(start.timestamp() * 1_000_000_000)
+          end_ns = int(end.timestamp() * 1_000_000_000)
+          expected_seconds = int((end - start).total_seconds()) + 1
+
+          conn = sqlite3.connect(db)
+          try:
+              row = conn.execute(
+                  """
+                  SELECT
+                    COUNT(*),
+                    COUNT(DISTINCT timestamp_ns / 1000000000),
+                    MIN(timestamp_ns),
+                    MAX(timestamp_ns),
+                    COUNT(DISTINCT instrument)
+                  FROM data_catalog
+                  WHERE source=? AND timeframe=? AND timestamp_ns BETWEEN ? AND ?
+                  """,
+                  ("angelone-live-1s", "1s", start_ns, end_ns),
+              ).fetchone()
+              rows, distinct_seconds, min_ts, max_ts, instruments = row
+
+              legs = conn.execute(
+                  """
+                  SELECT
+                    COUNT(DISTINCT CASE WHEN json_extract(payload_json, '$.leg')='CASH'
+                                        THEN timestamp_ns / 1000000000 END),
+                    COUNT(DISTINCT CASE WHEN json_extract(payload_json, '$.leg')='FUTURE'
+                                        THEN timestamp_ns / 1000000000 END)
+                  FROM data_catalog
+                  WHERE source=? AND timeframe=? AND timestamp_ns BETWEEN ? AND ?
+                  """,
+                  ("angelone-live-1s", "1s", start_ns, end_ns),
+              ).fetchone()
+
+              print(f"SESSION_DATE={today.isoformat()}")
+              print("SESSION_START=12:00:00 IST")
+              print("SESSION_END=15:30:00 IST")
+              print(f"SESSION_EXPECTED_SECONDS={expected_seconds}")
+              print(f"SESSION_ROWS={rows}")
+              print(f"SESSION_DISTINCT_SECONDS={distinct_seconds}")
+              print(f"SESSION_INSTRUMENTS={instruments}")
+              print(f"SESSION_CASH_DISTINCT_SECONDS={legs[0]}")
+              print(f"SESSION_FUTURE_DISTINCT_SECONDS={legs[1]}")
+              print(f"SESSION_MIN_TIMESTAMP_NS={min_ts}")
+              print(f"SESSION_MAX_TIMESTAMP_NS={max_ts}")
+
+              complete = (
+                  distinct_seconds == expected_seconds
+                  and legs[0] == expected_seconds
+                  and legs[1] == expected_seconds
+                  and min_ts == start_ns
+                  and max_ts == end_ns
+              )
+              print(f"SESSION_12_15_30_CONTINUOUS={'PASS' if complete else 'FAIL'}")
+              if not complete:
+                  raise SystemExit("TODAY_12_15_30_CONTINUITY_FAILED")
+          finally:
+              conn.close()
+          PY
+          else
+            echo "SESSION_COVERAGE_DB_NOT_FOUND"
+            exit 1
+          fi
+
           echo "=== RECENT CONFLICT CHECK ==="
           conflicts=$(journalctl -u algo-trading.service --no-pager --since "-10 minutes" 2>/dev/null | grep -ci 'conflicting historical record identity' || true)
           echo "RECENT_CONFLICT_ERRORS_LAST_10M=$conflicts"
