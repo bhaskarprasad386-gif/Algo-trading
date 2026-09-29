@@ -134,3 +134,18 @@ def test_live_atomic_first_write_wins_for_duplicate_second_bucket():
     stored = catalog.records(source=first.source, instrument=first.instrument, timeframe=first.timeframe)
     assert stored == (first,)
     catalog.close()
+
+
+def test_live_cash_future_health_exposes_runtime_state():
+    from app.market_data.live_cash_future_stream import live_cash_future_health
+    state = live_cash_future_health()
+    assert {"enabled", "running", "connected", "last_observation_ns", "written", "rejected", "gap_seconds", "latest_age_seconds", "status"}.issubset(state)
+    assert state["status"] in {"ok", "degraded"}
+
+
+def test_live_cash_future_gap_detection_is_explicit_in_collector_source():
+    from pathlib import Path
+    source = Path(__import__("app.market_data.live_cash_future_stream", fromlist=["__file__"]).__file__)
+    text = source.read_text(encoding="utf-8")
+    assert "gap_seconds" in text
+    assert "second_ns > previous[0] + 1_000_000_000" in text
