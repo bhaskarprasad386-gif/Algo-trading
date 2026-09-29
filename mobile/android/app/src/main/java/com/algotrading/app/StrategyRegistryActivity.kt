@@ -60,7 +60,7 @@ class StrategyRegistryActivity : AppCompatActivity() {
                     listView?.removeAllViews()
                     items.forEach { item ->
                         val button = Button(this@StrategyRegistryActivity).apply {
-                            text = item.name + " • v" + item.version
+                            text = item.name + " • v" + item.version + " • " + item.data_mode + " • " + item.execution_mode + " • ORDERS " + if (item.live_orders) "ON" else "OFF"
                             layoutParams = ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)
                         }
                         button.setOnClickListener { openStrategy(item) }
@@ -102,7 +102,7 @@ class StrategyRegistryActivity : AppCompatActivity() {
             }
             val mode = payload["mode"]?.toString() ?: "live"
             val detail = buildString {
-                append(name).append("\n")
+                append(name).append(" • v").append(item.version).append("\n")\n                append("Data: ").append(item.data_mode).append(" • Execution: ").append(item.execution_mode)\n                    .append(" • Live orders: ").append(if (item.live_orders) "ON" else "OFF").append("\n")\n                append("Capabilities: ").append(item.capabilities.joinToString(" • ")).append("\n")
                 append("Mode: ").append(mode).append(" • Live rows: ").append(rows.size)
                     .append(" • Executable: ").append(opportunities).append("\n\n")
                 if (id == "calendar-spread") {
