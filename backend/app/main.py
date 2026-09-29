@@ -22,7 +22,7 @@ from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadSca
 from app.models.live_calendar_spread_paper_position import LiveCalendarSpreadPaperPosition
 from app.algo.auth import AngelOneAuth
 from app.market_data.websocket import MarketDataWebSocket
-from app.market_data.live_cash_future_stream import LiveCashFutureOneSecondCollector
+from app.market_data.live_cash_future_stream import LiveCashFutureOneSecondCollector, live_cash_future_health
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget
@@ -623,6 +623,11 @@ def app_strategy_workspace(strategy_id: str):
 @app.get("/")
 def root():
     return {"message": "Algo Trading Platform is running", "environment": settings.environment, "version": "0.1.0"}
+
+
+@app.get("/api/v1/market-data/live-cash-future/health")
+def live_cash_future_health_route():
+    return live_cash_future_health()
 
 
 @app.get("/health")
