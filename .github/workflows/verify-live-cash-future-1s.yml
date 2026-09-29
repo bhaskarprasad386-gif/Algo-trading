@@ -317,12 +317,15 @@ jobs:
           fi
           echo "=== SCANNER FILTER / RANK / ALERT CHAIN ==="
           cd "$APP_DIR/backend"
-          SCANNER_BODY="$scanner_body" DATA_DB="$APP_DIR/backend/backtest_market_data.sqlite3" "$APP_DIR/.venv/bin/python" - <<'PY'
+          SCANNER_BODY="$scanner_body" "$APP_DIR/.venv/bin/python" - <<'PY'
           import json
           import math
           import os
-          import sqlite3
+          from datetime import datetime, timedelta
+
           from app.core.config import settings
+          from app.core.database import SessionLocal
+          from app.models import LiveCashFutureAlertHistory, LiveCashFutureScannerResult
 
           body = json.loads(open(os.environ["SCANNER_BODY"]).read())
           data = body.get("data") or []
@@ -379,65 +382,84 @@ jobs:
           if not rank_finite or not rank_sorted:
               raise SystemExit("CHAIN_RANK_CONTRACT_FAILED")
 
-          db = os.environ["DATA_DB"]
-          conn = sqlite3.connect(db)
-          try:
-              tables = {
-                  row[0] for row in conn.execute(
-                      "SELECT name FROM sqlite_master WHERE type='table'"
-                  )
-              }
-              for required_table in ("live_cash_future_scanner_results", "live_cash_future_alert_history"):
-                  if required_table not in tables:
-                      raise SystemExit(f"CHAIN_TABLE_MISSING={required_table}")
+          cutoff = datetime.utcnow() - timedelta(minutes=5)
+          with SessionLocal() as db:
+              # Scanner persistence uses the application's configured DATABASE_URL,
+              # not the separate historical/backtest SQLite catalog.
+              result_count = db.query(LiveCashFutureScannerResult).filter(
+                  LiveCashFutureScannerResult.observed_at >= cutoff
+              ).count()
+              alert_count = db.query(LiveCashFutureAlertHistory).filter(
+                  LiveCashFutureAlertHistory.observed_at >= cutoff
+              ).count()
 
-              persisted = conn.execute(
-                  "SELECT COUNT(*), "
-                  "SUM(CASE WHEN gap > 0 THEN 1 ELSE 0 END), "
-                  "SUM(CASE WHEN net_gap > 0 THEN 1 ELSE 0 END), "
-                  "SUM(CASE WHEN gap_pct >= ? THEN 1 ELSE 0 END), "
-                  "SUM(CASE WHEN stable_observations >= ? THEN 1 ELSE 0 END) "
-                  "FROM live_cash_future_scanner_results "
-                  "WHERE observed_at >= datetime('now','-5 minutes')",
-                  (gap_threshold, min_stable),
-              ).fetchone()
-              p_count, p_gap, p_net, p_threshold, p_stable = [int(x or 0) for x in persisted]
-              print(f"CHAIN_PERSISTED_RESULTS_5M={p_count}")
-              print(f"CHAIN_PERSISTED_POSITIVE_GAP_5M={p_gap}")
-              print(f"CHAIN_PERSISTED_POSITIVE_NET_GAP_5M={p_net}")
-              print(f"CHAIN_PERSISTED_THRESHOLD_OK_5M={p_threshold}")
-              print(f"CHAIN_PERSISTED_STABLE_OK_5M={p_stable}")
+              p_gap = db.query(LiveCashFutureScannerResult).filter(
+                  LiveCashFutureScannerResult.observed_at >= cutoff,
+                  LiveCashFutureScannerResult.gap > 0,
+              ).count()
+              p_net = db.query(LiveCashFutureScannerResult).filter(
+                  LiveCashFutureScannerResult.observed_at >= cutoff,
+                  LiveCashFutureScannerResult.net_gap > 0,
+              ).count()
+              p_threshold = db.query(LiveCashFutureScannerResult).filter(
+                  LiveCashFutureScannerResult.observed_at >= cutoff,
+                  LiveCashFutureScannerResult.gap_pct >= gap_threshold,
+              ).count()
+              p_stable = db.query(LiveCashFutureScannerResult).filter(
+                  LiveCashFutureScannerResult.observed_at >= cutoff,
+                  LiveCashFutureScannerResult.stable_observations >= min_stable,
+              ).count()
 
-              alerts = conn.execute(
-                  "SELECT COUNT(*), "
-                  "SUM(CASE WHEN event='NEW' THEN 1 ELSE 0 END), "
-                  "SUM(CASE WHEN event='RECOVERY' THEN 1 ELSE 0 END), "
-                  "SUM(CASE WHEN gross_profit IS NOT NULL AND gross_profit >= ? THEN 1 ELSE 0 END), "
-                  "SUM(CASE WHEN net_profit IS NOT NULL AND net_profit >= ? THEN 1 ELSE 0 END), "
-                  "SUM(CASE WHEN annualized_gap_pct IS NOT NULL AND annualized_gap_pct >= ? THEN 1 ELSE 0 END) "
-                  "FROM live_cash_future_alert_history "
-                  "WHERE observed_at >= datetime('now','-5 minutes')",
-                  (alert_min_gross, alert_min_net, alert_min_annualized),
-              ).fetchone()
-              print(f"CHAIN_ALERTS_5M={int(alerts[0] or 0)}")
-              print(f"CHAIN_NEW_ALERTS_5M={int(alerts[1] or 0)}")
-              print(f"CHAIN_RECOVERY_ALERTS_5M={int(alerts[2] or 0)}")
-              print(f"CHAIN_ALERT_GROSS_OK_5M={int(alerts[3] or 0)}")
-              print(f"CHAIN_ALERT_NET_OK_5M={int(alerts[4] or 0)}")
-              print(f"CHAIN_ALERT_ANNUALIZED_OK_5M={int(alerts[5] or 0)}")
+              alert_new = db.query(LiveCashFutureAlertHistory).filter(
+                  LiveCashFutureAlertHistory.observed_at >= cutoff,
+                  LiveCashFutureAlertHistory.event == "NEW",
+              ).count()
+              alert_recovery = db.query(LiveCashFutureAlertHistory).filter(
+                  LiveCashFutureAlertHistory.observed_at >= cutoff,
+                  LiveCashFutureAlertHistory.event == "RECOVERY",
+              ).count()
+              alert_gross = db.query(LiveCashFutureAlertHistory).filter(
+                  LiveCashFutureAlertHistory.observed_at >= cutoff,
+                  LiveCashFutureAlertHistory.gross_profit.isnot(None),
+                  LiveCashFutureAlertHistory.gross_profit >= alert_min_gross,
+              ).count()
+              alert_net = db.query(LiveCashFutureAlertHistory).filter(
+                  LiveCashFutureAlertHistory.observed_at >= cutoff,
+                  LiveCashFutureAlertHistory.net_profit.isnot(None),
+                  LiveCashFutureAlertHistory.net_profit >= alert_min_net,
+              ).count()
+              alert_annualized = db.query(LiveCashFutureAlertHistory).filter(
+                  LiveCashFutureAlertHistory.observed_at >= cutoff,
+                  LiveCashFutureAlertHistory.annualized_gap_pct.isnot(None),
+                  LiveCashFutureAlertHistory.annualized_gap_pct >= alert_min_annualized,
+              ).count()
 
-              bad_persisted = conn.execute(
-                  "SELECT COUNT(*) FROM live_cash_future_scanner_results "
-                  "WHERE observed_at >= datetime('now','-5 minutes') "
-                  "AND NOT (gap > 0 AND net_gap > 0 AND gap_pct >= ? AND stable_observations >= ? "
-                  "AND lifecycle IN ('NEW','ACTIVE','WEAKENING'))",
-                  (gap_threshold, min_stable),
-              ).fetchone()[0]
-              print(f"CHAIN_INVALID_PERSISTED_RESULTS_5M={int(bad_persisted)}")
-              if bad_persisted:
-                  raise SystemExit("CHAIN_PERSISTED_ELIGIBILITY_FAILED")
-          finally:
-              conn.close()
+              invalid_persisted = db.query(LiveCashFutureScannerResult).filter(
+                  LiveCashFutureScannerResult.observed_at >= cutoff,
+                  ~(
+                      (LiveCashFutureScannerResult.gap > 0)
+                      & (LiveCashFutureScannerResult.net_gap > 0)
+                      & (LiveCashFutureScannerResult.gap_pct >= gap_threshold)
+                      & (LiveCashFutureScannerResult.stable_observations >= min_stable)
+                      & LiveCashFutureScannerResult.lifecycle.in_({"NEW", "ACTIVE", "WEAKENING"})
+                  ),
+              ).count()
+
+          print(f"CHAIN_PERSISTED_RESULTS_5M={result_count}")
+          print(f"CHAIN_PERSISTED_POSITIVE_GAP_5M={p_gap}")
+          print(f"CHAIN_PERSISTED_POSITIVE_NET_GAP_5M={p_net}")
+          print(f"CHAIN_PERSISTED_THRESHOLD_OK_5M={p_threshold}")
+          print(f"CHAIN_PERSISTED_STABLE_OK_5M={p_stable}")
+          print(f"CHAIN_ALERTS_5M={alert_count}")
+          print(f"CHAIN_NEW_ALERTS_5M={alert_new}")
+          print(f"CHAIN_RECOVERY_ALERTS_5M={alert_recovery}")
+          print(f"CHAIN_ALERT_GROSS_OK_5M={alert_gross}")
+          print(f"CHAIN_ALERT_NET_OK_5M={alert_net}")
+          print(f"CHAIN_ALERT_ANNUALIZED_OK_5M={alert_annualized}")
+          print(f"CHAIN_INVALID_PERSISTED_RESULTS_5M={invalid_persisted}")
+
+          if invalid_persisted:
+              raise SystemExit("CHAIN_PERSISTED_ELIGIBILITY_FAILED")
 
           print("SCANNER_FILTER_RANK_ALERT_E2E=PASS")
           PY
