@@ -19,18 +19,18 @@ if (( current_bytes >= TARGET_SWAP_BYTES )); then
 fi
 
 if [[ -e "$SWAPFILE" ]]; then
-  file_bytes="$(stat -c '%s' "$SWAPFILE")"
-  if (( file_bytes != TARGET_SWAP_BYTES )); then
-    if swapon --show=NAME --noheadings | grep -Fxq "$SWAPFILE"; then
-      swapoff "$SWAPFILE"
-    fi
-    rm -f "$SWAPFILE"
+  # The supplemental file is sized from the currently available swap.
+  # If it already exists, keep it; the total is re-checked below.
+  if ! swapon --show=NAME --noheadings | grep -Fxq "$SWAPFILE"; then
+    swapon "$SWAPFILE"
   fi
 fi
 
 if [[ ! -e "$SWAPFILE" ]]; then
-  log "Creating 8 GiB swap file."
-  fallocate -l 8G "$SWAPFILE"
+  missing_bytes=$((TARGET_SWAP_BYTES - current_bytes))
+  missing_mib=$(((missing_bytes + 1048575) / 1048576))
+  log "Creating ${missing_mib} MiB supplemental swap file."
+  fallocate -l "${missing_mib}M" "$SWAPFILE"
   chmod 600 "$SWAPFILE"
   mkswap "$SWAPFILE" >/dev/null
 fi
