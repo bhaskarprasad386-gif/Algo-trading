@@ -27,7 +27,16 @@ class MarketDataWebSocket:
         self._reconnect_attempts = 3
         self._reconnect_delay_seconds = 2.0
         self._reconnect_thread = None
+        self._consecutive_failures = 0
+        self._error_count = 0
+        self._reconnect_count = 0
+        self._last_error = None
         self._reconnect_lock = Lock()
+
+    @property
+    def health(self) -> dict:
+        with self._lock:
+            return {"connected": self._connected, "stopping": self._stopping, "error_count": self._error_count, "reconnect_count": self._reconnect_count, "consecutive_failures": self._consecutive_failures, "last_error": self._last_error}
 
     @property
     def connected(self) -> bool:
@@ -47,6 +56,9 @@ class MarketDataWebSocket:
         def handle_open(wsapp):
             with self._lock:
                 self._connected = True
+            with self._lock:
+                self._consecutive_failures = 0
+                self._last_error = None
             app_logger.info("Angel One WebSocket connected")
             if self.exchange_type is not None and self.tokens:
                 socket.subscribe(self.correlation_id, self.mode, [{"exchangeType": self.exchange_type, "tokens": self.tokens}])
@@ -58,6 +70,9 @@ class MarketDataWebSocket:
         def handle_error(wsapp, error):
             with self._lock:
                 self._connected = False
+                self._error_count += 1
+                self._consecutive_failures += 1
+                self._last_error = str(error)
             app_logger.error(f"Angel One WebSocket error: {error}")
 
         def handle_close(wsapp):
@@ -80,6 +95,7 @@ class MarketDataWebSocket:
                 return
             if self._reconnect_thread is not None and self._reconnect_thread.is_alive():
                 return
+            self._reconnect_count += 1
             self._reconnect_thread = Thread(
                 target=self._reconnect_after_disconnect,
                 name="angel-ws-reconnect",
@@ -109,11 +125,16 @@ class MarketDataWebSocket:
                 reconnect_delay_seconds=self._reconnect_delay_seconds,
             )
         except Exception as exc:
-            app_logger.error(f"Angel One WebSocket reconnect failed: {exc}")
             with self._lock:
+                self._error_count += 1
+                self._consecutive_failures += 1
+                self._last_error = str(exc)
                 stopping = self._stopping
+                failures = self._consecutive_failures
+            app_logger.error(f"Angel One WebSocket reconnect failed: {exc}")
             if not stopping:
-                time.sleep(self._reconnect_delay_seconds)
+                delay = min(60.0, self._reconnect_delay_seconds * (2 ** min(failures - 1, 5)))
+                time.sleep(delay)
                 self._schedule_reconnect()
 
     def connect(self, exchange_type: int, tokens: list[str], mode: int = 1, correlation_id: str = "market-data", on_data: Optional[Callable] = None, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 2.0):
@@ -150,11 +171,17 @@ class MarketDataWebSocket:
             try:
                 self.websocket = self._build_socket()
                 self.websocket.connect()
+                with self._lock:
+                    self._consecutive_failures = 0
+                    self._last_error = None
                 return
             except Exception as exc:
                 last_error = exc
                 with self._lock:
                     self._connected = False
+                    self._error_count += 1
+                    self._consecutive_failures += 1
+                    self._last_error = str(exc)
                 app_logger.error(f"WebSocket connection attempt {attempt + 1} failed: {exc}")
                 if attempt < reconnect_attempts:
                     time.sleep(reconnect_delay_seconds * (attempt + 1))
