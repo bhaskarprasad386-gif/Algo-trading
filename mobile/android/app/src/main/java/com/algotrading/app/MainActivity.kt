@@ -56,6 +56,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvIndexOverview: TextView
     private lateinit var tvCommodityOverview: TextView
     private lateinit var btnMarketOverviewRefresh: Button
+    private lateinit var cbShowMarket: CheckBox
+    private lateinit var cbShowScanner: CheckBox
+    private lateinit var cbShowStrategy: CheckBox
+    private lateinit var cbShowResults: CheckBox
+    private lateinit var cbShowPaper: CheckBox
+    private lateinit var btnSaveDashboardLayout: Button
+    private lateinit var btnResetDashboardLayout: Button
+    private lateinit var tvDashboardLayoutStatus: TextView
 
     private val scannerRefreshHandler = Handler(Looper.getMainLooper())
     private lateinit var scannerRefreshRunnable: Runnable
@@ -119,6 +127,8 @@ class MainActivity : AppCompatActivity() {
         btnStrategies.setOnClickListener { startActivity(Intent(this, StrategyRegistryActivity::class.java)) }
         btnResultsJournal.setOnClickListener { startActivity(Intent(this, ResultsJournalActivity::class.java)) }
         btnMarketOverviewRefresh.setOnClickListener { loadMarketOverview() }
+        btnSaveDashboardLayout.setOnClickListener { saveDashboardLayout() }
+        btnResetDashboardLayout.setOnClickListener { resetDashboardLayout() }
         btnRunScanner.setOnClickListener { runCashFutureScanner() }
         btnScannerPaperExecute.setOnClickListener { paperExecuteScannerOpportunity() }
         btnFullFnoBacktest.setOnClickListener { startActivity(Intent(this, FullFnoBacktestActivity::class.java)) }
@@ -142,6 +152,32 @@ class MainActivity : AppCompatActivity() {
         scannerRefreshHandler.postDelayed(scannerRefreshRunnable, seconds * 1000L); scannerRefreshHandler.postDelayed(scannerCountdownRunnable, 1000L)
     }
 
+    private fun dashboardPreferences() = getSharedPreferences("dashboard_layout", MODE_PRIVATE)
+    private fun loadDashboardLayout() {
+        val p = dashboardPreferences()
+        cbShowMarket.isChecked = p.getBoolean("market", true)
+        cbShowScanner.isChecked = p.getBoolean("scanner", true)
+        cbShowStrategy.isChecked = p.getBoolean("strategy", true)
+        cbShowResults.isChecked = p.getBoolean("results", true)
+        cbShowPaper.isChecked = p.getBoolean("paper", true)
+        tvDashboardLayoutStatus.text = if (p.getBoolean("saved", false)) "Layout: SAVED • this device" else "Layout: DEFAULT • saved on this device"
+    }
+    private fun saveDashboardLayout() {
+        dashboardPreferences().edit()
+            .putBoolean("saved", true)
+            .putBoolean("market", cbShowMarket.isChecked)
+            .putBoolean("scanner", cbShowScanner.isChecked)
+            .putBoolean("strategy", cbShowStrategy.isChecked)
+            .putBoolean("results", cbShowResults.isChecked)
+            .putBoolean("paper", cbShowPaper.isChecked)
+            .apply()
+        tvDashboardLayoutStatus.text = "Layout: SAVED • this device"
+    }
+    private fun resetDashboardLayout() {
+        dashboardPreferences().edit().clear().apply()
+        cbShowMarket.isChecked = true; cbShowScanner.isChecked = true; cbShowStrategy.isChecked = true; cbShowResults.isChecked = true; cbShowPaper.isChecked = true
+        tvDashboardLayoutStatus.text = "Layout: DEFAULT • saved on this device"
+    }
     private fun loadMarketOverview() = lifecycleScope.launch(Dispatchers.IO) {
         withContext(Dispatchers.Main) {
             btnMarketOverviewRefresh.isEnabled = false
