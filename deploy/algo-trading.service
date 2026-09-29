@@ -15,6 +15,9 @@ Restart=always
 RestartSec=5
 TimeoutStopSec=30
 KillSignal=SIGTERM
+KillMode=control-group
+FinalKillSignal=SIGKILL
+SendSIGKILL=yes
 
 [Install]
 WantedBy=multi-user.target
