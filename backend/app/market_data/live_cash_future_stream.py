@@ -62,17 +62,8 @@ def _ltp(message: dict[str, Any]) -> float | None:
 
 
 def _ingest_live_record(catalog: HistoricalCatalog, record: HistoricalRecord) -> int:
-    """Persist one second-bucket only when that identity is not already durable."""
-    existing = catalog.timestamps(
-        source=record.source,
-        instrument=record.instrument,
-        timeframe=record.timeframe,
-        start_ns=record.timestamp_ns,
-        end_ns=record.timestamp_ns,
-    )
-    if existing:
-        return 0
-    return catalog.ingest(record)
+    """Persist one live second-bucket with atomic first-write-wins semantics."""
+    return catalog.ingest_if_absent(record)
 
 
 class LiveCashFutureOneSecondCollector:
