@@ -178,7 +178,8 @@ class MainActivity : AppCompatActivity() {
         try {
             val response = ApiService.retrofitService.liveCashFutureScan(maxAgeSeconds = 5.0, limit = 50)
             val completedAt = currentTimestamp()
-            val sorted = response.data.sortedWith(compareByDescending<LiveCashFutureSignal> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit }.thenByDescending { it.rank_score }.thenByDescending { it.gap_pct }.thenBy { it.symbol })
+            val sorted = response.data.sortedWith(compareByDescending<LiveCashFutureSignal> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit })
+                val rankTieBreak = sorted.sortedWith(compareByDescending<LiveCashFutureSignal> { it.rank_score }.thenByDescending { it.gap_pct }.thenBy { it.symbol })
             val executable = sorted.firstOrNull { it.executable }
             val responseDataSize = response.data.size
             val responsePositiveGapCount = response.data.count { it.gap > 0.0 && it.net_gap > 0.0 }
@@ -194,7 +195,9 @@ class MainActivity : AppCompatActivity() {
                 sorted.forEach { item ->
                     append("────────────────────\n")
                     append("${item.symbol} • ${item.contract_month} • Rank ${String.format(Locale.US, "%.3f", item.rank_score)}\n")
+                    append("Cash: ₹${item.cash_ask ?: item.cash_ltp}\n")
                     append("Cash Ask: ₹${item.cash_ask ?: item.cash_ltp}\n")
+                    append("Future: ₹${item.future_bid ?: item.future_ltp}\n")
                     append("Future Bid: ₹${item.future_bid ?: item.future_ltp}\n")
                     append("Gap: ₹${item.gap} (${item.gap_pct}%)\n")
                     append("Net Gap: ${item.net_gap_pct}%\n")
