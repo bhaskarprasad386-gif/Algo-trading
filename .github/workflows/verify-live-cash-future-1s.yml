@@ -258,12 +258,12 @@ jobs:
             DATA_DB="$DATA_DB" "$APP_DIR/.venv/bin/python" - <<'PY'
           import os
           import sqlite3
-          from datetime import date, datetime, time
+          from datetime import datetime, time
           from zoneinfo import ZoneInfo
 
           db = os.environ["DATA_DB"]
           ist = ZoneInfo("Asia/Kolkata")
-          today = date.today()
+          today = datetime.now(ist).date()
           start = datetime.combine(today, time(12, 0), tzinfo=ist)
           end = datetime.combine(today, time(15, 30), tzinfo=ist)
           start_ns = int(start.timestamp() * 1_000_000_000)
@@ -276,7 +276,7 @@ jobs:
                   """
                   SELECT
                     COUNT(*),
-                    COUNT(DISTINCT timestamp_ns / 1000000000),
+                    COUNT(DISTINCT CAST(timestamp_ns / 1000000000 AS INTEGER)),
                     MIN(timestamp_ns),
                     MAX(timestamp_ns),
                     COUNT(DISTINCT instrument)
@@ -291,7 +291,7 @@ jobs:
                   """
                   SELECT
                     COUNT(DISTINCT CASE WHEN json_extract(payload_json, '$.leg')='CASH'
-                                        THEN timestamp_ns / 1000000000 END),
+                                        THEN CAST(timestamp_ns / 1000000000 AS INTEGER) END),
                     COUNT(DISTINCT CASE WHEN json_extract(payload_json, '$.leg')='FUTURE'
                                         THEN timestamp_ns / 1000000000 END)
                   FROM data_catalog
