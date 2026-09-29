@@ -10,6 +10,7 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.TextView
 import android.view.View
+import android.widget.ScrollView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -69,6 +70,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnSaveDashboardLayout: Button
     private lateinit var btnResetDashboardLayout: Button
     private lateinit var tvDashboardLayoutStatus: TextView
+    private lateinit var mainScroll: ScrollView
 
     private val scannerRefreshHandler = Handler(Looper.getMainLooper())
     private lateinit var scannerRefreshRunnable: Runnable
@@ -83,6 +85,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         tvStatus = findViewById(R.id.tvStatus)
+        mainScroll = findViewById(R.id.mainScroll)
         etEntryPrice = findViewById(R.id.etEntryPrice)
         etQuantity = findViewById(R.id.etQuantity)
         etExitPrice = findViewById(R.id.etExitPrice)
