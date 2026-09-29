@@ -185,8 +185,20 @@ def _run_full_fno_job(job_id: str, days: int, min_entry_gap: float, exit_gap: fl
         with _LOCK: _FUTURES.pop(job_id, None)
 
 
+def cleanup_finished_workers() -> int:
+    """Remove completed/cancelled futures from the in-process registry."""
+    removed = 0
+    with _LOCK:
+        for job_id, future in list(_FUTURES.items()):
+            if future.done():
+                _FUTURES.pop(job_id, None)
+                removed += 1
+    return removed
+
+
 def recover_interrupted_jobs() -> int:
     """Recover every supported queued/running job after a worker restart."""
+    cleanup_finished_workers()
     db = SessionLocal(); recovered = 0
     try:
         jobs = db.query(BacktestJob).filter(BacktestJob.status.in_(["queued", "running"])).all()
