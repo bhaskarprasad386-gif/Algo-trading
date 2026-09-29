@@ -37,6 +37,9 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y git python3 python3-venv python3-pip curl sqlite3 ca-certificates
 
+log "Configuring VPS virtual memory"
+bash "$APP_DIR/deploy/configure-vps-swap.sh"
+
 log "Creating/updating Python virtual environment"
 python3 -m venv "$VENV_DIR"
 "$VENV_DIR/bin/python" -m pip install --upgrade pip wheel
