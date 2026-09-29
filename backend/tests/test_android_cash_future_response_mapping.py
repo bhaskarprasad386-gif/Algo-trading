@@ -46,7 +46,7 @@ def test_android_cash_future_scanner_summary_counts_are_clear():
     assert 'append("Current signals: ${sorted.size}\\n")' in ui
     assert 'append("Executable positive-gap signals: ${sorted.count { it.gap > 0.0 && it.net_gap > 0.0 }}\\n")' in ui
     assert 'append("Source: Angel One WebSocket → 1s collector → live scanner\\n\\n")' in ui
-        assert 'append("LIVE 1s SCAN — ")' in ui
+    assert 'append("LIVE 1s SCAN — ")' in ui
 
 
 def test_android_cash_future_per_stock_summary_is_clear():
