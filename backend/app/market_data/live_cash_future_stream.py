@@ -83,23 +83,31 @@ def _ingest_live_record(catalog: HistoricalCatalog, record: HistoricalRecord) ->
 
 
 class _LatestMessageBuffer:
-    """Bound raw websocket backlog to one pending message per token."""
+    """Coalesce duplicate websocket ticks without dropping distinct seconds."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._messages: dict[str, dict[str, Any]] = {}
+        self._messages: dict[tuple[str, int], dict[str, Any]] = {}
 
     def put(self, message: dict[str, Any]) -> None:
         token = str(message.get("token") or "").strip()
         if not token:
             return
+        timestamp_ns = _timestamp_ns(message)
+        if timestamp_ns is None:
+            return
+        second_ns = (timestamp_ns // 1_000_000_000) * 1_000_000_000
         with self._lock:
-            self._messages[token] = message
+            self._messages[(token, second_ns)] = message
 
     def drain(self) -> list[dict[str, Any]]:
         with self._lock:
             messages = list(self._messages.values())
             self._messages.clear()
+        messages.sort(key=lambda message: (
+            _timestamp_ns(message) or 0,
+            str(message.get("token") or ""),
+        ))
         return messages
 
     def __len__(self) -> int:
