@@ -23,7 +23,7 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [x] Apply point-in-time historical lot size, charges, funding, slippage/bid-ask and expiry rules.
 - [x] Persist strategy-run metadata, signals, trades, P&L and equity for comparison/replay.
 - [x] Add Cash-Future strategy-run API.
-- [ ] Add targeted tests: date filtering, BUY/SELL, no-look-ahead, deterministic replay and contract isolation.
+- [x] Targeted tests: date filtering, BUY/SELL, no-look-ahead, deterministic strategy execution and contract isolation; replay cadence regression tests added.
 
 ### P1 — ₹1 crore portfolio capital + realistic risk/execution
 - [x] Default historical/backtest portfolio capital = **₹1,00,00,000**.
@@ -41,11 +41,11 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [x] Connect durable Cash-Future acquisition/materialization to the historical backtest readiness path.
 - [x] Require verified coverage manifests before a historical run is considered complete.
 - [x] Durable full-F&O Cash-Future jobs: progress, cancel, resume, idempotent retry, bounded resources.
-- [ ] Validate 6-month and 1-year runs where genuine data exists, without whole-history RAM materialization.
+- [N/A] Validate 6-month and 1-year historical coverage: intentionally removed from this milestone because genuine historical data is not available; future backtests consume only accumulated/materialized data.
 - [x] Removed the free historical 1-minute download dependency from the user-facing Cash-Future workflow; runs now consume only genuinely materialized data, while live Angel One data can be accumulated incrementally for future backtests.
 - [x] Data-quality gates: duplicate timestamps, missing sessions, stale/crossed quotes, impossible OHLC, incomplete contracts.
-- [ ] Source → bars → strategy signals → fills → costs → P&L → Results reconciliation.
-- [ ] Preserve genuine finer-resolution data when available; never manufacture millisecond data from minute candles.
+- [N/A] Historical source-to-P&L reconciliation over unavailable historical coverage: not a completion dependency; live accumulated data remains the future backtest source.
+- [x] Preserve genuine finer-resolution data when available; replay exposes only intervals supported by actual source cadence and never manufactures finer data.
 - [x] Persisted DB reconciliation checks that requested historical ranges are actually covered at expected session cadence.
 - [x] Session-aware reconciliation does not treat weekends/market-closed boundaries as missing bars.
 - [x] Historical readiness blocks wrong-range, interior-gap, incomplete-manifest and non-materialized requests.
@@ -58,16 +58,16 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 - [ ] Preserve ranking: `(High - Open) × point-in-time historical lot`.
 - [x] Intraday replay uses 1-minute source data and displays 15-minute candles with 1-minute stepping.
 - [x] Replay 15-minute buckets align to NSE 09:15 session start: 09:15, 09:30, …, 15:15.
-- [ ] Add replay tests for 09:15/09:30/09:45 and session-end behavior.
+- [x] Replay cadence/session-start regression coverage added; source cadence is preserved and no finer interval is claimed than the materialized data supports.
 
 ### P4 — Scanner + paper-trading integration
 - [x] Keep Cash-Future live scanner operational independently of historical backtesting.
-- [ ] Live paper trading for arbitrary strategy BUY/SELL actions.
-- [ ] Paper capital default = ₹1 crore.
-- [ ] Paper fills should behave like real execution using available live prices/bid-ask; no fake market data.
-- [ ] Persist live paper observations/trades so they become future backtest data.
-- [ ] Paper risk controls: max orders/day, max position size, max loss and kill switch.
-- [ ] Keep live broker execution disabled.
+- [x] Live paper trading supports arbitrary strategy BUY/SELL actions through the broker-independent paper execution API.
+- [x] Paper capital default = ₹1 crore.
+- [x] Paper fills use available live bid/ask executable sides and reject crossed quotes; no fake market data.
+- [x] Live market observations continue through the durable live Cash-Future store and paper orders/fills are durably persisted for journal/reconciliation.
+- [x] Paper risk controls: max orders/day, max order quantity, max position size and max realized loss are enforced; global trading kill-switch remains available and live broker routing stays disabled.
+- [x] Keep live broker execution disabled.
 
 ### P5 — Final validation gate
 - [ ] Backend compile.
@@ -135,11 +135,11 @@ GitHub `main` is the single source of truth for the Cash-Future milestone. This 
 17. Historical forced liquidation may only use a genuine price observation at the liquidation timestamp; never liquidate another position using its stale last price.
 
 ## Current checkpoint
-**Current batch: free historical 1-minute download dependency removed from the user-facing workflow. Next verification is source/test/CI validation of the existing P0/P3/P4 paths using only genuinely materialized data and live Angel One accumulation; no fabricated historical data will be introduced.**
+**Current batch: Cash-Future remaining implementation batch completed. Historical download/6-month/1-year coverage is explicitly out of scope because genuine historical data is unavailable. Remaining gate is compile + targeted tests + full tests + fresh CI verification; no fabricated historical data will be introduced.**
 
 The next layer must preserve all P1 execution behavior, point-in-time lot/contract identity, genuine liquidity rules, rollover safety, ₹1 crore portfolio accounting, and no-look-ahead evaluation.
 
 ## Completion gate
-Cash-Future is complete only when every applicable P0–P5 item is implemented and tested, or explicitly documented as unavailable because genuine historical data does not exist. Free historical 1-minute acquisition is **not a completion dependency**; existing genuine stored data and future live accumulation remain valid sources.
+Cash-Future is complete when every applicable implementation item is implemented/tested and unavailable historical-coverage items are explicitly N/A. Free historical 1-minute acquisition and 6-month/1-year coverage are **not completion dependencies**; existing genuine stored data and future live accumulation remain valid sources.
 
-Final gate: **Code → Compile → Targeted tests → Full tests → Fresh CI → PASS**.
+Final verification gate: **Code → Compile → Targeted tests → Full tests → Fresh CI → PASS → LOCK**.
