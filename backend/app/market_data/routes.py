@@ -108,6 +108,48 @@ def get_historical(
         raise HTTPException(status_code=502, detail="Historical market data provider request failed") from e
 
 
+@router.get("/live-health")
+def get_live_data_health():
+    """Return bounded live-data persistence and freshness health for the control center."""
+    from datetime import datetime, time
+    from zoneinfo import ZoneInfo
+    from app.backtesting.historical_catalog import HistoricalCatalog
+    from app.core.config import settings
+
+    ist = ZoneInfo("Asia/Kolkata")
+    now = datetime.now(ist)
+    market_open = now.weekday() < 5 and time(9, 15) <= now.time() <= time(15, 30)
+    catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
+    try:
+        sources = []
+        for source, timeframe in (("angelone-live-1s", "1s"), ("angelone-live", "event")):
+            count = catalog.count(source=source, timeframe=timeframe)
+            instruments = catalog.instruments(source=source, timeframe=timeframe)
+            watermarks = [catalog.watermark(source=source, instrument=i, timeframe=timeframe) for i in instruments]
+            latest_ns = max((v for v in watermarks if v is not None), default=None)
+            age_seconds = None if latest_ns is None else max(0.0, (now.timestamp() * 1_000_000_000 - latest_ns) / 1_000_000_000)
+            status = "LIVE" if market_open and age_seconds is not None and age_seconds <= 5 else (
+                "STALE" if market_open and age_seconds is not None else "NO_DATA"
+            )
+            sources.append({
+                "source": source, "timeframe": timeframe, "records": count,
+                "instruments": len(instruments), "latest_timestamp_ns": latest_ns,
+                "age_seconds": age_seconds, "status": status,
+            })
+        one_second = next(x for x in sources if x["source"] == "angelone-live-1s")
+        return {
+            "status": "success", "market_session": "OPEN" if market_open else "CLOSED",
+            "checked_at": now.isoformat(), "persisted": one_second["records"] > 0,
+            "source": one_second["source"], "timeframe": one_second["timeframe"],
+            "records": one_second["records"], "instruments": one_second["instruments"],
+            "latest_timestamp_ns": one_second["latest_timestamp_ns"],
+            "age_seconds": one_second["age_seconds"], "feed_status": one_second["status"],
+            "sources": sources, "live_orders": "OFF",
+        }
+    finally:
+        catalog.close()
+
+
 @router.get("/overview")
 def get_market_overview():
     """Return a bounded live overview for configured NSE/BSE indices and MCX commodities."""
