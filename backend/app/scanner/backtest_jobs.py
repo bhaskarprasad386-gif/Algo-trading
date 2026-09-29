@@ -190,7 +190,8 @@ def cleanup_finished_workers() -> int:
     removed = 0
     with _LOCK:
         for job_id, future in list(_FUTURES.items()):
-            if future.done():
+            done = getattr(future, "done", None)
+            if callable(done) and done():
                 _FUTURES.pop(job_id, None)
                 removed += 1
     return removed
