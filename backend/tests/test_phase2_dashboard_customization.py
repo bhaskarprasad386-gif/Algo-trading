@@ -24,4 +24,6 @@ def test_phase2_android_persistent_dashboard_preferences():
     assert "getSharedPreferences("dashboard_layout"" in main
     assert "saveDashboardLayout" in main
     assert "resetDashboardLayout" in main
+    assert "applyDashboardVisibility" in main
+    assert "View.GONE" in main
     assert "Layout: SAVED" in main
