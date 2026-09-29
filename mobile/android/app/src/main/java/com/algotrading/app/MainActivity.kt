@@ -71,6 +71,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnResetDashboardLayout: Button
     private lateinit var tvDashboardLayoutStatus: TextView
     private lateinit var mainScroll: ScrollView
+    private lateinit var btnQuickMarket: Button
+    private lateinit var btnQuickScanner: Button
+    private lateinit var btnQuickStrategies: Button
+    private lateinit var btnQuickResults: Button
+    private lateinit var btnQuickPaper: Button
+    private lateinit var btnQuickExpansion: Button
 
     private val scannerRefreshHandler = Handler(Looper.getMainLooper())
     private lateinit var scannerRefreshRunnable: Runnable
@@ -86,6 +92,12 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         tvStatus = findViewById(R.id.tvStatus)
         mainScroll = findViewById(R.id.mainScroll)
+        btnQuickMarket = findViewById(R.id.btnQuickMarket)
+        btnQuickScanner = findViewById(R.id.btnQuickScanner)
+        btnQuickStrategies = findViewById(R.id.btnQuickStrategies)
+        btnQuickResults = findViewById(R.id.btnQuickResults)
+        btnQuickPaper = findViewById(R.id.btnQuickPaper)
+        btnQuickExpansion = findViewById(R.id.btnQuickExpansion)
         etEntryPrice = findViewById(R.id.etEntryPrice)
         etQuantity = findViewById(R.id.etQuantity)
         etExitPrice = findViewById(R.id.etExitPrice)
@@ -150,6 +162,12 @@ class MainActivity : AppCompatActivity() {
         btnConnectBroker.setOnClickListener { connectAngelOne() }; btnDisconnectBroker.setOnClickListener { disconnectAngelOne() }
         btnEnableRealTrading.setOnClickListener { confirmEnableRealTrading() }; btnDisableRealTrading.setOnClickListener { disableRealTrading() }; btnKillSwitch.setOnClickListener { triggerKillSwitch() }
         tvScannerResult.setOnClickListener { openScannerDetail(lastExecutableOpportunity) }
+        btnQuickMarket.setOnClickListener { mainScroll.smoothScrollTo(0, 0); loadMarketOverview() }
+        btnQuickScanner.setOnClickListener { mainScroll.post { mainScroll.smoothScrollTo(0, btnRunScanner.top) }; runCashFutureScanner() }
+        btnQuickStrategies.setOnClickListener { startActivity(Intent(this, StrategyRegistryActivity::class.java)) }
+        btnQuickResults.setOnClickListener { startActivity(Intent(this, ResultsJournalActivity::class.java)) }
+        btnQuickPaper.setOnClickListener { mainScroll.post { mainScroll.smoothScrollTo(0, btnPaperPosition.top) } }
+        btnQuickExpansion.setOnClickListener { mainScroll.post { mainScroll.smoothScrollTo(0, findViewById<View>(R.id.phase13Expansion).top) } }
     }
 
     override fun onDestroy() { scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable); scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable); super.onDestroy() }
