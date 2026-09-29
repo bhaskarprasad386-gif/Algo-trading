@@ -193,6 +193,7 @@ class LiveCashFutureScanner:
                     alert_event=signal.alert_event,
                 ))
                 db.commit()
+                self._stats["persisted"] += 1
         except Exception as exc:
             from app.core.logger import app_logger
             app_logger.error("Cash-Future scanner result persistence failed: %s", exc)
