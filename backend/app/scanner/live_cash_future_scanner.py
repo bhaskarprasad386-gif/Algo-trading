@@ -55,6 +55,7 @@ class LiveCashFutureSignal:
     reason_codes: tuple[str, ...]
     observation_ref: str
     alert_event: str | None
+    quality_score: float
 
 
 class LiveCashFutureScanner:
@@ -68,6 +69,8 @@ class LiveCashFutureScanner:
         self._session_extremes: dict[tuple[str, str], dict[str, float]] = {}
         self._stability: dict[tuple[str, str], tuple[int, int]] = {}
         self._alert_state: dict[tuple[str, str], str] = {}
+        self._alert_last_at: dict[tuple[str, str], float] = {}
+        self._stats = {"observations": 0, "pairs": 0, "dropped": 0, "persisted": 0}
         self._alert_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cf-alert")
         self._result_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cf-result")
         self._last_result_cleanup = 0.0
@@ -130,7 +133,7 @@ class LiveCashFutureScanner:
             return
 
     def _persist_result(self, session_factory, signal: LiveCashFutureSignal) -> None:
-        if session_factory is None or not signal.lifecycle:
+        if session_factory is None or signal.lifecycle in {"", "EXPIRED"}:
             return
         try:
             now = datetime.now(IST).replace(tzinfo=None)
@@ -189,12 +192,13 @@ class LiveCashFutureScanner:
                     alert_event=signal.alert_event,
                 ))
                 db.commit()
-        except Exception:
-            return
+        except Exception as exc:
+            from app.core.logger import app_logger
+            app_logger.error("Cash-Future scanner result persistence failed: %s", exc)
 
 
     def _persist_alert(self, session_factory, signal: LiveCashFutureSignal) -> None:
-        if session_factory is None or not signal.alert_event:
+        if session_factory is None or not signal.alert_event or signal.lifecycle == "EXPIRED":
             return
         try:
             now = datetime.now(IST).replace(tzinfo=None)
@@ -233,8 +237,9 @@ class LiveCashFutureScanner:
                     stable_observations=signal.stable_observations,
                 ))
                 db.commit()
-        except Exception:
-            return
+        except Exception as exc:
+            from app.core.logger import app_logger
+            app_logger.error("Cash-Future alert persistence failed: %s", exc)
 
     @staticmethod
     def _factor(value: float | None, values: list[float]) -> float:
@@ -279,6 +284,16 @@ class LiveCashFutureScanner:
         timestamp_ns = int(payload.get("source_timestamp_ns") or payload.get("exchange_timestamp") or 0)
         if timestamp_ns <= 0 or not symbol:
             return None
+        self._stats["observations"] += 1
+        received_at_ns = payload.get("received_at_ns")
+        try:
+            received_at_ns = int(received_at_ns) if received_at_ns is not None else time.time_ns()
+        except (TypeError, ValueError):
+            received_at_ns = time.time_ns()
+        max_age_ns = int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 1_000_000_000)
+        if time.time_ns() - received_at_ns > max_age_ns:
+            self._stats["dropped"] += 1
+            return None
         if leg == "CASH":
             month = "CASH"
         elif leg != "FUTURE" or not month:
@@ -294,6 +309,9 @@ class LiveCashFutureScanner:
         ask = self._price(payload, "ask")
         bid_qty = self._positive_qty(payload, "bid_qty")
         ask_qty = self._positive_qty(payload, "ask_qty")
+        if bid is not None and ask is not None and bid > ask:
+            self._stats["dropped"] += 1
+            return None
         lot = None
         try:
             raw_lot = payload.get("lot_size")
@@ -307,31 +325,27 @@ class LiveCashFutureScanner:
             "ltp": ltp, "bid": bid, "ask": ask,
             "bid_qty": bid_qty, "ask_qty": ask_qty,
             "lot_size": lot, "expiry": payload.get("expiry"),
+            "received_at_ns": received_at_ns,
         }
         ts_date = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, IST).date()
         ts_date_key = ts_date.isoformat()
+        tolerance_ns = int(max(0.0, float(settings.LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS)) * 1_000_000_000)
         with self._lock:
-            # Prune stale trading-day extremes on every valid observation,
-            # including unmatched legs, so an inactive day cannot survive
-            # merely because the next day's cash/future pair is incomplete.
-            self._session_extremes = {
-                key: value for key, value in self._session_extremes.items()
-                if key[1] == ts_date_key
-            }
-            bucket = self._latest.setdefault(key, {})
+            self._session_extremes = {k: v for k, v in self._session_extremes.items() if k[1] == ts_date_key}
+            candidates = [k for k in self._latest if k[0] == symbol and abs(k[1] - timestamp_ns) <= tolerance_ns]
+            nearest = min(candidates, key=lambda k: abs(k[1] - timestamp_ns), default=key)
+            bucket = self._latest.setdefault(nearest, {})
             if leg == "CASH":
                 bucket["CASH"] = leg_payload
             else:
                 futures = bucket.setdefault("FUTURE", {})
                 futures[month] = leg_payload
-            self._latest = {
-                k: v for k, v in self._latest.items()
-                if k[1] >= timestamp_ns - 2_000_000_000
-            }
+            self._latest = {k: v for k, v in self._latest.items() if k[1] >= timestamp_ns - max(2_000_000_000, tolerance_ns + 1_000_000_000)}
             futures = bucket.get("FUTURE", {})
             if "CASH" not in bucket or month not in futures:
                 return None
             cash, future = bucket["CASH"], futures[month]
+            self._stats["pairs"] += 1
 
         cash_ask, future_bid = cash["ask"], future["bid"]
         if cash_ask is None or future_bid is None:
@@ -346,6 +360,9 @@ class LiveCashFutureScanner:
         if min_liquidity > 0 and (liquidity_qty is None or liquidity_qty < min_liquidity):
             return None
 
+        if future["bid"] is not None and future["ask"] is not None and future["bid"] > future["ask"]:
+            self._stats["dropped"] += 1
+            return None
         gap = future_bid - cash_ask
         gap_pct = gap / cash_ask * 100.0
         expiry = self._parse_expiry(future.get("expiry"))
@@ -371,7 +388,10 @@ class LiveCashFutureScanner:
             self._stability[stability_key] = (stable, timestamp_ns)
             previous_signal = self._signals.get((symbol, month))
 
-        estimated_cost = max(0.0, float(settings.LIVE_CASH_FUTURE_ESTIMATED_COST_PER_LOT))
+        combined_notional = (cash_ask + future_bid) * (lot or 1)
+        estimated_cost = combined_notional * max(0.0, float(settings.LIVE_CASH_FUTURE_COST_BPS)) / 10_000.0
+        estimated_cost += max(0.0, float(settings.LIVE_CASH_FUTURE_ESTIMATED_COST_PER_LOT))
+        estimated_cost += combined_notional * max(0.0, float(settings.LIVE_CASH_FUTURE_SLIPPAGE_BPS)) / 10_000.0
         estimated_cost += max(0.0, float(settings.LIVE_CASH_FUTURE_SLIPPAGE_PER_LOT))
         gross_lot_value = gap * lot if lot else None
         net_gap = gap - estimated_cost / lot if lot else gap
@@ -433,12 +453,22 @@ class LiveCashFutureScanner:
         if capacity_lots is not None:
             reasons.append("CAPACITY_ESTIMATED")
 
+        quote_quality = 1.0 if cash["bid"] is not None and cash["ask"] is not None and future["bid"] is not None and future["ask"] is not None else 0.0
+        liquidity_quality = min(1.0, (liquidity_qty or 0.0) / max(1.0, float(lot or 1) * 10.0))
+        stability_quality = min(1.0, stable / max(1.0, float(min_stable)))
+        edge_quality = min(1.0, max(0.0, net_gap_pct) / 1.0)
+        quality_score = round(100.0 * (0.30 * quote_quality + 0.25 * liquidity_quality + 0.25 * stability_quality + 0.20 * edge_quality), 2)
+
         state_key = (symbol, month)
         with self._lock:
             previous_alert_state = self._alert_state.get(state_key)
-            if alert_eligible and previous_alert_state != "ACTIVE":
+            cooldown = max(0.0, float(settings.LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS))
+            now_monotonic = time.monotonic()
+            cooldown_ok = now_monotonic - self._alert_last_at.get(state_key, 0.0) >= cooldown
+            if alert_eligible and previous_alert_state != "ACTIVE" and cooldown_ok:
                 alert_event = "RECOVERY" if previous_alert_state else "NEW"
                 self._alert_state[state_key] = "ACTIVE"
+                self._alert_last_at[state_key] = now_monotonic
             elif not alert_eligible:
                 self._alert_state[state_key] = "WEAKENING" if previous_alert_state == "ACTIVE" else "INACTIVE"
                 alert_event = None
@@ -482,11 +512,13 @@ class LiveCashFutureScanner:
             reason_codes=tuple(reasons),
             observation_ref=f"{symbol}:{month}:{timestamp_ns}",
             alert_event=alert_event,
+            quality_score=quality_score,
         )
         with self._lock:
             self._signals[(signal.symbol, signal.contract_month)] = signal
 
-        if eligible and session_factory is not None:
+        meaningful_change = previous_signal is None or previous_signal.lifecycle != signal.lifecycle or previous_signal.alert_event != signal.alert_event or abs(signal.gap_pct - previous_signal.gap_pct) >= 0.05 or abs(signal.quality_score - previous_signal.quality_score) >= 2.0
+        if eligible and meaningful_change and session_factory is not None:
             self._result_executor.submit(self._persist_result, session_factory, signal)
         if alert_event and session_factory is not None:
             # Keep database I/O off the market-data callback path just like
@@ -494,6 +526,10 @@ class LiveCashFutureScanner:
             self._result_executor.submit(self._persist_alert, session_factory, signal)
             self._alert_executor.submit(self._notify_users, session_factory, signal)
         return signal
+
+    def health(self) -> dict:
+        with self._lock:
+            return dict(self._stats)
 
     def snapshot(self, *, max_age_seconds: float = 5.0, limit: int = 50) -> list[dict]:
         now_ns = int(datetime.now(IST).timestamp() * 1_000_000_000)
@@ -512,6 +548,9 @@ class LiveCashFutureScanner:
             peers = by_symbol.get(signal.symbol, [])
             peer = next((p for p in peers if p.contract_month != signal.contract_month), None)
             item["rank_score"] = rank_scores.get((signal.symbol, signal.contract_month), 0.0)
+            item["quality_score"] = signal.quality_score
+            item["contract_role"] = signal.contract_month
+            item["comparison"] = "CURRENT vs NEAR" if peer else "single contract"
             item["rank_factors"] = {
                 "gap_pct": signal.gap_pct,
                 "net_gap_pct": signal.net_gap_pct,
