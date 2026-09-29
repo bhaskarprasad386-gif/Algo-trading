@@ -9,6 +9,9 @@ def test_underlying_feed_resolves_real_nse_tokens():
         {"exch_seg": "NSE", "instrumenttype": "EQ", "symbol": "NIFTY", "token": "999"}
     ]
     master._loaded = True
+    # Keep this token-resolution regression deterministic and offline; the
+    # test fixture must not be replaced by the process-wide Angel master cache.
+    master.download = lambda force=False: master.instruments
     tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0)})
     feed = LiveSyntheticUnderlyingFeed(
         ("NIFTY",), tracker=tracker, instrument_master=master
