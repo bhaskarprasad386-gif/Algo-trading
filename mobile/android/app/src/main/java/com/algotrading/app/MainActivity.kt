@@ -57,6 +57,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvIndexOverview: TextView
     private lateinit var tvCommodityOverview: TextView
     private lateinit var btnMarketOverviewRefresh: Button
+    private lateinit var tvLiveDataQuality: TextView
+    private lateinit var btnLiveDataHealthRefresh: Button
     private lateinit var cbShowMarket: CheckBox
     private lateinit var cbShowScanner: CheckBox
     private lateinit var cbShowStrategy: CheckBox
@@ -128,6 +130,7 @@ class MainActivity : AppCompatActivity() {
         btnStrategies.setOnClickListener { startActivity(Intent(this, StrategyRegistryActivity::class.java)) }
         btnResultsJournal.setOnClickListener { startActivity(Intent(this, ResultsJournalActivity::class.java)) }
         btnMarketOverviewRefresh.setOnClickListener { loadMarketOverview() }
+        btnLiveDataHealthRefresh.setOnClickListener { loadLiveDataHealth() }
         btnSaveDashboardLayout.setOnClickListener { saveDashboardLayout() }
         btnResetDashboardLayout.setOnClickListener { resetDashboardLayout() }
         btnRunScanner.setOnClickListener { runCashFutureScanner() }
@@ -187,6 +190,8 @@ class MainActivity : AppCompatActivity() {
         val hidden = View.GONE
         btnMarketOverviewRefresh.visibility = if (cbShowMarket.isChecked) visible else hidden
         tvMarketFeedStatus.visibility = if (cbShowMarket.isChecked) visible else hidden
+        tvLiveDataQuality.visibility = if (cbShowMarket.isChecked) visible else hidden
+        btnLiveDataHealthRefresh.visibility = if (cbShowMarket.isChecked) visible else hidden
         tvIndexOverview.visibility = if (cbShowMarket.isChecked) visible else hidden
         tvCommodityOverview.visibility = if (cbShowMarket.isChecked) visible else hidden
         btnRunScanner.visibility = if (cbShowScanner.isChecked) visible else hidden
@@ -229,6 +234,26 @@ class MainActivity : AppCompatActivity() {
             }
         } finally {
             withContext(Dispatchers.Main) { btnMarketOverviewRefresh.isEnabled = true }
+        }
+    }
+    private fun loadLiveDataHealth() = lifecycleScope.launch(Dispatchers.IO) {
+        withContext(Dispatchers.Main) {
+            btnLiveDataHealthRefresh.isEnabled = false
+            tvLiveDataQuality.text = "Persistence: CHECKING\\nFeed: CHECKING\\nRecords: — • Instruments: —\\nData age: — • Session: —\\nLive broker orders: OFF"
+        }
+        try {
+            val h = ApiService.retrofitService.liveDataHealth()
+            val age = h.age_seconds?.let { String.format(Locale.US, "%.1fs", it) } ?: "—"
+            val persistence = if (h.persisted) "READY" else "NO DATA"
+            withContext(Dispatchers.Main) {
+                tvLiveDataQuality.text = "Persistence: $persistence\\nFeed: ${h.feed_status}\\nRecords: ${h.records} • Instruments: ${h.instruments}\\nData age: $age • Session: ${h.market_session}\\nSource: ${h.source} • ${h.timeframe}\\nLive broker orders: ${h.live_orders}"
+            }
+        } catch (error: Exception) {
+            withContext(Dispatchers.Main) {
+                tvLiveDataQuality.text = "Persistence: ERROR\\nFeed: UNAVAILABLE\\nData health API failed: " + (error.message ?: "API error") + "\\nLive broker orders: OFF"
+            }
+        } finally {
+            withContext(Dispatchers.Main) { btnLiveDataHealthRefresh.isEnabled = true }
         }
     }
     private fun checkServerStatus() = lifecycleScope.launch(Dispatchers.IO) { try { val response = ApiService.retrofitService.getRootStatus(); withContext(Dispatchers.Main) { tvStatus.text = "Server Status: ${response.status}" } } catch (_: Exception) { withContext(Dispatchers.Main) { tvStatus.text = "Server Error: Offline" } } }
