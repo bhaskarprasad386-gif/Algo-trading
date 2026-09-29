@@ -90,9 +90,9 @@ class StrategyRegistryActivity : AppCompatActivity() {
     }
 
     private fun loadBackendStrategy(item: StrategyRegistryItem) = lifecycleScope.launch(Dispatchers.IO) {
+        val id = item.id
+        val name = item.name
         try {
-            val id = item.id
-            val name = item.name
             val payload = when (id) {
                 "calendar-spread" -> ApiService.retrofitService.calendarSpreadLive(50)
                 "synthetic-future-cash-carry" -> ApiService.retrofitService.syntheticCashCarryLive(50)
