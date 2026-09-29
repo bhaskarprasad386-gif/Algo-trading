@@ -82,15 +82,17 @@ class StrategyRegistryActivity : AppCompatActivity() {
             "box_spread" -> startActivity(Intent(this, BoxSpreadActivity::class.java))
             "full_fno" -> startActivity(Intent(this, FullFnoBacktestActivity::class.java))
             "cash_future_scanner" -> startActivity(Intent(this, MainActivity::class.java))
-            "backend" -> loadBackendStrategy(item.id, item.name)
+            "backend" -> loadBackendStrategy(item)
             else -> AlertDialog.Builder(this).setTitle(item.name)
                 .setMessage("Strategy v" + item.version + " is enabled by the backend. Its scanner/backtest API is available without an APK update.")
                 .setPositiveButton("OK", null).show()
         }
     }
 
-    private fun loadBackendStrategy(id: String, name: String) = lifecycleScope.launch(Dispatchers.IO) {
+    private fun loadBackendStrategy(item: StrategyRegistryItem) = lifecycleScope.launch(Dispatchers.IO) {
         try {
+            val id = item.id
+            val name = item.name
             val payload = when (id) {
                 "calendar-spread" -> ApiService.retrofitService.calendarSpreadLive(50)
                 "synthetic-future-cash-carry" -> ApiService.retrofitService.syntheticCashCarryLive(50)
