@@ -34,6 +34,9 @@ class Settings(BaseSettings):
 
     # Continuous one-second live Cash-Future feed for backtesting
     LIVE_CASH_FUTURE_DATA_ENABLED: bool = False
+    # Shared latest-snapshot cache; bounded in-process now, Redis-ready interface later.
+    MARKET_DATA_CACHE_MAX_ENTRIES: int = 2000
+    MARKET_DATA_CACHE_TTL_SECONDS: float = 15.0
     LIVE_CALENDAR_SPREAD_DATA_ENABLED: bool = False
     LIVE_SYNTHETIC_DATA_ENABLED: bool = False
     LIVE_BOX_SPREAD_DATA_ENABLED: bool = False
