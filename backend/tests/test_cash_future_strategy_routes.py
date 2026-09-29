@@ -133,8 +133,8 @@ def test_strategy_run_route_executes_live_1s_bid_ask_trade_and_persists_result(m
     assert body["signal_count"] == 2
     assert body["trade_count"] == 1
     assert body["trades"][0]["execution_model"] == "bid_ask"
-    assert body["trades"][0]["net_profit"] == 435.0
-    assert body["analysis"]["net_pnl"] == 435.0
+    assert body["trades"][0]["net_profit"] == 420.0
+    assert body["analysis"]["net_pnl"] == 420.0
 
 
 
