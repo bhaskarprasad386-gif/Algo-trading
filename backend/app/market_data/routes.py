@@ -106,3 +106,65 @@ def get_historical(
     except Exception as e:
         app_logger.error(f"Historical error: {e}")
         raise HTTPException(status_code=502, detail="Historical market data provider request failed") from e
+
+
+@router.get("/overview")
+def get_market_overview():
+    """Return a bounded live overview for configured NSE/BSE indices and MCX commodities."""
+    from app.market_data.client import MarketDataClient
+    from app.market_data.instruments import InstrumentMaster
+    from app.market_data.nifty50_universe import NIFTY50_INDEX_SYMBOLS
+
+    index_specs = [
+        *(("NSE", symbol) for symbol in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY")),
+        *(("BSE", symbol) for symbol in ("SENSEX", "BANKEX")),
+    ]
+    commodity_specs = [("MCX", symbol) for symbol in ("GOLD", "SILVER", "CRUDEOIL", "NATURALGAS")]
+    master = InstrumentMaster()
+    client = MarketDataClient()
+
+    def resolve(specs):
+        resolved = []
+        errors = []
+        for exchange, symbol in specs:
+            try:
+                instrument = master.get_instrument(symbol, exchange)
+                if not instrument:
+                    errors.append({"exchange": exchange, "symbol": symbol, "error": "instrument_not_found"})
+                    continue
+                resolved.append((exchange, symbol, str(instrument.get("token", ""))))
+            except Exception as exc:
+                errors.append({"exchange": exchange, "symbol": symbol, "error": str(exc)})
+        return resolved, errors
+
+    def fetch(specs):
+        resolved, errors = resolve(specs)
+        by_exchange = {}
+        for exchange, symbol, token in resolved:
+            if token:
+                by_exchange.setdefault(exchange, []).append({"symbol": symbol, "symboltoken": token})
+        rows = []
+        for exchange, instruments in by_exchange.items():
+            try:
+                payload = client.quote_many(exchange, instruments).get("data") or {}
+                fetched = payload.get("fetched") or payload.get("data") or []
+                if isinstance(fetched, dict):
+                    fetched = [fetched]
+                by_token = {str(row.get("symbolToken", row.get("token", ""))): row for row in fetched if isinstance(row, dict)}
+                for item in instruments:
+                    quote = by_token.get(item["symboltoken"], {})
+                    rows.append({"exchange": exchange, "symbol": item["symbol"], "token": item["symboltoken"],
+                                 "ltp": quote.get("ltp"), "open": quote.get("open"), "high": quote.get("high"),
+                                 "low": quote.get("low"), "close": quote.get("close"), "change_percent": quote.get("percentChange"),
+                                 "volume": quote.get("tradeVolume"), "oi": quote.get("opnInterest"),
+                                 "bid": (quote.get("depth", {}).get("buy", [{}])[0].get("price") if quote.get("depth") else None),
+                                 "ask": (quote.get("depth", {}).get("sell", [{}])[0].get("price") if quote.get("depth") else None),
+                                 "status": "LIVE" if quote else "NO_QUOTE"})
+            except Exception as exc:
+                errors.extend({"exchange": exchange, "symbol": item["symbol"], "error": str(exc)} for item in instruments)
+        return rows, errors
+
+    indices, index_errors = fetch(index_specs)
+    commodities, commodity_errors = fetch(commodity_specs)
+    return {"status": "success", "mode": "live", "indices": indices, "commodities": commodities,
+            "errors": index_errors + commodity_errors}
