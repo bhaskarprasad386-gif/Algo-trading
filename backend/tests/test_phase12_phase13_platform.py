@@ -24,12 +24,12 @@ def test_phase12_web_android_alignment():
         assert view_id in layout
 
     main = ANDROID_MAIN.read_text()
-    assert "btnQuickMarket).setOnClickListener" in main
-    assert "btnQuickScanner).setOnClickListener" in main
-    assert "btnQuickStrategies).setOnClickListener" in main
-    assert "btnQuickResults).setOnClickListener" in main
-    assert "btnQuickPaper).setOnClickListener" in main
-    assert "btnQuickExpansion).setOnClickListener" in main
+    assert "R.id.btnQuickMarket).setOnClickListener" in main
+    assert "R.id.btnQuickScanner).setOnClickListener" in main
+    assert "R.id.btnQuickStrategies).setOnClickListener" in main
+    assert "R.id.btnQuickResults).setOnClickListener" in main
+    assert "R.id.btnQuickPaper).setOnClickListener" in main
+    assert "R.id.btnQuickExpansion).setOnClickListener" in main
 
 
 def test_phase13_final_expansion_layer_is_present_on_both_surfaces():
