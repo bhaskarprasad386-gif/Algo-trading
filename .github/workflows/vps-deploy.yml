@@ -26,7 +26,8 @@ jobs:
           ssh-keygen -y -f /tmp/vps_key > /tmp/vps_pub
           mkdir -p ~/.ssh
           ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
-          ssh -vv -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          printf 'SSH_CONNECT_START\n'
+ssh -vv -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
           set -Eeuo pipefail
           APP_DIR="/opt/Algo-Trading"
 
