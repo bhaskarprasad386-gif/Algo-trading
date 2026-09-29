@@ -156,16 +156,25 @@ def test_live_feed_silence_watchdog_triggers_only_after_timeout():
     assert LiveCashFutureOneSecondCollector._feed_silent(100.0, 130.0)
 
 
-def test_live_message_buffer_coalesces_raw_backlog_by_token():
+def test_live_message_buffer_coalesces_duplicate_ticks_without_dropping_seconds():
     from app.market_data.live_cash_future_stream import _LatestMessageBuffer
 
     buffer = _LatestMessageBuffer()
-    for second in range(1000):
-        buffer.put({"token": "101", "exchange_timestamp": second, "last_traded_price": second})
+    for exchange_timestamp in (1000, 1001, 1001, 1002):
+        buffer.put({
+            "token": "101",
+            "exchange_timestamp": exchange_timestamp,
+            "last_traded_price": exchange_timestamp,
+        })
     buffer.put({"token": "201", "exchange_timestamp": 1000, "last_traded_price": 200})
 
-    assert len(buffer) == 2
-    drained = {item["token"]: item for item in buffer.drain()}
-    assert drained["101"]["exchange_timestamp"] == 999
-    assert drained["201"]["exchange_timestamp"] == 1000
+    assert len(buffer) == 4
+    drained = buffer.drain()
+
+    assert [(item["token"], item["exchange_timestamp"]) for item in drained] == [
+        ("101", 1000),
+        ("201", 1000),
+        ("101", 1001),
+        ("101", 1002),
+    ]
     assert len(buffer) == 0
