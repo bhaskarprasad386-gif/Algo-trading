@@ -44,9 +44,11 @@ async function loadLiveDataHealth(){
   const badge=document.getElementById('liveDataHealthBadge');
   const status=document.getElementById('liveDataHealthStatus');
   try{
-    const r=await fetch(base()+'/api/v1/market-data/live-health',{cache:'no-store'});
+    const [r, cf]=await Promise.all([fetch(base()+'/api/v1/market-data/live-health',{cache:'no-store'}), fetch(base()+'/api/v1/market-data/live-cash-future/health',{cache:'no-store'})]);
     if(!r.ok) throw new Error('Health API '+r.status);
+    if(!cf.ok) throw new Error('Cash-Future health API '+cf.status);
     const p=await r.json();
+    const cashFuture=await cf.json();
     renderAlertCenter(p.data||[]);
     document.getElementById('livePersisted').textContent=p.persisted?'READY':'NO DATA';
     document.getElementById('liveFeedStatus').textContent=p.feed_status||'—';
@@ -54,7 +56,7 @@ async function loadLiveDataHealth(){
     document.getElementById('liveInstrumentCount').textContent=Number(p.instruments||0).toLocaleString();
     const age=p.age_seconds==null?'—':Number(p.age_seconds).toFixed(1)+'s';
     badge.textContent=p.feed_status==='LIVE'?'LIVE':(p.market_session==='CLOSED'?'SESSION CLOSED':(p.feed_status||'CHECKED'));
-    status.textContent='Session: '+p.market_session+' • Data age: '+age+' • Source: '+p.source+' • '+p.timeframe+' • Durable persistence: '+(p.persisted?'YES':'NO')+' • Orders: '+p.live_orders;
+    status.textContent='Session: '+p.market_session+' • Data age: '+age+' • Source: '+p.source+' • '+p.timeframe+' • Durable persistence: '+(p.persisted?'YES':'NO')+' • Orders: '+p.live_orders+' • Cash-Future 1s: '+(cashFuture.status||'—')+' • CF age: '+(cashFuture.latest_age_seconds==null?'—':Number(cashFuture.latest_age_seconds).toFixed(1)+'s')+' • CF gaps: '+Number(cashFuture.gap_seconds||0);
   }catch(e){
     badge.textContent='ERROR';
     status.textContent='Live data health unavailable: '+e.message+' • Orders: OFF';
