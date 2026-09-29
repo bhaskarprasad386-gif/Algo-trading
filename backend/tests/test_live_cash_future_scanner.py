@@ -22,7 +22,7 @@ def test_live_scanner_pairs_same_second_cash_and_future():
     assert round(signal.gap_pct, 3) == 0.8
 
 
-def test_live_scanner_does_not_pair_different_seconds():
+def test_live_scanner_rejects_pair_beyond_one_second():
     scanner = LiveCashFutureScanner()
     assert scanner.observe({
         "leg": "CASH", "underlying": "ABC", "ltp": 100.0,
@@ -30,7 +30,7 @@ def test_live_scanner_does_not_pair_different_seconds():
     }) is None
     assert scanner.observe({
         "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
-        "ltp": 101.0, "bid": 100.8, "ask": 101.0, "source_timestamp_ns": 2_000_000_000,
+        "ltp": 101.0, "bid": 100.8, "ask": 101.0, "source_timestamp_ns": 3_000_000_000,
     }) is None
 
 
@@ -56,7 +56,7 @@ def test_live_scanner_advanced_metrics(monkeypatch):
                               "expiry":"30SEP2026","source_timestamp_ns":ts})
     assert signal is not None
     assert signal.gross_lot_value == pytest.approx(80.0)
-    assert signal.net_gap == signal.gap
+    assert signal.net_gap < signal.gap
     assert signal.cash_day_high == 100
     assert signal.cash_day_low == 100
     assert signal.future_day_high == 101
@@ -237,3 +237,54 @@ def test_live_scanner_keeps_only_active_day_extremes():
     old_key = next(iter(scanner._session_extremes))
     scanner.observe({"leg":"CASH","underlying":"NEW","ltp":200,"ask":200,"source_timestamp_ns":ts + 86_400_000_000_000})
     assert old_key not in scanner._session_extremes
+
+def test_live_scanner_pairs_within_one_second_and_uses_wall_clock_age():
+    scanner = LiveCashFutureScanner()
+    now = time() * 1_000_000_000
+    assert scanner.observe({
+        "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
+        "source_timestamp_ns": int(now),
+    }) is None
+    signal = scanner.observe({
+        "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
+        "ltp": 101, "bid": 100.8, "ask": 101, "source_timestamp_ns": int(now + 1_000_000_000),
+    })
+    assert signal is not None
+
+    stale = scanner.observe({
+        "leg": "CASH", "underlying": "STALE", "ltp": 100, "bid": 99.9, "ask": 100,
+        "source_timestamp_ns": int(now), "received_at_ns": int(now - 10_000_000_000),
+    })
+    assert stale is None
+
+
+def test_live_scanner_rejects_crossed_market():
+    scanner = LiveCashFutureScanner()
+    ts = int(time() * 1_000_000_000)
+    assert scanner.observe({
+        "leg": "CASH", "underlying": "BAD", "ltp": 100, "bid": 101, "ask": 100,
+        "source_timestamp_ns": ts,
+    }) is None
+
+
+def test_live_scanner_stability_survives_one_missed_second(monkeypatch):
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS", 1)
+    scanner = LiveCashFutureScanner()
+    base = int(time() * 1_000_000_000)
+    def pair(ts):
+        scanner.observe({"leg":"CASH","underlying":"ABC","ltp":100,"bid":99.9,"ask":100,"source_timestamp_ns":ts})
+        return scanner.observe({"leg":"FUTURE","underlying":"ABC","contract_month":"CURRENT","ltp":101,"bid":100.8,"ask":101,"source_timestamp_ns":ts})
+    assert pair(base).stable_observations == 1
+    assert pair(base + 2_000_000_000).stable_observations == 2
+
+
+def test_live_scanner_exposes_absolute_quality_score():
+    scanner = LiveCashFutureScanner()
+    ts = int(time() * 1_000_000_000)
+    scanner.observe({"leg":"CASH","underlying":"ABC","ltp":100,"bid":99.9,"ask":100,"bid_qty":1000,"ask_qty":1000,"source_timestamp_ns":ts})
+    signal = scanner.observe({"leg":"FUTURE","underlying":"ABC","contract_month":"CURRENT","ltp":102,"bid":101,"ask":102,"bid_qty":1000,"ask_qty":1000,"lot_size":1,"source_timestamp_ns":ts})
+    assert signal is not None
+    assert 0 <= signal.quality_score <= 100
+    row = scanner.snapshot(max_age_seconds=10, limit=1)[0]
+    assert row["quality_score"] == signal.quality_score
+    assert row["comparison"] == "single contract"
