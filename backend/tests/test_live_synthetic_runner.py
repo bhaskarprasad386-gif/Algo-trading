@@ -145,6 +145,9 @@ def test_runner_stock_path_uses_provider_and_only_real_plus_minus_5_positions():
         ])
     master.instruments = items
     master._loaded = True
+    # Keep this regression fixture authoritative and offline; the test must
+    # never replace its synthetic ABC contracts with the live Angel master.
+    master.download = lambda force=False: master.instruments
     runner = LiveSyntheticRunner(
         ":memory:",
         [SyntheticLiveTarget("ABC", "STOCK", 100.0, "30SEP2026")],
