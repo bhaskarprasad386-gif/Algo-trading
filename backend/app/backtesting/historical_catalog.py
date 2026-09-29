@@ -67,6 +67,8 @@ class HistoricalCatalog:
         # source+timeframe would otherwise walk the primary-key index inefficiently.
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_data_catalog_source_timeframe_ts ON data_catalog(source, timeframe, timestamp_ns, instrument, sequence)")
         self._db.execute("CREATE INDEX IF NOT EXISTS idx_data_catalog_source_instrument_timeframe_ts ON data_catalog(source, instrument, timeframe, timestamp_ns, sequence)")
+        # Live fixed-second identities must be unique even when sequence is NULL (SQLite PRIMARY KEY permits multiple NULLs).
+        self._db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_data_catalog_live_identity ON data_catalog(source, instrument, timeframe, timestamp_ns, COALESCE(sequence, -1)) WHERE source='angelone-live-1s'")
         self._db.commit()
 
     def close(self) -> None:
