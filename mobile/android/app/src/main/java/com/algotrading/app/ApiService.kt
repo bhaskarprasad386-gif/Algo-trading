@@ -273,7 +273,8 @@ data class BoxSpreadHistoryItem(
 data class BoxSpreadHistoryPage(val count: Int = 0, val items: List<BoxSpreadHistoryItem> = emptyList())
 data class BoxSpreadJournalPage(val count: Int = 0, val items: List<Map<String, Any?>> = emptyList())
 data class AppUpdateInfo(val platform: String = "android", val version_code: Int = 1, val version_name: String = "1.0", val release_notes: String = "", val apk_url: String = "", val sha256: String = "", val mandatory: Boolean = false)
-data class StrategyRegistryItem(val id: String = "", val name: String = "", val version: String = "1", val enabled: Boolean = true, val screen: String = "backend")
+data class StrategyRegistryItem(val id: String = "", val name: String = "", val version: String = "1", val enabled: Boolean = true, val screen: String = "backend", val data_mode: String = "", val execution_mode: String = "PAPER", val live_orders: Boolean = false, val capabilities: List<String> = emptyList(), val live_route: String? = null, val workspace_route: String? = null)
+data class StrategyWorkspaceResponse(val status: String = "", val workspace: StrategyRegistryItem = StrategyRegistryItem())
 data class StrategyRegistryResponse(val strategies: List<StrategyRegistryItem> = emptyList())
 data class BoxSpreadOverview(
     val status: String = "", val strategy: String = "", val mode: String = "",
@@ -286,6 +287,7 @@ interface ApiInterface {
     @GET("/") suspend fun getRootStatus(): MarketStatus
     @GET("/api/v1/app/update") suspend fun appUpdate(): AppUpdateInfo
     @GET("/api/v1/app/strategies") suspend fun appStrategies(): StrategyRegistryResponse
+    @GET("/api/v1/app/strategies/{strategy_id}/workspace") suspend fun strategyWorkspace(@retrofit2.http.Path("strategy_id") strategyId: String): StrategyWorkspaceResponse
     @GET("/api/v1/scanner/calendar-spread/live") suspend fun calendarSpreadLive(@Query("limit") limit: Int = 50): Map<String, Any?>
     @GET("/api/v1/scanner/synthetic-cash-carry/live") suspend fun syntheticCashCarryLive(@Query("limit") limit: Int = 50): Map<String, Any?>
     @GET("/api/v1/brokers/connections") suspend fun brokerConnections(): BrokerConnectionsResponse
