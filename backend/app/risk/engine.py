@@ -46,9 +46,14 @@ class RiskEngine:
             self._orders_today = 0
             self._realized_pnl = 0.0
 
-    def check(self, quantity: int, current_position: int = 0, realized_pnl: float = 0.0) -> tuple[bool, str]:
+    def check(self, quantity: int, current_position: int = 0, realized_pnl: float = 0.0, projected_position: int | None = None) -> tuple[bool, str]:
         with self._lock:
-            return self._check_unlocked(quantity, current_position, realized_pnl)
+            return self._check_unlocked(
+                quantity,
+                current_position,
+                realized_pnl,
+                projected_position=projected_position,
+            )
 
     def _check_unlocked(self, quantity: int, current_position: int, realized_pnl: float, projected_position: int | None = None) -> tuple[bool, str]:
         self._roll_day()
