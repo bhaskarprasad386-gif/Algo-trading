@@ -60,3 +60,42 @@ def test_instrument_key_requires_exchange_segment_and_token():
             pass
         else:
             raise AssertionError("blank instrument identity must fail")
+
+def test_option_requires_complete_metadata():
+    for kwargs in (
+        {"strike": None, "option_type": OptionType.CALL},
+        {"strike": 25000, "option_type": None},
+    ):
+        try:
+            MarketDataRecord(
+                instrument=InstrumentKey("NSE", "NFO", "505"),
+                symbol="INCOMPLETE", instrument_type=InstrumentType.OPTION,
+                timestamp_ns=1, **kwargs,
+            )
+        except ValueError as exc:
+            assert "require strike and option_type" in str(exc)
+        else:
+            raise AssertionError("incomplete option metadata must fail")
+
+def test_record_rejects_invalid_timestamp_and_nonfinite_price():
+    for timestamp_ns in (-1, True):
+        try:
+            MarketDataRecord(
+                instrument=InstrumentKey("NSE", "NFO", "606"),
+                symbol="BADTIME", instrument_type=InstrumentType.FUTURE,
+                timestamp_ns=timestamp_ns,
+            )
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid timestamp must fail")
+    try:
+        MarketDataRecord(
+            instrument=InstrumentKey("NSE", "NFO", "707"),
+            symbol="BADPRICE", instrument_type=InstrumentType.FUTURE,
+            timestamp_ns=1, ltp=float("nan"),
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("non-finite price must fail")
