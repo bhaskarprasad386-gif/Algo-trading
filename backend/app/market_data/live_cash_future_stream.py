@@ -26,6 +26,19 @@ CLOSE = time(15, 30)
 SOURCE = "angelone-live-1s"
 TIMEFRAME = "1s"
 
+_STATE_LOCK = threading.Lock()
+_STATE = {"enabled": False, "running": False, "connected": False, "last_observation_ns": None, "written": 0, "rejected": 0, "gap_seconds": 0, "last_error": None}
+
+
+def live_cash_future_health() -> dict[str, Any]:
+    with _STATE_LOCK:
+        state = dict(_STATE)
+    now_ns = time_module.time_ns()
+    latest = state.get("last_observation_ns")
+    state["latest_age_seconds"] = None if latest is None else max(0.0, (now_ns - int(latest)) / 1_000_000_000)
+    state["status"] = "ok" if state["running"] and state["connected"] and (state["latest_age_seconds"] is None or state["latest_age_seconds"] <= 10) else "degraded"
+    return state
+
 
 def _expiry(value: Any) -> date | None:
     text = str(value or "").strip().upper()
@@ -87,6 +100,8 @@ class LiveCashFutureOneSecondCollector:
         self.on_observation = on_observation
         self.stop_event = threading.Event()
         self._sockets: list[MarketDataWebSocket] = []
+        with _STATE_LOCK:
+            _STATE["enabled"] = True
 
     @staticmethod
     def market_open(now: datetime | None = None) -> bool:
@@ -228,8 +243,13 @@ class LiveCashFutureOneSecondCollector:
             thread.start()
 
         catalog = HistoricalCatalog(self.data_db)
+        with _STATE_LOCK:
+            _STATE["running"] = True
+            _STATE["connected"] = False
+            _STATE["last_error"] = None
         latest: dict[str, tuple[int, dict[str, Any]]] = {}
         written = 0
+        gap_seconds = 0
         try:
             while not self.stop_event.is_set() and self.market_open():
                 deadline = time_module.monotonic() + self.poll_seconds
@@ -278,7 +298,13 @@ class LiveCashFutureOneSecondCollector:
                         "ask_qty": self._best_side_detail(message, "best_5_sell_data")[1],
                         "received_at_ns": time_module.time_ns(),
                     })
+                    if previous is not None and second_ns > previous[0] + 1_000_000_000:
+                        gap_seconds += int((second_ns - previous[0]) / 1_000_000_000) - 1
                     latest[token] = (second_ns, payload)
+                    with _STATE_LOCK:
+                        _STATE["last_observation_ns"] = second_ns
+                        _STATE["gap_seconds"] = gap_seconds
+                        _STATE["connected"] = any(socket.connected for socket in self._sockets)
             for token, (second_ns, payload) in latest.items():
                 meta = token_meta[token]
                 try:
@@ -301,7 +327,12 @@ class LiveCashFutureOneSecondCollector:
             for socket in self._sockets:
                 socket.close()
             self._sockets = []
-        app_logger.info(f"1-second live Cash-Future session complete: written={written}")
+        with _STATE_LOCK:
+            _STATE["written"] += written
+            _STATE["running"] = False
+            _STATE["connected"] = False
+            _STATE["gap_seconds"] = gap_seconds
+        app_logger.info(f"1-second live Cash-Future session complete: written={written}, gaps={gap_seconds}")
 
     def run_forever(self) -> None:
         app_logger.info("1-second live Cash-Future collector started")
@@ -312,6 +343,10 @@ class LiveCashFutureOneSecondCollector:
                 else:
                     time_module.sleep(5)
             except Exception as exc:
+                with _STATE_LOCK:
+                    _STATE["running"] = False
+                    _STATE["connected"] = False
+                    _STATE["last_error"] = str(exc)
                 app_logger.error(f"1-second live Cash-Future collector failed: {exc}")
                 time_module.sleep(10)
         app_logger.info("1-second live Cash-Future collector stopped")
