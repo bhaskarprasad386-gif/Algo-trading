@@ -14,7 +14,8 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from app.algo.auth import AngelOneAuth
-from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
+from app.backtesting.historical_catalog import HistoricalRecord
+from app.market_data.daily_shard_catalog import DailyMarketDataShardCatalog
 from app.core.logger import app_logger
 from app.core.config import settings
 from app.market_data.instruments import InstrumentMaster
@@ -83,7 +84,7 @@ def _ltp(message: dict[str, Any]) -> float | None:
     return number / 100.0
 
 
-def _ingest_live_record(catalog: HistoricalCatalog, record: HistoricalRecord) -> int:
+def _ingest_live_record(catalog: DailyMarketDataShardCatalog, record: HistoricalRecord) -> int:
     """Persist one live second-bucket with atomic first-write-wins semantics."""
     return catalog.ingest_if_absent(record)
 
@@ -294,7 +295,7 @@ class LiveCashFutureOneSecondCollector:
         for thread in threads:
             thread.start()
 
-        catalog = HistoricalCatalog(self.data_db)
+        catalog = DailyMarketDataShardCatalog(self.data_db)
         with _STATE_LOCK:
             _STATE["running"] = True
             _STATE["connected"] = False
