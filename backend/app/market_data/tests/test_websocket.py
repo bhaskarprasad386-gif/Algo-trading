@@ -101,3 +101,35 @@ def test_websocket_unexpected_close_schedules_reconnect(monkeypatch):
     socket = client._build_socket()
     socket.on_close(socket)
     assert scheduled == [True]
+
+
+def test_websocket_health_tracks_errors_and_resets_on_connect(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+    socket = client._build_socket()
+    socket.on_error(socket, "temporary")
+    health = client.health
+    assert health["error_count"] == 1
+    assert health["consecutive_failures"] == 1
+    assert health["last_error"] == "temporary"
+    socket.on_open(socket)
+    health = client.health
+    assert health["consecutive_failures"] == 0
+    assert health["last_error"] is None
+
+
+def test_websocket_reconnect_backoff_is_bounded(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+    client.exchange_type = 1
+    client.tokens = ["101"]
+    client._reconnect_delay_seconds = 10.0
+    client._consecutive_failures = 6
+    sleeps = []
+    monkeypatch.setattr(websocket_module.time, "sleep", lambda value: sleeps.append(value))
+    monkeypatch.setattr(client, "connect", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("down")))
+    monkeypatch.setattr(client, "_schedule_reconnect", lambda: None)
+    client._reconnect_after_disconnect()
+    assert sleeps == [60.0]
+    assert client.health["error_count"] == 1
+    assert client.health["consecutive_failures"] == 7
