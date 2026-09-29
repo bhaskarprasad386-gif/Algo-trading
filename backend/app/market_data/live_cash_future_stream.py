@@ -26,6 +26,9 @@ OPEN = time(9, 15)
 CLOSE = time(15, 30)
 SOURCE = "angelone-live-1s"
 TIMEFRAME = "1s"
+# Reconnect the WebSocket session if both feeds go silent. A silent socket can
+# return after its bounded reconnect attempts without raising into run_forever.
+NO_DATA_RECONNECT_SECONDS = 30.0
 
 _STATE_LOCK = threading.Lock()
 _STATE = {"enabled": False, "running": False, "connected": False, "last_observation_ns": None, "written": 0, "rejected": 0, "dropped": 0, "pairs": 0, "observations": 0, "gap_seconds": 0, "coverage": 0, "last_error": None}
@@ -180,6 +183,10 @@ class LiveCashFutureOneSecondCollector:
     def _best_side(message: dict[str, Any], key: str) -> float | None:
         return LiveCashFutureOneSecondCollector._best_side_detail(message, key)[0]
 
+    @staticmethod
+    def _feed_silent(last_message_monotonic: float, now_monotonic: float) -> bool:
+        return (now_monotonic - last_message_monotonic) >= NO_DATA_RECONNECT_SECONDS
+
     def _run_market_session(self) -> None:
         futures, cash = self._contracts()
         if not futures:
@@ -254,6 +261,7 @@ class LiveCashFutureOneSecondCollector:
             _STATE["connected"] = False
             _STATE["last_error"] = None
         latest: dict[str, tuple[int, dict[str, Any]]] = {}
+        last_message_monotonic = time_module.monotonic()
         written = 0
         rejected = 0
         dropped = 0
@@ -268,6 +276,7 @@ class LiveCashFutureOneSecondCollector:
                         message = queue.get(timeout=max(0.01, deadline - time_module.monotonic()))
                     except Empty:
                         break
+                    last_message_monotonic = time_module.monotonic()
                     token = str(message.get("token") or "").strip()
                     meta = token_meta.get(token)
                     ts = _timestamp_ns(message)
@@ -321,6 +330,12 @@ class LiveCashFutureOneSecondCollector:
                         _STATE["pairs"] = pairs
                         _STATE["dropped"] = dropped
                         _STATE["connected"] = any(socket.connected for socket in self._sockets)
+                if self._feed_silent(last_message_monotonic, time_module.monotonic()):
+                    connected = any(socket.connected for socket in self._sockets)
+                    raise RuntimeError(
+                        f"1-second live Cash-Future feed silent for {NO_DATA_RECONNECT_SECONDS:.0f}s "
+                        f"(connected={connected}); restarting WebSocket session"
+                    )
             for token, (second_ns, payload) in latest.items():
                 meta = token_meta[token]
                 try:
