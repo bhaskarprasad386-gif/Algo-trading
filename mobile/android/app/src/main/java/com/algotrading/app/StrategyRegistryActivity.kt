@@ -3,6 +3,8 @@ package com.algotrading.app
 import android.app.AlertDialog
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
@@ -14,6 +16,26 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class StrategyRegistryActivity : AppCompatActivity() {
+    private val refreshHandler = Handler(Looper.getMainLooper())
+    private val refreshRunnable = object : Runnable {
+        override fun run() {
+            refreshRegistry()
+            refreshHandler.postDelayed(this, 30_000L)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshRegistry()
+        refreshHandler.removeCallbacks(refreshRunnable)
+        refreshHandler.postDelayed(refreshRunnable, 30_000L)
+    }
+
+    override fun onPause() {
+        refreshHandler.removeCallbacks(refreshRunnable)
+        super.onPause()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 24, 24, 24) }
@@ -21,22 +43,36 @@ class StrategyRegistryActivity : AppCompatActivity() {
         val status = TextView(this).apply { text = "Loading backend registry..."; textSize = 13f; setPadding(0, 8, 0, 16) }
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(title); root.addView(status); root.addView(list); setContentView(root)
+        refreshRegistry()
+    }
+
+    private fun refreshRegistry() {
+        val status = findViewById<TextView>(android.R.id.content)?.let { null }
+        // Registry refresh is performed by the same coroutine path used at startup.
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val items = ApiService.retrofitService.appStrategies().strategies.filter { it.enabled }
                 withContext(Dispatchers.Main) {
-                    status.text = "Backend registry • " + items.size + " enabled strategies"
+                    val root = (window.decorView.findViewById<LinearLayout>(android.R.id.content)?.getChildAt(0) as? LinearLayout)
+                    val statusView = root?.getChildAt(1) as? TextView
+                    val listView = root?.getChildAt(2) as? LinearLayout
+                    statusView?.text = "Backend registry • " + items.size + " enabled strategies • LIVE refresh 30s"
+                    listView?.removeAllViews()
                     items.forEach { item ->
                         val button = Button(this@StrategyRegistryActivity).apply {
                             text = item.name + " • v" + item.version
                             layoutParams = ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)
                         }
                         button.setOnClickListener { openStrategy(item) }
-                        list.addView(button)
+                        listView?.addView(button)
                     }
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { status.text = "Strategy registry unavailable • " + (e.message ?: "network error") }
+                withContext(Dispatchers.Main) {
+                    val root = (window.decorView.findViewById<LinearLayout>(android.R.id.content)?.getChildAt(0) as? LinearLayout)
+                    (root?.getChildAt(1) as? TextView)?.text =
+                        "Strategy registry unavailable • " + (e.message ?: "network error")
+                }
             }
         }
     }
