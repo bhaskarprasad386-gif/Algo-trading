@@ -233,23 +233,6 @@ def recover_interrupted_jobs() -> int:
     finally: db.close()
 
 
-def shutdown_workers() -> None:
-    """Cancel queued backtests and release the executor during app shutdown."""
-    with _LOCK:
-        futures = tuple(_FUTURES.values())
-    for future in futures:
-        future.cancel()
-    _EXECUTOR.shutdown(wait=False, cancel_futures=True)
-
-
-def worker_state() -> dict:
-    """Return bounded diagnostics for in-process backtest workers."""
-    with _LOCK:
-        active = sum(1 for future in _FUTURES.values() if not future.done())
-        completed = sum(1 for future in _FUTURES.values() if future.done())
-        return {"tracked": len(_FUTURES), "active": active, "completed": completed, "max_workers": 1}
-
-
 def get_job(db: Session, job_id: str) -> BacktestJob | None:
     return db.query(BacktestJob).filter(BacktestJob.job_id == job_id).first()
 
