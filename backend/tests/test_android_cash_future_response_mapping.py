@@ -51,7 +51,7 @@ def test_android_cash_future_scanner_summary_counts_are_clear():
 
 def test_android_cash_future_per_stock_summary_is_clear():
     ui = MAIN_ACTIVITY.read_text(encoding="utf-8")
-    for label in ('append("────────────────────\\n")', 'append("Cash: ₹${item.cash_ask ?: item.cash_ltp}\\n")', 'append("Future: ₹${item.future_bid ?: item.future_ltp}\\n")', 'append("Gap: ₹${item.gap} (${item.gap_pct}%)\\n")', 'append("Gross Spread: ₹${item.gross_profit ?: item.gross_lot_value ?: 0.0}\\n")', 'append("Margin: ₹${item.capacity_notional ?: 0.0}\\n")', 'append("Deployed Capital: ₹${item.capacity_notional ?: 0.0}\\n")', 'append("Net Profit: ₹${item.net_profit}\\n")', 'append("ROI: ${item.net_gap_pct}%\\n")', 'append("Executable: ${item.lifecycle}\\n\\n")'):
+    for label in ('append("────────────────────\\n")', 'append("Cash: ₹${item.cash_ask ?: item.cash_ltp}\\n")', 'append("Future: ₹${item.future_bid ?: item.future_ltp}\\n")', 'append("Gap: ₹${item.gap} (${item.gap_pct}%)\\n")', 'append("Gross Spread: ₹${item.gross_profit ?: item.gross_lot_value ?: 0.0}\\n")', 'append("Margin: ₹${item.capacity_notional ?: 0.0}\\n")', 'append("Deployed Capital: ₹${item.capacity_notional ?: 0.0}\\n")', 'append("Net Profit: ₹${item.net_profit ?: 0.0}\\n")', 'append("ROI: ${item.net_gap_pct}%\\n")', 'append("Executable: ${item.lifecycle}\\n\\n")'):
         assert label in ui
 
 
