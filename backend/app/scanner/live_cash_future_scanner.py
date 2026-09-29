@@ -382,7 +382,7 @@ class LiveCashFutureScanner:
             ext["future_high"] = max(ext["future_high"], future["ltp"])
             ext["future_low"] = min(ext["future_low"], future["ltp"])
             previous_stability = self._stability.get(stability_key)
-            max_gap_ns = int(max(1.0, float(settings.LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS) + 1.0) * 1_000_000_000
+            max_gap_ns = int(max(1.0, float(settings.LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS) + 1.0) * 1_000_000_000)
             stable = (
                 previous_stability[0] + 1
                 if previous_stability and timestamp_ns > previous_stability[1] and timestamp_ns - previous_stability[1] <= max_gap_ns
