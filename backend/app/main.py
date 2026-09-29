@@ -627,7 +627,17 @@ def root():
 
 @app.get("/api/v1/market-data/live-cash-future/health")
 def live_cash_future_health_route():
-    return live_cash_future_health()
+    state = live_cash_future_health()
+    scanner = live_cash_future_scanner.health()
+    observations = max(1, int(scanner.get("observations", 0)))
+    state.update({
+        "pair_rate": round(float(scanner.get("pairs", 0)) / observations, 4),
+        "scanner_pairs": int(scanner.get("pairs", 0)),
+        "scanner_dropped": int(scanner.get("dropped", 0)),
+        "scanner_persisted": int(scanner.get("persisted", 0)),
+        "coverage": max(int(state.get("coverage", 0)), len({row.get("symbol") for row in live_cash_future_scanner.snapshot(max_age_seconds=30, limit=50) if row.get("symbol")})),
+    })
+    return state
 
 
 @app.get("/health")
