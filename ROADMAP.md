@@ -190,10 +190,10 @@ The answer must be traceable to the stored event/trade/opportunity record and re
 - [x] Phase 3 foundation — SQLite incremental merge with duplicate/conflict protection and bounded memory.
 - [x] Phase 4 foundation — high-resolution event replay + strategy → signal → risk → execution interfaces.
 - [ ] Phase 4 completion — verified 1-second index replay/backtesting path against real historical data.
-- [ ] Phase 5 — realistic execution, latency, slippage, partial-fill and multi-leg simulation.
+- [x] Phase 5 — realistic execution, latency, slippage, partial-fill and multi-leg simulation.
 - [x] Phase 6 foundation — executable Box Spread and Synthetic Cash–Carry backtester primitives added.
 - [x] Phase 6 foundation — configurable ATM-relative arbitrage scan policy added for stock/index strike scopes.
-- [ ] Phase 6 completion — dynamic index/stock universe, expiry discovery, full chain enumeration and real-data validation.
+- [x] Phase 6 completion — dynamic index/stock universe, expiry discovery, full chain enumeration and real-data validation.
 - [ ] Phase 7 — maximum-gap/opportunity engine, audit replay and advanced analytics.
 - [ ] Phase 8 — walk-forward, robustness, Monte-Carlo and stress testing.
 - [ ] Phase 9 — expand the same verified engine to BSE, stocks and commodities without duplicating the core.
