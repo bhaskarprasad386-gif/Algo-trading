@@ -69,17 +69,33 @@ class StrategyRegistryActivity : AppCompatActivity() {
                 append(name).append("\n")
                 append("Mode: ").append(mode).append(" • Live rows: ").append(rows.size)
                     .append(" • Executable: ").append(opportunities).append("\n\n")
-                append("Rank • Underlying • Expiry/Contract • Executable Edge • Gross P&L • Liquidity\n")
-                rows.take(10).forEachIndexed { index, row ->
-                    val underlying = row["underlying"] ?: row["symbol"] ?: "-"
-                    val expiry = row["expiry"] ?: row["near_contract_month"] ?: "-"
-                    val edge = row["executable_edge"] ?: row["long_edge"] ?: row["short_edge"] ?: 0
-                    val gross = row["gross_pnl"] ?: 0
-                    val liquidity = row["liquidity_qty"] ?: row["capacity_lots"] ?: 0
-                    append(index + 1).append(" • ").append(underlying).append(" • ")
-                        .append(expiry).append(" • ₹").append(number(edge).format2())
-                        .append(" • ₹").append(number(gross).format2())
-                        .append(" • ").append(number(liquidity).format2()).append("\n")
+                if (id == "calendar-spread") {
+                    append("Rank • Underlying • Near/Far • Long/Short Edge • Edge % • Liquidity\n")
+                    rows.take(10).forEachIndexed { index, row ->
+                        val underlying = row["underlying"] ?: "-"
+                        val contract = (row["near_contract_month"] ?: "-").toString() + " / " + (row["far_contract_month"] ?: "-")
+                        val longEdge = number(row["long_edge"]).format2()
+                        val shortEdge = number(row["short_edge"]).format2()
+                        val longPct = number(row["long_edge_pct"]).format2()
+                        val shortPct = number(row["short_edge_pct"]).format2()
+                        val liquidity = number(row["liquidity_qty"]).format2()
+                        append(index + 1).append(" • ").append(underlying).append(" • ").append(contract)
+                            .append(" • L ₹").append(longEdge).append(" / S ₹").append(shortEdge)
+                            .append(" • L ").append(longPct).append("% / S ").append(shortPct).append("%")
+                            .append(" • ").append(liquidity).append("\n")
+                    }
+                } else {
+                    append("Rank • Underlying • Expiry/Contract • Executable Edge • Gross P&L • Liquidity\n")
+                    rows.take(10).forEachIndexed { index, row ->
+                        val underlying = row["underlying"] ?: row["symbol"] ?: "-"
+                        val expiry = row["expiry"] ?: "-"
+                        val edge = row["executable_edge"] ?: 0
+                        val gross = row["gross_pnl"] ?: 0
+                        val liquidity = row["liquidity_qty"] ?: 0
+                        append(index + 1).append(" • ").append(underlying).append(" • ").append(expiry)
+                            .append(" • ₹").append(number(edge).format2()).append(" • ₹").append(number(gross).format2())
+                            .append(" • ").append(number(liquidity).format2()).append("\n")
+                    }
                 }
                 if (rows.isEmpty()) append("NO CURRENT LIVE ROWS\n")
                 append("\nBid/ask executable scan • paper-safe • live broker orders OFF")
