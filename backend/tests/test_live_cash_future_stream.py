@@ -117,3 +117,20 @@ def test_live_payload_price_compatibility_supports_ltp_and_close():
 
     assert _record_price(old_live) == 100.25
     assert _record_price(new_live) == 101.25
+
+
+def test_live_atomic_first_write_wins_for_duplicate_second_bucket():
+    catalog = HistoricalCatalog(":memory:")
+    first = HistoricalRecord(
+        "angelone-live-1s", "NFO:AAA30SEP|101", "1s", 1000,
+        {"ltp": 100.0, "received_at_ns": 1},
+    )
+    second = HistoricalRecord(
+        first.source, first.instrument, first.timeframe, first.timestamp_ns,
+        {"ltp": 101.0, "received_at_ns": 2},
+    )
+    assert _ingest_live_record(catalog, first) == 1
+    assert _ingest_live_record(catalog, second) == 0
+    stored = catalog.records(source=first.source, instrument=first.instrument, timeframe=first.timeframe)
+    assert stored == (first,)
+    catalog.close()
