@@ -112,6 +112,41 @@ class HistoricalCatalog:
             raise
         return inserted
 
+    def ingest_if_absent(self, record: HistoricalRecord, *, ingested_at_ns: int = 0) -> int:
+        """Insert one record only if its durable identity is absent.
+
+        This is intentionally first-write-wins for live fixed-bucket feeds: a
+        reconnect or concurrent writer can observe the same second again, but
+        it must not turn a valid duplicate identity into a data-integrity
+        conflict. The strict ingest() API remains unchanged for historical
+        reconciliation where conflicting payloads must fail loudly.
+        """
+        if not isinstance(record, HistoricalRecord):
+            raise TypeError("record must be a HistoricalRecord")
+        if ingested_at_ns < 0:
+            raise ValueError("ingested_at_ns cannot be negative")
+        if not record.source.strip() or not record.instrument.strip() or not record.timeframe.strip():
+            raise ValueError("source, instrument and timeframe are required")
+        if record.timestamp_ns < 0 or (record.sequence is not None and record.sequence < 0):
+            raise ValueError("timestamp_ns and sequence cannot be negative")
+        payload_json = self._payload_json(record.payload)
+        row = (*record.identity(), payload_json, self._hash(payload_json), ingested_at_ns)
+        try:
+            cursor = self._db.execute(
+                "INSERT OR IGNORE INTO data_catalog(source,instrument,timeframe,timestamp_ns,sequence,payload_json,payload_hash,ingested_at_ns) VALUES(?,?,?,?,?,?,?,?)",
+                row,
+            )
+            if cursor.rowcount:
+                self._db.execute(
+                    "INSERT INTO source_watermarks(source,instrument,timeframe,max_timestamp_ns) VALUES(?,?,?,?) ON CONFLICT(source,instrument,timeframe) DO UPDATE SET max_timestamp_ns=MAX(source_watermarks.max_timestamp_ns, excluded.max_timestamp_ns)",
+                    (row[0], row[1], row[2], row[3]),
+                )
+            self._db.commit()
+            return int(cursor.rowcount)
+        except Exception:
+            self._db.rollback()
+            raise
+
     def ingest_events(self, records: Iterable[HistoricalRecord], *, ingested_at_ns: int = 0) -> int:
         """Ingest non-cadenced tick/event/order-book records without cadence assumptions."""
         def event_records():
