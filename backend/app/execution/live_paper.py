@@ -110,6 +110,7 @@ class LivePaperExecution:
         if existing is not None:
             return existing
         self._risk_check(db, user_id=user_id, symbol=symbol, side=side, quantity=quantity)
+        self.risk.reserve_order()
         order = Order(order_id=client_order_id or f"LIVE-PAPER-{user_id}-{uuid.uuid4().hex[:16]}",
                       symbol=symbol, quantity=quantity, transaction_type=side, status="OPEN",
                       user_id=user_id, price=price, pnl=0.0, order_type=order_type,
