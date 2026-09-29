@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.database import Base
 from app.execution.live_paper import LivePaperExecution
 from app.models import TradingAccount
+from app.risk.engine import RiskLimits
 
 
 def session():
@@ -45,3 +46,45 @@ def test_cancel_is_idempotent():
     order = service.place(db, user_id=1, symbol="TCS", side="BUY", quantity=1)
     service.cancel(db, user_id=1, order_id=order.order_id)
     assert service.cancel(db, user_id=1, order_id=order.order_id).status == "CANCELLED"
+
+
+def test_paper_risk_blocks_daily_order_limit():
+    db = session()
+    db.add(TradingAccount(user_id=1))
+    db.commit()
+    service = LivePaperExecution(RiskLimits(max_orders_per_day=1, max_quantity_per_order=10, max_position_quantity=10, max_loss=1000))
+    service.place(db, user_id=1, symbol="INFY", side="BUY", quantity=1)
+    try:
+        service.place(db, user_id=1, symbol="TCS", side="BUY", quantity=1)
+    except ValueError as exc:
+        assert "daily order limit" in str(exc)
+    else:
+        raise AssertionError("daily order limit was not enforced")
+
+
+def test_paper_rejects_crossed_market():
+    db = session()
+    db.add(TradingAccount(user_id=1))
+    db.commit()
+    service = LivePaperExecution()
+    service.place(db, user_id=1, symbol="HDFCBANK", side="BUY", quantity=1)
+    try:
+        service.on_tick(db, user_id=1, tick={"symbol": "HDFCBANK", "ltp": 100, "bid": 101, "ask": 100})
+    except ValueError as exc:
+        assert "bid cannot exceed ask" in str(exc)
+    else:
+        raise AssertionError("crossed market was accepted")
+
+
+def test_paper_risk_blocks_position_limit():
+    db = session()
+    db.add(TradingAccount(user_id=1))
+    db.commit()
+    service = LivePaperExecution(RiskLimits(max_orders_per_day=20, max_quantity_per_order=10, max_position_quantity=2, max_loss=1000))
+    service.place(db, user_id=1, symbol="ITC", side="BUY", quantity=2)
+    try:
+        service.place(db, user_id=1, symbol="ITC", side="BUY", quantity=1)
+    except ValueError as exc:
+        assert "position limit" in str(exc)
+    else:
+        raise AssertionError("position limit was not enforced")
