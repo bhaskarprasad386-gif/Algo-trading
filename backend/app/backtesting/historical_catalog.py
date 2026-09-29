@@ -51,6 +51,9 @@ class HistoricalCatalog:
         self._db = sqlite3.connect(path)
         self._db.execute("PRAGMA foreign_keys=ON")
         self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA synchronous=NORMAL")
+        self._db.execute("PRAGMA busy_timeout=5000")
+        self._db.execute("PRAGMA wal_autocheckpoint=1000")
         self._db.execute("""CREATE TABLE IF NOT EXISTS data_catalog (
             source TEXT NOT NULL, instrument TEXT NOT NULL, timeframe TEXT NOT NULL,
             timestamp_ns INTEGER NOT NULL, sequence INTEGER, payload_json TEXT NOT NULL,
@@ -113,6 +116,43 @@ class HistoricalCatalog:
             self._db.rollback()
             raise
         return inserted
+
+    def ingest_if_absent_batch(self, records: Iterable[HistoricalRecord], *, ingested_at_ns: int = 0) -> int:
+        """Durably insert a bounded batch in one SQLite transaction."""
+        if ingested_at_ns < 0:
+            raise ValueError("ingested_at_ns cannot be negative")
+        batch = tuple(records)
+        if not batch:
+            return 0
+        rows = []
+        for record in batch:
+            if not isinstance(record, HistoricalRecord):
+                raise TypeError("records must contain HistoricalRecord values")
+            if not record.source.strip() or not record.instrument.strip() or not record.timeframe.strip():
+                raise ValueError("source, instrument and timeframe are required")
+            if record.timestamp_ns < 0 or (record.sequence is not None and record.sequence < 0):
+                raise ValueError("timestamp_ns and sequence cannot be negative")
+            payload_json = self._payload_json(record.payload)
+            rows.append((*record.identity(), payload_json, self._hash(payload_json), ingested_at_ns))
+        inserted = 0
+        try:
+            for row in rows:
+                cursor = self._db.execute("INSERT OR IGNORE INTO data_catalog(source,instrument,timeframe,timestamp_ns,sequence,payload_json,payload_hash,ingested_at_ns) VALUES(?,?,?,?,?,?,?,?)", row)
+                if cursor.rowcount:
+                    inserted += int(cursor.rowcount)
+                    self._db.execute("INSERT INTO source_watermarks(source,instrument,timeframe,max_timestamp_ns) VALUES(?,?,?,?) ON CONFLICT(source,instrument,timeframe) DO UPDATE SET max_timestamp_ns=MAX(source_watermarks.max_timestamp_ns, excluded.max_timestamp_ns)", (row[0], row[1], row[2], row[3]))
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
+        return inserted
+
+    def checkpoint(self, *, mode: str = "PASSIVE") -> tuple[int, int, int]:
+        """Run a controlled WAL checkpoint."""
+        if mode not in {"PASSIVE", "FULL", "RESTART", "TRUNCATE"}:
+            raise ValueError("unsupported checkpoint mode")
+        row = self._db.execute(f"PRAGMA wal_checkpoint({mode})").fetchone()
+        return tuple(int(value) for value in row)
 
     def ingest_if_absent(self, record: HistoricalRecord, *, ingested_at_ns: int = 0) -> int:
         """Insert one record only if its durable identity is absent.
