@@ -76,13 +76,27 @@ class LivePaperExecution:
         ).order_by(Position.id.desc()).first())
         current = int(position.quantity) if position else 0
         signed = quantity if side == "BUY" else -quantity
-        allowed, reason = self.risk.check(quantity, current_position=current,
-                                          realized_pnl=self._realized_pnl(db, user_id))
+        # Open paper orders already reserve position capacity even before a tick
+        # fills them; otherwise multiple pending orders could collectively exceed
+        # the position limit while each individual order passes the check.
+        open_orders = (db.query(Order).filter(
+            Order.user_id == user_id,
+            Order.symbol == symbol,
+            Order.status == "OPEN",
+        ).all())
+        reserved = sum(
+            int(order.quantity) if order.transaction_type.upper() == "BUY" else -int(order.quantity)
+            for order in open_orders
+        )
+        projected = current + reserved + signed
+        allowed, reason = self.risk.check(
+            quantity,
+            current_position=current + reserved,
+            realized_pnl=self._realized_pnl(db, user_id),
+            projected_position=projected,
+        )
         if not allowed:
             raise ValueError(reason)
-        projected = current + signed
-        if abs(projected) > self.risk.limits.max_position_quantity:
-            raise ValueError("position limit exceeded")
 
     @staticmethod
     def _realized_pnl(db: Session, user_id: int) -> float:
