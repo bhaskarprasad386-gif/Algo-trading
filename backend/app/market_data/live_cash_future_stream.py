@@ -19,6 +19,7 @@ from app.core.logger import app_logger
 from app.core.config import settings
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.websocket import MarketDataWebSocket
+from app.market_data.shared_cache import get_shared_market_data_cache
 
 IST = ZoneInfo("Asia/Kolkata")
 OPEN = time(9, 15)
@@ -139,6 +140,7 @@ class LiveCashFutureOneSecondCollector:
         self.instrument_master = instrument_master or InstrumentMaster()
         self.poll_seconds = poll_seconds
         self.on_observation = on_observation
+        self.shared_cache = get_shared_market_data_cache()
         self.stop_event = threading.Event()
         self._sockets: list[MarketDataWebSocket] = []
         with _STATE_LOCK:
@@ -377,6 +379,7 @@ class LiveCashFutureOneSecondCollector:
                             gap_seconds += int((second_ns - previous[0]) / 1_000_000_000) - 1
                         observations += 1
                         latest[token] = (second_ns, payload)
+                        self.shared_cache.put(f"{meta['leg']}:{token}", payload, timestamp_ns=second_ns)
                         with _STATE_LOCK:
                             _STATE["last_observation_ns"] = second_ns
                             _STATE["gap_seconds"] = gap_seconds
