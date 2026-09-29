@@ -474,6 +474,8 @@ class LiveCashFutureScanner:
                 self._alert_last_at[state_key] = now_monotonic
             elif not alert_eligible:
                 self._alert_state[state_key] = "WEAKENING" if previous_alert_state == "ACTIVE" else "INACTIVE"
+                if previous_alert_state != "ACTIVE":
+                    self._alert_last_at.pop(state_key, None)
                 alert_event = None
             else:
                 alert_event = None
