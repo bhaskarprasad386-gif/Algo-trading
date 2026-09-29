@@ -194,7 +194,7 @@ def dashboard():
   async function scan(){
     try{
       summary.textContent='Scanning backend Cash-Future opportunities…';
-      const r=await fetch(`${api}/api/v1/scanner/cash-future/live/auto?limit=50`,{cache:'no-store'});
+      const r=await fetch(`${api}/api/v1/scanner/cash-future/live/fast?limit=50`,{cache:'no-store'});
       if(!r.ok) throw new Error(`Scanner API ${r.status}`);
       const p=await r.json(), rows=Array.isArray(p.data)?p.data:[];
       tbody.innerHTML='';
