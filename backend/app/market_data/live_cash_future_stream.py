@@ -14,7 +14,7 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from app.algo.auth import AngelOneAuth
-from app.backtesting.historical_catalog import HistoricalRecord
+from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 from app.market_data.daily_shard_catalog import DailyMarketDataShardCatalog
 from app.core.logger import app_logger
 from app.core.config import settings
@@ -295,7 +295,7 @@ class LiveCashFutureOneSecondCollector:
         for thread in threads:
             thread.start()
 
-        catalog = DailyMarketDataShardCatalog(self.data_db)
+        catalog = (DailyMarketDataShardCatalog(self.data_db) if settings.LIVE_CASH_FUTURE_DAILY_SHARDS_ENABLED else HistoricalCatalog(self.data_db))
         with _STATE_LOCK:
             _STATE["running"] = True
             _STATE["connected"] = False
