@@ -85,6 +85,28 @@ class MarketDataClient:
             app_logger.error(f"Quote request failed for {tradingsymbol}: {str(e)}")
             raise TradingAppException("QuoteRequestError", "Market data provider request failed", 502) from e
 
+    def quote_many(self, exchange: str, instruments: list[dict[str, str]]) -> Dict[str, Any]:
+        """Fetch one FULL quote request for a bounded list of instruments."""
+        if not instruments:
+            raise ValueError("instruments must not be empty")
+        tokens = [str(item["symboltoken"]) for item in instruments if str(item.get("symboltoken", "")).strip()]
+        if not tokens:
+            raise ValueError("instruments must contain symboltoken values")
+        try:
+            response = self._request_with_retry(
+                f"Quote batch {exchange}",
+                lambda: self.get_client().getMarketData("FULL", {exchange.upper(): tokens}),
+            )
+            if response and response.get("status"):
+                return response
+            message = response.get("message", "Unknown market-data error") if response else "Empty response from Angel One"
+            raise TradingAppException("QuoteBatchRequestFailed", message, 502)
+        except TradingAppException:
+            raise
+        except Exception as e:
+            app_logger.error(f"Quote batch request failed for {exchange}: {str(e)}")
+            raise TradingAppException("QuoteBatchRequestError", "Market data provider request failed", 502) from e
+
     def margin(self, positions: list[dict[str, Any]]) -> Dict[str, Any]:
         """Fetch Angel One's real-time margin requirement for a position basket."""
         if not positions:
