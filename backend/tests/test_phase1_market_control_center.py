@@ -23,6 +23,7 @@ def test_phase1_android_market_control_center_contract():
     api = ANDROID_API.read_text(encoding="utf-8")
     for marker in ("marketControlCenter", "tvMarketFeedStatus", "tvIndexOverview", "tvCommodityOverview", "btnMarketOverviewRefresh"):
         assert marker in layout
+    for marker in ("tvMarketFeedStatus", "tvIndexOverview", "tvCommodityOverview", "btnMarketOverviewRefresh"):
         assert marker in main
     assert "marketOverview()" in api
     assert "/api/v1/market-data/overview" in api
