@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from app.algo.auth import AngelOneAuth
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 from app.core.logger import app_logger
+from app.core.config import settings
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.nifty50_universe import NIFTY50_STOCK_SYMBOLS
