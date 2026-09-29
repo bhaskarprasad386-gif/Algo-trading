@@ -8,7 +8,6 @@ forward-filled. Live orders are not involved.
 from __future__ import annotations
 
 from datetime import date, datetime, time
-from queue import Empty, Queue
 import threading
 import time as time_module
 from typing import Any, Callable
@@ -81,6 +80,31 @@ def _ltp(message: dict[str, Any]) -> float | None:
 def _ingest_live_record(catalog: HistoricalCatalog, record: HistoricalRecord) -> int:
     """Persist one live second-bucket with atomic first-write-wins semantics."""
     return catalog.ingest_if_absent(record)
+
+
+class _LatestMessageBuffer:
+    """Bound raw websocket backlog to one pending message per token."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._messages: dict[str, dict[str, Any]] = {}
+
+    def put(self, message: dict[str, Any]) -> None:
+        token = str(message.get("token") or "").strip()
+        if not token:
+            return
+        with self._lock:
+            self._messages[token] = message
+
+    def drain(self) -> list[dict[str, Any]]:
+        with self._lock:
+            messages = list(self._messages.values())
+            self._messages.clear()
+        return messages
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._messages)
 
 
 class LiveCashFutureOneSecondCollector:
@@ -214,7 +238,7 @@ class LiveCashFutureOneSecondCollector:
                 "lot_size": int(item.get("lotsize") or item.get("lotSize") or 0) or None,
             }
 
-        queue: Queue[dict[str, Any]] = Queue()
+        queue = _LatestMessageBuffer()
         self.auth.login()
         nse_socket = MarketDataWebSocket(auth=self.auth)
         nfo_socket = MarketDataWebSocket(auth=self.auth)
@@ -272,64 +296,65 @@ class LiveCashFutureOneSecondCollector:
             while not self.stop_event.is_set() and self.market_open():
                 deadline = time_module.monotonic() + self.poll_seconds
                 while time_module.monotonic() < deadline:
-                    try:
-                        message = queue.get(timeout=max(0.01, deadline - time_module.monotonic()))
-                    except Empty:
-                        break
-                    last_message_monotonic = time_module.monotonic()
-                    token = str(message.get("token") or "").strip()
-                    meta = token_meta.get(token)
-                    ts = _timestamp_ns(message)
-                    if not token or meta is None or ts is None:
-                        dropped += 1
+                    messages = queue.drain()
+                    if not messages:
+                        time_module.sleep(min(0.01, max(0.0, deadline - time_module.monotonic())))
                         continue
-                    second_ns = (ts // 1_000_000_000) * 1_000_000_000
-                    previous = latest.get(token)
-                    if previous is not None and previous[0] != second_ns:
-                        previous_payload = previous[1]
-                        if self.on_observation is not None:
+                    for message in messages:
+                        last_message_monotonic = time_module.monotonic()
+                        token = str(message.get("token") or "").strip()
+                        meta = token_meta.get(token)
+                        ts = _timestamp_ns(message)
+                        if not token or meta is None or ts is None:
+                            dropped += 1
+                            continue
+                        second_ns = (ts // 1_000_000_000) * 1_000_000_000
+                        previous = latest.get(token)
+                        if previous is not None and previous[0] != second_ns:
+                            previous_payload = previous[1]
+                            if self.on_observation is not None:
+                                try:
+                                    self.on_observation(dict(previous_payload))
+                                except Exception as exc:
+                                    app_logger.error(f"1-second live scanner callback failed {token}: {exc}")
                             try:
-                                self.on_observation(dict(previous_payload))
-                            except Exception as exc:
-                                app_logger.error(f"1-second live scanner callback failed {token}: {exc}")
-                        try:
-                            written += _ingest_live_record(catalog, HistoricalRecord(
-                                source=SOURCE,
-                                instrument=f"{meta['symbol']}|{token}",
-                                timeframe=TIMEFRAME,
-                                timestamp_ns=previous[0],
-                                payload=previous_payload,
-                            ))
-                        except ValueError as exc:
-                            rejected += 1
-                            app_logger.error(f"1-second live record rejected {token}: {exc}")
-                    payload = dict(message)
-                    payload.update({
-                        "source_timestamp_ns": second_ns,
-                        "ltp": _ltp(message),
-                        "close": _ltp(message),
-                        "underlying": meta["underlying"],
-                        "leg": meta["leg"],
-                        "contract_month": meta["contract_month"],
-                        "expiry": meta["expiry"],
-                        "lot_size": meta["lot_size"],
-                        "bid": self._best_side(message, "best_5_buy_data"),
-                        "ask": self._best_side(message, "best_5_sell_data"),
-                        "bid_qty": self._best_side_detail(message, "best_5_buy_data")[1],
-                        "ask_qty": self._best_side_detail(message, "best_5_sell_data")[1],
-                        "received_at_ns": time_module.time_ns(),
-                    })
-                    if previous is not None and second_ns > previous[0] + 1_000_000_000:
-                        gap_seconds += int((second_ns - previous[0]) / 1_000_000_000) - 1
-                    observations += 1
-                    latest[token] = (second_ns, payload)
-                    with _STATE_LOCK:
-                        _STATE["last_observation_ns"] = second_ns
-                        _STATE["gap_seconds"] = gap_seconds
-                        _STATE["observations"] = observations
-                        _STATE["pairs"] = pairs
-                        _STATE["dropped"] = dropped
-                        _STATE["connected"] = any(socket.connected for socket in self._sockets)
+                                written += _ingest_live_record(catalog, HistoricalRecord(
+                                    source=SOURCE,
+                                    instrument=f"{meta['symbol']}|{token}",
+                                    timeframe=TIMEFRAME,
+                                    timestamp_ns=previous[0],
+                                    payload=previous_payload,
+                                ))
+                            except ValueError as exc:
+                                rejected += 1
+                                app_logger.error(f"1-second live record rejected {token}: {exc}")
+                        payload = dict(message)
+                        payload.update({
+                            "source_timestamp_ns": second_ns,
+                            "ltp": _ltp(message),
+                            "close": _ltp(message),
+                            "underlying": meta["underlying"],
+                            "leg": meta["leg"],
+                            "contract_month": meta["contract_month"],
+                            "expiry": meta["expiry"],
+                            "lot_size": meta["lot_size"],
+                            "bid": self._best_side(message, "best_5_buy_data"),
+                            "ask": self._best_side(message, "best_5_sell_data"),
+                            "bid_qty": self._best_side_detail(message, "best_5_buy_data")[1],
+                            "ask_qty": self._best_side_detail(message, "best_5_sell_data")[1],
+                            "received_at_ns": time_module.time_ns(),
+                        })
+                        if previous is not None and second_ns > previous[0] + 1_000_000_000:
+                            gap_seconds += int((second_ns - previous[0]) / 1_000_000_000) - 1
+                        observations += 1
+                        latest[token] = (second_ns, payload)
+                        with _STATE_LOCK:
+                            _STATE["last_observation_ns"] = second_ns
+                            _STATE["gap_seconds"] = gap_seconds
+                            _STATE["observations"] = observations
+                            _STATE["pairs"] = pairs
+                            _STATE["dropped"] = dropped
+                            _STATE["connected"] = any(socket.connected for socket in self._sockets)
                 if self._feed_silent(last_message_monotonic, time_module.monotonic()):
                     connected = any(socket.connected for socket in self._sockets)
                     raise RuntimeError(
