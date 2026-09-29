@@ -28,6 +28,8 @@ TIMEFRAME = "1s"
 # Reconnect the WebSocket session if both feeds go silent. A silent socket can
 # return after its bounded reconnect attempts without raising into run_forever.
 NO_DATA_RECONNECT_SECONDS = 30.0
+WRITE_BATCH_SIZE = 100
+WRITE_BATCH_MAX_SECONDS = 5.0
 
 _STATE_LOCK = threading.Lock()
 _STATE = {"enabled": False, "running": False, "connected": False, "last_observation_ns": None, "written": 0, "rejected": 0, "dropped": 0, "pairs": 0, "observations": 0, "gap_seconds": 0, "coverage": 0, "last_error": None}
@@ -300,6 +302,22 @@ class LiveCashFutureOneSecondCollector:
         pairs = 0
         observations = 0
         gap_seconds = 0
+        pending_records: list[HistoricalRecord] = []
+        last_flush_monotonic = time_module.monotonic()
+
+        def flush_pending() -> None:
+            nonlocal pending_records, written, last_flush_monotonic
+            if not pending_records:
+                return
+            written += catalog.ingest_if_absent_batch(pending_records, ingested_at_ns=time_module.time_ns())
+            pending_records.clear()
+            last_flush_monotonic = time_module.monotonic()
+
+        def queue_record(record: HistoricalRecord) -> None:
+            pending_records.append(record)
+            if len(pending_records) >= WRITE_BATCH_SIZE or (time_module.monotonic() - last_flush_monotonic) >= WRITE_BATCH_MAX_SECONDS:
+                flush_pending()
+
         try:
             while not self.stop_event.is_set() and self.market_open():
                 deadline = time_module.monotonic() + self.poll_seconds
@@ -326,7 +344,7 @@ class LiveCashFutureOneSecondCollector:
                                 except Exception as exc:
                                     app_logger.error(f"1-second live scanner callback failed {token}: {exc}")
                             try:
-                                written += _ingest_live_record(catalog, HistoricalRecord(
+                                queue_record(HistoricalRecord(
                                     source=SOURCE,
                                     instrument=f"{meta['symbol']}|{token}",
                                     timeframe=TIMEFRAME,
@@ -388,7 +406,11 @@ class LiveCashFutureOneSecondCollector:
                     rejected += 1
                     app_logger.error(f"1-second final record rejected {token}: {exc}")
         finally:
-            catalog.close()
+            try:
+                flush_pending()
+                catalog.checkpoint(mode="PASSIVE")
+            finally:
+                catalog.close()
             for socket in self._sockets:
                 socket.close()
             self._sockets = []
