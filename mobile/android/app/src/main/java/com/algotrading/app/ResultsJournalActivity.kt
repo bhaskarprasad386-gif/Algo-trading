@@ -38,7 +38,7 @@ class ResultsJournalActivity : AppCompatActivity() {
         }
         val title = TextView(this).apply { text = "RESULTS / JOURNAL"; textSize = 22f }
         status = TextView(this).apply { text = "Enter a Universal run ID."; textSize = 13f }
-        input = EditText(this).apply { hint = "Universal run ID"; singleLine = true }
+        input = EditText(this).apply { hint = "Universal run ID"; setSingleLine(true) }
         val load = Button(this).apply {
             text = "LOAD RESULT"
             layoutParams = ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -71,7 +71,7 @@ class ResultsJournalActivity : AppCompatActivity() {
         try {
             currentRunId = id; tradeCursor = -1; fillCursor = -1; eventCursor = -1; equityTimestamp = null; equityId = null; cashFutureMode = false
             tradeRows.clear(); fillRows.clear(); eventRows.clear(); equityRows.clear()
-            val run: Map<String, Any?>
+            var run: Map<String, Any?>
             try {
                 val cashRun = ApiService.retrofitService.cashFutureStrategyRun(id)
                 if (cashRun.run_id == id) {
