@@ -562,18 +562,62 @@ def app_update():
     return payload
 
 
+STRATEGY_WORKSPACES = [
+    {
+        "id": "cash-future", "name": "Cash–Future", "version": "1", "enabled": True,
+        "screen": "cash_future_scanner", "data_mode": "LIVE 1s",
+        "execution_mode": "PAPER", "live_orders": False,
+        "capabilities": ["LIVE DATA", "SCANNER", "HISTORICAL", "BACKDATE", "BACKTEST", "REPLAY", "PAPER TRADE", "RESULTS"],
+        "live_route": "/api/v1/scanner/cash-future/live/fast",
+        "workspace_route": "/api/v1/backtesting/cash-future/strategy-run"
+    },
+    {
+        "id": "calendar-spread", "name": "Calendar Spread", "version": "1", "enabled": True,
+        "screen": "calendar_spread", "data_mode": "LIVE 1s",
+        "execution_mode": "PAPER", "live_orders": False,
+        "capabilities": ["LIVE DATA", "SCANNER", "BACKTEST", "PAPER TRADE", "RESULTS"],
+        "live_route": "/api/v1/scanner/calendar-spread/live",
+        "workspace_route": "/api/v1/backtesting/calendar-spread"
+    },
+    {
+        "id": "synthetic-future-cash-carry", "name": "Synthetic Future / Cash Carry", "version": "1", "enabled": True,
+        "screen": "synthetic_cash_carry", "data_mode": "LIVE",
+        "execution_mode": "PAPER", "live_orders": False,
+        "capabilities": ["LIVE DATA", "SCANNER", "BACKTEST", "PAPER TRADE", "RESULTS"],
+        "live_route": "/api/v1/scanner/synthetic-cash-carry/live",
+        "workspace_route": "/api/v1/backtesting/cash-future/strategy-run"
+    },
+    {
+        "id": "box-spread", "name": "Box Spread", "version": "1", "enabled": True,
+        "screen": "box_spread", "data_mode": "LIVE",
+        "execution_mode": "PAPER", "live_orders": False,
+        "capabilities": ["LIVE DATA", "SCANNER", "BACKTEST", "PAPER TRADE", "RESULTS"],
+        "live_route": "/api/v1/scanner/box-spread/live",
+        "workspace_route": "/api/v1/backtesting/cash-future/strategy-run"
+    },
+    {
+        "id": "full-fno", "name": "Full F&O Backtest", "version": "1", "enabled": True,
+        "screen": "full_fno", "data_mode": "ACCUMULATED LIVE",
+        "execution_mode": "PAPER", "live_orders": False,
+        "capabilities": ["HISTORICAL", "BACKDATE", "BACKTEST", "REPLAY", "RESULTS"],
+        "live_route": None,
+        "workspace_route": "/api/v1/backtesting/full-fno/start"
+    },
+]
+
+
 @app.get("/api/v1/app/strategies")
 def app_strategies():
-    """Backend-owned strategy registry used by the Android shell."""
-    return {
-        "strategies": [
-            {"id": "cash-future", "name": "Cash–Future", "version": "1", "enabled": True, "screen": "cash_future_scanner"},
-            {"id": "calendar-spread", "name": "Calendar Spread", "version": "1", "enabled": True, "screen": "backend"},
-            {"id": "synthetic-future-cash-carry", "name": "Synthetic Future / Cash Carry", "version": "1", "enabled": True, "screen": "backend"},
-            {"id": "box-spread", "name": "Box Spread", "version": "1", "enabled": True, "screen": "box_spread"},
-            {"id": "full-fno", "name": "Full F&O Backtest", "version": "1", "enabled": True, "screen": "full_fno"},
-        ]
-    }
+    """Backend-owned strategy workspace registry used by Web and Android."""
+    return {"strategies": STRATEGY_WORKSPACES}
+
+
+@app.get("/api/v1/app/strategies/{strategy_id}/workspace")
+def app_strategy_workspace(strategy_id: str):
+    for workspace in STRATEGY_WORKSPACES:
+        if workspace["id"] == strategy_id:
+            return {"status": "success", "workspace": workspace}
+    raise HTTPException(status_code=404, detail=f"Strategy workspace not found: {strategy_id}")
 
 
 @app.get("/")
