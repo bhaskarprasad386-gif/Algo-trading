@@ -1,5 +1,7 @@
 import requests
 from threading import Lock
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional
 
 from app.core.exceptions import TradingAppException
@@ -15,6 +17,7 @@ class InstrumentMaster:
     )
     _cache_lock = Lock()
     _cached_instruments: Optional[List[Dict[str, Any]]] = None
+    _cached_snapshot_date: Optional[str] = None
 
     def __init__(self):
         # Each instance remains a cheap view over the process-wide snapshot.
@@ -34,12 +37,17 @@ class InstrumentMaster:
                 return None
             return cls._cached_instruments
 
-    def download(self) -> List[Dict[str, Any]]:
-        """Download the latest Angel One instrument master once per process."""
+    def download(self, *, force: bool = False) -> List[Dict[str, Any]]:
+        """Download Angel One instrument master at most once per IST day unless forced.
+
+        Daily refresh is intentional because expiry/roll-day contracts can change
+        without a process restart.
+        """
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
         with self._cache_lock:
-            if self._loaded and self.instruments:
+            if not force and self._loaded and self.instruments and self.__class__._cached_snapshot_date == today:
                 return self.instruments
-            if self._cached_instruments is not None:
+            if not force and self._cached_instruments is not None and self.__class__._cached_snapshot_date == today:
                 self.instruments = self._cached_instruments
                 self._loaded = True
                 return self.instruments
@@ -54,6 +62,7 @@ class InstrumentMaster:
                         502,
                     )
                 self.__class__._cached_instruments = data
+                self.__class__._cached_snapshot_date = today
                 self.instruments = data
                 self._loaded = True
                 app_logger.info(
