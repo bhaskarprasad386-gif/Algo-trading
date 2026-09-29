@@ -83,7 +83,10 @@ def test_phase6_enumerates_full_point_in_time_chain_without_inventing_legs():
         contracts=result.contracts,
         atm=25000.0,
     )
-    assert len(HistoricalArbitrageChainCandidates.synthetic_index(snapshot)) == 6
+    # Synthetic selection uses the nearest available strike on each side of
+    # ATM; ATM itself is not a synthetic leg. With one strike on each side,
+    # the genuine executable candidate set therefore contains four contracts.
+    assert len(HistoricalArbitrageChainCandidates.synthetic_index(snapshot)) == 4
 
 
 def test_phase5_multileg_execution_keeps_partial_leg_failure_non_executable():
@@ -99,3 +102,4 @@ def test_phase5_multileg_execution_keeps_partial_leg_failure_non_executable():
     assert result.fills == ()
     assert result.leg_results[0].fills[0].filled_at_ns == 12_000
     assert result.leg_results[1].remaining_quantity == 30
+}
