@@ -17,6 +17,7 @@ from .arbitrage_chain_selector import ChainContract
 _OPTION_TYPES = {"OPTSTK": "STOCK", "OPTIDX": "INDEX"}
 _FUTURE_TYPES = {"FUTSTK": "STOCK", "FUTIDX": "INDEX"}
 _SUPPORTED_SEGMENTS = {"NFO", "BFO"}
+_VENUE_BY_SEGMENT = {"NFO": "NSE", "BFO": "BSE"}
 
 
 def _expiry(value: Any) -> date:
@@ -183,7 +184,7 @@ class ArbitrageInstrumentDiscovery:
                 raise ValueError(f"invalid point-in-time quote for token {token}")
             contracts.append(ChainContract(
                 timestamp_ns=timestamp_ns,
-                venue=exchange.strip().upper(),
+                venue=_VENUE_BY_SEGMENT.get(exchange.strip().upper(), exchange.strip().upper()),
                 underlying=underlying.strip().upper(),
                 instrument_class=cls,
                 expiry=int(expiry.strftime("%Y%m%d")),
