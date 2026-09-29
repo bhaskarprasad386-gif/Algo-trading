@@ -1,4 +1,5 @@
 name: Verify Live Cash-Future 1s Collector
+# Runtime verification refresh: execute the current main verifier against the VPS.
 
 on:
   workflow_dispatch:
