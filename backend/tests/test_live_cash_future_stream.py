@@ -154,3 +154,18 @@ def test_live_cash_future_gap_detection_is_explicit_in_collector_source():
 def test_live_feed_silence_watchdog_triggers_only_after_timeout():
     assert not LiveCashFutureOneSecondCollector._feed_silent(100.0, 129.9)
     assert LiveCashFutureOneSecondCollector._feed_silent(100.0, 130.0)
+
+
+def test_live_message_buffer_coalesces_raw_backlog_by_token():
+    from app.market_data.live_cash_future_stream import _LatestMessageBuffer
+
+    buffer = _LatestMessageBuffer()
+    for second in range(1000):
+        buffer.put({"token": "101", "exchange_timestamp": second, "last_traded_price": second})
+    buffer.put({"token": "201", "exchange_timestamp": 1000, "last_traded_price": 200})
+
+    assert len(buffer) == 2
+    drained = {item["token"]: item for item in buffer.drain()}
+    assert drained["101"]["exchange_timestamp"] == 999
+    assert drained["201"]["exchange_timestamp"] == 1000
+    assert len(buffer) == 0
