@@ -79,7 +79,7 @@ def cash_future_replay(
     spot_instrument: str | None = Query(None),
     exchange: str = Query("NSE", min_length=1),
 ):
-    """Return actual paired Cash/Future/Gap observations; never fabricate resolution."""
+    """Return actual paired Cash/Future/Gap observations. Never fabricate resolution."""
     underlying = symbol.strip().upper()
     spot = (spot_instrument or underlying).strip().upper()
     catalog = HistoricalCatalog(settings.BACKTEST_DATA_DB)
