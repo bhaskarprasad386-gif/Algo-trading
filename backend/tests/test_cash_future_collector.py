@@ -8,8 +8,8 @@ from app.scanner.cash_future_collector import CashFutureHistoryCollector, _full_
 class FakeMaster:
     def __init__(self):
         self.instruments = [
-            {"symbol": "ABC30SEP2026FUT", "name": "ABC", "token": "201", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "100"},
-            {"symbol": "ABC29OCT2026FUT", "name": "ABC", "token": "202", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "29OCT2026", "lotsize": "100"},
+            {"symbol": "ABC31OCT2026FUT", "name": "ABC", "token": "201", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "100"},
+            {"symbol": "ABC30NOV2026FUT", "name": "ABC", "token": "202", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "29OCT2026", "lotsize": "100"},
         ]
 
     def search(self, exchange=None):
@@ -23,7 +23,7 @@ class FakeMaster:
 
 class FakeMarketClient:
     def quote(self, exchange, tradingsymbol, symboltoken):
-        prices = {"ABC-EQ": 100.0, "ABC30SEP2026FUT": 108.0, "ABC29OCT2026FUT": 111.0}
+        prices = {"ABC-EQ": 100.0, "ABC31OCT2026FUT": 108.0, "ABC30NOV2026FUT": 111.0}
         price = prices[tradingsymbol]
         return {
             "status": True,
@@ -64,8 +64,8 @@ def test_collector_keeps_current_and_near_separate(monkeypatch):
     assert [point.contract_month for point in saved] == ["CURRENT", "NEAR"]
     assert [point.gap for point in saved] == [8.0, 11.0]
     assert [point.margin_required for point in saved] == [50000.0, 50000.0]
-    assert saved[0].expiry_date == date(2026, 9, 30)
-    assert saved[1].expiry_date == date(2026, 10, 29)
+    assert saved[0].expiry_date == date(2026, 10, 31)
+    assert saved[1].expiry_date == date(2026, 11, 30)
     assert result[0]["volume"] == 5000
     assert result[0]["oi"] == 20000
     assert result[0]["cash_bid"] == 99.9
@@ -86,22 +86,22 @@ def test_contract_selection_ignores_wrong_underlying_expired_and_duplicate_rows(
     master.instruments.extend([
         {"symbol": "ABCBANK30SEP2026FUT", "name": "ABCBANK", "token": "301", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "100"},
         {"symbol": "ABC31JUL2026FUT", "name": "ABC", "token": "302", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "31JUL2026", "lotsize": "100"},
-        {"symbol": "ABC30SEP2026FUT", "name": "ABC", "token": "303", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "100"},
-        {"symbol": "ABC30SEP2026OPT", "name": "ABC", "token": "304", "exch_seg": "NFO", "instrumenttype": "OPTSTK", "expiry": "30SEP2026", "lotsize": "100"},
+        {"symbol": "ABC31OCT2026FUT", "name": "ABC", "token": "303", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "100"},
+        {"symbol": "ABC31OCT2026OPT", "name": "ABC", "token": "304", "exch_seg": "NFO", "instrumenttype": "OPTSTK", "expiry": "30SEP2026", "lotsize": "100"},
     ])
     collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), master)
 
     selected = collector._future_instruments("ABC")
 
-    assert [item["symbol"] for item in selected] == ["ABC30SEP2026FUT", "ABC29OCT2026FUT"]
+    assert [item["symbol"] for item in selected] == ["ABC31OCT2026FUT", "ABC30NOV2026FUT"]
 
 
 def test_contract_selection_ignores_missing_token_and_invalid_lot_size():
     master = FakeMaster()
     master.instruments.extend([
-        {"symbol": "ABC30SEP2026BADTOKEN", "name": "ABC", "token": "", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "100"},
-        {"symbol": "ABC30SEP2026ZEROLOT", "name": "ABC", "token": "305", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "0"},
-        {"symbol": "ABC30SEP2026BADLOT", "name": "ABC", "token": "306", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "not-a-lot"},
+        {"symbol": "ABC31OCT2026BADTOKEN", "name": "ABC", "token": "", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "100"},
+        {"symbol": "ABC31OCT2026ZEROLOT", "name": "ABC", "token": "305", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "0"},
+        {"symbol": "ABC31OCT2026BADLOT", "name": "ABC", "token": "306", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "not-a-lot"},
     ])
     collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), master)
 
