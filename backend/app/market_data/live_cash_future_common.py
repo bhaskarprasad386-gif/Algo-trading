@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import threading
 from datetime import datetime, date
+from zoneinfo import ZoneInfo
 from typing import Any, Callable
 
 from app.core.config import settings
@@ -69,7 +70,7 @@ class LiveCashFutureCommonRunner:
         rows = self.instrument_master.download()
         configured = {x.strip().upper() for x in settings.LIVE_CASH_FUTURE_SYMBOLS.split(",") if x.strip()}
         universe = configured or None
-        today = datetime.now().astimezone().date()
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
         futures: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
         for row in rows:
