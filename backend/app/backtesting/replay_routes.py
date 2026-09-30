@@ -6,7 +6,7 @@ The selected range is streamed through MarketDataReplay.
 from __future__ import annotations
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
-from app.backtesting.daily_market_data_shard_catalog import DailyMarketDataShardCatalog
+from app.market_data.daily_shard_catalog import DailyMarketDataShardCatalog
 from app.backtesting.market_data_replay import MarketDataReplay
 
 def create_replay_router(base_path: str) -> APIRouter:
