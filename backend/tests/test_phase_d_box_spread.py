@@ -49,9 +49,9 @@ def test_stock_scanner_stops_at_five():
 def test_min_arbitrage_points_filters_before_result():
     chain = make_chain((1,), cls="INDEX")
     assert scan_box_snapshot(chain, atm_strike=100, instrument_class="INDEX",
-                             config=BoxSpreadScanConfig(min_executable_edge=2.0))
+                             config=BoxSpreadScanConfig(min_executable_edge=1.0))
     assert not scan_box_snapshot(chain, atm_strike=100, instrument_class="INDEX",
-                                 config=BoxSpreadScanConfig(min_executable_edge=2.01))
+                                 config=BoxSpreadScanConfig(min_executable_edge=1.01))
 
 
 def test_crossed_quote_is_rejected():
