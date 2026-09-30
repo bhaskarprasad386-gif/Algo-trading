@@ -48,3 +48,26 @@ def test_common_websocket_close_does_not_block_on_broker_close():
     manager._close_socket_bounded(socket, timeout=0.05)
     elapsed = time.monotonic() - started
     assert elapsed < 1.0
+
+
+def test_common_websocket_clear_consumer_does_not_block_on_broker_close():
+    import time
+
+    class BlockingSocket(FakeSocket):
+        def close(self):
+            time.sleep(10)
+
+    socket = BlockingSocket()
+    manager = CommonWebSocketManager(socket_factory=lambda: socket)
+    key = InstrumentKey("NSE", "NSE", "202")
+    manager.registry.register(
+        InstrumentDescriptor(
+            key=key, symbol="TEST-EQ-2", instrument_type="equity",
+            exchange="NSE", segment="NSE",
+        )
+    )
+    manager.subscribe("cash-future", [key], mode=3)
+    started = time.monotonic()
+    manager.clear_consumer("cash-future")
+    elapsed = time.monotonic() - started
+    assert elapsed < 1.0
