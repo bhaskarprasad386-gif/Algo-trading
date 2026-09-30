@@ -41,6 +41,32 @@ jobs:
           APP_DIR=/opt/Algo-Trading
           ENV_FILE="$APP_DIR/backend/.env"
 
+          echo "=== SQLITE STORAGE BREAKDOWN ==="
+          for DB in "$APP_DIR/backend/backtest_market_data_2026_09_30.sqlite3" "$APP_DIR/backend/backtest_market_data.sqlite3"; do
+            if [ -f "$DB" ]; then
+              echo "DB=$DB"
+              "$APP_DIR/.venv/bin/python" - "$DB" <<'PY'
+          import sqlite3, sys
+          db=sys.argv[1]
+          c=sqlite3.connect(db)
+          try:
+              print("DB_SIZE_BYTES="+str(__import__("os").path.getsize(db)))
+              print("PAGE_SIZE="+str(c.execute("PRAGMA page_size").fetchone()[0]))
+              print("PAGE_COUNT="+str(c.execute("PRAGMA page_count").fetchone()[0]))
+              print("FREELIST_PAGES="+str(c.execute("PRAGMA freelist_count").fetchone()[0]))
+              print("WAL_MODE="+str(c.execute("PRAGMA journal_mode").fetchone()[0]))
+              try:
+                  rows=c.execute("SELECT name, SUM(pgsize) FROM dbstat GROUP BY name ORDER BY SUM(pgsize) DESC").fetchall()
+                  for name,size in rows[:20]:
+                      print(f"DBSTAT {name} {size}")
+              except sqlite3.OperationalError as e:
+                  print("DBSTAT_UNAVAILABLE="+str(e))
+          finally:
+              c.close()
+          PY
+            fi
+          done
+
           echo "=== DEPLOYMENT ==="
           echo "COMMIT=$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || true)"
           echo "SERVICE=$(systemctl is-active algo-trading.service 2>/dev/null || true)"
