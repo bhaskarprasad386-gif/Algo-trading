@@ -1,4 +1,4 @@
-from app.market_data.common_websocket import CommonWebSocketManager
+from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
 from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
 
@@ -55,7 +55,7 @@ def test_common_manager_deduplicates_shared_instrument_and_fans_out():
     assert socket.connect_calls[0]["tokens"] == ["101"]
     assert registry.subscriptions()[0].ref_count == 2
 
-    manager._on_data({"token": "101", "ltp": 100})
+    manager._on_data(SocketGroup(1, 1), {"token": "101", "ltp": 100})
     assert seen == [("box", "101"), ("cash", "101")]
 
 
@@ -92,3 +92,19 @@ def test_clear_consumer_closes_unused_socket_and_preserves_other_consumer():
     manager.clear_consumer("b")
     assert manager.snapshot()["active_instruments"] == 0
     assert FakeSocket.instances[0].closed is True
+
+
+def test_same_token_on_different_exchange_group_does_not_cross_fan_out():
+    registry = InstrumentRegistry()
+    nse = descriptor("101", "NSE", "EQ")
+    nfo = descriptor("101", "NFO", "DERIVATIVES")
+    registry.register_many([nse, nfo])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_callback("nse", lambda m: seen.append("nse"))
+    manager.register_callback("nfo", lambda m: seen.append("nfo"))
+    manager.subscribe("nse", [nse.key])
+    manager.subscribe("nfo", [nfo.key])
+
+    manager._on_data(SocketGroup(1, 1), {"token": "101"})
+    assert seen == ["nse"]
