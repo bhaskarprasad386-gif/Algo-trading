@@ -95,7 +95,7 @@ def _ingest_live_record(catalog: DailyMarketDataShardCatalog, record: Historical
 
 class _LatestMessageBuffer:
     """Hard-bounded coalescing tick buffer with producer backpressure."""
-    def __init__(self, max_entries: int, timeout_seconds: float = TICK_BUFFER_TIMEOUT_SECONDS) -> None:
+    def __init__(self, max_entries: int = 10000, timeout_seconds: float = TICK_BUFFER_TIMEOUT_SECONDS) -> None:
         if max_entries < 1 or timeout_seconds <= 0:
             raise ValueError("max_entries and timeout_seconds must be positive")
         self.max_entries = int(max_entries)
