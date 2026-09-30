@@ -244,6 +244,11 @@ th{font-size:7px!important}
 .journal-page{padding:14px;max-width:1560px;margin:auto}.journal-toolbar{display:flex;gap:7px;align-items:end;flex-wrap:wrap}.journal-field{min-width:145px}.journal-field label{display:block;color:#758792;font-size:8px;margin-bottom:4px}.journal-field input,.journal-field select,.journal-field textarea{width:100%;background:#081016;border:1px solid #263540;color:#DCE7ED;border-radius:7px;padding:8px;font-size:9px}.journal-kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:8px 0}.journal-kpi{background:#0D1319;border:1px solid #1C2832;border-radius:7px;padding:10px}.journal-kpi b{display:block;color:#71838F;font-size:7px;letter-spacing:.7px}.journal-kpi strong{display:block;font-size:15px;margin-top:4px}.journal-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:8px}.journal-list{min-height:290px}.journal-editor{min-height:290px}.journal-entry{display:grid;grid-template-columns:1.15fr .55fr .65fr .65fr .7fr auto;gap:6px;padding:9px 6px;border-bottom:1px solid #18232C;align-items:center;font-size:8px;cursor:pointer}.journal-entry:hover{background:#0F171E}.journal-entry.head{color:#71838F;font-size:7px;text-transform:uppercase;letter-spacing:.5px;cursor:default}.journal-entry strong{font-size:9px}.journal-badge{display:inline-block;padding:3px 5px;border-radius:5px;background:#241445;color:#D8C7FF;font-size:7px;font-weight:900}.journal-badge.win{background:#092A20;color:#7DFFB0}.journal-badge.loss{background:#32121A;color:#FF8FA5}.journal-detail{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}.journal-detail .item{background:#0D1319;border:1px solid #1C2832;border-radius:7px;padding:8px}.journal-detail .item b{display:block;color:#71838F;font-size:7px}.journal-detail .item strong{display:block;font-size:10px;margin-top:4px}.journal-form{display:grid;grid-template-columns:1fr 1fr;gap:8px}.journal-form .full{grid-column:1/-1}.journal-form textarea{min-height:70px;resize:vertical}.journal-checks{display:flex;gap:12px;flex-wrap:wrap;color:#91A3AE;font-size:8px}.journal-mobile-actions{display:none}.journal-note{padding:8px;border:1px dashed #314653;background:#091117;color:#8295A1;border-radius:7px;font-size:8px;line-height:1.5}
 @media(max-width:1000px){.journal-kpis{grid-template-columns:repeat(3,1fr)}.journal-grid{grid-template-columns:1fr}}
 @media(max-width:720px){.journal-page{padding:10px 10px 78px}.journal-kpis{grid-template-columns:repeat(2,1fr)}.journal-grid{display:block}.journal-grid>.card{margin-bottom:10px}.journal-entry{grid-template-columns:1.2fr .65fr .65fr .7fr;min-width:560px}.journal-entry:nth-child(n){font-size:8px}.journal-table-scroll{overflow:auto}.journal-detail,.journal-form{grid-template-columns:1fr 1fr}.journal-mobile-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;position:sticky;bottom:62px;z-index:25;padding:7px;background:rgba(7,10,13,.95);border:1px solid #1B2A35;border-radius:8px}}
+
+/* Batch-10 Historical + Replay */
+.hist-page{display:grid;gap:12px}.hist-toolbar,.hist-kpis,.hist-grid{display:grid;gap:10px}.hist-toolbar{grid-template-columns:1.1fr 1.1fr 1fr 1fr auto}.hist-kpis{grid-template-columns:repeat(6,1fr)}.hist-kpi{background:#0D1319;border:1px solid #1C2832;border-radius:9px;padding:11px}.hist-kpi b{display:block;color:#738591;font-size:8px;text-transform:uppercase;letter-spacing:.7px}.hist-kpi strong{display:block;font-size:16px;margin-top:6px}.hist-grid{grid-template-columns:1.5fr .8fr}.hist-panel{background:#12171E;border:1px solid #202B35;border-radius:12px;padding:14px}.hist-field label{display:block;color:#758792;font-size:9px;margin-bottom:5px}.hist-field input,.hist-field select{width:100%;background:#081016;border:1px solid #263540;color:#DCE7ED;border-radius:7px;padding:9px;font-size:10px}.hist-controls{display:flex;gap:7px;flex-wrap:wrap}.hist-controls button{min-width:42px}.hist-speed.active{background:#082C43;color:#BDEBFF;border-color:#075B88}.hist-chart{height:300px;background:#091016;border:1px solid #1B2730;border-radius:9px;position:relative;overflow:hidden}.hist-chart-grid{position:absolute;inset:0;background:linear-gradient(#13202A 1px,transparent 1px),linear-gradient(90deg,#13202A 1px,transparent 1px);background-size:100% 20%,10% 100%;opacity:.65}.hist-svg{position:absolute;inset:0;width:100%;height:100%}.hist-readout{position:absolute;left:10px;top:9px;z-index:2;font:10px ui-monospace,SFMono-Regular,Menlo,monospace;color:#DCECF4;background:rgba(5,9,13,.72);padding:6px 8px;border-radius:6px}.hist-table{max-height:300px;overflow:auto;border:1px solid #1B2730;border-radius:8px}.hist-row{display:grid;grid-template-columns:110px 1fr 90px 90px 90px;gap:8px;padding:8px;border-bottom:1px solid #18232C;font-size:9px;cursor:pointer}.hist-row:hover{background:#0F171E}.hist-row.head{color:#71838F;font-size:8px;text-transform:uppercase;cursor:default}.hist-row.selected{background:#082A42}.hist-timeline{display:grid;gap:6px;max-height:235px;overflow:auto}.hist-event{padding:8px 9px;background:#0D1319;border:1px solid #1C2832;border-radius:7px;font-size:9px}.hist-event strong{display:block;font-size:10px}.hist-event span{color:#7F919F}.hist-status{font-size:9px;color:#7F919F}.hist-note{font-size:9px;color:#8EA0AB;line-height:1.5;background:#0B1116;border:1px solid #1B2730;border-radius:8px;padding:9px}.hist-mobile-actions{display:none}.hist-empty{padding:28px 12px;text-align:center;color:#7F919F;font-size:10px}.hist-badge{display:inline-block;padding:4px 6px;border-radius:5px;background:#092A20;color:#7DFFB0;font-size:8px;font-weight:900}.hist-badge.pending{background:#241E0B;color:#FFD477}.hist-badge.error{background:#35101A;color:#FF8FA5}
+@media(max-width:1100px){.hist-toolbar{grid-template-columns:repeat(2,1fr)}.hist-kpis{grid-template-columns:repeat(3,1fr)}.hist-grid{grid-template-columns:1fr}}
+@media(max-width:720px){.hist-toolbar{grid-template-columns:1fr 1fr}.hist-kpis{grid-template-columns:repeat(2,1fr)}.hist-chart{height:240px}.hist-mobile-actions{display:grid;position:sticky;bottom:8px;z-index:10;grid-template-columns:1fr 1fr;gap:8px}.hist-row{grid-template-columns:95px 1fr 75px}.hist-row span:nth-child(4),.hist-row span:nth-child(5){display:none}}
 </style>
 </head>
 <body>
@@ -354,7 +359,7 @@ th{font-size:7px!important}
   </div>
  </section>
 <section class="card" id="gainersCard" style="margin-top:12px"><div class="card-head"><div><h2>Top Gainers / Losers</h2><div class="sub">Live F&amp;O scanner snapshot</div></div><span class="view">View All →</span></div><div class="market-tabs"><button class="tab active">Gainers</button><button class="tab">Losers</button><button class="tab">Volume</button></div><div id="gainersRows"><div class="top-gainer-row"><span>Waiting for live scanner</span><span>—</span><span>—</span><span>—</span></div></div></section>
- <section class="card" id="quickNavCard" style="margin-top:12px"><div class="card-head"><div><h2>Quick Navigation</h2><div class="sub">Workspace shortcuts</div></div><span class="view">→</span></div><div class="quick-grid"><button class="quick" onclick="toast('Cash-Future workspace is Batch 3')"><b>↔ Cash-Future</b><span>Live Scanner • Chart</span></button><button class="quick" onclick="toast('Calendar Spread workspace is Batch 4')"><b>◫ Calendar Spread</b><span>Live Scanner • Chart</span></button><button class="quick" onclick="toast('Synthetic Arbitrage workspace is Batch 5')"><b>⌁ Synthetic Arbitrage</b><span>Live Scanner • Chart</span></button><button class="quick" onclick="toast('Box Spread workspace is Batch 6')"><b>▣ Box Spread</b><span>Live Scanner • Chart</span></button><button class="quick" onclick="toast('Paper Portfolio is Batch 8')"><b>▤ Paper Portfolio</b><span>Positions • Ledger</span></button><button class="quick" onclick="toast('Trading Journal is Batch 9')"><b>▥ Trading Journal</b><span>Trades • Analytics</span></button></div></section>
+ <section class="card" id="quickNavCard" style="margin-top:12px"><div class="card-head"><div><h2>Quick Navigation</h2><div class="sub">Workspace shortcuts</div></div><span class="view">→</span></div><div class="quick-grid"><button class="quick" onclick="toast('Cash-Future workspace is Batch 3')"><b>↔ Cash-Future</b><span>Live Scanner • Chart</span></button><button class="quick" onclick="toast('Calendar Spread workspace is Batch 4')"><b>◫ Calendar Spread</b><span>Live Scanner • Chart</span></button><button class="quick" onclick="toast('Synthetic Arbitrage workspace is Batch 5')"><b>⌁ Synthetic Arbitrage</b><span>Live Scanner • Chart</span></button><button class="quick" onclick="toast('Box Spread workspace is Batch 6')"><b>▣ Box Spread</b><span>Live Scanner • Chart</span></button><button class="quick" onclick="toast('Paper Portfolio is Batch 8')"><b>▤ Paper Portfolio</b><span>Positions • Ledger</span></button><button class="quick" onclick="showTradingJournal()"><b>▥ Trading Journal</b><span>Trades • Analytics</span></button><button class="quick" onclick="showHistoricalReplay()"><b>◷ Historical + Replay</b><span>Saved Live Data • Replay</span></button></div></section>
  <section class="grid main-grid" style="margin-top:12px">
   <div class="card" id="recentAlertCard">
    <div class="card-head"><div><h2>Recent Alerts</h2><div class="sub">Latest scanner-generated events</div></div><span class="view" onclick="openAlertModal()">View All →</span></div>
@@ -1172,9 +1177,105 @@ function saveJournalEntry(){const symbol=document.getElementById('jSymbol').valu
 function refreshTradingJournal(){renderTradingJournal();toast('Journal refreshed')}
 document.getElementById('journalStrategyFilter')?.addEventListener('change',renderTradingJournal);document.getElementById('journalResultFilter')?.addEventListener('change',renderTradingJournal);document.getElementById('journalSymbolFilter')?.addEventListener('input',renderTradingJournal);
 
+
+/* Batch-10 Historical + Replay runtime */
+let histRows=[],histCursor=0,histTimer=null,histSpeed='1s';
+function showHistoricalReplay(){
+ ['home','analyzePage','cashFuturePage','calendarPage','syntheticPage','boxSpreadPage','customAlertsPage','paperPortfolioPage','tradingJournalPage'].forEach(id=>{const e=document.getElementById(id);if(e)e.hidden=true});
+ const p=document.getElementById('historicalReplayPage');if(p)p.hidden=false;
+ document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById('historicalReplayNav')?.classList.add('active');
+ const d=document.getElementById('histDate');if(d&&!d.value)d.value=new Date().toISOString().slice(0,10);
+ loadHistoricalInstruments();window.scrollTo({top:0,behavior:'smooth'});
+}
+function histSetStatus(text,kind='pending'){const e=document.getElementById('histStatus');if(e)e.innerHTML='<span class="hist-badge '+kind+'">'+text+'</span>'}
+function histNs(date, end=false){const t=new Date(date+'T00:00:00').getTime();return Math.round((t+(end?86400000-1:0))*1000000)}
+async function loadHistoricalInstruments(){
+ const date=document.getElementById('histDate')?.value;if(!date)return;
+ histSetStatus('SOURCE CHECKING');
+ try{
+  const r=await fetch(base()+'/api/v1/backtesting/replay/instruments?timeframe=1s&source=angelone-live-1s&start_ns='+histNs(date)+'&end_ns='+histNs(date,true),{cache:'no-store'});
+  if(!r.ok)throw new Error('Coverage '+r.status);
+  const j=await r.json(),items=j.instruments||[],sel=document.getElementById('histInstrument');sel.innerHTML=items.length?items.map(x=>'<option value="'+String(x).replace(/"/g,'&quot;')+'">'+x+'</option>').join(''):'<option value="">NO SAVED LIVE DATA</option>';
+  document.getElementById('histCoverage').textContent=items.length?'SAVED LIVE • '+items.length+' INSTRUMENTS':'SOURCE PENDING';
+  histSetStatus(items.length?'SAVED LIVE':'SOURCE PENDING',items.length?'':'pending');
+ }catch(e){histSetStatus('SOURCE ERROR','error');document.getElementById('histCoverage').textContent='SOURCE ERROR';toast('Replay source: '+e.message)}
+}
+async function loadHistoricalReplay(){
+ histPause();const date=document.getElementById('histDate')?.value,sym=document.getElementById('histInstrument')?.value,tf=document.getElementById('histTimeframe')?.value||'1s';
+ if(!date||!sym){toast('Select date and saved instrument');return}
+ document.getElementById('histReplayState').textContent='LOADING SAVED DATA…';histSetStatus('LOADING');
+ try{
+  const url=base()+'/api/v1/backtesting/replay/stream?instrument='+encodeURIComponent(sym)+'&timeframe='+encodeURIComponent(tf)+'&source=angelone-live-1s&start_ns='+histNs(date)+'&end_ns='+histNs(date,true)+'&limit=10000';
+  const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error('Replay '+r.status);
+  const j=await r.json();histRows=j.data||[];histCursor=0;
+  document.getElementById('histSource').textContent='ANGEL • LIVE 1s';document.getElementById('histCount').textContent=fmt(histRows.length);document.getElementById('histResolution').textContent=tf;document.getElementById('histFirst').textContent=histRows[0]?new Date(histRows[0].timestamp_ns/1e6).toLocaleTimeString('en-IN'):'—';document.getElementById('histLast').textContent=histRows.length?new Date(histRows[histRows.length-1].timestamp_ns/1e6).toLocaleTimeString('en-IN'):'—';
+  renderHistRows();renderHistTimeline();renderHistCursor();drawHistChart();histSetStatus(histRows.length?'SAVED LIVE':'NO DATA',histRows.length?'':'pending');document.getElementById('histReplayState').textContent=histRows.length?'READY • SAVED LIVE':'NO SAVED DATA';toast(histRows.length?'Saved live replay loaded':'No saved live data for selection');
+ }catch(e){histRows=[];renderHistRows();document.getElementById('histReplayState').textContent='SOURCE ERROR';histSetStatus('SOURCE ERROR','error');toast('Replay load failed: '+e.message)}
+}
+function histValue(r){return Number(r?.ltp??r?.close??0)}
+function renderHistRows(){
+ const box=document.getElementById('histRows');if(!box)return;const head='<div class="hist-row head"><span>TIME</span><span>SYMBOL</span><span>LTP</span><span>BID</span><span>ASK</span></div>';
+ const body=histRows.slice(Math.max(0,histCursor-120),histCursor+120).map((r,i)=>{const idx=Math.max(0,histCursor-120)+i;return '<div class="hist-row '+(idx===histCursor?'selected':'')+'" onclick="histSelect('+idx+')"><span>'+new Date(r.timestamp_ns/1e6).toLocaleTimeString('en-IN')+'</span><span>'+r.symbol+'</span><span>₹'+fmt(r.ltp)+'</span><span>₹'+fmt(r.bid)+'</span><span>₹'+fmt(r.ask)+'</span></div>'}).join('');
+ box.innerHTML=head+(body||'<div class="hist-empty">No saved records loaded.</div>');
+}
+function renderHistTimeline(){
+ const box=document.getElementById('histTimeline');if(!box)return;
+ const rows=histRows.slice(0,120);box.innerHTML=rows.length?rows.map((r,i)=>'<div class="hist-event" onclick="histSelect('+i+')"><strong>'+new Date(r.timestamp_ns/1e6).toLocaleTimeString('en-IN')+' • '+r.symbol+'</strong><span>LTP ₹'+fmt(r.ltp)+' • Bid ₹'+fmt(r.bid)+' • Ask ₹'+fmt(r.ask)+' • Vol '+fmt(r.volume)+' • OI '+fmt(r.oi)+'</span></div>').join(''):'<div class="hist-empty">No events in selected range.</div>';
+}
+function histSelect(i){if(!histRows.length)return;histCursor=Math.max(0,Math.min(histRows.length-1,i));renderHistCursor();renderHistRows();drawHistChart()}
+function renderHistCursor(){const r=histRows[histCursor];document.getElementById('histCursor').textContent=histRows.length?(histCursor+1)+' / '+histRows.length:'0 / 0';document.getElementById('histDetail').innerHTML=r?'<strong>'+r.symbol+'</strong><br>Timestamp: '+new Date(r.timestamp_ns/1e6).toLocaleString('en-IN')+'<br>LTP: ₹'+fmt(r.ltp)+' • Bid: ₹'+fmt(r.bid)+' • Ask: ₹'+fmt(r.ask)+'<br>Volume: '+fmt(r.volume)+' • OI: '+fmt(r.oi)+'<br>Expiry: '+(r.expiry||'—')+' • Strike: '+(r.strike??'—')+'<br><span class="up">PAPER REPLAY • BROKER ORDERS OFF</span>':'No replay event selected.';document.getElementById('histReadout').textContent=r?r.symbol+' • '+new Date(r.timestamp_ns/1e6).toLocaleTimeString('en-IN')+' • ₹'+fmt(r.ltp):'No replay loaded'}
+function drawHistChart(){
+ const line=document.getElementById('histLine');if(!line)return;const data=histRows.slice(0,1000).map(histValue).filter(Number.isFinite);if(data.length<2){line.setAttribute('points','');return}const lo=Math.min(...data),hi=Math.max(...data),range=hi-lo||1;line.setAttribute('points',data.map((v,i)=>((i/(data.length-1))*1000)+' '+(285-((v-lo)/range)*260)).join(' '));}
+function histPlay(){if(histTimer||histRows.length<2)return;document.getElementById('histReplayState').textContent='PLAYING • '+histSpeed;histTimer=setInterval(()=>{if(histCursor>=histRows.length-1){histPause();document.getElementById('histReplayState').textContent='REPLAY COMPLETE';return}histCursor++;renderHistCursor();if(histCursor%10===0)renderHistRows();},250)}
+function histPause(){if(histTimer){clearInterval(histTimer);histTimer=null}if(histRows.length)document.getElementById('histReplayState').textContent='PAUSED • '+histSpeed}
+function histStep(dir){histPause();histSelect(histCursor+dir)}
+function histReset(){histPause();histCursor=0;renderHistCursor();renderHistRows();drawHistChart();document.getElementById('histReplayState').textContent='READY'}
+function histSetSpeed(speed){histSpeed=speed;document.querySelectorAll('.hist-speed').forEach(x=>x.classList.toggle('active',x.dataset.speed===speed));if(histTimer){histPause();histPlay()}}
+function refreshHistoricalReplay(){loadHistoricalInstruments();if(histRows.length)loadHistoricalReplay()}
+document.getElementById('histDate')?.addEventListener('change',loadHistoricalInstruments);
+document.getElementById('histTimeframe')?.addEventListener('change',()=>{if(histRows.length)loadHistoricalReplay()});
 </script>
 
 <!-- Shared dashboard compatibility/status contract for completed platform phases. -->
 <div hidden id="dashboardContractStatus">MARKET WATCH | Live broker orders: OFF | cash-future | calendar-spread | synthetic-future-cash-carry | box-spread | full-fno | PHASE 12 • PLATFORM NAVIGATION | WEB • FULL TABLES | ANDROID • COMPACT CARDS | SAME API / DATA | PAPER ORDERS ONLY | PHASE 13 • EXPANSION CENTER | INDICES &amp; EXCHANGES | COMMODITIES &amp; CURRENCY | STRATEGIES &amp; SCANNERS | DATA SOURCES | ANALYTICS &amp; CHARTS | NOTIFICATIONS | BROKER INTEGRATIONS | USER LAYOUTS | Real broker routing remains OFF.</div>
+
+<section id="historicalReplayPage" class="hist-page" hidden>
+ <div class="page-head">
+  <div><h1>Historical + Replay</h1><p>Replay only data already saved from the live stream • no historical downloader</p></div>
+  <div class="refresh-box"><span id="histStatus"><span class="hist-badge pending">SOURCE CHECKING</span></span><button class="secondary" onclick="refreshHistoricalReplay()">↻ Refresh</button></div>
+ </div>
+ <div class="hist-toolbar">
+  <div class="hist-field"><label>DATE</label><input id="histDate" type="date"></div>
+  <div class="hist-field"><label>INSTRUMENT / SYMBOL</label><select id="histInstrument"><option value="">Loading saved instruments…</option></select></div>
+  <div class="hist-field"><label>STRATEGY</label><select id="histStrategy"><option value="MARKET DATA">MARKET DATA</option><option value="CASH-FUTURE">CASH-FUTURE</option><option value="CALENDAR SPREAD">CALENDAR SPREAD</option><option value="SYNTHETIC ARBITRAGE">SYNTHETIC ARBITRAGE</option><option value="BOX SPREAD">BOX SPREAD</option></select></div>
+  <div class="hist-field"><label>DATA RESOLUTION</label><select id="histTimeframe"><option>1s</option><option>30s</option><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option></select></div>
+  <button class="primary" onclick="loadHistoricalReplay()">LOAD SAVED DATA</button>
+ </div>
+ <div class="hist-kpis">
+  <div class="hist-kpi"><b>Source</b><strong id="histSource">—</strong></div><div class="hist-kpi"><b>Records</b><strong id="histCount">0</strong></div><div class="hist-kpi"><b>Resolution</b><strong id="histResolution">—</strong></div><div class="hist-kpi"><b>First</b><strong id="histFirst">—</strong></div><div class="hist-kpi"><b>Last</b><strong id="histLast">—</strong></div><div class="hist-kpi"><b>Orders</b><strong class="up">OFF</strong></div>
+ </div>
+ <div class="hist-grid">
+  <div class="hist-panel">
+   <div class="card-head"><div><h2>Replay Chart</h2><div class="sub">Saved live observation • positional replay</div></div><span id="histReplayState" class="hist-status">READY</span></div>
+   <div class="hist-chart"><div class="hist-chart-grid"></div><div id="histReadout" class="hist-readout">No replay loaded</div><svg id="histSvg" class="hist-svg" viewBox="0 0 1000 300" preserveAspectRatio="none"><polyline id="histLine" fill="none" stroke="#00B0FF" stroke-width="2" points=""/></svg></div>
+   <div class="hist-controls" style="margin-top:10px">
+    <button class="secondary" onclick="histPlay()">▶ Play</button><button class="secondary" onclick="histPause()">Ⅱ Pause</button><button class="secondary" onclick="histStep(-1)">‹ Step</button><button class="secondary" onclick="histStep(1)">Step ›</button><button class="secondary" onclick="histReset()">↺ Reset</button>
+    <button class="tab hist-speed active" data-speed="1s" onclick="histSetSpeed('1s')">1s</button><button class="tab hist-speed" data-speed="30s" onclick="histSetSpeed('30s')">30s</button><button class="tab hist-speed" data-speed="1m" onclick="histSetSpeed('1m')">1m</button><button class="tab hist-speed" data-speed="5m" onclick="histSetSpeed('5m')">5m</button><button class="tab hist-speed" data-speed="15m" onclick="histSetSpeed('15m')">15m</button><button class="tab hist-speed" data-speed="30m" onclick="histSetSpeed('30m')">30m</button><button class="tab hist-speed" data-speed="1h" onclick="histSetSpeed('1h')">1h</button>
+   </div>
+   <div class="hist-note" style="margin-top:9px">Replay advances through actual saved observations. A faster playback control never fabricates missing ticks or prices. Paper replay only; broker orders remain OFF.</div>
+  </div>
+  <div class="hist-panel">
+   <div class="card-head"><div><h2>Replay Event Timeline</h2><div class="sub">Timestamped source observations</div></div><span id="histCursor">0 / 0</span></div>
+   <div id="histTimeline" class="hist-timeline"><div class="hist-empty">Load a saved-live date and instrument.</div></div>
+   <div class="card-head" style="margin-top:12px"><div><h2>Signal / Position Detail</h2><div class="sub">Current replay cursor</div></div></div>
+   <div id="histDetail" class="hist-note">No replay event selected.</div>
+  </div>
+ </div>
+ <div class="hist-panel">
+  <div class="card-head"><div><h2>Saved Data Coverage</h2><div class="sub">Only persisted live data is eligible for replay</div></div><span id="histCoverage" class="hist-status">SOURCE PENDING</span></div>
+  <div id="histRows" class="hist-table"><div class="hist-row head"><span>TIME</span><span>SYMBOL</span><span>LTP</span><span>BID</span><span>ASK</span></div><div class="hist-empty">No saved records loaded.</div></div>
+ </div>
+ <div class="hist-mobile-actions"><button class="primary" onclick="loadHistoricalReplay()">↻ LIVE LOAD</button><button class="secondary" onclick="histPlay()">▶ REPLAY</button></div>
+</section>
 </body>
 </html>
