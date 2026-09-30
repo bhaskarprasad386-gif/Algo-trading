@@ -27,6 +27,7 @@ class CashFutureScanResult:
     cash: MarketDataRecord
     future: MarketDataRecord
     contract_month: str
+    direction: str
 
     def as_dict(self) -> dict[str, object]:
         data = self.signal.as_dict()
@@ -34,6 +35,7 @@ class CashFutureScanResult:
             "date_time": datetime.fromtimestamp(self.signal.timestamp_ns / 1_000_000_000, ZoneInfo("Asia/Kolkata")).isoformat(),
             "symbol": self.signal.symbol,
             "contract_month": self.contract_month,
+            "direction": self.direction,
             "cash_ltp": self.cash.ltp,
             "future_ltp": self.future.ltp,
             "cash_bid": self.cash.bid,
@@ -99,9 +101,24 @@ class CashFutureOpportunityScanner:
                 return None
             if future.lot_size is None or future.lot_size <= 0:
                 return None
-            gap = float(future.bid) - float(cash.ask)
-            if gap < 0:
+            forward_gap = float(future.bid) - float(cash.ask)
+            reverse_gap = float(cash.bid) - float(future.ask)
+            if forward_gap < 0 and reverse_gap < 0:
                 return None
+            if forward_gap >= reverse_gap:
+                gap = forward_gap
+                direction = "CASH_BUY_FUTURE_SELL"
+                legs = (
+                    OpportunityLeg(cash, OrderSide.BUY, "cash-entry"),
+                    OpportunityLeg(future, OrderSide.SELL, f"future-{selected_month.lower()}-entry"),
+                )
+            else:
+                gap = reverse_gap
+                direction = "CASH_SELL_FUTURE_BUY"
+                legs = (
+                    OpportunityLeg(cash, OrderSide.SELL, "cash-entry"),
+                    OpportunityLeg(future, OrderSide.BUY, f"future-{selected_month.lower()}-entry"),
+                )
             gross = gross_profit_from_points(gap, int(future.lot_size))
             qualifies = qualifies_opportunity(
                 gap_points=gap,
@@ -120,14 +137,11 @@ class CashFutureOpportunityScanner:
                 qualifies=qualifies,
                 minimum_gap_points=self.minimum_gap_points,
                 minimum_gross_profit=self.minimum_gross_profit,
-                legs=(
-                    OpportunityLeg(cash, OrderSide.BUY, "cash-entry"),
-                    OpportunityLeg(future, OrderSide.SELL, f"future-{selected_month.lower()}-entry"),
-                ),
+                legs=legs,
                 expiry=future.expiry,
-                metadata={"contract_month": selected_month, "source": "common-market-data", "live_orders": False},
+                metadata={"contract_month": selected_month, "direction": direction, "source": "common-market-data", "live_orders": False},
             )
-            result = CashFutureScanResult(signal, cash, future, selected_month)
+            result = CashFutureScanResult(signal, cash, future, selected_month, direction)
             self._results[(symbol, month)] = result
             return result
 
