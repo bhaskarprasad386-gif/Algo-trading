@@ -32,13 +32,13 @@ def test_synthetic_stock_is_both_sides_of_atm_with_max_five_positions():
     assert (125.0, 5, "UPPER") in result
 
 
-def test_synthetic_index_allows_fifteen_positions_when_chain_has_them():
+def test_synthetic_index_allows_ten_positions_when_chain_has_them():
     strikes = tuple(range(100, 201))
     result = enumerate_synthetic_strikes(strikes, atm_strike=150, instrument_class="INDEX")
-    assert max(distance for _, distance, _ in result) == 15
-    assert (135.0, 15, "LOWER") in result
-    assert (165.0, 15, "UPPER") in result
-    assert 134.0 not in {strike for strike, _, _ in result}
+    assert max(distance for _, distance, _ in result) == 10
+    assert (140.0, 10, "LOWER") in result
+    assert (160.0, 10, "UPPER") in result
+    assert 139.0 not in {strike for strike, _, _ in result}
 
 
 def test_distance_is_chain_position_count():
