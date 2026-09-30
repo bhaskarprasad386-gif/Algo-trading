@@ -38,3 +38,5 @@ Fresh sparse expiry rollover acquisition verification.
 Phase B Cash-Future common-feed verification trigger.
 
 Phase B final verification trigger.
+
+Phase B PR CI verification.
