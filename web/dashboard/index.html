@@ -56,7 +56,7 @@ button,input,select{font:inherit}button{cursor:pointer}
 <main class="content" id="home">
  <div class="page-head">
   <div><h1>Home / Command Center</h1><p>Live market overview, opportunity radar, alerts, paper portfolio and system health.</p></div>
-  <div class="refresh-box">Auto Refresh <input id="autoRefresh" class="switch" type="checkbox" checked><select id="refreshSeconds" style="background:#0D1319;color:#9FB0BC;border:1px solid var(--line);border-radius:7px;padding:5px;font-size:9px"><option value="5">5s</option><option value="10">10s</option><option value="30">30s</option></select><span id="lastUpdated">—</span></div>
+  <div class="refresh-box">Auto Refresh <input id="autoRefresh" class="switch" type="checkbox" checked><input id="refreshSeconds" type="number" min="10" max="300" value="10" style="width:48px;background:#0D1319;color:#9FB0BC;border:1px solid var(--line);border-radius:7px;padding:5px;font-size:9px"><span id="lastUpdated">—</span></div>
  </div>
 
  <section class="grid hero-grid">
@@ -93,8 +93,8 @@ button,input,select{font:inherit}button{cursor:pointer}
   <div class="card" data-widget-id="scanner" data-widget="scanner" id="scanner">
    <div class="card-head"><div><h2>Live Scanner <span class="sub">(Top 5)</span></h2><div class="sub">Cash-Future executable opportunities</div></div><span class="view" onclick="scan()">View All →</span></div>
    <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Gap %</th><th>Net %</th><th>Volume</th><th>OI</th></tr></thead><tbody id="scannerRows"><tr><td colspan="5">Reading live 1s scanner…</td></tr></tbody></table></div>
-   <div class="sub" id="scanStatus" style="margin-top:8px">Scanner: CHECKING</div>
-   <button id="scanBtn" class="secondary full" onclick="scan()">RUN LIVE SCAN</button>
+   <div class="sub" id="scanStatus" style="margin-top:8px">Scanner: CHECKING</div><div id="scanSummary" class="metric-grid" style="margin-top:8px"><div class="metric"><div class="k">SYMBOLS</div><div class="v" id="summarySymbols">0</div></div><div class="metric"><div class="k">OBSERVATIONS</div><div class="v" id="summaryObservations">0</div></div><div class="metric"><div class="k">OPPORTUNITIES</div><div class="v" id="summaryOpportunities">0</div></div><div class="metric"><div class="k">ERRORS</div><div class="v" id="summaryErrors">0</div></div></div><div class="sub" style="margin-top:7px">Last Scan: <span id="lastScan">—</span></div>
+   <button id="scanBtn" class="secondary full" onclick="scan()">RUN LIVE SCAN</button><details style="margin-top:8px"><summary class="sub" style="cursor:pointer">Full scanner details</summary><div class="table-wrap" style="margin-top:7px"><table><thead><tr><th>Rank</th><th>Symbol</th><th>Contract</th><th>Cash Ask</th><th>Future Bid</th><th>Gap</th><th>Net Gap</th><th>Gross</th><th>Net</th><th>ROI</th><th>Capacity</th><th>Cash H/L</th><th>Future H/L</th><th>Liquidity</th><th>Lifecycle</th></tr></thead><tbody id="rows"><tr><td colspan="15">NO LIVE SIGNAL WITHIN 5 SECONDS</td></tr></tbody></table></div></details>
   </div>
  </section>
 
@@ -121,7 +121,7 @@ button,input,select{font:inherit}button{cursor:pointer}
     <div class="portfolio-row"><span>Open Positions</span><strong id="paperPositions">0</strong></div>
     <div class="portfolio-row"><span>Mark-to-Market</span><strong id="paperMtm">—</strong></div>
    </div>
-   <div id="paperStatus" class="sub" style="margin-top:8px">Paper account: CHECKING</div>
+   <div id="paperStatus" class="sub" style="margin-top:8px">Paper account: CHECKING</div><button class="secondary full" onclick="openPaperModal()">PAPER TRADE / POSITION</button>
   </div>
  </section>
 
@@ -202,7 +202,22 @@ button,input,select{font:inherit}button{cursor:pointer}
   <div class="modal-actions"><button class="secondary" onclick="closeAlertModal()">CANCEL</button><button class="primary" onclick="saveAlertDraft()">SAVE ALERT DRAFT</button></div>
  </div>
 </div>
-<div class="toast" id="toastBox"></div>
+<div class="modal" id="paperModal" onclick="if(event.target===this)closePaperModal()">
+ <div class="modal-box" style="border-color:#075B88">
+  <div class="card-head"><div><h2>Paper Trade</h2><div class="sub">Simulation only • live broker orders OFF</div></div><button class="icon-btn" onclick="closePaperModal()">×</button></div>
+  <div class="form-grid">
+   <div class="field"><label>Symbol</label><input id="paperSymbol" value="PAPER"></div>
+   <div class="field"><label>Quantity</label><input id="paperQty" type="number" value="1" min="1"></div>
+   <div class="field"><label>Entry Price</label><input id="paperPrice" type="number" min="0" step="0.01"></div>
+   <div class="field"><label>Stop Loss %</label><input id="slPct" type="number" value="2" min="0" step="0.1"></div>
+   <div class="field"><label>Target %</label><input id="targetPct" type="number" value="4" min="0" step="0.1"></div>
+   <div class="field"><label>Exit Price</label><input id="paperExit" type="number" min="0" step="0.01"></div>
+  </div>
+  <div id="paperResult" class="sub" style="margin-top:10px">No active paper position.</div>
+  <div class="modal-actions"><button id="paperEntryBtn" class="primary" onclick="paperEntry()">PAPER ENTRY</button><button id="paperPositionBtn" class="secondary" onclick="paperPosition()">Check Position</button><button id="paperExitBtn" class="secondary" onclick="paperExit()">PAPER EXIT</button></div>
+  <div id="paperModalStatus" class="sub" style="margin-top:8px">CHECKING PAPER POSITION…</div>
+ </div>
+</div><div class="toast" id="toastBox"></div>
 
 <script>
 const DASHBOARD_WIDGET_KEY='algo.dashboard.widgets.v1';
@@ -220,7 +235,7 @@ function goHome(){window.scrollTo({top:0,behavior:'smooth'})}
 function openAlertModal(){document.getElementById('alertModal').classList.add('open')}
 function closeAlertModal(){document.getElementById('alertModal').classList.remove('open')}
 function saveAlertDraft(){toast('Alert draft prepared. Full saved-alert engine is Batch 7.');closeAlertModal()}
-function stamp(){return new Date().toLocaleTimeString('en-IN')}
+function stamp(){return new Date().toLocaleString()}
 function renderMarketCards(indices){
  const wanted=['NIFTY','NIFTY 50','BANKNIFTY','NIFTY BANK','FINNIFTY','MIDCPNIFTY'];
  const ordered=[];
@@ -265,16 +280,19 @@ async function loadLiveDataHealth(){
   document.getElementById('dashSystem').textContent=ok?'ONLINE':'CHECK';
  }catch(e){document.getElementById('liveDataHealthBadge').textContent='ERROR';document.getElementById('homeData').textContent='ERROR';log('Live health failed: '+e.message)}
 }
-function setScanSummary(count){document.getElementById('dashOpp').textContent=count;document.getElementById('homeCfCount').textContent=count}
+function setScanSummary(p){const count=Number(p.opportunity_count||0);document.getElementById('summarySymbols').textContent=(p.symbols_requested||[]).length;document.getElementById('summaryObservations').textContent=p.scanned_observations||0;document.getElementById('summaryOpportunities').textContent=count;document.getElementById('summaryErrors').textContent=(p.errors||[]).length;document.getElementById('dashOpp').textContent=count;document.getElementById('homeCfCount').textContent=count}
 async function scan(){
- const btn=document.getElementById('scanBtn');btn.disabled=true;btn.textContent='SCANNING…';document.getElementById('scanStatus').textContent='READING LIVE 1s SCANNER…';
+ const status=scanStatus,tbody=rows,button=scanBtn;button.disabled=true;button.textContent='SCANNING…';status.textContent='READING LIVE 1s SCANNER…';
  try{
-  const r=await fetch(base()+'/api/v1/scanner/cash-future/live/fast?max_age_seconds=5&limit=50',{cache:'no-store'});if(!r.ok)throw new Error('Scanner API '+r.status);
-  const p=await r.json();const data=(p.data||[]).slice().sort((a,b)=>Number(b.rank_score||0)-Number(a.rank_score||0)||Number(b.gap_pct||0)-Number(a.gap_pct||0));setScanSummary(data.filter(x=>Number(x.gap)>0).length);
-  const rows=document.getElementById('scannerRows');rows.innerHTML=data.slice(0,5).map(x=>'<tr><td><strong>'+x.symbol+'</strong></td><td class="'+(Number(x.gap_pct)>0?'up':'')+'">'+pct(x.gap_pct)+'</td><td>'+pct(x.net_gap_pct)+'</td><td>'+fmt(x.liquidity_qty||x.volume)+'</td><td>'+fmt(x.oi)+'</td></tr>').join('')||'<tr><td colspan="5">NO LIVE SIGNAL WITHIN 5 SECONDS</td></tr>';
-  document.getElementById('scanStatus').textContent='LIVE SCAN • '+data.length+' current rows • refreshed '+stamp();document.getElementById('homeScanner').textContent='LIVE';document.getElementById('homeScanner').className='health-state up';document.getElementById('sideAlertCount').textContent=data.filter(x=>x.alert_event).length;renderAlerts(data);log('Live Cash-Future scanner refreshed');
- }catch(e){document.getElementById('scanStatus').textContent='LIVE SCAN FAILED • '+e.message;document.getElementById('homeScanner').textContent='ERROR';document.getElementById('homeScanner').className='health-state down';log('Scanner failed: '+e.message)}
- finally{btn.disabled=false;btn.textContent='RUN LIVE SCAN';scheduleScan()}
+  const r=await fetch(base()+'/api/v1/scanner/cash-future/live/fast?max_age_seconds=5&limit=50',{cache:'no-store'});if(!r.ok)throw new Error('Live Scanner API '+r.status);
+  const p=await r.json();const data=(p.data||[]).slice().sort((a,b)=>Number(b.rank_score||0)-Number(a.rank_score||0)||Number(b.gap_pct||0)-Number(a.gap_pct||0)||Number(b.net_profit||0)-Number(a.net_profit||0));
+  setScanSummary({symbols_requested:[...new Set(data.map(x=>x.symbol))],scanned_observations:data.length,opportunity_count:data.filter(x=>Number(x.gap)>0).length,errors:p.errors||[]});
+  dashSystem.textContent='ONLINE • LIVE 1s';tbody.innerHTML='';data.forEach((x,i)=>{const executable=Number(x.gap)>0&&Number(x.net_gap)>0&&x.lifecycle!=='EXPIRED';const tr=document.createElement('tr');tr.innerHTML='<td>'+(i+1)+'</td><td>'+x.symbol+'</td><td>'+x.contract_month+'</td><td>'+fmt(x.cash_ask)+'</td><td>'+fmt(x.future_bid)+'</td><td>'+fmt(x.gap)+' ('+fmt(x.gap_pct)+'%)</td><td>'+fmt(x.net_gap_pct)+'%</td><td>'+fmt(x.gross_profit||x.gross_lot_value)+'</td><td>'+fmt(x.net_profit)+'</td><td>'+fmt(x.roi_pct)+'%</td><td>'+fmt(x.capacity_notional)+'</td><td>'+fmt(x.cash_day_high)+' / '+fmt(x.cash_day_low)+'</td><td>'+fmt(x.future_day_high)+' / '+fmt(x.future_day_low)+'</td><td>'+fmt(x.liquidity_qty)+' • Stable '+fmt(x.stable_observations)+'</td><td class="'+(executable?'up':'')+'">'+x.lifecycle+'</td>';tbody.appendChild(tr)});
+  const mini=document.getElementById('scannerRows');mini.innerHTML=data.slice(0,5).map(x=>'<tr><td><strong>'+x.symbol+'</strong></td><td class="'+(Number(x.gap_pct)>0?'up':'')+'">'+pct(x.gap_pct)+'</td><td>'+pct(x.net_gap_pct)+'</td><td>'+fmt(x.liquidity_qty||x.volume)+'</td><td>'+fmt(x.oi)+'</td></tr>').join('');
+  if(!tbody.children.length){tbody.innerHTML='<tr><td colspan="15">NO LIVE SIGNAL WITHIN 5 SECONDS</td></tr>';status.textContent='SCAN COMPLETE • NO LIVE SIGNAL WITHIN 5 SECONDS'}else status.textContent='LIVE SCAN COMPLETE • '+data.length+' current signals';
+  document.getElementById('lastScan').textContent=stamp();renderAlerts(data);log('Live Cash–Future 1s scanner refreshed');localStorage.setItem('algoApiBase',apiInput.value.trim());
+ }catch(e){dashSystem.textContent='OFFLINE';document.getElementById('lastScan').textContent=stamp();status.textContent='LIVE SCAN FAILED: '+e.message;log('Live scan failed: '+e.message)}
+ finally{button.disabled=false;button.textContent='RUN LIVE SCAN';scheduleScan()}
 }
 function renderAlerts(data){
  const events=(data||[]).filter(x=>x&&x.alert_event);alertEvents=events;
@@ -302,7 +320,7 @@ async function strategyOpen(id){
  try{const r=await fetch(base()+workspaceUrl,{cache:'no-store'});if(!r.ok)throw new Error('Workspace API '+r.status);const w=(await r.json()).workspace||{};document.getElementById('strategyOutput').textContent=(w.name||id)+' • v'+(w.version||'—')+' • '+(w.data_mode||'DATA')+' • '+(w.execution_mode||'PAPER')+' • live_orders '+(w.live_orders?'ON':'OFF');}
  catch(e){document.getElementById('strategyOutput').textContent='Workspace unavailable: '+e.message}
 }
-function scheduleScan(){if(refreshTimer)clearTimeout(refreshTimer);if(document.getElementById('autoRefresh').checked){const seconds=Math.min(300,Math.max(5,Number(document.getElementById('refreshSeconds').value)||5));refreshTimer=setTimeout(scan,seconds*1000)}}
+function scheduleScan(){if(refreshTimer)clearTimeout(refreshTimer);if(document.getElementById('autoRefresh').checked){const seconds=Math.min(300,Math.max(10,Number(document.getElementById('refreshSeconds').value)||10));refreshTimer=setTimeout(scan,seconds*1000)} }
 async function loadAll(){await Promise.all([loadMarketOverview(),loadLiveDataHealth(),scan(),loadPaperAccount(),loadStrategies()]);document.getElementById('lastUpdated').textContent='Updated '+stamp()}
 function saveDashboardWidgets(){
  const values={};document.querySelectorAll('[data-widget]').forEach(el=>{if(el.matches('input'))values[el.dataset.widget]=el.checked});localStorage.setItem(DASHBOARD_WIDGET_KEY,JSON.stringify(values));applyDashboardWidgets();document.getElementById('widgetSaveStatus').textContent='Layout: SAVED'
@@ -318,9 +336,14 @@ function connectLiveTicker(){
  // Do not open one broker socket per browser card.
  document.getElementById('topLive').title='Backend live data + WebSocket-backed scanners'
 }
-function paperEntry(){toast('Paper entry remains available through strategy workspaces; live broker orders are OFF')}
-function paperPosition(){loadPaperAccount()}
-function paperExit(exit){if(!exit){toast('Paper exit requires a price in the Paper workspace');return}return fetch(base()+'/api/v1/execution/paper/exit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price:exit})})}
+const paperButtons=['paperEntryBtn','paperPositionBtn','paperExitBtn'];
+function setPaperBusy(busy,message){paperButtons.forEach(id=>document.getElementById(id).disabled=busy);if(message)document.getElementById('paperModalStatus').textContent=message}
+function openPaperModal(){document.getElementById('paperModal').classList.add('open');paperPosition()}
+function closePaperModal(){document.getElementById('paperModal').classList.remove('open')}
+async function paperEntry(){const price=Number(document.getElementById('paperPrice').value),quantity=Number(document.getElementById('paperQty').value),symbol=document.getElementById('paperSymbol').value.trim()||'PAPER';if(!(price>0&&quantity>0)){document.getElementById('paperModalStatus').textContent='Enter valid price and quantity.';return}setPaperBusy(true,'PAPER ENTRY IN PROGRESS…');try{const r=await fetch(base()+'/api/v1/execution/paper/entry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:symbol,price:price,quantity:quantity,stop_loss_pct:Number(document.getElementById('slPct').value)/100,target_pct:Number(document.getElementById('targetPct').value)/100})});if(!r.ok)throw new Error('Paper API '+r.status);const p=await r.json();document.getElementById('paperResult').textContent='Entry ₹'+fmt(p.entry_price)+' • SL ₹'+fmt(p.stop_loss)+' • Target ₹'+fmt(p.target);document.getElementById('paperModalStatus').innerHTML='<span class="up">PAPER POSITION ACTIVE</span> • Qty '+fmt(p.fill.quantity);await loadPaperAccount()}catch(e){document.getElementById('paperModalStatus').textContent='Paper execution failed: '+e.message}finally{setPaperBusy(false)}}
+async function paperPosition(){setPaperBusy(true,'CHECKING PAPER POSITION…');try{const r=await fetch(base()+'/api/v1/execution/paper/position',{cache:'no-store'});if(!r.ok)throw new Error('Paper API '+r.status);const p=await r.json();if(!p.position){document.getElementById('paperModalStatus').textContent='No active paper position.';document.getElementById('paperResult').textContent='—';return}const q=p.position;document.getElementById('paperModalStatus').innerHTML='<span class="up">PAPER POSITION ACTIVE</span> • Qty '+fmt(q.quantity);document.getElementById('paperResult').textContent='Entry ₹'+fmt(q.entry_price)+' • SL ₹'+fmt(q.stop_loss)+' • Target ₹'+fmt(q.target)}catch(e){document.getElementById('paperModalStatus').textContent='Position check failed: '+e.message}finally{setPaperBusy(false)}}
+async function paperExit(){const exit=Number(document.getElementById('paperExit').value);if(!(exit>0)){document.getElementById('paperModalStatus').textContent='Enter a valid exit price.';return}setPaperBusy(true,'PAPER EXIT IN PROGRESS…');try{const r=await fetch(base()+'/api/v1/execution/paper/exit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price:exit})});if(!r.ok)throw new Error('Paper API '+r.status);const p=await r.json();if(p.status==='flat'){document.getElementById('paperModalStatus').textContent='No active paper position.';return}document.getElementById('paperModalStatus').innerHTML='<span class="up">PAPER POSITION CLOSED</span>';document.getElementById('paperResult').textContent='P&L ₹'+fmt(p.pnl);await loadPaperAccount()}catch(e){document.getElementById('paperModalStatus').textContent='Paper exit failed: '+e.message}finally{setPaperBusy(false)}}
+
 document.getElementById('autoRefresh').addEventListener('change',scheduleScan);
 document.getElementById('refreshSeconds').addEventListener('change',scheduleScan);
 applyDashboardWidgets();connectLiveTicker();loadAll();
