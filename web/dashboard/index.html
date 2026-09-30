@@ -79,6 +79,8 @@ button,input,select{font:inherit}button{cursor:pointer}
     <div class="metric"><div class="k">ACTIVE ALERTS</div><div class="v" id="activeAlertCount">0</div></div>
     <div class="metric"><div class="k">PAPER P&amp;L</div><div class="v up" id="dashPnl">₹0.00</div></div>
     <div class="metric"><div class="k">POSITIONS</div><div class="v" id="positionCount">0</div></div>
+    <div class="metric"><div class="k">AVAILABLE CAPITAL</div><div class="v" id="dashCapital">₹1,00,00,000</div></div>
+    <div class="metric"><div class="k">SYSTEM HEALTH</div><div class="v up" id="dashHealth">CHECKING</div></div>
    </div>
   </div>
  </section>
@@ -86,7 +88,7 @@ button,input,select{font:inherit}button{cursor:pointer}
  <section class="grid main-grid" style="margin-top:12px">
   <div class="card alert-panel" data-widget-id="alerts" data-widget="alerts" id="alertCenter">
    <div class="card-head"><div><h2>♧ Custom Alerts</h2><div class="sub">Active conditions and recent trigger events</div></div><span class="view" onclick="openAlertModal()">View All →</span></div>
-   <div class="alert-tabs"><button class="alert-tab active">Active (<span id="activeAlertTab">0</span>)</button><button class="alert-tab">Triggered (<span id="triggeredAlertCount">0</span>)</button><button class="alert-tab">Saved</button></div>
+   <div class="alert-tabs"><button id="alertTabActive" class="alert-tab active" onclick="setAlertTab('active')">Active (<span id="activeAlertTab">0</span>)</button><button id="alertTabTriggered" class="alert-tab" onclick="setAlertTab('triggered')">Triggered (<span id="triggeredAlertCount">0</span>)</button><button id="alertTabSaved" class="alert-tab" onclick="setAlertTab('saved')">Saved (<span id="savedAlertCount">0</span>)</button></div>
    <div id="alertCenterList" class="alert-list"><div class="alert-row"><span class="alert-dot"></span><div><strong>No alert event yet</strong><span>Create a custom alert to monitor your conditions.</span></div><span class="status-tag saved">READY</span></div></div>
    <button class="primary full" onclick="openAlertModal()">＋ CREATE CUSTOM ALERT</button>
   </div>
@@ -112,7 +114,7 @@ button,input,select{font:inherit}button{cursor:pointer}
   <div class="card">
    <div class="card-head"><div><h2>Live Market Chart</h2><div class="sub">NIFTY 50 • live snapshot</div></div><span class="live-pill" style="padding:5px 7px">● LIVE</span></div>
    <div class="chart" id="liveChart"><div class="chart-grid"></div><svg class="chart-line" viewBox="0 0 1000 300" preserveAspectRatio="none"><polyline id="chartLine" fill="none" stroke="#00B0FF" stroke-width="3" points="0,210 60,205 120,215 180,185 240,195 300,170 360,180 420,145 480,155 540,125 600,140 660,105 720,120 780,90 840,115 900,82 1000,96"/></svg><div class="chart-label" id="chartLabel">Waiting for market data</div></div>
-   <div class="market-tabs" style="margin-top:8px;margin-bottom:0"><button class="tab active">1m</button><button class="tab">5m</button><button class="tab">15m</button><button class="tab">30m</button><button class="tab">1h</button></div>
+   <div class="market-tabs chart-ranges" style="margin-top:8px;margin-bottom:0"><button class="tab active" data-range="1m" onclick="setChartRange('1m')">1m</button><button class="tab" data-range="5m" onclick="setChartRange('5m')">5m</button><button class="tab" data-range="15m" onclick="setChartRange('15m')">15m</button><button class="tab" data-range="30m" onclick="setChartRange('30m')">30m</button><button class="tab" data-range="1h" onclick="setChartRange('1h')">1h</button></div>
   </div>
   <div class="card" data-widget-id="paper" data-widget="paper" id="paper">
    <div class="card-head"><div><h2>Paper Portfolio</h2><div class="sub">₹1 crore paper ledger • real broker orders OFF</div></div><span class="view" onclick="toast('Portfolio workspace is Batch 8')">View Details →</span></div>
@@ -195,9 +197,9 @@ button,input,select{font:inherit}button{cursor:pointer}
   <div class="form-grid">
    <div class="field"><label>Strategy</label><select><option>Cash-Future</option><option>Calendar Spread</option><option>Synthetic Arbitrage</option><option>Box Spread</option></select></div>
    <div class="field"><label>Alert Type</label><select><option>Executable Gap</option><option>Volume Spike</option><option>OI Change</option><option>Price Reversal</option></select></div>
-   <div class="field full-field"><label>Symbol</label><input placeholder="Search symbol e.g. RELIANCE"></div>
-   <div class="field"><label>Condition</label><select><option>Gap %</option><option>Executable Gap %</option><option>Volume</option><option>OI Change %</option></select></div>
-   <div class="field"><label>Threshold</label><input placeholder="1.0"></div>
+   <div class="field full-field"><label>Symbol</label><input id="alertSymbol" placeholder="Search symbol e.g. RELIANCE"></div>
+   <div class="field"><label>Condition</label><select id="alertCondition"><option>Gap %</option><option>Executable Gap %</option><option>Volume</option><option>OI Change %</option></select></div>
+   <div class="field"><label>Threshold</label><input id="alertThreshold" placeholder="1.0"></div>
   </div>
   <div class="modal-actions"><button class="secondary" onclick="closeAlertModal()">CANCEL</button><button class="primary" onclick="saveAlertDraft()">SAVE ALERT DRAFT</button></div>
  </div>
@@ -225,6 +227,9 @@ const DASHBOARD_DEFAULT_WIDGETS={market:true,alerts:true,scanner:true,strategy:t
 let refreshTimer=null;
 let liveSnapshot={indices:[],commodities:[]};
 let alertEvents=[];
+let alertTab='active';
+let savedAlerts=JSON.parse(localStorage.getItem('algo.dashboard.alerts.v1')||'[]');
+let chartRange='1m';
 const apiInput={value:localStorage.getItem('algoApiBase')||''};
 function base(){return (apiInput.value||window.location.origin).trim().replace(/\/$/,'')}
 function fmt(v){return v===null||v===undefined||v===''?'—':Number(v).toLocaleString('en-IN',{maximumFractionDigits:2})}
@@ -234,8 +239,44 @@ function toast(message){const el=document.getElementById('toastBox');el.textCont
 function goHome(){window.scrollTo({top:0,behavior:'smooth'})}
 function openAlertModal(){document.getElementById('alertModal').classList.add('open')}
 function closeAlertModal(){document.getElementById('alertModal').classList.remove('open')}
-function saveAlertDraft(){toast('Alert draft prepared. Full saved-alert engine is Batch 7.');closeAlertModal()}
+function saveAlertDraft(){
+ const strategy=document.querySelector('#alertModal select')?.value||'Cash-Future';
+ const type=document.querySelectorAll('#alertModal select')[1]?.value||'Executable Gap';
+ const symbol=(document.getElementById('alertSymbol')?.value||'').trim()||'ALL';
+ const condition=document.getElementById('alertCondition')?.value||'Gap %';
+ const threshold=(document.getElementById('alertThreshold')?.value||'1.0').trim();
+ savedAlerts.unshift({id:Date.now(),strategy,type,symbol,condition,threshold,created_at:new Date().toISOString()});
+ savedAlerts=savedAlerts.slice(0,50);
+ localStorage.setItem('algo.dashboard.alerts.v1',JSON.stringify(savedAlerts));
+ renderAlertTab(); closeAlertModal(); toast('Alert saved on this device.');
+}
 function stamp(){return new Date().toLocaleString()}
+function setAlertTab(tab){
+ alertTab=tab;
+ document.querySelectorAll('#alertCenter .alert-tab').forEach(b=>b.classList.remove('active'));
+ const map={active:'alertTabActive',triggered:'alertTabTriggered',saved:'alertTabSaved'};document.getElementById(map[tab])?.classList.add('active');
+ renderAlertTab();
+}
+function renderAlertTab(){
+ const box=document.getElementById('alertCenterList'); if(!box)return;
+ document.getElementById('savedAlertCount').textContent=savedAlerts.length;
+ document.getElementById('sideAlertCount').textContent=savedAlerts.length;
+ let html='';
+ if(alertTab==='saved'){
+   html=savedAlerts.length?savedAlerts.slice(0,8).map(a=>'<div class="alert-row"><span class="alert-dot"></span><div><strong>'+a.type+' • '+a.symbol+'</strong><span>'+a.strategy+' • '+a.condition+' ≥ '+a.threshold+'</span></div><span class="status-tag saved">SAVED</span></div>').join(''):'<div class="alert-row"><span class="alert-dot"></span><div><strong>No saved alerts</strong><span>Create one above; it is stored locally on this device.</span></div><span class="status-tag saved">READY</span></div>';
+ }else if(alertTab==='triggered'){
+   html=alertEvents.length?alertEvents.slice(0,8).map(x=>'<div class="alert-row"><span class="alert-dot green"></span><div><strong>'+(String(x.alert_event||'TRIGGERED').toUpperCase())+' • '+(x.symbol||'—')+'</strong><span>Gap '+pct(x.gap_pct)+' • Net '+pct(x.net_gap_pct)+'</span></div><span class="status-tag active">TRIGGERED</span></div>').join(''):'<div class="alert-row"><span class="alert-dot"></span><div><strong>No triggered event</strong><span>Scanner events will appear here when available.</span></div><span class="status-tag saved">WAITING</span></div>';
+ }else{
+   html=alertEvents.length?alertEvents.slice(0,8).map(x=>'<div class="alert-row"><span class="alert-dot green"></span><div><strong>'+String(x.alert_event||'ACTIVE').toUpperCase()+' • '+(x.symbol||'—')+'</strong><span>Gap '+pct(x.gap_pct)+' • Net '+pct(x.net_gap_pct)+'</span></div><span class="status-tag active">ACTIVE</span></div>').join(''):'<div class="alert-row"><span class="alert-dot"></span><div><strong>No active alert event</strong><span>Create a custom alert to monitor your conditions.</span></div><span class="status-tag saved">READY</span></div>';
+ }
+ box.innerHTML=html;
+}
+function setChartRange(range){
+ chartRange=range;
+ document.querySelectorAll('.chart-ranges [data-range]').forEach(b=>b.classList.toggle('active',b.dataset.range===range));
+ const label=document.getElementById('chartLabel');
+ if(label && liveSnapshot?.indices?.[0]?.ltp) label.textContent='NIFTY 50 • ₹'+fmt(liveSnapshot.indices[0].ltp)+' • '+range+' snapshot • '+stamp();
+}
 function renderMarketCards(indices,commodities){
  marketOverviewPayload={indices:indices||[],commodities:commodities||[]};
  setMarketTab(marketTab);
@@ -294,7 +335,7 @@ async function loadLiveDataHealth(){
   document.getElementById('liveDataHealthStatus').textContent='Session '+p.market_session+' • age '+(p.age_seconds==null?'—':Number(p.age_seconds).toFixed(1)+'s')+' • source '+p.source+' • '+p.timeframe+' • orders '+p.live_orders;
   document.getElementById('homeData').textContent=p.persisted?'READY':'NO DATA';document.getElementById('homeData').className='health-state '+(p.persisted?'up':'neutral');
   document.getElementById('sideSystem').textContent=ok?'ONLINE':'CHECK';document.getElementById('sideLast').textContent='Data age '+(p.age_seconds==null?'—':Number(p.age_seconds).toFixed(1)+'s');
-  document.getElementById('dashSystem').textContent=ok?'ONLINE':'CHECK';
+  document.getElementById('dashSystem').textContent=ok?'ONLINE':'CHECK';document.getElementById('dashHealth').textContent=ok?'HEALTHY':'CHECK';document.getElementById('dashHealth').className='v '+(ok?'up':'neutral');
  }catch(e){document.getElementById('liveDataHealthBadge').textContent='ERROR';document.getElementById('homeData').textContent='ERROR';log('Live health failed: '+e.message)}
 }
 function setScanSummary(p){const count=Number(p.opportunity_count||0);document.getElementById('summarySymbols').textContent=(p.symbols_requested||[]).length;document.getElementById('summaryObservations').textContent=p.scanned_observations||0;document.getElementById('summaryOpportunities').textContent=count;document.getElementById('summaryErrors').textContent=(p.errors||[]).length;document.getElementById('dashOpp').textContent=count;document.getElementById('homeCfCount').textContent=count}
@@ -318,7 +359,7 @@ function applyScannerPayload(p){
  const mini=document.getElementById('scannerRows');
  mini.innerHTML=data.slice(0,5).map(x=>'<tr><td><strong>'+x.symbol+'</strong></td><td class="'+(Number(x.gap_pct)>0?'up':'')+'">'+pct(x.gap_pct)+'</td><td>'+pct(x.net_gap_pct)+'</td><td>'+fmt(x.liquidity_qty||x.volume)+'</td><td>'+fmt(x.oi)+'</td></tr>').join('') || '<tr><td colspan="5">NO LIVE SIGNAL WITHIN 5 SECONDS</td></tr>';
  document.getElementById('lastScan').textContent=stamp();
- renderAlerts(data);
+ renderAlerts(data); renderAlertTab();
  document.getElementById('dashSystem').textContent='ONLINE • LIVE 1s';
  document.getElementById('topLive').textContent='● LIVE DATA • WS CONNECTED';
 }
@@ -415,7 +456,7 @@ function renderAlerts(data){
 async function loadPaperAccount(){
  try{
   const r=await fetch(base()+'/api/v1/execution/paper/account',{cache:'no-store'});if(!r.ok)throw new Error('Paper account API '+r.status);
-  const p=await r.json();document.getElementById('paperBalance').textContent='₹'+fmt(p.virtual_balance);document.getElementById('paperRealized').textContent='₹'+fmt(p.realized_pnl);document.getElementById('paperPositions').textContent=fmt(p.open_positions);document.getElementById('positionCount').textContent=fmt(p.open_positions);document.getElementById('paperStatus').textContent='Paper account: ONLINE • LIVE BROKER ORDERS OFF';
+  const p=await r.json();document.getElementById('paperBalance').textContent='₹'+fmt(p.virtual_balance);document.getElementById('dashCapital').textContent='₹'+fmt(p.virtual_balance);document.getElementById('paperRealized').textContent='₹'+fmt(p.realized_pnl);document.getElementById('paperPositions').textContent=fmt(p.open_positions);document.getElementById('positionCount').textContent=fmt(p.open_positions);document.getElementById('paperStatus').textContent='Paper account: ONLINE • LIVE BROKER ORDERS OFF';
   const pos=await fetch(base()+'/api/v1/execution/paper/position',{cache:'no-store'});if(pos.ok){const q=await pos.json();const mtm=q.mark_to_market;document.getElementById('paperMtm').textContent=mtm&&mtm.net_pnl!=null?'₹'+fmt(mtm.net_pnl):(mtm?'₹'+fmt(mtm.gross_pnl):'—');if(mtm){document.getElementById('dashPnl').textContent='₹'+fmt(mtm.gross_pnl);document.getElementById('dashPnl').className='v '+(Number(mtm.gross_pnl)>=0?'up':'down')}}
  }catch(e){document.getElementById('paperStatus').textContent='Paper account unavailable • '+e.message}
 }
@@ -465,7 +506,7 @@ async function paperExit(){const exit=Number(document.getElementById('paperExit'
 
 document.getElementById('autoRefresh').addEventListener('change',scheduleScan);
 document.getElementById('refreshSeconds').addEventListener('change',scheduleScan);
-applyDashboardWidgets();connectLiveTicker();loadAll();
+applyDashboardWidgets();renderAlertTab();connectLiveTicker();loadAll();
 </script>
 
 <!-- Shared dashboard compatibility/status contract for completed platform phases. -->
