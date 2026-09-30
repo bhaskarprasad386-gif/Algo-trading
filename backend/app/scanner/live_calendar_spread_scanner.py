@@ -140,7 +140,25 @@ class LiveCalendarSpreadScanner:
         if session_factory is not None:
             self.set_session_factory(session_factory)
         try:
-            record=MarketDataRecord.from_dict(payload)
+            from app.market_data.contracts import InstrumentKey, InstrumentType
+            kind = InstrumentType(str(payload.get("instrument_type", "future")).lower())
+            record = MarketDataRecord(
+                instrument=InstrumentKey(
+                    str(payload.get("exchange") or payload.get("segment") or ""),
+                    str(payload.get("segment") or payload.get("exchange") or ""),
+                    str(payload.get("token") or ""),
+                ),
+                symbol=str(payload.get("symbol") or ""),
+                instrument_type=kind,
+                timestamp_ns=int(payload.get("timestamp_ns") or 0),
+                timeframe=str(payload.get("timeframe") or "1s"),
+                ltp=payload.get("ltp"), bid=payload.get("bid"), ask=payload.get("ask"),
+                bid_qty=payload.get("bid_qty"), ask_qty=payload.get("ask_qty"),
+                volume=payload.get("volume"), oi=payload.get("oi"),
+                open=payload.get("open"), high=payload.get("high"), low=payload.get("low"), close=payload.get("close"),
+                underlying=payload.get("underlying"), expiry=payload.get("expiry"),
+                lot_size=payload.get("lot_size"), tick_size=payload.get("tick_size"),
+            )
             return self.update(record)
         except Exception:
             return None
