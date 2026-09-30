@@ -5,8 +5,8 @@ from app.scanner.box_spread import BOX_SCAN_POLICY, BoxSpreadScanConfig, scan_bo
 def q(ts, strike, *, underlying="NIFTY", cls="INDEX", expiry=20270101, lot=50, edge=True):
     return OptionQuote(
         ts, underlying, expiry, strike,
-        1.0 if edge else 10.0, 2.0,
-        1.0, 2.0,
+        2.0 if edge else 10.0, 2.0,
+        2.0, 2.0,
         lot, cls, 100, 1000,
     )
 
