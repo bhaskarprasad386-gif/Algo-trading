@@ -66,7 +66,10 @@ Base.metadata.create_all(bind=engine)
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
 live_cash_future_scanner = LiveCashFutureScanner()
-live_calendar_spread_scanner = LiveCalendarSpreadScanner()
+live_calendar_spread_scanner = LiveCalendarSpreadScanner(
+    minimum_gap_points=settings.LIVE_CALENDAR_SPREAD_MIN_GAP_POINTS,
+    minimum_gross_profit=settings.LIVE_CALENDAR_SPREAD_MIN_GROSS_PROFIT,
+)
 configure_calendar_spread_scanner(live_calendar_spread_scanner)
 live_synthetic_latest_results: tuple = ()
 live_synthetic_runner: LiveSyntheticRunner | None = None
