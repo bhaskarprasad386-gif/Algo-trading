@@ -85,7 +85,7 @@ def test_contract_selection_ignores_wrong_underlying_expired_and_duplicate_rows(
     master = FakeMaster()
     master.instruments.extend([
         {"symbol": "ABCBANK30SEP2026FUT", "name": "ABCBANK", "token": "301", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "31OCT2099", "lotsize": "100"},
-        {"symbol": "ABC31JUL2098FUT", "name": "ABC", "token": "302", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "31JUL2098", "lotsize": "100"},
+        {"symbol": "ABC31JUL2100FUT", "name": "ABC", "token": "302", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "31JUL2100", "lotsize": "100"},
         {"symbol": "ABC31OCT2099FUT", "name": "ABC", "token": "303", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "31OCT2099", "lotsize": "100"},
         {"symbol": "ABC31OCT2099OPT", "name": "ABC", "token": "304", "exch_seg": "NFO", "instrumenttype": "OPTSTK", "expiry": "31OCT2099", "lotsize": "100"},
     ])
@@ -255,7 +255,7 @@ def test_full_quote_keeps_invalid_timestamp_unavailable():
 def test_quote_freshness_rejects_stale_timestamp():
     collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), FakeMaster(), max_quote_age_seconds=15)
     stale = datetime.now().astimezone() - timedelta(seconds=30)
-    with pytest.raises(ValueError, match="stale CURRENT quote for ABC30SEP2026FUT"):
+    with pytest.raises(ValueError, match="stale CURRENT quote for ABC31OCT2099FUT"):
         collector._validate_quote_freshness("CURRENT", "ABC31OCT2099FUT", stale)
 
 
