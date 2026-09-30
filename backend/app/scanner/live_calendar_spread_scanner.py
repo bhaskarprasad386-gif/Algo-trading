@@ -141,12 +141,13 @@ class LiveCalendarSpreadScanner:
             self.set_session_factory(session_factory)
         try:
             from app.market_data.contracts import InstrumentKey, InstrumentType
-            kind = InstrumentType(str(payload.get("instrument_type", "future")).lower())
+            raw_kind = str(payload.get("instrument_type", "future")).lower()
+            kind = InstrumentType.COMMODITY if raw_kind in {"commodity", "commodity_future"} else InstrumentType.FUTURE
             record = MarketDataRecord(
                 instrument=InstrumentKey(
                     str(payload.get("exchange") or payload.get("segment") or ""),
                     str(payload.get("segment") or payload.get("exchange") or ""),
-                    str(payload.get("token") or ""),
+                    str(payload.get("token") or payload.get("symbol") or payload.get("underlying") or "calendar"),
                 ),
                 symbol=str(payload.get("symbol") or ""),
                 instrument_type=kind,
