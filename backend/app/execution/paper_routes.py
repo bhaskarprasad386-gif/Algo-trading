@@ -326,6 +326,24 @@ def paper_from_scanner(request: ScannerPaperEntryRequest, user_id: int = Depends
     return result
 
 
+@router.get("/paper/account")
+def paper_account(user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
+    """Return the lightweight paper-account summary used by the Home command center."""
+    account = _account(db, user_id)
+    open_positions = (
+        db.query(Position)
+        .filter(Position.user_id == user_id, Position.quantity != 0)
+        .count()
+    )
+    return {
+        "mode": "paper",
+        "virtual_balance": float(account.virtual_balance),
+        "realized_pnl": float(account.realized_pnl or 0.0),
+        "open_positions": int(open_positions),
+        "live_orders": "OFF",
+    }
+
+
 @router.get("/paper/orders")
 def paper_orders(user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     orders = db.query(Order).filter(Order.user_id == user_id, Order.order_id.like(f"PAPER-{user_id}-%")).order_by(Order.id.asc()).all()
