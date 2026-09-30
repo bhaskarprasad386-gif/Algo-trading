@@ -48,3 +48,5 @@ Phase C final green verification.
 Phase F common alert engine final verification trigger.
 
 Phase F PR verification gate.
+
+Phase G+H final verification gate.
