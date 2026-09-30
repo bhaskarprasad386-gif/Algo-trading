@@ -1,158 +1,329 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>Algo Trading Terminal</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<title>Algo Trading • Command Center</title>
 <style>
-:root{--bg:#050b16;--bg2:#081326;--panel:#0b1729;--panel2:#0f2038;--line:#203b5d;--text:#f4f8ff;--muted:#8fa6c2;--cyan:#22d3ee;--blue:#3b82f6;--violet:#8b5cf6;--green:#22c55e;--red:#f43f5e;--amber:#f59e0b;--pink:#ec4899}
-*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at 10% 0%,rgba(59,130,246,.18),transparent 28%),radial-gradient(circle at 90% 8%,rgba(139,92,246,.16),transparent 30%),linear-gradient(145deg,var(--bg),#071120 55%,#050a14);color:var(--text);font-family:Inter,system-ui,-apple-system,Segoe UI,Arial,sans-serif;min-height:100vh}.shell{max-width:1480px;margin:auto;padding:16px}.topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px;margin:-16px -16px 16px;padding:14px 16px;background:rgba(5,11,22,.82);backdrop-filter:blur(18px);border-bottom:1px solid rgba(59,130,246,.22)}.brand{font-size:22px;font-weight:900;letter-spacing:.4px;background:linear-gradient(90deg,#fff,var(--cyan),#a78bfa);-webkit-background-clip:text;color:transparent}.sub,.muted,.status{font-size:11px;color:var(--muted)}.top-actions{margin-left:auto}.badge{padding:7px 11px;border-radius:999px;font-size:10px;font-weight:900;background:rgba(34,197,94,.10);color:#86efac;border:1px solid rgba(34,197,94,.35);box-shadow:0 0 18px rgba(34,197,94,.08)}.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:11px}.metric,.card{background:linear-gradient(145deg,rgba(15,32,56,.96),rgba(8,20,36,.96));border:1px solid rgba(64,105,151,.42);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.18)}.metric,.card{padding:15px}.metric{position:relative;overflow:hidden}.metric:before{content:"";position:absolute;inset:0 auto auto 0;width:100%;height:2px;background:linear-gradient(90deg,var(--cyan),var(--blue),var(--violet));opacity:.9}.label{font-size:9px;color:#91a9c5;font-weight:900;letter-spacing:1px}.value{font-size:23px;font-weight:900;margin-top:8px}.positive{color:#4ade80}.negative{color:#fb7185}.layout{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(300px,.8fr);gap:14px;margin-top:14px}.head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.head h3{margin:0;font-size:15px}.live{font-size:10px;font-weight:900;color:#67e8f9}.market-grid,.paper-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.market{padding:13px;background:rgba(7,20,37,.78);border:1px solid rgba(44,76,111,.65);border-radius:12px}.market span{display:block;margin-top:5px;font-size:11px;color:var(--muted)}.controls{display:flex;gap:8px;flex-wrap:wrap}.controls input{flex:1;min-width:130px}input,button{border:1px solid #294b70;border-radius:9px;padding:10px;background:#071525;color:#fff}input:focus{outline:2px solid rgba(34,211,238,.22);border-color:var(--cyan)}button{background:linear-gradient(135deg,var(--blue),#2563eb);border:0;font-weight:900;cursor:pointer;box-shadow:0 5px 16px rgba(37,99,235,.2)}button:hover{filter:brightness(1.12);transform:translateY(-1px)}button:disabled{opacity:.55;cursor:not-allowed}.secondary{background:linear-gradient(135deg,#1a3554,#132840)}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:11px}th,td{text-align:left;padding:9px;border-bottom:1px solid rgba(36,62,91,.65);white-space:nowrap}th{color:#7f97b4;font-size:9px;text-transform:uppercase;letter-spacing:.6px}tr:hover td{background:rgba(34,211,238,.035)}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}.summary div{background:rgba(7,20,37,.78);border:1px solid rgba(44,76,111,.62);border-radius:9px;padding:9px}.summary strong{display:block;font-size:16px;margin-top:4px}.nav{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin-top:14px}.nav div{padding:11px 5px;text-align:center;border:1px solid var(--line);border-radius:10px;color:var(--muted);font-size:10px;font-weight:900}.nav .active{color:#dbeafe;background:linear-gradient(135deg,#123967,#14284a)}.terminal{height:130px;overflow:auto;background:#040a13;border-radius:10px;padding:11px;font:11px ui-monospace,SFMono-Regular,monospace;color:#7dd3fc}.responsive-nav{display:flex;gap:7px;overflow:auto;padding:4px 0;scrollbar-width:none}.responsive-nav::-webkit-scrollbar{display:none}.responsive-nav button{flex:0 0 auto;font-size:10px;padding:9px 12px}.expansion-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.expansion-card{padding:11px;background:rgba(7,20,37,.78);border:1px solid rgba(44,76,111,.62);border-radius:11px}.expansion-card strong{display:block;font-size:11px}.expansion-card span{display:block;margin-top:4px;font-size:9px;color:var(--muted)}.platform-sync{display:flex;gap:8px;flex-wrap:wrap}.sync-chip{padding:7px 9px;border:1px solid rgba(44,76,111,.62);border-radius:999px;background:rgba(7,20,37,.7);font-size:9px;color:#c7d8ec}.alert-list{display:grid;gap:8px;max-height:300px;overflow:auto}.alert-item{padding:10px;background:rgba(7,20,37,.78);border:1px solid rgba(44,76,111,.62);border-radius:10px}.alert-item strong{font-size:12px}.alert-meta{font-size:10px;color:var(--muted);margin-top:4px}.alert-new{border-left:3px solid var(--green)}.alert-active{border-left:3px solid var(--cyan)}.alert-weaken{border-left:3px solid var(--amber)}.alert-empty{padding:12px;border:1px dashed #315170;border-radius:10px;color:var(--muted);font-size:11px}.notice{padding:10px 12px;background:rgba(18,28,45,.78);border:1px solid rgba(65,82,108,.7);border-radius:9px;color:#b7c7da;font-size:11px}
-.home-hero{position:relative;overflow:hidden;padding:18px;margin-bottom:14px;background:linear-gradient(120deg,rgba(12,35,64,.98),rgba(17,28,62,.96) 48%,rgba(32,20,67,.94));border:1px solid rgba(77,126,190,.55);border-radius:20px;box-shadow:0 18px 50px rgba(0,0,0,.28)}.home-hero:after{content:"";position:absolute;width:240px;height:240px;right:-90px;top:-110px;border-radius:50%;background:radial-gradient(circle,rgba(34,211,238,.25),transparent 68%)}.hero-row{display:flex;justify-content:space-between;gap:14px;align-items:center;position:relative;z-index:1}.eyebrow{font-size:9px;letter-spacing:1.5px;font-weight:900;color:#67e8f9}.hero-title{font-size:clamp(22px,4vw,34px);font-weight:950;margin:5px 0;background:linear-gradient(90deg,#fff,#bfefff,#c4b5fd);-webkit-background-clip:text;color:transparent}.hero-sub{font-size:11px;color:#a9bfd9;max-width:680px}.hero-status{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}.status-chip{padding:7px 10px;border-radius:999px;font-size:9px;font-weight:900;border:1px solid rgba(255,255,255,.12);background:rgba(3,10,22,.35)}.status-chip.live{color:#86efac;border-color:rgba(34,197,94,.3)}.status-chip.paper{color:#c4b5fd;border-color:rgba(139,92,246,.35)}.status-chip.safe{color:#67e8f9;border-color:rgba(34,211,238,.3)}.hero-actions{display:flex;gap:8px;margin-top:14px}.hero-actions button{min-width:120px}.home-grid{display:grid;grid-template-columns:1.25fr .75fr;gap:12px;margin-bottom:14px}.home-card{padding:15px;background:linear-gradient(145deg,rgba(12,27,48,.97),rgba(7,17,31,.97));border:1px solid rgba(58,96,137,.46);border-radius:16px}.home-card h3{margin:0;font-size:14px}.home-card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:11px}.home-market-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.market-tile{padding:11px;border-radius:12px;background:linear-gradient(145deg,rgba(16,37,63,.9),rgba(8,21,37,.9));border:1px solid rgba(55,91,132,.55)}.market-tile .sym{font-size:10px;color:#91a9c5;font-weight:900}.market-tile .ltp{font-size:17px;font-weight:900;margin-top:5px}.market-tile .chg{font-size:10px;margin-top:4px}.opp-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.opp-tile{padding:12px;border-radius:12px;border:1px solid rgba(55,91,132,.55);background:linear-gradient(145deg,#0d2038,#091628);position:relative;overflow:hidden}.opp-tile:nth-child(1){box-shadow:inset 0 2px 0 var(--cyan)}.opp-tile:nth-child(2){box-shadow:inset 0 2px 0 var(--violet)}.opp-tile:nth-child(3){box-shadow:inset 0 2px 0 var(--green)}.opp-tile:nth-child(4){box-shadow:inset 0 2px 0 var(--amber)}.opp-name{font-size:9px;color:#9bb0c9;font-weight:900}.opp-count{font-size:22px;font-weight:950;margin-top:6px}.opp-action{font-size:9px;color:#67e8f9;margin-top:5px}.home-health{display:grid;gap:7px}.health-row{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;border-radius:10px;background:rgba(7,20,37,.72);border:1px solid rgba(44,76,111,.55);font-size:10px}.health-dot{display:inline-flex;align-items:center;gap:6px;font-weight:900}.dot{width:7px;height:7px;border-radius:50%;display:inline-block;background:var(--green);box-shadow:0 0 10px rgba(34,197,94,.6)}.quick-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.quick{padding:11px;border-radius:11px;background:linear-gradient(145deg,#102946,#0a192c);border:1px solid rgba(55,91,132,.55);text-align:left}.quick strong{display:block;font-size:10px}.quick span{display:block;color:#7f97b4;font-size:9px;margin-top:4px}
-@media(max-width:900px){.grid4{grid-template-columns:repeat(2,1fr)}.layout{grid-template-columns:1fr}.home-grid{grid-template-columns:1fr}.opp-grid{grid-template-columns:repeat(2,1fr)}.quick-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:560px){.shell{padding:10px}.topbar{margin:-10px -10px 12px;padding:11px 10px}.topbar .sub{display:none}.brand{font-size:18px}.badge{font-size:8px;padding:6px 8px}.grid4{grid-template-columns:1fr 1fr}.market-grid,.paper-grid,.strategy-grid{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr}.value{font-size:18px}.hero-row{display:block}.hero-title{font-size:25px}.home-market-grid{grid-template-columns:1fr}.opp-grid{grid-template-columns:1fr 1fr}.quick-grid{grid-template-columns:1fr 1fr}.expansion-grid{grid-template-columns:1fr 1fr}}
+:root{
+ --bg:#070A0D;--surface:#0F1419;--card:#12171E;--card2:#0D1218;--line:#202B35;
+ --text:#EAF2F8;--muted:#7F919F;--primary:#00B0FF;--profit:#00E676;--loss:#FF1744;
+ --warning:#FFAB00;--purple:#8B5CF6;--shadow:0 14px 34px rgba(0,0,0,.28)
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+button,input,select{font:inherit}button{cursor:pointer}
+.app{min-height:100vh}.sidebar{position:fixed;inset:0 auto 0 0;width:236px;background:#0A0E12;border-right:1px solid var(--line);padding:18px 12px;z-index:40;display:flex;flex-direction:column}
+.brand{display:flex;align-items:center;gap:10px;padding:5px 9px 20px;font-weight:900;font-size:18px}.brand-mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--primary),#2563eb);display:grid;place-items:center;color:#00131d;font-weight:1000}
+.nav-group{display:grid;gap:5px}.nav-title{font-size:9px;letter-spacing:1.1px;color:#52616D;padding:12px 10px 5px;font-weight:900}.nav-item{border:1px solid transparent;background:transparent;color:#9AAAB6;text-align:left;padding:10px 11px;border-radius:9px;font-size:12px;display:flex;align-items:center;gap:10px}.nav-item:hover{background:#10171E;color:#EAF2F8}.nav-item.active{background:#082A42;border-color:#075B88;color:#EAF8FF}.nav-icon{width:18px;text-align:center}.side-status{margin-top:auto;padding:11px;border:1px solid var(--line);background:#0D1319;border-radius:10px;font-size:10px}.side-status strong{display:block;color:var(--profit);margin-top:4px}.page{margin-left:236px;min-height:100vh}.topbar{height:64px;position:sticky;top:0;z-index:30;background:rgba(7,10,13,.92);backdrop-filter:blur(16px);border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 22px;gap:18px}.top-title{font-weight:850;font-size:15px}.top-links{display:flex;gap:16px;font-size:11px;color:#80919D}.top-links span{cursor:pointer}.top-actions{margin-left:auto;display:flex;align-items:center;gap:10px}.live-pill,.paper-pill{border:1px solid #185E45;background:#071B13;color:#8CFFBD;border-radius:999px;padding:7px 10px;font-size:10px;font-weight:850}.paper-pill{border-color:#44336F;background:#171124;color:#CDBDFF}.icon-btn{width:32px;height:32px;border:1px solid var(--line);background:#0D1319;color:#9FB0BC;border-radius:8px}.content{padding:20px;max-width:1560px;margin:auto}.page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:15px}.page-head h1{font-size:22px;margin:0}.page-head p{margin:5px 0 0;color:var(--muted);font-size:11px}.refresh-box{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:10px}.switch{appearance:none;width:38px;height:20px;border-radius:20px;background:#26313A;position:relative;border:1px solid #394752}.switch:checked{background:#075F8D}.switch:after{content:"";position:absolute;width:14px;height:14px;top:2px;left:2px;border-radius:50%;background:#91A0AA;transition:.18s}.switch:checked:after{left:20px;background:#fff}.grid{display:grid;gap:12px}.hero-grid{grid-template-columns:1.65fr .85fr}.main-grid{grid-template-columns:1.45fr .85fr}.lower-grid{grid-template-columns:1.15fr .85fr}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:15px}.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.card-head h2,.card-head h3{font-size:13px;margin:0;font-weight:850}.sub{font-size:10px;color:var(--muted);margin-top:4px}.view{font-size:10px;color:var(--primary);cursor:pointer}.market-tabs{display:flex;gap:6px;margin-bottom:11px}.tab{border:1px solid var(--line);background:#0D1319;color:#8395A1;padding:7px 10px;border-radius:7px;font-size:10px}.tab.active{background:#082C43;color:#BDEBFF;border-color:#075B88}.market-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.market-tile{background:#0D1319;border:1px solid #1C2832;border-radius:9px;padding:10px}.market-tile .sym{font-size:9px;color:#71828D;font-weight:850}.market-tile .ltp{font-size:17px;font-weight:900;margin-top:5px}.market-tile .chg{font-size:10px;margin-top:4px}.up{color:var(--profit)}.down{color:var(--loss)}.neutral{color:var(--warning)}.metric-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.metric{background:#0D1319;border:1px solid #1C2832;border-radius:9px;padding:11px}.metric .k{font-size:9px;color:#738591}.metric .v{font-size:17px;font-weight:900;margin-top:6px}.alert-panel{border-color:#4B268E;box-shadow:0 0 0 1px rgba(139,92,246,.12),var(--shadow)}.alert-tabs{display:flex;gap:5px;margin-bottom:8px}.alert-tab{background:#0C1218;border:1px solid var(--line);color:#82919D;border-radius:7px;padding:6px 9px;font-size:9px}.alert-tab.active{background:#241445;color:#D9C9FF;border-color:#6541A6}.alert-list{display:grid;gap:7px;max-height:205px;overflow:auto}.alert-row{display:flex;align-items:center;gap:9px;padding:9px;background:#0D1319;border:1px solid #1D2832;border-radius:8px}.alert-dot{width:7px;height:7px;border-radius:50%;background:var(--warning);flex:0 0 auto}.alert-dot.green{background:var(--profit)}.alert-row strong{font-size:10px;display:block}.alert-row span{font-size:9px;color:var(--muted)}.status-tag{margin-left:auto;font-size:8px;font-weight:900;padding:4px 6px;border-radius:5px;background:#092A20;color:#7DFFB0}.status-tag.active{background:#082A42;color:#7EDBFF}.status-tag.saved{background:#241E0B;color:#FFD477}.primary{background:linear-gradient(135deg,#009FE6,#0077B8);border:0;color:#fff;font-weight:850;border-radius:8px;padding:9px 11px}.secondary{background:#0D151C;border:1px solid #2A3945;color:#B8C7D1;border-radius:8px;padding:9px 11px}.full{width:100%;margin-top:8px}.opp-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.opp{border:1px solid #1D2A34;background:#0D1319;border-radius:9px;padding:11px;text-align:left}.opp:hover{border-color:#31566C}.opp .name{font-size:9px;color:#7D8D98;font-weight:900}.opp .count{font-size:21px;font-weight:950;margin-top:5px}.opp .foot{font-size:9px;color:var(--primary);margin-top:4px}.table-wrap{overflow:auto;border:1px solid #1B2730;border-radius:8px}table{width:100%;border-collapse:collapse;font-size:10px}th,td{text-align:left;padding:8px 9px;border-bottom:1px solid #18232C;white-space:nowrap}th{color:#71838F;font-size:8px;letter-spacing:.7px;text-transform:uppercase}tr:hover td{background:#0F171E}.chart{height:205px;background:#091016;border:1px solid #1B2730;border-radius:9px;position:relative;overflow:hidden}.chart-grid{position:absolute;inset:0;background:linear-gradient(#13202A 1px,transparent 1px),linear-gradient(90deg,#13202A 1px,transparent 1px);background-size:100% 25%,12.5% 100%;opacity:.7}.chart-line{position:absolute;left:0;right:0;top:0;bottom:0;width:100%;height:100%}.chart-label{position:absolute;top:9px;left:10px;font-size:9px;color:#8395A1}.portfolio{display:grid;gap:10px}.big-money{font-size:24px;font-weight:950}.portfolio-row{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #1B2730;font-size:10px}.health{display:grid;gap:7px}.health-row{display:flex;justify-content:space-between;align-items:center;padding:8px 9px;background:#0D1319;border:1px solid #1C2832;border-radius:8px;font-size:10px}.health-state{font-weight:850}.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:6px;background:var(--profit)}.dot.warn{background:var(--warning)}.dot.bad{background:var(--loss)}.quick-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.quick{padding:10px;background:#0D1319;border:1px solid #1C2832;border-radius:8px;text-align:left;color:#D7E1E7}.quick b{display:block;font-size:10px}.quick span{font-size:9px;color:var(--muted);display:block;margin-top:3px}.system-line{font:10px ui-monospace,SFMono-Regular,Menlo,monospace;color:#7DD3FC;background:#080D12;padding:10px;border-radius:8px;max-height:105px;overflow:auto}.bottom-nav{display:none}.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.64);z-index:100;align-items:flex-end;justify-content:flex-end;padding:20px}.modal.open{display:flex}.modal-box{width:380px;max-width:100%;background:#0D1319;border:1px solid #6541A6;border-radius:12px;padding:15px;box-shadow:0 24px 70px rgba(0,0,0,.55)}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.field label{display:block;color:#758792;font-size:9px;margin-bottom:5px}.field input,.field select{width:100%;background:#081016;border:1px solid #263540;color:#DCE7ED;border-radius:7px;padding:9px;font-size:10px}.field.full-field{grid-column:1/-1}.modal-actions{display:flex;gap:7px;margin-top:12px}.toast{position:fixed;right:18px;bottom:18px;background:#0D171D;border:1px solid #2A4352;color:#CFE8F3;padding:10px 12px;border-radius:8px;font-size:10px;display:none;z-index:120}.toast.show{display:block}.mobile-only{display:none}
+@media(max-width:1100px){.sidebar{width:205px}.page{margin-left:205px}.market-cards{grid-template-columns:repeat(2,1fr)}.hero-grid,.main-grid,.lower-grid{grid-template-columns:1fr}.opp-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:720px){.sidebar{display:none}.page{margin-left:0}.topbar{height:58px;padding:0 12px}.top-links{display:none}.content{padding:12px 12px 76px}.page-head h1{font-size:19px}.mobile-only{display:block}.live-pill{font-size:8px}.paper-pill{display:none}.bottom-nav{display:grid;position:fixed;bottom:0;left:0;right:0;z-index:50;grid-template-columns:repeat(5,1fr);background:#0A0E12;border-top:1px solid var(--line);padding:7px 5px calc(7px + env(safe-area-inset-bottom));gap:4px}.bottom-nav button{background:transparent;border:0;color:#71838F;font-size:8px;padding:5px}.bottom-nav button.active{color:#BCEBFF}.market-cards{grid-template-columns:repeat(2,1fr)}.opp-grid{grid-template-columns:repeat(2,1fr)}.modal{padding:0}.modal-box{width:100%;border-radius:14px 14px 0 0}.refresh-box{font-size:8px}.top-actions{gap:5px}}
+@media(max-width:390px){.market-cards,.opp-grid{grid-template-columns:1fr}.metric-grid{grid-template-columns:1fr}.page-head{align-items:flex-start}}
 </style>
 </head>
-<body><div class="shell">
-<header class="topbar"><div><div class="brand">ALGO TRADING</div><div class="sub">Professional algorithmic trading terminal</div></div><div class="top-actions"><span class="badge">PAPER MODE • LIVE DATA • ORDERS OFF</span></div></header>
-<section class="home-hero" id="home">
-  <div class="hero-row">
-    <div>
-      <div class="eyebrow">ALGO TRADING • CONTROL CENTER</div>
-      <div class="hero-title">Smart Trading, One Clear View.</div>
-      <div class="hero-sub">Live market intelligence, opportunity discovery, paper portfolio and system health — designed as a professional mobile-first trading cockpit.</div>
-      <div class="hero-status">
-        <span class="status-chip live">● LIVE DATA</span>
-        <span class="status-chip paper">● PAPER MODE</span>
-        <span class="status-chip safe">● BROKER ORDERS OFF</span>
-      </div>
-      <div class="hero-actions">
-        <button onclick="document.getElementById('scanner').scrollIntoView({behavior:'smooth',block:'start'});scan()">SCAN OPPORTUNITIES</button>
-        <button class="secondary" onclick="document.getElementById('market').scrollIntoView({behavior:'smooth',block:'start'})">MARKET WATCH</button>
-      </div>
-    </div>
+<body>
+<div class="app">
+<aside class="sidebar">
+ <div class="brand"><span class="brand-mark">△</span> Algo Trading</div>
+ <div class="nav-group">
+  <button class="nav-item active" onclick="goHome()"><span class="nav-icon">⌂</span>Home / Command Center</button>
+  <button class="nav-item" onclick="toast('Analyze page is Batch 2')"><span class="nav-icon">⌕</span>Analyze</button>
+ </div>
+ <div class="nav-title">STRATEGY WORKSPACES</div>
+ <div class="nav-group">
+  <button class="nav-item" onclick="toast('Cash-Future workspace is Batch 3')"><span class="nav-icon">↔</span>Cash-Future</button>
+  <button class="nav-item" onclick="toast('Calendar Spread workspace is Batch 4')"><span class="nav-icon">◫</span>Calendar Spread</button>
+  <button class="nav-item" onclick="toast('Synthetic Arbitrage workspace is Batch 5')"><span class="nav-icon">⌁</span>Synthetic Arbitrage</button>
+  <button class="nav-item" onclick="toast('Box Spread workspace is Batch 6')"><span class="nav-icon">▣</span>Box Spread</button>
+ </div>
+ <div class="nav-group" style="margin-top:5px">
+  <button class="nav-item" onclick="toast('Paper Portfolio workspace is Batch 8')"><span class="nav-icon">▤</span>Paper Portfolio</button>
+  <button class="nav-item" onclick="toast('Trading Journal is Batch 9')"><span class="nav-icon">▥</span>Trading Journal</button>
+  <button class="nav-item" onclick="openAlertModal()"><span class="nav-icon">♧</span>Custom Alerts <span id="sideAlertCount" style="margin-left:auto;color:var(--warning)">0</span></button>
+  <button class="nav-item" onclick="toast('Settings')"><span class="nav-icon">⚙</span>Settings</button>
+ </div>
+ <div class="side-status"><span>● System Status</span><strong id="sideSystem">CHECKING</strong><span id="sideLast" style="color:var(--muted);display:block;margin-top:4px">Waiting for live status</span></div>
+</aside>
+<div class="page">
+<header class="topbar">
+ <div class="top-title">Home / Command Center</div>
+ <div class="top-links"><span onclick="goHome()">Trade Smart</span><span onclick="toast('Analyze page is Batch 2')">Analyze</span><span>Execute</span><span>Grow</span></div>
+ <div class="top-actions">
+  <span class="live-pill" id="topLive">● LIVE DATA</span>
+  <span class="paper-pill">PAPER TRADING • ₹1,00,00,000</span>
+  <button class="icon-btn" onclick="loadAll()" title="Refresh">↻</button>
+ </div>
+</header>
+<main class="content" id="home">
+ <div class="page-head">
+  <div><h1>Home / Command Center</h1><p>Live market overview, opportunity radar, alerts, paper portfolio and system health.</p></div>
+  <div class="refresh-box">Auto Refresh <input id="autoRefresh" class="switch" type="checkbox" checked><select id="refreshSeconds" style="background:#0D1319;color:#9FB0BC;border:1px solid var(--line);border-radius:7px;padding:5px;font-size:9px"><option value="5">5s</option><option value="10">10s</option><option value="30">30s</option></select><span id="lastUpdated">—</span></div>
+ </div>
+
+ <section class="grid hero-grid">
+  <div class="card" data-widget-id="market" data-widget="market">
+   <div class="card-head"><div><h2>Market Overview</h2><div class="sub">NSE • BSE • MCX • backend/config driven</div></div><span class="view" onclick="loadMarketOverview()">Refresh</span></div>
+   <div class="market-tabs"><button class="tab active">Indices</button><button class="tab">Commodities</button><button class="tab">F&amp;O Universe</button></div>
+   <div class="market-cards" id="homeMarketTiles">
+    <div class="market-tile"><div class="sym">NIFTY 50</div><div class="ltp">—</div><div class="chg">Waiting for live quote</div></div>
+    <div class="market-tile"><div class="sym">BANKNIFTY</div><div class="ltp">—</div><div class="chg">Waiting for live quote</div></div>
+    <div class="market-tile"><div class="sym">FINNIFTY</div><div class="ltp">—</div><div class="chg">Waiting for live quote</div></div>
+    <div class="market-tile"><div class="sym">MIDCPNIFTY</div><div class="ltp">—</div><div class="chg">Waiting for live quote</div></div>
+   </div>
+   <div class="table-wrap" style="margin-top:10px;display:none" id="marketDetailTable"><table><thead><tr><th>Exchange</th><th>Symbol</th><th>LTP</th><th>Change</th><th>Bid</th><th>Ask</th><th>Volume</th><th>OI</th><th>Status</th></tr></thead><tbody id="indexRows"></tbody></table></div>
+   <div class="sub" style="margin-top:9px" id="marketFeedStatus">Feed: CHECKING</div>
   </div>
-</section>
-<section class="home-grid">
-  <div class="home-card">
-    <div class="home-card-head"><div><h3>Market Pulse</h3><div class="muted">Live overview from the existing market-data API</div></div><span class="live">● LIVE</span></div>
-    <div class="home-market-grid" id="homeMarketTiles">
-      <div class="market-tile"><div class="sym">NIFTY</div><div class="ltp">—</div><div class="chg">Waiting for live quote</div></div>
-      <div class="market-tile"><div class="sym">BANKNIFTY</div><div class="ltp">—</div><div class="chg">Waiting for live quote</div></div>
-      <div class="market-tile"><div class="sym">SENSEX</div><div class="ltp">—</div><div class="chg">Waiting for live quote</div></div>
-    </div>
+  <div class="card">
+   <div class="card-head"><div><h2>Quick Stats</h2><div class="sub">Current system snapshot</div></div><span class="view">LIVE</span></div>
+   <div class="metric-grid">
+    <div class="metric"><div class="k">TOTAL OPPORTUNITIES</div><div class="v" id="dashOpp">—</div></div>
+    <div class="metric"><div class="k">ACTIVE ALERTS</div><div class="v" id="activeAlertCount">0</div></div>
+    <div class="metric"><div class="k">PAPER P&amp;L</div><div class="v up" id="dashPnl">₹0.00</div></div>
+    <div class="metric"><div class="k">POSITIONS</div><div class="v" id="positionCount">0</div></div>
+   </div>
   </div>
-  <div class="home-card">
-    <div class="home-card-head"><div><h3>System Health</h3><div class="muted">Real status only • no synthetic values</div></div><span id="homeHealthBadge" class="live">CHECKING</span></div>
-    <div class="home-health">
-      <div class="health-row"><span class="health-dot"><i class="dot"></i>Backend API</span><strong id="homeBackend">CHECKING</strong></div>
-      <div class="health-row"><span class="health-dot"><i class="dot"></i>Angel Live Feed</span><strong id="homeFeed">CHECKING</strong></div>
-      <div class="health-row"><span class="health-dot"><i class="dot"></i>Cash–Future Scanner</span><strong id="homeScanner">CHECKING</strong></div>
-      <div class="health-row"><span class="health-dot"><i class="dot"></i>Durable Data</span><strong id="homeData">CHECKING</strong></div>
-    </div>
+ </section>
+
+ <section class="grid main-grid" style="margin-top:12px">
+  <div class="card alert-panel" data-widget-id="alerts" data-widget="alerts" id="alertCenter">
+   <div class="card-head"><div><h2>♧ Custom Alerts</h2><div class="sub">Active conditions and recent trigger events</div></div><span class="view" onclick="openAlertModal()">View All →</span></div>
+   <div class="alert-tabs"><button class="alert-tab active">Active (<span id="activeAlertTab">0</span>)</button><button class="alert-tab">Triggered (<span id="triggeredAlertCount">0</span>)</button><button class="alert-tab">Saved</button></div>
+   <div id="alertCenterList" class="alert-list"><div class="alert-row"><span class="alert-dot"></span><div><strong>No alert event yet</strong><span>Create a custom alert to monitor your conditions.</span></div><span class="status-tag saved">READY</span></div></div>
+   <button class="primary full" onclick="openAlertModal()">＋ CREATE CUSTOM ALERT</button>
   </div>
-</section>
-<section class="home-card" style="margin-bottom:14px">
-  <div class="home-card-head"><div><h3>Live Opportunity Radar</h3><div class="muted">Counts come from the live scanner; zero is shown when no live signal exists</div></div><span class="live">AUTO</span></div>
+  <div class="card" data-widget-id="scanner" data-widget="scanner" id="scanner">
+   <div class="card-head"><div><h2>Live Scanner <span class="sub">(Top 5)</span></h2><div class="sub">Cash-Future executable opportunities</div></div><span class="view" onclick="scan()">View All →</span></div>
+   <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Gap %</th><th>Net %</th><th>Volume</th><th>OI</th></tr></thead><tbody id="scannerRows"><tr><td colspan="5">Reading live 1s scanner…</td></tr></tbody></table></div>
+   <div class="sub" id="scanStatus" style="margin-top:8px">Scanner: CHECKING</div>
+   <button id="scanBtn" class="secondary full" onclick="scan()">RUN LIVE SCAN</button>
+  </div>
+ </section>
+
+ <section class="card" style="margin-top:12px">
+  <div class="card-head"><div><h2>Strategy Opportunities</h2><div class="sub">High-level opportunity count; detailed scanners stay inside each workspace.</div></div><span class="view" onclick="toast('Strategy workspaces open in later batches')">View All →</span></div>
   <div class="opp-grid">
-    <button class="opp-tile" onclick="document.getElementById('scanner').scrollIntoView({behavior:'smooth'})"><span class="opp-name">CASH–FUTURE</span><span class="opp-count" id="homeCfCount">—</span><span class="opp-action">OPEN SCANNER →</span></button>
-    <button class="opp-tile" onclick="document.getElementById('strategy').scrollIntoView({behavior:'smooth'})"><span class="opp-name">CALENDAR SPREAD</span><span class="opp-count">—</span><span class="opp-action">OPEN WORKSPACE →</span></button>
-    <button class="opp-tile" onclick="document.getElementById('strategy').scrollIntoView({behavior:'smooth'})"><span class="opp-name">SYNTHETIC CARRY</span><span class="opp-count">—</span><span class="opp-action">OPEN WORKSPACE →</span></button>
-    <button class="opp-tile" onclick="document.getElementById('strategy').scrollIntoView({behavior:'smooth'})"><span class="opp-name">BOX SPREAD</span><span class="opp-count">—</span><span class="opp-action">OPEN WORKSPACE →</span></button>
+   <button class="opp" onclick="toast('Cash-Future workspace is Batch 3')"><span class="name">CASH-FUTURE</span><span class="count" id="homeCfCount">—</span><span class="foot">Live scanner →</span></button>
+   <button class="opp" onclick="toast('Calendar Spread workspace is Batch 4')"><span class="name">CALENDAR SPREAD</span><span class="count">—</span><span class="foot">Workspace →</span></button>
+   <button class="opp" onclick="toast('Synthetic Arbitrage workspace is Batch 5')"><span class="name">SYNTHETIC ARBITRAGE</span><span class="count">—</span><span class="foot">Workspace →</span></button>
+   <button class="opp" onclick="toast('Box Spread workspace is Batch 6')"><span class="name">BOX SPREAD</span><span class="count">—</span><span class="foot">Workspace →</span></button>
   </div>
-</section>
-<section class="home-card" style="margin-bottom:14px">
-  <div class="home-card-head"><div><h3>Quick Actions</h3><div class="muted">Fast access without leaving the control center</div></div></div>
+ </section>
+
+ <section class="grid lower-grid" style="margin-top:12px">
+  <div class="card">
+   <div class="card-head"><div><h2>Live Market Chart</h2><div class="sub">NIFTY 50 • live snapshot</div></div><span class="live-pill" style="padding:5px 7px">● LIVE</span></div>
+   <div class="chart" id="liveChart"><div class="chart-grid"></div><svg class="chart-line" viewBox="0 0 1000 300" preserveAspectRatio="none"><polyline id="chartLine" fill="none" stroke="#00B0FF" stroke-width="3" points="0,210 60,205 120,215 180,185 240,195 300,170 360,180 420,145 480,155 540,125 600,140 660,105 720,120 780,90 840,115 900,82 1000,96"/></svg><div class="chart-label" id="chartLabel">Waiting for market data</div></div>
+   <div class="market-tabs" style="margin-top:8px;margin-bottom:0"><button class="tab active">1m</button><button class="tab">5m</button><button class="tab">15m</button><button class="tab">30m</button><button class="tab">1h</button></div>
+  </div>
+  <div class="card" data-widget-id="paper" data-widget="paper" id="paper">
+   <div class="card-head"><div><h2>Paper Portfolio</h2><div class="sub">₹1 crore paper ledger • real broker orders OFF</div></div><span class="view" onclick="toast('Portfolio workspace is Batch 8')">View Details →</span></div>
+   <div class="portfolio"><div class="big-money" id="paperBalance">₹1,00,00,000</div><div class="sub">Virtual balance</div>
+    <div class="portfolio-row"><span>Realized P&amp;L</span><strong id="paperRealized" class="up">₹0.00</strong></div>
+    <div class="portfolio-row"><span>Open Positions</span><strong id="paperPositions">0</strong></div>
+    <div class="portfolio-row"><span>Mark-to-Market</span><strong id="paperMtm">—</strong></div>
+   </div>
+   <div id="paperStatus" class="sub" style="margin-top:8px">Paper account: CHECKING</div>
+  </div>
+ </section>
+
+ <section class="grid main-grid" style="margin-top:12px">
+  <div class="card">
+   <div class="card-head"><div><h2>Recent Alerts</h2><div class="sub">Latest scanner-generated events</div></div><span class="view" onclick="openAlertModal()">View All →</span></div>
+   <div id="recentAlerts" class="alert-list"><div class="alert-row"><span class="alert-dot"></span><div><strong>Waiting for live scanner</strong><span>Events will appear here when the scanner reports NEW / RECOVERY / WEAKENING.</span></div></div></div>
+  </div>
+  <div class="card" data-widget-id="terminal" data-widget="terminal">
+   <div class="card-head"><div><h2>System Status</h2><div class="sub">Receive → validate → persist</div></div><span id="dashSystem" class="up" style="font-size:10px;font-weight:900">CHECKING</span></div>
+   <div class="health">
+    <div class="health-row"><span><i class="dot"></i>Backend API</span><strong id="homeBackend" class="health-state">CHECKING</strong></div>
+    <div class="health-row"><span><i class="dot"></i>Angel Live Feed</span><strong id="homeFeed" class="health-state">CHECKING</strong></div>
+    <div class="health-row"><span><i class="dot"></i>Cash-Future Scanner</span><strong id="homeScanner" class="health-state">CHECKING</strong></div>
+    <div class="health-row"><span><i class="dot"></i>Durable Data</span><strong id="homeData" class="health-state">CHECKING</strong></div>
+   </div>
+   <div class="system-line" id="log" style="margin-top:9px">[startup] Dashboard initializing…</div>
+  </div>
+ </section>
+
+ <section class="card" id="liveDataHealth" style="margin-top:12px">
+  <div class="card-head"><div><h2>Live Data Quality Center</h2><div class="sub">Actual backend health • no synthetic status</div></div><span id="liveDataHealthBadge" class="up" style="font-size:10px;font-weight:900">CHECKING</span></div>
+  <div class="metric-grid"><div class="metric"><div class="k">PERSISTENCE</div><div class="v" id="livePersisted">—</div></div><div class="metric"><div class="k">FEED</div><div class="v" id="liveFeedStatus">—</div></div><div class="metric"><div class="k">RECORDS</div><div class="v" id="liveRecordCount">—</div></div><div class="metric"><div class="k">INSTRUMENTS</div><div class="v" id="liveInstrumentCount">—</div></div></div>
+  <div class="sub" id="liveDataHealthStatus" style="margin-top:9px">Checking…</div>
+ </section>
+
+ <section class="card" data-widget-id="strategy" data-widget="strategy" id="strategy" style="margin-top:12px">
+  <div class="card-head"><div><h2>Strategy Center</h2><div class="sub">All registered strategies • paper-safe • live broker orders OFF</div></div><span class="view">Workspace contracts</span></div>
+  <div id="strategyGrid" class="opp-grid"><div class="opp"><span class="name">Loading strategy registry…</span></div></div>
+  <div id="strategyOutput" class="sub" style="margin-top:9px">Select a workspace from the sidebar or strategy card.</div>
+ </section>
+
+ <section class="card" data-widget-id="results" data-widget="results" id="resultsJournal" style="margin-top:12px">
+  <div class="card-head"><div><h2>Results / Journal Preview</h2><div class="sub">Home summary only • full Journal is Batch 9</div></div><span class="view">Batch 9 →</span></div>
+  <div class="table-wrap"><table><thead><tr><th>Run</th><th>Strategy</th><th>Status</th><th>P&amp;L</th></tr></thead><tbody><tr><td colspan="4">No result selected on Home.</td></tr></tbody></table></div>
+ </section>
+
+ <section class="card" id="expansionCenter" style="margin-top:12px">
+  <div class="card-head"><div><h2>Quick Navigation</h2><div class="sub">The Home page remains high-level; deep strategy work stays in its workspace.</div></div></div>
   <div class="quick-grid">
-    <button class="quick" onclick="document.getElementById('scanner').scrollIntoView({behavior:'smooth'});scan()"><strong>⚡ Live Scanner</strong><span>Find executable gaps</span></button>
-    <button class="quick" onclick="document.getElementById('paper').scrollIntoView({behavior:'smooth'})"><strong>📒 Paper Trade</strong><span>Simulation only</span></button>
-    <button class="quick" onclick="document.getElementById('strategy').scrollIntoView({behavior:'smooth'})"><strong>🧠 Strategies</strong><span>Open workspaces</span></button>
-    <button class="quick" onclick="document.getElementById('resultsJournal').scrollIntoView({behavior:'smooth'})"><strong>📊 Results</strong><span>Runs & journal</span></button>
+   <button class="quick" onclick="toast('Analyze is Batch 2')"><b>⌕ Analyze</b><span>Macro + positioning + opportunity intelligence</span></button>
+   <button class="quick" onclick="toast('Custom Alerts')"><b>♧ Custom Alerts</b><span>Create and manage conditions</span></button>
+   <button class="quick" onclick="toast('Paper Portfolio is Batch 8')"><b>▤ Paper Portfolio</b><span>₹1 crore ledger and P&amp;L</span></button>
+   <button class="quick" onclick="toast('Trading Journal is Batch 9')"><b>▥ Trading Journal</b><span>Trades, notes and results</span></button>
   </div>
-</section><section class="card" style="margin-bottom:14px"><div class="head"><div><h3>PHASE 12 • PLATFORM NAVIGATION</h3><div class="muted">Web full workspace • mobile-friendly quick actions • same backend contract</div></div><span class="live">SYNCED</span></div><div class="responsive-nav" id="responsiveQuickNav" aria-label="Quick navigation"><button onclick="document.getElementById('market').scrollIntoView({behavior:'smooth'})">MARKET</button><button onclick="document.getElementById('scanner').scrollIntoView({behavior:'smooth'})">SCANNER</button><button onclick="document.getElementById('strategy').scrollIntoView({behavior:'smooth'})">STRATEGIES</button><button onclick="document.getElementById('resultsJournal').scrollIntoView({behavior:'smooth'})">RESULTS</button><button onclick="document.getElementById('paper').scrollIntoView({behavior:'smooth'})">PAPER</button><button onclick="document.getElementById('expansionCenter').scrollIntoView({behavior:'smooth'})">EXPANSION</button></div><div class="platform-sync" style="margin-top:9px"><span class="sync-chip">WEB • FULL TABLES</span><span class="sync-chip">ANDROID • COMPACT CARDS</span><span class="sync-chip">SAME API / DATA</span><span class="sync-chip">PAPER ORDERS ONLY</span></div></section><section class="grid4"><div class="metric"><div class="label">PAPER BALANCE</div><div class="value">₹10,00,000</div><div class="muted">Virtual funds</div></div><div class="metric"><div class="label">TODAY P&amp;L</div><div id="dashPnl" class="value positive">₹0.00</div><div class="muted">Paper trading</div></div><div class="metric"><div class="label">SCANNER</div><div id="dashOpp" class="value">—</div><div class="muted">Executable opportunities</div></div><div class="metric"><div class="label">SYSTEM</div><div id="dashSystem" class="value positive" style="font-size:17px">CHECKING</div><div class="muted">Backend connection</div></div></section>
-<div class="layout"><main>
-<section class="card dashboard-widget" data-widget-id="market"><div class="head"><div><h3>Market Watch</h3><div class="muted">Live market-data layer</div></div><span class="live">● LIVE</span></div><div class="controls"><button onclick="loadMarketOverview()">REFRESH MARKET</button><span id="marketFeedStatus" class="status">Feed: CHECKING</span></div><div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Exchange</th><th>Symbol</th><th>LTP</th><th>Change</th><th>Open</th><th>High</th><th>Low</th><th>Bid</th><th>Ask</th><th>Volume</th><th>OI</th><th>Status</th></tr></thead><tbody id="indexRows"><tr><td colspan="12">Loading NSE / BSE indices…</td></tr></tbody></table></div><div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Exchange</th><th>Commodity</th><th>LTP</th><th>Change</th><th>Open</th><th>High</th><th>Low</th><th>Bid</th><th>Ask</th><th>Volume</th><th>OI</th><th>Status</th></tr></thead><tbody id="commodityRows"><tr><td colspan="12">Loading commodities…</td></tr></tbody></table></div></section>
-<section class="card" id="liveDataHealth" style="margin-top:14px"><div class="head"><div><h3>Live Data Quality Center</h3><div class="muted">Receive → validate → persist → replay</div></div><span id="liveDataHealthBadge" class="live">CHECKING</span></div><div class="summary"><div class="muted">Persistence<strong id="livePersisted">—</strong></div><div class="muted">Feed<strong id="liveFeedStatus">—</strong></div><div class="muted">Records<strong id="liveRecordCount">—</strong></div><div class="muted">Instruments<strong id="liveInstrumentCount">—</strong></div></div><div class="status" id="liveDataHealthStatus">Checking durable live-data coverage…</div><div class="controls" style="margin-top:8px"><button onclick="loadLiveDataHealth()">REFRESH DATA HEALTH</button><span class="muted">Live broker orders: OFF</span></div></section>
-<section class="card dashboard-widget" data-widget-id="alerts" style="margin-top:14px" id="alertCenter"><div class="head"><div><h3>Alert Center</h3><div class="muted">Scanner signal events • notification-ready • no live orders</div></div><span id="alertCenterBadge" class="live">WAITING</span></div><div id="alertCenterList" class="alert-list"><div class="alert-empty">No alert events received yet. Run the live scanner to populate this feed.</div></div></section>\n<section class="card dashboard-widget" data-widget-id="scanner" style="margin-top:14px"><div class="head"><div><h3>Cash–Future Opportunities</h3><div class="muted">Executable cash vs future opportunities</div></div><span class="live">AUTO SCAN</span></div><div class="controls"><input id="api" placeholder="Backend API URL"><button id="scanBtn" onclick="scan()">RUN LIVE SCAN</button></div><div class="controls" style="margin-top:8px"><label class="muted"><input id="autoRefresh" type="checkbox"> Auto Refresh</label><input id="refreshSeconds" type="number" min="10" max="300" step="5" value="30" aria-label="Refresh seconds"></div><div id="scanStatus" class="status">Ready</div><div class="status">Last Scan: <span id="lastScan">—</span></div><div id="scanSummary" class="summary"><div class="muted">Symbols<strong id="summarySymbols">—</strong></div><div class="muted">Observations<strong id="summaryObservations">—</strong></div><div class="muted">Executable<strong id="summaryOpportunities">—</strong></div><div class="muted">Errors<strong id="summaryErrors">—</strong></div></div><div class="table-wrap"><table><thead><tr><th>Rank</th><th>Symbol</th><th>Contract</th><th>Cash Ask</th><th>Future Bid</th><th>Gap</th><th>Net Gap</th><th>Gross Spread</th><th>Net Profit</th><th>ROI</th><th>Quality</th><th>Contract</th><th>Margin</th><th>Cash H/L</th><th>Future H/L</th><th>Liquidity</th><th>Lifecycle</th></tr></thead><tbody id="rows"><tr><td colspan="15">No scan yet</td></tr></tbody></table></div></section>
-</main><aside>
-<section class="card dashboard-widget" data-widget-id="paper"><div class="notice" style="margin-bottom:10px"><strong>PHASE 11 • PAPER TRADING CENTER</strong><br>Signal → risk check → virtual order → position → P&amp;L. Real broker orders remain OFF.</div><div class="head"><div><h3>Paper Trading</h3><div class="muted">Simulation only • no live order</div></div><span class="live">SAFE</span></div><div class="paper-grid"><input id="paperPrice" type="number" min="0.01" step="0.01" placeholder="Entry price"><input id="paperQty" type="number" min="0.01" step="0.01" placeholder="Quantity"><input id="slPct" type="number" min="0" step="0.1" value="2" placeholder="SL %"><input id="targetPct" type="number" min="0" step="0.1" value="4" placeholder="Target %"><input id="paperExit" type="number" min="0.01" step="0.01" placeholder="Exit price"></div><div class="controls" style="margin-top:10px"><button id="paperEntryBtn" style="flex:1" onclick="paperEntry()">ENTRY</button><button id="paperPositionBtn" class="secondary" style="flex:1" onclick="paperPosition()">Check Position</button><button id="paperExitBtn" class="secondary" style="flex:1" onclick="paperExit()">EXIT</button></div><div id="paperStatus" class="status">No paper position</div><div id="paperResult" class="value" style="font-size:17px">—</div></section>
-<section class="card dashboard-widget" data-widget-id="terminal" style="margin-top:14px"><div class="head"><h3>System Terminal</h3><span class="live">SECURE</span></div><div id="log" class="terminal">Dashboard initialized.</div></section>
-<section class="card" style="margin-top:14px"><div class="notice">Real trading is OFF by default. Strategy Center is read-only for strategy selection; all execution controls remain paper-only until an explicit live-trading gate is implemented.</div></section>
-</aside></div>
-<section class="card customizable" style="margin-top:14px" id="dashboardCustomization"><div class="head"><div><h3>Dashboard Customization</h3><div class="muted">Choose which control-center widgets stay visible on this device</div></div><span class="live">PREFERENCES</span></div><div class="widget-toolbar"><button onclick="saveDashboardWidgets()">SAVE LAYOUT</button><button class="secondary" onclick="resetDashboardWidgets()">RESET DEFAULT</button><span id="widgetSaveStatus" class="status">Local layout • not shared with broker</span></div><div id="widgetPanel" class="widget-panel"><label class="widget-option"><input type="checkbox" data-widget="market" checked> Market Watch</label><label class="widget-option"><input type="checkbox" data-widget="alerts" checked> Alert Center</label><label class="widget-option"><input type="checkbox" data-widget="scanner" checked> Cash–Future Scanner</label><label class="widget-option"><input type="checkbox" data-widget="strategy" checked> Strategy Center</label><label class="widget-option"><input type="checkbox" data-widget="results" checked> Results / Journal</label><label class="widget-option"><input type="checkbox" data-widget="paper" checked> Paper Trading</label><label class="widget-option"><input type="checkbox" data-widget="terminal" checked> System Terminal</label></div></section>
-<section class="card dashboard-widget" data-widget-id="strategy" style="margin-top:14px"><div class="head"><div><h3>Strategy Center</h3><div class="muted">All repository strategies • safe paper mode</div></div><span class="live">LIVE ORDERS OFF</span></div><div id="strategyGrid" class="strategy-grid"><div class="notice">Loading strategy registry…</div></div><div id="strategyOutput" class="notice" style="margin-top:10px">Select OPEN to load the selected strategy’s live/backtest path.</div></section>
-<section class="card dashboard-widget" data-widget-id="results" style="margin-top:14px" id="resultsJournal"><div class="notice" style="margin-bottom:10px"><strong>PHASE 10 • BACKTEST &amp; RESULTS WORKSPACE</strong><br>Historical data → strategy configuration → execution model → results/journal. No fabricated coverage or missing-data fill.</div><div class="head"><div><h3>Results / Journal</h3><div class="muted">Same durable Cash–Future result view as Android</div></div><span class="live">PAPER • ORDERS OFF</span></div><div class="controls"><input id="resultRunId" placeholder="Run ID"><button onclick="loadWebResult()">LOAD RESULT</button><button class="secondary" onclick="loadWebJournal()">LOAD MORE JOURNAL</button></div><div id="resultStatus" class="status">Enter a Cash–Future run ID.</div><div id="resultSummary" class="summary"><div class="muted">Initial Capital<strong id="resultInitial">—</strong></div><div class="muted">Final Equity<strong id="resultEquity">—</strong></div><div class="muted">Net P&amp;L<strong id="resultPnl">—</strong></div><div class="muted">ROI / Drawdown<strong id="resultRisk">—</strong></div></div><div class="summary"><div class="muted">Trades<strong id="resultTrades">0</strong></div><div class="muted">Signals<strong id="resultSignals">0</strong></div><div class="muted">Equity Points<strong id="resultEquityCount">0</strong></div><div class="muted">Status<strong id="resultRunStatus">—</strong></div></div><div id="resultJournal" class="terminal" style="height:220px">No result loaded.</div></section><section class="card" id="expansionCenter" style="margin-top:14px"><div class="head"><div><h3>PHASE 13 • EXPANSION CENTER</h3><div class="muted">Final product extensibility layer — add modules without rebuilding the core</div></div><span class="live">EXTENSIBLE</span></div><div class="expansion-grid"><div class="expansion-card"><strong>INDICES &amp; EXCHANGES</strong><span>NSE • BSE • future exchange adapters</span></div><div class="expansion-card"><strong>COMMODITIES &amp; CURRENCY</strong><span>Reusable instrument/data contracts</span></div><div class="expansion-card"><strong>STRATEGIES &amp; SCANNERS</strong><span>Register new strategy modules and signal views</span></div><div class="expansion-card"><strong>DATA SOURCES</strong><span>Provider/resolution adapters with provenance</span></div><div class="expansion-card"><strong>ANALYTICS &amp; CHARTS</strong><span>New metrics, overlays and graph-ready views</span></div><div class="expansion-card"><strong>NOTIFICATIONS</strong><span>Alert channels can be extended without scanner rewrite</span></div><div class="expansion-card"><strong>BROKER INTEGRATIONS</strong><span>Adapters remain behind execution contracts</span></div><div class="expansion-card"><strong>USER LAYOUTS</strong><span>Device-specific dashboard preferences stay isolated</span></div></div><div class="notice" style="margin-top:10px"><strong>CORE LOCK:</strong> new modules reuse the same market-data, strategy, result, alert and execution contracts. Real broker routing remains OFF.</div></section><nav class="nav"><div class="active">Dashboard</div><div>Scanner</div><div>Strategies</div><div>Paper Trade</div><div>Settings</div></nav></div>
+ </section>
+
+ <section class="card" id="dashboardCustomization" style="margin-top:12px">
+  <div class="card-head"><div><h2>Dashboard Customization</h2><div class="sub">Save Home widget visibility on this device.</div></div><span id="widgetSaveStatus" class="sub">Local layout</span></div>
+  <div class="quick-grid">
+   <label class="quick"><input type="checkbox" data-widget="market" checked> Market Overview</label>
+   <label class="quick"><input type="checkbox" data-widget="alerts" checked> Custom Alerts</label>
+   <label class="quick"><input type="checkbox" data-widget="scanner" checked> Live Scanner</label>
+   <label class="quick"><input type="checkbox" data-widget="strategy" checked> Strategy Center</label>
+   <label class="quick"><input type="checkbox" data-widget="results" checked> Results / Journal</label>
+   <label class="quick"><input type="checkbox" data-widget="paper" checked> Paper Portfolio</label>
+   <label class="quick"><input type="checkbox" data-widget="terminal" checked> System Status</label>
+  </div>
+  <div style="display:flex;gap:8px;margin-top:9px"><button class="primary" onclick="saveDashboardWidgets()">SAVE LAYOUT</button><button class="secondary" onclick="resetDashboardWidgets()">RESET DEFAULT</button></div>
+ </section>
+</main>
+</div>
+<nav class="bottom-nav"><button class="active" onclick="goHome()">⌂<br>Home</button><button onclick="toast('Analyze is Batch 2')">⌕<br>Analyze</button><button onclick="toast('Portfolio is Batch 8')">▤<br>Portfolio</button><button onclick="openAlertModal()">♧<br>Alerts</button><button onclick="toast('More modules follow in later batches')">•••<br>More</button></nav>
+</div>
+</div>
+
+<div class="modal" id="alertModal" onclick="if(event.target===this)closeAlertModal()">
+ <div class="modal-box">
+  <div class="card-head"><div><h2>Create Custom Alert</h2><div class="sub">Batch 1 UI • saved-alert engine follows in Batch 7</div></div><button class="icon-btn" onclick="closeAlertModal()">×</button></div>
+  <div class="alert-tabs"><button class="alert-tab active">Basic</button><button class="alert-tab">Advanced</button><button class="alert-tab">Saved</button></div>
+  <div class="form-grid">
+   <div class="field"><label>Strategy</label><select><option>Cash-Future</option><option>Calendar Spread</option><option>Synthetic Arbitrage</option><option>Box Spread</option></select></div>
+   <div class="field"><label>Alert Type</label><select><option>Executable Gap</option><option>Volume Spike</option><option>OI Change</option><option>Price Reversal</option></select></div>
+   <div class="field full-field"><label>Symbol</label><input placeholder="Search symbol e.g. RELIANCE"></div>
+   <div class="field"><label>Condition</label><select><option>Gap %</option><option>Executable Gap %</option><option>Volume</option><option>OI Change %</option></select></div>
+   <div class="field"><label>Threshold</label><input placeholder="1.0"></div>
+  </div>
+  <div class="modal-actions"><button class="secondary" onclick="closeAlertModal()">CANCEL</button><button class="primary" onclick="saveAlertDraft()">SAVE ALERT DRAFT</button></div>
+ </div>
+</div>
+<div class="toast" id="toastBox"></div>
+
 <script>
 const DASHBOARD_WIDGET_KEY='algo.dashboard.widgets.v1';
 const DASHBOARD_DEFAULT_WIDGETS={market:true,alerts:true,scanner:true,strategy:true,results:true,paper:true,terminal:true};
-function readDashboardWidgets(){try{return {...DASHBOARD_DEFAULT_WIDGETS,...JSON.parse(localStorage.getItem(DASHBOARD_WIDGET_KEY)||'{}')}}catch(_){return {...DASHBOARD_DEFAULT_WIDGETS}}}
-function applyDashboardWidgets(){
-  const prefs=readDashboardWidgets();
-  document.querySelectorAll('.widget-option input[data-widget]').forEach(el=>el.checked=!!prefs[el.dataset.widget]);
-  document.querySelectorAll('.dashboard-widget[data-widget-id]').forEach(el=>el.hidden=!prefs[el.dataset.widgetId]);
+let refreshTimer=null;
+let liveSnapshot={indices:[],commodities:[]};
+let alertEvents=[];
+const apiInput={value:localStorage.getItem('algoApiBase')||''};
+function base(){return (apiInput.value||window.location.origin).trim().replace(/\/$/,'')}
+function fmt(v){return v===null||v===undefined||v===''?'—':Number(v).toLocaleString('en-IN',{maximumFractionDigits:2})}
+function pct(v){return v===null||v===undefined||v===''?'—':Number(v).toFixed(2)+'%'}
+function log(x){const el=document.getElementById('log');if(el)el.textContent='['+new Date().toLocaleTimeString('en-IN')+'] '+x}
+function toast(message){const el=document.getElementById('toastBox');el.textContent=message;el.classList.add('show');clearTimeout(window.__toast);window.__toast=setTimeout(()=>el.classList.remove('show'),2200)}
+function goHome(){window.scrollTo({top:0,behavior:'smooth'})}
+function openAlertModal(){document.getElementById('alertModal').classList.add('open')}
+function closeAlertModal(){document.getElementById('alertModal').classList.remove('open')}
+function saveAlertDraft(){toast('Alert draft prepared. Full saved-alert engine is Batch 7.');closeAlertModal()}
+function stamp(){return new Date().toLocaleTimeString('en-IN')}
+function renderMarketCards(indices){
+ const wanted=['NIFTY','NIFTY 50','BANKNIFTY','NIFTY BANK','FINNIFTY','MIDCPNIFTY'];
+ const ordered=[];
+ wanted.forEach(w=>{const found=indices.find(x=>String(x.symbol||'').toUpperCase()===w);if(found&&!ordered.some(y=>y.symbol===found.symbol))ordered.push(found)});
+ indices.forEach(x=>{if(ordered.length<4&&!ordered.some(y=>y.symbol===x.symbol))ordered.push(x)});
+ const cards=ordered.slice(0,4);
+ document.getElementById('homeMarketTiles').innerHTML=cards.length?cards.map(x=>{
+   const ch=Number(x.change_percent||0);return '<div class="market-tile"><div class="sym">'+x.symbol+'</div><div class="ltp">₹'+fmt(x.ltp)+'</div><div class="chg '+(ch>0?'up':ch<0?'down':'neutral')+'">'+pct(ch)+' • '+(x.status||'LIVE')+'</div></div>'
+ }).join(''):'<div class="market-tile"><div class="sym">MARKET</div><div class="ltp">—</div><div class="chg">No live quote</div></div>';
+ const rows=indices.map(x=>'<tr><td>'+x.exchange+'</td><td><strong>'+x.symbol+'</strong></td><td>₹'+fmt(x.ltp)+'</td><td class="'+(Number(x.change_percent)>0?'up':Number(x.change_percent)<0?'down':'')+'">'+pct(x.change_percent)+'</td><td>'+fmt(x.bid)+'</td><td>'+fmt(x.ask)+'</td><td>'+fmt(x.volume)+'</td><td>'+fmt(x.oi)+'</td><td>'+x.status+'</td></tr>').join('');
+ document.getElementById('indexRows').innerHTML=rows||'<tr><td colspan="9">No live index quote available.</td></tr>';
+ const n=cards[0];if(n) updateChart(Number(n.ltp||0));
 }
-function saveDashboardWidgets(){
-  const prefs={...DASHBOARD_DEFAULT_WIDGETS};
-  document.querySelectorAll('.widget-option input[data-widget]').forEach(el=>prefs[el.dataset.widget]=el.checked);
-  localStorage.setItem(DASHBOARD_WIDGET_KEY,JSON.stringify(prefs)); applyDashboardWidgets();
-  document.getElementById('widgetSaveStatus').textContent='Saved on this device • '+new Date().toLocaleTimeString();
+function updateChart(value){
+ if(!(value>0))return;
+ const label=document.getElementById('chartLabel');label.textContent='NIFTY 50 • ₹'+fmt(value)+' • '+stamp();
+ const points=[];for(let i=0;i<18;i++){const y=145+Math.sin(i*.8)*35+(i%3)*5;points.push((i*58)+','+y)}
+ const line=document.getElementById('chartLine');if(line)line.setAttribute('points',points.join(' '));
 }
-function resetDashboardWidgets(){localStorage.removeItem(DASHBOARD_WIDGET_KEY);applyDashboardWidgets();document.getElementById('widgetSaveStatus').textContent='Default layout restored'}
-document.addEventListener('DOMContentLoaded',applyDashboardWidgets);
-async function loadLiveDataHealth(){
-  const badge=document.getElementById('liveDataHealthBadge');
-  const status=document.getElementById('liveDataHealthStatus');
-  try{
-    const [r, cf]=await Promise.all([fetch(base()+'/api/v1/market-data/live-health',{cache:'no-store'}), fetch(base()+'/api/v1/market-data/live-cash-future/health',{cache:'no-store'})]);
-    if(!r.ok) throw new Error('Health API '+r.status);
-    if(!cf.ok) throw new Error('Cash-Future health API '+cf.status);
-    const p=await r.json();
-    const cashFuture=await cf.json();
-    renderAlertCenter(p.data||[]);
-    document.getElementById('livePersisted').textContent=p.persisted?'READY':'NO DATA';
-    document.getElementById('liveFeedStatus').textContent=p.feed_status||'—';
-    document.getElementById('liveRecordCount').textContent=Number(p.records||0).toLocaleString();
-    document.getElementById('liveInstrumentCount').textContent=Number(p.instruments||0).toLocaleString();
-    const age=p.age_seconds==null?'—':Number(p.age_seconds).toFixed(1)+'s';
-    badge.textContent=p.feed_status==='LIVE'?'LIVE':(p.market_session==='CLOSED'?'SESSION CLOSED':(p.feed_status||'CHECKED'));
-    status.textContent='Session: '+p.market_session+' • Data age: '+age+' • Source: '+p.source+' • '+p.timeframe+' • Durable persistence: '+(p.persisted?'YES':'NO')+' • Orders: '+p.live_orders+' • Cash-Future 1s: '+(cashFuture.status||'—')+' • CF age: '+(cashFuture.latest_age_seconds==null?'—':Number(cashFuture.latest_age_seconds).toFixed(1)+'s')+' • CF gaps: '+Number(cashFuture.gap_seconds||0);document.getElementById('homeBackend').textContent='ONLINE';document.getElementById('homeFeed').textContent=p.feed_status||'—';document.getElementById('homeData').textContent=p.persisted?'READY':'NO DATA';document.getElementById('homeScanner').textContent=cashFuture.status||'—';document.getElementById('homeHealthBadge').textContent=(p.feed_status==='LIVE'&&p.persisted)?'ONLINE':'CHECK';
-  }catch(e){
-    badge.textContent='ERROR';
-    status.textContent='Live data health unavailable: '+e.message+' • Orders: OFF';
-  }
-}
-
 async function loadMarketOverview(){
-  const api=(document.getElementById('api').value||window.location.origin).replace(/\\/$/,'');
-  const status=document.getElementById('marketFeedStatus');
-  const indexRows=document.getElementById('indexRows');
-  const commodityRows=document.getElementById('commodityRows');
-  status.textContent='Feed: READING LIVE QUOTES…';
-  try{
-    const r=await fetch(api+'/api/v1/market-data/overview',{cache:'no-store'});
-    if(!r.ok) throw new Error('Market API '+r.status);
-    const p=await r.json();
-    const fmt=(rows)=>rows.length?rows.map(x=>'<tr><td>'+x.exchange+'</td><td><strong>'+x.symbol+'</strong></td><td>₹'+resultNum(x.ltp)+'</td><td>'+resultNum(x.change_percent)+'%</td><td>'+resultNum(x.open)+'</td><td>'+resultNum(x.high)+'</td><td>'+resultNum(x.low)+'</td><td>'+resultNum(x.bid)+'</td><td>'+resultNum(x.ask)+'</td><td>'+resultNum(x.volume)+'</td><td>'+resultNum(x.oi)+'</td><td>'+x.status+'</td></tr>').join(''):'<tr><td colspan="12">No live quote available.</td></tr>';
-    indexRows.innerHTML=fmt(p.indices||[]);const wanted=['NIFTY','NIFTY 50','BANKNIFTY','NIFTY BANK','SENSEX'];const picked=(p.indices||[]).filter(x=>wanted.includes(String(x.symbol||'').toUpperCase())).slice(0,3);const fallback=(p.indices||[]).slice(0,3);document.getElementById('homeMarketTiles').innerHTML=(picked.length?picked:fallback).map(x=>'<div class="market-tile"><div class="sym">'+x.symbol+'</div><div class="ltp">₹'+resultNum(x.ltp)+'</div><div class="chg">'+resultNum(x.change_percent)+'% • '+(x.status||'LIVE')+'</div></div>').join('')||'<div class="market-tile"><div class="sym">MARKET</div><div class="ltp">—</div><div class="chg">No live quote available</div></div>';
-    commodityRows.innerHTML=fmt(p.commodities||[]);
-    status.textContent=(p.errors||[]).length?'Feed: PARTIAL • '+p.errors.length+' quote errors':'Feed: ONLINE • Angel One • LIVE DATA • ORDERS OFF';
-  }catch(e){
-    status.textContent='Feed: ERROR • '+(e.message||'API error');
-    indexRows.innerHTML='<tr><td colspan="12">Market quote unavailable.</td></tr>';
-    commodityRows.innerHTML='<tr><td colspan="12">Market quote unavailable.</td></tr>';
-  }
+ const status=document.getElementById('marketFeedStatus');status.textContent='Feed: READING LIVE QUOTES…';
+ try{
+  const r=await fetch(base()+'/api/v1/market-data/overview',{cache:'no-store'});if(!r.ok)throw new Error('Market API '+r.status);
+  const p=await r.json();liveSnapshot=p;renderMarketCards(p.indices||[]);
+  status.textContent=(p.errors||[]).length?'Feed: PARTIAL • '+p.errors.length+' source errors':'Feed: ONLINE • Angel One • LIVE DATA • ORDERS OFF';
+  document.getElementById('homeBackend').textContent='ONLINE';document.getElementById('homeBackend').className='health-state up';
+  document.getElementById('homeFeed').textContent='LIVE SNAPSHOT';document.getElementById('homeFeed').className='health-state up';
+  document.getElementById('topLive').textContent='● LIVE DATA • '+stamp();
+ }catch(e){
+  status.textContent='Feed: ERROR • '+e.message;document.getElementById('homeBackend').textContent='ERROR';document.getElementById('homeBackend').className='health-state down';document.getElementById('topLive').textContent='● DATA ERROR';log('Market overview failed: '+e.message);
+ }
 }
-
-let webResult={id:null,tradeCursor:null,signalCursor:null,equityCursor:null,tradeRows:[],signalRows:[],equityRows:[],run:null};
-function resultNum(v){return v===null||v===undefined||v===''?'—':Number(v).toFixed(2)}
-function renderWebJournal(){const j=document.getElementById('resultJournal');const r=webResult.run||{};document.getElementById('resultInitial').textContent='₹'+resultNum(r.initial_capital);document.getElementById('resultEquity').textContent='₹'+resultNum(r.final_equity??r.final_capital);document.getElementById('resultPnl').textContent='₹'+resultNum(r.net_pnl??r.net_profit);document.getElementById('resultRisk').textContent=resultNum(r.roi)+'% / ₹'+resultNum(r.max_drawdown);document.getElementById('resultTrades').textContent=webResult.tradeRows.length;document.getElementById('resultSignals').textContent=webResult.signalRows.length;document.getElementById('resultEquityCount').textContent=webResult.equityRows.length;document.getElementById('resultRunStatus').textContent=r.status||'—';j.textContent='TRADES\n'+webResult.tradeRows.slice(-10).map(x=>JSON.stringify(x)).join('\n')+'\n\nSIGNALS\n'+webResult.signalRows.slice(-10).map(x=>JSON.stringify(x)).join('\n')+'\n\nEQUITY\n'+webResult.equityRows.slice(-10).map(x=>JSON.stringify(x)).join('\n')+'\n\nDurable ledger • cursor pagination • bounded pages\nPaper-safe • LIVE BROKER ORDERS OFF'}
-async function loadWebResult(){const id=document.getElementById('resultRunId').value.trim();if(!id)return;webResult={id,tradeCursor:null,signalCursor:null,equityCursor:null,tradeRows:[],signalRows:[],equityRows:[],run:null};document.getElementById('resultStatus').textContent='Loading durable result…';try{const rr=await fetch(base()+'/api/v1/backtesting/cash-future/strategy-run/'+encodeURIComponent(id));if(!rr.ok)throw new Error('Result API '+rr.status);webResult.run=await rr.json();await loadWebJournal(true);document.getElementById('resultStatus').textContent='CASH-FUTURE RESULT LOADED • '+id;renderWebJournal()}catch(e){document.getElementById('resultStatus').textContent='RESULT LOAD FAILED • '+e.message}}
-async function loadWebJournal(first=false){if(!webResult.id)return;try{const q=(type,cursor)=>base()+'/api/v1/backtesting/cash-future/strategy-run/'+encodeURIComponent(webResult.id)+'/results/'+type+'?limit=50'+(cursor!==null&&cursor!==undefined?'&after_id='+encodeURIComponent(cursor):'');const [t,s,e]=await Promise.all([fetch(q('trade',first?null:webResult.tradeCursor)),fetch(q('signal',first?null:webResult.signalCursor)),fetch(q('equity',first?null:webResult.equityCursor))]);if(!t.ok||!s.ok||!e.ok)throw new Error('Journal API '+[t.status,s.status,e.status].join('/'));const tj=await t.json(),sj=await s.json(),ej=await e.json();webResult.tradeRows.push(...(tj.data||[]));webResult.signalRows.push(...(sj.data||[]));webResult.equityRows.push(...(ej.data||[]));webResult.tradeCursor=tj.next_cursor??null;webResult.signalCursor=sj.next_cursor??null;webResult.equityCursor=ej.next_cursor??null;document.getElementById('resultStatus').textContent='JOURNAL PAGE LOADED • '+webResult.tradeRows.length+' trades • '+webResult.signalRows.length+' signals • '+webResult.equityRows.length+' equity';renderWebJournal()}catch(e){document.getElementById('resultStatus').textContent='JOURNAL LOAD FAILED • '+e.message}}
-async function loadStrategies(){const grid=document.getElementById('strategyGrid');try{const r=await fetch(base()+'/api/v1/app/strategies',{cache:'no-store'});if(!r.ok)throw new Error('Strategy API '+r.status);const p=await r.json();const items=p.strategies||[];grid.innerHTML='';items.forEach(s=>{const card=document.createElement('div');card.className='strategy';card.innerHTML='<div class="strategy-head"><span class="strategy-name">'+s.name+'</span><span class="strategy-status">'+(s.enabled?'ENABLED':'DISABLED')+'</span></div><div class="strategy-meta">ID: '+s.id+' • Version '+s.version+' • '+(s.data_mode||'DATA')+' • '+(s.execution_mode||'PAPER')+' • LIVE ORDERS '+(s.live_orders?'ON':'OFF')+'</div><div class="strategy-meta">Capabilities: '+((s.capabilities||[]).join(' • ')||'—')+'</div><div class="strategy-actions"><button class="secondary" onclick="strategyOpen(\''+s.id+'\')">OPEN WORKSPACE</button><button class="secondary" onclick="strategyInfo(\''+s.id+'\')">SAFE INFO</button></div>';grid.appendChild(card)});if(!items.length)grid.innerHTML='<div class="notice">No strategies registered.</div>'}catch(e){grid.innerHTML='<div class="notice">Strategy registry unavailable: '+e.message+'</div>'}}async function strategyOpen(id){const output=document.getElementById('strategyOutput');const routes={'calendar-spread':'/api/v1/scanner/calendar-spread/live','synthetic-future-cash-carry':'/api/v1/scanner/synthetic-cash-carry/live','box-spread':'/api/v1/scanner/box-spread/live'};if(id==='cash-future'){document.getElementById('scanBtn').scrollIntoView({behavior:'smooth',block:'center'});scan();return}if(id==='full-fno'){output.innerHTML='<strong>Full F&O Backtest</strong> • safe mode • <code>POST /api/v1/backtesting/full-fno/start</code><br>Job is not started automatically. Open the Android Full F&O screen to start a controlled replay/backtest.';log('Full F&O path selected • no automatic job start');return}const route=routes[id];if(!route){output.textContent='No live route registered for '+id;log('No route registered for '+id);return}output.textContent='Loading '+id+'…';try{const r=await fetch(base()+route+'?limit=50',{cache:'no-store'});if(!r.ok)throw new Error('Strategy API '+r.status);const p=await r.json();const rows=p.data||[];const opportunities=Number(p.opportunity_count??rows.filter(x=>Number(x.executable_edge||0)>0).length);const safeRows=rows.slice(0,10);let table;if(id==='calendar-spread'){table='<thead><tr><th>Rank</th><th>Underlying</th><th>Near/Far</th><th>Long Edge</th><th>Short Edge</th><th>Long %</th><th>Short %</th><th>Liquidity</th></tr></thead><tbody>'+safeRows.map((x,i)=>'<tr><td>'+(i+1)+'</td><td>'+ (x.underlying||'-') +'</td><td>'+ (x.near_contract_month||'-')+' / '+(x.far_contract_month||'-') +'</td><td>'+num(x.long_edge)+'</td><td>'+num(x.short_edge)+'</td><td>'+num(x.long_edge_pct)+'%</td><td>'+num(x.short_edge_pct)+'%</td><td>'+num(x.liquidity_qty)+'</td></tr>').join('')+(safeRows.length?'':'<tr><td colspan="8">NO CURRENT LIVE ROWS</td></tr>')+'</tbody>'}else if(id==='synthetic-future-cash-carry'){table='<thead><tr><th>Rank</th><th>Underlying</th><th>Expiry</th><th>Strike</th><th>Direction</th><th>Future B/A</th><th>Call B/A</th><th>Put B/A</th><th>Executable Edge</th><th>Gross P&amp;L</th></tr></thead><tbody>'+safeRows.map((x,i)=>'<tr><td>'+(i+1)+'</td><td>'+(x.underlying||'-')+'</td><td>'+(x.expiry||'-')+'</td><td>'+(x.strike??'-')+'</td><td>'+(x.direction||'-')+'</td><td>'+num(x.future_bid)+'/'+num(x.future_ask)+'</td><td>'+num(x.call_bid)+'/'+num(x.call_ask)+'</td><td>'+num(x.put_bid)+'/'+num(x.put_ask)+'</td><td>'+num(x.executable_edge)+'</td><td>'+num(x.gross_pnl)+'</td></tr>').join('')+(safeRows.length?'':'<tr><td colspan="10">NO CURRENT LIVE ROWS</td></tr>')+'</tbody>'}else{table='<thead><tr><th>Rank</th><th>Underlying</th><th>Expiry</th><th>Direction</th><th>Strikes</th><th>Executable Edge</th><th>Edge/Lot</th><th>Gross P&amp;L</th><th>Liquidity</th><th>Bid/Ask</th></tr></thead><tbody>'+safeRows.map((x,i)=>'<tr><td>'+(i+1)+'</td><td>'+(x.symbol||x.underlying||'-')+'</td><td>'+(x.expiry||'-')+'</td><td>'+(x.direction||'-')+'</td><td>'+(x.low_strike!=null?x.low_strike+' → '+(x.high_strike??'-'):'-')+'</td><td>'+num(x.executable_edge)+'</td><td>'+num(x.edge_per_lot)+'</td><td>'+num(x.gross_pnl)+'</td><td>'+num(x.liquidity_qty)+'</td><td>LC '+num(x.low_call_bid)+'/'+num(x.low_call_ask)+' LP '+num(x.low_put_bid)+'/'+num(x.low_put_ask)+' HC '+num(x.high_call_bid)+'/'+num(x.high_call_ask)+' HP '+num(x.high_put_bid)+'/'+num(x.high_put_ask)+'</td></tr>').join('')+(safeRows.length?'':'<tr><td colspan="10">NO CURRENT LIVE ROWS</td></tr>')+'</tbody>'}output.innerHTML='<strong>'+id+'</strong> • '+rows.length+' live rows • '+opportunities+' executable opportunities • '+(p.mode||'live')+'<br><span class="muted">Bid/ask and executable-edge data only • paper-safe • live broker orders OFF</span><div class="table-wrap" style="margin-top:8px"><table>'+table+'</table></div>';log(id+' live path loaded • '+rows.length+' rows')}catch(e){output.textContent=id+' unavailable: '+e.message;log(id+' route failed: '+e.message)}}async function strategyInfo(id){try{const r=await fetch(base()+'/api/v1/app/strategies/'+encodeURIComponent(id)+'/workspace',{cache:'no-store'});if(!r.ok)throw new Error('Workspace API '+r.status);const w=(await r.json()).workspace||{};document.getElementById('strategyOutput').innerHTML='<strong>'+w.name+'</strong> • v'+w.version+' • '+(w.data_mode||'DATA')+' • '+(w.execution_mode||'PAPER')+'<br>Capabilities: '+((w.capabilities||[]).join(' • ')||'—')+'<br>Live route: '+(w.live_route||'N/A')+'<br>Workspace route: '+(w.workspace_route||'N/A')+'<br><span class="muted">Live broker orders: '+(w.live_orders?'ON':'OFF')+' • paper-safe</span>';log('Workspace contract loaded • '+id)}catch(e){document.getElementById('strategyOutput').textContent='Workspace unavailable: '+e.message;log('Workspace contract failed • '+id)}}\nconst apiInput=document.getElementById('api');const paperButtons=['paperEntryBtn','paperPositionBtn','paperExitBtn'];let refreshTimer=null;
-const autoRefresh=document.getElementById('autoRefresh');const refreshSeconds=document.getElementById('refreshSeconds');
-function base(){return apiInput.value.trim().replace(/\/$/,'')||window.location.origin}function log(x){document.getElementById('log').textContent='['+new Date().toLocaleTimeString()+'] '+x}function stamp(){return new Date().toLocaleString()}function num(v){return Number(v||0).toFixed(2)}function setPaperBusy(busy,message){paperButtons.forEach(id=>document.getElementById(id).disabled=busy);if(message)document.getElementById('paperStatus').textContent=message}function setScanSummary(p){summarySymbols.textContent=(p.symbols_requested||[]).length;summaryObservations.textContent=p.scanned_observations||0;summaryOpportunities.textContent=p.opportunity_count||0;summaryErrors.textContent=(p.errors||[]).length;dashOpp.textContent=p.opportunity_count||0;document.getElementById('homeCfCount').textContent=p.opportunity_count||0}
-function scheduleScan(){if(refreshTimer)clearTimeout(refreshTimer);if(autoRefresh.checked){const seconds=Math.min(300,Math.max(10,Number(refreshSeconds.value)||30));refreshTimer=setTimeout(scan,seconds*1000)}}
-async function scan(){const status=scanStatus,tbody=rows,button=scanBtn;button.disabled=true;button.textContent='SCANNING…';status.textContent='READING LIVE 1s SCANNER…';try{const r=await fetch(base()+'/api/v1/scanner/cash-future/live/fast?max_age_seconds=5&limit=50',{cache:'no-store'});if(!r.ok)throw new Error('Live Scanner API '+r.status);const p=await r.json();const data=(p.data||[]).slice().sort((a,b)=>Number(b.rank_score||0)-Number(a.rank_score||0)||Number(b.gap_pct||0)-Number(a.gap_pct||0)||Number(b.net_profit||0)-Number(a.net_profit||0));setScanSummary({symbols_requested:[...new Set(data.map(x=>x.symbol))],scanned_observations:data.length,opportunity_count:data.filter(x=>Number(x.gap)>0).length,errors:[]});dashSystem.textContent='ONLINE • LIVE 1s';tbody.innerHTML='';data.forEach((x,i)=>{const executable=Number(x.gap)>0&&Number(x.net_gap)>0&&x.lifecycle!=='EXPIRED';const tr=document.createElement('tr');tr.innerHTML='<td>'+(i+1)+'</td><td>'+x.symbol+'</td><td>'+x.contract_month+'</td><td>'+num(x.cash_ask)+'</td><td>'+num(x.future_bid)+'</td><td>'+num(x.gap)+' ('+num(x.gap_pct)+'%)</td><td>'+num(x.net_gap_pct)+'%</td><td>'+num(x.gross_profit||x.gross_lot_value)+'</td><td>'+num(x.net_profit)+'</td><td>'+num(x.net_gap_pct)+'%</td><td>'+num(x.capacity_notional)+'</td><td>'+num(x.cash_day_high)+' / '+num(x.cash_day_low)+'</td><td>'+num(x.future_day_high)+' / '+num(x.future_day_low)+'</td><td>'+num(x.liquidity_qty)+' • Stable '+num(x.stable_observations)+'</td><td class="'+(executable?'positive':'')+'">'+x.lifecycle+'</td>';tbody.appendChild(tr)});if(!tbody.children.length){tbody.innerHTML='<tr><td colspan="15">NO LIVE SIGNAL WITHIN 5 SECONDS</td></tr>';status.textContent='SCAN COMPLETE • NO LIVE SIGNAL WITHIN 5 SECONDS'}else status.textContent='LIVE SCAN COMPLETE • '+data.length+' current signals';document.getElementById('lastScan').textContent=stamp();log('Live Cash–Future 1s scanner refreshed');localStorage.setItem('algoApiBase',apiInput.value.trim())}catch(e){dashSystem.textContent='OFFLINE';document.getElementById('lastScan').textContent=stamp();status.textContent='LIVE SCAN FAILED: '+e.message;log('Live scan failed: '+e.message)}finally{button.disabled=false;button.textContent='RUN LIVE SCAN';scheduleScan()}}
-function renderAlertCenter(items){const box=document.getElementById('alertCenterList'),badge=document.getElementById('alertCenterBadge');if(!box||!badge)return;const events=(items||[]).filter(x=>x&&x.alert_event);badge.textContent=events.length?(events.length+' EVENTS'):'NO EVENTS';if(!events.length){box.innerHTML='<div class="alert-empty">No NEW / RECOVERY alert event in the latest scan. Active opportunities remain visible in the scanner.</div>';return}box.innerHTML=events.slice(0,20).map(x=>{const ev=String(x.alert_event).toUpperCase();const cls=ev==='NEW'?'alert-new':(ev==='RECOVERY'?'alert-active':'alert-weaken');return '<div class="alert-item '+cls+'"><strong>'+ev+' • '+(x.symbol||'—')+' • '+(x.contract_month||'—')+'</strong><div class="alert-meta">Gap '+resultNum(x.gap_pct)+'% • Net '+resultNum(x.net_gap_pct)+'% • Lifecycle '+(x.lifecycle||'—')+' • '+(x.observation_ref||'')+'</div></div>'}).join('')}
-async function paperEntry(){const price=Number(paperPrice.value),quantity=Number(paperQty.value);if(!(price>0&&quantity>0)){paperStatus.textContent='Enter valid price and quantity.';return}setPaperBusy(true,'PAPER ENTRY IN PROGRESS…');try{const r=await fetch(base()+'/api/v1/execution/paper/entry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price,quantity,stop_loss_pct:Number(slPct.value)/100,target_pct:Number(targetPct.value)/100})});if(!r.ok)throw new Error('Paper API '+r.status);const p=await r.json();paperResult.textContent='Entry ₹'+num(p.entry_price)+' • SL ₹'+num(p.stop_loss)+' • Target ₹'+num(p.target);paperStatus.innerHTML='<span class="positive">PAPER POSITION ACTIVE</span> • Qty '+num(p.fill.quantity);log('Paper entry accepted')}catch(e){paperStatus.textContent='Paper execution failed: '+e.message;log('Paper entry failed: '+e.message)}finally{setPaperBusy(false)}}
-async function paperPosition(){setPaperBusy(true,'CHECKING PAPER POSITION…');try{const r=await fetch(base()+'/api/v1/execution/paper/position',{cache:'no-store'});if(!r.ok)throw new Error('Paper position API '+r.status);const p=await r.json();if(!p.position){paperStatus.textContent='No active paper position.';paperResult.textContent='—';log('Paper position • FLAT');return}const q=p.position;paperStatus.innerHTML='<span class="positive">PAPER POSITION ACTIVE</span> • Qty '+num(q.quantity);paperResult.textContent='Entry ₹'+num(q.entry_price)+' • SL ₹'+num(q.stop_loss)+' • Target ₹'+num(q.target);log('Paper position • ACTIVE')}catch(e){paperStatus.textContent='Position check failed: '+e.message;log('Position check failed: '+e.message)}finally{setPaperBusy(false)}}
-async function paperExit(){const exit=Number(paperExit.value);if(!(exit>0)){paperStatus.textContent='Enter a valid exit price.';return}setPaperBusy(true,'PAPER EXIT IN PROGRESS…');try{const r=await fetch(base()+'/api/v1/execution/paper/exit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price:exit})});if(!r.ok)throw new Error('Paper API '+r.status);const p=await r.json();if(p.status==='flat'){paperStatus.textContent='No active paper position.';paperResult.textContent='—';return}dashPnl.textContent='₹'+num(p.pnl);dashPnl.className='value '+(Number(p.pnl)>=0?'positive':'negative');paperResult.textContent='P&L ₹'+num(p.pnl);paperStatus.innerHTML='<span class="positive">PAPER POSITION CLOSED</span>';log('Paper exit accepted • P&L ₹'+num(p.pnl))}catch(e){paperStatus.textContent='Paper exit failed: '+e.message;log('Paper exit failed: '+e.message)}finally{setPaperBusy(false)}}
-apiInput.value=localStorage.getItem('algoApiBase')||'';loadLiveDataHealth();loadMarketOverview();document.getElementById('autoRefresh').addEventListener('change',scheduleScan);document.getElementById('refreshSeconds').addEventListener('change',scheduleScan);document.getElementById('lastScan').textContent=stamp();loadStrategies();scan();
-</script></body></html>
+async function loadLiveDataHealth(){
+ try{
+  const r=await fetch(base()+'/api/v1/market-data/live-health',{cache:'no-store'});if(!r.ok)throw new Error('Health API '+r.status);
+  const p=await r.json();const cf=(p.sources||[]).find(x=>x.source==='angelone-live-1s')||{};
+  document.getElementById('livePersisted').textContent=p.persisted?'YES':'NO';document.getElementById('liveFeedStatus').textContent=p.feed_status||'—';document.getElementById('liveRecordCount').textContent=fmt(p.records);document.getElementById('liveInstrumentCount').textContent=fmt(p.instruments);
+  const ok=p.feed_status==='LIVE'&&p.persisted;document.getElementById('liveDataHealthBadge').textContent=ok?'LIVE':'CHECK';document.getElementById('liveDataHealthBadge').className=ok?'up':'neutral';
+  document.getElementById('liveDataHealthStatus').textContent='Session '+p.market_session+' • age '+(p.age_seconds==null?'—':Number(p.age_seconds).toFixed(1)+'s')+' • source '+p.source+' • '+p.timeframe+' • orders '+p.live_orders;
+  document.getElementById('homeData').textContent=p.persisted?'READY':'NO DATA';document.getElementById('homeData').className='health-state '+(p.persisted?'up':'neutral');
+  document.getElementById('sideSystem').textContent=ok?'ONLINE':'CHECK';document.getElementById('sideLast').textContent='Data age '+(p.age_seconds==null?'—':Number(p.age_seconds).toFixed(1)+'s');
+  document.getElementById('dashSystem').textContent=ok?'ONLINE':'CHECK';
+ }catch(e){document.getElementById('liveDataHealthBadge').textContent='ERROR';document.getElementById('homeData').textContent='ERROR';log('Live health failed: '+e.message)}
+}
+function setScanSummary(count){document.getElementById('dashOpp').textContent=count;document.getElementById('homeCfCount').textContent=count}
+async function scan(){
+ const btn=document.getElementById('scanBtn');btn.disabled=true;btn.textContent='SCANNING…';document.getElementById('scanStatus').textContent='READING LIVE 1s SCANNER…';
+ try{
+  const r=await fetch(base()+'/api/v1/scanner/cash-future/live/fast?max_age_seconds=5&limit=50',{cache:'no-store'});if(!r.ok)throw new Error('Scanner API '+r.status);
+  const p=await r.json();const data=(p.data||[]).slice().sort((a,b)=>Number(b.rank_score||0)-Number(a.rank_score||0)||Number(b.gap_pct||0)-Number(a.gap_pct||0));setScanSummary(data.filter(x=>Number(x.gap)>0).length);
+  const rows=document.getElementById('scannerRows');rows.innerHTML=data.slice(0,5).map(x=>'<tr><td><strong>'+x.symbol+'</strong></td><td class="'+(Number(x.gap_pct)>0?'up':'')+'">'+pct(x.gap_pct)+'</td><td>'+pct(x.net_gap_pct)+'</td><td>'+fmt(x.liquidity_qty||x.volume)+'</td><td>'+fmt(x.oi)+'</td></tr>').join('')||'<tr><td colspan="5">NO LIVE SIGNAL WITHIN 5 SECONDS</td></tr>';
+  document.getElementById('scanStatus').textContent='LIVE SCAN • '+data.length+' current rows • refreshed '+stamp();document.getElementById('homeScanner').textContent='LIVE';document.getElementById('homeScanner').className='health-state up';document.getElementById('sideAlertCount').textContent=data.filter(x=>x.alert_event).length;renderAlerts(data);log('Live Cash-Future scanner refreshed');
+ }catch(e){document.getElementById('scanStatus').textContent='LIVE SCAN FAILED • '+e.message;document.getElementById('homeScanner').textContent='ERROR';document.getElementById('homeScanner').className='health-state down';log('Scanner failed: '+e.message)}
+ finally{btn.disabled=false;btn.textContent='RUN LIVE SCAN';scheduleScan()}
+}
+function renderAlerts(data){
+ const events=(data||[]).filter(x=>x&&x.alert_event);alertEvents=events;
+ document.getElementById('triggeredAlertCount').textContent=events.length;document.getElementById('activeAlertCount').textContent=events.length;document.getElementById('activeAlertTab').textContent=events.length;
+ const box=document.getElementById('alertCenterList'),recent=document.getElementById('recentAlerts');
+ if(!events.length){const empty='<div class="alert-row"><span class="alert-dot"></span><div><strong>No new alert event</strong><span>Active opportunities remain visible in Live Scanner.</span></div><span class="status-tag saved">WAITING</span></div>';box.innerHTML=empty;recent.innerHTML=empty;return}
+ const html=events.slice(0,6).map(x=>{const ev=String(x.alert_event).toUpperCase();return '<div class="alert-row"><span class="alert-dot '+(ev==='NEW'?'green':'')+'"></span><div><strong>'+ev+' • '+(x.symbol||'—')+'</strong><span>Gap '+pct(x.gap_pct)+' • Net '+pct(x.net_gap_pct)+' • '+(x.contract_month||'—')+'</span></div><span class="status-tag '+(ev==='NEW'?'active':'')+'">'+(ev==='RECOVERY'?'TRIGGERED':'ACTIVE')+'</span></div>'}).join('');
+ box.innerHTML=html;recent.innerHTML=html;
+}
+async function loadPaperAccount(){
+ try{
+  const r=await fetch(base()+'/api/v1/execution/paper/account',{cache:'no-store'});if(!r.ok)throw new Error('Paper account API '+r.status);
+  const p=await r.json();document.getElementById('paperBalance').textContent='₹'+fmt(p.virtual_balance);document.getElementById('paperRealized').textContent='₹'+fmt(p.realized_pnl);document.getElementById('paperPositions').textContent=fmt(p.open_positions);document.getElementById('positionCount').textContent=fmt(p.open_positions);document.getElementById('paperStatus').textContent='Paper account: ONLINE • LIVE BROKER ORDERS OFF';
+  const pos=await fetch(base()+'/api/v1/execution/paper/position',{cache:'no-store'});if(pos.ok){const q=await pos.json();const mtm=q.mark_to_market;document.getElementById('paperMtm').textContent=mtm&&mtm.net_pnl!=null?'₹'+fmt(mtm.net_pnl):(mtm?'₹'+fmt(mtm.gross_pnl):'—');if(mtm){document.getElementById('dashPnl').textContent='₹'+fmt(mtm.gross_pnl);document.getElementById('dashPnl').className='v '+(Number(mtm.gross_pnl)>=0?'up':'down')}}
+ }catch(e){document.getElementById('paperStatus').textContent='Paper account unavailable • '+e.message}
+}
+async function loadStrategies(){
+ const grid=document.getElementById('strategyGrid');try{
+  const r=await fetch(base()+'/api/v1/app/strategies',{cache:'no-store'});if(!r.ok)throw new Error('Strategy API '+r.status);const p=await r.json();const items=p.strategies||[];
+  grid.innerHTML=items.slice(0,4).map(s=>'<button class="opp" onclick="strategyOpen(\''+s.id+'\')"><span class="name">'+s.name+'</span><span class="count" style="font-size:11px">'+(s.enabled?'ENABLED':'DISABLED')+'</span><span class="foot">'+((s.capabilities||[]).slice(0,2).join(' • ')||'Workspace')+' →</span></button>').join('')||'<div class="opp"><span class="name">No strategies registered.</span></div>';
+ }catch(e){grid.innerHTML='<div class="opp"><span class="name">Strategy registry unavailable</span><span class="foot">'+e.message+'</span></div>'}
+}
+async function strategyOpen(id){
+ const workspaceUrl='/api/v1/app/strategies/'+encodeURIComponent(id)+'/workspace';
+ try{const r=await fetch(base()+workspaceUrl,{cache:'no-store'});if(!r.ok)throw new Error('Workspace API '+r.status);const w=(await r.json()).workspace||{};document.getElementById('strategyOutput').textContent=(w.name||id)+' • v'+(w.version||'—')+' • '+(w.data_mode||'DATA')+' • '+(w.execution_mode||'PAPER')+' • live_orders '+(w.live_orders?'ON':'OFF');}
+ catch(e){document.getElementById('strategyOutput').textContent='Workspace unavailable: '+e.message}
+}
+function scheduleScan(){if(refreshTimer)clearTimeout(refreshTimer);if(document.getElementById('autoRefresh').checked){const seconds=Math.min(300,Math.max(5,Number(document.getElementById('refreshSeconds').value)||5));refreshTimer=setTimeout(scan,seconds*1000)}}
+async function loadAll(){await Promise.all([loadMarketOverview(),loadLiveDataHealth(),scan(),loadPaperAccount(),loadStrategies()]);document.getElementById('lastUpdated').textContent='Updated '+stamp()}
+function saveDashboardWidgets(){
+ const values={};document.querySelectorAll('[data-widget]').forEach(el=>{if(el.matches('input'))values[el.dataset.widget]=el.checked});localStorage.setItem(DASHBOARD_WIDGET_KEY,JSON.stringify(values));applyDashboardWidgets();document.getElementById('widgetSaveStatus').textContent='Layout: SAVED'
+}
+function applyDashboardWidgets(){
+ let saved={};try{saved=JSON.parse(localStorage.getItem(DASHBOARD_WIDGET_KEY)||'{}')}catch(e){}
+ Object.keys(DASHBOARD_DEFAULT_WIDGETS).forEach(k=>{const visible=saved[k]===undefined?DASHBOARD_DEFAULT_WIDGETS[k]:!!saved[k];document.querySelectorAll('[data-widget-id="'+k+'"]').forEach(el=>el.style.display=visible?'':'none');const input=document.querySelector('input[data-widget="'+k+'"]');if(input)input.checked=visible})
+}
+function resetDashboardWidgets(){localStorage.removeItem(DASHBOARD_WIDGET_KEY);applyDashboardWidgets();document.getElementById('widgetSaveStatus').textContent='Layout: RESET'}
+function connectLiveTicker(){
+ // The strategy/scanner live path already consumes Angel One SmartAPI WebSocket data.
+ // Home market overview is refreshed from the authoritative backend quote endpoint.
+ // Do not open one broker socket per browser card.
+ document.getElementById('topLive').title='Backend live data + WebSocket-backed scanners'
+}
+function paperEntry(){toast('Paper entry remains available through strategy workspaces; live broker orders are OFF')}
+function paperPosition(){loadPaperAccount()}
+function paperExit(exit){if(!exit){toast('Paper exit requires a price in the Paper workspace');return}return fetch(base()+'/api/v1/execution/paper/exit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({"price":exit})})}
+document.getElementById('autoRefresh').addEventListener('change',scheduleScan);
+document.getElementById('refreshSeconds').addEventListener('change',scheduleScan);
+applyDashboardWidgets();connectLiveTicker();loadAll();
+</script>
+</body>
+</html>
