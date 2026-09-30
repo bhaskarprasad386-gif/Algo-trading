@@ -1,29 +1,27 @@
-"""Continuous option+future live recorder for synthetic arbitrage.
+"""Continuous option/future recorder using the shared common WebSocket feed.
 
-The collector is deliberately broker-neutral at the normalization boundary:
-Angel One WebSocket ticks are converted to source-backed records and persisted
-through the existing bounded LiveMarketDataRecorder. It does not fabricate
-quotes, strikes, fills, or P&L, and live orders are never placed.
+Concrete contracts remain selected by the strategy, but broker connectivity,
+normalization and durable persistence are shared and bounded.
 """
-
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, time
-from queue import Empty, Queue
-from threading import Event, Thread
-from time import monotonic, sleep, time_ns
+from threading import Event, Lock
+from time import sleep
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from app.algo.auth import AngelOneAuth
-from app.backtesting.historical_catalog import HistoricalCatalog
-from app.market_data.live_recorder import LiveMarketDataRecorder
-from app.market_data.websocket import MarketDataWebSocket
+from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
+from app.market_data.ingestion import BoundedMarketDataIngestor
+from app.market_data.persistence import DailySQLiteMarketDataRepository
 
 IST = ZoneInfo("Asia/Kolkata")
 OPEN = time(9, 15)
 CLOSE = time(15, 40)
+
+_EXCHANGE_BY_TYPE = {1: "NSE", 2: "NFO", 3: "BSE", 4: "BFO", 5: "MCX", 7: "NCDEX"}
 
 
 @dataclass(frozen=True)
@@ -42,12 +40,7 @@ class SyntheticSubscription:
 
 
 class LiveSyntheticOptionFutureRecorder:
-    """Persist live option/future ticks with bounded memory.
-
-    The caller supplies concrete contracts from the instrument master. This is
-    intentional: the collector never invents strikes or silently substitutes
-    a contract when an instrument is missing.
-    """
+    """Persist live option/future ticks through the common market-data layer."""
 
     SOURCE = "angelone-live-synthetic"
 
@@ -65,7 +58,7 @@ class LiveSyntheticOptionFutureRecorder:
             raise ValueError("at least one synthetic subscription is required")
         if poll_seconds <= 0:
             raise ValueError("poll_seconds must be positive")
-        normalized: list[SyntheticSubscription] = []
+        normalized = []
         seen: set[tuple[int, str]] = set()
         for item in subscriptions:
             token = str(item.token).strip()
@@ -82,15 +75,8 @@ class LiveSyntheticOptionFutureRecorder:
             seen.add(key)
             normalized.append(
                 SyntheticSubscription(
-                    exchange_type=int(item.exchange_type),
-                    token=token,
-                    symbol=symbol,
-                    underlying=underlying,
-                    instrument_class=cls,
-                    expiry=item.expiry,
-                    option_type=item.option_type,
-                    strike=item.strike,
-                    lot_size=item.lot_size,
+                    int(item.exchange_type), token, symbol, underlying, cls,
+                    item.expiry, item.option_type, item.strike, item.lot_size,
                 )
             )
         self.data_db = data_db
@@ -100,148 +86,112 @@ class LiveSyntheticOptionFutureRecorder:
         self.poll_seconds = poll_seconds
         self.on_observation = on_observation
         self.stop_event = Event()
-        self._sockets: list[MarketDataWebSocket] = []
+        self._feed: CommonStrategyMarketFeed | None = None
+        self._repository: DailySQLiteMarketDataRepository | None = None
+        self._ingestor: BoundedMarketDataIngestor | None = None
+        self._latest: dict[tuple[str, str], tuple[int, Any]] = {}
+        self._lock = Lock()
+        self._metadata: dict[tuple[str, str], SyntheticSubscription] = {}
 
     @staticmethod
     def market_open(now: datetime | None = None) -> bool:
         current = now or datetime.now(IST)
         return current.weekday() < 5 and OPEN <= current.time() <= CLOSE
 
-    @staticmethod
-    def _ltp(message: dict[str, Any]) -> float | None:
-        value = message.get("last_traded_price")
-        try:
-            price = float(value)
-        except (TypeError, ValueError):
-            return None
-        return price / 100.0
+    def _descriptors(self):
+        descriptors = []
+        for item in self.subscriptions:
+            exchange = _EXCHANGE_BY_TYPE.get(item.exchange_type)
+            if exchange is None:
+                raise ValueError(f"unsupported exchange type: {item.exchange_type}")
+            key = (exchange, item.token)
+            self._metadata[key] = item
+            descriptors.append(
+                CommonStrategyMarketFeed.descriptor(
+                    exchange=exchange,
+                    token=item.token,
+                    symbol=item.symbol,
+                    instrument_type="option" if item.option_type else "future",
+                    segment=exchange,
+                    expiry=item.expiry,
+                    strike=item.strike,
+                    option_type=item.option_type,
+                    lot_size=item.lot_size,
+                )
+            )
+        return descriptors
 
-    @staticmethod
-    def _side(message: dict[str, Any], key: str) -> tuple[float | None, float | None]:
-        levels = message.get(key)
-        if not isinstance(levels, list) or not levels or not isinstance(levels[0], dict):
-            return None, None
-        level = levels[0]
-        try:
-            price = float(level.get("price")) / 100.0
-        except (TypeError, ValueError):
-            price = 0.0
-        try:
-            quantity = float(level.get("quantity"))
-        except (TypeError, ValueError):
-            quantity = 0.0
-        return (price if price > 0 else None, quantity if quantity > 0 else None)
-
-    def _normalize(self, message: dict[str, Any], meta: SyntheticSubscription) -> dict[str, Any]:
-        bid, bid_qty = self._side(message, "best_5_buy_data")
-        ask, ask_qty = self._side(message, "best_5_sell_data")
-        payload = dict(message)
-        payload.update(
-            {
+    def _emit(self, record, timestamp_ns: int) -> None:
+        payload = record.as_dict()
+        payload["timestamp_ns"] = timestamp_ns
+        payload["source_timestamp_ns"] = timestamp_ns
+        meta = self._metadata.get(
+            (record.instrument.exchange.strip().upper(), record.instrument.token.strip())
+        )
+        if meta is not None:
+            payload.update({
                 "underlying": meta.underlying,
                 "instrument_class": meta.instrument_class,
                 "expiry": meta.expiry,
                 "option_type": meta.option_type,
                 "strike": meta.strike,
                 "lot_size": meta.lot_size,
-                "ltp": self._ltp(message),
-                "bid": bid,
-                "ask": ask,
-                "bid_qty": bid_qty,
-                "ask_qty": ask_qty,
-            }
-        )
-        return payload
+            })
+        if self.on_observation is not None:
+            try:
+                self.on_observation(dict(payload))
+            except Exception:
+                pass
+        if self._ingestor is not None:
+            self._ingestor.submit(record)
+
+    def _on_record(self, record) -> None:
+        key = (record.instrument.exchange.strip().upper(), record.instrument.token.strip())
+        second = (record.timestamp_ns // 1_000_000_000) * 1_000_000_000
+        with self._lock:
+            previous = self._latest.get(key)
+            if previous is not None and second < previous[0]:
+                return
+            if previous is not None and second == previous[0]:
+                self._latest[key] = (second, record)
+                return
+            self._latest[key] = (second, record)
+        if previous is not None:
+            self._emit(previous[1], previous[0])
 
     def _run_session(self) -> int:
-        self.auth.login()
-        by_exchange: dict[int, list[SyntheticSubscription]] = {}
-        by_token: dict[tuple[int, str], SyntheticSubscription] = {}
-        for item in self.subscriptions:
-            by_exchange.setdefault(item.exchange_type, []).append(item)
-            by_token[(item.exchange_type, item.token)] = item
-
-        queue: Queue[tuple[int, dict[str, Any]]] = Queue()
-        sockets: list[MarketDataWebSocket] = []
-
-        def receive(exchange_type: int, message: Any) -> None:
-            if isinstance(message, dict):
-                queue.put((exchange_type, message))
-
-        for exchange_type, items in sorted(by_exchange.items()):
-            socket = MarketDataWebSocket(auth=self.auth)
-            sockets.append(socket)
-            Thread(
-                target=socket.connect,
-                kwargs={
-                    "exchange_type": exchange_type,
-                    "tokens": [item.token for item in items],
-                    "mode": 3,
-                    "correlation_id": f"synthetic-live-{exchange_type}",
-                    "on_data": lambda msg, e=exchange_type: receive(e, msg),
-                    "reconnect_attempts": 3,
-                    "reconnect_delay_seconds": 2,
-                },
-                daemon=True,
-            ).start()
-        self._sockets = sockets
-
-        catalog = HistoricalCatalog(self.data_db)
-        recorder = LiveMarketDataRecorder(
-            catalog,
-            source=self.SOURCE,
-            timeframe="1s",
+        self._repository = DailySQLiteMarketDataRepository(self.data_db)
+        self._ingestor = BoundedMarketDataIngestor(
+            self._repository,
             batch_size=self.batch_size,
+            record_source=self.SOURCE,
         )
-        latest: dict[tuple[int, str], tuple[int, dict[str, Any]]] = {}
-        written = 0
+        self._ingestor.start()
+        self._feed = CommonStrategyMarketFeed(
+            "synthetic-options",
+            auth=self.auth,
+        )
+        self._feed.start(self._descriptors(), self._on_record)
         try:
-            while self.market_open() and (not self.stop_event.is_set() or not queue.empty()):
-                deadline = monotonic() + self.poll_seconds
-                while monotonic() < deadline and (not self.stop_event.is_set() or not queue.empty()):
-                    try:
-                        exchange_type, raw = queue.get(
-                            timeout=max(0.01, deadline - monotonic())
-                        )
-                    except Empty:
-                        continue
-                    token = str(raw.get("token") or "").strip()
-                    meta = by_token.get((exchange_type, token))
-                    if meta is None:
-                        continue
-                    timestamp = recorder._timestamp_ns(raw, time_ns())
-                    second = (timestamp // 1_000_000_000) * 1_000_000_000
-                    key = (exchange_type, token)
-                    previous = latest.get(key)
-                    if previous is not None:
-                        previous_second = previous[0]
-                        if second < previous_second:
-                            continue
-                        if second != previous_second:
-                            payload = dict(previous[1])
-                            payload["source_timestamp_ns"] = previous_second
-                            written += recorder.on_tick(payload)
-                            if self.on_observation is not None:
-                                try:
-                                    self.on_observation(dict(payload))
-                                except Exception:
-                                    pass
-                    latest[key] = (second, self._normalize(raw, meta))
-            for _, (timestamp, payload) in latest.items():
-                payload["source_timestamp_ns"] = timestamp
-                written += recorder.on_tick(payload)
-                if self.on_observation is not None:
-                    try:
-                        self.on_observation(dict(payload))
-                    except Exception:
-                        pass
-            written += recorder.flush()
+            while self.market_open() and not self.stop_event.is_set():
+                sleep(self.poll_seconds)
+            with self._lock:
+                latest = list(self._latest.values())
+                self._latest.clear()
+            for timestamp, record in latest:
+                self._emit(record, timestamp)
+            snapshot = self._ingestor.snapshot()
+            return int(snapshot.get("inserted", 0))
         finally:
-            catalog.close()
-            for socket in sockets:
-                socket.close()
-            self._sockets = []
-        return written
+            if self._feed:
+                self._feed.stop()
+                self._feed = None
+            if self._ingestor:
+                self._ingestor.close()
+                self._ingestor = None
+            if self._repository:
+                self._repository.close()
+                self._repository = None
 
     def run_forever(self) -> None:
         while not self.stop_event.is_set():
@@ -255,8 +205,8 @@ class LiveSyntheticOptionFutureRecorder:
 
     def stop(self) -> None:
         self.stop_event.set()
-        for socket in self._sockets:
-            socket.close()
+        if self._feed:
+            self._feed.stop()
 
 
 __all__ = ["LiveSyntheticOptionFutureRecorder", "SyntheticSubscription"]
