@@ -21,6 +21,9 @@ from app.core.config import settings
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.shared_cache import get_shared_market_data_cache
+from app.market_data.bounded_buffer import BufferPriority
+from app.market_data.ingestion import BoundedMarketDataIngestor
+from app.market_data.persistence import DailySQLiteMarketDataRepository
 
 IST = ZoneInfo("Asia/Kolkata")
 OPEN = time(9, 15)
@@ -35,6 +38,7 @@ WRITE_BATCH_MAX_SECONDS = 5.0
 NO_DATA_RETRY_INITIAL_SECONDS = 10.0
 NO_DATA_RETRY_MAX_SECONDS = 60.0
 WORKER_JOIN_TIMEOUT_SECONDS = 5.0
+TICK_BUFFER_TIMEOUT_SECONDS = 1.0
 
 _STATE_LOCK = threading.Lock()
 _STATE = {"enabled": False, "running": False, "connected": False, "last_observation_ns": None, "written": 0, "rejected": 0, "dropped": 0, "pairs": 0, "observations": 0, "gap_seconds": 0, "coverage": 0, "last_error": None}
@@ -90,36 +94,44 @@ def _ingest_live_record(catalog: DailyMarketDataShardCatalog, record: Historical
 
 
 class _LatestMessageBuffer:
-    """Coalesce duplicate websocket ticks without dropping distinct seconds."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
+    """Hard-bounded coalescing tick buffer with producer backpressure."""
+    def __init__(self, max_entries: int, timeout_seconds: float = TICK_BUFFER_TIMEOUT_SECONDS) -> None:
+        if max_entries < 1 or timeout_seconds <= 0:
+            raise ValueError("max_entries and timeout_seconds must be positive")
+        self.max_entries = int(max_entries)
+        self.timeout_seconds = float(timeout_seconds)
+        self._condition = threading.Condition()
         self._messages: dict[tuple[str, int], dict[str, Any]] = {}
-
-    def put(self, message: dict[str, Any]) -> None:
+        self._blocked = self._dropped = 0
+    def put(self, message: dict[str, Any]) -> bool:
         token = str(message.get("token") or "").strip()
-        if not token:
-            return
-        timestamp_ns = _timestamp_ns(message)
-        if timestamp_ns is None:
-            return
-        second_ns = (timestamp_ns // 1_000_000_000) * 1_000_000_000
-        with self._lock:
-            self._messages[(token, second_ns)] = message
-
+        ts = _timestamp_ns(message)
+        if not token or ts is None:
+            return False
+        key = (token, (ts // 1_000_000_000) * 1_000_000_000)
+        deadline = time_module.monotonic() + self.timeout_seconds
+        with self._condition:
+            while len(self._messages) >= self.max_entries and key not in self._messages:
+                self._blocked += 1
+                remaining = deadline - time_module.monotonic()
+                if remaining <= 0:
+                    self._dropped += 1
+                    return False
+                self._condition.wait(timeout=remaining)
+            self._messages[key] = message
+            self._condition.notify_all()
+            return True
     def drain(self) -> list[dict[str, Any]]:
-        with self._lock:
+        with self._condition:
             messages = list(self._messages.values())
             self._messages.clear()
-        messages.sort(key=lambda message: (
-            _timestamp_ns(message) or 0,
-            str(message.get("token") or ""),
-        ))
+            self._condition.notify_all()
+        messages.sort(key=lambda m: (_timestamp_ns(m) or 0, str(m.get("token") or "")))
         return messages
-
-    def __len__(self) -> int:
-        with self._lock:
-            return len(self._messages)
+    def snapshot(self) -> dict[str, int]:
+        with self._condition:
+            return {"depth": len(self._messages), "capacity": self.max_entries,
+                    "blocked": self._blocked, "dropped": self._dropped}
 
 
 class LiveCashFutureOneSecondCollector:
@@ -254,7 +266,7 @@ class LiveCashFutureOneSecondCollector:
                 "lot_size": int(item.get("lotsize") or item.get("lotSize") or 0) or None,
             }
 
-        queue = _LatestMessageBuffer()
+        queue = _LatestMessageBuffer(max_entries=max(1000, len(token_meta) * 4))
         self.auth.login()
         nse_socket = MarketDataWebSocket(auth=self.auth)
         nfo_socket = MarketDataWebSocket(auth=self.auth)
@@ -262,7 +274,8 @@ class LiveCashFutureOneSecondCollector:
 
         def receive(message: Any) -> None:
             if isinstance(message, dict):
-                queue.put(message)
+                if not queue.put(message):
+                    app_logger.warning("1-second live tick buffer full; producer backpressure timeout")
 
         threads = [
             threading.Thread(
@@ -295,7 +308,16 @@ class LiveCashFutureOneSecondCollector:
         for thread in threads:
             thread.start()
 
-        catalog = (DailyMarketDataShardCatalog(self.data_db) if settings.LIVE_CASH_FUTURE_DAILY_SHARDS_ENABLED else HistoricalCatalog(self.data_db))
+        repository = DailySQLiteMarketDataRepository(self.data_db)
+        ingestor = BoundedMarketDataIngestor(
+            repository,
+            max_queue=settings.MARKET_DATA_INGEST_QUEUE_MAX,
+            batch_size=settings.MARKET_DATA_INGEST_BATCH_SIZE,
+            flush_seconds=settings.MARKET_DATA_INGEST_FLUSH_SECONDS,
+            put_timeout_seconds=settings.MARKET_DATA_INGEST_PUT_TIMEOUT_SECONDS,
+            record_source=SOURCE,
+            on_error=lambda exc: app_logger.error(f"1-second live persistence error: {exc}"),
+        )
         with _STATE_LOCK:
             _STATE["running"] = True
             _STATE["connected"] = False
@@ -308,21 +330,10 @@ class LiveCashFutureOneSecondCollector:
         pairs = 0
         observations = 0
         gap_seconds = 0
-        pending_records: list[HistoricalRecord] = []
-        last_flush_monotonic = time_module.monotonic()
-
-        def flush_pending() -> None:
-            nonlocal pending_records, written, last_flush_monotonic
-            if not pending_records:
-                return
-            written += catalog.ingest_if_absent_batch(pending_records, ingested_at_ns=time_module.time_ns())
-            pending_records.clear()
-            last_flush_monotonic = time_module.monotonic()
-
         def queue_record(record: HistoricalRecord) -> None:
-            pending_records.append(record)
-            if len(pending_records) >= WRITE_BATCH_SIZE or (time_module.monotonic() - last_flush_monotonic) >= WRITE_BATCH_MAX_SECONDS:
-                flush_pending()
+            if not ingestor.submit_historical(record, priority=BufferPriority.CRITICAL):
+                raise TimeoutError("critical live persistence queue rejected record")
+
 
         try:
             while not self.stop_event.is_set() and self.market_open():
@@ -414,10 +425,11 @@ class LiveCashFutureOneSecondCollector:
                     app_logger.error(f"1-second final record rejected {token}: {exc}")
         finally:
             try:
-                flush_pending()
-                catalog.checkpoint(mode="PASSIVE")
+                ingestor.close(timeout=10.0)
+                written = int(ingestor.snapshot()["inserted"])
+                repository.checkpoint(mode="PASSIVE")
             finally:
-                catalog.close()
+                repository.close()
             for socket in self._sockets:
                 socket.close()
             for thread in threads:

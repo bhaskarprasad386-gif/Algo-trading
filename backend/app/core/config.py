@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # Shared latest-snapshot cache; bounded in-process now, Redis-ready interface later.
     MARKET_DATA_CACHE_MAX_ENTRIES: int = 2000
     MARKET_DATA_CACHE_TTL_SECONDS: float = 15.0
+    MARKET_DATA_INGEST_QUEUE_MAX: int = 5000
+    MARKET_DATA_INGEST_BATCH_SIZE: int = 100
+    MARKET_DATA_INGEST_FLUSH_SECONDS: float = 5.0
+    MARKET_DATA_INGEST_PUT_TIMEOUT_SECONDS: float = 2.0
     LIVE_CALENDAR_SPREAD_DATA_ENABLED: bool = False
     LIVE_SYNTHETIC_DATA_ENABLED: bool = False
     LIVE_BOX_SPREAD_DATA_ENABLED: bool = False
