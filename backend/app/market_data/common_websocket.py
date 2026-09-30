@@ -175,6 +175,9 @@ class CommonWebSocketManager:
             except Exception:
                 with self._lock:
                     self._delivery_errors += 1
+            except Exception:
+                with self._lock:
+                    self._delivery_errors += 1
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
