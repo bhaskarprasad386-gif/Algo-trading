@@ -413,7 +413,16 @@ async function strategyOpen(id){
  try{const r=await fetch(base()+workspaceUrl,{cache:'no-store'});if(!r.ok)throw new Error('Workspace API '+r.status);const w=(await r.json()).workspace||{};document.getElementById('strategyOutput').textContent=(w.name||id)+' • v'+(w.version||'—')+' • '+(w.data_mode||'DATA')+' • '+(w.execution_mode||'PAPER')+' • live_orders '+(w.live_orders?'ON':'OFF');}
  catch(e){document.getElementById('strategyOutput').textContent='Workspace unavailable: '+e.message}
 }
-function scheduleScan(){if(refreshTimer)clearTimeout(refreshTimer);if(document.getElementById('autoRefresh').checked){const seconds=Math.min(300,Math.max(10,Number(document.getElementById('refreshSeconds').value)||10));refreshTimer=setTimeout(scan,seconds*1000)} }
+function scheduleScan(){
+ if(refreshTimer)clearTimeout(refreshTimer);
+ if(document.getElementById('autoRefresh').checked){
+  const seconds=Math.min(300,Math.max(10,Number(document.getElementById('refreshSeconds').value)||10));
+  refreshTimer=setTimeout(async()=>{
+   await Promise.allSettled([loadMarketOverview(),loadLiveDataHealth(),loadPaperAccount()]);
+   await scan();
+  },seconds*1000);
+ }
+}
 async function loadAll(){await Promise.all([loadMarketOverview(),loadLiveDataHealth(),scan(),loadPaperAccount(),loadStrategies()]);document.getElementById('lastUpdated').textContent='Updated '+stamp()}
 function saveDashboardWidgets(){
  const values={};document.querySelectorAll('[data-widget]').forEach(el=>{if(el.matches('input'))values[el.dataset.widget]=el.checked});localStorage.setItem(DASHBOARD_WIDGET_KEY,JSON.stringify(values));applyDashboardWidgets();document.getElementById('widgetSaveStatus').textContent='Layout: SAVED'
