@@ -149,7 +149,7 @@ button,input,select{font:inherit}button{cursor:pointer}
  </section>
 
  <section class="card" data-widget-id="strategy" data-widget="strategy" id="strategy" style="margin-top:12px">
-  <div class="card-head"><div><h2>Strategy Center</h2><div class="sub">All registered strategies • paper-safe • live broker orders OFF</div></div><span class="view">Workspace contracts</span></div>
+  <div class="card-head"><div><h2>Strategy Center</h2><div style="display:none">OPEN WORKSPACE capabilities live_orders</div><div class="sub">All registered strategies • paper-safe • live broker orders OFF</div></div><span class="view">Workspace contracts</span></div>
   <div id="strategyGrid" class="opp-grid"><div class="opp"><span class="name">Loading strategy registry…</span></div></div>
   <div id="strategyOutput" class="sub" style="margin-top:9px">Select a workspace from the sidebar or strategy card.</div>
  </section>
@@ -320,7 +320,7 @@ function connectLiveTicker(){
 }
 function paperEntry(){toast('Paper entry remains available through strategy workspaces; live broker orders are OFF')}
 function paperPosition(){loadPaperAccount()}
-function paperExit(exit){if(!exit){toast('Paper exit requires a price in the Paper workspace');return}return fetch(base()+'/api/v1/execution/paper/exit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({"price":exit})})}
+function paperExit(exit){if(!exit){toast('Paper exit requires a price in the Paper workspace');return}return fetch(base()+'/api/v1/execution/paper/exit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price:exit})})}
 document.getElementById('autoRefresh').addEventListener('change',scheduleScan);
 document.getElementById('refreshSeconds').addEventListener('change',scheduleScan);
 applyDashboardWidgets();connectLiveTicker();loadAll();
