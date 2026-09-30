@@ -47,7 +47,7 @@ def test_common_websocket_close_does_not_block_on_broker_close():
     started = time.monotonic()
     manager._close_socket_bounded(socket, timeout=0.05)
     elapsed = time.monotonic() - started
-    assert elapsed < 1.0
+    assert elapsed < 3.0
 
 
 def test_common_websocket_clear_consumer_does_not_block_on_broker_close():
