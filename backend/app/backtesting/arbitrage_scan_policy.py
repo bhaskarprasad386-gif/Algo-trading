@@ -20,7 +20,7 @@ class ScanPolicy:
     stock_box_distances: tuple[int, ...] = (3, 4, 5)
     index_box_distances: tuple[int, ...] = tuple(range(3, 16))
     stock_synthetic_radius: int = 5
-    index_synthetic_radius: int = 15
+    index_synthetic_radius: int = 10
 
     def box_distances(self, instrument_class: InstrumentClass) -> tuple[int, ...]:
         return self.stock_box_distances if instrument_class == "STOCK" else self.index_box_distances

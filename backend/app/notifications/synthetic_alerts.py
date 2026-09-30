@@ -1,4 +1,4 @@
-"""Synthetic-arbitrage alert delivery and durable 30-day history."""
+"""Synthetic-arbitrage alert delivery and durable 90-day history."""
 
 from __future__ import annotations
 from datetime import datetime, timedelta
@@ -54,7 +54,7 @@ class SyntheticAlertService:
         return sent
 
     def persist(self, db, results) -> int:
-        retention_days = max(1, int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
+        retention_days = max(1, int(settings.LIVE_SYNTHETIC_RESULT_RETENTION_DAYS))
         cutoff = datetime.utcnow() - timedelta(days=retention_days)
         db.query(LiveSyntheticAlertHistory).filter(LiveSyntheticAlertHistory.observed_at < cutoff).delete(synchronize_session=False)
         added = 0
