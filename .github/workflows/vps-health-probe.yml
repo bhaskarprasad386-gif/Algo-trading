@@ -9,10 +9,6 @@ on:
     # India cash-market observation window: 09:15-15:30 IST (03:45-10:00 UTC).
     - cron: "*/5 3-9 * * 1-5"
     - cron: "0 10 * * 1-5"
-  schedule:
-    # India cash-market observation window: 09:15-15:30 IST (03:45-10:00 UTC).
-    - cron: "*/5 3-9 * * 1-5"
-    - cron: "0 10 * * 1-5"
 
 jobs:
   probe:
