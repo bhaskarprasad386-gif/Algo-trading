@@ -1185,7 +1185,7 @@ function showHistoricalReplay(){
  ['home','analyzePage','cashFuturePage','calendarPage','syntheticPage','boxSpreadPage','customAlertsPage','paperPortfolioPage','tradingJournalPage'].forEach(id=>{const e=document.getElementById(id);if(e)e.hidden=true});
  const p=document.getElementById('historicalReplayPage');if(p)p.hidden=false;
  document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById('historicalReplayNav')?.classList.add('active');
- const d=document.getElementById('histDate');if(d&&!d.value)d.value=new Date().toISOString().slice(0,10);
+ const d=document.getElementById('histDate');if(d&&!d.value){const now=new Date();d.value=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');}
  loadHistoricalInstruments();window.scrollTo({top:0,behavior:'smooth'});
 }
 function histSetStatus(text,kind='pending'){const e=document.getElementById('histStatus');if(e)e.innerHTML='<span class="hist-badge '+kind+'">'+text+'</span>'}
