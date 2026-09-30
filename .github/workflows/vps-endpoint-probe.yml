@@ -37,6 +37,21 @@ jobs:
               echo PORT=$port HTTP=$code
               if [ "$code" != "000" ]; then grep -q "/api/v1/auth/google" /tmp/body && echo GOOGLE_ROUTE_PRESENT || true; fi
             done
+
+            echo SYSTEMD_TIMERS
+            systemctl list-timers --all --no-pager 2>/dev/null | head -80 || true
+            echo CRON_ALGO_MATCHES
+            grep -RniE "algo-trading|systemctl (stop|restart|start).*algo-trading" /etc/cron* /var/spool/cron 2>/dev/null | head -80 || true
+            echo NGINX_STATUS
+            systemctl is-enabled nginx 2>/dev/null || true
+            systemctl is-active nginx 2>/dev/null || true
+            nginx -t 2>&1 || true
+            echo FIREWALL
+            ufw status verbose 2>&1 || true
+            echo SOCKET_DETAILS
+            ss -lntp 2>/dev/null | head -80 || true
+            echo SERVICE_JOURNAL_STOPS
+            journalctl -u algo-trading.service --since "3 hours ago" --no-pager 2>/dev/null | grep -E "Stopping|Stopped|Started|timeout|Failed|Consumed" | tail -120 || true
             echo PROXY
             for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/* /etc/caddy/Caddyfile; do
               [ -f "$f" ] || continue
