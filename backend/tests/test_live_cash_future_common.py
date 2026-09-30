@@ -1,3 +1,5 @@
+import threading
+
 from app.market_data.cash_future_opportunity import CashFutureOpportunityScanner
 from app.market_data.common_websocket import CommonWebSocketManager
 from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord
@@ -44,3 +46,58 @@ def test_runner_contract_metadata_keeps_current_and_near_separate():
     assert len(descriptors) == 4
     months = {meta["contract_month"] for meta in runner._metadata.values() if meta["leg"] == "FUTURE"}
     assert months == {"CURRENT", "NEAR"}
+
+
+def test_runner_stop_is_idempotent_under_concurrent_shutdown():
+    from types import SimpleNamespace
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+
+    class Manager:
+        def __init__(self):
+            self.clear_calls = 0
+            self.lock = threading.Lock()
+
+        def clear_consumer(self, consumer):
+            with self.lock:
+                self.clear_calls += 1
+
+    class Ingestor:
+        def __init__(self):
+            self.close_calls = 0
+            self.lock = threading.Lock()
+
+        def close(self):
+            with self.lock:
+                self.close_calls += 1
+
+    class Repository:
+        def __init__(self):
+            self.close_calls = 0
+            self.lock = threading.Lock()
+
+        def close(self):
+            with self.lock:
+                self.close_calls += 1
+
+    manager = Manager()
+    ingestor = Ingestor()
+    repository = Repository()
+    runner = LiveCashFutureCommonRunner(
+        "ignored",
+        manager=manager,
+    )
+    runner._ingestor = ingestor
+    runner._repository = repository
+
+    threads = [threading.Thread(target=runner.stop) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert runner.stop_event.is_set()
+    assert manager.clear_calls == 1
+    assert ingestor.close_calls == 1
+    assert repository.close_calls == 1
+    assert runner._ingestor is None
+    assert runner._repository is None
