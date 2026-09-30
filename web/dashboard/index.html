@@ -193,6 +193,41 @@ th{font-size:7px!important}
 .cal-page{padding:12px;display:grid;gap:9px}.cal-toolbar{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:7px}.cal-field label{display:block;color:#71838f;font-size:8px;margin-bottom:4px}.cal-field input,.cal-field select{width:100%;background:#081016;border:1px solid #263540;color:#dce7ed;border-radius:6px;padding:7px;font-size:9px}.cal-kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:7px}.cal-kpi{background:#0d1319;border:1px solid #1c2832;border-radius:7px;padding:8px}.cal-kpi b{display:block;color:#71838f;font-size:8px}.cal-kpi strong{display:block;font-size:15px;margin-top:4px}.cal-grid{display:grid;grid-template-columns:1.8fr 1fr;gap:9px}.cal-table{max-height:430px}.cal-table tr.sel td{background:#082a42}.cal-actions{display:flex;gap:5px;flex-wrap:wrap}.cal-chip{font-size:8px;padding:5px 7px;border:1px solid #263540;border-radius:999px;background:#0b1218;color:#8ea1ad}.cal-chip.active{border-color:#075b88;background:#082c43;color:#bdeaff}.cal-detail{display:grid;gap:7px}.cal-detail-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}.cal-detail-item{background:#0b1218;border:1px solid #1b2933;border-radius:6px;padding:7px}.cal-detail-item span{display:block;color:#71838f;font-size:7px}.cal-detail-item b{display:block;font-size:10px;margin-top:3px}.cal-signal{padding:9px;border:1px solid #1b5b43;background:#071a13;border-radius:7px}.cal-signal strong{color:#7dffb0;font-size:10px}.cal-note{font-size:8px;color:#71838f;line-height:1.45}.cal-mobile-actions{display:none}
 @media(max-width:900px){.cal-toolbar{grid-template-columns:1fr 1fr}.cal-kpis{grid-template-columns:repeat(3,1fr)}.cal-grid{grid-template-columns:1fr}.cal-table{max-height:360px}}
 @media(max-width:600px){.cal-page{padding:10px}.cal-toolbar{grid-template-columns:1fr 1fr}.cal-kpis{grid-template-columns:repeat(2,1fr)}.cal-grid{grid-template-columns:1fr}.cal-table table{min-width:780px}.cal-mobile-actions{display:flex;position:sticky;bottom:68px;z-index:20;background:#070a0d;padding:6px 0}.cal-mobile-actions button{flex:1}}
+
+/* Batch 5 — Synthetic Arbitrage Workspace */
+.syn-page{padding:12px;display:grid;gap:9px}
+.syn-toolbar{display:grid;grid-template-columns:1.15fr .95fr 1fr auto;gap:7px;align-items:end}
+.syn-field label{display:block;color:#71838f;font-size:8px;margin-bottom:4px}
+.syn-field input,.syn-field select{width:100%;background:#081016;border:1px solid #263540;color:#dce7ed;border-radius:6px;padding:7px;font-size:9px}
+.syn-kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:7px}
+.syn-kpi{background:#0d1319;border:1px solid #1c2832;border-radius:7px;padding:8px}
+.syn-kpi b{display:block;font-size:8px;color:#71838f}
+.syn-kpi strong{display:block;font-size:15px;margin-top:4px}
+.syn-grid{display:grid;grid-template-columns:1.85fr 1fr;gap:9px}
+.syn-table{max-height:430px}
+.syn-table tr.syn-selected td{background:#082a42}
+.syn-actions{display:flex;gap:5px;flex-wrap:wrap}
+.syn-chip{font-size:8px;padding:5px 7px;border:1px solid #263540;border-radius:999px;background:#0b1218;color:#8ea1ad}
+.syn-chip.active{border-color:#075b88;background:#082c43;color:#bdeaff}
+.syn-detail{display:grid;gap:7px}
+.syn-detail-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+.syn-detail-item{background:#0b1218;border:1px solid #1b2933;border-radius:6px;padding:7px}
+.syn-detail-item span{display:block;color:#71838f;font-size:7px}
+.syn-detail-item b{display:block;font-size:10px;margin-top:3px}
+.syn-signal{padding:9px;border:1px solid #1b5b43;background:#071a13;border-radius:7px}
+.syn-signal strong{color:#7dffb0;font-size:10px}
+.syn-leg-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.syn-leg{background:#0b1218;border:1px solid #1b2933;border-radius:6px;padding:7px}
+.syn-leg span{display:block;color:#71838f;font-size:7px}
+.syn-leg b{display:block;font-size:9px;margin-top:3px}
+.syn-note{font-size:8px;color:#71838f;line-height:1.45}
+.syn-alerts{display:grid;grid-template-columns:1.35fr .65fr;gap:9px}
+.syn-alert-list{max-height:180px;overflow:auto;display:grid;gap:5px}
+.syn-alert-row{display:flex;justify-content:space-between;gap:8px;align-items:center;background:#0b1218;border:1px solid #1b2933;border-radius:6px;padding:7px;font-size:8px}
+.syn-alert-row b{font-size:9px}
+.syn-mobile-actions{display:none}
+@media(max-width:900px){.syn-toolbar{grid-template-columns:1fr 1fr}.syn-kpis{grid-template-columns:repeat(3,1fr)}.syn-grid,.syn-alerts{grid-template-columns:1fr}.syn-table{max-height:360px}}
+@media(max-width:600px){.syn-page{padding:10px}.syn-toolbar{grid-template-columns:1fr 1fr}.syn-kpis{grid-template-columns:repeat(2,1fr)}.syn-kpi strong{font-size:14px}.syn-table table{min-width:980px}.syn-detail-grid{grid-template-columns:repeat(2,1fr)}.syn-leg-grid{grid-template-columns:1fr}.syn-mobile-actions{display:flex;position:sticky;bottom:68px;z-index:20;background:#070a0d;padding:6px 0;gap:6px}.syn-mobile-actions button{flex:1}}
 </style>
 </head>
 <body>
@@ -207,7 +242,7 @@ th{font-size:7px!important}
  <div class="nav-group">
   <button class="nav-item" id="cashFutureNav" onclick="showCashFuture()"><span class="nav-icon">↔</span>Cash-Future</button>
   <button class="nav-item" id="calendarNav" onclick="showCalendarSpread()"><span class="nav-icon">◫</span>Calendar Spread</button>
-  <button class="nav-item" onclick="toast('Synthetic Arbitrage workspace is Batch 5')"><span class="nav-icon">⌁</span>Synthetic Arbitrage</button>
+  <button class="nav-item" id="syntheticNav" onclick="showSyntheticArbitrage()"><span class="nav-icon">⌁</span>Synthetic Arbitrage</button>
   <button class="nav-item" onclick="toast('Box Spread workspace is Batch 6')"><span class="nav-icon">▣</span>Box Spread</button>
  </div>
  <div class="nav-group" style="margin-top:5px">
@@ -799,7 +834,7 @@ function showAnalyze(){
  refreshAnalyze();window.scrollTo({top:0,behavior:'smooth'});
 }
 function goHome(){
- document.getElementById('analyzePage').hidden=true;document.getElementById('home').hidden=false;
+ document.getElementById('analyzePage').hidden=true;document.getElementById('cashFuturePage').hidden=true;document.getElementById('calendarPage').hidden=true;document.getElementById('syntheticPage').hidden=true;document.getElementById('home').hidden=false;
  document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.querySelector('.nav-item[onclick="goHome()"]')?.classList.add('active');
  document.getElementById('bottomAnalyze')?.classList.remove('active');document.getElementById('bottomHome')?.classList.add('active');
  window.scrollTo({top:0,behavior:'smooth'});
@@ -873,6 +908,104 @@ function calSetRank(m){calRankMode=m;[['spread','calSpreadChip'],['volume','calV
 async function refreshCalendar(){try{const r=await fetch(base()+'/api/v1/strategy/calendar-spread/live',{cache:'no-store'});if(!r.ok)throw new Error('Calendar API '+r.status);const p=await r.json();calData=p.data||p.opportunities||p.pairs||[];document.getElementById('calObs').textContent=calFmt(p.health?.observations||p.observations||0);document.getElementById('calDropped').textContent=calFmt(p.health?.dropped||p.dropped||0);renderCalendar();document.getElementById('calUpdated').textContent='LIVE '+stamp()}catch(e){document.getElementById('calRows').innerHTML='<tr><td colspan="10">LIVE CALENDAR ERROR • '+e.message+'</td></tr>';document.getElementById('calUpdated').textContent='SOURCE ERROR'}}
 function calPaperEntry(){if(!calSelected){toast('Select a calendar pair first');return}document.getElementById('paperSymbol').value=calSelected.symbol||'';document.getElementById('paperPrice').value=calSelected.near_ltp||calSelected.current_ltp||'';document.getElementById('paperQty').value=calSelected.lot_size||1;openPaperModal()}
 document.getElementById('calSymbol')?.addEventListener('input',renderCalendar);document.getElementById('calUniverse')?.addEventListener('change',renderCalendar);document.getElementById('calRank')?.addEventListener('change',e=>calSetRank(e.target.value));
+
+let synData=[],synSelected=null,synRankMode='edge';
+function showSyntheticArbitrage(){
+ document.getElementById('home').hidden=true;
+ document.getElementById('analyzePage').hidden=true;
+ document.getElementById('cashFuturePage').hidden=true;
+ document.getElementById('calendarPage').hidden=true;
+ document.getElementById('syntheticPage').hidden=false;
+ document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
+ document.getElementById('syntheticNav').classList.add('active');
+ refreshSynthetic(); refreshSyntheticAlerts(); loadSyntheticPaper(); window.scrollTo({top:0,behavior:'smooth'});
+}
+function synFmt(v){return v==null||v===''||!Number.isFinite(Number(v))?'—':Number(v).toLocaleString('en-IN',{maximumFractionDigits:2})}
+function synPct(v){return v==null||v===''||!Number.isFinite(Number(v))?'—':Number(v).toFixed(4)}
+function synFiltered(){
+ const s=document.getElementById('synSymbol').value.trim().toUpperCase(),u=document.getElementById('synUniverse').value;
+ return synData.filter(x=>(!s||String(x.underlying||'').toUpperCase().includes(s))&&(u==='ALL'||String(x.instrument_class||'').toUpperCase()===u))
+ .sort((a,b)=>{
+   const ka=synRankMode==='lot'?'edge_per_lot':synRankMode==='distance'?'strike_distance':'executable_edge';
+   const av=Number(a[ka]||0),bv=Number(b[ka]||0);
+   return synRankMode==='distance'?av-bv:bv-av;
+ });
+}
+function synBidAsk(b,a){return synFmt(b)+' / '+synFmt(a)}
+function renderSynthetic(){
+ const rows=synFiltered(),tb=document.getElementById('synRows');
+ tb.innerHTML=rows.map((x,i)=>{
+   const selected=synSelected&&x.underlying===synSelected.underlying&&x.strike===synSelected.strike&&x.direction===synSelected.direction&&String(x.expiry)===String(synSelected.expiry);
+   const executable=Number(x.executable_edge)>0;
+   return '<tr class="'+(selected?'syn-selected':'')+'" onclick="selectSynthetic('+i+')"><td><strong>'+String(x.underlying||'—')+'</strong></td><td>'+String(x.instrument_class||'—')+'</td><td>'+String(x.expiry||'—')+'</td><td>'+synFmt(x.strike)+'</td><td>'+String(x.strike_side||'—')+' • ±'+String(x.strike_distance??'—')+'</td><td>'+String(x.direction||'—')+'</td><td>'+synBidAsk(x.future_bid,x.future_ask)+'</td><td>'+synBidAsk(x.call_bid,x.call_ask)+'</td><td>'+synBidAsk(x.put_bid,x.put_ask)+'</td><td class="'+(executable?'up':'')+'">'+synFmt(x.executable_edge)+'</td><td>'+synFmt(x.edge_per_lot)+'</td><td class="'+(executable?'up':'')+'">'+(executable?'LIVE':'FILTERED')+'</td></tr>';
+ }).join('')||'<tr><td colspan="12">NO LIVE SYNTHETIC OPPORTUNITY</td></tr>';
+ document.getElementById('synCount').textContent=rows.length;
+ document.getElementById('synBest').textContent=rows.length?synFmt(rows[0].executable_edge):'—';
+ document.getElementById('synIndex').textContent=rows.filter(x=>String(x.instrument_class).toUpperCase()==='INDEX').length;
+ document.getElementById('synStock').textContent=rows.filter(x=>String(x.instrument_class).toUpperCase()==='STOCK').length;
+ if(rows.length&&!synSelected)selectSynthetic(0);
+ if(synSelected&&!rows.some(x=>x.underlying===synSelected.underlying&&x.strike===synSelected.strike&&x.direction===synSelected.direction))selectSynthetic(0);
+}
+function selectSynthetic(i){
+ const rows=synFiltered(); synSelected=rows[i]||null;
+ if(!synSelected){document.getElementById('synDetailTitle').textContent='Select a live opportunity';return}
+ const x=synSelected;
+ document.getElementById('synDetailTitle').textContent=x.underlying+' • '+x.direction+' SYNTHETIC';
+ document.getElementById('synSignal').textContent=Number(x.executable_edge)>0?'EXECUTABLE SYNTHETIC EDGE':'LIVE • MONITOR';
+ document.getElementById('synUnderlying').textContent=String(x.underlying||'—')+' • '+String(x.instrument_class||'—');
+ document.getElementById('synExpiryStrike').textContent=String(x.expiry||'—')+' • '+synFmt(x.strike);
+ document.getElementById('synDirection').textContent=String(x.direction||'—');
+ document.getElementById('synEdge').textContent=synFmt(x.executable_edge);
+ document.getElementById('synEdgeLot').textContent=synFmt(x.edge_per_lot);
+ document.getElementById('synGross').textContent=synFmt(x.gross_pnl);
+ document.getElementById('synDistance').textContent='±'+String(x.strike_distance??'—')+' • '+String(x.strike_side||'—');
+ document.getElementById('synTimestamp').textContent=x.timestamp_ns?new Date(Number(x.timestamp_ns)/1e6).toLocaleTimeString('en-IN',{hour12:false}):'—';
+ document.getElementById('synFuture').textContent=synBidAsk(x.future_bid,x.future_ask);
+ document.getElementById('synCall').textContent=synBidAsk(x.call_bid,x.call_ask);
+ document.getElementById('synPut').textContent=synBidAsk(x.put_bid,x.put_ask);
+ renderSynthetic();
+}
+function synSetRank(m){
+ synRankMode=m;
+ [['edge','synEdgeChip'],['lot','synLotChip'],['distance','synDistChip']].forEach(a=>document.getElementById(a[1]).classList.toggle('active',a[0]===m));
+ renderSynthetic();
+}
+async function refreshSynthetic(){
+ try{
+   const r=await fetch(base()+'/api/v1/scanner/synthetic-cash-carry/live?limit=200',{cache:'no-store'});
+   if(!r.ok)throw new Error('Synthetic API '+r.status);
+   const p=await r.json(); synData=p.data||[];
+   renderSynthetic(); document.getElementById('synUpdated').textContent='LIVE '+stamp();
+ }catch(e){
+   document.getElementById('synRows').innerHTML='<tr><td colspan="12">LIVE SYNTHETIC ERROR • '+e.message+'</td></tr>';
+   document.getElementById('synUpdated').textContent='SOURCE ERROR';
+ }
+}
+async function refreshSyntheticAlerts(){
+ try{
+   const r=await fetch(base()+'/api/v1/scanner/synthetic-cash-carry/alerts?days=30&limit=50',{cache:'no-store'});
+   if(!r.ok)throw new Error('Alert API '+r.status);
+   const p=await r.json(),rows=p.data||[]; document.getElementById('synAlerts').textContent=rows.length;
+   document.getElementById('synAlertList').innerHTML=rows.map(x=>'<div class="syn-alert-row"><div><b>'+String(x.underlying||x.symbol||'—')+'</b><div>'+String(x.direction||'—')+' • strike '+synFmt(x.strike)+'</div></div><span class="status-tag active">EDGE '+synFmt(x.executable_edge)+'</span></div>').join('')||'<div class="syn-alert-row"><span>No synthetic alerts in the last 30 days.</span></div>';
+ }catch(e){document.getElementById('synAlerts').textContent='—';document.getElementById('synAlertList').innerHTML='<div class="syn-alert-row"><span>Alert history unavailable • '+e.message+'</span></div>'}
+}
+async function loadSyntheticPaper(){
+ try{
+   const r=await fetch(base()+'/api/v1/execution/paper/account',{cache:'no-store'});if(!r.ok)throw new Error('Paper account '+r.status);
+   const p=await r.json();document.getElementById('synCapital').textContent='₹'+fmt(p.virtual_balance);document.getElementById('synPositions').textContent=fmt(p.open_positions);document.getElementById('synRealized').textContent='₹'+fmt(p.realized_pnl);
+   const q=await fetch(base()+'/api/v1/execution/paper/position',{cache:'no-store'});if(q.ok){const m=(await q.json()).mark_to_market;document.getElementById('synMtm').textContent=m&&m.net_pnl!=null?'₹'+fmt(m.net_pnl):m?'₹'+fmt(m.gross_pnl):'—'}
+ }catch(e){document.getElementById('synCapital').textContent='₹—';document.getElementById('synPositions').textContent='CHECK'}
+}
+function synPaperEntry(){
+ if(!synSelected){toast('Select a live synthetic opportunity first');return}
+ document.getElementById('paperSymbol').value=(synSelected.underlying||'')+' SYNTHETIC';
+ document.getElementById('paperPrice').value=synSelected.direction==='LONG'?synSelected.future_ask||'':synSelected.future_bid||'';
+ document.getElementById('paperQty').value=synSelected.lot_size||1;
+ openPaperModal();
+}
+document.getElementById('synSymbol')?.addEventListener('input',renderSynthetic);
+document.getElementById('synUniverse')?.addEventListener('change',renderSynthetic);
+document.getElementById('synRank')?.addEventListener('change',e=>synSetRank(e.target.value));
 </script>
 
 <!-- Shared dashboard compatibility/status contract for completed platform phases. -->
