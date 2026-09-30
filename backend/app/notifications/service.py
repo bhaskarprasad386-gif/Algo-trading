@@ -21,6 +21,7 @@ class LiveCashFutureAlert:
 class NotificationService:
     def __init__(self) -> None:
         self._common = AlertService()
+        self._notifier = self._common._notifier
         self._last_alert_ns = self._common._last_sent
 
     @staticmethod
