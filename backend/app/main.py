@@ -729,11 +729,22 @@ def root():
 def market_data_runtime_health():
     """Expose process-local live-feed diagnostics for runtime troubleshooting."""
     manager = shared_common_manager()
-    runner = live_cash_future_runner
+    cash_runner = live_cash_future_runner
+    calendar_runner = live_calendar_spread_task
+    synthetic_runner = live_synthetic_runner
+    box_runner = live_box_spread_runner
     return {
         "status": "ok",
         "common_feed": manager.snapshot(),
-        "cash_future_runner": None if runner is None else runner.snapshot(),
+        "runners": {
+            "cash_future": None if cash_runner is None else cash_runner.snapshot(),
+            "calendar_spread": None if calendar_runner is None else {
+                "task": calendar_runner.get_name(),
+                "done": calendar_runner.done(),
+            },
+            "synthetic_arbitrage": None if synthetic_runner is None else synthetic_runner.snapshot(),
+            "box_spread": None if box_runner is None else box_runner.snapshot(),
+        },
         "scanner": live_cash_future_scanner.health(),
     }
 
