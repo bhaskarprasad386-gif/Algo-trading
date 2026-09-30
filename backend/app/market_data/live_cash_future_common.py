@@ -66,6 +66,15 @@ class LiveCashFutureCommonRunner:
     def last_result(self) -> CashFutureScanResult | None:
         return self._last_result
 
+    def snapshot(self) -> dict[str, Any]:
+        """Return live runner state without exposing broker/socket internals."""
+        ingestor = self._ingestor
+        return {
+            "running": not self.stop_event.is_set() and not self._stopped,
+            "registered_instruments": len(self._metadata),
+            "ingestor": None if ingestor is None else ingestor.snapshot(),
+        }
+
     def _build_descriptors(self) -> tuple[InstrumentDescriptor, ...]:
         rows = self.instrument_master.download()
         configured = {x.strip().upper() for x in settings.LIVE_CASH_FUTURE_SYMBOLS.split(",") if x.strip()}
