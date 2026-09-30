@@ -102,7 +102,7 @@ class LiveBoxSpreadRunner:
                     current=self.tracker.atm(symbol,time_ns())
                     if previous is not None and current is not None and current != previous and self.recorder is not None:
                         self.recorder.stop()
-                self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe)
+                self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe,consumer="box-options")
                 self.recorder.run_forever()
                 self.recorder=None
         finally:
