@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     PAPER_BOX_SPREAD_AUTO_CYCLE_INTERVAL_SECONDS: int = 5
     PAPER_BOX_SPREAD_AUTO_CYCLE_MIN_PNL: float = 0.0
     LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT: float = 0.0
-    # Restrict the 1-second Cash-Future feed to a configured universe; empty means NIFTY-50 stocks.
+    # Restrict the 1-second Cash-Future feed to a configured universe; empty means all active F&O stock futures.
     LIVE_CASH_FUTURE_SYMBOLS: str = ""
     LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS: float = 1.0
     LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS: float = 3.0
@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS: int = 1
     LIVE_CASH_FUTURE_CAPITAL: float = 10_000_000.0
     LIVE_CASH_FUTURE_MIN_LIQUIDITY_QTY: int = 0
-    LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS: int = 30
+    LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS: int = 90
     LIVE_CASH_FUTURE_ALERT_MIN_GROSS_PROFIT: float = 0.0
     LIVE_CASH_FUTURE_ALERT_MIN_NET_PROFIT: float = 0.0
     LIVE_CASH_FUTURE_ALERT_MIN_ANNUALIZED_GAP_PCT: float = 0.0
