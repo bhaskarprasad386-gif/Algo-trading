@@ -138,7 +138,7 @@ class CommonWebSocketManager:
         for group in list(self._sockets):
             if group not in desired:
                 socket = self._sockets.pop(group)
-                socket.close()
+                self._close_socket_bounded(socket)
 
     def _on_data(self, group: SocketGroup, message: Any) -> None:
         if not isinstance(message, dict):
