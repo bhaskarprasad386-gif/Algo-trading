@@ -6,7 +6,6 @@ from datetime import date
 from typing import Iterable, Mapping, Any
 
 from app.market_data.contract_resolver import DynamicContractResolver, ContractCandidate
-from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
