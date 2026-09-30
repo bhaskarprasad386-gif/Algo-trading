@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from threading import RLock
 from typing import Iterable
 
@@ -30,7 +31,7 @@ class CashFutureScanResult:
     def as_dict(self) -> dict[str, object]:
         data = self.signal.as_dict()
         data.update({
-            "date_time": datetime.fromtimestamp(self.signal.timestamp_ns / 1_000_000_000).isoformat(),
+            "date_time": datetime.fromtimestamp(self.signal.timestamp_ns / 1_000_000_000, ZoneInfo("Asia/Kolkata")).isoformat(),
             "symbol": self.signal.symbol,
             "contract_month": self.contract_month,
             "cash_ltp": self.cash.ltp,
@@ -90,7 +91,8 @@ class CashFutureOpportunityScanner:
             bucket = self._latest.setdefault(symbol, {})
             bucket[leg] = record
             cash = bucket.get("CASH")
-            future = bucket.get(month) if leg != "CASH" else bucket.get("CURRENT") or bucket.get("NEAR")
+            selected_month = month if leg != "CASH" else ("CURRENT" if bucket.get("CURRENT") is not None else "NEAR")
+            future = bucket.get(selected_month)
             if cash is None or future is None:
                 return None
             if cash.timestamp_ns != future.timestamp_ns:
@@ -120,12 +122,12 @@ class CashFutureOpportunityScanner:
                 minimum_gross_profit=self.minimum_gross_profit,
                 legs=(
                     OpportunityLeg(cash, OrderSide.BUY, "cash-entry"),
-                    OpportunityLeg(future, OrderSide.SELL, f"future-{month.lower()}-entry"),
+                    OpportunityLeg(future, OrderSide.SELL, f"future-{selected_month.lower()}-entry"),
                 ),
                 expiry=future.expiry,
-                metadata={"contract_month": month, "source": "common-market-data", "live_orders": False},
+                metadata={"contract_month": selected_month, "source": "common-market-data", "live_orders": False},
             )
-            result = CashFutureScanResult(signal, cash, future, month)
+            result = CashFutureScanResult(signal, cash, future, selected_month)
             self._results[(symbol, month)] = result
             return result
 
