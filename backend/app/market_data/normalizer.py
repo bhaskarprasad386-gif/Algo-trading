@@ -8,7 +8,8 @@ from __future__ import annotations
 from time import time_ns
 from typing import Any, Mapping
 
-from .contracts import InstrumentDescriptor, InstrumentKey, InstrumentType, MarketDataRecord, OptionType
+from .contracts import InstrumentKey, InstrumentType, MarketDataRecord, OptionType
+from .registry import InstrumentDescriptor
 
 
 class AngelOneTickNormalizer:
