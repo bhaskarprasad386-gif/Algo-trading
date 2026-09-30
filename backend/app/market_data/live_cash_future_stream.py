@@ -41,7 +41,7 @@ WORKER_JOIN_TIMEOUT_SECONDS = 5.0
 TICK_BUFFER_TIMEOUT_SECONDS = 1.0
 
 _STATE_LOCK = threading.Lock()
-_STATE = {"enabled": False, "running": False, "connected": False, "last_observation_ns": None, "written": 0, "rejected": 0, "dropped": 0, "pairs": 0, "observations": 0, "gap_seconds": 0, "coverage": 0, "last_error": None}
+_STATE = {"enabled": False, "running": False, "connected": False, "last_observation_ns": None, "written": 0, "rejected": 0, "dropped": 0, "pairs": 0, "observations": 0, "gap_seconds": 0, "coverage": 0, "last_error": None, "persistence": {}}
 
 
 def live_cash_future_health() -> dict[str, Any]:
@@ -51,6 +51,7 @@ def live_cash_future_health() -> dict[str, Any]:
     latest = state.get("last_observation_ns")
     state["latest_age_seconds"] = None if latest is None else max(0.0, (now_ns - int(latest)) / 1_000_000_000)
     state["status"] = "ok" if state["running"] and state["connected"] and (state["latest_age_seconds"] is None or state["latest_age_seconds"] <= 10) else "degraded"
+    state["health_version"] = 1
     return state
 
 
@@ -330,6 +331,7 @@ class LiveCashFutureOneSecondCollector:
         last_message_monotonic = time_module.monotonic()
         written = 0
         rejected = 0
+        persistence_snapshot: dict[str, Any] = {}
         dropped = 0
         pairs = 0
         observations = 0
@@ -430,7 +432,8 @@ class LiveCashFutureOneSecondCollector:
         finally:
             try:
                 ingestor.close(timeout=10.0)
-                written = int(ingestor.snapshot()["inserted"])
+                persistence_snapshot = dict(ingestor.snapshot())
+                written = int(persistence_snapshot["inserted"])
                 repository.checkpoint(mode="PASSIVE")
             finally:
                 repository.close()
@@ -450,6 +453,7 @@ class LiveCashFutureOneSecondCollector:
             _STATE["running"] = False
             _STATE["connected"] = False
             _STATE["gap_seconds"] = gap_seconds
+            _STATE["persistence"] = persistence_snapshot
         app_logger.info(f"1-second live Cash-Future session complete: written={written}, rejected={rejected}, dropped={dropped}, pairs={pairs}, gaps={gap_seconds}")
 
     def run_forever(self) -> None:
