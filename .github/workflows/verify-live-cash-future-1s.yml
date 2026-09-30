@@ -17,7 +17,55 @@ permissions:
   contents: read
 
 jobs:
+  storage-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      VPS_HOST: 82.41.67.22
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY_B64: ${{ secrets.VPS_SSH_KEY }}
+    steps:
+      - name: SQLite storage breakdown
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_KEY_B64"
+          printf '%s' "$VPS_SSH_KEY_B64" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          APP_DIR=/opt/Algo-Trading
+          echo "=== SQLITE STORAGE BREAKDOWN ==="
+          for DB in "$APP_DIR/backend/backtest_market_data_2026_09_30.sqlite3" "$APP_DIR/backend/backtest_market_data.sqlite3"; do
+            if [ -f "$DB" ]; then
+              echo "DB=$DB"
+              "$APP_DIR/.venv/bin/python" - "$DB" <<'PY'
+          import os, sqlite3, sys
+          db=sys.argv[1]
+          c=sqlite3.connect(db, timeout=5)
+          try:
+              print("DB_SIZE_BYTES="+str(os.path.getsize(db)))
+              print("PAGE_SIZE="+str(c.execute("PRAGMA page_size").fetchone()[0]))
+              print("PAGE_COUNT="+str(c.execute("PRAGMA page_count").fetchone()[0]))
+              print("FREELIST_PAGES="+str(c.execute("PRAGMA freelist_count").fetchone()[0]))
+              print("WAL_MODE="+str(c.execute("PRAGMA journal_mode").fetchone()[0]))
+              rows=c.execute("SELECT name, SUM(pgsize) FROM dbstat GROUP BY name ORDER BY SUM(pgsize) DESC").fetchall()
+              for name,size in rows[:30]:
+                  print(f"DBSTAT {name} {size}")
+          finally:
+              c.close()
+          PY
+            else
+              echo "DB_NOT_FOUND=$DB"
+            fi
+          done
+          REMOTE
+
   verify:
+
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
