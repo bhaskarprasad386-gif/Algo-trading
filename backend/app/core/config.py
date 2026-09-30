@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     MARKET_DATA_INGEST_FLUSH_SECONDS: float = 5.0
     MARKET_DATA_INGEST_PUT_TIMEOUT_SECONDS: float = 2.0
     LIVE_CALENDAR_SPREAD_DATA_ENABLED: bool = False
+    LIVE_CALENDAR_SPREAD_MIN_GAP_POINTS: float = 0.0
+    LIVE_CALENDAR_SPREAD_MIN_GROSS_PROFIT: float = 0.0
+    LIVE_CALENDAR_SPREAD_RESULT_RETENTION_DAYS: int = 90
     LIVE_SYNTHETIC_DATA_ENABLED: bool = False
     LIVE_BOX_SPREAD_DATA_ENABLED: bool = False
     # Box-Spread paper automation is opt-in and only touches active PAPER accounts.
