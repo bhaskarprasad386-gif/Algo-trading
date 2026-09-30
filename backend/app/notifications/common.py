@@ -36,7 +36,7 @@ class AlertService:
         return ("whatsapp",) if self._notifier.configured else ()
 
     def dispatch_user(self, user, event: AlertEvent) -> bool:
-        if not user.mobile_number or not self._notifier.configured:
+        if not user.mobile_number:
             return False
         key = (int(user.id), event.event_id)
         cooldown_ns = int(max(0.0, float(settings.LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS)) * 1_000_000_000)
