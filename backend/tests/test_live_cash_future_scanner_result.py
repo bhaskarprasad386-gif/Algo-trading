@@ -90,7 +90,7 @@ def test_live_scanner_alert_history_is_retained_for_90_days(monkeypatch, tmp_pat
         assert row.timestamp_ns == signal.timestamp_ns
         assert row.gap == signal.gap
         assert row.observed_at >= datetime.now() - timedelta(seconds=5)
-        row.observed_at = row.observed_at - timedelta(days=31)
+        row.observed_at = row.observed_at - timedelta(days=91)
         db.commit()
 
     recovered = replace(signal, timestamp_ns=4_000_000_000, alert_event="RECOVERY")
