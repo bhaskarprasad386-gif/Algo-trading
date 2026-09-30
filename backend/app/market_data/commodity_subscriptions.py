@@ -93,4 +93,4 @@ def select_commodity_contracts(
     )
 
 
-__all__ = ["CommodityContractSelection", "select_commodity_contracts"]
+__all__ = ["CommoditySubscription", "CommodityContractSelection", "select_commodity_contracts"]
