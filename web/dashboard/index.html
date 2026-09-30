@@ -281,18 +281,111 @@ async function loadLiveDataHealth(){
  }catch(e){document.getElementById('liveDataHealthBadge').textContent='ERROR';document.getElementById('homeData').textContent='ERROR';log('Live health failed: '+e.message)}
 }
 function setScanSummary(p){const count=Number(p.opportunity_count||0);document.getElementById('summarySymbols').textContent=(p.symbols_requested||[]).length;document.getElementById('summaryObservations').textContent=p.scanned_observations||0;document.getElementById('summaryOpportunities').textContent=count;document.getElementById('summaryErrors').textContent=(p.errors||[]).length;document.getElementById('dashOpp').textContent=count;document.getElementById('homeCfCount').textContent=count}
+function applyScannerPayload(p){
+ const data=(p.data||[]).slice().sort((a,b)=>Number(b.rank_score||0)-Number(a.rank_score||0)||Number(b.gap_pct||0)-Number(a.gap_pct||0)||Number(b.net_profit||0)-Number(a.net_profit||0));
+ setScanSummary({
+   symbols_requested:[...new Set(data.map(x=>x.symbol))],
+   scanned_observations:data.length,
+   opportunity_count:Number(p.opportunity_count||data.filter(x=>Number(x.gap)>0&&Number(x.net_gap)>0&&x.lifecycle!=='EXPIRED').length),
+   errors:[]
+ });
+ const tbody=document.getElementById('rows');
+ tbody.innerHTML='';
+ data.forEach((x,i)=>{
+   const executable=Number(x.gap)>0&&Number(x.net_gap)>0&&x.lifecycle!=='EXPIRED';
+   const tr=document.createElement('tr');
+   tr.innerHTML='<td>'+(i+1)+'</td><td>'+x.symbol+'</td><td>'+x.contract_month+'</td><td>'+fmt(x.cash_ask)+'</td><td>'+fmt(x.future_bid)+'</td><td>'+fmt(x.gap)+' ('+fmt(x.gap_pct)+'%)</td><td>'+fmt(x.net_gap_pct)+'%</td><td>'+fmt(x.gross_profit||x.gross_lot_value)+'</td><td>'+fmt(x.net_profit)+'</td><td>'+fmt(x.roi_pct)+'%</td><td>'+fmt(x.capacity_notional)+'</td><td>'+fmt(x.cash_day_high)+' / '+fmt(x.cash_day_low)+'</td><td>'+fmt(x.future_day_high)+' / '+fmt(x.future_day_low)+'</td><td>'+fmt(x.liquidity_qty)+' • Stable '+fmt(x.stable_observations)+'</td><td class="'+(executable?'up':'')+'">'+x.lifecycle+'</td>';
+   tbody.appendChild(tr);
+ });
+ if(!tbody.children.length) tbody.innerHTML='<tr><td colspan="15">NO LIVE SIGNAL WITHIN 5 SECONDS</td></tr>';
+ const mini=document.getElementById('scannerRows');
+ mini.innerHTML=data.slice(0,5).map(x=>'<tr><td><strong>'+x.symbol+'</strong></td><td class="'+(Number(x.gap_pct)>0?'up':'')+'">'+pct(x.gap_pct)+'</td><td>'+pct(x.net_gap_pct)+'</td><td>'+fmt(x.liquidity_qty||x.volume)+'</td><td>'+fmt(x.oi)+'</td></tr>').join('') || '<tr><td colspan="5">NO LIVE SIGNAL WITHIN 5 SECONDS</td></tr>';
+ document.getElementById('lastScan').textContent=stamp();
+ renderAlerts(data);
+ document.getElementById('dashSystem').textContent='ONLINE • LIVE 1s';
+ document.getElementById('topLive').textContent='● LIVE DATA • WS CONNECTED';
+}
+
 async function scan(){
- const status=scanStatus,tbody=rows,button=scanBtn;button.disabled=true;button.textContent='SCANNING…';status.textContent='READING LIVE 1s SCANNER…';
+ const status=document.getElementById('scanStatus'),button=document.getElementById('scanBtn');
+ button.disabled=true;button.textContent='SCANNING…';status.textContent='READING LIVE 1s SCANNER…';
  try{
-  const r=await fetch(base()+'/api/v1/scanner/cash-future/live/fast?max_age_seconds=5&limit=50',{cache:'no-store'});if(!r.ok)throw new Error('Live Scanner API '+r.status);
-  const p=await r.json();const data=(p.data||[]).slice().sort((a,b)=>Number(b.rank_score||0)-Number(a.rank_score||0)||Number(b.gap_pct||0)-Number(a.gap_pct||0)||Number(b.net_profit||0)-Number(a.net_profit||0));
-  setScanSummary({symbols_requested:[...new Set(data.map(x=>x.symbol))],scanned_observations:data.length,opportunity_count:data.filter(x=>Number(x.gap)>0).length,errors:p.errors||[]});
-  dashSystem.textContent='ONLINE • LIVE 1s';tbody.innerHTML='';data.forEach((x,i)=>{const executable=Number(x.gap)>0&&Number(x.net_gap)>0&&x.lifecycle!=='EXPIRED';const tr=document.createElement('tr');tr.innerHTML='<td>'+(i+1)+'</td><td>'+x.symbol+'</td><td>'+x.contract_month+'</td><td>'+fmt(x.cash_ask)+'</td><td>'+fmt(x.future_bid)+'</td><td>'+fmt(x.gap)+' ('+fmt(x.gap_pct)+'%)</td><td>'+fmt(x.net_gap_pct)+'%</td><td>'+fmt(x.gross_profit||x.gross_lot_value)+'</td><td>'+fmt(x.net_profit)+'</td><td>'+fmt(x.roi_pct)+'%</td><td>'+fmt(x.capacity_notional)+'</td><td>'+fmt(x.cash_day_high)+' / '+fmt(x.cash_day_low)+'</td><td>'+fmt(x.future_day_high)+' / '+fmt(x.future_day_low)+'</td><td>'+fmt(x.liquidity_qty)+' • Stable '+fmt(x.stable_observations)+'</td><td class="'+(executable?'up':'')+'">'+x.lifecycle+'</td>';tbody.appendChild(tr)});
-  const mini=document.getElementById('scannerRows');mini.innerHTML=data.slice(0,5).map(x=>'<tr><td><strong>'+x.symbol+'</strong></td><td class="'+(Number(x.gap_pct)>0?'up':'')+'">'+pct(x.gap_pct)+'</td><td>'+pct(x.net_gap_pct)+'</td><td>'+fmt(x.liquidity_qty||x.volume)+'</td><td>'+fmt(x.oi)+'</td></tr>').join('');
-  if(!tbody.children.length){tbody.innerHTML='<tr><td colspan="15">NO LIVE SIGNAL WITHIN 5 SECONDS</td></tr>';status.textContent='SCAN COMPLETE • NO LIVE SIGNAL WITHIN 5 SECONDS'}else status.textContent='LIVE SCAN COMPLETE • '+data.length+' current signals';
-  document.getElementById('lastScan').textContent=stamp();renderAlerts(data);log('Live Cash–Future 1s scanner refreshed');localStorage.setItem('algoApiBase',apiInput.value.trim());
- }catch(e){dashSystem.textContent='OFFLINE';document.getElementById('lastScan').textContent=stamp();status.textContent='LIVE SCAN FAILED: '+e.message;log('Live scan failed: '+e.message)}
- finally{button.disabled=false;button.textContent='RUN LIVE SCAN';scheduleScan()}
+   const r=await fetch(base()+'/api/v1/scanner/cash-future/live/fast?max_age_seconds=5&limit=50',{cache:'no-store'});
+   if(!r.ok)throw new Error('Live Scanner API '+r.status);
+   const p=await r.json();
+   applyScannerPayload(p);
+   status.textContent='LIVE SCAN COMPLETE • '+(p.data||[]).length+' current signals';
+   log('Live Cash–Future scanner refreshed');
+   localStorage.setItem('algoApiBase',apiInput.value.trim());
+ }catch(e){
+   document.getElementById('dashSystem').textContent='OFFLINE';
+   status.textContent='LIVE SCAN FAILED: '+e.message;
+   log('Live scan failed: '+e.message);
+ }finally{
+   button.disabled=false;button.textContent='RUN LIVE SCAN';scheduleScan();
+ }
+}
+
+let dashboardSocket=null;
+let dashboardReconnectTimer=null;
+let dashboardReconnectDelay=1000;
+
+function dashboardWsUrl(){
+ const raw=base();
+ const origin=raw || window.location.origin;
+ const u=new URL(origin,window.location.href);
+ u.protocol=u.protocol==='https:'?'wss:':'ws:';
+ u.pathname='/ws/dashboard';
+ u.search='';
+ u.hash='';
+ return u.toString();
+}
+
+function connectDashboardWebSocket(){
+ if(dashboardSocket && (dashboardSocket.readyState===WebSocket.OPEN || dashboardSocket.readyState===WebSocket.CONNECTING)) return;
+ clearTimeout(dashboardReconnectTimer);
+ try{
+   dashboardSocket=new WebSocket(dashboardWsUrl());
+ }catch(e){
+   scheduleDashboardReconnect();
+   return;
+ }
+ dashboardSocket.onopen=()=>{
+   dashboardReconnectDelay=1000;
+   document.getElementById('topLive').textContent='● LIVE DATA • WS CONNECTED';
+   document.getElementById('scanStatus').textContent='LIVE 1s STREAM CONNECTED';
+   log('Dashboard WebSocket connected');
+ };
+ dashboardSocket.onmessage=(event)=>{
+   try{
+     const payload=JSON.parse(event.data);
+     if(payload.type!=='dashboard_snapshot') return;
+     const scanner=payload.scanner||{};
+     applyScannerPayload({
+       data:Array.isArray(scanner.data)?scanner.data:[],
+       opportunity_count:Number(scanner.opportunity_count||0)
+     });
+     const health=scanner.health||{};
+     document.getElementById('summaryObservations').textContent=fmt(health.observations||0);
+     document.getElementById('summaryErrors').textContent=fmt(health.dropped||0);
+     document.getElementById('scanStatus').textContent='LIVE 1s STREAM • '+(scanner.data||[]).length+' signals';
+     document.getElementById('lastUpdated').textContent='Updated '+new Date(payload.timestamp||Date.now()).toLocaleTimeString('en-IN');
+   }catch(e){log('Dashboard WebSocket payload error: '+e.message)}
+ };
+ dashboardSocket.onerror=()=>{document.getElementById('topLive').textContent='● LIVE DATA • WS ERROR'};
+ dashboardSocket.onclose=()=>{
+   document.getElementById('topLive').textContent='● LIVE DATA • WS RECONNECTING';
+   document.getElementById('scanStatus').textContent='LIVE STREAM RECONNECTING…';
+   scheduleDashboardReconnect();
+ };
+}
+
+function scheduleDashboardReconnect(){
+ clearTimeout(dashboardReconnectTimer);
+ dashboardReconnectTimer=setTimeout(()=>{
+   dashboardReconnectDelay=Math.min(30000,dashboardReconnectDelay*2);
+   connectDashboardWebSocket();
+ },dashboardReconnectDelay);
 }
 function renderAlerts(data){
  const events=(data||[]).filter(x=>x&&x.alert_event);alertEvents=events;
@@ -331,10 +424,10 @@ function applyDashboardWidgets(){
 }
 function resetDashboardWidgets(){localStorage.removeItem(DASHBOARD_WIDGET_KEY);applyDashboardWidgets();document.getElementById('widgetSaveStatus').textContent='Layout: RESET'}
 function connectLiveTicker(){
- // The strategy/scanner live path already consumes Angel One SmartAPI WebSocket data.
- // Home market overview is refreshed from the authoritative backend quote endpoint.
- // Do not open one broker socket per browser card.
- document.getElementById('topLive').title='Backend live data + WebSocket-backed scanners'
+ // One browser WebSocket to the backend; the backend reuses the existing
+ // process-level Angel One 1s scanner. No browser tab opens a broker socket.
+ document.getElementById('topLive').title='Backend dashboard WebSocket • existing Angel One 1s scanner';
+ connectDashboardWebSocket();
 }
 const paperButtons=['paperEntryBtn','paperPositionBtn','paperExitBtn'];
 function setPaperBusy(busy,message){paperButtons.forEach(id=>document.getElementById(id).disabled=busy);if(message)document.getElementById('paperModalStatus').textContent=message}
