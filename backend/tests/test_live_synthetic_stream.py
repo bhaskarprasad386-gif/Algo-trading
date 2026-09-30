@@ -1,6 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from app.market_data.common_websocket import CommonWebSocketManager
 from app.market_data.live_synthetic_stream import (
     LiveSyntheticOptionFutureRecorder,
     SyntheticSubscription,
@@ -134,6 +135,9 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
         def close(self):
             return None
 
+    collector._manager = CommonWebSocketManager(
+        socket_factory=lambda: FakeSocket(auth=collector.auth)
+    )
     monkeypatch.setattr(stream, "MarketDataWebSocket", FakeSocket)
     monkeypatch.setattr(
         stream.LiveSyntheticOptionFutureRecorder,
@@ -221,6 +225,9 @@ def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypa
         def close(self):
             return None
 
+    collector._manager = CommonWebSocketManager(
+        socket_factory=lambda: FakeSocket(auth=collector.auth)
+    )
     monkeypatch.setattr(stream, "MarketDataWebSocket", FakeSocket)
     monkeypatch.setattr(
         stream.LiveSyntheticOptionFutureRecorder,
@@ -327,6 +334,9 @@ def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
         def close(self):
             return None
 
+    collector._manager = CommonWebSocketManager(
+        socket_factory=lambda: FakeSocket(auth=collector.auth)
+    )
     monkeypatch.setattr(stream, "MarketDataWebSocket", FakeSocket)
     monkeypatch.setattr(
         stream.LiveSyntheticOptionFutureRecorder,
@@ -393,6 +403,9 @@ def test_stream_ignores_unsubscribed_tokens_without_persisting(tmp_path, monkeyp
         def close(self):
             return None
 
+    collector._manager = CommonWebSocketManager(
+        socket_factory=lambda: FakeSocket(auth=collector.auth)
+    )
     monkeypatch.setattr(stream, "MarketDataWebSocket", FakeSocket)
     monkeypatch.setattr(
         stream.LiveSyntheticOptionFutureRecorder,
