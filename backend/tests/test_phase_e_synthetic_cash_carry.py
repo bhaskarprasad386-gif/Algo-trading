@@ -29,7 +29,7 @@ def test_synthetic_uses_executable_bid_ask_sides():
 def test_synthetic_threshold_filters_before_results():
     ts = 1_000_000_000
     opts = [option(ts, float(k)) for k in range(99, 102)]
-    fut = FutureQuote(ts, "NIFTY", 20270101, 104.0, 106.0, 50, "INDEX", 100, 1000)
+    fut = FutureQuote(ts, "NIFTY", 20270101, 115.0, 116.0, 50, "INDEX", 100, 1000)
     assert scan_synthetic_snapshot(opts, fut, atm_strike=100.0,
         config=SyntheticScanConfig(min_executable_edge=9.0))
     assert not scan_synthetic_snapshot(opts, fut, atm_strike=100.0,
