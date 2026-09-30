@@ -352,7 +352,7 @@ th{font-size:7px!important}
  </section>
 </main>
 </div>
-<nav class="bottom-nav"><button class="active" onclick="goHome()">⌂<br>Home</button><button onclick="toast('Analyze is Batch 2')">⌕<br>Analyze</button><button onclick="toast('Portfolio is Batch 8')">▤<br>Portfolio</button><button onclick="openAlertModal()">♧<br>Alerts</button><button onclick="toast('More modules follow in later batches')">•••<br>More</button></nav>
+<nav class="bottom-nav" id="responsiveQuickNav"><button class="active" onclick="goHome()">⌂<br>Home</button><button onclick="toast('Analyze is Batch 2')">⌕<br>Analyze</button><button onclick="toast('Portfolio is Batch 8')">▤<br>Portfolio</button><button onclick="openAlertModal()">♧<br>Alerts</button><button onclick="toast('More modules follow in later batches')">•••<br>More</button></nav>
 </div>
 </div>
 
@@ -541,16 +541,14 @@ async function scan(){
    if(!r.ok)throw new Error('Live Scanner API '+r.status);
    const p=await r.json();
    applyScannerPayload(p);
-   status.textContent='LIVE SCAN COMPLETE • '+(p.data||[]).length+' current signals';
+   status.textContent=(p.data||[]).length?'LIVE SCAN COMPLETE • '+(p.data||[]).length+' current signals':'SCAN COMPLETE • NO LIVE SIGNAL WITHIN 5 SECONDS';
    log('Live Cash–Future scanner refreshed');
    localStorage.setItem('algoApiBase',apiInput.value.trim());
  }catch(e){
    document.getElementById('dashSystem').textContent='OFFLINE';
    status.textContent='LIVE SCAN FAILED: '+e.message;
    log('Live scan failed: '+e.message);
- }finally{
-   button.disabled=false;button.textContent='RUN LIVE SCAN';scheduleScan();
- }
+ }finally{button.disabled=false;button.textContent='RUN LIVE SCAN';scheduleScan()}
 }
 
 let dashboardSocket=null;
