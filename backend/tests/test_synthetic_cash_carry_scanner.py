@@ -19,7 +19,7 @@ def future(ts, bid=110, ask=111):
     )
 
 
-def test_index_scan_keeps_locked_fifteen_position_radius():
+def test_index_scan_keeps_locked_ten_position_radius():
     strikes = tuple(float(x) for x in range(100, 201))
     quotes = tuple(option(1, strike) for strike in strikes)
     results = scan_synthetic_snapshot(
@@ -27,8 +27,8 @@ def test_index_scan_keeps_locked_fifteen_position_radius():
         config=SyntheticScanConfig(min_executable_edge=0.0),
     )
     assert results
-    assert max(r.strike_distance for r in results) == 15
-    assert all(r.strike_distance <= 15 for r in results)
+    assert max(r.strike_distance for r in results) == 10
+    assert all(r.strike_distance <= 10 for r in results)
 
 
 def test_scanner_ranks_highest_executable_edge_first():
