@@ -16,7 +16,7 @@ def test_synthetic_index_scope_is_atm_plus_minus_ten():
 def test_synthetic_uses_executable_bid_ask_sides():
     ts = 1_000_000_000
     opts = [option(ts, float(k)) for k in range(90, 111)]
-    fut = FutureQuote(ts, "NIFTY", 20270101, 104.0, 106.0, 50, "INDEX", 100, 1000)
+    fut = FutureQuote(ts, "NIFTY", 20270101, 106.0, 108.0, 50, "INDEX", 100, 1000)
     results = scan_synthetic_snapshot(opts, fut, atm_strike=100.0,
                                       config=SyntheticScanConfig())
     assert results
