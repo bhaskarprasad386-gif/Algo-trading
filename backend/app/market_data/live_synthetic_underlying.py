@@ -25,6 +25,7 @@ class LiveSyntheticUnderlyingFeed:
         on_price: Callable[[str, float, int | None], None] | None = None,
         concrete_tokens: dict[str, str] | None = None,
         index_symbols: frozenset[str] = frozenset(),
+        consumer: str = "synthetic-underlyings",
     ) -> None:
         if not symbols:
             raise ValueError("at least one underlying symbol is required")
@@ -40,6 +41,9 @@ class LiveSyntheticUnderlyingFeed:
             for k, v in (concrete_tokens or {}).items()
             if str(k).strip() and str(v).strip()
         }
+        self.consumer = str(consumer).strip()
+        if not self.consumer:
+            raise ValueError("consumer is required")
         self.index_symbols = frozenset(
             str(symbol).strip().upper() for symbol in index_symbols if str(symbol).strip()
         )
@@ -127,7 +131,7 @@ class LiveSyntheticUnderlyingFeed:
 
     def run_forever(self) -> None:
         self._feed = CommonStrategyMarketFeed(
-            "synthetic-underlyings",
+            self.consumer,
             auth=self.auth,
         )
         self._feed.start(self._descriptors(), self._on_record)
