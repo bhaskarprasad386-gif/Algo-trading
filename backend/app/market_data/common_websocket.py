@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from threading import RLock
+from threading import RLock, Thread
 from typing import Any, Callable
 
 from .contracts import InstrumentKey
@@ -175,18 +175,39 @@ class CommonWebSocketManager:
             except Exception:
                 with self._lock:
                     self._delivery_errors += 1
+
+    @staticmethod
+    def _close_socket_bounded(socket: Any, timeout: float = 2.0) -> None:
+        """Keep application shutdown bounded even if broker close blocks."""
+        def _close() -> None:
+            try:
+                socket.close()
             except Exception:
-                with self._lock:
-                    self._delivery_errors += 1
+                pass
+
+        worker = Thread(target=_close, name="common-ws-close", daemon=True)
+        worker.start()
+        worker.join(timeout=max(0.1, float(timeout)))
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
+            sockets = dict(self._sockets)
             return {
                 "subscriptions": len(self.registry.subscriptions()),
                 "active_instruments": len(self.registry.active_keys()),
-                "socket_groups": len(self._sockets),
+                "socket_groups": len(sockets),
                 "consumers": sorted(set(self._callbacks) | set(self._record_callbacks)),
                 "delivery_errors": self._delivery_errors,
+                "connected_groups": [
+                    f"{group.exchange_type}:{group.mode}"
+                    for group, socket in sockets.items()
+                    if bool(getattr(socket, "connected", False))
+                ],
+                "disconnected_groups": [
+                    f"{group.exchange_type}:{group.mode}"
+                    for group, socket in sockets.items()
+                    if not bool(getattr(socket, "connected", False))
+                ],
             }
 
     def close(self) -> None:
@@ -194,4 +215,4 @@ class CommonWebSocketManager:
             sockets = list(self._sockets.values())
             self._sockets.clear()
         for socket in sockets:
-            socket.close()
+            self._close_socket_bounded(socket)
