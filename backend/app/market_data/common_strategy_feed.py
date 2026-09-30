@@ -24,15 +24,17 @@ _SHARED_MANAGER: CommonWebSocketManager | None = None
 _SHARED_AUTH: AngelOneAuth | None = None
 
 
-def shared_common_manager(auth: AngelOneAuth | None = None) -> CommonWebSocketManager:
+def shared_common_manager(
+    auth: AngelOneAuth | None = None,
+    socket_factory: Callable[[], Any] | None = None,
+) -> CommonWebSocketManager:
     """Return the process-wide common broker manager used by strategy consumers."""
     global _SHARED_MANAGER, _SHARED_AUTH
     with _SHARED_LOCK:
         if _SHARED_MANAGER is None:
             _SHARED_AUTH = auth or AngelOneAuth()
-            _SHARED_MANAGER = CommonWebSocketManager(
-                socket_factory=lambda: MarketDataWebSocket(auth=_SHARED_AUTH)
-            )
+            factory = socket_factory or (lambda: MarketDataWebSocket(auth=_SHARED_AUTH))
+            _SHARED_MANAGER = CommonWebSocketManager(socket_factory=factory)
         return _SHARED_MANAGER
 
 
@@ -45,6 +47,7 @@ class CommonStrategyMarketFeed:
         *,
         auth: AngelOneAuth | None = None,
         manager: CommonWebSocketManager | None = None,
+        socket_factory: Callable[[], Any] | None = None,
         mode: int = 3,
     ) -> None:
         self.consumer = str(consumer).strip()
@@ -53,7 +56,7 @@ class CommonStrategyMarketFeed:
         if mode not in {1, 2, 3, 4}:
             raise ValueError("mode must be one of 1, 2, 3 or 4")
         self.mode = mode
-        self.manager = manager or shared_common_manager(auth)
+        self.manager = manager or shared_common_manager(auth, socket_factory=socket_factory)
         self._started = False
 
     @staticmethod
