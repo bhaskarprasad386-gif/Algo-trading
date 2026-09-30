@@ -128,6 +128,10 @@ class _LatestMessageBuffer:
             self._condition.notify_all()
         messages.sort(key=lambda m: (_timestamp_ns(m) or 0, str(m.get("token") or "")))
         return messages
+    def __len__(self) -> int:
+        with self._condition:
+            return len(self._messages)
+
     def snapshot(self) -> dict[str, int]:
         with self._condition:
             return {"depth": len(self._messages), "capacity": self.max_entries,
