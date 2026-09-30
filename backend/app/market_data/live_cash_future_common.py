@@ -41,6 +41,7 @@ class LiveCashFutureCommonRunner:
         manager: CommonWebSocketManager | None = None,
         scanner: CashFutureOpportunityScanner | None = None,
         on_result: Callable[[CashFutureScanResult], None] | None = None,
+        on_payload: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         from app.market_data.instruments import InstrumentMaster
         self.data_db = data_db
@@ -53,6 +54,7 @@ class LiveCashFutureCommonRunner:
             minimum_gross_profit=0.0,
         )
         self.on_result = on_result
+        self.on_payload = on_payload
         self.stop_event = threading.Event()
         self._repository: DailySQLiteMarketDataRepository | None = None
         self._ingestor: BoundedMarketDataIngestor | None = None
@@ -159,6 +161,11 @@ class LiveCashFutureCommonRunner:
             )
         except Exception as exc:
             app_logger.error("Cash-Future common persistence submit failed: %s", exc)
+        if self.on_payload is not None:
+            try:
+                self.on_payload(dict(payload))
+            except Exception as exc:
+                app_logger.error("Cash-Future payload callback failed: %s", exc)
         try:
             result = self.scanner.update(
                 record,
