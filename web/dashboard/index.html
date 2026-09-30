@@ -269,6 +269,7 @@ th{font-size:7px!important}
  <div class="nav-group" style="margin-top:5px">
   <button class="nav-item" id="paperPortfolioNav" onclick="showPaperPortfolio()"><span class="nav-icon">▤</span>Paper Portfolio</button>
   <button class="nav-item" id="tradingJournalNav" onclick="showTradingJournal()"><span class="nav-icon">▥</span>Trading Journal</button>
+  <button class="nav-item" id="historicalReplayNav" onclick="showHistoricalReplay()"><span class="nav-icon">◷</span>Historical + Replay</button>
   <button class="nav-item alert-nav" id="alertsNav" onclick="showCustomAlerts()"><span class="nav-icon">♧</span>Custom Alerts <span id="sideAlertCount" style="margin-left:auto;color:#fff;background:#ff1744;border-radius:8px;padding:2px 5px;font-size:8px">0</span></button>
   <button class="nav-item" onclick="toast('Settings')"><span class="nav-icon">⚙</span>Settings</button>
  </div>
@@ -1234,6 +1235,18 @@ function histSetSpeed(speed){histSpeed=speed;document.querySelectorAll('.hist-sp
 function refreshHistoricalReplay(){loadHistoricalInstruments();if(histRows.length)loadHistoricalReplay()}
 document.getElementById('histDate')?.addEventListener('change',loadHistoricalInstruments);
 document.getElementById('histTimeframe')?.addEventListener('change',()=>{if(histRows.length)loadHistoricalReplay()});
+
+const _histHidePage=document.getElementById('historicalReplayPage');
+function histHideBefore(fn){return function(){if(_histHidePage)_histHidePage.hidden=true;return fn.apply(this,arguments)}}
+if(typeof goHome==='function')goHome=histHideBefore(goHome);
+if(typeof showAnalyze==='function')showAnalyze=histHideBefore(showAnalyze);
+if(typeof showCashFuture==='function')showCashFuture=histHideBefore(showCashFuture);
+if(typeof showCalendarSpread==='function')showCalendarSpread=histHideBefore(showCalendarSpread);
+if(typeof showSyntheticArbitrage==='function')showSyntheticArbitrage=histHideBefore(showSyntheticArbitrage);
+if(typeof showBoxSpread==='function')showBoxSpread=histHideBefore(showBoxSpread);
+if(typeof showCustomAlerts==='function')showCustomAlerts=histHideBefore(showCustomAlerts);
+if(typeof showPaperPortfolio==='function')showPaperPortfolio=histHideBefore(showPaperPortfolio);
+if(typeof showTradingJournal==='function')showTradingJournal=histHideBefore(showTradingJournal);
 </script>
 
 <!-- Shared dashboard compatibility/status contract for completed platform phases. -->
