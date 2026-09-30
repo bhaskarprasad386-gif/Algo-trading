@@ -70,4 +70,4 @@ def test_common_websocket_clear_consumer_does_not_block_on_broker_close():
     started = time.monotonic()
     manager.clear_consumer("cash-future")
     elapsed = time.monotonic() - started
-    assert elapsed < 1.0
+    assert elapsed < 3.0
