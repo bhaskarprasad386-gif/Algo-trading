@@ -27,7 +27,8 @@ class CalendarSpreadAlertService:
         cutoff = self.alerts.cutoff(settings.LIVE_CALENDAR_SPREAD_RESULT_RETENTION_DAYS)
         db.query(LiveCalendarSpreadAlertHistory).filter(
             LiveCalendarSpreadAlertHistory.observed_at < cutoff
-        ).delete(synchronize_session=False)
+        ).delete(synchronize_session="fetch")
+        db.flush()
         exists = db.query(LiveCalendarSpreadAlertHistory.id).filter(
             LiveCalendarSpreadAlertHistory.underlying == signal.underlying,
             LiveCalendarSpreadAlertHistory.exchange == signal.exchange,
