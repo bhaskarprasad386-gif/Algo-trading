@@ -267,6 +267,7 @@ class LiveSyntheticRunner:
                     list(subscriptions),
                     auth=self.auth,
                     on_observation=observe,
+                    consumer="synthetic-options",
                 )
                 self._recorder.run_forever()
                 refresh_requested = self._refresh_requested.is_set()
@@ -283,6 +284,17 @@ class LiveSyntheticRunner:
             if self._recorder is not None:
                 self._recorder.stop()
                 self._recorder = None
+
+    def snapshot(self) -> dict:
+        """Return lightweight runtime state for shared-feed diagnostics."""
+        feed = self._active_underlying_feed or self.underlying_feed
+        recorder = self._recorder
+        return {
+            "running": not self._stop_requested.is_set(),
+            "targets": len(self.targets),
+            "underlying_feed": None if feed is None else feed.snapshot(),
+            "option_recorder": None if recorder is None else recorder.snapshot(),
+        }
 
     def stop(self) -> None:
         self._stop_requested.set()
