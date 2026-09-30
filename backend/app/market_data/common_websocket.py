@@ -72,6 +72,8 @@ class CommonWebSocketManager:
             for key in keys:
                 if not isinstance(key, InstrumentKey):
                     raise TypeError("keys must contain InstrumentKey values")
+                if self.registry.get(key) is None:
+                    raise KeyError(f"instrument is not registered: {key.value}")
             for key in keys:
                 self.registry.subscribe(consumer, key, mode=mode)
             self._reconcile_locked()
@@ -111,7 +113,7 @@ class CommonWebSocketManager:
                     tokens=sorted(tokens),
                     mode=group.mode,
                     correlation_id=f"common-{group.exchange_type}-{group.mode}",
-                    on_data=self._on_data,
+                    on_data=lambda message, group=group: self._on_data(group, message),
                 )
             else:
                 socket.subscribe(sorted(tokens), mode=group.mode)
@@ -121,7 +123,7 @@ class CommonWebSocketManager:
                 socket = self._sockets.pop(group)
                 socket.close()
 
-    def _on_data(self, message: Any) -> None:
+    def _on_data(self, group: SocketGroup, message: Any) -> None:
         if not isinstance(message, dict):
             return
         token = str(message.get("token") or message.get("symboltoken") or "").strip()
@@ -129,7 +131,10 @@ class CommonWebSocketManager:
             return
         matching: list[str] = []
         for sub in self.registry.subscriptions():
-            if sub.key.token.strip() == token:
+            if (
+                sub.key.token.strip() == token
+                and SocketGroup(self._resolve_exchange_type(sub.key), sub.mode) == group
+            ):
                 matching.extend(sub.consumers)
         with self._lock:
             callbacks = [self._callbacks.get(name) for name in set(matching)]
