@@ -14,6 +14,7 @@ from time import sleep, time_ns
 from typing import Callable, Iterable
 
 from app.backtesting.arbitrage_scan_policy import ScanPolicy
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.live_synthetic_stream import LiveSyntheticOptionFutureRecorder
@@ -70,7 +71,8 @@ class LiveSyntheticRunner:
         self.auth = auth
         self.scan_config_provider = scan_config_provider or (
             lambda _symbol: SyntheticScanConfig(
-                allowed_stock_symbols=self.allowed_stock_symbols
+                allowed_stock_symbols=self.allowed_stock_symbols,
+                min_executable_edge=float(settings.LIVE_SYNTHETIC_MIN_ARBITRAGE_POINTS),
             )
         )
         self.session_factory = session_factory
