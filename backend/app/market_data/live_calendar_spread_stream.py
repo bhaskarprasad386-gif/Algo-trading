@@ -174,10 +174,7 @@ class LiveCalendarSpreadOneSecondCollector:
         payload["timestamp_ns"] = timestamp_ns
         payload["source_timestamp_ns"] = timestamp_ns
         payload["exchange"] = record.instrument.exchange
-        payload["instrument_type"] = self._kind_by_key.get(
-            (record.instrument.exchange.strip().upper(), record.instrument.token.strip()),
-            "COMMODITY_FUTURE" if record.instrument_type.value == "commodity" else "STOCK_FUTURE",
-        )
+        payload["instrument_type"] = record.instrument_type.value
         if record.expiry:
             payload["contract_month"] = record.expiry[:7]
         if self._ingestor is not None:
