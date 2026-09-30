@@ -2,6 +2,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app.market_data.common_websocket import CommonWebSocketManager
+from app.market_data.daily_shard_catalog import DailyMarketDataShardCatalog
 from app.market_data.live_synthetic_stream import (
     LiveSyntheticOptionFutureRecorder,
     SyntheticSubscription,
@@ -150,7 +151,7 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
 
     from app.backtesting.historical_catalog import HistoricalCatalog
 
-    catalog = HistoricalCatalog(str(tmp_path / "synthetic.db"))
+    catalog = DailyMarketDataShardCatalog(str(tmp_path / "synthetic.db"))
     try:
         records = catalog.records(
             source=collector.SOURCE,
