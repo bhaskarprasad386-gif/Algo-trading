@@ -40,6 +40,7 @@ class CommonWebSocketManager:
         self._record_callbacks: dict[str, Callable[[Any], None]] = {}
         self._normalizer = AngelOneTickNormalizer()
         self._lock = RLock()
+        self._delivery_errors = 0
 
     @staticmethod
     def _default_exchange_type(key: InstrumentKey) -> int:
@@ -156,7 +157,11 @@ class CommonWebSocketManager:
             raw_callbacks = [self._callbacks.get(name) for name, _ in matching]
             record_callbacks = [(self._record_callbacks.get(name), key) for name, key in matching]
         for callback in {id(cb): cb for cb in raw_callbacks if cb is not None}.values():
-            callback(message)
+            try:
+                callback(message)
+            except Exception:
+                with self._lock:
+                    self._delivery_errors += 1
         for callback, key in record_callbacks:
             if callback is None:
                 continue
@@ -167,6 +172,9 @@ class CommonWebSocketManager:
                 callback(self._normalizer.normalize(descriptor, message))
             except (TypeError, ValueError):
                 continue
+            except Exception:
+                with self._lock:
+                    self._delivery_errors += 1
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -174,7 +182,8 @@ class CommonWebSocketManager:
                 "subscriptions": len(self.registry.subscriptions()),
                 "active_instruments": len(self.registry.active_keys()),
                 "socket_groups": len(self._sockets),
-                "consumers": sorted(self._callbacks),
+                "consumers": sorted(set(self._callbacks) | set(self._record_callbacks)),
+                "delivery_errors": self._delivery_errors,
             }
 
     def close(self) -> None:
