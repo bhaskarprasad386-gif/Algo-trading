@@ -18,6 +18,79 @@ button,input,select{font:inherit}button{cursor:pointer}
 @media(max-width:1100px){.sidebar{width:205px}.page{margin-left:205px}.market-cards{grid-template-columns:repeat(2,1fr)}.hero-grid,.main-grid,.lower-grid{grid-template-columns:1fr}.opp-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:720px){.sidebar{display:none}.page{margin-left:0}.topbar{height:58px;padding:0 12px}.top-links{display:none}.content{padding:12px 12px 76px}.page-head h1{font-size:19px}.mobile-only{display:block}.live-pill{font-size:8px}.paper-pill{display:none}.bottom-nav{display:grid;position:fixed;bottom:0;left:0;right:0;z-index:50;grid-template-columns:repeat(5,1fr);background:#0A0E12;border-top:1px solid var(--line);padding:7px 5px calc(7px + env(safe-area-inset-bottom));gap:4px}.bottom-nav button{background:transparent;border:0;color:#71838F;font-size:8px;padding:5px}.bottom-nav button.active{color:#BCEBFF}.market-cards{grid-template-columns:repeat(2,1fr)}.opp-grid{grid-template-columns:repeat(2,1fr)}.modal{padding:0}.modal-box{width:100%;border-radius:14px 14px 0 0}.refresh-box{font-size:8px}.top-actions{gap:5px}}
 @media(max-width:390px){.market-cards,.opp-grid{grid-template-columns:1fr}.metric-grid{grid-template-columns:1fr}.page-head{align-items:flex-start}}
+
+/* Batch-1 visual match layer — Neo-Dark reference */
+.topbar{position:fixed;left:0;top:0;width:100vw;height:46px;padding:0 16px;gap:16px;z-index:80;background:#05090d;border-bottom:1px solid #173043}
+.page{margin-left:214px;padding-top:46px}
+.sidebar{top:46px;width:214px;height:calc(100vh - 46px);padding:12px 8px}
+.brand{display:none}
+.top-brand{display:flex;align-items:center;gap:8px;min-width:310px}
+.top-brand-mark{width:25px;height:25px;display:grid;place-items:center;color:#00d7ff;font-size:22px;font-weight:900}
+.top-brand-name{font-size:17px;font-weight:900;color:#eaf7ff}
+.top-tagline{font-size:10px;color:#8ea4b2;margin-left:10px;white-space:nowrap}
+.top-meta{display:flex;align-items:center;gap:12px;margin-left:auto;color:#8ea4b2;font-size:9px}
+.top-clock{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#d9ecf5}
+.top-date{font-size:8px;color:#708491}
+.notify-btn{position:relative;width:30px;height:30px;border:0;border-left:1px solid #173043;background:transparent;color:#b9cad4}
+.notify-badge{position:absolute;right:1px;top:1px;min-width:13px;height:13px;padding:0 3px;border-radius:8px;background:#ff1744;color:white;font-size:8px;font-weight:900}
+.profile-pill{display:flex;align-items:center;gap:7px;border-left:1px solid #173043;padding-left:12px;color:#dceaf1;font-size:9px}
+.profile-avatar{width:25px;height:25px;border-radius:50%;display:grid;place-items:center;background:#1769aa;color:#fff;font-weight:900}
+.profile-copy small{display:block;color:#7f919f;font-size:8px;margin-top:2px}
+.top-actions{margin-left:0}
+.content{padding:14px 14px 24px;max-width:none}
+.page-head{margin-bottom:10px}
+.page-head h1{font-size:21px}
+.page-head p{display:none}
+.hero-grid,.main-grid,.lower-grid{display:contents}
+.content{display:grid;grid-template-columns:4fr 2.5fr 3fr 2.5fr;gap:10px;align-items:start}
+.page-head{grid-column:1/-1;grid-row:1}
+.hero-grid>.card:first-child{grid-column:1;grid-row:2}
+.hero-grid>.card:nth-child(2){grid-column:2;grid-row:2}
+.main-grid>#alertCenter{grid-column:3;grid-row:2}
+.main-grid>#scanner{grid-column:4;grid-row:2}
+#strategyOpportunities{grid-column:1;grid-row:3}
+#paper{grid-column:2;grid-row:3}
+#recentAlertCard{grid-column:3;grid-row:3}
+#chartCard{grid-column:1;grid-row:4}
+#gainersCard{grid-column:2;grid-row:4}
+#quickNavCard{grid-column:3;grid-row:4}
+#terminalCard,#liveDataHealth,#strategy,#resultsJournal,#dashboardCustomization{display:none!important}
+.card{padding:10px;border-radius:8px;box-shadow:0 10px 24px rgba(0,0,0,.24)}
+.card-head{margin-bottom:8px}
+.card-head h2{font-size:12px}
+.sub{font-size:9px}
+.market-cards{grid-template-columns:repeat(4,1fr);gap:6px}
+.market-tile{padding:8px;border-radius:7px}
+.market-tile .ltp{font-size:15px}
+.metric-grid{gap:6px}
+.metric{padding:9px;border-radius:7px}
+.metric .v{font-size:15px}
+.alert-panel{border-color:#6d2be0;box-shadow:0 0 0 1px rgba(139,92,246,.16),0 10px 28px rgba(0,0,0,.28)}
+.alert-list{max-height:205px}
+.alert-row{padding:8px;gap:7px}
+.opp-grid{grid-template-columns:repeat(4,1fr);gap:7px}
+.opp{padding:9px}
+.chart{height:245px}
+.quick-grid{grid-template-columns:repeat(2,1fr);gap:7px}
+.side-status{padding:10px}
+.side-status .side-health-row{display:flex;justify-content:space-between;padding:4px 0;color:#91a3ae;font-size:9px}
+.side-status .side-health-row b{color:#00e676;font-weight:800}
+.side-version{display:block;color:#60727e;font-size:8px;margin-top:10px}
+.nav-item{padding:8px 9px;font-size:11px}
+.nav-title{padding:10px 9px 4px}
+#marketStatusStrip{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:6px;margin-top:8px;padding:7px;border:1px solid #1b2b36;border-radius:7px;background:#0a1117;align-items:center}
+.market-status-item{font-size:8px;color:#91a3ae}
+.market-status-item b{color:#00e676;font-size:9px}
+.market-status-time{font-size:8px;color:#a8bcc7;border:1px solid #244152;padding:5px 7px;border-radius:6px}
+.chart-toolbar{display:flex;gap:5px;margin:7px 0}
+.chart-toolbar .tab{padding:5px 8px;font-size:8px}
+.top-gainer-row{display:grid;grid-template-columns:1fr auto auto auto;gap:7px;align-items:center;padding:7px 4px;border-bottom:1px solid #18232c;font-size:9px}
+.top-gainer-row .change{font-weight:800}
+.tv-footer{display:flex;justify-content:space-between;align-items:center;margin-top:7px;color:#7f919f;font-size:8px}
+.tv-live{color:#00e676}
+@media(max-width:1200px){.content{grid-template-columns:1.6fr 1fr}.hero-grid>.card:first-child,.hero-grid>.card:nth-child(2),.main-grid>#alertCenter,.main-grid>#scanner,#strategyOpportunities,#paper,#recentAlertCard,#chartCard,#gainersCard,#quickNavCard{grid-column:auto;grid-row:auto}.content{display:grid}.hero-grid,.main-grid,.lower-grid{display:contents}}
+@media(max-width:720px){.topbar{height:52px}.page{padding-top:52px}.sidebar{display:none}.content{display:block;padding:10px 10px 76px}.top-brand{min-width:0}.top-tagline,.top-links,.top-meta .top-clock,.top-meta .top-date,.profile-copy{display:none}.top-actions{margin-left:auto}.page-head{display:flex}.hero-grid,.main-grid,.lower-grid{display:grid;grid-template-columns:1fr}.content .card{margin-bottom:10px}.market-cards{grid-template-columns:repeat(2,1fr)}#strategyOpportunities,#paper,#recentAlertCard,#chartCard,#gainersCard,#quickNavCard{display:block!important}}
+
 </style>
 </head>
 <body>
@@ -38,20 +111,21 @@ button,input,select{font:inherit}button{cursor:pointer}
  <div class="nav-group" style="margin-top:5px">
   <button class="nav-item" onclick="toast('Paper Portfolio workspace is Batch 8')"><span class="nav-icon">▤</span>Paper Portfolio</button>
   <button class="nav-item" onclick="toast('Trading Journal is Batch 9')"><span class="nav-icon">▥</span>Trading Journal</button>
-  <button class="nav-item" onclick="openAlertModal()"><span class="nav-icon">♧</span>Custom Alerts <span id="sideAlertCount" style="margin-left:auto;color:var(--warning)">0</span></button>
+  <button class="nav-item alert-nav" onclick="openAlertModal()"><span class="nav-icon">♧</span>Custom Alerts <span id="sideAlertCount" style="margin-left:auto;color:#fff;background:#ff1744;border-radius:8px;padding:2px 5px;font-size:8px">0</span></button>
   <button class="nav-item" onclick="toast('Settings')"><span class="nav-icon">⚙</span>Settings</button>
  </div>
- <div class="side-status"><span>● System Status</span><strong id="sideSystem">CHECKING</strong><span id="sideLast" style="color:var(--muted);display:block;margin-top:4px">Waiting for live status</span></div>
+ <div class="side-status"><span>● System Status</span><strong id="sideSystem">CHECKING</strong>
+ <div class="side-health-row"><span>◉ WebSocket</span><b id="sideWs">CHECKING</b></div>
+ <div class="side-health-row"><span>◉ API</span><b id="sideApi">CHECKING</b></div>
+ <div class="side-health-row"><span>◉ Database</span><b id="sideDb">CHECKING</b></div>
+ <div class="side-health-row"><span>◉ Market Data</span><b id="sideMarket">CHECKING</b></div>
+ <span id="sideLast" style="color:var(--muted);display:block;margin-top:4px">Waiting for live status</span><span class="side-version">Algo Trading v1.0.0</span></div>
 </aside>
 <div class="page">
 <header class="topbar">
- <div class="top-title">Home / Command Center</div>
- <div class="top-links"><span onclick="goHome()">Trade Smart</span><span onclick="toast('Analyze page is Batch 2')">Analyze</span><span>Execute</span><span>Grow</span></div>
- <div class="top-actions">
-  <span class="live-pill" id="topLive">● LIVE DATA</span>
-  <span class="paper-pill">PAPER TRADING • ₹1,00,00,000</span>
-  <button class="icon-btn" onclick="loadAll()" title="Refresh">↻</button>
- </div>
+ <div class="top-brand"><span class="top-brand-mark">↗</span><strong class="top-brand-name">Algo Trading</strong><span class="top-tagline">Trade Smart&nbsp; | &nbsp;Analyze&nbsp; | &nbsp;Execute&nbsp; | &nbsp;Grow</span></div>
+ <div class="top-actions"><span class="live-pill" id="topLive">● LIVE DATA (WebSocket)</span></div>
+ <div class="top-meta"><span><span class="top-clock" id="topClock">--:--:--</span><span class="top-date" id="topDate">--</span></span><button class="notify-btn" onclick="openAlertModal()" title="Notifications">♧<span class="notify-badge" id="topNotify">0</span></button><div class="profile-pill"><span class="profile-avatar">P</span><span class="profile-copy">Paper Trading<small>₹1,00,00,000</small></span></div><button class="icon-btn" onclick="loadAll()" title="Refresh">↻</button></div>
 </header>
 <main class="content" id="home">
  <div class="page-head">
@@ -70,7 +144,7 @@ button,input,select{font:inherit}button{cursor:pointer}
     <div class="market-tile"><div class="sym">MIDCPNIFTY</div><div class="ltp">—</div><div class="chg">Waiting for live quote</div></div>
    </div>
    <div class="table-wrap" style="margin-top:10px;display:none" id="marketDetailTable"><table><thead><tr><th>Exchange</th><th>Symbol</th><th>LTP</th><th>Change</th><th>Bid</th><th>Ask</th><th>Volume</th><th>OI</th><th>Status</th></tr></thead><tbody id="indexRows"></tbody></table></div><div class="table-wrap" style="margin-top:10px;display:none" id="commodityDetailTable"><table><thead><tr><th>Exchange</th><th>Symbol</th><th>LTP</th><th>Change</th><th>Bid</th><th>Ask</th><th>Volume</th><th>OI</th><th>Status</th></tr></thead><tbody id="commodityRows"></tbody></table></div><div class="table-wrap" style="margin-top:10px;display:none" id="foDetailTable"><table><thead><tr><th>Rank</th><th>Symbol</th><th>Contract</th><th>Cash Ask</th><th>Future Bid</th><th>Gap %</th><th>Net %</th><th>Status</th></tr></thead><tbody id="foRows"></tbody></table></div>
-   <div class="sub" style="margin-top:9px" id="marketFeedStatus">Feed: CHECKING</div>
+   <div id="marketStatusStrip"><span class="market-status-item">● <b>NSE</b> Open</span><span class="market-status-item">● <b>BSE</b> Open</span><span class="market-status-item">● <b>MCX</b> Open</span><span class="market-status-time">09:15 - 15:30</span></div><div class="sub" style="margin-top:7px" id="marketFeedStatus">Feed: CHECKING</div>
   </div>
   <div class="card">
    <div class="card-head"><div><h2>Quick Stats</h2><div class="sub">Current system snapshot</div></div><span class="view">LIVE</span></div>
@@ -100,7 +174,7 @@ button,input,select{font:inherit}button{cursor:pointer}
   </div>
  </section>
 
- <section class="card" style="margin-top:12px">
+ <section class="card" id="strategyOpportunities" style="margin-top:12px">
   <div class="card-head"><div><h2>Strategy Opportunities</h2><div class="sub">High-level opportunity count; detailed scanners stay inside each workspace.</div></div><span class="view" onclick="toast('Strategy workspaces open in later batches')">View All →</span></div>
   <div class="opp-grid">
    <button class="opp" onclick="toast('Cash-Future workspace is Batch 3')"><span class="name">CASH-FUTURE</span><span class="count" id="homeCfCount">—</span><span class="foot">Live scanner →</span></button>
@@ -111,11 +185,11 @@ button,input,select{font:inherit}button{cursor:pointer}
  </section>
 
  <section class="grid lower-grid" style="margin-top:12px">
-  <div class="card">
-   <div class="card-head"><div><h2>Live Market Chart</h2><div class="sub">NIFTY 50 • live snapshot</div></div><span class="live-pill" style="padding:5px 7px">● LIVE</span></div>
+  <div class="card" id="chartCard">
+   <div class="card-head"><div><h2>Live Market Charts</h2><div class="sub">NIFTY 50 • live snapshot</div></div><span class="live-pill" style="padding:5px 7px">● LIVE</span></div>
    <div class="chart" id="liveChart"><div class="chart-grid"></div><svg class="chart-line" viewBox="0 0 1000 300" preserveAspectRatio="none"><polyline id="chartLine" fill="none" stroke="#00B0FF" stroke-width="3" points="0,210 60,205 120,215 180,185 240,195 300,170 360,180 420,145 480,155 540,125 600,140 660,105 720,120 780,90 840,115 900,82 1000,96"/></svg><div class="chart-label" id="chartLabel">Waiting for market data</div></div>
-   <div class="market-tabs chart-ranges" style="margin-top:8px;margin-bottom:0"><button class="tab active" data-range="1m" onclick="setChartRange('1m')">1m</button><button class="tab" data-range="5m" onclick="setChartRange('5m')">5m</button><button class="tab" data-range="15m" onclick="setChartRange('15m')">15m</button><button class="tab" data-range="30m" onclick="setChartRange('30m')">30m</button><button class="tab" data-range="1h" onclick="setChartRange('1h')">1h</button></div>
-  </div>
+   <div class="chart-toolbar"><button class="tab active">NIFTY 50</button><button class="tab">BANKNIFTY</button><button class="tab">FINNIFTY</button><button class="tab">MIDCPNIFTY</button><button class="tab">RELIANCE</button><button class="tab">TCS</button></div><div class="market-tabs chart-ranges" style="margin-top:4px;margin-bottom:0"><button class="tab active" data-range="1m" onclick="setChartRange('1m')">1m</button><button class="tab" data-range="5m" onclick="setChartRange('5m')">5m</button><button class="tab" data-range="15m" onclick="setChartRange('15m')">15m</button><button class="tab" data-range="30m" onclick="setChartRange('30m')">30m</button><button class="tab" data-range="1h" onclick="setChartRange('1h')">1h</button></div>
+  </div><div class="tv-footer"><span>TradingView-style live chart</span><span class="tv-live">● Live</span></div>
   <div class="card" data-widget-id="paper" data-widget="paper" id="paper">
    <div class="card-head"><div><h2>Paper Portfolio</h2><div class="sub">₹1 crore paper ledger • real broker orders OFF</div></div><span class="view" onclick="toast('Portfolio workspace is Batch 8')">View Details →</span></div>
    <div class="portfolio"><div class="big-money" id="paperBalance">₹1,00,00,000</div><div class="sub">Virtual balance</div>
@@ -126,9 +200,10 @@ button,input,select{font:inherit}button{cursor:pointer}
    <div id="paperStatus" class="sub" style="margin-top:8px">Paper account: CHECKING</div><button class="secondary full" onclick="openPaperModal()">PAPER TRADE / POSITION</button>
   </div>
  </section>
-
+<section class="card" id="gainersCard" style="margin-top:12px"><div class="card-head"><div><h2>Top Gainers / Losers</h2><div class="sub">Live F&amp;O scanner snapshot</div></div><span class="view">View All →</span></div><div class="market-tabs"><button class="tab active">Gainers</button><button class="tab">Losers</button><button class="tab">Volume</button></div><div id="gainersRows"><div class="top-gainer-row"><span>Waiting for live scanner</span><span>—</span><span>—</span><span>—</span></div></div></section>
+ <section class="card" id="quickNavCard" style="margin-top:12px"><div class="card-head"><div><h2>Quick Navigation</h2><div class="sub">Workspace shortcuts</div></div><span class="view">→</span></div><div class="quick-grid"><button class="quick" onclick="toast('Cash-Future workspace is Batch 3')"><b>↔ Cash-Future</b><span>Live Scanner • Chart</span></button><button class="quick" onclick="toast('Calendar Spread workspace is Batch 4')"><b>◫ Calendar Spread</b><span>Live Scanner • Chart</span></button><button class="quick" onclick="toast('Synthetic Arbitrage workspace is Batch 5')"><b>⌁ Synthetic Arbitrage</b><span>Live Scanner • Chart</span></button><button class="quick" onclick="toast('Box Spread workspace is Batch 6')"><b>▣ Box Spread</b><span>Live Scanner • Chart</span></button><button class="quick" onclick="toast('Paper Portfolio is Batch 8')"><b>▤ Paper Portfolio</b><span>Positions • Ledger</span></button><button class="quick" onclick="toast('Trading Journal is Batch 9')"><b>▥ Trading Journal</b><span>Trades • Analytics</span></button></div></section>
  <section class="grid main-grid" style="margin-top:12px">
-  <div class="card">
+  <div class="card" id="recentAlertCard">
    <div class="card-head"><div><h2>Recent Alerts</h2><div class="sub">Latest scanner-generated events</div></div><span class="view" onclick="openAlertModal()">View All →</span></div>
    <div id="recentAlerts" class="alert-list"><div class="alert-row"><span class="alert-dot"></span><div><strong>Waiting for live scanner</strong><span>Events will appear here when the scanner reports NEW / RECOVERY / WEAKENING.</span></div></div></div>
   </div>
@@ -251,6 +326,8 @@ function saveAlertDraft(){
  renderAlertTab(); closeAlertModal(); toast('Alert saved on this device.');
 }
 function stamp(){return new Date().toLocaleString()}
+function updateHeaderClock(){const d=new Date();const c=document.getElementById('topClock');const dt=document.getElementById('topDate');if(c)c.textContent=d.toLocaleTimeString('en-IN',{hour12:false});if(dt)dt.textContent=d.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});}
+setInterval(updateHeaderClock,1000);updateHeaderClock();
 function setAlertTab(tab){
  alertTab=tab;
  document.querySelectorAll('#alertCenter .alert-tab').forEach(b=>b.classList.remove('active'));
@@ -334,7 +411,7 @@ async function loadLiveDataHealth(){
   const ok=p.feed_status==='LIVE'&&p.persisted;document.getElementById('liveDataHealthBadge').textContent=ok?'LIVE':'CHECK';document.getElementById('liveDataHealthBadge').className=ok?'up':'neutral';
   document.getElementById('liveDataHealthStatus').textContent='Session '+p.market_session+' • age '+(p.age_seconds==null?'—':Number(p.age_seconds).toFixed(1)+'s')+' • source '+p.source+' • '+p.timeframe+' • orders '+p.live_orders;
   document.getElementById('homeData').textContent=p.persisted?'READY':'NO DATA';document.getElementById('homeData').className='health-state '+(p.persisted?'up':'neutral');
-  document.getElementById('sideSystem').textContent=ok?'ONLINE':'CHECK';document.getElementById('sideLast').textContent='Data age '+(p.age_seconds==null?'—':Number(p.age_seconds).toFixed(1)+'s');
+  document.getElementById('sideSystem').textContent=ok?'ONLINE':'CHECK';document.getElementById('sideApi').textContent=ok?'Connected':'CHECK';document.getElementById('sideDb').textContent=p.persisted?'Connected':'CHECK';document.getElementById('sideMarket').textContent=ok?'Live':'CHECK';document.getElementById('sideLast').textContent='Data age '+(p.age_seconds==null?'—':Number(p.age_seconds).toFixed(1)+'s');
   document.getElementById('dashSystem').textContent=ok?'ONLINE':'CHECK';document.getElementById('dashHealth').textContent=ok?'HEALTHY':'CHECK';document.getElementById('dashHealth').className='v '+(ok?'up':'neutral');
  }catch(e){document.getElementById('liveDataHealthBadge').textContent='ERROR';document.getElementById('homeData').textContent='ERROR';log('Live health failed: '+e.message)}
 }
@@ -356,12 +433,13 @@ function applyScannerPayload(p){
    tbody.appendChild(tr);
  });
  if(!tbody.children.length) tbody.innerHTML='<tr><td colspan="15">NO LIVE SIGNAL WITHIN 5 SECONDS</td></tr>';
+ const gainers=document.getElementById('gainersRows');if(gainers){const ranked=data.slice().sort((a,b)=>Number(b.gap_pct||0)-Number(a.gap_pct||0)).slice(0,6);gainers.innerHTML=ranked.map(x=>'<div class="top-gainer-row"><span>'+x.symbol+'</span><span>'+fmt(x.cash_ask||x.ltp)+'</span><span class="change '+(Number(x.gap_pct)>0?'up':'down')+'">'+pct(x.gap_pct)+'</span><span>'+fmt(x.liquidity_qty||x.volume)+'</span></div>').join('')||'<div class="top-gainer-row"><span>Waiting for live scanner</span><span>—</span><span>—</span><span>—</span></div>';}
  const mini=document.getElementById('scannerRows');
  mini.innerHTML=data.slice(0,5).map(x=>'<tr><td><strong>'+x.symbol+'</strong></td><td class="'+(Number(x.gap_pct)>0?'up':'')+'">'+pct(x.gap_pct)+'</td><td>'+pct(x.net_gap_pct)+'</td><td>'+fmt(x.liquidity_qty||x.volume)+'</td><td>'+fmt(x.oi)+'</td></tr>').join('') || '<tr><td colspan="5">NO LIVE SIGNAL WITHIN 5 SECONDS</td></tr>';
  document.getElementById('lastScan').textContent=stamp();
  renderAlerts(data); renderAlertTab();
  document.getElementById('dashSystem').textContent='ONLINE • LIVE 1s';
- document.getElementById('topLive').textContent='● LIVE DATA • WS CONNECTED';
+ document.getElementById('topLive').textContent='● Live Data (WebSocket)';document.getElementById('sideWs').textContent='Connected';document.getElementById('topNotify').textContent=document.getElementById('activeAlertCount')?.textContent||'0';
 }
 
 async function scan(){
