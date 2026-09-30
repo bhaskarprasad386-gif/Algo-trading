@@ -40,7 +40,7 @@ def test_synthetic_alert_persists_and_deduplicates(db_session):
 def test_synthetic_alert_retention_cleanup_runs_without_new_results(db_session, monkeypatch):
     service = SyntheticAlertService()
     old = LiveSyntheticAlertHistory(
-        observed_at=datetime.utcnow() - timedelta(days=31),
+        observed_at=datetime.utcnow() - timedelta(days=91),
         timestamp_ns=1,
         symbol="NIFTY",
         instrument_class="INDEX",
@@ -55,6 +55,6 @@ def test_synthetic_alert_retention_cleanup_runs_without_new_results(db_session, 
     db_session.add(old)
     db_session.commit()
 
-    monkeypatch.setattr("app.notifications.synthetic_alerts.settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS", 30)
+    monkeypatch.setattr("app.notifications.synthetic_alerts.settings.LIVE_SYNTHETIC_RESULT_RETENTION_DAYS", 90)
     assert service.persist(db_session, ()) == 0
     assert db_session.query(LiveSyntheticAlertHistory).count() == 0
