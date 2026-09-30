@@ -6,9 +6,11 @@ import threading
 from app.core.config import settings
 from app.models import LiveSyntheticAlertHistory, User
 from app.notifications.whatsapp import WhatsAppConfig, WhatsAppNotifier
+from app.notifications.common import AlertEvent, AlertService
 
 class SyntheticAlertService:
     def __init__(self) -> None:
+        self._alerts = AlertService()
         self._notifier = WhatsAppNotifier(WhatsAppConfig(
             access_token=settings.WHATSAPP_ACCESS_TOKEN,
             phone_number_id=settings.WHATSAPP_PHONE_NUMBER_ID,
@@ -47,7 +49,7 @@ class SyntheticAlertService:
                     cooldown_ns = int(float(getattr(settings, "LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS", 60.0)) * 1_000_000_000)
                     if result.option.timestamp_ns - previous < cooldown_ns:
                         continue
-                if self._notifier.send_text(user.mobile_number, self._message(result)):
+                if self._alerts.dispatch_user(user, AlertEvent(strategy_id="synthetic-future-cash-carry", event_id=f"{result.option.underlying}:{result.option.expiry}:{result.option.strike:g}:{result.direction}", symbol=result.option.underlying, timestamp_ns=result.option.timestamp_ns, message=self._message(result))):
                     with self._lock:
                         self._last_sent[key] = result.option.timestamp_ns
                     sent += 1
