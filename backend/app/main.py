@@ -331,8 +331,8 @@ async def _live_cash_future_loop() -> None:
     runner = LiveCashFutureCommonRunner(
         settings.BACKTEST_DATA_DB,
         instrument_master=instrument_master,
-        on_result=lambda result: live_cash_future_scanner.observe(
-            result.as_dict(), session_factory=SessionLocal
+        on_payload=lambda payload: live_cash_future_scanner.observe(
+            payload, session_factory=SessionLocal
         ),
     )
     try:
