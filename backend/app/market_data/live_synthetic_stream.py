@@ -229,6 +229,11 @@ class LiveSyntheticOptionFutureRecorder:
                 self._latest.clear()
             for timestamp, record in latest:
                 self._emit(record, timestamp)
+            # Stop/join the bounded writer before reading persistence metrics so
+            # the final bucket has actually reached SQLite.  Reading snapshot()
+            # first races the async writer and can report inserted=0 even though
+            # records were accepted and are about to be flushed by close().
+            self._ingestor.close()
             snapshot = self._ingestor.snapshot()
             return int(snapshot.get("inserted", 0))
         finally:
