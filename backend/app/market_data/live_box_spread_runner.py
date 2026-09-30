@@ -56,7 +56,7 @@ class LiveBoxSpreadRunner:
                 strikes.update(concrete_strikes_from_master(self.master.instruments,symbols=(target.underlying,),expiry=wanted, exchange_segment=("BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO")))
         self.tracker=LiveSyntheticAtmTracker(strikes_by_symbol=strikes)
         index_symbols=frozenset(t.underlying for t in self.targets if t.instrument_class=="INDEX")
-        self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,index_symbols=index_symbols)
+        self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,index_symbols=index_symbols,consumer="box-underlyings")
         Thread(target=self.feed.run_forever,daemon=True,name="box-underlying-feed").start()
         try:
             while not self.stop_event.is_set():
@@ -107,6 +107,15 @@ class LiveBoxSpreadRunner:
                 self.recorder=None
         finally:
             self.stop()
+
+    def snapshot(self):
+        """Return lightweight runtime state for shared-feed diagnostics."""
+        return {
+            "running": not self.stop_event.is_set(),
+            "targets": len(self.targets),
+            "underlying_feed": None if self.feed is None else self.feed.snapshot(),
+            "option_recorder": None if self.recorder is None else self.recorder.snapshot(),
+        }
 
     def stop(self):
         self.stop_event.set()
