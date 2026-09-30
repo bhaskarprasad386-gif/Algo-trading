@@ -1,5 +1,6 @@
 """Calendar Spread adapter for the common alert service."""
 from __future__ import annotations
+from datetime import datetime
 from app.core.config import settings
 from app.models import LiveCalendarSpreadAlertHistory
 from app.notifications.common import AlertEvent, AlertService
@@ -37,7 +38,7 @@ class CalendarSpreadAlertService:
         if exists:
             return False
         db.add(LiveCalendarSpreadAlertHistory(
-            observed_at=signal.timestamp_ns and __import__("datetime").datetime.utcnow(),
+            observed_at=datetime.utcnow(),
             timestamp_ns=signal.timestamp_ns, underlying=signal.underlying,
             exchange=signal.exchange, near_contract_month=signal.near_contract_month,
             far_contract_month=signal.far_contract_month, direction=signal.direction,
