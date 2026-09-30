@@ -44,7 +44,7 @@ def test_live_scanner_result_persists_and_cleans_up_after_30_days(monkeypatch, t
 
     with Session() as db:
         row = db.query(LiveCashFutureScannerResult).one()
-        row.observed_at = row.observed_at - timedelta(days=31)
+        row.observed_at = row.observed_at - timedelta(days=91)
         db.commit()
 
     second = _signal(scanner, 2_000_000_000)
@@ -59,7 +59,7 @@ def test_live_scanner_result_persists_and_cleans_up_after_30_days(monkeypatch, t
         assert rows[0].gap_pct == second.gap_pct
 
 
-def test_live_scanner_alert_history_is_retained_for_30_days(monkeypatch, tmp_path):
+def test_live_scanner_alert_history_is_retained_for_90_days(monkeypatch, tmp_path):
     from contextlib import contextmanager
     from datetime import datetime, timedelta
     from sqlalchemy import create_engine
