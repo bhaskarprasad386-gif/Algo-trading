@@ -50,3 +50,16 @@ def test_crossed_quote_rejected():
     except ValueError:
         return
     raise AssertionError("crossed quote must be rejected by MarketDataRecord")
+
+
+def test_reverse_direction_uses_cash_bid_and_future_ask():
+    scanner = CashFutureOpportunityScanner(minimum_gap_points=4, minimum_gross_profit=200)
+    cash = rec("C2", "XYZ-EQ", InstrumentType.EQUITY, 200, 110, 111, underlying="XYZ")
+    future = rec("F2", "XYZ-FUT", InstrumentType.FUTURE, 200, 105, 106, lot=50, underlying="XYZ")
+    scanner.update(cash, contract_month="CASH")
+    result = scanner.update(future, contract_month="CURRENT")
+    assert result is not None
+    assert result.direction == "CASH_SELL_FUTURE_BUY"
+    assert result.signal.gap_points == 4
+    assert result.signal.gross_profit == 200
+    assert result.signal.qualifies is True
