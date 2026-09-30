@@ -1,6 +1,7 @@
 name: VPS Endpoint Probe
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - .github/workflows/vps-endpoint-probe.yml
