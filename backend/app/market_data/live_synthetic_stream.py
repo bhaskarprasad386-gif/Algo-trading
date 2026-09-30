@@ -18,6 +18,7 @@ from app.market_data.ingestion import BoundedMarketDataIngestor
 from app.backtesting.historical_catalog import HistoricalRecord
 from app.market_data.persistence import DailySQLiteMarketDataRepository
 from app.market_data.websocket import MarketDataWebSocket
+from app.market_data.common_websocket import CommonWebSocketManager
 
 IST = ZoneInfo("Asia/Kolkata")
 OPEN = time(9, 15)
@@ -55,6 +56,7 @@ class LiveSyntheticOptionFutureRecorder:
         batch_size: int = 256,
         poll_seconds: float = 0.25,
         on_observation: Callable[[dict[str, Any]], None] | None = None,
+        manager: CommonWebSocketManager | None = None,
     ) -> None:
         if not subscriptions:
             raise ValueError("at least one synthetic subscription is required")
@@ -87,6 +89,7 @@ class LiveSyntheticOptionFutureRecorder:
         self.batch_size = batch_size
         self.poll_seconds = poll_seconds
         self.on_observation = on_observation
+        self._manager = manager
         self.stop_event = Event()
         self._feed: CommonStrategyMarketFeed | None = None
         self._repository: DailySQLiteMarketDataRepository | None = None
@@ -211,11 +214,12 @@ class LiveSyntheticOptionFutureRecorder:
             record_source=self.SOURCE,
         )
         self._ingestor.start()
-        self._feed = CommonStrategyMarketFeed(
-            "synthetic-options",
-            auth=self.auth,
-            socket_factory=lambda: MarketDataWebSocket(auth=self.auth),
-        )
+        feed_kwargs = {"auth": self.auth}
+        if self._manager is not None:
+            feed_kwargs["manager"] = self._manager
+        else:
+            feed_kwargs["socket_factory"] = lambda: MarketDataWebSocket(auth=self.auth)
+        self._feed = CommonStrategyMarketFeed("synthetic-options", **feed_kwargs)
         self._feed.start(self._descriptors(), self._on_record)
         try:
             while self.market_open() and not self.stop_event.is_set():
