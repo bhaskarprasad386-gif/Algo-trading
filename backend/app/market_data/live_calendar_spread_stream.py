@@ -154,7 +154,11 @@ class LiveCalendarSpreadOneSecondCollector:
         )
 
     def _observe_record(self, record) -> None:
-        key = (record.instrument.exchange.strip().upper(), record.instrument.token.strip())
+        exchange = record.instrument.exchange.strip().upper()
+        local = datetime.fromtimestamp(record.timestamp_ns / 1_000_000_000, tz=ZoneInfo("UTC")).astimezone(IST)
+        if not self._exchange_open(exchange, local):
+            return
+        key = (exchange, record.instrument.token.strip())
         second = (record.timestamp_ns // 1_000_000_000) * 1_000_000_000
         with self._lock:
             previous = self._latest.get(key)
