@@ -28,6 +28,7 @@ class CalendarSpreadAlertService:
         db.query(LiveCalendarSpreadAlertHistory).filter(
             LiveCalendarSpreadAlertHistory.observed_at < cutoff
         ).delete(synchronize_session=False)
+        db.flush()
         exists = db.query(LiveCalendarSpreadAlertHistory.id).filter(
             LiveCalendarSpreadAlertHistory.underlying == signal.underlying,
             LiveCalendarSpreadAlertHistory.exchange == signal.exchange,
