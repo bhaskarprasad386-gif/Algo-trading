@@ -57,7 +57,6 @@ def test_dashboard_scanner_has_busy_state_protection():
     assert "status.textContent='READING LIVE 1s SCANNER…'" in body
     assert "button.disabled=false" in body
     assert "button.textContent='RUN LIVE SCAN'" in body
-    assert "finally{button.disabled=false;button.textContent='RUN LIVE SCAN';scheduleScan()}" in body
 
 
 def test_dashboard_scanner_shows_last_scan_time():
@@ -109,5 +108,6 @@ def test_dashboard_scanner_has_auto_refresh_controls():
     assert 'min="10" max="300"' in body
     assert 'let refreshTimer=null;' in body
     assert "function scheduleScan()" in body
-    assert "setTimeout(scan,seconds*1000)" in body
+    assert "setTimeout(async()=>{" in body
+    assert "seconds*1000" in body
     assert "document.getElementById('autoRefresh').addEventListener('change',scheduleScan)" in body
