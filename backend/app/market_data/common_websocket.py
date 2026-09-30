@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from .contracts import InstrumentKey
 from .registry import InstrumentRegistry, Subscription
+from .normalizer import AngelOneTickNormalizer
 from .websocket import MarketDataWebSocket
 
 
@@ -36,6 +37,8 @@ class CommonWebSocketManager:
         self._resolve_exchange_type = exchange_type_resolver or self._default_exchange_type
         self._sockets: dict[SocketGroup, Any] = {}
         self._callbacks: dict[str, Callable[[dict[str, Any]], None]] = {}
+        self._record_callbacks: dict[str, Callable[[Any], None]] = {}
+        self._normalizer = AngelOneTickNormalizer()
         self._lock = RLock()
 
     @staticmethod
@@ -63,6 +66,18 @@ class CommonWebSocketManager:
     def unregister_callback(self, consumer: str) -> None:
         with self._lock:
             self._callbacks.pop(self._consumer_name(consumer), None)
+
+    def register_normalized_callback(self, consumer: str, callback: Callable[[Any], None]) -> None:
+        """Register a callback receiving canonical MarketDataRecord values."""
+        consumer = self._consumer_name(consumer)
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        with self._lock:
+            self._record_callbacks[consumer] = callback
+
+    def unregister_normalized_callback(self, consumer: str) -> None:
+        with self._lock:
+            self._record_callbacks.pop(self._consumer_name(consumer), None)
 
     def subscribe(self, consumer: str, keys: list[InstrumentKey], mode: int = 1) -> tuple[Subscription, ...]:
         consumer = self._consumer_name(consumer)
@@ -95,6 +110,7 @@ class CommonWebSocketManager:
         with self._lock:
             self.registry.clear_consumer(consumer)
             self._callbacks.pop(consumer, None)
+            self._record_callbacks.pop(consumer, None)
             self._reconcile_locked()
 
     def _reconcile_locked(self) -> None:
@@ -129,18 +145,28 @@ class CommonWebSocketManager:
         token = str(message.get("token") or message.get("symboltoken") or "").strip()
         if not token:
             return
-        matching: list[str] = []
+        matching: list[tuple[str, InstrumentKey]] = []
         for sub in self.registry.subscriptions():
             if (
                 sub.key.token.strip() == token
                 and SocketGroup(self._resolve_exchange_type(sub.key), sub.mode) == group
             ):
-                matching.extend(sub.consumers)
+                matching.extend((consumer, sub.key) for consumer in sub.consumers)
         with self._lock:
-            callbacks = [self._callbacks.get(name) for name in set(matching)]
-        for callback in callbacks:
-            if callback is not None:
-                callback(message)
+            raw_callbacks = [self._callbacks.get(name) for name, _ in matching]
+            record_callbacks = [(self._record_callbacks.get(name), key) for name, key in matching]
+        for callback in {id(cb): cb for cb in raw_callbacks if cb is not None}.values():
+            callback(message)
+        for callback, key in record_callbacks:
+            if callback is None:
+                continue
+            descriptor = self.registry.get(key)
+            if descriptor is None:
+                continue
+            try:
+                callback(self._normalizer.normalize(descriptor, message))
+            except (TypeError, ValueError):
+                continue
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
