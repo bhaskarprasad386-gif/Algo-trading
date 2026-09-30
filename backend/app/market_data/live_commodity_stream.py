@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, time
 from threading import Event, Lock
-from time import sleep
+from time import sleep, time_ns
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
@@ -60,11 +60,11 @@ class LiveCommodityMarketDataRecorder:
         return current.weekday() < 5 and time(9, 0) <= current.time() <= time(23, 30)
 
     def build_subscriptions(self) -> tuple:
-        rows = self.instrument_master.download()
+        self.instrument_master.download()
         out = []
         seen: set[tuple[int, str]] = set()
         for symbol in self.underlyings:
-            atm = self.atm_provider(symbol, 0) if self.atm_provider else None
+            atm = self.atm_provider(symbol, time_ns()) if self.atm_provider else None
             selection = select_commodity_contracts(
                 self.instrument_master.instruments,
                 underlying=symbol,
