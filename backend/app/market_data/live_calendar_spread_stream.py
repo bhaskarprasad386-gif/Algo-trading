@@ -243,6 +243,17 @@ class LiveCalendarSpreadOneSecondCollector:
                 app_logger.error(f"Calendar Spread common-feed collector failed: {exc}")
                 time_module.sleep(10)
 
+    def snapshot(self) -> dict[str, Any]:
+        """Return lightweight runtime state for the shared-feed health endpoint."""
+        feed = self._feed
+        ingestor = self._ingestor
+        return {
+            "running": not self.stop_event.is_set(),
+            "registered_instruments": len(self._kind_by_key),
+            "feed": None if feed is None else feed.snapshot(),
+            "ingestor": None if ingestor is None else ingestor.snapshot(),
+        }
+
     def stop(self) -> None:
         self.stop_event.set()
         if self._feed:
