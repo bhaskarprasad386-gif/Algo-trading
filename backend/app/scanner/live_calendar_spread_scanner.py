@@ -161,8 +161,8 @@ class LiveCalendarSpreadScanner:
                 lot_size=payload.get("lot_size"), tick_size=payload.get("tick_size"),
             )
             return self.update(record)
-        except Exception:
-            return None
+        except Exception as exc:
+            raise RuntimeError(f"Calendar payload normalization failed: {exc}") from exc
 
     def snapshot(self, limit=50, *, minimum_gap_points=None, minimum_gross_profit=None):
         min_gap=self.minimum_gap_points if minimum_gap_points is None else float(minimum_gap_points)
