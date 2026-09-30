@@ -249,6 +249,22 @@ th{font-size:7px!important}
 .hist-page{display:grid;gap:12px}.hist-toolbar,.hist-kpis,.hist-grid{display:grid;gap:10px}.hist-toolbar{grid-template-columns:1.1fr 1.1fr 1fr 1fr auto}.hist-kpis{grid-template-columns:repeat(6,1fr)}.hist-kpi{background:#0D1319;border:1px solid #1C2832;border-radius:9px;padding:11px}.hist-kpi b{display:block;color:#738591;font-size:8px;text-transform:uppercase;letter-spacing:.7px}.hist-kpi strong{display:block;font-size:16px;margin-top:6px}.hist-grid{grid-template-columns:1.5fr .8fr}.hist-panel{background:#12171E;border:1px solid #202B35;border-radius:12px;padding:14px}.hist-field label{display:block;color:#758792;font-size:9px;margin-bottom:5px}.hist-field input,.hist-field select{width:100%;background:#081016;border:1px solid #263540;color:#DCE7ED;border-radius:7px;padding:9px;font-size:10px}.hist-controls{display:flex;gap:7px;flex-wrap:wrap}.hist-controls button{min-width:42px}.hist-speed.active{background:#082C43;color:#BDEBFF;border-color:#075B88}.hist-chart{height:300px;background:#091016;border:1px solid #1B2730;border-radius:9px;position:relative;overflow:hidden}.hist-chart-grid{position:absolute;inset:0;background:linear-gradient(#13202A 1px,transparent 1px),linear-gradient(90deg,#13202A 1px,transparent 1px);background-size:100% 20%,10% 100%;opacity:.65}.hist-svg{position:absolute;inset:0;width:100%;height:100%}.hist-readout{position:absolute;left:10px;top:9px;z-index:2;font:10px ui-monospace,SFMono-Regular,Menlo,monospace;color:#DCECF4;background:rgba(5,9,13,.72);padding:6px 8px;border-radius:6px}.hist-table{max-height:300px;overflow:auto;border:1px solid #1B2730;border-radius:8px}.hist-row{display:grid;grid-template-columns:110px 1fr 90px 90px 90px;gap:8px;padding:8px;border-bottom:1px solid #18232C;font-size:9px;cursor:pointer}.hist-row:hover{background:#0F171E}.hist-row.head{color:#71838F;font-size:8px;text-transform:uppercase;cursor:default}.hist-row.selected{background:#082A42}.hist-timeline{display:grid;gap:6px;max-height:235px;overflow:auto}.hist-event{padding:8px 9px;background:#0D1319;border:1px solid #1C2832;border-radius:7px;font-size:9px}.hist-event strong{display:block;font-size:10px}.hist-event span{color:#7F919F}.hist-status{font-size:9px;color:#7F919F}.hist-note{font-size:9px;color:#8EA0AB;line-height:1.5;background:#0B1116;border:1px solid #1B2730;border-radius:8px;padding:9px}.hist-mobile-actions{display:none}.hist-empty{padding:28px 12px;text-align:center;color:#7F919F;font-size:10px}.hist-badge{display:inline-block;padding:4px 6px;border-radius:5px;background:#092A20;color:#7DFFB0;font-size:8px;font-weight:900}.hist-badge.pending{background:#241E0B;color:#FFD477}.hist-badge.error{background:#35101A;color:#FF8FA5}
 @media(max-width:1100px){.hist-toolbar{grid-template-columns:repeat(2,1fr)}.hist-kpis{grid-template-columns:repeat(3,1fr)}.hist-grid{grid-template-columns:1fr}}
 @media(max-width:720px){.hist-toolbar{grid-template-columns:1fr 1fr}.hist-kpis{grid-template-columns:repeat(2,1fr)}.hist-chart{height:240px}.hist-mobile-actions{display:grid;position:sticky;bottom:8px;z-index:10;grid-template-columns:1fr 1fr;gap:8px}.hist-row{grid-template-columns:95px 1fr 75px}.hist-row span:nth-child(4),.hist-row span:nth-child(5){display:none}}
+
+/* Batch-10 terminal visual layer */
+.hist-page{padding:14px;max-width:1600px;margin:0 auto;background:linear-gradient(180deg,#070A0D 0%,#080D11 100%);min-height:calc(100vh - 58px)}
+.hist-hero{display:flex;justify-content:space-between;align-items:center;padding:18px 20px;border:1px solid #1D2A34;background:linear-gradient(135deg,#0E151B,#0A1015);border-radius:13px;box-shadow:0 10px 30px rgba(0,0,0,.22)}
+.hist-eyebrow{font:900 8px ui-monospace,SFMono-Regular,Menlo,monospace;color:#00B0FF;letter-spacing:1.5px}.hist-live-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#00E676;box-shadow:0 0 9px #00E676;margin-right:6px}.hist-hero h1{margin:5px 0 3px;font-size:24px;letter-spacing:-.5px}.hist-hero p{margin:0;color:#71838F;font-size:10px}.hist-hero-right{display:flex;gap:8px;align-items:center}.hist-source-pill{padding:7px 10px;background:#080F14;border:1px solid #22313B;border-radius:7px}
+.hist-commandbar{display:grid;grid-template-columns:1.5fr 1fr 1.25fr 1.1fr .8fr auto;gap:8px;align-items:end;padding:10px;margin-top:10px;background:#0F1419;border:1px solid #202D36;border-radius:11px}.hist-command-title{display:flex;align-items:center;gap:9px;padding:0 6px}.hist-command-icon{width:30px;height:30px;display:grid;place-items:center;border-radius:8px;background:#092A3F;color:#00B0FF;font-size:15px}.hist-command-title b{display:block;font-size:9px}.hist-command-title small{display:block;color:#657783;font-size:8px;margin-top:3px}.hist-load-btn{height:34px;white-space:nowrap}.hist-field label{display:block;color:#657783;font-size:7px;font-weight:900;letter-spacing:.8px;margin:0 0 4px 2px}.hist-field input,.hist-field select{width:100%;height:34px;background:#080F14;border:1px solid #253640;color:#DCE7ED;border-radius:6px;padding:0 9px;font-size:9px;outline:none}
+.hist-kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:10px 0}.hist-kpi{display:flex;gap:9px;align-items:center;padding:11px;background:#0F1419;border:1px solid #1C2932;border-radius:9px}.hist-kpi-icon{width:27px;height:27px;display:grid;place-items:center;border-radius:7px;background:#0B202D;color:#00B0FF;font-size:11px;font-weight:900}.hist-kpi b{display:block;color:#637783;font-size:7px;letter-spacing:.7px}.hist-kpi strong{display:block;font-size:13px;margin-top:3px}.hist-kpi small{display:block;color:#566874;font-size:7px;margin-top:2px}.hist-paper .hist-kpi-icon{color:#00E676;background:#09261C}.hist-paper strong{color:#00E676}
+.hist-main-grid{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(280px,.65fr);gap:10px}.hist-panel{background:#0F1419;border:1px solid #1E2B35;border-radius:11px;overflow:hidden}.hist-chart-panel{padding:13px}.hist-panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.hist-panel-head.compact{padding:13px 13px 0}.hist-panel-label{color:#00B0FF;font-size:7px;font-weight:900;letter-spacing:1px}.hist-panel-head h2{margin:3px 0;font-size:13px}.hist-panel-head span{color:#667A86;font-size:8px}.hist-state-box{padding:6px 8px;border:1px solid #263640;border-radius:6px;background:#0A1116}.hist-state-box i{display:inline-block;width:5px;height:5px;border-radius:50%;background:#00E676;margin-right:5px}.hist-state-box b{font-size:8px;color:#9EB0BA}
+.hist-chart-wrap{height:320px;position:relative;overflow:hidden;border:1px solid #1A2831;border-radius:8px;background:#080E13}.hist-chart-grid{position:absolute;inset:0;background:linear-gradient(#14212A 1px,transparent 1px),linear-gradient(90deg,#14212A 1px,transparent 1px);background-size:100% 20%,10% 100%;opacity:.55}.hist-chart-axis{position:absolute;left:10px;right:10px;bottom:6px;display:flex;justify-content:space-between;color:#465964;font-size:6px;z-index:2}.hist-chart-y{position:absolute;top:8px;left:8px;color:#465964;font-size:6px;z-index:2}.hist-svg{position:absolute;inset:0;width:100%;height:100%}.hist-readout{position:absolute;top:9px;left:42px;z-index:3;background:#071017dd;border:1px solid #20333F;border-radius:6px;padding:7px 9px;color:#DDEAF0;font:9px ui-monospace,SFMono-Regular,Menlo,monospace}
+.hist-scrubber{display:flex;gap:8px;align-items:center;color:#566A76;font-size:7px;margin:9px 2px}.hist-scrubber input{flex:1;accent-color:#00B0FF}.hist-playbar{display:flex;justify-content:space-between;align-items:center;padding:7px;background:#0A1116;border:1px solid #1B2831;border-radius:7px}.hist-transport{display:flex;gap:5px}.hist-icon-btn,.hist-play-btn{border:1px solid #273842;background:#101920;color:#B9C9D1;border-radius:6px;width:29px;height:27px;cursor:pointer}.hist-play-btn{background:#073654;border-color:#09638F;color:#BEEAFF}.hist-speeds{display:flex;align-items:center;gap:4px}.hist-speeds>span{color:#536873;font-size:7px;margin-right:3px}.hist-speeds .tab{font-size:7px;padding:5px 7px}.hist-terminal-note{display:flex;gap:8px;align-items:center;margin-top:8px;padding:7px 9px;background:#091016;border:1px dashed #23333D;border-radius:6px;color:#60747F;font-size:7px}.hist-terminal-note span:first-child{color:#00E676}.hist-terminal-note b{color:#8DA1AC;font-size:7px}
+.hist-side-stack{display:grid;grid-template-rows:auto 1fr;gap:10px;min-height:0}.hist-cursor-panel{padding-bottom:12px}.hist-cursor-panel .hist-panel-head>strong{font:900 9px ui-monospace,SFMono-Regular,Menlo,monospace;color:#8CA0AA}.hist-detail-card{margin:0 13px;padding:11px;background:#091016;border:1px solid #1B2A34;border-radius:8px;color:#8FA3AE;font-size:9px;line-height:1.7;min-height:75px}.hist-detail-card strong{color:#DCE8EE;font-size:12px}.hist-detail-card .up{color:#00E676}.hist-timeline{padding:9px 13px 13px;max-height:365px;overflow:auto}.hist-event{position:relative;padding:8px 9px 8px 12px;margin-bottom:5px;background:#0A1116;border:1px solid #1B2932;border-radius:7px;cursor:pointer}.hist-event:before{content:'';position:absolute;left:0;top:9px;bottom:9px;width:2px;background:#075C88;border-radius:2px}.hist-event:hover{background:#0D1820;border-color:#2A4555}.hist-event strong{display:block;color:#B8C8D0;font:900 8px ui-monospace,SFMono-Regular,Menlo,monospace}.hist-event span{display:block;color:#60747F;font-size:7px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.hist-empty{padding:25px 10px;text-align:center;color:#5E727D;font-size:8px}
+.hist-data-panel{margin-top:10px}.hist-data-panel .hist-panel-head{padding-bottom:10px}.hist-coverage{display:flex;align-items:center}.hist-table{margin:0 13px 13px;border:1px solid #1A2831;border-radius:8px;overflow:auto;max-height:250px}.hist-row{display:grid;grid-template-columns:110px 1fr 100px 100px 100px;gap:8px;padding:8px 10px;border-bottom:1px solid #17232C;color:#9CB0BA;font-size:8px;cursor:pointer}.hist-row:hover,.hist-row.selected{background:#0A2231}.hist-row.head{color:#586D78;font-size:7px;font-weight:900;letter-spacing:.6px;cursor:default;background:#0B1116}.hist-status{font-size:7px;color:#6D808B}
+.hist-badge{display:inline-block;padding:5px 7px;border-radius:5px;background:#092A20;color:#78F8A7;font-size:7px;font-weight:900;letter-spacing:.5px}.hist-badge.pending{background:#261F0C;color:#FFD46F}.hist-badge.error{background:#35131B;color:#FF91A5}.hist-mobile-actions{display:none}
+@media(max-width:1200px){.hist-commandbar{grid-template-columns:1fr 1fr 1fr}.hist-command-title{display:none}.hist-kpis{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:820px){.hist-main-grid{grid-template-columns:1fr}.hist-side-stack{grid-template-rows:auto auto}.hist-timeline{max-height:230px}}
+@media(max-width:650px){.hist-page{padding:8px 8px 76px}.hist-hero{padding:13px;align-items:flex-start}.hist-hero h1{font-size:19px}.hist-hero p{font-size:8px;max-width:220px}.hist-hero-right{flex-direction:column;align-items:flex-end}.hist-commandbar{grid-template-columns:1fr 1fr;padding:9px}.hist-load-btn{grid-column:1/-1}.hist-kpis{grid-template-columns:1fr 1fr}.hist-kpi{padding:9px}.hist-kpi-icon{width:23px;height:23px}.hist-kpi strong{font-size:11px}.hist-chart-wrap{height:235px}.hist-speeds{width:100%;overflow:auto}.hist-speeds>span{display:none}.hist-playbar{display:block}.hist-transport{justify-content:center;margin-bottom:7px}.hist-speeds{justify-content:center}.hist-terminal-note{flex-wrap:wrap}.hist-row{grid-template-columns:90px 1fr 75px;min-width:300px}.hist-row span:nth-child(4),.hist-row span:nth-child(5){display:none}.hist-mobile-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;position:sticky;bottom:58px;z-index:25;padding:7px;background:#070A0D;border:1px solid #1B2932;border-radius:8px}.hist-mobile-actions button{height:38px}}
 </style>
 </head>
 <body>
@@ -1208,7 +1224,7 @@ async function loadHistoricalReplay(){
  try{
   const url=base()+'/api/v1/backtesting/replay/stream?instrument='+encodeURIComponent(sym)+'&timeframe='+encodeURIComponent(tf)+'&source=angelone-live-1s&start_ns='+histNs(date)+'&end_ns='+histNs(date,true)+'&limit=10000';
   const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error('Replay '+r.status);
-  const j=await r.json();histRows=j.data||[];histCursor=0;
+  const j=await r.json();histRows=j.data||[];histCursor=0;const hs=document.getElementById('histScrubber');if(hs){hs.max=Math.max(0,histRows.length-1);hs.value=0}const he=document.getElementById('histScrubEnd');if(he&&histRows.length)he.textContent=new Date(histRows[histRows.length-1].timestamp_ns/1e6).toLocaleTimeString('en-IN');
   document.getElementById('histSource').textContent='ANGEL • LIVE 1s';document.getElementById('histCount').textContent=fmt(histRows.length);document.getElementById('histResolution').textContent=tf;document.getElementById('histFirst').textContent=histRows[0]?new Date(histRows[0].timestamp_ns/1e6).toLocaleTimeString('en-IN'):'—';document.getElementById('histLast').textContent=histRows.length?new Date(histRows[histRows.length-1].timestamp_ns/1e6).toLocaleTimeString('en-IN'):'—';
   renderHistRows();renderHistTimeline();renderHistCursor();drawHistChart();histSetStatus(histRows.length?'SAVED LIVE':'NO DATA',histRows.length?'':'pending');document.getElementById('histReplayState').textContent=histRows.length?'READY • SAVED LIVE':'NO SAVED DATA';toast(histRows.length?'Saved live replay loaded':'No saved live data for selection');
  }catch(e){histRows=[];renderHistRows();document.getElementById('histReplayState').textContent='SOURCE ERROR';histSetStatus('SOURCE ERROR','error');toast('Replay load failed: '+e.message)}
@@ -1223,7 +1239,8 @@ function renderHistTimeline(){
  const box=document.getElementById('histTimeline');if(!box)return;
  const rows=histRows.slice(0,120);box.innerHTML=rows.length?rows.map((r,i)=>'<div class="hist-event" onclick="histSelect('+i+')"><strong>'+new Date(r.timestamp_ns/1e6).toLocaleTimeString('en-IN')+' • '+r.symbol+'</strong><span>LTP ₹'+fmt(r.ltp)+' • Bid ₹'+fmt(r.bid)+' • Ask ₹'+fmt(r.ask)+' • Vol '+fmt(r.volume)+' • OI '+fmt(r.oi)+'</span></div>').join(''):'<div class="hist-empty">No events in selected range.</div>';
 }
-function histSelect(i){if(!histRows.length)return;histCursor=Math.max(0,Math.min(histRows.length-1,i));renderHistCursor();renderHistRows();drawHistChart()}
+function histSelect(i){if(!histRows.length)return;histCursor=Math.max(0,Math.min(histRows.length-1,i));const s=document.getElementById('histScrubber');if(s){s.max=Math.max(0,histRows.length-1);s.value=histCursor}renderHistCursor();renderHistRows();drawHistChart()}
+
 function renderHistCursor(){const r=histRows[histCursor];document.getElementById('histCursor').textContent=histRows.length?(histCursor+1)+' / '+histRows.length:'0 / 0';document.getElementById('histDetail').innerHTML=r?'<strong>'+r.symbol+'</strong><br>Timestamp: '+new Date(r.timestamp_ns/1e6).toLocaleString('en-IN')+'<br>LTP: ₹'+fmt(r.ltp)+' • Bid: ₹'+fmt(r.bid)+' • Ask: ₹'+fmt(r.ask)+'<br>Volume: '+fmt(r.volume)+' • OI: '+fmt(r.oi)+'<br>Expiry: '+(r.expiry||'—')+' • Strike: '+(r.strike??'—')+'<br><span class="up">PAPER REPLAY • BROKER ORDERS OFF</span>':'No replay event selected.';document.getElementById('histReadout').textContent=r?r.symbol+' • '+new Date(r.timestamp_ns/1e6).toLocaleTimeString('en-IN')+' • ₹'+fmt(r.ltp):'No replay loaded'}
 function drawHistChart(){
  const line=document.getElementById('histLine');if(!line)return;const data=histRows.slice(0,1000).map(histValue).filter(Number.isFinite);if(data.length<2){line.setAttribute('points','');return}const lo=Math.min(...data),hi=Math.max(...data),range=hi-lo||1;line.setAttribute('points',data.map((v,i)=>((i/(data.length-1))*1000)+' '+(285-((v-lo)/range)*260)).join(' '));}
@@ -1253,42 +1270,83 @@ if(typeof showTradingJournal==='function')showTradingJournal=histHideBefore(show
 <div hidden id="dashboardContractStatus">MARKET WATCH | Live broker orders: OFF | cash-future | calendar-spread | synthetic-future-cash-carry | box-spread | full-fno | PHASE 12 • PLATFORM NAVIGATION | WEB • FULL TABLES | ANDROID • COMPACT CARDS | SAME API / DATA | PAPER ORDERS ONLY | PHASE 13 • EXPANSION CENTER | INDICES &amp; EXCHANGES | COMMODITIES &amp; CURRENCY | STRATEGIES &amp; SCANNERS | DATA SOURCES | ANALYTICS &amp; CHARTS | NOTIFICATIONS | BROKER INTEGRATIONS | USER LAYOUTS | Real broker routing remains OFF.</div>
 
 <section id="historicalReplayPage" class="hist-page" hidden>
- <div class="page-head">
-  <div><h1>Historical + Replay</h1><p>Replay only data already saved from the live stream • no historical downloader</p></div>
-  <div class="refresh-box"><span id="histStatus"><span class="hist-badge pending">SOURCE CHECKING</span></span><button class="secondary" onclick="refreshHistoricalReplay()">↻ Refresh</button></div>
+ <div class="hist-hero">
+  <div class="hist-hero-left">
+   <div class="hist-eyebrow"><span class="hist-live-dot"></span> BACKTESTING TERMINAL</div>
+   <h1>Historical + Replay</h1>
+   <p>Replay persisted live-market observations with the same terminal workflow used by the live scanner.</p>
+  </div>
+  <div class="hist-hero-right">
+   <div class="hist-source-pill"><span id="histStatus"><span class="hist-badge pending">SOURCE CHECKING</span></span></div>
+   <button class="secondary" onclick="refreshHistoricalReplay()">↻ SYNC DATA</button>
+  </div>
  </div>
- <div class="hist-toolbar">
-  <div class="hist-field"><label>DATE</label><input id="histDate" type="date"></div>
-  <div class="hist-field"><label>INSTRUMENT / SYMBOL</label><select id="histInstrument"><option value="">Loading saved instruments…</option></select></div>
+
+ <div class="hist-commandbar">
+  <div class="hist-command-title"><span class="hist-command-icon">◷</span><div><b>REPLAY CONFIGURATION</b><small>Saved Live Data Engine</small></div></div>
+  <div class="hist-field"><label>TRADING DATE</label><input id="histDate" type="date"></div>
+  <div class="hist-field"><label>INSTRUMENT</label><select id="histInstrument"><option value="">Loading saved instruments…</option></select></div>
   <div class="hist-field"><label>STRATEGY</label><select id="histStrategy"><option value="MARKET DATA">MARKET DATA</option><option value="CASH-FUTURE">CASH-FUTURE</option><option value="CALENDAR SPREAD">CALENDAR SPREAD</option><option value="SYNTHETIC ARBITRAGE">SYNTHETIC ARBITRAGE</option><option value="BOX SPREAD">BOX SPREAD</option></select></div>
-  <div class="hist-field"><label>DATA RESOLUTION</label><select id="histTimeframe"><option>1s</option><option>30s</option><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option></select></div>
-  <button class="primary" onclick="loadHistoricalReplay()">LOAD SAVED DATA</button>
+  <div class="hist-field"><label>RESOLUTION</label><select id="histTimeframe"><option>1s</option><option>30s</option><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option></select></div>
+  <button class="primary hist-load-btn" onclick="loadHistoricalReplay()">LOAD REPLAY</button>
  </div>
+
  <div class="hist-kpis">
-  <div class="hist-kpi"><b>Source</b><strong id="histSource">—</strong></div><div class="hist-kpi"><b>Records</b><strong id="histCount">0</strong></div><div class="hist-kpi"><b>Resolution</b><strong id="histResolution">—</strong></div><div class="hist-kpi"><b>First</b><strong id="histFirst">—</strong></div><div class="hist-kpi"><b>Last</b><strong id="histLast">—</strong></div><div class="hist-kpi"><b>Orders</b><strong class="up">OFF</strong></div>
+  <div class="hist-kpi"><div class="hist-kpi-icon">◉</div><div><b>DATA SOURCE</b><strong id="histSource">—</strong><small>Persisted live stream</small></div></div>
+  <div class="hist-kpi"><div class="hist-kpi-icon">#</div><div><b>OBSERVATIONS</b><strong id="histCount">0</strong><small>Saved records</small></div></div>
+  <div class="hist-kpi"><div class="hist-kpi-icon">◷</div><div><b>RESOLUTION</b><strong id="histResolution">—</strong><small>Actual cadence</small></div></div>
+  <div class="hist-kpi"><div class="hist-kpi-icon">↤</div><div><b>START</b><strong id="histFirst">—</strong><small>First observation</small></div></div>
+  <div class="hist-kpi"><div class="hist-kpi-icon">↦</div><div><b>END</b><strong id="histLast">—</strong><small>Last observation</small></div></div>
+  <div class="hist-kpi hist-paper"><div class="hist-kpi-icon">P</div><div><b>EXECUTION</b><strong>OFF</strong><small>Paper replay only</small></div></div>
  </div>
- <div class="hist-grid">
-  <div class="hist-panel">
-   <div class="card-head"><div><h2>Replay Chart</h2><div class="sub">Saved live observation • positional replay</div></div><span id="histReplayState" class="hist-status">READY</span></div>
-   <div class="hist-chart"><div class="hist-chart-grid"></div><div id="histReadout" class="hist-readout">No replay loaded</div><svg id="histSvg" class="hist-svg" viewBox="0 0 1000 300" preserveAspectRatio="none"><polyline id="histLine" fill="none" stroke="#00B0FF" stroke-width="2" points=""/></svg></div>
-   <div class="hist-controls" style="margin-top:10px">
-    <button class="secondary" onclick="histPlay()">▶ Play</button><button class="secondary" onclick="histPause()">Ⅱ Pause</button><button class="secondary" onclick="histStep(-1)">‹ Step</button><button class="secondary" onclick="histStep(1)">Step ›</button><button class="secondary" onclick="histReset()">↺ Reset</button>
-    <button class="tab hist-speed active" data-speed="1s" onclick="histSetSpeed('1s')">1s</button><button class="tab hist-speed" data-speed="30s" onclick="histSetSpeed('30s')">30s</button><button class="tab hist-speed" data-speed="1m" onclick="histSetSpeed('1m')">1m</button><button class="tab hist-speed" data-speed="5m" onclick="histSetSpeed('5m')">5m</button><button class="tab hist-speed" data-speed="15m" onclick="histSetSpeed('15m')">15m</button><button class="tab hist-speed" data-speed="30m" onclick="histSetSpeed('30m')">30m</button><button class="tab hist-speed" data-speed="1h" onclick="histSetSpeed('1h')">1h</button>
+
+ <div class="hist-main-grid">
+  <div class="hist-panel hist-chart-panel">
+   <div class="hist-panel-head">
+    <div><div class="hist-panel-label">MARKET REPLAY</div><h2 id="histChartTitle">Price Timeline</h2><span>Saved observation stream • cursor follows playback</span></div>
+    <div class="hist-state-box"><i></i><b id="histReplayState">READY</b></div>
    </div>
-   <div class="hist-note" style="margin-top:9px">Replay advances through actual saved observations. A faster playback control never fabricates missing ticks or prices. Paper replay only; broker orders remain OFF.</div>
+   <div class="hist-chart-wrap">
+    <div class="hist-chart-y y1">PRICE</div><div class="hist-chart-grid"></div>
+    <div class="hist-chart-axis"><span>OPEN</span><span>MID SESSION</span><span>CLOSE</span></div>
+    <div id="histReadout" class="hist-readout">NO REPLAY LOADED</div>
+    <svg id="histSvg" class="hist-svg" viewBox="0 0 1000 300" preserveAspectRatio="none"><polyline id="histLine" fill="none" stroke="#00B0FF" stroke-width="2.5" points=""/></svg>
+   </div>
+   <div class="hist-scrubber"><span>00:00</span><input id="histScrubber" type="range" min="0" max="0" value="0" oninput="histSelect(Number(this.value))"><span id="histScrubEnd">—</span></div>
+   <div class="hist-playbar">
+    <div class="hist-transport">
+     <button class="hist-icon-btn" onclick="histReset()" title="Reset">↺</button>
+     <button class="hist-icon-btn" onclick="histStep(-1)" title="Previous">‹</button>
+     <button class="hist-play-btn" onclick="histPlay()" title="Play">▶</button>
+     <button class="hist-icon-btn" onclick="histPause()" title="Pause">Ⅱ</button>
+     <button class="hist-icon-btn" onclick="histStep(1)" title="Next">›</button>
+    </div>
+    <div class="hist-speeds"><span>PLAYBACK</span><button class="tab hist-speed active" data-speed="1s" onclick="histSetSpeed('1s')">1S</button><button class="tab hist-speed" data-speed="30s" onclick="histSetSpeed('30s')">30S</button><button class="tab hist-speed" data-speed="1m" onclick="histSetSpeed('1m')">1M</button><button class="tab hist-speed" data-speed="5m" onclick="histSetSpeed('5m')">5M</button><button class="tab hist-speed" data-speed="15m" onclick="histSetSpeed('15m')">15M</button><button class="tab hist-speed" data-speed="30m" onclick="histSetSpeed('30m')">30M</button><button class="tab hist-speed" data-speed="1h" onclick="histSetSpeed('1h')">1H</button></div>
+   </div>
+   <div class="hist-terminal-note"><span>●</span><b>REPLAY ENGINE</b><span>Actual saved ticks only</span><span>•</span><span>NO HISTORICAL DOWNLOAD</span><span>•</span><span>BROKER ORDERS OFF</span></div>
   </div>
-  <div class="hist-panel">
-   <div class="card-head"><div><h2>Replay Event Timeline</h2><div class="sub">Timestamped source observations</div></div><span id="histCursor">0 / 0</span></div>
-   <div id="histTimeline" class="hist-timeline"><div class="hist-empty">Load a saved-live date and instrument.</div></div>
-   <div class="card-head" style="margin-top:12px"><div><h2>Signal / Position Detail</h2><div class="sub">Current replay cursor</div></div></div>
-   <div id="histDetail" class="hist-note">No replay event selected.</div>
+
+  <div class="hist-side-stack">
+   <div class="hist-panel hist-cursor-panel">
+    <div class="hist-panel-head compact"><div><div class="hist-panel-label">CURRENT CURSOR</div><h2>Replay Event</h2></div><strong id="histCursor">0 / 0</strong></div>
+    <div id="histDetail" class="hist-detail-card">No replay event selected.</div>
+   </div>
+   <div class="hist-panel">
+    <div class="hist-panel-head compact"><div><div class="hist-panel-label">EVENT FLOW</div><h2>Timeline</h2></div><span class="hist-status">LIVE CURSOR</span></div>
+    <div id="histTimeline" class="hist-timeline"><div class="hist-empty">Load a saved-live date and instrument.</div></div>
+   </div>
   </div>
  </div>
- <div class="hist-panel">
-  <div class="card-head"><div><h2>Saved Data Coverage</h2><div class="sub">Only persisted live data is eligible for replay</div></div><span id="histCoverage" class="hist-status">SOURCE PENDING</span></div>
+
+ <div class="hist-panel hist-data-panel">
+  <div class="hist-panel-head compact">
+   <div><div class="hist-panel-label">SOURCE COVERAGE</div><h2>Saved Data Observations</h2><span>Only persisted live data is eligible for replay</span></div>
+   <div class="hist-coverage"><span id="histCoverage" class="hist-status">SOURCE PENDING</span></div>
+  </div>
   <div id="histRows" class="hist-table"><div class="hist-row head"><span>TIME</span><span>SYMBOL</span><span>LTP</span><span>BID</span><span>ASK</span></div><div class="hist-empty">No saved records loaded.</div></div>
  </div>
- <div class="hist-mobile-actions"><button class="primary" onclick="loadHistoricalReplay()">↻ LIVE LOAD</button><button class="secondary" onclick="histPlay()">▶ REPLAY</button></div>
+
+ <div class="hist-mobile-actions"><button class="primary" onclick="loadHistoricalReplay()">↻ LOAD</button><button class="secondary" onclick="histPlay()">▶ REPLAY</button></div>
 </section>
 </body>
 </html>
