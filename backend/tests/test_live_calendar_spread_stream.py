@@ -14,16 +14,16 @@ def test_calendar_live_contracts_select_two_nearest_per_index_stock_and_commodit
     class Master:
         def download(self):
             return [
-                {"exch_seg": "NFO", "instrumenttype": "FUTIDX", "expiry": "31OCT2026", "token": "1", "symbol": "NIFTY30SEP26FUT", "name": "NIFTY", "lotsize": "75"},
-                {"exch_seg": "NFO", "instrumenttype": "FUTIDX", "expiry": "30NOV2026", "token": "2", "symbol": "NIFTY29OCT26FUT", "name": "NIFTY", "lotsize": "75"},
-                {"exch_seg": "NFO", "instrumenttype": "FUTIDX", "expiry": "31DEC2026", "token": "3", "symbol": "NIFTY26NOV26FUT", "name": "NIFTY", "lotsize": "75"},
-                {"exch_seg": "BFO", "instrumenttype": "FUTIDX", "expiry": "30SEP2026", "token": "4", "symbol": "SENSEX30SEP26FUT", "name": "SENSEX", "lotsize": "20"},
-                {"exch_seg": "BFO", "instrumenttype": "FUTIDX", "expiry": "30NOV2026", "token": "5", "symbol": "SENSEX30OCT26FUT", "name": "SENSEX", "lotsize": "20"},
-                {"exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "token": "6", "symbol": "SBIN30SEP26FUT", "name": "SBIN", "lotsize": "150"},
-                {"exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "29OCT2026", "token": "7", "symbol": "SBIN29OCT26FUT", "name": "SBIN", "lotsize": "150"},
-                {"exch_seg": "MCX", "instrumenttype": "FUTCOM", "expiry": "30SEP2026", "token": "8", "symbol": "CRUDEOIL30SEP26FUT", "name": "CRUDEOIL", "lotsize": "100"},
-                {"exch_seg": "MCX", "instrumenttype": "FUTCOM", "expiry": "19DEC2026", "token": "9", "symbol": "CRUDEOIL19OCT26FUT", "name": "CRUDEOIL", "lotsize": "100"},
-                {"exch_seg": "MCX", "instrumenttype": "FUTCOM", "expiry": "19NOV2026", "token": "10", "symbol": "CRUDEOIL19NOV26FUT", "name": "CRUDEOIL", "lotsize": "100"},
+                {"exch_seg": "NFO", "instrumenttype": "FUTIDX", "expiry": "31OCT2099", "token": "1", "symbol": "NIFTY30SEP26FUT", "name": "NIFTY", "lotsize": "75"},
+                {"exch_seg": "NFO", "instrumenttype": "FUTIDX", "expiry": "30NOV2099", "token": "2", "symbol": "NIFTY29OCT26FUT", "name": "NIFTY", "lotsize": "75"},
+                {"exch_seg": "NFO", "instrumenttype": "FUTIDX", "expiry": "31DEC2099", "token": "3", "symbol": "NIFTY26NOV26FUT", "name": "NIFTY", "lotsize": "75"},
+                {"exch_seg": "BFO", "instrumenttype": "FUTIDX", "expiry": "30SEP2098", "token": "4", "symbol": "SENSEX30SEP26FUT", "name": "SENSEX", "lotsize": "20"},
+                {"exch_seg": "BFO", "instrumenttype": "FUTIDX", "expiry": "30NOV2099", "token": "5", "symbol": "SENSEX30OCT26FUT", "name": "SENSEX", "lotsize": "20"},
+                {"exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2098", "token": "6", "symbol": "SBIN30SEP26FUT", "name": "SBIN", "lotsize": "150"},
+                {"exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "29OCT2099", "token": "7", "symbol": "SBIN29OCT26FUT", "name": "SBIN", "lotsize": "150"},
+                {"exch_seg": "MCX", "instrumenttype": "FUTCOM", "expiry": "30SEP2098", "token": "8", "symbol": "CRUDEOIL30SEP26FUT", "name": "CRUDEOIL", "lotsize": "100"},
+                {"exch_seg": "MCX", "instrumenttype": "FUTCOM", "expiry": "19DEC2099", "token": "9", "symbol": "CRUDEOIL19OCT26FUT", "name": "CRUDEOIL", "lotsize": "100"},
+                {"exch_seg": "MCX", "instrumenttype": "FUTCOM", "expiry": "19NOV2099", "token": "10", "symbol": "CRUDEOIL19NOV26FUT", "name": "CRUDEOIL", "lotsize": "100"},
             ]
 
     collector = LiveCalendarSpreadOneSecondCollector("unused", instrument_master=Master())
@@ -48,7 +48,7 @@ def test_calendar_live_session_hours_are_exchange_specific():
 
 
 def test_calendar_live_timestamp_and_expiry_normalization():
-    assert _expiry("30SEP2026").isoformat() == "2026-09-30"
+    assert _expiry("30SEP2098").isoformat() == "2026-09-30"
     assert _expiry("2026-09-30").isoformat() == "2026-09-30"
     assert _timestamp_ns({"exchange_timestamp": 1727000000}) == 1727000000 * 1_000_000_000
     assert _timestamp_ns({"exchange_timestamp": 1727000000000}) == 1727000000000 * 1_000_000
