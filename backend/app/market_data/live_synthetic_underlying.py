@@ -46,6 +46,51 @@ class LiveSyntheticUnderlyingFeed:
         self.stop_event = Event()
         self._feed: CommonStrategyMarketFeed | None = None
 
+    @staticmethod
+    def _price(message: dict) -> float | None:
+        try:
+            value = float(message.get("last_traded_price"))
+        except (TypeError, ValueError):
+            return None
+        return value / 100.0 if value > 0 else None
+
+    @staticmethod
+    def _timestamp_ns(message: dict) -> int | None:
+        try:
+            value = int(float(message.get("exchange_timestamp")))
+        except (TypeError, ValueError):
+            return None
+        if value <= 0:
+            return None
+        if value < 10_000_000_000:
+            return value * 1_000_000_000
+        if value < 10_000_000_000_000:
+            return value * 1_000_000
+        return value * 1_000
+
+    def _tokens(self) -> dict[str, str]:
+        self.instrument_master.download()
+        result = {}
+        for symbol in self.symbols:
+            token = self.concrete_tokens.get(symbol)
+            if token:
+                result[symbol] = token
+            elif symbol in self.index_symbols:
+                exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS else "NSE"
+                result[symbol] = self.instrument_master.resolve_index_token(symbol, exchange)
+            else:
+                result[symbol] = self.instrument_master.resolve_cash_token(symbol, "NSE")
+        return result
+
+    def _exchange_type(self, symbol: str) -> int:
+        return 4 if symbol in BSE_INDEX_SYMBOLS and symbol in self.index_symbols else 1
+
+    def _subscription_groups(self, tokens: dict[str, str]) -> dict[int, list[str]]:
+        groups = {}
+        for symbol, token in tokens.items():
+            groups.setdefault(self._exchange_type(symbol), []).append(token)
+        return groups
+
     def _descriptors(self):
         self.instrument_master.download()
         descriptors = []
