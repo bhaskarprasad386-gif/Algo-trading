@@ -988,7 +988,7 @@ async function refreshAnalyze(){
     document.getElementById('rbiStatement').textContent=pol.statement||'SOURCE PENDING • No policy text fabricated.';
     document.getElementById('rbiPolicyTime').textContent='Checked '+(m.checked_at?new Date(m.checked_at).toLocaleString('en-IN'):'—')+(pol.as_at?' • '+pol.as_at:'');
     document.getElementById('rbiPolicySource').textContent='Source: '+(pol.source||'RBI')+' • '+(pol.url||'');
-    const rh=rr.status==='LIVE'?'LIVE':rr.status==='ERROR'?'ERROR':'PENDING';analyzeSet('analyzeRbiHealth',rh,'health-state '+(rh==='LIVE'?'up':rh==='ERROR'?'down':'neutral'));
+    const rh=rr.status==='LIVE'?'LIVE':rr.status==='ERROR'?'ERROR':'PENDING';analyzeSet('analyzeRbiHealth',rh,'health-state '+(rh==='LIVE'?'up':rh==='ERROR'?'down':'neutral'));document.getElementById('rbiStatus').textContent=rh==='LIVE'?'LIVE SOURCE':rh;document.getElementById('rbiStatus').className='status-tag '+(rh==='LIVE'?'active':rh==='ERROR'?'saved':'saved');
     const srcs=(m.sources||[]).map(x=>x.source+' '+x.status).join(' • ');document.getElementById('analyzeSource').textContent='Market: existing live API • External: '+(srcs||'SOURCE PENDING');
    }catch(e){analyzeSet('analyzeRbiHealth','ERROR','health-state down');document.getElementById('rbiStatus').textContent='SOURCE ERROR';document.getElementById('rbiStatement').textContent='External intelligence source unavailable. No value was fabricated.';document.getElementById('analyzeSource').textContent='External intelligence error • '+e.message}
    
