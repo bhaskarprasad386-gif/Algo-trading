@@ -52,9 +52,7 @@ class LiveSyntheticUnderlyingFeed:
         for symbol in self.symbols:
             token = self.concrete_tokens.get(symbol)
             if token:
-                exchange = "BFO" if symbol in BSE_INDEX_SYMBOLS and symbol in self.index_symbols else (
-                    "NFO" if symbol in self.index_symbols else "NSE"
-                )
+                exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS and symbol in self.index_symbols else "NSE"
             elif symbol in self.index_symbols:
                 exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS else "NSE"
                 token = self.instrument_master.resolve_index_token(symbol, exchange)
