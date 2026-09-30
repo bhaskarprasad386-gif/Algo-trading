@@ -19,7 +19,7 @@ IST = ZoneInfo("Asia/Kolkata")
 
 
 class LiveCommodityMarketDataRecorder:
-    """Record Angel One commodity futures/options without strategy-owned sockets."""
+    """Record Angel One commodity futures/options through CommonStrategyMarketFeed; no strategy-owned sockets."""
 
     SOURCE = "angelone-commodity-live-1s"
 
