@@ -980,7 +980,18 @@ async function refreshAnalyze(){
    renderAnalyzePositioning([]);
    document.getElementById('analysisTimeline').insertAdjacentHTML('afterbegin','<div class="timeline-row"><span class="timeline-dot"></span><div><b>Market snapshot refreshed</b><small>Existing market overview feed</small></div><time>'+stamp()+'</time></div>');
    while(document.getElementById('analysisTimeline').children.length>6)document.getElementById('analysisTimeline').lastElementChild.remove();
-   document.getElementById('analyzeSource').textContent='Source: existing market overview API • live snapshot';
+   try{
+    const ir=await fetch(base()+'/api/v1/intelligence/macro',{cache:'no-store'});if(!ir.ok)throw new Error('Intelligence API '+ir.status);const m=await ir.json(),rr=m.repo_rate||{},pol=m.policy||{},ind=m.indicators||{};
+    analyzeSet('rbiCurrent',rr.current!=null?Number(rr.current).toFixed(2)+'%':'—');
+    analyzeSet('rbiPrevious',rr.previous!=null?Number(rr.previous).toFixed(2)+'%':'SOURCE PENDING');
+    analyzeSet('rbiChange',rr.change!=null?((Number(rr.change)>=0?'+':'')+Number(rr.change).toFixed(2)+' pp'):'—',rr.change==null?'neutral':Number(rr.change)>=0?'up':'down');
+    document.getElementById('rbiStatement').textContent=pol.statement||'SOURCE PENDING • No policy text fabricated.';
+    document.getElementById('rbiPolicyTime').textContent='Checked '+(m.checked_at?new Date(m.checked_at).toLocaleString('en-IN'):'—')+(pol.as_at?' • '+pol.as_at:'');
+    document.getElementById('rbiPolicySource').textContent='Source: '+(pol.source||'RBI')+' • '+(pol.url||'');
+    const rh=rr.status==='LIVE'?'LIVE':rr.status==='ERROR'?'ERROR':'PENDING';analyzeSet('analyzeRbiHealth',rh,'health-state '+(rh==='LIVE'?'up':rh==='ERROR'?'down':'neutral'));
+    const srcs=(m.sources||[]).map(x=>x.source+' '+x.status).join(' • ');document.getElementById('analyzeSource').textContent='Market: existing live API • External: '+(srcs||'SOURCE PENDING');
+   }catch(e){analyzeSet('analyzeRbiHealth','ERROR','health-state down');document.getElementById('rbiStatus').textContent='SOURCE ERROR';document.getElementById('rbiStatement').textContent='External intelligence source unavailable. No value was fabricated.';document.getElementById('analyzeSource').textContent='External intelligence error • '+e.message}
+   
  }catch(e){analyzeSet('analyzeMarketHealth','ERROR','health-state down');document.getElementById('analyzeSource').textContent='Market source error • '+e.message}
  document.getElementById('analyzeUpdated').textContent='Updated '+stamp();
 }
