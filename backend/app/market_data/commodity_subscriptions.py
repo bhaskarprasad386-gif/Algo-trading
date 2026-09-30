@@ -79,8 +79,8 @@ def select_commodity_contracts(
             if key in seen:
                 continue
             seen.add(key)
-            selected.append(SyntheticSubscription(
-                exchange_type, option.token, option.symbol, symbol, "COMMODITY",
+            selected.append(CommoditySubscription(
+                exchange_type, option.token, option.symbol, symbol,
                 option.expiry, option.option_type, option.strike, option.lot_size
             ))
             option_count += 1
