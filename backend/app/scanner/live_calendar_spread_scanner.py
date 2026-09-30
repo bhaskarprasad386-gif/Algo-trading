@@ -149,7 +149,7 @@ class LiveCalendarSpreadScanner:
                     str(payload.get("segment") or payload.get("exchange") or ""),
                     str(payload.get("token") or payload.get("symbol") or payload.get("underlying") or "calendar"),
                 ),
-                symbol=str(payload.get("symbol") or ""),
+                symbol=str(payload.get("symbol") or payload.get("underlying") or "calendar"),
                 instrument_type=kind,
                 timestamp_ns=int(payload.get("timestamp_ns") or 0),
                 timeframe=str(payload.get("timeframe") or "1s"),
