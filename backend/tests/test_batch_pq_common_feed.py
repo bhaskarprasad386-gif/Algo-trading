@@ -72,7 +72,9 @@ def test_calendar_and_box_consumers_share_common_nfo_socket(monkeypatch):
     assert len(FakeSocket.instances) == 1
     socket = FakeSocket.instances[0]
     assert socket.connect_calls[0]["mode"] == 3
-    assert set(socket.connect_calls[0]["tokens"]) == {"FUT-1", "OPT-1"}
+    assert set(socket.connect_calls[0]["tokens"]) == {"FUT-1"}
+    subscribed = [token for tokens, _mode in socket.subscribe_calls for token in tokens]
+    assert set(subscribed) == {"FUT-1", "OPT-1"}
 
     box_feed.stop()
     calendar_feed.stop()
