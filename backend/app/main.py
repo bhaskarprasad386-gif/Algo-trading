@@ -296,6 +296,21 @@ async def dashboard_websocket(websocket: WebSocket):
         while True:
             snapshot = live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=50)
             health = live_cash_future_scanner.health()
+            cash_count = len(snapshot)
+            calendar_snapshot = live_calendar_spread_scanner.snapshot(limit=200)
+            calendar_count = len(calendar_snapshot)
+            synthetic_snapshot = live_synthetic_latest_results
+            box_snapshot = live_box_spread_latest_results
+            def _ts(items):
+                if not items:
+                    return None
+                first = items[0]
+                value = getattr(first, "timestamp_ns", None)
+                if value is None:
+                    value = getattr(getattr(first, "option", None), "timestamp_ns", None)
+                if value is None:
+                    value = getattr(getattr(first, "low", None), "timestamp_ns", None)
+                return value
             await websocket.send_json({
                 "type": "dashboard_snapshot",
                 "timestamp": datetime.now(IST).isoformat(),
@@ -309,6 +324,15 @@ async def dashboard_websocket(websocket: WebSocket):
                         and float(item.get("net_gap", 0) or 0) > 0
                         and item.get("lifecycle") != "EXPIRED"
                     ),
+                },
+                "integration": {
+                    "transport": "server-websocket",
+                    "broker_socket_per_browser": False,
+                    "cash_future": {"count": cash_count, "timestamp_ns": _ts(snapshot)},
+                    "calendar_spread": {"count": calendar_count, "timestamp_ns": _ts(calendar_snapshot)},
+                    "synthetic_arbitrage": {"count": len(synthetic_snapshot), "timestamp_ns": _ts(synthetic_snapshot)},
+                    "box_spread": {"count": len(box_snapshot), "timestamp_ns": _ts(box_snapshot)},
+                    "paper_execution": "OFF",
                 },
                 "live_orders": "OFF",
             })
