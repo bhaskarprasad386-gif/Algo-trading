@@ -48,7 +48,7 @@ def test_calendar_live_session_hours_are_exchange_specific():
 
 
 def test_calendar_live_timestamp_and_expiry_normalization():
-    assert _expiry("30SEP2098").isoformat() == "2026-09-30"
+    assert _expiry("30SEP2098").isoformat() == "2098-09-30"
     assert _expiry("2026-09-30").isoformat() == "2026-09-30"
     assert _timestamp_ns({"exchange_timestamp": 1727000000}) == 1727000000 * 1_000_000_000
     assert _timestamp_ns({"exchange_timestamp": 1727000000000}) == 1727000000000 * 1_000_000
