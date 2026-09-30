@@ -10,6 +10,18 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
+      - name: Probe public endpoint from GitHub runner
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set +e
+          echo "=== EXTERNAL_HTTP ==="
+          for url in "http://$VPS_HOST/health" "http://$VPS_HOST/dashboard" "https://$VPS_HOST/health" "https://$VPS_HOST/dashboard"; do
+            code=$(curl -k -sS --connect-timeout 5 --max-time 10 -o /tmp/public_body -w "%{http_code}" "$url" 2>/tmp/public_err)
+            echo "URL=$url HTTP=$code"
+            if [ -s /tmp/public_err ]; then head -c 300 /tmp/public_err; echo; fi
+          done
+
       - name: Probe VPS
         env:
           VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
@@ -27,32 +39,70 @@ jobs:
             echo HOST=$(hostname)
             echo USER=$(id -un)
             echo PUBLIC_IP=$(curl -4 -sS --max-time 5 https://api.ipify.org || true)
-            echo PORTS
-            ss -ltn 2>/dev/null | grep -E ":(80|443|8000|8080)\\b" || true
-            echo SERVICE
+
+            echo SERVICE_STATE
             systemctl is-active algo-trading.service 2>/dev/null || true
-            systemctl cat algo-trading.service 2>/dev/null | grep -E "^(WorkingDirectory|ExecStart)=" || true
+            systemctl show algo-trading.service --no-pager               -p ActiveState -p SubState -p Result -p NRestarts               -p ExecMainPID -p ExecMainStatus -p ActiveEnterTimestamp               -p InactiveEnterTimestamp -p MemoryCurrent -p MemoryPeak               -p OOMPolicy -p MemoryHigh -p MemoryMax || true
+            systemctl cat algo-trading.service 2>/dev/null | grep -E "^(WorkingDirectory|ExecStart|Restart|RestartSec|TimeoutStopSec|KillMode|KillSignal|FinalKillSignal)=" || true
+
+            echo PORTS
+            ss -ltn 2>/dev/null | grep -E ":(80|443|8000|8080)\b" || true
+
             echo LOCAL_ENDPOINTS
             for port in 80 443 8000 8080; do
               code=$(curl -k -sS --connect-timeout 2 --max-time 5 -o /tmp/body -w "%{http_code}" "http://127.0.0.1:$port/openapi.json" 2>/dev/null || true)
               echo PORT=$port HTTP=$code
-              if [ "$code" != "000" ]; then grep -q "/api/v1/auth/google" /tmp/body && echo GOOGLE_ROUTE_PRESENT || true; fi
             done
 
             echo SYSTEMD_TIMERS
             systemctl list-timers --all --no-pager 2>/dev/null | head -80 || true
+
             echo CRON_ALGO_MATCHES
             grep -RniE "algo-trading|systemctl (stop|restart|start).*algo-trading" /etc/cron* /var/spool/cron 2>/dev/null | head -80 || true
+
+            echo RESTART_CALLER_JOURNAL
+            journalctl --since "3 hours ago" --no-pager 2>/dev/null |
+              grep -Ei "systemctl|sudo|polkit|algo-trading.*(stop|restart|start)|((stop|restart|start).*)algo-trading|Stopping algo-trading|Starting algo-trading" |
+              tail -250 || true
+
+            echo SERVICE_TRANSACTION_JOURNAL
+            journalctl -u algo-trading.service --since "3 hours ago" --no-pager 2>/dev/null |
+              grep -E "Stopping|Stopped|Started|Starting|timeout|Failed|Consumed|Main process exited|Killing|signal" |
+              tail -250 || true
+
+            echo AUDITD_STATUS
+            if command -v auditctl >/dev/null 2>&1; then
+              auditctl -s 2>/dev/null || true
+              if command -v ausearch >/dev/null 2>&1; then
+                ausearch -ts recent -m USER_CMD,EXECVE 2>/dev/null |
+                  grep -Ei "systemctl|algo-trading|sudo" | tail -150 || true
+              fi
+            else
+              echo AUDITD_NOT_INSTALLED
+            fi
+
+            echo SUDO_AUTH_LOG
+            for f in /var/log/auth.log /var/log/secure; do
+              if [ -r "$f" ]; then
+                grep -Ei "sudo|systemctl|algo-trading" "$f" | tail -150 || true
+              fi
+            done
+
+            echo JOURNAL_BOOT_CONTEXT
+            journalctl -u algo-trading.service --since "3 hours ago" --no-pager -o short-iso-precise 2>/dev/null |
+              tail -250 || true
+
             echo NGINX_STATUS
             systemctl is-enabled nginx 2>/dev/null || true
             systemctl is-active nginx 2>/dev/null || true
             nginx -t 2>&1 || true
+
             echo FIREWALL
             ufw status verbose 2>&1 || true
+
             echo SOCKET_DETAILS
             ss -lntp 2>/dev/null | head -80 || true
-            echo SERVICE_JOURNAL_STOPS
-            journalctl -u algo-trading.service --since "3 hours ago" --no-pager 2>/dev/null | grep -E "Stopping|Stopped|Started|timeout|Failed|Consumed" | tail -120 || true
+
             echo PROXY
             for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/* /etc/caddy/Caddyfile; do
               [ -f "$f" ] || continue
