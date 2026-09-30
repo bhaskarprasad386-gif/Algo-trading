@@ -275,6 +275,11 @@ th{font-size:7px!important}
 .live-channel{display:flex;align-items:center;gap:5px;padding:4px 7px;border:1px solid #1b3543;border-radius:999px;color:#8299a6;font:700 7px ui-monospace,SFMono-Regular,Menlo,monospace}
 .live-channel b{color:#d9edf5}.live-channel i{width:5px;height:5px;border-radius:50%;background:#00e676}
 @media(max-width:720px){.live-bus{font-size:7px;padding:4px 7px}.live-channel-strip{overflow:auto;flex-wrap:nowrap}.live-channel{flex:0 0 auto}}
+
+/* Batch-13 UX + mobile integration */
+.workspace-launcher{position:fixed;inset:0;background:rgba(2,6,10,.78);backdrop-filter:blur(10px);z-index:140;display:none;align-items:flex-end;justify-content:center;padding:18px}.workspace-launcher.open{display:flex}.workspace-sheet{width:min(720px,100%);background:#0b1218;border:1px solid #214052;border-radius:14px;padding:14px;box-shadow:0 28px 90px rgba(0,0,0,.6)}.workspace-sheet-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.workspace-sheet-head b{font-size:12px}.workspace-sheet-head span{font-size:9px;color:var(--muted)}.workspace-close{background:#101a22;border:1px solid var(--line);color:#b9cbd5;border-radius:7px;padding:6px 9px}.workspace-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.workspace-tile{min-height:58px;text-align:left;background:#0e171e;border:1px solid #1e303b;color:#dce8ee;border-radius:9px;padding:9px;touch-action:manipulation}.workspace-tile b{display:block;font-size:10px}.workspace-tile small{display:block;color:#718591;font-size:8px;margin-top:4px}.workspace-tile:active{transform:scale(.98);border-color:#0878ad}.ux-shortcuts{display:flex;gap:6px;overflow:auto;margin-top:8px}.ux-shortcuts button{white-space:nowrap}.mobile-nav-more{display:none}
+@media(max-width:720px){.workspace-launcher{padding:0}.workspace-sheet{border-radius:15px 15px 0 0;padding:13px 11px calc(13px + env(safe-area-inset-bottom));max-height:82vh;overflow:auto}.workspace-grid{grid-template-columns:repeat(2,1fr)}.workspace-tile{min-height:64px}.mobile-nav-more{display:block}.bottom-nav button{min-height:42px;touch-action:manipulation}}
+@media(min-width:721px){.workspace-launcher{align-items:center}.workspace-sheet{border-radius:14px}}
 </style>
 </head>
 <body>
@@ -521,7 +526,9 @@ th{font-size:7px!important}
  </section>
 </main>
 </div>
-<nav class="bottom-nav" id="responsiveQuickNav"><button class="active" id="bottomHome" onclick="goHome()">⌂<br>Home</button><button id="bottomAnalyze" onclick="showAnalyze()">⌕<br>Analyze</button><button onclick="toast('Portfolio is Batch 8')">▤<br>Portfolio</button><button onclick="openAlertModal()">♧<br>Alerts</button><button onclick="toast('More modules follow in later batches')">•••<br>More</button></nav>
+
+<div id="workspaceLauncher" class="workspace-launcher" aria-hidden="true" onclick="if(event.target===this)closeWorkspaceLauncher()"><div class="workspace-sheet"><div class="workspace-sheet-head"><div><b>WORKSPACE LAUNCHER</b><span>All modules • live data bus • paper only</span></div><button class="workspace-close" onclick="closeWorkspaceLauncher()">CLOSE</button></div><div class="workspace-grid"><button class="workspace-tile" onclick="goHome();closeWorkspaceLauncher()"><b>⌂ Command Center</b><small>Market overview + live scanner</small></button><button class="workspace-tile" onclick="showAnalyze();closeWorkspaceLauncher()"><b>⌕ Analyze Hub</b><small>Macro + market intelligence</small></button><button class="workspace-tile" onclick="showCashFuture();closeWorkspaceLauncher()"><b>Cash-Future</b><small>Executable live opportunities</small></button><button class="workspace-tile" onclick="showCalendarSpread();closeWorkspaceLauncher()"><b>Calendar Spread</b><small>Near / far contracts</small></button><button class="workspace-tile" onclick="showSyntheticArbitrage();closeWorkspaceLauncher()"><b>Synthetic Arbitrage</b><small>Executable option carry</small></button><button class="workspace-tile" onclick="showBoxSpread();closeWorkspaceLauncher()"><b>Box Spread</b><small>Four-leg opportunities</small></button><button class="workspace-tile" onclick="showCustomAlerts();closeWorkspaceLauncher()"><b>Custom Alerts</b><small>Touch-friendly alert rules</small></button><button class="workspace-tile" onclick="showPaperPortfolio();closeWorkspaceLauncher()"><b>Paper Portfolio</b><small>₹1 crore virtual ledger</small></button><button class="workspace-tile" onclick="showTradingJournal();closeWorkspaceLauncher()"><b>Trading Journal</b><small>Review + analytics</small></button><button class="workspace-tile" onclick="showHistoricalReplay();closeWorkspaceLauncher()"><b>Historical + Replay</b><small>Saved 1s data replay</small></button><button class="workspace-tile" onclick="openBrokerSettings();closeWorkspaceLauncher()"><b>Settings</b><small>Broker configuration</small></button><button class="workspace-tile" onclick="toast('System Status is shown by the live data bus and source-health panels.');closeWorkspaceLauncher()"><b>System Status</b><small>Connection + source health</small></button></div></div></div>
+<nav class="bottom-nav" id="responsiveQuickNav"><button class="active" id="bottomHome" onclick="goHome()">⌂<br>Home</button><button id="bottomAnalyze" onclick="showAnalyze()">⌕<br>Analyze</button><button id="bottomPortfolio" onclick="showPaperPortfolio()">▤<br>Portfolio</button><button id="bottomAlerts" onclick="showCustomAlerts()">♧<br>Alerts</button><button id="bottomMore" class="mobile-nav-more" onclick="openWorkspaceLauncher()">•••<br>More</button></nav>
 </div>
 </div>
 
@@ -1305,6 +1312,11 @@ if(typeof showBoxSpread==='function')showBoxSpread=histHideBefore(showBoxSpread)
 if(typeof showCustomAlerts==='function')showCustomAlerts=histHideBefore(showCustomAlerts);
 if(typeof showPaperPortfolio==='function')showPaperPortfolio=histHideBefore(showPaperPortfolio);
 if(typeof showTradingJournal==='function')showTradingJournal=histHideBefore(showTradingJournal);
+
+function openWorkspaceLauncher(){const e=document.getElementById('workspaceLauncher');if(e){e.classList.add('open');e.setAttribute('aria-hidden','false');document.body.style.overflow='hidden'}}
+function closeWorkspaceLauncher(){const e=document.getElementById('workspaceLauncher');if(e){e.classList.remove('open');e.setAttribute('aria-hidden','true');document.body.style.overflow=''}}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeWorkspaceLauncher();if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openWorkspaceLauncher()}});
+function setMobileNav(id){document.querySelectorAll('#responsiveQuickNav button').forEach(b=>b.classList.remove('active'));document.getElementById(id)?.classList.add('active')}
 </script>
 
 <!-- Shared dashboard compatibility/status contract for completed platform phases. -->
