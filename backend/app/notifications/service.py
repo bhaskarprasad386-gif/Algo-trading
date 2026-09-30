@@ -1,6 +1,7 @@
 """Compatibility wrapper routing Cash-Future alerts through the common alert service."""
 from __future__ import annotations
 from dataclasses import dataclass
+from app.core.config import settings
 from app.models import User
 from app.notifications.common import AlertEvent, AlertService
 
