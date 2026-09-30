@@ -4,8 +4,10 @@ from datetime import datetime,timedelta
 from app.core.config import settings
 from app.models import LiveBoxSpreadAlertHistory, User
 from app.notifications.whatsapp import WhatsAppConfig, WhatsAppNotifier
+from app.notifications.common import AlertEvent, AlertService
 class BoxSpreadAlertService:
     def __init__(self):
+        self._alerts=AlertService()
         self._notifier=WhatsAppNotifier(WhatsAppConfig(access_token=settings.WHATSAPP_ACCESS_TOKEN,phone_number_id=settings.WHATSAPP_PHONE_NUMBER_ID,graph_api_version=settings.WHATSAPP_GRAPH_API_VERSION,enabled=settings.WHATSAPP_ENABLED))
         self._last_sent={}
     @staticmethod
@@ -33,6 +35,6 @@ class BoxSpreadAlertService:
             for user in db.query(User).filter(User.is_active.is_(True),User.mobile_number.isnot(None)).all():
                 k=(int(user.id),*key); previous=self._last_sent.get(k,0)
                 if r.low.timestamp_ns-previous < int(float(settings.LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS)*1_000_000_000):continue
-                if self._notifier.send_text(user.mobile_number,self._message(r)):self._last_sent[k]=r.low.timestamp_ns;sent+=1
+                if self._alerts.dispatch_user(user, AlertEvent(strategy_id="box-spread", event_id=f"{r.low.underlying}:{r.low.expiry}:{r.low.strike:g}:{r.high.strike:g}:{r.direction}", symbol=r.low.underlying, timestamp_ns=r.low.timestamp_ns, message=self._message(r))):self._last_sent[k]=r.low.timestamp_ns;sent+=1
         return sent
 __all__=["BoxSpreadAlertService"]
