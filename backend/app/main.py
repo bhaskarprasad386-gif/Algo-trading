@@ -355,6 +355,7 @@ _history_collector_task: asyncio.Task | None = None
 _contract_master_sync_task: asyncio.Task | None = None
 _live_cash_future_task: asyncio.Task | None = None
 _live_calendar_spread_task: asyncio.Task | None = None
+live_calendar_spread_runner: LiveCalendarSpreadOneSecondCollector | None = None
 IST = ZoneInfo("Asia/Kolkata")
 _live_synthetic_task: asyncio.Task | None = None
 _live_box_spread_task: asyncio.Task | None = None
@@ -597,16 +598,19 @@ def _update_live_box_spread_results(results: tuple) -> None:
 
 
 async def _live_calendar_spread_loop() -> None:
+    global live_calendar_spread_runner
     collector = LiveCalendarSpreadOneSecondCollector(
         settings.BACKTEST_DATA_DB,
         auth=AngelOneAuth(),
         instrument_master=instrument_master,
         on_observation=lambda payload: live_calendar_spread_scanner.observe(payload, session_factory=SessionLocal),
     )
+    live_calendar_spread_runner = collector
     try:
         await asyncio.to_thread(collector.run_forever)
     finally:
         collector.stop()
+        live_calendar_spread_runner = None
 
 
 def _sync_contract_master_snapshot(database_path: str, snapshot_date):
@@ -730,7 +734,7 @@ def market_data_runtime_health():
     """Expose process-local live-feed diagnostics for runtime troubleshooting."""
     manager = shared_common_manager()
     cash_runner = live_cash_future_runner
-    calendar_runner = live_calendar_spread_task
+    calendar_runner = live_calendar_spread_runner
     synthetic_runner = live_synthetic_runner
     box_runner = live_box_spread_runner
     return {
@@ -738,10 +742,7 @@ def market_data_runtime_health():
         "common_feed": manager.snapshot(),
         "runners": {
             "cash_future": None if cash_runner is None else cash_runner.snapshot(),
-            "calendar_spread": None if calendar_runner is None else {
-                "task": calendar_runner.get_name(),
-                "done": calendar_runner.done(),
-            },
+            "calendar_spread": None if calendar_runner is None else calendar_runner.snapshot(),
             "synthetic_arbitrage": None if synthetic_runner is None else synthetic_runner.snapshot(),
             "box_spread": None if box_runner is None else box_runner.snapshot(),
         },
