@@ -94,6 +94,7 @@ class LiveCalendarSpreadOneSecondCollector:
         self.stop_event = __import__("threading").Event()
         self._feed = feed
         self._latest: dict[tuple[str, str], tuple[int, Any]] = {}
+        self._kind_by_key: dict[tuple[str, str], str] = {}
         self._lock = Lock()
         self._ingestor = None
         self._repository = None
@@ -168,11 +169,9 @@ class LiveCalendarSpreadOneSecondCollector:
         payload["timestamp_ns"] = timestamp_ns
         payload["source_timestamp_ns"] = timestamp_ns
         payload["exchange"] = record.instrument.exchange
-        payload["instrument_type"] = (
-            "COMMODITY_FUTURE" if record.instrument_type.value == "commodity" else
-            "INDEX_FUTURE" if record.instrument_type.value == "future" and
-            str(record.payload.get("instrument_type") or "").upper() == "INDEX_FUTURE" else
-            "STOCK_FUTURE" if record.instrument_type.value == "future" else record.instrument_type.value
+        payload["instrument_type"] = self._kind_by_key.get(
+            (record.instrument.exchange.strip().upper(), record.instrument.token.strip()),
+            "COMMODITY_FUTURE" if record.instrument_type.value == "commodity" else "STOCK_FUTURE",
         )
         if record.expiry:
             payload["contract_month"] = record.expiry[:7]
@@ -190,6 +189,7 @@ class LiveCalendarSpreadOneSecondCollector:
             app_logger.warning("Calendar Spread live collector found no eligible futures")
             time_module.sleep(30)
             return
+        self._kind_by_key = {(c["exchange"], c["token"]): c["kind"] for c in contracts}
         descriptors = tuple(self._descriptor(c) for c in contracts)
         self._repository = DailySQLiteMarketDataRepository(self.data_db)
         self._ingestor = BoundedMarketDataIngestor(
