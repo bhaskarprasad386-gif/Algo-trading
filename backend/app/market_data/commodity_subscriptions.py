@@ -6,14 +6,26 @@ from datetime import date
 from typing import Iterable, Mapping, Any
 
 from app.market_data.contract_resolver import DynamicContractResolver, ContractCandidate
-from app.market_data.live_synthetic_stream import SyntheticSubscription
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class CommoditySubscription:
+    exchange_type: int
+    token: str
+    symbol: str
+    underlying: str
+    expiry: str | None = None
+    option_type: str | None = None
+    strike: float | None = None
+    lot_size: int | None = None
 
 _EXCHANGE_TYPES = {"MCX": 5, "NCDEX": 7}
 
 
 @dataclass(frozen=True)
 class CommodityContractSelection:
-    subscriptions: tuple[SyntheticSubscription, ...]
+    subscriptions: tuple[CommoditySubscription, ...]
     underlying: str
     futures: tuple[ContractCandidate, ...]
     option_count: int
@@ -52,7 +64,7 @@ def select_commodity_contracts(
         if key in seen:
             continue
         seen.add(key)
-        selected.append(SyntheticSubscription(
+        selected.append(CommoditySubscription(
             exchange_type, future.token, future.symbol, symbol, "COMMODITY",
             future.expiry, None, None, future.lot_size
         ))
