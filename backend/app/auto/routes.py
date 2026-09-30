@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from app.core.database import get_db
@@ -59,7 +59,7 @@ def execute_signal(request: AutoSignalRequest, db: Session = Depends(get_db)):
     }
 
 @router.post("/positions/{position_id}/mark")
-def mark(position_id: int, current_price: float = Field(gt=0), db: Session = Depends(get_db)):
+def mark(position_id: int, current_price: float = Query(gt=0), db: Session = Depends(get_db)):
     try:
         return {"status": "success", "position": position_payload(service.update_mark(db, position_id, current_price))}
     except LookupError as exc:
