@@ -5,23 +5,35 @@ values. No strategy opens or owns a broker WebSocket directly.
 """
 from __future__ import annotations
 
+from threading import Lock
 from typing import Any, Callable, Iterable
 
 from app.algo.auth import AngelOneAuth
+from app.market_data.websocket import MarketDataWebSocket
 
 from .common_websocket import CommonWebSocketManager
 from .contracts import InstrumentKey
 from .registry import InstrumentDescriptor
 
-
 _EXCHANGE_SEGMENTS = {
-    "NSE": "NSE",
-    "NFO": "NFO",
-    "BSE": "BSE",
-    "BFO": "BFO",
-    "MCX": "MCX",
-    "NCDEX": "NCDEX",
+    "NSE": "NSE", "NFO": "NFO", "BSE": "BSE",
+    "BFO": "BFO", "MCX": "MCX", "NCDEX": "NCDEX",
 }
+_SHARED_LOCK = Lock()
+_SHARED_MANAGER: CommonWebSocketManager | None = None
+_SHARED_AUTH: AngelOneAuth | None = None
+
+
+def shared_common_manager(auth: AngelOneAuth | None = None) -> CommonWebSocketManager:
+    """Return the process-wide common broker manager used by strategy consumers."""
+    global _SHARED_MANAGER, _SHARED_AUTH
+    with _SHARED_LOCK:
+        if _SHARED_MANAGER is None:
+            _SHARED_AUTH = auth or AngelOneAuth()
+            _SHARED_MANAGER = CommonWebSocketManager(
+                socket_factory=lambda: MarketDataWebSocket(auth=_SHARED_AUTH)
+            )
+        return _SHARED_MANAGER
 
 
 class CommonStrategyMarketFeed:
@@ -41,12 +53,7 @@ class CommonStrategyMarketFeed:
         if mode not in {1, 2, 3, 4}:
             raise ValueError("mode must be one of 1, 2, 3 or 4")
         self.mode = mode
-        self.auth = auth or AngelOneAuth()
-        self.manager = manager or CommonWebSocketManager(
-            socket_factory=lambda: __import__(
-                "app.market_data.websocket", fromlist=["MarketDataWebSocket"]
-            ).MarketDataWebSocket(auth=self.auth)
-        )
+        self.manager = manager or shared_common_manager(auth)
         self._started = False
 
     @staticmethod
@@ -108,7 +115,6 @@ class CommonStrategyMarketFeed:
 
     def close(self) -> None:
         self.stop()
-        self.manager.close()
 
 
-__all__ = ["CommonStrategyMarketFeed"]
+__all__ = ["CommonStrategyMarketFeed", "shared_common_manager"]
