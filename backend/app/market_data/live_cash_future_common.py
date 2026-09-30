@@ -57,6 +57,8 @@ class LiveCashFutureCommonRunner:
         self.on_result = on_result
         self.on_payload = on_payload
         self.stop_event = threading.Event()
+        self._stop_lock = threading.Lock()
+        self._stopped = False
         self._repository: DailySQLiteMarketDataRepository | None = None
         self._ingestor: BoundedMarketDataIngestor | None = None
         self._metadata: dict[InstrumentKey, dict[str, Any]] = {}
@@ -183,7 +185,11 @@ class LiveCashFutureCommonRunner:
                     app_logger.error("Cash-Future result callback failed: %s", exc)
 
     def run_forever(self) -> None:
+        if self.stop_event.is_set():
+            return
         descriptors = self._build_descriptors()
+        if self.stop_event.is_set():
+            return
         if not descriptors:
             app_logger.warning("Common Cash-Future runner found no eligible F&O stock contracts")
             return
@@ -208,23 +214,29 @@ class LiveCashFutureCommonRunner:
             self.stop()
 
     def stop(self) -> None:
-        self.stop_event.set()
-        try:
-            self.manager.clear_consumer(self.CONSUMER)
-        except Exception:
-            pass
-        if self._ingestor is not None:
+        # run_forever() and the asyncio lifespan can both call stop() during
+        # cancellation. Serialize cleanup so shared resources are closed once.
+        with self._stop_lock:
+            if self._stopped:
+                return
+            self._stopped = True
+            self.stop_event.set()
             try:
-                self._ingestor.close()
-            except Exception as exc:
-                app_logger.error("Cash-Future common ingestor close failed: %s", exc)
-            self._ingestor = None
-        if self._repository is not None:
-            try:
-                self._repository.close()
+                self.manager.clear_consumer(self.CONSUMER)
             except Exception:
                 pass
-            self._repository = None
+            if self._ingestor is not None:
+                try:
+                    self._ingestor.close()
+                except Exception as exc:
+                    app_logger.error("Cash-Future common ingestor close failed: %s", exc)
+                self._ingestor = None
+            if self._repository is not None:
+                try:
+                    self._repository.close()
+                except Exception:
+                    pass
+                self._repository = None
 
 
 __all__ = ["LiveCashFutureCommonRunner"]
