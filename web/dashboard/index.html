@@ -182,6 +182,7 @@ th{font-size:7px!important}
  .page-head{height:auto!important}.modal{padding:0!important}.modal-box{width:100%!important;border-radius:12px 12px 0 0!important}
 }
 
+.analyze-page[hidden]{display:none!important}.analyze-page{padding-top:14px!important}.analyze-hero{display:grid;grid-template-columns:1.6fr .6fr;gap:8px;margin-bottom:8px}.analyze-title-card,.analyze-regime{background:#0b141c;border:1px solid #1b3443;border-radius:7px;padding:13px}.eyebrow{font-size:8px;letter-spacing:1.2px;color:#00b0ff;font-weight:900}.analyze-title-card h2{font-size:18px;margin:7px 0 9px;max-width:620px}.analyze-meta{display:flex;gap:16px;color:#718794;font-size:8px}.analyze-regime .k,.k{font-size:7px;letter-spacing:.7px;color:#718794}.regime-value{font-size:20px;font-weight:950;margin-top:7px;color:#ffab00}.source-chip{font-size:7px;border:1px solid #254456;border-radius:5px;padding:4px 6px;color:#8ea8b7}.analyze-grid{display:grid;grid-template-columns:1.15fr 1fr 1fr;gap:8px}.analyze-card{min-width:0}.span-2{grid-column:span 2}.rbi-rate-row{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.rbi-rate-row>div{background:#0b131a;border:1px solid #1a2a35;border-radius:6px;padding:9px}.rbi-rate-row strong{display:block;font-size:17px;margin-top:5px}.policy-box{margin-top:7px;border:1px solid #1a2a35;background:#0a1117;border-radius:6px;padding:9px}.policy-head{display:flex;justify-content:space-between;font-size:8px;color:#7f919f}.policy-box p{font-size:9px;line-height:1.5;color:#b4c4cd;min-height:42px}.policy-foot{display:flex;justify-content:space-between;color:#607581;font-size:7px}.breadth-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:7px}.breadth-stat{background:#0b131a;border:1px solid #1a2a35;border-radius:6px;padding:7px}.breadth-stat strong{display:block;font-size:12px;margin:4px 0}.breadth-stat span:last-child{font-size:8px}.analyze-table th,.analyze-table td{padding:5px 6px;font-size:8px}.position-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}.position-panel{background:#0b131a;border:1px solid #1a2a35;border-radius:6px;padding:8px}.position-head{display:flex;gap:7px;align-items:center}.position-icon{width:23px;height:23px;border:1px solid #234355;border-radius:5px;display:grid;place-items:center;color:#00b0ff}.position-head b{font-size:8px}.position-head small{display:block;color:#667b87;font-size:7px;margin-top:2px}.position-list{margin-top:7px;display:grid;gap:4px}.position-empty{padding:8px;border:1px dashed #263b47;color:#637783;font-size:8px;text-align:center}.position-row{display:grid;grid-template-columns:1fr auto auto;gap:7px;align-items:center;padding:6px;border-bottom:1px solid #182730;font-size:8px}.context-list{display:grid;gap:5px}.context-list>div{display:flex;justify-content:space-between;padding:8px;background:#0b131a;border:1px solid #1a2a35;border-radius:6px;font-size:8px}.context-list b{color:#9fb2bd}.timeline{display:grid;gap:4px}.timeline-row{display:grid;grid-template-columns:8px 1fr auto;gap:7px;align-items:center;padding:7px;background:#0b131a;border:1px solid #192a35;border-radius:6px}.timeline-dot{width:7px;height:7px;border-radius:50%;background:#00b0ff}.timeline-row b{display:block;font-size:8px}.timeline-row small,.timeline-row time{font-size:7px;color:#6e818d}.analyze-live-dot{color:#00e676;font-size:8px}@media(max-width:1100px){.analyze-grid{grid-template-columns:1fr 1fr}.span-2{grid-column:span 2}}@media(max-width:720px){.analyze-hero{grid-template-columns:1fr}.analyze-grid{grid-template-columns:1fr}.span-2{grid-column:auto}.analyze-meta{flex-direction:column;gap:4px}.breadth-grid{grid-template-columns:repeat(2,1fr)}.position-grid{grid-template-columns:1fr}.analyze-page .page-head{height:auto!important;margin-bottom:8px!important}.analyze-title-card h2{font-size:16px}}
 </style>
 </head>
 <body>
@@ -190,7 +191,7 @@ th{font-size:7px!important}
  <div class="brand"><span class="brand-mark">△</span> Algo Trading</div>
  <div class="nav-group">
   <button class="nav-item active" onclick="goHome()"><span class="nav-icon">⌂</span>Home / Command Center</button>
-  <button class="nav-item" onclick="toast('Analyze page is Batch 2')"><span class="nav-icon">⌕</span>Analyze</button>
+  <button class="nav-item" id="analyzeNav" onclick="showAnalyze()"><span class="nav-icon">⌕</span>Analyze</button>
  </div>
  <div class="nav-title">STRATEGY WORKSPACES</div>
  <div class="nav-group">
@@ -351,8 +352,83 @@ th{font-size:7px!important}
   <div style="display:flex;gap:8px;margin-top:9px"><button class="primary" onclick="saveDashboardWidgets()">SAVE LAYOUT</button><button class="secondary" onclick="resetDashboardWidgets()">RESET DEFAULT</button></div>
  </section>
 </main>
+
+<main class="content analyze-page" id="analyzePage" hidden>
+ <div class="page-head">
+  <div><h1>Analyze Hub</h1><p>Market intelligence, policy context, positioning and signal health.</p></div>
+  <div class="refresh-box"><span class="analyze-live-dot">●</span> LIVE CONTEXT <button class="secondary" onclick="refreshAnalyze()">↻ REFRESH</button></div>
+ </div>
+
+ <section class="analyze-hero">
+  <div class="analyze-title-card">
+   <div class="eyebrow">MARKET INTELLIGENCE</div>
+   <h2>Understand the market before the strategy fires.</h2>
+   <div class="analyze-meta"><span id="analyzeUpdated">Last update —</span><span id="analyzeSource">Sources: configured / awaiting live context</span></div>
+  </div>
+  <div class="analyze-regime">
+   <div class="k">MARKET REGIME</div><div class="regime-value" id="analyzeRegime">NEUTRAL</div>
+   <div class="sub">Descriptive state only • no trade recommendation</div>
+  </div>
+ </section>
+
+ <section class="analyze-grid">
+  <article class="card analyze-card">
+   <div class="card-head"><div><h2>RBI Policy Watch</h2><div class="sub">Repo rate and latest policy context</div></div><span class="source-chip">RBI</span></div>
+   <div class="rbi-rate-row"><div><span class="k">CURRENT REPO RATE</span><strong id="rbiCurrent">—</strong></div><div><span class="k">PREVIOUS</span><strong id="rbiPrevious">—</strong></div><div><span class="k">CHANGE</span><strong id="rbiChange">—</strong></div></div>
+   <div class="policy-box"><div class="policy-head"><span>POLICY STATEMENT</span><span id="rbiStatus" class="status-tag saved">SOURCE PENDING</span></div><p id="rbiStatement">Live RBI policy text is not yet connected in this frontend batch. No policy value is fabricated.</p><div class="policy-foot"><span id="rbiPolicyTime">Timestamp —</span><span id="rbiPolicySource">Source —</span></div></div>
+  </article>
+
+  <article class="card analyze-card">
+   <div class="card-head"><div><h2>Market Breadth</h2><div class="sub">Live index snapshot from existing market feed</div></div><span class="source-chip">LIVE</span></div>
+   <div class="breadth-grid">
+    <div class="breadth-stat"><span class="k">NIFTY 50</span><strong id="aNifty">—</strong><span id="aNiftyChg">—</span></div>
+    <div class="breadth-stat"><span class="k">BANKNIFTY</span><strong id="aBank">—</strong><span id="aBankChg">—</span></div>
+    <div class="breadth-stat"><span class="k">FINNIFTY</span><strong id="aFin">—</strong><span id="aFinChg">—</span></div>
+    <div class="breadth-stat"><span class="k">MIDCPNIFTY</span><strong id="aMid">—</strong><span id="aMidChg">—</span></div>
+   </div>
+   <div class="table-wrap analyze-table"><table><thead><tr><th>Instrument</th><th>Last</th><th>Change</th><th>Feed</th></tr></thead><tbody id="analyzeBreadthRows"><tr><td colspan="4">Loading live market context…</td></tr></tbody></table></div>
+  </article>
+
+  <article class="card analyze-card span-2">
+   <div class="card-head"><div><h2>Positioning Matrix</h2><div class="sub">Long/short and unwind/covering classifications</div></div><span class="view">Classification engine</span></div>
+   <div class="position-grid">
+    <div class="position-panel"><div class="position-head"><span class="position-icon">↗</span><div><b>TOP LONG</b><small>Price ↑ • OI ↑</small></div></div><div id="topLongList" class="position-list"><div class="position-empty">Awaiting live OI + price context</div></div></div>
+    <div class="position-panel"><div class="position-head"><span class="position-icon">↘</span><div><b>TOP SHORT</b><small>Price ↓ • OI ↑</small></div></div><div id="topShortList" class="position-list"><div class="position-empty">Awaiting live OI + price context</div></div></div>
+    <div class="position-panel"><div class="position-head"><span class="position-icon">↟</span><div><b>SHORT COVERING</b><small>Price ↑ • OI ↓</small></div></div><div id="coveringList" class="position-list"><div class="position-empty">Awaiting live OI + price context</div></div></div>
+    <div class="position-panel"><div class="position-head"><span class="position-icon">↡</span><div><b>LONG UNWINDING</b><small>Price ↓ • OI ↓</small></div></div><div id="unwindingList" class="position-list"><div class="position-empty">Awaiting live OI + price context</div></div></div>
+   </div>
+  </article>
+
+  <article class="card analyze-card">
+   <div class="card-head"><div><h2>Context Signals</h2><div class="sub">Observable market conditions</div></div></div>
+   <div class="context-list">
+    <div><span>Index direction</span><b id="ctxDirection">—</b></div>
+    <div><span>F&amp;O positioning</span><b id="ctxPositioning">AWAITING OI</b></div>
+    <div><span>Policy context</span><b id="ctxPolicy">SOURCE PENDING</b></div>
+    <div><span>Data freshness</span><b id="ctxFreshness">—</b></div>
+   </div>
+  </article>
+
+  <article class="card analyze-card span-2">
+   <div class="card-head"><div><h2>Analysis Timeline</h2><div class="sub">Timestamped context changes • 30-day UI history</div></div><span class="source-chip">LOCAL</span></div>
+   <div id="analysisTimeline" class="timeline">
+    <div class="timeline-row"><span class="timeline-dot"></span><div><b>Analyze Hub initialized</b><small>Live context will appear here as sources become available.</small></div><time>—</time></div>
+   </div>
+  </article>
+
+  <article class="card analyze-card">
+   <div class="card-head"><div><h2>Source Health</h2><div class="sub">Freshness and availability</div></div></div>
+   <div class="health">
+    <div class="health-row"><span><i class="dot"></i>Market feed</span><b id="analyzeMarketHealth" class="health-state neutral">CHECKING</b></div>
+    <div class="health-row"><span><i class="dot warn"></i>RBI context</span><b id="analyzeRbiHealth" class="health-state neutral">PENDING</b></div>
+    <div class="health-row"><span><i class="dot warn"></i>OI positioning</span><b id="analyzeOiHealth" class="health-state neutral">PENDING</b></div>
+    <div class="health-row"><span><i class="dot"></i>Execution</span><b class="health-state up">PAPER ONLY</b></div>
+   </div>
+  </article>
+ </section>
+</main>
 </div>
-<nav class="bottom-nav" id="responsiveQuickNav"><button class="active" onclick="goHome()">⌂<br>Home</button><button onclick="toast('Analyze is Batch 2')">⌕<br>Analyze</button><button onclick="toast('Portfolio is Batch 8')">▤<br>Portfolio</button><button onclick="openAlertModal()">♧<br>Alerts</button><button onclick="toast('More modules follow in later batches')">•••<br>More</button></nav>
+<nav class="bottom-nav" id="responsiveQuickNav"><button class="active" id="bottomHome" onclick="goHome()">⌂<br>Home</button><button id="bottomAnalyze" onclick="showAnalyze()">⌕<br>Analyze</button><button onclick="toast('Portfolio is Batch 8')">▤<br>Portfolio</button><button onclick="openAlertModal()">♧<br>Alerts</button><button onclick="toast('More modules follow in later batches')">•••<br>More</button></nav>
 </div>
 </div>
 
@@ -657,6 +733,46 @@ function applyDashboardWidgets(){
  Object.keys(DASHBOARD_DEFAULT_WIDGETS).forEach(k=>{const visible=saved[k]===undefined?DASHBOARD_DEFAULT_WIDGETS[k]:!!saved[k];document.querySelectorAll('[data-widget-id="'+k+'"]').forEach(el=>el.style.display=visible?'':'none');const input=document.querySelector('input[data-widget="'+k+'"]');if(input)input.checked=visible})
 }
 function resetDashboardWidgets(){localStorage.removeItem(DASHBOARD_WIDGET_KEY);applyDashboardWidgets();document.getElementById('widgetSaveStatus').textContent='Layout: RESET'}
+function showAnalyze(){
+ document.getElementById('home').hidden=true;document.getElementById('analyzePage').hidden=false;
+ document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById('analyzeNav').classList.add('active');
+ document.getElementById('bottomHome')?.classList.remove('active');document.getElementById('bottomAnalyze')?.classList.add('active');
+ refreshAnalyze();window.scrollTo({top:0,behavior:'smooth'});
+}
+function goHome(){
+ document.getElementById('analyzePage').hidden=true;document.getElementById('home').hidden=false;
+ document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.querySelector('.nav-item[onclick="goHome()"]')?.classList.add('active');
+ document.getElementById('bottomAnalyze')?.classList.remove('active');document.getElementById('bottomHome')?.classList.add('active');
+ window.scrollTo({top:0,behavior:'smooth'});
+}
+function analyzeSet(id,value,cls){const e=document.getElementById(id);if(e){e.textContent=value;e.className=cls||e.className}}
+function renderAnalyzePositioning(rows){
+ const groups={topLongList:[],topShortList:[],coveringList:[],unwindingList:[]};
+ (rows||[]).forEach(x=>{
+   const price=Number(x.gap_pct??x.change_pct??x.change??0),oi=Number(x.oi_change_pct??x.oi_change??0);
+   const item='<div class="position-row"><span><b>'+String(x.symbol||'—')+'</b></span><span>'+pct(price)+'</span><span>OI '+pct(oi)+'</span></div>';
+   if(price>0&&oi>0)groups.topLongList.push(item);else if(price<0&&oi>0)groups.topShortList.push(item);else if(price>0&&oi<0)groups.coveringList.push(item);else if(price<0&&oi<0)groups.unwindingList.push(item);
+ });
+ Object.entries(groups).forEach(([id,items])=>{const el=document.getElementById(id);if(el)el.innerHTML=items.slice(0,4).join('')||'<div class="position-empty">Awaiting live OI + price context</div>'});
+ analyzeSet('analyzeOiHealth',rows?.length?'LIVE':'PENDING','health-state '+(rows?.length?'up':'neutral'));
+}
+async function refreshAnalyze(){
+ document.getElementById('analyzeUpdated').textContent='Refreshing '+stamp();
+ try{
+   const r=await fetch(base()+'/api/v1/market-data/overview',{cache:'no-store'});if(!r.ok)throw new Error('Market API '+r.status);const p=await r.json();
+   const items=p.indices||[];const wanted=[['NIFTY 50','aNifty','aNiftyChg'],['BANKNIFTY','aBank','aBankChg'],['FINNIFTY','aFin','aFinChg'],['MIDCPNIFTY','aMid','aMidChg']];
+   const find=(name)=>items.find(x=>String(x.symbol||x.name||'').toUpperCase().includes(name.replace(' 50','')))||null;
+   wanted.forEach(([name,val,chg])=>{const x=find(name);analyzeSet(val,x?.ltp!=null?fmt(x.ltp):'—');analyzeSet(chg,x?.change_pct!=null?pct(x.change_pct):'—',x&&Number(x.change_pct)>=0?'up':'down')});
+   const rows=items.map(x=>({symbol:x.symbol||x.name,ltp:x.ltp,change_pct:x.change_pct}));
+   document.getElementById('analyzeBreadthRows').innerHTML=rows.slice(0,8).map(x=>'<tr><td>'+String(x.symbol||'—')+'</td><td>'+fmt(x.ltp)+'</td><td class="'+(Number(x.change_pct)>=0?'up':'down')+'">'+pct(x.change_pct)+'</td><td>LIVE</td></tr>').join('')||'<tr><td colspan="4">No live index rows</td></tr>';
+   const changes=rows.map(x=>Number(x.change_pct)).filter(Number.isFinite);const avg=changes.length?changes.reduce((a,b)=>a+b,0)/changes.length:0;analyzeSet('analyzeRegime',avg>0.25?'POSITIVE BREADTH':avg<-0.25?'NEGATIVE BREADTH':'NEUTRAL',avg>0.25?'up':avg<-0.25?'down':'neutral');analyzeSet('ctxDirection',avg>0.25?'UP':avg<-0.25?'DOWN':'MIXED');analyzeSet('analyzeMarketHealth','LIVE','health-state up');analyzeSet('ctxFreshness','LIVE');
+   renderAnalyzePositioning([]);
+   document.getElementById('analysisTimeline').insertAdjacentHTML('afterbegin','<div class="timeline-row"><span class="timeline-dot"></span><div><b>Market snapshot refreshed</b><small>Existing market overview feed</small></div><time>'+stamp()+'</time></div>');
+   while(document.getElementById('analysisTimeline').children.length>6)document.getElementById('analysisTimeline').lastElementChild.remove();
+   document.getElementById('analyzeSource').textContent='Source: existing market overview API • live snapshot';
+ }catch(e){analyzeSet('analyzeMarketHealth','ERROR','health-state down');document.getElementById('analyzeSource').textContent='Market source error • '+e.message}
+ document.getElementById('analyzeUpdated').textContent='Updated '+stamp();
+}
 function connectLiveTicker(){
  // One browser WebSocket to the backend; the backend reuses the existing
  // process-level Angel One 1s scanner. No browser tab opens a broker socket.
