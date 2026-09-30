@@ -17,6 +17,7 @@ from app.core.logger import app_logger
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.persistence import DailySQLiteMarketDataRepository
+from app.backtesting.historical_catalog import HistoricalRecord
 from app.market_data.ingestion import BoundedMarketDataIngestor
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -180,7 +181,15 @@ class LiveCalendarSpreadOneSecondCollector:
         if record.expiry:
             payload["contract_month"] = record.expiry[:7]
         if self._ingestor is not None:
-            self._ingestor.submit(record)
+            self._ingestor.submit_historical(
+                HistoricalRecord(
+                    source=SOURCE,
+                    instrument=f"{record.instrument.exchange}:{record.instrument.token}:{record.symbol}",
+                    timeframe=TIMEFRAME,
+                    timestamp_ns=timestamp_ns,
+                    payload=payload,
+                )
+            )
         if self.on_observation is not None:
             try:
                 self.on_observation(payload)
