@@ -16,6 +16,7 @@ from app.algo.auth import AngelOneAuth
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.ingestion import BoundedMarketDataIngestor
 from app.market_data.persistence import DailySQLiteMarketDataRepository
+from app.market_data.websocket import MarketDataWebSocket
 
 IST = ZoneInfo("Asia/Kolkata")
 OPEN = time(9, 15)
@@ -98,6 +99,40 @@ class LiveSyntheticOptionFutureRecorder:
         current = now or datetime.now(IST)
         return current.weekday() < 5 and OPEN <= current.time() <= CLOSE
 
+    @staticmethod
+    def _normalize(message: dict[str, Any], meta: SyntheticSubscription) -> dict[str, Any]:
+        def price(value):
+            try:
+                value = float(value) / 100.0
+                return value if value > 0 else None
+            except (TypeError, ValueError):
+                return None
+        def side(name, field):
+            levels = message.get(name)
+            if not isinstance(levels, list) or not levels or not isinstance(levels[0], dict):
+                return None
+            try:
+                value = float(levels[0].get(field))
+                return value if value > 0 else None
+            except (TypeError, ValueError):
+                return None
+        bid = side("best_5_buy_data", "price")
+        ask = side("best_5_sell_data", "price")
+        return {
+            **message,
+            "underlying": meta.underlying,
+            "instrument_class": meta.instrument_class,
+            "expiry": meta.expiry,
+            "option_type": meta.option_type,
+            "strike": meta.strike,
+            "lot_size": meta.lot_size,
+            "ltp": price(message.get("last_traded_price")),
+            "bid": None if bid is None else bid / 100.0,
+            "ask": None if ask is None else ask / 100.0,
+            "bid_qty": side("best_5_buy_data", "quantity"),
+            "ask_qty": side("best_5_sell_data", "quantity"),
+        }
+
     def _descriptors(self):
         descriptors = []
         for item in self.subscriptions:
@@ -170,6 +205,7 @@ class LiveSyntheticOptionFutureRecorder:
         self._feed = CommonStrategyMarketFeed(
             "synthetic-options",
             auth=self.auth,
+            socket_factory=lambda: MarketDataWebSocket(auth=self.auth),
         )
         self._feed.start(self._descriptors(), self._on_record)
         try:
