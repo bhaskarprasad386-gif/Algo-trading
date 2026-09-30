@@ -1,71 +1,155 @@
 from __future__ import annotations
-import math
 from dataclasses import dataclass
-from sqlalchemy.exc import IntegrityError
+from threading import RLock
+from typing import Any
 from app.core.config import settings
+from app.market_data.contracts import MarketDataRecord, InstrumentType
+from app.market_data.opportunity import OpportunityLeg, OpportunitySignal, OrderSide, gross_profit_from_points, qualifies_opportunity
 from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
+from sqlalchemy.exc import IntegrityError
 
 @dataclass(frozen=True)
 class CalendarSpreadSignal:
-    underlying:str; exchange:str; instrument_type:str; near_contract_month:str; far_contract_month:str
-    timestamp_ns:int; near_bid:float; near_ask:float; far_bid:float; far_ask:float; lot_size:int
-    edge_long:float; edge_short:float; edge_pct_long:float; edge_pct_short:float
-    liquidity_qty:float; capacity_lots:int; rank_score:float
+    underlying: str
+    exchange: str
+    instrument_type: str
+    near_contract_month: str
+    far_contract_month: str
+    timestamp_ns: int
+    near_bid: float
+    near_ask: float
+    far_bid: float
+    far_ask: float
+    lot_size: int
+    edge_long: float
+    edge_short: float
+    edge_pct_long: float
+    edge_pct_short: float
+    liquidity_qty: float
+    capacity_lots: int
+    rank_score: float
+    direction: str
+    gap_points: float
+    gross_profit: float
+    qualifies: bool
+    signal: OpportunitySignal
 
 class LiveCalendarSpreadScanner:
-    def __init__(self): self._latest={}
+    strategy_id = "calendar-spread"
+
+    def __init__(self, *, minimum_gap_points: float = 0.0, minimum_gross_profit: float = 0.0):
+        if minimum_gap_points < 0 or minimum_gross_profit < 0:
+            raise ValueError("thresholds cannot be negative")
+        self.minimum_gap_points = float(minimum_gap_points)
+        self.minimum_gross_profit = float(minimum_gross_profit)
+        self._latest: dict[tuple[str,str], dict[str, MarketDataRecord]] = {}
+        self._signals: dict[tuple[str,str], CalendarSpreadSignal] = {}
+        self._lock = RLock()
+
     @staticmethod
-    def _p(v):
-        try: x=float(v); return x if math.isfinite(x) and x>0 else None
-        except (TypeError,ValueError): return None
-    def observe(self,payload,session_factory=None):
-        try:
-            u=str(payload.get("underlying") or "").strip().upper(); ex=str(payload.get("exchange") or "").strip().upper()
-            kind=str(payload.get("instrument_type") or "").strip().upper(); month=str(payload.get("contract_month") or "").strip()
-            ts=int(payload.get("timestamp_ns") or payload.get("exchange_timestamp_ns") or 0); expiry=str(payload.get("expiry") or "").strip()
-            bid=self._p(payload.get("bid")); ask=self._p(payload.get("ask")); lot=int(float(payload.get("lot_size") or 0))
-            if not u or not ex or not month or not expiry or ts<=0 or not bid or not ask or ask<bid or lot<=0:return None
-            key=(u,ex)
+    def _record_ok(record: MarketDataRecord) -> bool:
+        return (
+            record.instrument_type in {InstrumentType.FUTURE, InstrumentType.COMMODITY}
+            and record.timestamp_ns > 0
+            and record.is_executable_quote
+            and record.lot_size is not None and record.lot_size > 0
+            and bool(record.expiry)
+        )
+
+    def update(self, record: MarketDataRecord, *, contract_month: str | None = None) -> CalendarSpreadSignal | None:
+        if not self._record_ok(record):
+            return None
+        key=(str(record.underlying or record.symbol).strip().upper(), record.instrument.exchange.strip().upper())
+        month=(contract_month or record.expiry or "").strip()
+        if not month:
+            return None
+        with self._lock:
             bucket=self._latest.setdefault(key,{})
-            bucket[month]=(ts,bid,ask,lot,kind,expiry,float(payload.get("bid_qty") or 0),float(payload.get("ask_qty") or 0))
-            if len(bucket)>2:
-                for m in sorted(bucket,key=lambda x:bucket[x][5])[:-2]: bucket.pop(m,None)
-            if len(bucket)<2:return None
-            near_m,far_m=sorted(bucket,key=lambda m:bucket[m][5])[:2]; n=bucket[near_m]; f=bucket[far_m]
-            if n[0]!=f[0]: return None
-            if n[4]!=f[4] or n[3]!=f[3]: return None
-            nq=min(n[6],n[7]); fq=min(f[6],f[7]); liquidity=min(nq,fq) if nq>0 and fq>0 else 0.0
-            edge_long=f[1]-n[2]; edge_short=n[1]-f[2]
-            base=(n[2]+f[2])/2
-            if base<=0:return None
-            cap=int(settings.LIVE_CASH_FUTURE_CAPITAL/(base*n[3])) if getattr(settings,"LIVE_CASH_FUTURE_CAPITAL",0)>0 else 0
-            score=max(edge_long,edge_short)/base
-            signal=CalendarSpreadSignal(u,ex,n[4],near_m,far_m,n[0],n[1],n[2],f[1],f[2],n[3],edge_long,edge_short,edge_long/base*100,edge_short/base*100,liquidity,cap,score)
-            self._latest[key]=bucket
-            if session_factory and (edge_long>0 or edge_short>0):
-                db=session_factory()
-                try:
-                    row=LiveCalendarSpreadScannerResult(**signal.__dict__); db.add(row); db.commit()
-                except IntegrityError: db.rollback()
-                finally: db.close()
-            return signal
-        except Exception:return None
-    def snapshot(self,limit=50):
-        rows=[]
-        for (underlying, exchange), bucket in self._latest.items():
-            if len(bucket)<2:continue
-            near_m,far_m=sorted(bucket,key=lambda m:bucket[m][5])[:2]; n=bucket[near_m]; f=bucket[far_m]
-            if n[0]!=f[0] or n[4]!=f[4] or n[3]!=f[3]:continue
-            base=(n[2]+f[2])/2
-            if base<=0:continue
-            long_edge=f[1]-n[2]; short_edge=n[1]-f[2]
-            liquidity=min(n[6],n[7],f[6],f[7])
-            capacity=int(settings.LIVE_CASH_FUTURE_CAPITAL/(base*n[3])) if getattr(settings,"LIVE_CASH_FUTURE_CAPITAL",0)>0 else 0
-            rows.append(CalendarSpreadSignal(
-                underlying, exchange, n[4], near_m, far_m, n[0],
-                n[1], n[2], f[1], f[2], n[3],
-                long_edge, short_edge,
-                long_edge/base*100, short_edge/base*100,
-                liquidity, capacity, max(long_edge,short_edge)/base,
-            ))
-        return sorted(rows,key=lambda x:x.rank_score,reverse=True)[:limit]
+            bucket[month]=record
+            ordered=sorted(bucket.items(), key=lambda item: (item[1].expiry or item[0], item[0]))
+            if len(ordered)>2:
+                bucket={k:v for k,v in ordered[:2]}
+                self._latest[key]=bucket
+            if len(bucket)<2:
+                return None
+            ordered=sorted(bucket.items(), key=lambda item: (item[1].expiry or item[0], item[0]))
+            near_m, near=ordered[0]; far_m, far=ordered[1]
+            if near.timestamp_ns != far.timestamp_ns or near.lot_size != far.lot_size:
+                return None
+            if near.instrument.exchange != far.instrument.exchange:
+                return None
+            long_edge=float(far.bid)-float(near.ask)
+            short_edge=float(near.bid)-float(far.ask)
+            if long_edge < 0 and short_edge < 0:
+                return None
+            if long_edge >= short_edge:
+                gap=long_edge
+                direction="LONG_NEAR_SHORT_FAR"
+                legs=(OpportunityLeg(near,OrderSide.BUY,"near-entry"),OpportunityLeg(far,OrderSide.SELL,"far-entry"))
+            else:
+                gap=short_edge
+                direction="SHORT_NEAR_LONG_FAR"
+                legs=(OpportunityLeg(near,OrderSide.SELL,"near-entry"),OpportunityLeg(far,OrderSide.BUY,"far-entry"))
+            lot=int(near.lot_size)
+            gross=gross_profit_from_points(gap,lot)
+            qualifies=qualifies_opportunity(gap_points=gap,gross_profit=gross,minimum_gap_points=self.minimum_gap_points,minimum_gross_profit=self.minimum_gross_profit)
+            base=max(float(near.ask),float(far.ask),1e-12)
+            nq=min(float(near.bid_qty or 0),float(near.ask_qty or 0))
+            fq=min(float(far.bid_qty or 0),float(far.ask_qty or 0))
+            liquidity=min(nq,fq) if nq>0 and fq>0 else 0.0
+            cap=int(settings.LIVE_CASH_FUTURE_CAPITAL/(base*lot)) if settings.LIVE_CASH_FUTURE_CAPITAL>0 else 0
+            signal=OpportunitySignal(
+                strategy_id=self.strategy_id, opportunity_type="calendar-spread",
+                symbol=key[0], timestamp_ns=near.timestamp_ns, gap_points=gap,
+                gross_profit=gross, lot_size=lot, qualifies=qualifies,
+                minimum_gap_points=self.minimum_gap_points,
+                minimum_gross_profit=self.minimum_gross_profit, legs=legs,
+                expiry=far.expiry, metadata={"direction":direction,"exchange":key[1],"near_contract_month":near_m,"far_contract_month":far_m,"source":"common-market-data","live_orders":False}
+            )
+            result=CalendarSpreadSignal(key[0],key[1],str(near.instrument_type.value),near_m,far_m,near.timestamp_ns,float(near.bid),float(near.ask),float(far.bid),float(far.ask),lot,long_edge,short_edge,long_edge/base*100,short_edge/base*100,liquidity,cap,gap/base,direction,gap,gross,qualifies,signal)
+            self._signals[key]=result
+            if session_factory := getattr(self, "_session_factory", None):
+                if qualifies:
+                    self._persist(result, session_factory)
+            return result
+
+    def set_session_factory(self, session_factory):
+        self._session_factory=session_factory
+
+    def _persist(self, signal, session_factory):
+        db=session_factory()
+        try:
+            row=LiveCalendarSpreadScannerResult(
+                underlying=signal.underlying, exchange=signal.exchange,
+                instrument_type=signal.instrument_type,
+                near_contract_month=signal.near_contract_month, far_contract_month=signal.far_contract_month,
+                timestamp_ns=signal.timestamp_ns, near_bid=signal.near_bid, near_ask=signal.near_ask,
+                far_bid=signal.far_bid, far_ask=signal.far_ask, lot_size=signal.lot_size,
+                edge_long=signal.edge_long, edge_short=signal.edge_short,
+                edge_pct_long=signal.edge_pct_long, edge_pct_short=signal.edge_pct_short,
+                liquidity_qty=signal.liquidity_qty, capacity_lots=signal.capacity_lots,
+                rank_score=signal.rank_score,
+            )
+            db.add(row); db.commit()
+        except IntegrityError:
+            db.rollback()
+        finally:
+            db.close()
+
+    def observe(self, payload, session_factory=None):
+        if session_factory is not None:
+            self.set_session_factory(session_factory)
+        try:
+            record=MarketDataRecord.from_dict(payload)
+            return self.update(record)
+        except Exception:
+            return None
+
+    def snapshot(self, limit=50, *, minimum_gap_points=None, minimum_gross_profit=None):
+        min_gap=self.minimum_gap_points if minimum_gap_points is None else float(minimum_gap_points)
+        min_gross=self.minimum_gross_profit if minimum_gross_profit is None else float(minimum_gross_profit)
+        if min_gap<0 or min_gross<0: raise ValueError("thresholds cannot be negative")
+        with self._lock:
+            values=tuple(self._signals.values())
+        values=tuple(x for x in values if qualifies_opportunity(gap_points=x.gap_points,gross_profit=x.gross_profit,minimum_gap_points=min_gap,minimum_gross_profit=min_gross))
+        return tuple(sorted(values,key=lambda x:(x.gross_profit,x.gap_points),reverse=True)[:limit])
