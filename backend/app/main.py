@@ -283,6 +283,46 @@ async def market_data_websocket(websocket: WebSocket, symbol: str):
     finally:
         client.close()
 
+
+@app.websocket("/ws/dashboard")
+async def dashboard_websocket(websocket: WebSocket):
+    """Stream the Home Command Center from the existing process-local live scanner.
+
+    The browser receives one server-side stream and never opens a broker socket.
+    The existing Angel One 1-second Cash-Future stream remains the sole market feed.
+    """
+    await websocket.accept()
+    try:
+        while True:
+            snapshot = live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=50)
+            health = live_cash_future_scanner.health()
+            await websocket.send_json({
+                "type": "dashboard_snapshot",
+                "timestamp": datetime.now(IST).isoformat(),
+                "scanner": {
+                    "mode": "live-fast",
+                    "data": snapshot,
+                    "health": health,
+                    "opportunity_count": sum(
+                        1 for item in snapshot
+                        if float(item.get("gap", 0) or 0) > 0
+                        and float(item.get("net_gap", 0) or 0) > 0
+                        and item.get("lifecycle") != "EXPIRED"
+                    ),
+                },
+                "live_orders": "OFF",
+            })
+            await asyncio.sleep(1.0)
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        app_logger.warning("Dashboard WebSocket closed: %s", exc)
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
 _history_collector_task: asyncio.Task | None = None
 _contract_master_sync_task: asyncio.Task | None = None
 _live_cash_future_task: asyncio.Task | None = None
