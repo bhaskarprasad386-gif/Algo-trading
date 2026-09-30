@@ -24,8 +24,9 @@ def _expiry_value(value):
     return None
 def _kind(row):
     raw=_text(row,"instrumenttype","instrument_type","instrumentType").upper()
-    if "FUT" in raw: return "future"
+    # OPTFUT/OPTIDX contain both markers; option classification must win.
     if "OPT" in raw: return "option"
+    if "FUT" in raw: return "future"
     if "COM" in _text(row,"exch_seg","segment","exchange_segment").upper(): return "commodity"
     if raw in {"INDEX","INDICES"}: return "index"
     return "equity"
