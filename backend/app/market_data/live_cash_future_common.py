@@ -10,13 +10,13 @@ from app.core.config import settings
 from app.core.logger import app_logger
 from app.market_data.cash_future_opportunity import CashFutureOpportunityScanner, CashFutureScanResult
 from app.market_data.common_websocket import CommonWebSocketManager
+from app.market_data.common_strategy_feed import shared_common_manager
 from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord
 from app.market_data.daily_shard_catalog import DailyMarketDataShardCatalog
 from app.market_data.historical import HistoricalDataClient
 from app.market_data.ingestion import BoundedMarketDataIngestor
 from app.market_data.persistence import DailySQLiteMarketDataRepository
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
-from app.market_data.websocket import MarketDataWebSocket
 
 
 def _expiry(value: Any) -> date | None:
@@ -47,9 +47,7 @@ class LiveCashFutureCommonRunner:
         from app.market_data.instruments import InstrumentMaster
         self.data_db = data_db
         self.instrument_master = instrument_master or InstrumentMaster()
-        self.manager = manager or CommonWebSocketManager(
-            socket_factory=lambda: MarketDataWebSocket()
-        )
+        self.manager = manager or shared_common_manager()
         self.scanner = scanner or CashFutureOpportunityScanner(
             minimum_gap_points=0.0,
             minimum_gross_profit=0.0,
