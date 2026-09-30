@@ -8,8 +8,8 @@ from app.scanner.cash_future_collector import CashFutureHistoryCollector, _full_
 class FakeMaster:
     def __init__(self):
         self.instruments = [
-            {"symbol": "ABC31OCT2026FUT", "name": "ABC", "token": "201", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "100"},
-            {"symbol": "ABC30NOV2026FUT", "name": "ABC", "token": "202", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "29OCT2026", "lotsize": "100"},
+            {"symbol": "ABC31OCT2099FUT", "name": "ABC", "token": "201", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "31OCT2099", "lotsize": "100"},
+            {"symbol": "ABC30NOV2099FUT", "name": "ABC", "token": "202", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30NOV2099", "lotsize": "100"},
         ]
 
     def search(self, exchange=None):
@@ -23,7 +23,7 @@ class FakeMaster:
 
 class FakeMarketClient:
     def quote(self, exchange, tradingsymbol, symboltoken):
-        prices = {"ABC-EQ": 100.0, "ABC31OCT2026FUT": 108.0, "ABC30NOV2026FUT": 111.0}
+        prices = {"ABC-EQ": 100.0, "ABC31OCT2099FUT": 108.0, "ABC30NOV2099FUT": 111.0}
         price = prices[tradingsymbol]
         return {
             "status": True,
@@ -64,8 +64,8 @@ def test_collector_keeps_current_and_near_separate(monkeypatch):
     assert [point.contract_month for point in saved] == ["CURRENT", "NEAR"]
     assert [point.gap for point in saved] == [8.0, 11.0]
     assert [point.margin_required for point in saved] == [50000.0, 50000.0]
-    assert saved[0].expiry_date == date(2026, 10, 31)
-    assert saved[1].expiry_date == date(2026, 11, 30)
+    assert saved[0].expiry_date == date(2099, 10, 31)
+    assert saved[1].expiry_date == date(2099, 11, 30)
     assert result[0]["volume"] == 5000
     assert result[0]["oi"] == 20000
     assert result[0]["cash_bid"] == 99.9
@@ -84,30 +84,30 @@ def test_collector_keeps_current_and_near_separate(monkeypatch):
 def test_contract_selection_ignores_wrong_underlying_expired_and_duplicate_rows(monkeypatch):
     master = FakeMaster()
     master.instruments.extend([
-        {"symbol": "ABCBANK30SEP2026FUT", "name": "ABCBANK", "token": "301", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "100"},
-        {"symbol": "ABC31JUL2026FUT", "name": "ABC", "token": "302", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "31JUL2026", "lotsize": "100"},
-        {"symbol": "ABC31OCT2026FUT", "name": "ABC", "token": "303", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "100"},
-        {"symbol": "ABC31OCT2026OPT", "name": "ABC", "token": "304", "exch_seg": "NFO", "instrumenttype": "OPTSTK", "expiry": "30SEP2026", "lotsize": "100"},
+        {"symbol": "ABCBANK30SEP2026FUT", "name": "ABCBANK", "token": "301", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "31OCT2099", "lotsize": "100"},
+        {"symbol": "ABC31JUL2098FUT", "name": "ABC", "token": "302", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "31JUL2098", "lotsize": "100"},
+        {"symbol": "ABC31OCT2099FUT", "name": "ABC", "token": "303", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "31OCT2099", "lotsize": "100"},
+        {"symbol": "ABC31OCT2099OPT", "name": "ABC", "token": "304", "exch_seg": "NFO", "instrumenttype": "OPTSTK", "expiry": "31OCT2099", "lotsize": "100"},
     ])
     collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), master)
 
     selected = collector._future_instruments("ABC")
 
-    assert [item["symbol"] for item in selected] == ["ABC31OCT2026FUT", "ABC30NOV2026FUT"]
+    assert [item["symbol"] for item in selected] == ["ABC31OCT2099FUT", "ABC30NOV2099FUT"]
 
 
 def test_contract_selection_ignores_missing_token_and_invalid_lot_size():
     master = FakeMaster()
     master.instruments.extend([
-        {"symbol": "ABC31OCT2026BADTOKEN", "name": "ABC", "token": "", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "100"},
-        {"symbol": "ABC31OCT2026ZEROLOT", "name": "ABC", "token": "305", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "0"},
-        {"symbol": "ABC31OCT2026BADLOT", "name": "ABC", "token": "306", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026", "lotsize": "not-a-lot"},
+        {"symbol": "ABC31OCT2099BADTOKEN", "name": "ABC", "token": "", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "31OCT2099", "lotsize": "100"},
+        {"symbol": "ABC31OCT2099ZEROLOT", "name": "ABC", "token": "305", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "31OCT2099", "lotsize": "0"},
+        {"symbol": "ABC31OCT2099BADLOT", "name": "ABC", "token": "306", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "31OCT2099", "lotsize": "not-a-lot"},
     ])
     collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), master)
 
     selected = collector._future_instruments("ABC")
 
-    assert [item["symbol"] for item in selected] == ["ABC30SEP2026FUT", "ABC29OCT2026FUT"]
+    assert [item["symbol"] for item in selected] == ["ABC31OCT2099FUT", "ABC30NOV2099FUT"]
 
 
 def test_contract_selection_ignores_malformed_expiry():
@@ -120,7 +120,7 @@ def test_contract_selection_ignores_malformed_expiry():
 
     selected = collector._future_instruments("ABC")
 
-    assert [item["symbol"] for item in selected] == ["ABC30SEP2026FUT", "ABC29OCT2026FUT"]
+    assert [item["symbol"] for item in selected] == ["ABC31OCT2099FUT", "ABC30NOV2099FUT"]
 
 
 def test_collect_reports_clear_error_when_no_eligible_contract_exists():
@@ -146,7 +146,7 @@ def test_collect_symbol_continues_when_current_contract_fails(monkeypatch):
 
     class CurrentFails(FakeMarketClient):
         def quote(self, exchange, tradingsymbol, symboltoken):
-            if tradingsymbol == "ABC30SEP2026FUT":
+            if tradingsymbol == "ABC31OCT2099FUT":
                 raise RuntimeError("current quote unavailable")
             return super().quote(exchange, tradingsymbol, symboltoken)
 
@@ -160,7 +160,7 @@ def test_collect_symbol_continues_when_current_contract_fails(monkeypatch):
     assert errors == [{
         "symbol": "ABC",
         "contract_month": "CURRENT",
-        "future_symbol": "ABC30SEP2026FUT",
+        "future_symbol": "ABC31OCT2099FUT",
         "error": "current quote unavailable",
     }]
 
@@ -187,7 +187,7 @@ def test_collect_reports_contract_error_and_keeps_successful_near_result(monkeyp
     assert result["errors"] == [{
         "symbol": "ABC",
         "contract_month": "CURRENT",
-        "future_symbol": "ABC30SEP2026FUT",
+        "future_symbol": "ABC31OCT2099FUT",
         "error": "current margin unavailable",
     }]
 
@@ -211,7 +211,7 @@ def test_symbol_timeout_guard_stops_remaining_contracts(monkeypatch):
     assert errors == [{
         "symbol": "ABC",
         "contract_month": "CURRENT",
-        "future_symbol": "ABC30SEP2026FUT",
+        "future_symbol": "ABC31OCT2099FUT",
         "error": "cash-future symbol scan timeout after 15s",
     }]
 
@@ -256,24 +256,24 @@ def test_quote_freshness_rejects_stale_timestamp():
     collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), FakeMaster(), max_quote_age_seconds=15)
     stale = datetime.now().astimezone() - timedelta(seconds=30)
     with pytest.raises(ValueError, match="stale CURRENT quote for ABC30SEP2026FUT"):
-        collector._validate_quote_freshness("CURRENT", "ABC30SEP2026FUT", stale)
+        collector._validate_quote_freshness("CURRENT", "ABC31OCT2099FUT", stale)
 
 
 def test_quote_freshness_accepts_fresh_timestamp():
     collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), FakeMaster(), max_quote_age_seconds=15)
     fresh = datetime.now().astimezone() - timedelta(seconds=2)
-    collector._validate_quote_freshness("CURRENT", "ABC30SEP2026FUT", fresh)
+    collector._validate_quote_freshness("CURRENT", "ABC31OCT2099FUT", fresh)
 
 
 def test_quote_freshness_ignores_missing_timestamp():
     collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), FakeMaster(), max_quote_age_seconds=15)
-    collector._validate_quote_freshness("CURRENT", "ABC30SEP2026FUT", None)
+    collector._validate_quote_freshness("CURRENT", "ABC31OCT2099FUT", None)
 
 
 def test_quote_freshness_ignores_future_timestamp():
     collector = CashFutureHistoryCollector(["ABC"], FakeMarketClient(), FakeMaster(), max_quote_age_seconds=15)
     future = datetime.now().astimezone() + timedelta(seconds=30)
-    collector._validate_quote_freshness("CURRENT", "ABC30SEP2026FUT", future)
+    collector._validate_quote_freshness("CURRENT", "ABC31OCT2099FUT", future)
 
 
 def test_full_quote_parses_top_of_book_quantities():
