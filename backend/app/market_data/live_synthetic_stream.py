@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from app.algo.auth import AngelOneAuth
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.ingestion import BoundedMarketDataIngestor
+from app.backtesting.historical_catalog import HistoricalRecord
 from app.market_data.persistence import DailySQLiteMarketDataRepository
 from app.market_data.websocket import MarketDataWebSocket
 
@@ -178,7 +179,15 @@ class LiveSyntheticOptionFutureRecorder:
             except Exception:
                 pass
         if self._ingestor is not None:
-            self._ingestor.submit(record)
+            self._ingestor.submit_historical(
+                HistoricalRecord(
+                    source=self.SOURCE,
+                    instrument=f"{record.symbol}|{record.instrument.token}",
+                    timeframe="1s",
+                    timestamp_ns=timestamp_ns,
+                    payload=payload,
+                )
+            )
 
     def _on_record(self, record) -> None:
         key = (record.instrument.exchange.strip().upper(), record.instrument.token.strip())
