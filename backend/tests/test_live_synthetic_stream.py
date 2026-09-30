@@ -246,7 +246,7 @@ def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypa
 
     from app.backtesting.historical_catalog import HistoricalCatalog
 
-    catalog = HistoricalCatalog(str(tmp_path / "synthetic.db"))
+    catalog = DailyMarketDataShardCatalog(str(tmp_path / "synthetic.db"))
     try:
         ce = catalog.records(
             source=collector.SOURCE,
@@ -350,7 +350,7 @@ def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
 
     from app.backtesting.historical_catalog import HistoricalCatalog
 
-    catalog = HistoricalCatalog(str(tmp_path / "synthetic.db"))
+    catalog = DailyMarketDataShardCatalog(str(tmp_path / "synthetic.db"))
     try:
         records = catalog.records(
             source=collector.SOURCE,
@@ -418,7 +418,7 @@ def test_stream_ignores_unsubscribed_tokens_without_persisting(tmp_path, monkeyp
 
     from app.backtesting.historical_catalog import HistoricalCatalog
 
-    catalog = HistoricalCatalog(str(tmp_path / "synthetic.db"))
+    catalog = DailyMarketDataShardCatalog(str(tmp_path / "synthetic.db"))
     try:
         records = catalog.records(
             source=collector.SOURCE,
