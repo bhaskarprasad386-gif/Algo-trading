@@ -111,11 +111,11 @@ def cash_future_live_fast_scanner(
 
 @router.get("/cash-future/live/history")
 def cash_future_live_scanner_history(
-    days: int = Query(30, ge=1, le=30),
+    days: int = Query(90, ge=1, le=90),
     limit: int = Query(1000, ge=1, le=5000),
     db: Session = Depends(get_db),
 ):
-    """Return persisted eligible live scanner results for up to the last 30 days."""
+    """Return persisted eligible live scanner results for up to the last 90 days."""
     cutoff = datetime.now(IST).replace(tzinfo=None) - timedelta(days=int(days))
     rows = db.scalars(
         select(LiveCashFutureScannerResult)
@@ -145,7 +145,7 @@ def cash_future_live_alert_history(
     limit: int = Query(500, ge=1, le=5000),
     db: Session = Depends(get_db),
 ):
-    """Return scanner-generated customized alerts retained for up to 30 days."""
+    """Return scanner-generated customized alerts retained for up to 90 days."""
     cutoff = datetime.now(IST).replace(tzinfo=None) - timedelta(days=int(days))
     rows = db.scalars(
         select(LiveCashFutureAlertHistory)
