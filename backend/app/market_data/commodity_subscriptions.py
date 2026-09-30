@@ -64,7 +64,7 @@ def select_commodity_contracts(
             continue
         seen.add(key)
         selected.append(CommoditySubscription(
-            exchange_type, future.token, future.symbol, symbol, "COMMODITY",
+            exchange_type, future.token, future.symbol, symbol,
             future.expiry, None, None, future.lot_size
         ))
 
