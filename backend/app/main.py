@@ -24,6 +24,7 @@ from app.algo.auth import AngelOneAuth
 from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.live_cash_future_stream import live_cash_future_health
 from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+from app.market_data.common_strategy_feed import shared_common_manager
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget
@@ -69,6 +70,7 @@ Base.metadata.create_all(bind=engine)
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
 live_cash_future_scanner = LiveCashFutureScanner()
+live_cash_future_runner: LiveCashFutureCommonRunner | None = None
 live_calendar_spread_scanner = LiveCalendarSpreadScanner(
     minimum_gap_points=settings.LIVE_CALENDAR_SPREAD_MIN_GAP_POINTS,
     minimum_gross_profit=settings.LIVE_CALENDAR_SPREAD_MIN_GROSS_PROFIT,
@@ -416,6 +418,7 @@ async def _cash_future_history_loop() -> None:
 
 
 async def _live_cash_future_loop() -> None:
+    global live_cash_future_runner
     runner = LiveCashFutureCommonRunner(
         settings.BACKTEST_DATA_DB,
         instrument_master=instrument_master,
@@ -423,10 +426,12 @@ async def _live_cash_future_loop() -> None:
             payload, session_factory=SessionLocal
         ),
     )
+    live_cash_future_runner = runner
     try:
         await asyncio.to_thread(runner.run_forever)
     finally:
         runner.stop()
+        live_cash_future_runner = None
 
 async def _live_synthetic_loop() -> None:
     global live_synthetic_runner, live_synthetic_latest_results
@@ -718,6 +723,19 @@ def app_strategy_workspace(strategy_id: str):
 @app.get("/")
 def root():
     return {"message": "Algo Trading Platform is running", "environment": settings.environment, "version": "0.1.0"}
+
+
+@app.get("/api/v1/market-data/runtime/health")
+def market_data_runtime_health():
+    """Expose process-local live-feed diagnostics for runtime troubleshooting."""
+    manager = shared_common_manager()
+    runner = live_cash_future_runner
+    return {
+        "status": "ok",
+        "common_feed": manager.snapshot(),
+        "cash_future_runner": None if runner is None else runner.snapshot(),
+        "scanner": live_cash_future_scanner.health(),
+    }
 
 
 @app.get("/api/v1/market-data/live-cash-future/health")
