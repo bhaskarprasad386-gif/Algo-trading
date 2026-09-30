@@ -2,6 +2,10 @@ name: VPS Health Probe
 
 on:
   workflow_dispatch:
+  schedule:
+    # India cash-market observation window: 09:15-15:30 IST (03:45-10:00 UTC).
+    - cron: "*/5 3-9 * * 1-5"
+    - cron: "0 10 * * 1-5"
 
 jobs:
   probe:
@@ -41,6 +45,32 @@ jobs:
           else
             echo "ENV_MISSING"
           fi
+
+          echo "=== RUNTIME SNAPSHOT ==="
+          runtime_code=$(curl -sS --connect-timeout 2 --max-time 8 -o /tmp/runtime_body -w "%{http_code}" http://127.0.0.1:8000/api/v1/market-data/runtime/health 2>/dev/null || true)
+          echo "RUNTIME_HEALTH_HTTP=$runtime_code"
+          if [ "$runtime_code" != "000" ]; then
+            cat /tmp/runtime_body || true
+            echo
+          fi
+
+          echo "=== SERVICE MEMORY / PROCESS ==="
+          systemctl show algo-trading.service --no-pager             -p ActiveState -p SubState -p Result -p NRestarts             -p ExecMainPID -p ExecMainStatus -p ActiveEnterTimestamp             -p InactiveEnterTimestamp -p MemoryCurrent -p MemoryPeak             -p OOMPolicy -p MemoryHigh -p MemoryMax || true
+          pid=$(systemctl show -p MainPID --value algo-trading.service 2>/dev/null || true)
+          if [ -n "$pid" ] && [ "$pid" != "0" ] && [ -r "/proc/$pid/status" ]; then
+            echo "MAIN_PID=$pid"
+            grep -E '^(VmRSS|VmHWM|VmSize|Threads):' "/proc/$pid/status" || true
+          fi
+          free -h || true
+          echo "=== KERNEL OOM EVENTS ==="
+          journalctl -k --no-pager -b 2>/dev/null |
+            grep -Ei 'oom|out of memory|killed process|memory cgroup|systemd-oomd' |
+            tail -40 || true
+
+          echo "=== SERVICE TRANSACTIONS ==="
+          journalctl -u algo-trading.service --since "20 minutes ago" --no-pager 2>/dev/null |
+            grep -E 'Stopping|Stopped|Started|Starting|timeout|Failed|Main process exited|Killing|signal' |
+            tail -80 || true
 
           echo "=== SERVICE ==="
           echo "ACTIVE=$(systemctl is-active algo-trading.service 2>/dev/null || true)"
