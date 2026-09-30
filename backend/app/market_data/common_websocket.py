@@ -41,6 +41,9 @@ class CommonWebSocketManager:
         self._normalizer = AngelOneTickNormalizer()
         self._lock = RLock()
         self._delivery_errors = 0
+        # Pre-index subscriptions by broker socket group + token so each tick
+        # does not scan the entire subscription registry.
+        self._route_index: dict[SocketGroup, dict[str, list[tuple[str, InstrumentKey]]]] = {}
 
     @staticmethod
     def _default_exchange_type(key: InstrumentKey) -> int:
@@ -115,6 +118,13 @@ class CommonWebSocketManager:
             self._reconcile_locked()
 
     def _reconcile_locked(self) -> None:
+        route_index: dict[SocketGroup, dict[str, list[tuple[str, InstrumentKey]]]] = defaultdict(lambda: defaultdict(list))
+        for sub in self.registry.subscriptions():
+            group = SocketGroup(self._resolve_exchange_type(sub.key), sub.mode)
+            for consumer in sub.consumers:
+                route_index[group][sub.key.token.strip()].append((consumer, sub.key))
+        self._route_index = {group: dict(tokens) for group, tokens in route_index.items()}
+
         desired: dict[SocketGroup, set[str]] = defaultdict(set)
         for sub in self.registry.subscriptions():
             group = SocketGroup(self._resolve_exchange_type(sub.key), sub.mode)
@@ -146,14 +156,8 @@ class CommonWebSocketManager:
         token = str(message.get("token") or message.get("symboltoken") or "").strip()
         if not token:
             return
-        matching: list[tuple[str, InstrumentKey]] = []
-        for sub in self.registry.subscriptions():
-            if (
-                sub.key.token.strip() == token
-                and SocketGroup(self._resolve_exchange_type(sub.key), sub.mode) == group
-            ):
-                matching.extend((consumer, sub.key) for consumer in sub.consumers)
         with self._lock:
+            matching = tuple(self._route_index.get(group, {}).get(token, ()))
             raw_callbacks = [self._callbacks.get(name) for name, _ in matching]
             record_callbacks = [(self._record_callbacks.get(name), key) for name, key in matching]
         for callback in {id(cb): cb for cb in raw_callbacks if cb is not None}.values():
