@@ -22,7 +22,8 @@ from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadSca
 from app.models.live_calendar_spread_paper_position import LiveCalendarSpreadPaperPosition
 from app.algo.auth import AngelOneAuth
 from app.market_data.websocket import MarketDataWebSocket
-from app.market_data.live_cash_future_stream import LiveCashFutureOneSecondCollector, live_cash_future_health
+from app.market_data.live_cash_future_stream import live_cash_future_health
+from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget
@@ -327,11 +328,17 @@ async def _cash_future_history_loop() -> None:
 
 
 async def _live_cash_future_loop() -> None:
-    collector = LiveCashFutureOneSecondCollector(settings.BACKTEST_DATA_DB, auth=AngelOneAuth(), instrument_master=instrument_master, on_observation=lambda payload: live_cash_future_scanner.observe(payload, session_factory=SessionLocal))
+    runner = LiveCashFutureCommonRunner(
+        settings.BACKTEST_DATA_DB,
+        instrument_master=instrument_master,
+        on_result=lambda result: live_cash_future_scanner.observe(
+            result.as_dict(), session_factory=SessionLocal
+        ),
+    )
     try:
-        await asyncio.to_thread(collector.run_forever)
+        await asyncio.to_thread(runner.run_forever)
     finally:
-        collector.stop()
+        runner.stop()
 
 async def _live_synthetic_loop() -> None:
     global live_synthetic_runner, live_synthetic_latest_results
