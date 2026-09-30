@@ -108,12 +108,27 @@ async def lifespan(app: FastAPI):
         for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _paper_box_spread_cycle_task):
             if task is not None:
                 task.cancel()
-        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _paper_box_spread_cycle_task):
-            if task is not None:
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+        shutdown_tasks = tuple(
+            task
+            for task in (
+                _history_collector_task,
+                _contract_master_sync_task,
+                _live_cash_future_task,
+                _live_calendar_spread_task,
+                _live_synthetic_task,
+                _live_box_spread_task,
+                _paper_box_spread_cycle_task,
+            )
+            if task is not None
+        )
+        if shutdown_tasks:
+            # Await all cancelled background tasks concurrently. Sequential
+            # awaits can add each runner's cleanup timeout and exceed systemd's
+            # 30s service stop deadline.
+            results = await asyncio.gather(*shutdown_tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
+                    app_logger.error("Background task shutdown failed: %s", result)
         _history_collector_task = None
         _contract_master_sync_task = None
         _live_cash_future_task = None
