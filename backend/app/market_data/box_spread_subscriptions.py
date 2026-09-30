@@ -42,7 +42,16 @@ def select_box_contracts(master: InstrumentMaster, *, underlying: str, instrumen
     options = [x for x in options if _expiry(x.get("expiry")) == target]
     if not options: raise LookupError(f"no options for {symbol} {target}")
     strikes = sorted({_strike(x.get("strike")) for x in options})
-    pairs = enumerate_box_pairs(strikes, atm_strike=float(atm_strike), instrument_class=cls, policy=policy or ScanPolicy())
+    effective_policy = policy or ScanPolicy(
+        stock_box_distances=tuple(range(1, 6)),
+        index_box_distances=tuple(range(1, 11)),
+    )
+    pairs = enumerate_box_pairs(
+        strikes,
+        atm_strike=float(atm_strike),
+        instrument_class=cls,
+        policy=effective_policy,
+    )
     selected = {s for pair in pairs for s in pair[:2]}
     rows_by_key = {(str(x.get("symbol","")).strip()[-2:].upper(), _strike(x.get("strike"))): x for x in options}
     subscriptions = []
