@@ -204,7 +204,10 @@ class LiveSyntheticOptionFutureRecorder:
                 return
             self._latest[key] = (second, record)
         if previous is not None:
-            self._emit(previous[1], previous[0])
+            # Persist the latest tick's real exchange timestamp, not the
+            # beginning-of-second bucket key. Multiple ticks in one second
+            # must coalesce to the newest tick without falsifying its time.
+            self._emit(previous[1], previous[1].timestamp_ns)
 
     def _run_session(self) -> int:
         self._repository = DailySQLiteMarketDataRepository(self.data_db)
@@ -227,12 +230,8 @@ class LiveSyntheticOptionFutureRecorder:
             with self._lock:
                 latest = list(self._latest.values())
                 self._latest.clear()
-            for timestamp, record in latest:
-                self._emit(record, timestamp)
-            # Stop/join the bounded writer before reading persistence metrics so
-            # the final bucket has actually reached SQLite.  Reading snapshot()
-            # first races the async writer and can report inserted=0 even though
-            # records were accepted and are about to be flushed by close().
+            for _, record in latest:
+                self._emit(record, record.timestamp_ns)
             self._ingestor.close()
             snapshot = self._ingestor.snapshot()
             return int(snapshot.get("inserted", 0))
