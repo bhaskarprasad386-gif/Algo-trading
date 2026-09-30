@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     LIVE_CALENDAR_SPREAD_RESULT_RETENTION_DAYS: int = 90
     LIVE_SYNTHETIC_DATA_ENABLED: bool = False
     LIVE_BOX_SPREAD_DATA_ENABLED: bool = False
+    LIVE_BOX_SPREAD_MIN_ARBITRAGE_POINTS: float = 0.0
+    LIVE_BOX_SPREAD_RESULT_RETENTION_DAYS: int = 90
     # Box-Spread paper automation is opt-in and only touches active PAPER accounts.
     PAPER_BOX_SPREAD_AUTO_CYCLE_ENABLED: bool = False
     PAPER_BOX_SPREAD_AUTO_CYCLE_INTERVAL_SECONDS: int = 5

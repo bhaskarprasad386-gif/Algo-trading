@@ -16,7 +16,7 @@ class BoxSpreadAlertService:
             f"HIGH CE Bid/Ask: ₹{h.call_bid:.2f}/₹{h.call_ask:.2f} | HIGH PE Bid/Ask: ₹{h.put_bid:.2f}/₹{h.put_ask:.2f}\n"+
             f"Executable Edge: ₹{r.executable_edge:.4f} | Edge/Lot: ₹{r.edge_per_lot:.2f}\n"+f"Gross P&L: ₹{r.gross_pnl:.2f}")
     def persist(self,db,results):
-        retention=max(1,int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
+        retention=max(1,int(settings.LIVE_BOX_SPREAD_RESULT_RETENTION_DAYS))
         db.query(LiveBoxSpreadAlertHistory).filter(LiveBoxSpreadAlertHistory.observed_at < datetime.utcnow()-timedelta(days=retention)).delete(synchronize_session=False)
         added=0
         for r in results:

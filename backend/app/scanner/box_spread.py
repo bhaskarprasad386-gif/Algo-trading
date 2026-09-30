@@ -5,6 +5,11 @@ from typing import Iterable
 from app.backtesting.arbitrage_backtester import BoxSpreadBacktester, OptionQuote
 from app.backtesting.arbitrage_scan_policy import ScanPolicy, enumerate_box_pairs
 
+BOX_SCAN_POLICY = ScanPolicy(
+    stock_box_distances=tuple(range(1, 6)),
+    index_box_distances=tuple(range(1, 11)),
+)
+
 @dataclass(frozen=True)
 class BoxSpreadScanConfig:
     fees_per_unit: float = 0.0
@@ -25,7 +30,7 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
                        instrument_class: str, config: BoxSpreadScanConfig | None = None,
                        policy: ScanPolicy | None = None) -> tuple[BoxSpreadScanResult, ...]:
     config = config or BoxSpreadScanConfig()
-    policy = policy or ScanPolicy()
+    policy = policy or BOX_SCAN_POLICY
     cls = str(instrument_class).strip().upper()
     quotes = tuple(option_quotes)
     if not quotes:
@@ -53,8 +58,10 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
             opp = BoxSpreadBacktester.evaluate(low, high, direction=direction, fees_per_unit=config.fees_per_unit)
             if opp is None or opp.executable_edge < config.min_executable_edge:
                 continue
-            results.append(BoxSpreadScanResult(low, high, direction, opp.executable_edge, opp.edge_per_lot, opp.gross_pnl, distance))
+            results.append(BoxSpreadScanResult(
+                low, high, direction, opp.executable_edge, opp.edge_per_lot, opp.gross_pnl, distance
+            ))
     results.sort(key=lambda x: (x.executable_edge, x.edge_per_lot, x.gross_pnl), reverse=True)
     return tuple(results)
 
-__all__ = ["BoxSpreadScanConfig", "BoxSpreadScanResult", "scan_box_snapshot"]
+__all__ = ["BOX_SCAN_POLICY", "BoxSpreadScanConfig", "BoxSpreadScanResult", "scan_box_snapshot"]

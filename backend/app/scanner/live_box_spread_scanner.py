@@ -3,12 +3,13 @@ from __future__ import annotations
 from threading import Lock
 from datetime import datetime
 from app.backtesting.arbitrage_backtester import OptionQuote
+from app.core.config import settings
 from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
 
 class LiveBoxSpreadScanner:
     def __init__(self, *, atm_provider, config_provider=None, on_result=None, policy=None):
         self.atm_provider=atm_provider
-        self.config_provider=config_provider or (lambda _s: BoxSpreadScanConfig())
+        self.config_provider=config_provider or (lambda _s: BoxSpreadScanConfig(min_executable_edge=float(settings.LIVE_BOX_SPREAD_MIN_ARBITRAGE_POINTS)))
         self.on_result=on_result
         self.policy=policy
         self._lock=Lock(); self._buckets={}
