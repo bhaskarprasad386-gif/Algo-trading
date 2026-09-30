@@ -41,6 +41,7 @@ from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
 from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread
+from app.intelligence.routes import router as intelligence_router
 from app.execution.calendar_spread_paper_routes import router as calendar_spread_paper_router
 from app.execution.box_spread_paper_routes import router as box_spread_paper_router, cycle as box_spread_paper_cycle
 from app.execution.paper_routes import router as paper_execution_router
@@ -161,6 +162,7 @@ app.include_router(box_spread_paper_router)
 app.include_router(calendar_spread_scanner_router)
 app.include_router(live_synthetic_router)
 app.include_router(live_box_spread_router)
+app.include_router(intelligence_router)
 app.include_router(monthly_results_router)
 app.include_router(cash_future_strategy_router)
 app.include_router(calendar_spread_strategy_router)
