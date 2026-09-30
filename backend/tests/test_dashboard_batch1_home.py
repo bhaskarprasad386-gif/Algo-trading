@@ -27,6 +27,9 @@ def test_batch1_home_command_center_contract():
         "/api/v1/market-data/live-health",
         "/api/v1/scanner/cash-future/live/fast",
         "/api/v1/execution/paper/account",
+        "/ws/dashboard",
+        "connectDashboardWebSocket",
+        "WS CONNECTED",
         "Live broker orders: OFF",
     ):
         assert marker in ui
