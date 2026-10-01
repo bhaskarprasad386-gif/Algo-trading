@@ -1,0 +1,29 @@
+from types import SimpleNamespace
+
+from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
+from app.market_data.contracts import InstrumentKey
+from app.market_data.registry import InstrumentDescriptor
+
+
+def test_common_feed_tracks_in_memory_tick_telemetry_without_persistence():
+    key = InstrumentKey("NSE", "NSE", "123")
+    descriptor = InstrumentDescriptor(
+        key=key, symbol="TEST", instrument_type="equity", exchange="NSE", segment="NSE",
+    )
+    manager = CommonWebSocketManager(socket_factory=lambda: None)
+    manager.registry.register(descriptor)
+    manager.registry.subscribe("test", key, mode=3)
+    manager._route_index = {SocketGroup(1, 3, 0): {"123": [("test", key)]}}
+    manager._normalizer.normalize = lambda _descriptor, _message: SimpleNamespace(
+        instrument=key, symbol="TEST", timestamp_ns=123456789, ltp=101.5, bid=101.4, ask=101.6,
+    )
+
+    manager._on_data(SocketGroup(1, 3, 0), {"token": "123"})
+
+    snapshot = manager.snapshot()
+    assert snapshot["ticks_received"] == 1
+    assert snapshot["ticks_by_exchange_type"] == {"1": 1}
+    assert snapshot["last_tick"] == {
+        "exchange_type": 1, "exchange": "NSE", "segment": "NSE", "token": "123",
+        "symbol": "TEST", "timestamp_ns": 123456789, "ltp": 101.5, "bid": 101.4, "ask": 101.6,
+    }
