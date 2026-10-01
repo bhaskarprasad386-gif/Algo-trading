@@ -93,6 +93,10 @@ class Settings(BaseSettings):
     # Durable historical market-data database (separate from API/job status)
     BACKTEST_DATA_DB: str = "./backtest_market_data.sqlite3"
 
+    # Provider-neutral archive root for completed daily market-data shards.
+    # Empty means archiving is opt-in; no automatic archive is attempted.
+    MARKET_DATA_ARCHIVE_ROOT: str = ""
+
     # Durable historical contract-master snapshots
     BACKTEST_CONTRACT_DB: str = "./backtest_contract_master.sqlite3"
     BACKTEST_CONTRACT_MASTER_AUTO_SYNC: bool = True
