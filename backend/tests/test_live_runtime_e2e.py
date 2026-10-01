@@ -11,6 +11,10 @@ class FakeSocket:
         self.connected = True
     def subscribe(self, tokens, mode=None):
         return None
+    def subscribe_groups(self, groups, mode=None):
+        return None
+    def unsubscribe_groups(self, groups):
+        return None
     def close(self):
         self.closed = True
         self.connected = False
@@ -30,7 +34,7 @@ def test_common_websocket_snapshot_reports_connected_group():
     snapshot = manager.snapshot()
     assert snapshot["subscriptions"] == 1
     assert snapshot["active_instruments"] == 1
-    assert "1:3" in snapshot["connected_groups"]
+    assert "3:0" in snapshot["connected_groups"]
     manager.close()
     assert socket.closed
 
