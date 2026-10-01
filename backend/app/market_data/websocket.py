@@ -132,9 +132,10 @@ class MarketDataWebSocket:
             on_data = self.on_data
         if exchange_type is None or not tokens:
             return
+        reconnect_subscriptions = dict(self.subscriptions) or {exchange_type: tokens}
         try:
             self.connect(
-                subscriptions=dict(self.subscriptions),
+                subscriptions=reconnect_subscriptions,
                 mode=mode,
                 correlation_id=correlation_id,
                 on_data=on_data,
