@@ -16,6 +16,7 @@ class FakeSocket:
         self.closed = False
         self.connect_calls = []
         self.subscribe_calls = []
+        self.unsubscribe_calls = []
         FakeSocket.instances.append(self)
 
     def connect(self, **kwargs):
@@ -23,6 +24,16 @@ class FakeSocket:
 
     def subscribe(self, tokens, mode=None):
         self.subscribe_calls.append((list(tokens), mode))
+
+    def subscribe_groups(self, groups, mode=None):
+        self.subscribe_calls.append(
+            ([token for tokens in groups.values() for token in tokens], mode)
+        )
+
+    def unsubscribe_groups(self, groups):
+        self.unsubscribe_calls.append(
+            [token for tokens in groups.values() for token in tokens]
+        )
 
     def close(self):
         self.closed = True
@@ -72,7 +83,7 @@ def test_calendar_and_box_consumers_share_common_nfo_socket(monkeypatch):
     assert len(FakeSocket.instances) == 1
     socket = FakeSocket.instances[0]
     assert socket.connect_calls[0]["mode"] == 3
-    assert set(socket.connect_calls[0]["tokens"]) == {"FUT-1"}
+    assert set(socket.connect_calls[0]["subscriptions"][2]) == {"FUT-1"}
     subscribed = [token for tokens, _mode in socket.subscribe_calls for token in tokens]
     assert set(subscribed) == {"OPT-1"}
 
