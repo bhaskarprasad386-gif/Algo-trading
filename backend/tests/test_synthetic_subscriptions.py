@@ -9,9 +9,9 @@ def _master(items):
     return master
 
 
-def test_index_selection_uses_actual_strikes_with_locked_plus_minus_15():
+def test_index_selection_uses_actual_strikes_with_locked_plus_minus_10():
     items = [
-        {"exch_seg":"NFO","name":"NIFTY","instrumenttype":"FUTIDX","expiry":"30SEP2026","token":"900","symbol":"NIFTY30SEP26FUT","lotsize":"65"},
+        {"exch_seg":"NFO","name":"NIFTY","instrumenttype":"FUTIDX","expiry":"29OCT2026","token":"900","symbol":"NIFTY29OCT26FUT","lotsize":"65"},
         *[
             {"exch_seg":"NFO","name":"NIFTY","instrumenttype":"OPTIDX","expiry":"30SEP2026","token":str(i),"symbol":f"NIFTY{i}CE","strike":str(2400000+i*5000),"lotsize":"65"}
             for i in range(1, 32)
@@ -19,11 +19,11 @@ def test_index_selection_uses_actual_strikes_with_locked_plus_minus_15():
     ]
     selected = select_synthetic_contracts(
         _master(items), underlying="NIFTY", instrument_class="INDEX", atm_strike=24150.0,
-        expiry="30SEP2026",
+        expiry="29OCT2026",
     )
     strikes = {x.strike for x in selected.subscriptions if x.strike is not None}
     assert strikes
-    assert max(abs(s-24150.0) for s in strikes) <= 15 * 50
+    assert max(abs(s-24150.0) for s in strikes) <= 10 * 50
 
 
 def test_stock_selection_requires_configured_nifty50_universe():
