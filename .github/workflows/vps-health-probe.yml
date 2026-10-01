@@ -21,13 +21,13 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_HOST: 82.41.67.22
         run: |
-          set -u
+          set -u -o pipefail
           printf '%s' "$VPS_KEY" | base64 --decode > /tmp/vps_key
           chmod 600 /tmp/vps_key
           mkdir -p ~/.ssh
           ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
-          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE' | tee /tmp/vps-health-probe.txt
           set -u
           echo "=== HOST ==="
           echo "HOST=$(hostname)"
@@ -58,7 +58,11 @@ jobs:
           fi
 
           echo "=== SERVICE MEMORY / PROCESS ==="
-          systemctl show algo-trading.service --no-pager             -p ActiveState -p SubState -p Result -p NRestarts             -p ExecMainPID -p ExecMainStatus -p ActiveEnterTimestamp             -p InactiveEnterTimestamp -p MemoryCurrent -p MemoryPeak             -p OOMPolicy -p MemoryHigh -p MemoryMax || true
+          systemctl show algo-trading.service --no-pager \
+            -p ActiveState -p SubState -p Result -p NRestarts \
+            -p ExecMainPID -p ExecMainStatus -p ActiveEnterTimestamp \
+            -p InactiveEnterTimestamp -p MemoryCurrent -p MemoryPeak \
+            -p OOMPolicy -p MemoryHigh -p MemoryMax || true
           pid=$(systemctl show -p MainPID --value algo-trading.service 2>/dev/null || true)
           if [ -n "$pid" ] && [ "$pid" != "0" ] && [ -r "/proc/$pid/status" ]; then
             echo "MAIN_PID=$pid"
@@ -89,5 +93,14 @@ jobs:
           fi
 
           echo "=== LISTENING ==="
-          ss -ltn 2>/dev/null | grep -E ':(80|443|8000|8080)\b' || true
+          ss -ltn 2>/dev/null | grep -E ':(80|443|8000|8080)\\b' || true
           REMOTE
+
+      - name: Upload VPS health evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: vps-health-evidence-${{ github.run_id }}
+          path: /tmp/vps-health-probe.txt
+          if-no-files-found: warn
+          retention-days: 14
