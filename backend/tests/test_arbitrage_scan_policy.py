@@ -24,7 +24,7 @@ def test_index_box_supports_three_through_fifteen_positions_when_chain_has_them(
     assert distances == set(range(3, 16))
 
 
-def test_synthetic_stock_is_both_sides_of_atm_with_max_five_positions():
+def test_synthetic_stock_is_both_sides_of_atm_with_max_seven_positions():
     result = enumerate_synthetic_strikes(STRIKES, atm_strike=100, instrument_class="STOCK")
     assert result[0] == (90.0, 2, "LOWER")
     assert (100.0, 0, "ATM") in result
