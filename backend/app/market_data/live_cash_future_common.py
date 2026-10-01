@@ -193,7 +193,7 @@ class LiveCashFutureCommonRunner:
                 self._latest_persisted[record.instrument] = record
         if self.on_payload is not None:
             try:
-                self.on_payload(dict(payload))
+                self.on_payload(self._record_payload(record, meta))
             except Exception as exc:
                 app_logger.error("Cash-Future payload callback failed: %s", exc)
         try:
