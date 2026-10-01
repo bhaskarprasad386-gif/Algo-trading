@@ -25,11 +25,12 @@ def test_index_box_supports_three_through_fifteen_positions_when_chain_has_them(
 
 
 def test_synthetic_stock_is_both_sides_of_atm_with_max_seven_positions():
-    result = enumerate_synthetic_strikes(STRIKES, atm_strike=100, instrument_class="STOCK")
-    assert result[0] == (90.0, 2, "LOWER")
+    strikes = tuple(range(65, 136, 5))
+    result = enumerate_synthetic_strikes(strikes, atm_strike=100, instrument_class="STOCK")
+    assert result[0] == (65.0, 7, "LOWER")
     assert (100.0, 0, "ATM") in result
     assert (120.0, 4, "UPPER") in result
-    assert (125.0, 5, "UPPER") in result
+    assert (135.0, 7, "UPPER") in result
     assert max(distance for _, distance, _ in result) == 7
 
 
