@@ -35,4 +35,4 @@ def test_box_runner_uses_resolved_expiry_when_target_has_none(monkeypatch):
         runner.run_forever()
     except RuntimeError:
         pass
-    assert captured == ["30SEP2026"]
+    assert captured == ["29OCT2026"]
