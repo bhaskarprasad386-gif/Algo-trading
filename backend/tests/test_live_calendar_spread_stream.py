@@ -63,3 +63,15 @@ def test_calendar_live_payload_source_timestamp_is_second_aligned():
     payload = {"source_timestamp_ns": second}
     assert payload["source_timestamp_ns"] == second
     assert payload["source_timestamp_ns"] % 1_000_000_000 == 0
+
+
+def test_calendar_live_no_contract_retry_is_interruptible(monkeypatch):
+    collector = LiveCalendarSpreadOneSecondCollector("unused", instrument_master=type("Master", (), {"download": lambda self: []})())
+
+    def no_contracts():
+        collector.stop_event.set()
+        return []
+
+    monkeypatch.setattr(collector, "_contracts", no_contracts)
+    collector.run_forever()
+    assert collector.stop_event.is_set()
