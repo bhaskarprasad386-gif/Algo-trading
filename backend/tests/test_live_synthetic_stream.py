@@ -1,5 +1,11 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import pytest
+from app.core.config import settings
+
+@pytest.fixture(autouse=True)
+def enable_persistence_for_legacy_stream_persistence_tests(monkeypatch):
+    monkeypatch.setattr(settings, "LIVE_MARKET_DATA_PERSISTENCE_ENABLED", True)
 
 from app.market_data.common_websocket import CommonWebSocketManager
 from app.market_data.daily_shard_catalog import DailyMarketDataShardCatalog
