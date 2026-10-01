@@ -74,8 +74,8 @@ class LiveSyntheticOptionFutureRecorder:
             cls = str(item.instrument_class).strip().upper()
             if not token or not symbol or not underlying:
                 raise ValueError("subscription token, symbol and underlying are required")
-            if cls not in {"STOCK", "INDEX"}:
-                raise ValueError("instrument_class must be STOCK or INDEX")
+            if cls not in {"STOCK", "INDEX", "COMMODITY"}:
+                raise ValueError("instrument_class must be STOCK, INDEX or COMMODITY")
             key = (int(item.exchange_type), token)
             if key in seen:
                 continue
