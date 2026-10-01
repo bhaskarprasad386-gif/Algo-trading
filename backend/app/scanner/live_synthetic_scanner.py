@@ -61,6 +61,26 @@ class LiveSyntheticScanner:
         if bid is None or ask is None or ask < bid:
             return ()
 
+        def positive_number(value: object) -> float:
+            try:
+                return max(float(value), 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        def liquid_leg(option: dict) -> bool:
+            # Liquidity is evaluated from live ticks, not the static instrument master.
+            return (
+                self._price(option.get("bid")) is not None
+                and self._price(option.get("ask")) is not None
+                and self._price(option.get("ask")) >= self._price(option.get("bid"))
+                and positive_number(option.get("bid_qty")) > 0
+                and positive_number(option.get("ask_qty")) > 0
+                and (
+                    positive_number(option.get("volume")) > 0
+                    or positive_number(option.get("oi")) > 0
+                )
+            )
+
         expiry = self._expiry(payload.get("expiry"))
         strike = self._price(payload.get("strike"))
         key = (symbol, timestamp_ns)
@@ -92,6 +112,8 @@ class LiveSyntheticScanner:
                     self._expiry(ce.get("expiry")) != future_expiry
                     or self._expiry(pe.get("expiry")) != future_expiry
                 ):
+                    continue
+                if not liquid_leg(ce) or not liquid_leg(pe):
                     continue
                 ce_bid, ce_ask = self._price(ce.get("bid")), self._price(ce.get("ask"))
                 pe_bid, pe_ask = self._price(pe.get("bid")), self._price(pe.get("ask"))
