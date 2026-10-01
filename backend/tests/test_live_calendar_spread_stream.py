@@ -84,7 +84,7 @@ def test_calendar_live_no_contract_retry_is_interruptible(monkeypatch):
     monkeypatch.setattr(collector, "_contracts", no_contracts)
     monkeypatch.setattr(collector.stop_event, "wait", tracked_wait)
 
-    worker = Thread(target=collector.run_forever)
+    worker = Thread(target=collector._run_session)
     worker.start()
     assert entered_wait.wait(2.0)
 
