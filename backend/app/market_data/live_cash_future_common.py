@@ -175,21 +175,22 @@ class LiveCashFutureCommonRunner:
 
     def _on_record(self, record: MarketDataRecord) -> None:
         meta = self._metadata.get(record.instrument)
-        if meta is None or self._ingestor is None:
+        if meta is None:
             return
-        # Persist one latest broker tick per second. The canonical WebSocket
+        if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED and self._ingestor is not None:
+            # Persist one latest broker tick per second. The canonical WebSocket
         # can emit many ticks inside a second, but this stream is explicitly 1s.
-        previous = self._latest_persisted.get(record.instrument)
-        second = (record.timestamp_ns // 1_000_000_000) * 1_000_000_000
-        if previous is not None:
-            previous_second = (previous.timestamp_ns // 1_000_000_000) * 1_000_000_000
-            if second == previous_second:
-                self._latest_persisted[record.instrument] = record
+            previous = self._latest_persisted.get(record.instrument)
+            second = (record.timestamp_ns // 1_000_000_000) * 1_000_000_000
+            if previous is not None:
+                previous_second = (previous.timestamp_ns // 1_000_000_000) * 1_000_000_000
+                if second == previous_second:
+                    self._latest_persisted[record.instrument] = record
+                else:
+                    self._persist_record(previous, self._metadata[record.instrument])
+                    self._latest_persisted[record.instrument] = record
             else:
-                self._persist_record(previous, self._metadata[record.instrument])
                 self._latest_persisted[record.instrument] = record
-        else:
-            self._latest_persisted[record.instrument] = record
         if self.on_payload is not None:
             try:
                 self.on_payload(dict(payload))
@@ -221,22 +222,26 @@ class LiveCashFutureCommonRunner:
             return
         self.manager.registry.register_many(descriptors)
         self.manager.register_normalized_callback(self.CONSUMER, self._on_record)
-        self._repository = DailySQLiteMarketDataRepository(self.data_db)
-        self._prune_old_live_shards()
-        self._ingestor = BoundedMarketDataIngestor(
-            self._repository,
-            max_queue=settings.MARKET_DATA_INGEST_QUEUE_MAX,
-            batch_size=settings.MARKET_DATA_INGEST_BATCH_SIZE,
-            flush_seconds=settings.MARKET_DATA_INGEST_FLUSH_SECONDS,
-            put_timeout_seconds=settings.MARKET_DATA_INGEST_PUT_TIMEOUT_SECONDS,
-            record_source="angelone-live-1s",
-            on_error=lambda exc: app_logger.error("Cash-Future common persistence error: %s", exc),
-        )
+        if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
+            self._repository = DailySQLiteMarketDataRepository(self.data_db)
+            self._prune_old_live_shards()
+            self._ingestor = BoundedMarketDataIngestor(
+                self._repository,
+                max_queue=settings.MARKET_DATA_INGEST_QUEUE_MAX,
+                batch_size=settings.MARKET_DATA_INGEST_BATCH_SIZE,
+                flush_seconds=settings.MARKET_DATA_INGEST_FLUSH_SECONDS,
+                put_timeout_seconds=settings.MARKET_DATA_INGEST_PUT_TIMEOUT_SECONDS,
+                record_source="angelone-live-1s",
+                on_error=lambda exc: app_logger.error("Cash-Future common persistence error: %s", exc),
+            )
+        else:
+            app_logger.info("Cash-Future live market-data persistence disabled; WebSocket/scanner remain live in memory")
         keys = list(self._metadata)
         try:
             self.manager.subscribe(self.CONSUMER, keys, mode=3)
             while not self.stop_event.wait(1.0):
-                self._prune_old_live_shards()
+                if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
+                    self._prune_old_live_shards()
         finally:
             self.stop()
 
@@ -273,12 +278,15 @@ class LiveCashFutureCommonRunner:
                 self.manager.clear_consumer(self.CONSUMER)
             except Exception:
                 pass
-            pending = list(self._latest_persisted.items())
-            self._latest_persisted.clear()
-            for key, record in pending:
-                meta = self._metadata.get(key)
-                if meta is not None:
-                    self._persist_record(record, meta)
+            if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
+                pending = list(self._latest_persisted.items())
+                self._latest_persisted.clear()
+                for key, record in pending:
+                    meta = self._metadata.get(key)
+                    if meta is not None:
+                        self._persist_record(record, meta)
+            else:
+                self._latest_persisted.clear()
             if self._ingestor is not None:
                 try:
                     self._ingestor.close()
