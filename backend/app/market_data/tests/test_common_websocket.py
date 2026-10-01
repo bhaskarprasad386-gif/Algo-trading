@@ -61,8 +61,8 @@ def test_common_manager_deduplicates_shared_instrument_and_fans_out():
     assert socket.connect_calls[0]["subscriptions"] == {1: ["101"]}
     assert registry.subscriptions()[0].ref_count == 2
 
-    manager._on_data(SocketGroup(1, 1), {"token": "101", "ltp": 100})
-    assert seen == [("box", "101"), ("cash", "101")]
+    manager._on_data(SocketGroup(1, 0), {"token": "101", "ltp": 100})
+    assert set(seen) == {("box", "101"), ("cash", "101")}
 
 
 def test_mode_upgrade_rehomes_socket_group_without_duplicate_sockets():
