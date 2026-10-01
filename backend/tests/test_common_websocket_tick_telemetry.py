@@ -19,6 +19,8 @@ def test_common_feed_tracks_in_memory_tick_telemetry_without_persistence():
         instrument=key, symbol="TEST", timestamp_ns=123456789, ltp=101.5, bid=101.4, ask=101.6,
     )
 
+    manager.register_normalized_callback("test", lambda _record: None)
+
     manager._on_data(group, {"token": "123", "exchange_type": 1})
 
     snapshot = manager.snapshot()
