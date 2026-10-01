@@ -20,6 +20,7 @@ class MarketDataWebSocket:
         self.mode: int = 1
         self.correlation_id: str = "market-data"
         self.tokens: list[str] = []
+        self.subscriptions: dict[int, list[str]] = {}
         self.on_data: Optional[Callable] = None
         self._lock = Lock()
         self._connected = False
@@ -43,6 +44,23 @@ class MarketDataWebSocket:
         with self._lock:
             return self._connected
 
+    def _token_groups(self) -> list[dict]:
+        return [{"exchangeType": exchange_type, "tokens": list(tokens)} for exchange_type, tokens in sorted(self.subscriptions.items()) if tokens]
+
+    def _set_subscriptions(self, subscriptions: dict[int, list[str]]) -> None:
+        normalized: dict[int, list[str]] = {}
+        for exchange_type, tokens in subscriptions.items():
+            if not isinstance(exchange_type, int) or isinstance(exchange_type, bool) or exchange_type <= 0:
+                raise ValueError("subscription exchange_type must be a positive integer")
+            values = [str(token).strip() for token in tokens if str(token).strip()]
+            if values:
+                normalized[exchange_type] = list(dict.fromkeys(values))
+        if not normalized:
+            raise ValueError("at least one WebSocket subscription is required")
+        self.subscriptions = normalized
+        self.exchange_type = next(iter(normalized))
+        self.tokens = list(normalized[self.exchange_type])
+
     def _build_socket(self):
         if not self.auth.smart_api or not self.auth.session_data:
             self.auth.login()
@@ -61,7 +79,7 @@ class MarketDataWebSocket:
                 self._last_error = None
             app_logger.info("Angel One WebSocket connected")
             if self.exchange_type is not None and self.tokens:
-                socket.subscribe(self.correlation_id, self.mode, [{"exchangeType": self.exchange_type, "tokens": self.tokens}])
+                socket.subscribe(self.correlation_id, self.mode, self._token_groups())
 
         def handle_data(wsapp, message):
             if self.on_data:
@@ -116,8 +134,7 @@ class MarketDataWebSocket:
             return
         try:
             self.connect(
-                exchange_type=exchange_type,
-                tokens=tokens,
+                subscriptions=dict(self.subscriptions),
                 mode=mode,
                 correlation_id=correlation_id,
                 on_data=on_data,
@@ -137,7 +154,7 @@ class MarketDataWebSocket:
                 time.sleep(delay)
                 self._schedule_reconnect()
 
-    def connect(self, exchange_type: int, tokens: list[str], mode: int = 1, correlation_id: str = "market-data", on_data: Optional[Callable] = None, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 2.0):
+    def connect(self, exchange_type: int | None = None, tokens: list[str] | None = None, mode: int = 1, correlation_id: str = "market-data", on_data: Optional[Callable] = None, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 2.0, subscriptions: Optional[dict[int, list[str]]] = None):
         """Connect and retry failed starts while preserving validated subscriptions."""
         if not isinstance(exchange_type, int) or isinstance(exchange_type, bool) or exchange_type <= 0:
             raise ValueError("exchange_type must be a positive integer")
@@ -149,14 +166,16 @@ class MarketDataWebSocket:
             raise ValueError("reconnect_delay_seconds must be finite and non-negative")
         if not str(correlation_id).strip():
             raise ValueError("correlation_id is required")
-        normalized_tokens = [str(token).strip() for token in tokens if str(token).strip()]
-        if not normalized_tokens:
-            raise ValueError("at least one WebSocket token is required")
+        if subscriptions is None:
+            if exchange_type is None or tokens is None:
+                raise ValueError("exchange_type and tokens are required when subscriptions is omitted")
+            subscriptions = {exchange_type: tokens}
+        elif exchange_type is not None or tokens is not None:
+            raise ValueError("use either subscriptions or exchange_type/tokens, not both")
         if on_data is not None and not callable(on_data):
             raise ValueError("on_data must be callable")
         with self._lock:
-            self.exchange_type = exchange_type
-            self.tokens = list(dict.fromkeys(normalized_tokens))
+            self._set_subscriptions(subscriptions)
             self.mode = mode
             self.correlation_id = correlation_id.strip()
             self.on_data = on_data
@@ -198,6 +217,10 @@ class MarketDataWebSocket:
             raise ValueError("mode must be one of 1, 2, 3 or 4")
         with self._lock:
             self.tokens = list(dict.fromkeys(normalized))
+            exchange_type = self.exchange_type
+            if exchange_type is None:
+                raise ValueError("exchange_type is not configured")
+            self.subscriptions[exchange_type] = list(self.tokens)
             if mode is not None:
                 self.mode = mode
             socket = self.websocket
@@ -207,7 +230,7 @@ class MarketDataWebSocket:
             current_mode = self.mode
             current_tokens = list(self.tokens)
         if socket and connected and exchange_type is not None:
-            socket.subscribe(correlation_id, current_mode, [{"exchangeType": exchange_type, "tokens": current_tokens}])
+            socket.subscribe(correlation_id, current_mode, self._token_groups())
 
     def unsubscribe(self, tokens: list[str]):
         """Unsubscribe tokens and remove them from the remembered set."""
@@ -217,6 +240,11 @@ class MarketDataWebSocket:
         with self._lock:
             normalized_set = set(normalized)
             self.tokens = [token for token in self.tokens if token not in normalized_set]
+            if self.exchange_type is not None:
+                if self.tokens:
+                    self.subscriptions[self.exchange_type] = list(self.tokens)
+                else:
+                    self.subscriptions.pop(self.exchange_type, None)
             socket = self.websocket
             exchange_type = self.exchange_type
             connected = self._connected
