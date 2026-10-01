@@ -21,6 +21,7 @@ from .websocket import MarketDataWebSocket
 class SocketGroup:
     exchange_type: int
     mode: int
+    shard: int = 0
 
 
 class CommonWebSocketManager:
@@ -36,6 +37,9 @@ class CommonWebSocketManager:
         self._socket_factory = socket_factory
         self._resolve_exchange_type = exchange_type_resolver or self._default_exchange_type
         self._sockets: dict[SocketGroup, Any] = {}
+        self._socket_tokens: dict[SocketGroup, set[str]] = {}
+        self._max_tokens_per_socket = 1000
+        self._max_sockets_per_group = 3
         self._callbacks: dict[str, Callable[[dict[str, Any]], None]] = {}
         self._record_callbacks: dict[str, Callable[[Any], None]] = {}
         self._normalizer = AngelOneTickNormalizer()
@@ -118,36 +122,67 @@ class CommonWebSocketManager:
             self._reconcile_locked()
 
     def _reconcile_locked(self) -> None:
+        """Reconcile subscriptions within Angel One's 1000-token/3-session limits."""
         route_index: dict[SocketGroup, dict[str, list[tuple[str, InstrumentKey]]]] = defaultdict(lambda: defaultdict(list))
+        grouped: dict[tuple[int, int], set[str]] = defaultdict(set)
         for sub in self.registry.subscriptions():
-            group = SocketGroup(self._resolve_exchange_type(sub.key), sub.mode)
+            exchange_type = self._resolve_exchange_type(sub.key)
+            grouped[(exchange_type, sub.mode)].add(sub.key.token.strip())
+
+        for sub in self.registry.subscriptions():
+            exchange_type = self._resolve_exchange_type(sub.key)
+            group_key = (exchange_type, sub.mode)
+            tokens = sorted(grouped[group_key])
+            shard_index = tokens.index(sub.key.token.strip()) // self._max_tokens_per_socket
+            shard = SocketGroup(exchange_type, sub.mode, shard_index)
             for consumer in sub.consumers:
-                route_index[group][sub.key.token.strip()].append((consumer, sub.key))
+                route_index[shard][sub.key.token.strip()].append((consumer, sub.key))
+
+        desired_tokens: dict[SocketGroup, set[str]] = {}
+        for (exchange_type, mode), tokens_set in grouped.items():
+            tokens = sorted(tokens_set)
+            shard_count = (len(tokens) + self._max_tokens_per_socket - 1) // self._max_tokens_per_socket
+            if shard_count > self._max_sockets_per_group:
+                raise ValueError(
+                    f"Angel One subscription limit exceeded for exchange={exchange_type} mode={mode}: "
+                    f"{len(tokens)} tokens requires {shard_count} sockets; maximum is {self._max_sockets_per_group}"
+                )
+            for shard_index in range(shard_count):
+                shard = SocketGroup(exchange_type, mode, shard_index)
+                desired_tokens[shard] = set(tokens[
+                    shard_index * self._max_tokens_per_socket:
+                    (shard_index + 1) * self._max_tokens_per_socket
+                ])
+
         self._route_index = {group: dict(tokens) for group, tokens in route_index.items()}
 
-        desired: dict[SocketGroup, set[str]] = defaultdict(set)
-        for sub in self.registry.subscriptions():
-            group = SocketGroup(self._resolve_exchange_type(sub.key), sub.mode)
-            desired[group].add(sub.key.token.strip())
-
-        for group, tokens in desired.items():
+        for group, tokens in desired_tokens.items():
             socket = self._sockets.get(group)
+            previous_tokens = self._socket_tokens.get(group, set())
             if socket is None:
                 socket = self._socket_factory()
                 self._sockets[group] = socket
+                self._socket_tokens[group] = set(tokens)
                 socket.connect(
                     exchange_type=group.exchange_type,
                     tokens=sorted(tokens),
                     mode=group.mode,
-                    correlation_id=f"common-{group.exchange_type}-{group.mode}",
+                    correlation_id=f"common-{group.exchange_type}-{group.mode}-{group.shard}",
                     on_data=lambda message, group=group: self._on_data(group, message),
                 )
             else:
-                socket.subscribe(sorted(tokens), mode=group.mode)
+                removed = sorted(previous_tokens - tokens)
+                added = sorted(tokens - previous_tokens)
+                if removed:
+                    socket.unsubscribe(removed)
+                if added:
+                    socket.subscribe(added, mode=group.mode)
+                self._socket_tokens[group] = set(tokens)
 
         for group in list(self._sockets):
-            if group not in desired:
+            if group not in desired_tokens:
                 socket = self._sockets.pop(group)
+                self._socket_tokens.pop(group, None)
                 self._close_socket_bounded(socket)
 
     def _on_data(self, group: SocketGroup, message: Any) -> None:
@@ -218,5 +253,6 @@ class CommonWebSocketManager:
         with self._lock:
             sockets = list(self._sockets.values())
             self._sockets.clear()
+            self._socket_tokens.clear()
         for socket in sockets:
             self._close_socket_bounded(socket)
