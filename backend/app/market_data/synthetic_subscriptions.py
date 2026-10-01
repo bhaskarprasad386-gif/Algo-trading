@@ -1,19 +1,10 @@
-"""Build concrete synthetic-arbitrage WebSocket subscriptions from Angel One master.
-
-No strike/token is fabricated here. The master is the only source of contract
-identity; ScanPolicy decides the locked INDEX +/-15 / STOCK +/-5 radius.
-"""
-
+"""Build concrete live synthetic subscriptions from Angel One instrument master."""
 from __future__ import annotations
-
 from dataclasses import dataclass
-from datetime import date
-from typing import Iterable
-
+from datetime import date, datetime
 from app.backtesting.arbitrage_scan_policy import ScanPolicy, enumerate_synthetic_strikes
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.live_synthetic_stream import SyntheticSubscription
-
 
 @dataclass(frozen=True)
 class SyntheticContractSelection:
@@ -21,123 +12,79 @@ class SyntheticContractSelection:
     expiry: str
     atm_strike: float
 
-
 def _expiry_key(value: object) -> date:
     text = str(value or "").strip()
     for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d"):
-        try:
-            from datetime import datetime
-            return datetime.strptime(text.upper(), fmt).date()
-        except ValueError:
-            continue
+        try: return datetime.strptime(text.upper(), fmt).date()
+        except ValueError: pass
     raise ValueError(f"invalid Angel One expiry: {text!r}")
 
-
 def _strike(value: object) -> float:
-    number = float(value)
-    # Angel One option-master strikes are represented in paise for this feed.
-    return number / 100.0
+    return float(value) / 100.0
 
-
-def select_synthetic_contracts(
-    master: InstrumentMaster,
-    *,
-    underlying: str,
-    instrument_class: str,
-    atm_strike: float,
-    expiry: str | None = None,
-    allowed_stock_symbols: frozenset[str] = frozenset(),
-    policy: ScanPolicy | None = None,
-    exchange: str = "NFO",
-) -> SyntheticContractSelection:
-    """Select one concrete future plus actual option strikes for live recording."""
+def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
+                               instrument_class: str, atm_strike: float,
+                               expiry: str | None = None,
+                               allowed_stock_symbols: frozenset[str] = frozenset(),
+                               policy: ScanPolicy | None = None,
+                               exchange: str | None = None) -> SyntheticContractSelection:
     cls = instrument_class.strip().upper()
     symbol = underlying.strip().upper()
-    if cls not in {"STOCK", "INDEX"}:
-        raise ValueError("instrument_class must be STOCK or INDEX")
+    if cls not in {"STOCK", "INDEX", "COMMODITY"}:
+        raise ValueError("instrument_class must be STOCK, INDEX or COMMODITY")
     if cls == "STOCK" and symbol not in {s.strip().upper() for s in allowed_stock_symbols}:
         raise ValueError("stock is outside the configured NIFTY-50 universe")
 
+    expected_exchange = exchange.upper() if exchange else ("MCX" if cls == "COMMODITY" else "NFO")
+    future_type = {"STOCK": "FUTSTK", "INDEX": "FUTIDX", "COMMODITY": "FUTCOM"}[cls]
+    option_types = {"STOCK": {"OPTSTK"}, "INDEX": {"OPTIDX"}, "COMMODITY": {"OPTFUT"}}[cls]
     instruments = [
         item for item in master.instruments
-        if str(item.get("exch_seg", "")).upper() == exchange.upper()
-        and str(item.get("name", "")).strip().upper() == symbol
+        if str(item.get("exch_seg","")).upper() == expected_exchange
+        and str(item.get("name","")).strip().upper() == symbol
     ]
-    future_type = "FUTSTK" if cls == "STOCK" else "FUTIDX"
-    option_type = {"OPTSTK", "OPTIDX"}
+    futures = [x for x in instruments if str(x.get("instrumenttype","")).upper() == future_type]
+    options = [x for x in instruments if str(x.get("instrumenttype","")).upper() in option_types and str(x.get("symbol","")).strip()]
+    if not futures: raise LookupError(f"no {future_type} contract found for {expected_exchange}:{symbol}")
+    if not options: raise LookupError(f"no option contracts found for {expected_exchange}:{symbol}")
 
-    futures = [
-        item for item in instruments
-        if str(item.get("instrumenttype", "")).upper() == future_type
-    ]
-    options = [
-        item for item in instruments
-        if str(item.get("instrumenttype", "")).upper() in option_type
-        and str(item.get("symbol", "")).strip()
-    ]
-    if not futures:
-        raise LookupError(f"no {future_type} contract found for {symbol}")
-    if not options:
-        raise LookupError(f"no option contracts found for {symbol}")
-
-    target_expiry = _expiry_key(expiry) if expiry else min(_expiry_key(x.get("expiry")) for x in futures)
-    futures = [x for x in futures if _expiry_key(x.get("expiry")) == target_expiry]
+    future_rows = sorted(
+        [x for x in futures if _expiry_key(x.get("expiry")) >= datetime.now().date()],
+        key=lambda x: (_expiry_key(x.get("expiry")), str(x.get("token","")))
+    )
+    if not future_rows: raise LookupError(f"no current/near {future_type} contracts for {symbol}")
+    current = future_rows[0]
+    selected_futures = future_rows[:2]
+    target_expiry = _expiry_key(expiry) if expiry else _expiry_key(current.get("expiry"))
     options = [x for x in options if _expiry_key(x.get("expiry")) == target_expiry]
-    if not futures or not options:
-        raise LookupError(f"no matching future/option contracts for {symbol} {target_expiry}")
+    if not options: raise LookupError(f"no options for {symbol} {target_expiry}")
 
     actual_strikes = sorted({_strike(x.get("strike")) for x in options})
-    selected = enumerate_synthetic_strikes(
-        actual_strikes,
-        atm_strike=float(atm_strike),
-        instrument_class=cls,
-        policy=policy or ScanPolicy(),
-    )
+    selected = enumerate_synthetic_strikes(actual_strikes, atm_strike=float(atm_strike),
+                                           instrument_class=cls, policy=policy or ScanPolicy())
     selected_strikes = {strike for strike, _, _ in selected}
-    selected_options = [
-        x for x in options if _strike(x.get("strike")) in selected_strikes
-    ]
+    selected_options = [x for x in options if _strike(x.get("strike")) in selected_strikes]
 
-    future = sorted(
-        futures,
-        key=lambda x: (str(x.get("expiry", "")), str(x.get("token", ""))),
-    )[0]
-
-    subscriptions = [
-        SyntheticSubscription(
-            exchange_type=2,
-            token=str(future.get("token", "")).strip(),
-            symbol=str(future.get("symbol", "")).strip(),
-            underlying=symbol,
-            instrument_class=cls,
-            expiry=str(future.get("expiry", "")).strip(),
-            lot_size=int(float(future.get("lotsize", 0) or 0)) or None,
-        )
-    ]
+    subscriptions = []
+    for role, future in zip(("CURRENT","NEAR"), selected_futures):
+        subscriptions.append(SyntheticSubscription(
+            exchange_type={"NFO":2,"BFO":4,"MCX":5}[expected_exchange],
+            token=str(future.get("token","")).strip(),
+            symbol=str(future.get("symbol","")).strip(), underlying=symbol,
+            instrument_class=cls, expiry=str(future.get("expiry","")).strip(),
+            lot_size=int(float(future.get("lotsize",0) or 0)) or None, contract_role=role))
     for item in selected_options:
-        token = str(item.get("token", "")).strip()
-        if not token:
-            continue
-        subscriptions.append(
-            SyntheticSubscription(
-                exchange_type=2,
-                token=token,
-                symbol=str(item.get("symbol", "")).strip(),
-                underlying=symbol,
-                instrument_class=cls,
-                expiry=str(item.get("expiry", "")).strip(),
-                option_type=str(item.get("symbol", "")).strip()[-2:] or None,
+        token=str(item.get("token","")).strip()
+        if token:
+            subscriptions.append(SyntheticSubscription(
+                exchange_type={"NFO":2,"BFO":4,"MCX":5}[expected_exchange],
+                token=token, symbol=str(item.get("symbol","")).strip(), underlying=symbol,
+                instrument_class=cls, expiry=str(item.get("expiry","")).strip(),
+                option_type=str(item.get("symbol","")).strip()[-2:] or None,
                 strike=_strike(item.get("strike")),
-                lot_size=int(float(item.get("lotsize", 0) or 0)) or None,
-            )
-        )
-    if len(subscriptions) < 2:
-        raise LookupError("selected synthetic chain has no concrete option contracts")
-    return SyntheticContractSelection(
-        subscriptions=tuple(subscriptions),
-        expiry=str(future.get("expiry", "")).strip(),
-        atm_strike=float(atm_strike),
-    )
+                lot_size=int(float(item.get("lotsize",0) or 0)) or None,
+                contract_role="OPTION"))
+    if len(subscriptions) < 3: raise LookupError("selected live chain has no concrete option contracts")
+    return SyntheticContractSelection(tuple(subscriptions), str(current.get("expiry","")).strip(), float(atm_strike))
 
-
-__all__ = ["SyntheticContractSelection", "select_synthetic_contracts"]
+__all__=["SyntheticContractSelection","select_synthetic_contracts"]
