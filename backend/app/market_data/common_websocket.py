@@ -198,24 +198,20 @@ class CommonWebSocketManager:
             result[exchange_type].append(token)
         return dict(result)
 
+    @staticmethod
+    def _by_exchange(pairs: set[tuple[int, str]]) -> dict[int, list[str]]:
+        grouped: dict[int, list[str]] = defaultdict(list)
+        for exchange_type, token in sorted(pairs):
+            grouped[exchange_type].append(token)
+        return dict(grouped)
+
     @classmethod
     def _subscribe_pairs(cls, socket: Any, mode: int, pairs: set[tuple[int, str]]) -> None:
-        groups = [{"exchangeType": exchange, "tokens": [token for _, token in sorted(group)]}
-                  for exchange, group in cls._by_exchange(pairs)]
-        for group in groups:
-            socket.subscribe(group["tokens"], mode=mode, exchange_type=group["exchangeType"]) if False else socket.subscribe(group["tokens"], mode=mode)
-
-    @staticmethod
-    def _by_exchange(pairs: set[tuple[int, str]]) -> list[tuple[int, set[str]]]:
-        grouped: dict[int, set[str]] = defaultdict(set)
-        for exchange_type, token in pairs:
-            grouped[exchange_type].add(token)
-        return sorted(grouped.items())
+        socket.subscribe_groups(cls._by_exchange(pairs), mode=mode)
 
     @classmethod
     def _unsubscribe_pairs(cls, socket: Any, mode: int, pairs: set[tuple[int, str]]) -> None:
-        for exchange_type, tokens in cls._by_exchange(pairs):
-            socket.unsubscribe(list(tokens))
+        socket.unsubscribe_groups(cls._by_exchange(pairs))
 
     def _on_data(self, group: SocketGroup, message: Any) -> None:
         if not isinstance(message, dict):
