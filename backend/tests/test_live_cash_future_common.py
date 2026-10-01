@@ -101,3 +101,36 @@ def test_runner_stop_is_idempotent_under_concurrent_shutdown():
     assert repository.close_calls == 1
     assert runner._ingestor is None
     assert runner._repository is None
+
+
+def test_runner_persistence_coalesces_multiple_ticks_within_one_second():
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+
+    class Ingestor:
+        def __init__(self):
+            self.records = []
+        def submit_historical(self, record):
+            self.records.append(record)
+        def close(self):
+            pass
+
+    runner = LiveCashFutureCommonRunner(
+        "ignored",
+        manager=CommonWebSocketManager(socket_factory=lambda: object()),
+    )
+    ingestor = Ingestor()
+    runner._ingestor = ingestor
+    key = InstrumentKey("NSE", "NSE", "1")
+    runner._metadata[key] = {"leg": "CASH", "underlying": "ABC", "contract_month": "CASH"}
+
+    runner._on_record(record(key, "ABC-EQ", InstrumentType.EQUITY, 1_100_000_000, 99, 100, underlying="ABC"))
+    runner._on_record(record(key, "ABC-EQ", InstrumentType.EQUITY, 1_500_000_000, 99.5, 100.5, underlying="ABC"))
+    assert ingestor.records == []
+
+    runner._on_record(record(key, "ABC-EQ", InstrumentType.EQUITY, 2_100_000_000, 100, 101, underlying="ABC"))
+    assert len(ingestor.records) == 1
+    assert ingestor.records[0].timestamp_ns == 1_500_000_000
+
+    runner.stop()
+    assert len(ingestor.records) == 2
+    assert ingestor.records[1].timestamp_ns == 2_100_000_000
