@@ -1,6 +1,7 @@
 name: Verify Live Cash-Future 1s Collector
 # Runtime verification refresh: execute the current main verifier against the VPS.
 # Verification pass after live collector health/continuity hardening.
+# Storage diagnostic trigger: collect current SQLite dbstat before archive/cleanup decisions.
 
 on:
   workflow_dispatch:
