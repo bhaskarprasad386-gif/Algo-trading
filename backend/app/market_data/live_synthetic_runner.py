@@ -145,12 +145,18 @@ class LiveSyntheticRunner:
             for target in self.targets
             if target.instrument_class.strip().upper() == "INDEX"
         )
+        commodity_symbols = frozenset(
+            target.underlying.strip().upper()
+            for target in self.targets
+            if target.instrument_class.strip().upper() == "COMMODITY"
+        )
         return LiveSyntheticUnderlyingFeed(
             symbols,
             tracker=self._atm_tracker,
             instrument_master=self.instrument_master,
             auth=self.auth,
             index_symbols=index_symbols,
+            commodity_symbols=commodity_symbols,
         )
 
     def build_subscriptions(self) -> tuple:
