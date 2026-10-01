@@ -20,7 +20,7 @@ permissions:
 jobs:
   storage-diagnostic:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 10
     env:
       VPS_HOST: 82.41.67.22
       VPS_USER: ${{ secrets.VPS_USER }}
