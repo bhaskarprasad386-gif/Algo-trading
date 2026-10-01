@@ -13,6 +13,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.algo.auth import AngelOneAuth
+from app.core.config import settings
 from app.core.logger import app_logger
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.instruments import InstrumentMaster
@@ -201,12 +202,13 @@ class LiveCalendarSpreadOneSecondCollector:
             return
         self._kind_by_key = {(c["exchange"], c["token"]): c["kind"] for c in contracts}
         descriptors = tuple(self._descriptor(c) for c in contracts)
-        self._repository = DailySQLiteMarketDataRepository(self.data_db)
-        self._ingestor = BoundedMarketDataIngestor(
-            self._repository,
-            record_source=SOURCE,
-        )
-        self._ingestor.start()
+        if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
+            self._repository = DailySQLiteMarketDataRepository(self.data_db)
+            self._ingestor = BoundedMarketDataIngestor(
+                self._repository,
+                record_source=SOURCE,
+            )
+            self._ingestor.start()
         feed = self._feed or CommonStrategyMarketFeed(
             "calendar-spread",
             auth=self.auth,
