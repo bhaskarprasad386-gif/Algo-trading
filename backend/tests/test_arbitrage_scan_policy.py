@@ -30,6 +30,7 @@ def test_synthetic_stock_is_both_sides_of_atm_with_max_seven_positions():
     assert (100.0, 0, "ATM") in result
     assert (120.0, 4, "UPPER") in result
     assert (125.0, 5, "UPPER") in result
+    assert max(distance for _, distance, _ in result) == 7
 
 
 def test_synthetic_index_allows_ten_positions_when_chain_has_them():
@@ -56,3 +57,9 @@ def test_custom_policy_can_tighten_limits_without_changing_engine():
             STRIKES, atm_strike=100, instrument_class="STOCK", policy=policy
         )
     )
+
+
+def test_synthetic_index_and_commodity_radii_are_ten():
+    strikes = tuple(range(50, 151))
+    assert max(d for _, d, _ in enumerate_synthetic_strikes(strikes, atm_strike=100, instrument_class="INDEX")) == 10
+    assert max(d for _, d, _ in enumerate_synthetic_strikes(strikes, atm_strike=100, instrument_class="COMMODITY")) == 10
