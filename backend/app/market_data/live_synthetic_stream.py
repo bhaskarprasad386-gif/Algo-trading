@@ -181,6 +181,7 @@ class LiveSyntheticOptionFutureRecorder:
                 "option_type": meta.option_type,
                 "strike": meta.strike,
                 "lot_size": meta.lot_size,
+                "contract_role": meta.contract_role,
             })
         if self.on_observation is not None:
             try:
