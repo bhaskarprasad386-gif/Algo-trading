@@ -13,9 +13,9 @@ def _master():
     for i, strike in enumerate(range(5, 201, 5)):
         items.extend([
             {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":f"c{strike}","name":"NIFTY",
-             "symbol":f"NIFTY30SEP26{strike}CE","expiry":"30SEP2026","strike":str(strike * 100),"lotsize":"50"},
+             "symbol":f"NIFTY29OCT26{strike}CE","expiry":"29OCT2026","strike":str(strike * 100),"lotsize":"50"},
             {"exch_seg":"NFO","instrumenttype":"OPTIDX","token":f"p{strike}","name":"NIFTY",
-             "symbol":f"NIFTY30SEP26{strike}PE","expiry":"30SEP2026","strike":str(strike * 100),"lotsize":"50"},
+             "symbol":f"NIFTY29OCT26{strike}PE","expiry":"29OCT2026","strike":str(strike * 100),"lotsize":"50"},
         ])
     master.instruments = items
     master._loaded = True
@@ -27,14 +27,14 @@ def test_runner_builds_concrete_real_tokens_without_duplicates():
     master = _master()
     runner = LiveSyntheticRunner(
         ":memory:",
-        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "30SEP2026")],
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "29OCT2026")],
         allowed_stock_symbols=frozenset(),
         instrument_master=master,
         atm_provider=lambda _s, _t: 100.0,
     )
     subscriptions = runner.build_subscriptions()
     tokens = {item.token for item in subscriptions}
-    assert {"f1", "c100", "p100", "c105", "p105", "c95", "p95"} <= tokens
+    assert {"f1", "f2", "c100", "p100", "c105", "p105", "c95", "p95"} <= tokens
 
 
 def test_runner_build_subscriptions_follow_live_atm():
@@ -42,7 +42,7 @@ def test_runner_build_subscriptions_follow_live_atm():
     current = {"value": 100.0}
     runner = LiveSyntheticRunner(
         ":memory:",
-        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "30SEP2026")],
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "29OCT2026")],
         allowed_stock_symbols=frozenset(),
         instrument_master=master,
         atm_provider=lambda _s, _t: current["value"],
@@ -59,7 +59,7 @@ def test_runner_builds_automatic_atm_tracker_from_real_chain():
     master = _master()
     runner = LiveSyntheticRunner(
         ":memory:",
-        [SyntheticLiveTarget("NIFTY", "INDEX", None, "30SEP2026")],
+        [SyntheticLiveTarget("NIFTY", "INDEX", None, "29OCT2026")],
         allowed_stock_symbols=frozenset(),
         instrument_master=master,
     )
@@ -78,7 +78,7 @@ def test_runner_requires_live_atm_when_automatic_tracker_has_no_price():
     master = _master()
     runner = LiveSyntheticRunner(
         ":memory:",
-        [SyntheticLiveTarget("NIFTY", "INDEX", None, "30SEP2026")],
+        [SyntheticLiveTarget("NIFTY", "INDEX", None, "29OCT2026")],
         allowed_stock_symbols=frozenset(),
         instrument_master=master,
     )
@@ -94,7 +94,7 @@ def test_runner_exposes_concrete_atm_strikes_from_master():
     master = _master()
     runner = LiveSyntheticRunner(
         ":memory:",
-        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "30SEP2026")],
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "29OCT2026")],
         allowed_stock_symbols=frozenset(),
         instrument_master=master,
         atm_provider=lambda _s, _t: 100.0,
@@ -106,7 +106,7 @@ def test_runner_refresh_snapshot_uses_automatic_atm_provider(monkeypatch):
     master = _master()
     runner = LiveSyntheticRunner(
         ":memory:",
-        [SyntheticLiveTarget("NIFTY", "INDEX", None, "30SEP2026")],
+        [SyntheticLiveTarget("NIFTY", "INDEX", None, "29OCT2026")],
         allowed_stock_symbols=frozenset(),
         instrument_master=master,
     )
@@ -141,9 +141,9 @@ def test_runner_stock_path_uses_provider_and_only_real_plus_minus_7_positions():
     for i, strike in enumerate(range(70, 131, 5)):
         items.extend([
             {"exch_seg":"NFO","instrumenttype":"OPTSTK","token":f"c{i}","name":"ABC",
-             "symbol":f"ABC{strike}CE","expiry":"30SEP2026","strike":str(strike * 100),"lotsize":"10"},
+             "symbol":f"ABC{strike}CE","expiry":"29OCT2026","strike":str(strike * 100),"lotsize":"10"},
             {"exch_seg":"NFO","instrumenttype":"OPTSTK","token":f"p{i}","name":"ABC",
-             "symbol":f"ABC{strike}PE","expiry":"30SEP2026","strike":str(strike * 100),"lotsize":"10"},
+             "symbol":f"ABC{strike}PE","expiry":"29OCT2026","strike":str(strike * 100),"lotsize":"10"},
         ])
     master.instruments = items
     master._loaded = True
@@ -152,7 +152,7 @@ def test_runner_stock_path_uses_provider_and_only_real_plus_minus_7_positions():
     master.download = lambda force=False: master.instruments
     runner = LiveSyntheticRunner(
         ":memory:",
-        [SyntheticLiveTarget("ABC", "STOCK", 100.0, "30SEP2026")],
+        [SyntheticLiveTarget("ABC", "STOCK", 100.0, "29OCT2026")],
         allowed_stock_symbols=frozenset(),
         stock_universe_provider=lambda: ("ABC",),
         instrument_master=master,
@@ -168,7 +168,7 @@ def test_runner_stop_stops_auto_created_underlying_feed():
     master = _master()
     runner = LiveSyntheticRunner(
         ":memory:",
-        [SyntheticLiveTarget("NIFTY", "INDEX", None, "30SEP2026")],
+        [SyntheticLiveTarget("NIFTY", "INDEX", None, "29OCT2026")],
         allowed_stock_symbols=frozenset(),
         instrument_master=master,
     )
@@ -193,7 +193,7 @@ def test_runner_reuses_alert_service_across_pipeline_refreshes():
     alerts = object()
     runner = LiveSyntheticRunner(
         ":memory:",
-        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "30SEP2026")],
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "29OCT2026")],
         allowed_stock_symbols=frozenset(),
         instrument_master=master,
         atm_provider=lambda _s, _t: 100.0,
