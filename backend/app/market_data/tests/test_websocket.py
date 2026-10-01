@@ -133,3 +133,21 @@ def test_websocket_reconnect_backoff_is_bounded(monkeypatch):
     assert sleeps == [60.0]
     assert client.health["error_count"] == 1
     assert client.health["consecutive_failures"] == 7
+
+
+def test_websocket_supports_multiple_exchange_groups(monkeypatch):
+    FakeSocket.instances.clear()
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+    client.connect(subscriptions={1: ["101"], 2: ["202"], 5: ["303"]})
+    socket = FakeSocket.instances[-1]
+    assert socket.subscriptions[-1][2] == [
+        {"exchangeType": 1, "tokens": ["101"]},
+        {"exchangeType": 2, "tokens": ["202"]},
+        {"exchangeType": 5, "tokens": ["303"]},
+    ]
+    client.subscribe_groups({4: ["404"]})
+    assert client.subscriptions[4] == ["404"]
+    assert socket.subscriptions[-1][2][-1] == {"exchangeType": 4, "tokens": ["404"]}
+    client.unsubscribe_groups({4: ["404"]})
+    assert 4 not in client.subscriptions
