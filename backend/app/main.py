@@ -91,7 +91,7 @@ async def lifespan(app: FastAPI):
     # migration module has no dependency on scanner/backtest job modules.
     from app.scanner.backtest_jobs import recover_interrupted_jobs
     recover_interrupted_jobs()
-    if settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
+    if settings.BACKTESTING_ENABLED and settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
         _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
     if _collector_enabled() and _history_collector_task is None:
         _history_collector_task = asyncio.create_task(_cash_future_history_loop())
@@ -139,9 +139,12 @@ async def lifespan(app: FastAPI):
         _live_synthetic_task = None
         _live_box_spread_task = None
         _paper_box_spread_cycle_task = None
-        backtest_download_manager.close()
-        backtest_status_store.close()
-        universal_result_ledger.close()
+        if backtest_download_manager is not None:
+            backtest_download_manager.close()
+        if backtest_status_store is not None:
+            backtest_status_store.close()
+        if universal_result_ledger is not None:
+            universal_result_ledger.close()
 
 app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug, lifespan=lifespan)
 app.add_exception_handler(TradingAppException, trading_exception_handler)
@@ -158,39 +161,42 @@ app.include_router(auto_scanner_router)
 app.include_router(paper_execution_router)
 app.include_router(live_paper_execution_router)
 app.include_router(global_auto_router)
-app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))
+if settings.BACKTESTING_ENABLED:
+    app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))
 app.include_router(calendar_spread_paper_router)
 app.include_router(box_spread_paper_router)
 app.include_router(calendar_spread_scanner_router)
 app.include_router(live_synthetic_router)
 app.include_router(live_box_spread_router)
 app.include_router(intelligence_router)
-app.include_router(monthly_results_router)
-app.include_router(cash_future_strategy_router)
-app.include_router(calendar_spread_strategy_router)
+if settings.BACKTESTING_ENABLED:
+    app.include_router(monthly_results_router)
+    app.include_router(cash_future_strategy_router)
+    app.include_router(calendar_spread_strategy_router)
 
 # Durable backtesting-download status is kept in its own SQLite file so API
 # requests never depend on an in-memory status object. The path can be
 # overridden for deployments through the BACKTEST_STATUS_DB environment var.
-BACKTEST_STATUS_DB = Path(settings.BACKTEST_STATUS_DB)
-BACKTEST_STATUS_DB.parent.mkdir(parents=True, exist_ok=True)
-backtest_status_store = HistoricalDownloadStatusStore(str(BACKTEST_STATUS_DB))
-app.include_router(create_download_status_router(backtest_status_store))
+backtest_status_store = None
+backtest_download_manager = None
+universal_result_ledger = None
+if settings.BACKTESTING_ENABLED:
+    BACKTEST_STATUS_DB = Path(settings.BACKTEST_STATUS_DB)
+    BACKTEST_STATUS_DB.parent.mkdir(parents=True, exist_ok=True)
+    backtest_status_store = HistoricalDownloadStatusStore(str(BACKTEST_STATUS_DB))
+    app.include_router(create_download_status_router(backtest_status_store))
 
-# Long-running Cash-Future historical downloads use separate durable data and
-# contract-master databases. The manager opens those databases only inside its
-# worker thread; the status store is internally locked for API/worker sharing.
-backtest_download_manager = CashFutureDownloadManager(
-    data_db=settings.BACKTEST_DATA_DB,
-    contract_db=settings.BACKTEST_CONTRACT_DB,
-    status_store=backtest_status_store,
-)
-app.include_router(create_cash_future_download_router(backtest_download_manager))
+    # Historical download/backtesting storage is opt-in and unavailable by default.
+    backtest_download_manager = CashFutureDownloadManager(
+        data_db=settings.BACKTEST_DATA_DB,
+        contract_db=settings.BACKTEST_CONTRACT_DB,
+        status_store=backtest_status_store,
+    )
+    app.include_router(create_cash_future_download_router(backtest_download_manager))
 
-# Universal results use a dedicated durable ledger, isolated from legacy backtesting APIs.
-universal_result_ledger = create_universal_ledger(settings.BACKTEST_RESULT_LEDGER_DB)
-universal_result_service = UniversalResultService(universal_result_ledger)
-app.include_router(create_universal_result_router(universal_result_service))
+    universal_result_ledger = create_universal_ledger(settings.BACKTEST_RESULT_LEDGER_DB)
+    universal_result_service = UniversalResultService(universal_result_ledger)
+    app.include_router(create_universal_result_router(universal_result_service))
 
 DASHBOARD_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "index.html"
 BROKER_SETTINGS_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard" / "broker.html"
