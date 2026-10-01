@@ -54,7 +54,7 @@ class LiveSyntheticScanner:
         cls = str(payload.get("instrument_class") or "").strip().upper()
         option_type = str(payload.get("option_type") or "").strip().upper()
         timestamp_ns = int(payload.get("source_timestamp_ns") or 0)
-        if not symbol or cls not in {"STOCK", "INDEX"} or timestamp_ns <= 0:
+        if not symbol or cls not in {"STOCK", "INDEX", "COMMODITY"} or timestamp_ns <= 0:
             return ()
         bid = self._price(payload.get("bid"))
         ask = self._price(payload.get("ask"))
