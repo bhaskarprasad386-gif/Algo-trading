@@ -38,6 +38,15 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
     expected_exchange = exchange.upper() if exchange else ("MCX" if cls == "COMMODITY" else "NFO")
     future_type = {"STOCK": "FUTSTK", "INDEX": "FUTIDX", "COMMODITY": "FUTCOM"}[cls]
     option_types = {"STOCK": {"OPTSTK"}, "INDEX": {"OPTIDX"}, "COMMODITY": {"OPTFUT"}}[cls]
+    if cls == "INDEX" and exchange is None:
+        available_segments = {
+            str(item.get("exch_seg","")).upper()
+            for item in master.instruments
+            if str(item.get("name","")).strip().upper() == symbol
+            and str(item.get("instrumenttype","")).upper() == future_type
+        }
+        if "NFO" not in available_segments and "BFO" in available_segments:
+            expected_exchange = "BFO"
     instruments = [
         item for item in master.instruments
         if str(item.get("exch_seg","")).upper() == expected_exchange
