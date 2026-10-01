@@ -441,19 +441,21 @@ async def _live_cash_future_loop() -> None:
         live_cash_future_runner = None
 
 async def _live_synthetic_loop() -> None:
+    """Subscribe only to the requested live option/future universe."""
     global live_synthetic_runner, live_synthetic_latest_results
     master = InstrumentMaster()
     try:
         master.download()
         today = datetime.now(IST).date()
-        stock_symbols = set()
-        index_symbols = set()
+        nifty50_stocks: set[str] = set()
+        index_symbols: set[str] = set()
+        commodity_symbols: set[str] = set()
         for item in master.instruments:
-            if str(item.get("exch_seg", "")).upper() != "NFO":
-                continue
-            instrument_type = str(item.get("instrumenttype", "")).upper()
+            segment = str(item.get("exch_seg", "")).strip().upper()
+            typ = str(item.get("instrumenttype", "")).strip().upper()
             expiry_text = str(item.get("expiry", "")).strip()
-            if not expiry_text:
+            name = str(item.get("name", "")).strip().upper()
+            if not expiry_text or not name:
                 continue
             try:
                 expiry = datetime.strptime(expiry_text.upper(), "%d%b%Y").date()
@@ -464,21 +466,25 @@ async def _live_synthetic_loop() -> None:
                     continue
             if expiry < today:
                 continue
-            name = str(item.get("name", "")).strip().upper()
-            if not name:
-                continue
-            if instrument_type == "FUTSTK":
-                stock_symbols.add(name)
-            elif instrument_type == "FUTIDX":
+            if typ == "FUTSTK" and segment == "NFO" and name in NIFTY50_STOCK_SYMBOLS:
+                nifty50_stocks.add(name)
+            elif typ == "FUTIDX" and segment in {"NFO", "BFO"}:
                 index_symbols.add(name)
-        stock_symbols = sorted(stock_symbols)
+            elif typ == "FUTCOM" and segment == "MCX":
+                commodity_symbols.add(name)
+
+        stock_symbols = sorted(nifty50_stocks)
+        index_symbols = sorted(index_symbols)
+        commodity_symbols = sorted(commodity_symbols)
         targets = tuple(
             [SyntheticLiveTarget(symbol, "STOCK") for symbol in stock_symbols]
-            + [SyntheticLiveTarget(symbol, "INDEX") for symbol in sorted(index_symbols)]
+            + [SyntheticLiveTarget(symbol, "INDEX") for symbol in index_symbols]
+            + [SyntheticLiveTarget(symbol, "COMMODITY") for symbol in commodity_symbols]
         )
         if not targets:
-            app_logger.warning("Synthetic Cash-Carry live runner found no current F&O targets")
+            app_logger.warning("Synthetic live runner found no eligible NIFTY50/index/MCX targets")
             return
+
         runner = LiveSyntheticRunner(
             settings.BACKTEST_DATA_DB,
             targets,
@@ -495,7 +501,6 @@ async def _live_synthetic_loop() -> None:
         if runner is not None:
             runner.stop()
         live_synthetic_runner = None
-
 
 def _update_live_synthetic_results(results: tuple) -> None:
     global live_synthetic_latest_results
