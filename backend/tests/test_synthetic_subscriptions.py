@@ -13,7 +13,7 @@ def test_index_selection_uses_actual_strikes_with_locked_plus_minus_10():
     items = [
         {"exch_seg":"NFO","name":"NIFTY","instrumenttype":"FUTIDX","expiry":"29OCT2026","token":"900","symbol":"NIFTY29OCT26FUT","lotsize":"65"},
         *[
-            {"exch_seg":"NFO","name":"NIFTY","instrumenttype":"OPTIDX","expiry":"30SEP2026","token":str(i),"symbol":f"NIFTY{i}CE","strike":str(2400000+i*5000),"lotsize":"65"}
+            {"exch_seg":"NFO","name":"NIFTY","instrumenttype":"OPTIDX","expiry":"29OCT2026","token":str(i),"symbol":f"NIFTY{i}CE","strike":str(2400000+i*5000),"lotsize":"65"}
             for i in range(1, 32)
         ],
     ]
@@ -38,15 +38,15 @@ def test_stock_selection_requires_configured_nifty50_universe():
 
 def test_selection_keeps_only_matching_expiry_and_real_tokens():
     items=[
-        {"exch_seg":"NFO","name":"ABC","instrumenttype":"FUTSTK","expiry":"30SEP2026","token":"10","symbol":"ABCFUT","lotsize":"10"},
-        {"exch_seg":"NFO","name":"ABC","instrumenttype":"FUTSTK","expiry":"29OCT2026","token":"11","symbol":"ABCFUT2","lotsize":"10"},
-        {"exch_seg":"NFO","name":"ABC","instrumenttype":"OPTSTK","expiry":"30SEP2026","token":"20","symbol":"ABC100CE","strike":"10000","lotsize":"10"},
-        {"exch_seg":"NFO","name":"ABC","instrumenttype":"OPTSTK","expiry":"30SEP2026","token":"21","symbol":"ABC100PE","strike":"10000","lotsize":"10"},
-        {"exch_seg":"NFO","name":"ABC","instrumenttype":"OPTSTK","expiry":"29OCT2026","token":"30","symbol":"ABC100CE","strike":"10000","lotsize":"10"},
+        {"exch_seg":"NFO","name":"ABC","instrumenttype":"FUTSTK","expiry":"29OCT2026","token":"10","symbol":"ABCFUT","lotsize":"10"},
+        {"exch_seg":"NFO","name":"ABC","instrumenttype":"FUTSTK","expiry":"26NOV2026","token":"11","symbol":"ABCFUT2","lotsize":"10"},
+        {"exch_seg":"NFO","name":"ABC","instrumenttype":"OPTSTK","expiry":"29OCT2026","token":"20","symbol":"ABC100CE","strike":"10000","lotsize":"10"},
+        {"exch_seg":"NFO","name":"ABC","instrumenttype":"OPTSTK","expiry":"29OCT2026","token":"21","symbol":"ABC100PE","strike":"10000","lotsize":"10"},
+        {"exch_seg":"NFO","name":"ABC","instrumenttype":"OPTSTK","expiry":"26NOV2026","token":"30","symbol":"ABC100CE","strike":"10000","lotsize":"10"},
     ]
     selected=select_synthetic_contracts(
         _master(items), underlying="ABC", instrument_class="STOCK", atm_strike=100,
-        expiry="30SEP2026", allowed_stock_symbols=frozenset({"ABC"})
+        expiry="29OCT2026", allowed_stock_symbols=frozenset({"ABC"})
     )
-    assert selected.expiry=="30SEP2026"
+    assert selected.expiry=="29OCT2026"
     assert {x.token for x in selected.subscriptions}=={"10","20","21"}
