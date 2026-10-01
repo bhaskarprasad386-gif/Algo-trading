@@ -18,6 +18,12 @@ class FakeSocket:
     def subscribe(self, tokens, mode=None):
         self.subscribe_calls.append((list(tokens), mode))
 
+    def subscribe_groups(self, groups, mode=None):
+        self.subscribe_calls.append((dict(groups), mode))
+
+    def unsubscribe_groups(self, groups):
+        pass
+
     def close(self):
         self.closed = True
 
@@ -52,7 +58,7 @@ def test_common_manager_deduplicates_shared_instrument_and_fans_out():
     assert len(FakeSocket.instances) == 1
     socket = FakeSocket.instances[0]
     assert len(socket.connect_calls) == 1
-    assert socket.connect_calls[0]["tokens"] == ["101"]
+    assert socket.connect_calls[0]["subscriptions"] == {1: ["101"]}
     assert registry.subscriptions()[0].ref_count == 2
 
     manager._on_data(SocketGroup(1, 1), {"token": "101", "ltp": 100})
@@ -106,5 +112,5 @@ def test_same_token_on_different_exchange_group_does_not_cross_fan_out():
     manager.subscribe("nse", [nse.key])
     manager.subscribe("nfo", [nfo.key])
 
-    manager._on_data(SocketGroup(1, 1), {"token": "101"})
+    manager._on_data(SocketGroup(1, 0), {"token": "101", "exchange_type": 1})
     assert seen == ["nse"]
