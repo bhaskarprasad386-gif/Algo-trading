@@ -45,6 +45,9 @@ class CommonWebSocketManager:
         self._normalizer = AngelOneTickNormalizer()
         self._lock = RLock()
         self._delivery_errors = 0
+        self._ticks_received = 0
+        self._ticks_by_exchange: dict[str, int] = defaultdict(int)
+        self._last_tick: dict[str, Any] | None = None
         # Pre-index subscriptions by broker socket group + token so each tick
         # does not scan the entire subscription registry.
         self._route_index: dict[SocketGroup, dict[str, list[tuple[str, InstrumentKey]]]] = {}
@@ -195,6 +198,9 @@ class CommonWebSocketManager:
             matching = tuple(self._route_index.get(group, {}).get(token, ()))
             raw_callbacks = [self._callbacks.get(name) for name, _ in matching]
             record_callbacks = [(self._record_callbacks.get(name), key) for name, key in matching]
+            if matching:
+                self._ticks_received += 1
+                self._ticks_by_exchange[str(group.exchange_type)] += 1
         for callback in {id(cb): cb for cb in raw_callbacks if cb is not None}.values():
             try:
                 callback(message)
@@ -208,7 +214,20 @@ class CommonWebSocketManager:
             if descriptor is None:
                 continue
             try:
-                callback(self._normalizer.normalize(descriptor, message))
+                record = self._normalizer.normalize(descriptor, message)
+                with self._lock:
+                    self._last_tick = {
+                        "exchange_type": group.exchange_type,
+                        "exchange": record.instrument.exchange,
+                        "segment": record.instrument.segment,
+                        "token": record.instrument.token,
+                        "symbol": record.symbol,
+                        "timestamp_ns": record.timestamp_ns,
+                        "ltp": record.ltp,
+                        "bid": record.bid,
+                        "ask": record.ask,
+                    }
+                callback(record)
             except (TypeError, ValueError):
                 continue
             except Exception:
@@ -237,6 +256,9 @@ class CommonWebSocketManager:
                 "socket_groups": len(sockets),
                 "consumers": sorted(set(self._callbacks) | set(self._record_callbacks)),
                 "delivery_errors": self._delivery_errors,
+                "ticks_received": self._ticks_received,
+                "ticks_by_exchange_type": dict(self._ticks_by_exchange),
+                "last_tick": dict(self._last_tick) if self._last_tick else None,
                 "connected_groups": [
                     f"{group.exchange_type}:{group.mode}"
                     for group, socket in sockets.items()
