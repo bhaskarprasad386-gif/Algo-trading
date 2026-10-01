@@ -40,10 +40,10 @@ jobs:
           set -euo pipefail
           APP_DIR=/opt/Algo-Trading
           echo "=== SQLITE STORAGE BREAKDOWN ==="
-          for DB in "$APP_DIR/backend/backtest_market_data_2026_09_30.sqlite3" "$APP_DIR/backend/backtest_market_data.sqlite3"; do
-            if [ -f "$DB" ]; then
-              echo "DB=$DB"
-              "$APP_DIR/.venv/bin/python" - "$DB" <<'PY'
+          DAILY_DB="$APP_DIR/backend/backtest_market_data_2026_09_30.sqlite3"
+          if [ -f "$DAILY_DB" ]; then
+            echo "DB=$DAILY_DB"
+            "$APP_DIR/.venv/bin/python" - "$DAILY_DB" <<'PY'
           import os, sqlite3, sys
           db=sys.argv[1]
           c=sqlite3.connect(db, timeout=5)
@@ -59,11 +59,35 @@ jobs:
           finally:
               c.close()
           PY
-            else
-              echo "DB_NOT_FOUND=$DB"
-            fi
-          done
-          REMOTE
+          else
+            echo "DB_NOT_FOUND=$DAILY_DB"
+          fi
+
+          BASE_DB="$APP_DIR/backend/backtest_market_data.sqlite3"
+          if [ -f "$BASE_DB" ]; then
+            echo "BASE_DB=$BASE_DB"
+            "$APP_DIR/.venv/bin/python" - "$BASE_DB" <<'PY'
+          import os, sqlite3, sys
+          db=sys.argv[1]
+          c=sqlite3.connect(db, timeout=5)
+          try:
+              print("BASE_DB_SIZE_BYTES="+str(os.path.getsize(db)))
+              print("BASE_PAGE_SIZE="+str(c.execute("PRAGMA page_size").fetchone()[0]))
+              print("BASE_PAGE_COUNT="+str(c.execute("PRAGMA page_count").fetchone()[0]))
+              print("BASE_FREELIST_PAGES="+str(c.execute("PRAGMA freelist_count").fetchone()[0]))
+              print("BASE_WAL_MODE="+str(c.execute("PRAGMA journal_mode").fetchone()[0]))
+              rows=c.execute("SELECT source,timeframe,COUNT(*) FROM source_watermarks GROUP BY source,timeframe ORDER BY source,timeframe").fetchall()
+              for source,timeframe,instruments in rows:
+                  print(f"BASE_SOURCE {source} {timeframe} INSTRUMENTS={instruments}")
+                  mn=c.execute("SELECT timestamp_ns FROM data_catalog WHERE source=? AND timeframe=? ORDER BY timestamp_ns LIMIT 1",(source,timeframe)).fetchone()
+                  mx=c.execute("SELECT timestamp_ns FROM data_catalog WHERE source=? AND timeframe=? ORDER BY timestamp_ns DESC LIMIT 1",(source,timeframe)).fetchone()
+                  print(f"BASE_RANGE {source} {timeframe} MIN_NS={mn[0] if mn else 'NA'} MAX_NS={mx[0] if mx else 'NA'}")
+          finally:
+              c.close()
+          PY
+          else
+            echo "BASE_DB_NOT_FOUND=$BASE_DB"
+          fi
 
   verify:
 
