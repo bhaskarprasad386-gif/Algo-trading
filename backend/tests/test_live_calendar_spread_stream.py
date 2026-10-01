@@ -1,4 +1,5 @@
 from datetime import datetime
+from threading import Event, Thread
 from zoneinfo import ZoneInfo
 
 from app.market_data.live_calendar_spread_stream import (
@@ -66,12 +67,29 @@ def test_calendar_live_payload_source_timestamp_is_second_aligned():
 
 
 def test_calendar_live_no_contract_retry_is_interruptible(monkeypatch):
-    collector = LiveCalendarSpreadOneSecondCollector("unused", instrument_master=type("Master", (), {"download": lambda self: []})())
+    collector = LiveCalendarSpreadOneSecondCollector(
+        "unused",
+        instrument_master=type("Master", (), {"download": lambda self: []})(),
+    )
+    entered_wait = Event()
+    original_wait = collector.stop_event.wait
 
     def no_contracts():
-        collector.stop_event.set()
         return []
 
+    def tracked_wait(timeout=None):
+        entered_wait.set()
+        return original_wait(timeout)
+
     monkeypatch.setattr(collector, "_contracts", no_contracts)
-    collector.run_forever()
+    monkeypatch.setattr(collector.stop_event, "wait", tracked_wait)
+
+    worker = Thread(target=collector.run_forever)
+    worker.start()
+    assert entered_wait.wait(2.0)
+
+    collector.stop()
+    worker.join(2.0)
+
+    assert not worker.is_alive()
     assert collector.stop_event.is_set()
