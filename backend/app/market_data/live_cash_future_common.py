@@ -61,6 +61,7 @@ class LiveCashFutureCommonRunner:
         self._ingestor: BoundedMarketDataIngestor | None = None
         self._metadata: dict[InstrumentKey, dict[str, Any]] = {}
         self._last_result: CashFutureScanResult | None = None
+        self._latest_persisted: dict[InstrumentKey, MarketDataRecord] = {}
 
     @property
     def last_result(self) -> CashFutureScanResult | None:
@@ -153,9 +154,8 @@ class LiveCashFutureCommonRunner:
         })
         return payload
 
-    def _on_record(self, record: MarketDataRecord) -> None:
-        meta = self._metadata.get(record.instrument)
-        if meta is None or self._ingestor is None:
+    def _persist_record(self, record: MarketDataRecord, meta: dict[str, Any]) -> None:
+        if self._ingestor is None:
             return
         payload = self._record_payload(record, meta)
         from app.backtesting.historical_catalog import HistoricalRecord
@@ -164,13 +164,31 @@ class LiveCashFutureCommonRunner:
                 HistoricalRecord(
                     source="angelone-live-1s",
                     instrument=record.instrument.value,
-                    timeframe=record.timeframe,
+                    timeframe="1s",
                     timestamp_ns=record.timestamp_ns,
                     payload=payload,
                 )
             )
         except Exception as exc:
             app_logger.error("Cash-Future common persistence submit failed: %s", exc)
+
+    def _on_record(self, record: MarketDataRecord) -> None:
+        meta = self._metadata.get(record.instrument)
+        if meta is None or self._ingestor is None:
+            return
+        # Persist one latest broker tick per second. The canonical WebSocket
+        # can emit many ticks inside a second, but this stream is explicitly 1s.
+        previous = self._latest_persisted.get(record.instrument)
+        second = (record.timestamp_ns // 1_000_000_000) * 1_000_000_000
+        if previous is not None:
+            previous_second = (previous.timestamp_ns // 1_000_000_000) * 1_000_000_000
+            if second == previous_second:
+                self._latest_persisted[record.instrument] = record
+            else:
+                self._persist_record(previous, self._metadata[record.instrument])
+                self._latest_persisted[record.instrument] = record
+        else:
+            self._latest_persisted[record.instrument] = record
         if self.on_payload is not None:
             try:
                 self.on_payload(dict(payload))
@@ -232,6 +250,12 @@ class LiveCashFutureCommonRunner:
                 self.manager.clear_consumer(self.CONSUMER)
             except Exception:
                 pass
+            pending = list(self._latest_persisted.items())
+            self._latest_persisted.clear()
+            for key, record in pending:
+                meta = self._metadata.get(key)
+                if meta is not None:
+                    self._persist_record(record, meta)
             if self._ingestor is not None:
                 try:
                     self._ingestor.close()
