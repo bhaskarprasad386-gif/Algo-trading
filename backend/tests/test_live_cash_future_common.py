@@ -103,8 +103,10 @@ def test_runner_stop_is_idempotent_under_concurrent_shutdown():
     assert runner._repository is None
 
 
-def test_runner_persistence_coalesces_multiple_ticks_within_one_second():
+def test_runner_persistence_coalesces_multiple_ticks_within_one_second(monkeypatch):
     from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "LIVE_MARKET_DATA_PERSISTENCE_ENABLED", True)
 
     class Ingestor:
         def __init__(self):
