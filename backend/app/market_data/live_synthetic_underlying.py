@@ -25,6 +25,7 @@ class LiveSyntheticUnderlyingFeed:
         on_price: Callable[[str, float, int | None], None] | None = None,
         concrete_tokens: dict[str, str] | None = None,
         index_symbols: frozenset[str] = frozenset(),
+        commodity_symbols: frozenset[str] = frozenset(),
         consumer: str = "synthetic-underlyings",
     ) -> None:
         if not symbols:
@@ -44,6 +45,7 @@ class LiveSyntheticUnderlyingFeed:
         self.consumer = str(consumer).strip()
         if not self.consumer:
             raise ValueError("consumer is required")
+        self.commodity_symbols = frozenset(str(symbol).strip().upper() for symbol in commodity_symbols if str(symbol).strip())
         self.index_symbols = frozenset(
             str(symbol).strip().upper() for symbol in index_symbols if str(symbol).strip()
         )
@@ -82,6 +84,10 @@ class LiveSyntheticUnderlyingFeed:
             elif symbol in self.index_symbols:
                 exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS else "NSE"
                 result[symbol] = self.instrument_master.resolve_index_token(symbol, exchange)
+            elif symbol in self.commodity_symbols:
+                result[symbol] = self.instrument_master.get_token(symbol, "MCX") or ""
+                if not result[symbol]:
+                    raise LookupError(f"no MCX underlying token for {symbol}")
             else:
                 result[symbol] = self.instrument_master.resolve_cash_token(symbol, "NSE")
         return result
@@ -105,6 +111,11 @@ class LiveSyntheticUnderlyingFeed:
             elif symbol in self.index_symbols:
                 exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS else "NSE"
                 token = self.instrument_master.resolve_index_token(symbol, exchange)
+            elif symbol in self.commodity_symbols:
+                exchange = "MCX"
+                token = self.instrument_master.get_token(symbol, exchange)
+                if not token:
+                    raise LookupError(f"no MCX underlying token for {symbol}")
             else:
                 exchange = "NSE"
                 token = self.instrument_master.resolve_cash_token(symbol, exchange)
