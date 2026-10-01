@@ -32,8 +32,12 @@ class Settings(BaseSettings):
     CASH_FUTURE_HISTORY_SYMBOLS: str = ""
     CASH_FUTURE_HISTORY_INTERVAL_SECONDS: int = 60
 
-    # Continuous one-second live Cash-Future feed for backtesting
+    # Continuous live Cash-Future feed; broker/WebSocket scanning stays live even when persistence is disabled.
     LIVE_CASH_FUTURE_DATA_ENABLED: bool = False
+    # Keep live market data in memory only; alerts/paper-trades use the normal trading DB.
+    LIVE_MARKET_DATA_PERSISTENCE_ENABLED: bool = False
+    # Historical download/replay/backtesting subsystem is currently unavailable by default.
+    BACKTESTING_ENABLED: bool = False
     # New live records are partitioned by IST trading day; legacy base data remains readable.
     LIVE_CASH_FUTURE_DAILY_SHARDS_ENABLED: bool = True
     LIVE_MARKET_DATA_RETENTION_DAYS: int = 1
@@ -100,7 +104,7 @@ class Settings(BaseSettings):
 
     # Durable historical contract-master snapshots
     BACKTEST_CONTRACT_DB: str = "./backtest_contract_master.sqlite3"
-    BACKTEST_CONTRACT_MASTER_AUTO_SYNC: bool = True
+    BACKTEST_CONTRACT_MASTER_AUTO_SYNC: bool = False
     BACKTEST_CONTRACT_MASTER_SYNC_INTERVAL_SECONDS: int = 86400
 
     # Durable historical strategy-run ledger
