@@ -156,7 +156,7 @@ class MarketDataWebSocket:
 
     def connect(self, exchange_type: int | None = None, tokens: list[str] | None = None, mode: int = 1, correlation_id: str = "market-data", on_data: Optional[Callable] = None, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 2.0, subscriptions: Optional[dict[int, list[str]]] = None):
         """Connect and retry failed starts while preserving validated subscriptions."""
-        if not isinstance(exchange_type, int) or isinstance(exchange_type, bool) or exchange_type <= 0:
+        if exchange_type is not None and (not isinstance(exchange_type, int) or isinstance(exchange_type, bool) or exchange_type <= 0):
             raise ValueError("exchange_type must be a positive integer")
         if not isinstance(mode, int) or isinstance(mode, bool) or mode not in {1, 2, 3, 4}:
             raise ValueError("mode must be one of 1, 2, 3 or 4")
@@ -207,6 +207,63 @@ class MarketDataWebSocket:
         if isinstance(last_error, TradingAppException):
             raise last_error
         raise TradingAppException("WebSocketConnectionError", str(last_error), 502)
+
+    def subscribe_groups(self, groups: dict[int, list[str]], mode: Optional[int] = None) -> None:
+        """Add exchange/token groups to the shared Angel session."""
+        normalized: dict[int, list[str]] = {}
+        for exchange_type, tokens in groups.items():
+            if not isinstance(exchange_type, int) or isinstance(exchange_type, bool) or exchange_type <= 0:
+                raise ValueError("exchange_type must be a positive integer")
+            values = [str(token).strip() for token in tokens if str(token).strip()]
+            if values:
+                normalized[exchange_type] = list(dict.fromkeys(values))
+        if not normalized:
+            return
+        with self._lock:
+            for exchange_type, tokens in normalized.items():
+                current = self.subscriptions.setdefault(exchange_type, [])
+                self.subscriptions[exchange_type] = list(dict.fromkeys(current + tokens))
+            self.exchange_type = next(iter(self.subscriptions))
+            self.tokens = list(self.subscriptions[self.exchange_type])
+            if mode is not None:
+                self.mode = mode
+            socket = self.websocket
+            connected = self._connected
+            correlation_id = self.correlation_id
+            current_mode = self.mode
+            payload = self._token_groups()
+        if socket and connected:
+            socket.subscribe(correlation_id, current_mode, payload)
+
+    def unsubscribe_groups(self, groups: dict[int, list[str]]) -> None:
+        """Remove exchange/token groups from the shared Angel session."""
+        normalized: dict[int, list[str]] = {}
+        for exchange_type, tokens in groups.items():
+            values = [str(token).strip() for token in tokens if str(token).strip()]
+            if values:
+                normalized[exchange_type] = list(dict.fromkeys(values))
+        if not normalized:
+            return
+        with self._lock:
+            for exchange_type, tokens in normalized.items():
+                current = self.subscriptions.get(exchange_type, [])
+                remaining = [token for token in current if token not in set(tokens)]
+                if remaining:
+                    self.subscriptions[exchange_type] = remaining
+                else:
+                    self.subscriptions.pop(exchange_type, None)
+            if self.subscriptions:
+                self.exchange_type = next(iter(self.subscriptions))
+                self.tokens = list(self.subscriptions[self.exchange_type])
+            else:
+                self.exchange_type = None
+                self.tokens = []
+            socket = self.websocket
+            connected = self._connected
+            correlation_id = self.correlation_id
+            current_mode = self.mode
+        if socket and connected:
+            socket.unsubscribe(correlation_id, current_mode, [{"exchangeType": e, "tokens": t} for e, t in normalized.items()])
 
     def subscribe(self, tokens: list[str], mode: Optional[int] = None):
         """Replace the remembered token set and subscribe when connected."""
