@@ -197,7 +197,7 @@ class LiveCalendarSpreadOneSecondCollector:
         contracts = self._contracts()
         if not contracts:
             app_logger.warning("Calendar Spread live collector found no eligible futures")
-            time_module.sleep(30)
+            self.stop_event.wait(30)
             return
         self._kind_by_key = {(c["exchange"], c["token"]): c["kind"] for c in contracts}
         descriptors = tuple(self._descriptor(c) for c in contracts)
