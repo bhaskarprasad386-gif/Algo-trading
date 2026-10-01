@@ -6,7 +6,9 @@ def _master():
     master = InstrumentMaster()
     items = [
         {"exch_seg":"NFO","instrumenttype":"FUTIDX","token":"f1","name":"NIFTY",
-         "symbol":"NIFTY30SEP26FUT","expiry":"30SEP2026","lotsize":"50"},
+         "symbol":"NIFTY29OCT26FUT","expiry":"29OCT2026","lotsize":"50"},
+        {"exch_seg":"NFO","instrumenttype":"FUTIDX","token":"f2","name":"NIFTY",
+         "symbol":"NIFTY26NOV26FUT","expiry":"26NOV2026","lotsize":"50"},
     ]
     for i, strike in enumerate(range(5, 201, 5)):
         items.extend([
@@ -120,7 +122,7 @@ def test_runner_refreshes_authoritative_stock_universe_before_selection():
     master = _master()
     runner = LiveSyntheticRunner(
         ":memory:",
-        [SyntheticLiveTarget("ABC", "STOCK", 100.0, "30SEP2026")],
+        [SyntheticLiveTarget("ABC", "STOCK", 100.0, "29OCT2026")],
         allowed_stock_symbols=frozenset(),
         stock_universe_provider=lambda: ("ABC",),
         instrument_master=master,
@@ -130,11 +132,11 @@ def test_runner_refreshes_authoritative_stock_universe_before_selection():
     assert runner.allowed_stock_symbols == frozenset({"ABC"})
 
 
-def test_runner_stock_path_uses_provider_and_only_real_plus_minus_5_positions():
+def test_runner_stock_path_uses_provider_and_only_real_plus_minus_7_positions():
     master = InstrumentMaster()
     items = [
         {"exch_seg":"NFO","instrumenttype":"FUTSTK","token":"sf","name":"ABC",
-         "symbol":"ABC30SEP26FUT","expiry":"30SEP2026","lotsize":"10"},
+         "symbol":"ABC29OCT26FUT","expiry":"29OCT2026","lotsize":"10"},
     ]
     for i, strike in enumerate(range(70, 131, 5)):
         items.extend([
@@ -158,7 +160,7 @@ def test_runner_stock_path_uses_provider_and_only_real_plus_minus_5_positions():
     )
     subscriptions = runner.build_subscriptions()
     strikes = {item.strike for item in subscriptions if item.strike is not None}
-    assert strikes == {75.0, 80.0, 85.0, 90.0, 95.0, 100.0, 105.0, 110.0, 115.0, 120.0, 125.0}
+    assert strikes == {70.0, 75.0, 80.0, 85.0, 90.0, 95.0, 100.0, 105.0, 110.0, 115.0, 120.0, 125.0, 130.0}
     assert "sf" in {item.token for item in subscriptions}
 
 
