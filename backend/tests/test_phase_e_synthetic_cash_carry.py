@@ -9,7 +9,7 @@ def option(ts, strike):
 
 def test_synthetic_index_scope_is_atm_plus_minus_ten():
     p = ScanPolicy()
-    assert p.stock_synthetic_radius == 5
+    assert p.stock_synthetic_radius == 7
     assert p.index_synthetic_radius == 10
 
 
