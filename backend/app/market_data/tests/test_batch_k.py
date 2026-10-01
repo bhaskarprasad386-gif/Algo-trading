@@ -74,7 +74,7 @@ def test_normalized_callback_uses_exact_exchange_group():
     manager.subscribe("nse", [nse.key])
     manager.subscribe("nfo", [nfo.key])
 
-    manager._on_data(SocketGroup(1, 1), {"token": "101", "last_traded_price": 10000})
+    manager._on_data(SocketGroup(1, 0), {"token": "101", "exchange_type": 1, "last_traded_price": 10000})
     assert len(seen) == 1
     assert seen[0].instrument.exchange == "NSE"
     assert seen[0].ltp == 100.0
