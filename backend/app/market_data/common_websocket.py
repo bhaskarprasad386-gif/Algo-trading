@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from threading import RLock, Thread
+from threading import Lock, RLock, Thread
 from typing import Any, Callable
 
 from .contracts import InstrumentKey
@@ -43,6 +43,7 @@ class CommonWebSocketManager:
         self._record_callbacks: dict[str, Callable[[Any], None]] = {}
         self._normalizer = AngelOneTickNormalizer()
         self._lock = RLock()
+        self._reconcile_lock = Lock()
         self._delivery_errors = 0
         self._ticks_received = 0
         self._ticks_by_exchange: dict[str, int] = defaultdict(int)
@@ -101,7 +102,8 @@ class CommonWebSocketManager:
                     raise KeyError(f"instrument is not registered: {key.value}")
             for key in keys:
                 self.registry.subscribe(consumer, key, mode=mode)
-            self._reconcile_locked()
+        self._reconcile()
+        with self._lock:
             return tuple(sub for sub in self.registry.subscriptions() if consumer in sub.consumers)
 
     def unsubscribe(self, consumer: str, keys: list[InstrumentKey] | None = None) -> None:
@@ -110,7 +112,7 @@ class CommonWebSocketManager:
             targets = keys if keys is not None else list(self.registry.active_keys())
             for key in targets:
                 self.registry.unsubscribe(consumer, key)
-            self._reconcile_locked()
+        self._reconcile()
 
     def clear_consumer(self, consumer: str) -> None:
         consumer = self._consumer_name(consumer)
@@ -118,77 +120,84 @@ class CommonWebSocketManager:
             self.registry.clear_consumer(consumer)
             self._callbacks.pop(consumer, None)
             self._record_callbacks.pop(consumer, None)
-            self._reconcile_locked()
+        self._reconcile()
 
-    def _reconcile_locked(self) -> None:
-        """Pack all exchange/token pairs into at most three shared sessions."""
-        grouped: dict[int, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
-        for sub in self.registry.subscriptions():
-            exchange_type = self._resolve_exchange_type(sub.key)
-            grouped[sub.mode][exchange_type].add(sub.key.token.strip())
+    def _reconcile(self) -> None:
+        """Pack subscriptions while keeping broker I/O outside the state lock."""
+        with self._reconcile_lock:
+            with self._lock:
+                grouped: dict[int, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
+                for sub in self.registry.subscriptions():
+                    exchange_type = self._resolve_exchange_type(sub.key)
+                    grouped[sub.mode][exchange_type].add(sub.key.token.strip())
 
-        desired_tokens: dict[SocketGroup, set[tuple[int, str]]] = {}
-        route_index: dict[
-            SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
-        ] = defaultdict(lambda: defaultdict(list))
+                desired_tokens: dict[SocketGroup, set[tuple[int, str]]] = {}
+                route_index: dict[
+                    SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
+                ] = defaultdict(lambda: defaultdict(list))
 
-        groups_by_mode: dict[int, list[tuple[int, str]]] = defaultdict(list)
-        for mode, exchanges in grouped.items():
-            for exchange_type, tokens in exchanges.items():
-                for token in sorted(tokens):
-                    groups_by_mode[mode].append((exchange_type, token))
+                groups_by_mode: dict[int, list[tuple[int, str]]] = defaultdict(list)
+                for mode, exchanges in grouped.items():
+                    for exchange_type, tokens in exchanges.items():
+                        for token in sorted(tokens):
+                            groups_by_mode[mode].append((exchange_type, token))
 
-        for mode in groups_by_mode:
-            groups_by_mode[mode].sort()
-            pairs = groups_by_mode[mode]
-            for index, pair in enumerate(pairs):
-                shard = SocketGroup(mode=mode, shard=index // self._max_tokens_per_socket)
-                desired_tokens.setdefault(shard, set()).add(pair)
+                for mode in groups_by_mode:
+                    groups_by_mode[mode].sort()
+                    pairs = groups_by_mode[mode]
+                    for index, pair in enumerate(pairs):
+                        shard = SocketGroup(mode=mode, shard=index // self._max_tokens_per_socket)
+                        desired_tokens.setdefault(shard, set()).add(pair)
 
-        if len(desired_tokens) > self._max_sockets:
-            raise ValueError(
-                f"Angel One global WebSocket limit exceeded: {len(desired_tokens)} "
-                f"sessions required; maximum is {self._max_sockets}"
-            )
+                if len(desired_tokens) > self._max_sockets:
+                    raise ValueError(
+                        f"Angel One global WebSocket limit exceeded: {len(desired_tokens)} "
+                        f"sessions required; maximum is {self._max_sockets}"
+                    )
 
-        for sub in self.registry.subscriptions():
-            exchange_type = self._resolve_exchange_type(sub.key)
-            pair = (exchange_type, sub.key.token.strip())
-            pairs = groups_by_mode[sub.mode]
-            index = pairs.index(pair)
-            shard = SocketGroup(mode=sub.mode, shard=index // self._max_tokens_per_socket)
-            for consumer in sub.consumers:
-                route_index[shard][pair].append((consumer, sub.key))
+                for sub in self.registry.subscriptions():
+                    exchange_type = self._resolve_exchange_type(sub.key)
+                    pair = (exchange_type, sub.key.token.strip())
+                    pairs = groups_by_mode[sub.mode]
+                    index = pairs.index(pair)
+                    shard = SocketGroup(mode=sub.mode, shard=index // self._max_tokens_per_socket)
+                    for consumer in sub.consumers:
+                        route_index[shard][pair].append((consumer, sub.key))
 
-        self._route_index = {group: dict(tokens) for group, tokens in route_index.items()}
+                self._route_index = {group: dict(tokens) for group, tokens in route_index.items()}
+                existing = dict(self._sockets)
+                previous_tokens = {group: set(tokens) for group, tokens in self._socket_tokens.items()}
 
-        for group, pairs in desired_tokens.items():
-            socket = self._sockets.get(group)
-            previous = self._socket_tokens.get(group, set())
-            if socket is None:
-                socket = self._socket_factory()
-                self._sockets[group] = socket
-                self._socket_tokens[group] = set(pairs)
-                subscriptions = self._group_subscriptions(pairs)
-                socket.connect(
-                    mode=group.mode,
-                    subscriptions=subscriptions,
-                    correlation_id=f"common-{group.mode}-{group.shard}",
-                    on_data=lambda message, group=group: self._on_data(group, message),
-                )
-            else:
-                removed = previous - pairs
-                added = pairs - previous
-                if removed:
-                    self._unsubscribe_pairs(socket, group.mode, removed)
-                if added:
-                    self._subscribe_pairs(socket, group.mode, added)
-                self._socket_tokens[group] = set(pairs)
+            for group, pairs in desired_tokens.items():
+                socket = existing.get(group)
+                if socket is None:
+                    socket = self._socket_factory()
+                    subscriptions = self._group_subscriptions(pairs)
+                    socket.connect(
+                        mode=group.mode,
+                        subscriptions=subscriptions,
+                        correlation_id=f"common-{group.mode}-{group.shard}",
+                        on_data=lambda message, group=group: self._on_data(group, message),
+                    )
+                    with self._lock:
+                        self._sockets[group] = socket
+                        self._socket_tokens[group] = set(pairs)
+                else:
+                    removed = previous_tokens.get(group, set()) - pairs
+                    added = pairs - previous_tokens.get(group, set())
+                    if removed:
+                        self._unsubscribe_pairs(socket, group.mode, removed)
+                    if added:
+                        self._subscribe_pairs(socket, group.mode, added)
+                    with self._lock:
+                        self._socket_tokens[group] = set(pairs)
 
-        for group in list(self._sockets):
-            if group not in desired_tokens:
-                socket = self._sockets.pop(group)
-                self._socket_tokens.pop(group, None)
+            with self._lock:
+                stale_groups = [group for group in self._sockets if group not in desired_tokens]
+                stale_sockets = [self._sockets.pop(group) for group in stale_groups]
+                for group in stale_groups:
+                    self._socket_tokens.pop(group, None)
+            for socket in stale_sockets:
                 self._close_socket_bounded(socket)
 
     @staticmethod
