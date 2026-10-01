@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     LIVE_CASH_FUTURE_DATA_ENABLED: bool = False
     # New live records are partitioned by IST trading day; legacy base data remains readable.
     LIVE_CASH_FUTURE_DAILY_SHARDS_ENABLED: bool = True
+    LIVE_MARKET_DATA_RETENTION_DAYS: int = 1
     # Shared latest-snapshot cache; bounded in-process now, Redis-ready interface later.
     MARKET_DATA_CACHE_MAX_ENTRIES: int = 2000
     MARKET_DATA_CACHE_TTL_SECONDS: float = 15.0

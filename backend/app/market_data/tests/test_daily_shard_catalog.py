@@ -43,3 +43,35 @@ def test_legacy_base_data_remains_readable_with_new_shards(tmp_path):
         assert catalog.watermark(source="legacy", instrument="ABC", timeframe="1m") == 1_000_000_000
     finally:
         catalog.close()
+
+
+def test_prune_keeps_only_current_day_and_never_deletes_legacy_base(tmp_path):
+    base = tmp_path / "backtest_market_data.sqlite3"
+    from app.backtesting.historical_catalog import HistoricalCatalog
+    legacy = HistoricalCatalog(str(base))
+    legacy.ingest([HistoricalRecord("legacy", "ABC", "1m", 1_000_000_000, {"close": 99})])
+    legacy.close()
+    catalog = DailyMarketDataShardCatalog(base)
+    try:
+        for index, day in enumerate((date(2026, 9, 29), date(2026, 9, 30), date(2026, 10, 1)):
+            catalog.ingest([HistoricalRecord("angelone-live-1s", "ABC", "1s", _ns(day, index + 1), {"close": 100 + index})])
+        removed = catalog.prune_shards_older_than(retention_days=1, today=date(2026, 10, 1))
+        assert [path.name for path in removed] == ["backtest_market_data_2026_09_29.sqlite3", "backtest_market_data_2026_09_30.sqlite3"]
+        assert [path.name for path in catalog.shard_paths()] == ["backtest_market_data_2026_10_01.sqlite3"]
+        assert base.exists()
+        assert catalog.count(source="legacy", timeframe="1m") == 1
+    finally:
+        catalog.close()
+
+
+def test_prune_rejects_invalid_retention(tmp_path):
+    catalog = DailyMarketDataShardCatalog(tmp_path / "backtest_market_data.sqlite3")
+    try:
+        try:
+            catalog.prune_shards_older_than(retention_days=0, today=date(2026, 10, 1))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("expected ValueError")
+    finally:
+        catalog.close()

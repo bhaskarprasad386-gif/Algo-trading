@@ -62,6 +62,7 @@ class LiveCashFutureCommonRunner:
         self._metadata: dict[InstrumentKey, dict[str, Any]] = {}
         self._last_result: CashFutureScanResult | None = None
         self._latest_persisted: dict[InstrumentKey, MarketDataRecord] = {}
+        self._last_retention_date: date | None = None
 
     @property
     def last_result(self) -> CashFutureScanResult | None:
@@ -221,6 +222,7 @@ class LiveCashFutureCommonRunner:
         self.manager.registry.register_many(descriptors)
         self.manager.register_normalized_callback(self.CONSUMER, self._on_record)
         self._repository = DailySQLiteMarketDataRepository(self.data_db)
+        self._prune_old_live_shards()
         self._ingestor = BoundedMarketDataIngestor(
             self._repository,
             max_queue=settings.MARKET_DATA_INGEST_QUEUE_MAX,
@@ -234,9 +236,30 @@ class LiveCashFutureCommonRunner:
         try:
             self.manager.subscribe(self.CONSUMER, keys, mode=3)
             while not self.stop_event.wait(1.0):
-                pass
+                self._prune_old_live_shards()
         finally:
             self.stop()
+
+    def _prune_old_live_shards(self) -> None:
+        repository = self._repository
+        if repository is None or not settings.LIVE_CASH_FUTURE_DAILY_SHARDS_ENABLED:
+            return
+        current_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        if current_date == self._last_retention_date:
+            return
+        try:
+            removed = repository.prune_shards_older_than(
+                retention_days=settings.LIVE_MARKET_DATA_RETENTION_DAYS,
+                today=current_date,
+            )
+            self._last_retention_date = current_date
+            if removed:
+                app_logger.info(
+                    "Cash-Future live shard retention removed %d old shard(s): %s",
+                    len(removed), ", ".join(path.name for path in removed),
+                )
+        except Exception as exc:
+            app_logger.error("Cash-Future live shard retention cleanup failed: %s", exc)
 
     def stop(self) -> None:
         # run_forever() and the asyncio lifespan can both call stop() during

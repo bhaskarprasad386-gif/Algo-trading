@@ -7,8 +7,9 @@ without bound. Shards are strategy-neutral and preserve exact record identity.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import heapq
+import re
 from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
@@ -18,6 +19,7 @@ from app.backtesting.trading_calendar import TradingCalendar
 
 IST = ZoneInfo("Asia/Kolkata")
 SHARD_SUFFIX = ".sqlite3"
+_SHARD_DATE_RE = re.compile(r"_(\d{4})_(\d{2})_(\d{2})$")
 
 
 def shard_path(base_path: str | Path, trading_date: date) -> Path:
@@ -186,6 +188,34 @@ class DailyMarketDataShardCatalog:
     def checkpoint(self, *, mode: str = "PASSIVE") -> tuple[int, int, int]:
         rows = [catalog.checkpoint(mode=mode) for catalog in self._catalogs_for_read()]
         return rows[-1] if rows else (0, 0, 0)
+
+    def prune_shards_older_than(self, *, retention_days: int, today: date | None = None) -> tuple[Path, ...]:
+        """Delete daily shards outside the rolling retention window."""
+        if retention_days < 1:
+            raise ValueError("retention_days must be at least 1")
+        current_date = today or datetime.now(IST).date()
+        cutoff = current_date - timedelta(days=retention_days - 1)
+        removed: list[Path] = []
+        for path in self.shard_paths():
+            match = _SHARD_DATE_RE.search(path.stem)
+            if match is None:
+                continue
+            try:
+                shard_date = date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+            except ValueError:
+                continue
+            if shard_date >= cutoff:
+                continue
+            catalog = self._catalogs.pop(path, None)
+            if catalog is not None:
+                catalog.close()
+            for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+                try:
+                    candidate.unlink()
+                except FileNotFoundError:
+                    pass
+            removed.append(path)
+        return tuple(removed)
 
     def shard_paths(self) -> tuple[Path, ...]:
         return tuple(sorted(self.base_path.parent.glob(f"{self.base_path.stem}_????_??_??{self.base_path.suffix or SHARD_SUFFIX}")))
