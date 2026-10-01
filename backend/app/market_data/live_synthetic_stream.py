@@ -13,6 +13,7 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from app.algo.auth import AngelOneAuth
+from app.core.config import settings
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.ingestion import BoundedMarketDataIngestor
 from app.backtesting.historical_catalog import HistoricalRecord
@@ -40,6 +41,7 @@ class SyntheticSubscription:
     option_type: str | None = None
     strike: float | None = None
     lot_size: int | None = None
+    contract_role: str = "CURRENT"
 
 
 class LiveSyntheticOptionFutureRecorder:
@@ -81,7 +83,7 @@ class LiveSyntheticOptionFutureRecorder:
             normalized.append(
                 SyntheticSubscription(
                     int(item.exchange_type), token, symbol, underlying, cls,
-                    item.expiry, item.option_type, item.strike, item.lot_size,
+                    item.expiry, item.option_type, item.strike, item.lot_size, item.contract_role,
                 )
             )
         self.data_db = data_db
@@ -214,13 +216,14 @@ class LiveSyntheticOptionFutureRecorder:
             self._emit(previous[1], previous[1].timestamp_ns)
 
     def _run_session(self) -> int:
-        self._repository = DailySQLiteMarketDataRepository(self.data_db)
-        self._ingestor = BoundedMarketDataIngestor(
-            self._repository,
-            batch_size=self.batch_size,
-            record_source=self.SOURCE,
-        )
-        self._ingestor.start()
+        if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
+            self._repository = DailySQLiteMarketDataRepository(self.data_db)
+            self._ingestor = BoundedMarketDataIngestor(
+                self._repository,
+                batch_size=self.batch_size,
+                record_source=self.SOURCE,
+            )
+            self._ingestor.start()
         feed_kwargs = {"auth": self.auth}
         if self._manager is not None:
             feed_kwargs["manager"] = self._manager
@@ -236,9 +239,11 @@ class LiveSyntheticOptionFutureRecorder:
                 self._latest.clear()
             for _, record in latest:
                 self._emit(record, record.timestamp_ns)
-            self._ingestor.close()
-            snapshot = self._ingestor.snapshot()
-            return int(snapshot.get("inserted", 0))
+            if self._ingestor is not None:
+                self._ingestor.close()
+                snapshot = self._ingestor.snapshot()
+                return int(snapshot.get("inserted", 0))
+            return 0
         finally:
             if self._feed:
                 self._feed.stop()
