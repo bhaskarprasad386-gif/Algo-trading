@@ -1,13 +1,16 @@
+from datetime import date, timedelta
+
 from app.scanner import auto_routes
 from app.scanner.cash_future import CashFutureConfig, CashQuote, FutureQuote, calculate_cash_future
 
 
 class FakeMaster:
     def __init__(self):
+        future_expiry = (date.today() + timedelta(days=30)).strftime("%d%b%Y").upper()
         self.instruments = [
-            {"name": "SBIN", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026"},
-            {"name": "RELIANCE", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2026"},
-            {"name": "NIFTY", "exch_seg": "NFO", "instrumenttype": "FUTIDX", "expiry": "30SEP2026"},
+            {"name": "SBIN", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": future_expiry},
+            {"name": "RELIANCE", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": future_expiry},
+            {"name": "NIFTY", "exch_seg": "NFO", "instrumenttype": "FUTIDX", "expiry": future_expiry},
             {"name": "OLD", "exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30SEP2025"},
             {"name": "ABC", "exch_seg": "NSE", "instrumenttype": "FUTSTK", "expiry": "30SEP2026"},
         ]
