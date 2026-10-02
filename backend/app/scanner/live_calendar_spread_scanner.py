@@ -36,6 +36,10 @@ class CalendarSpreadSignal:
 
 class LiveCalendarSpreadScanner:
     strategy_id = "calendar-spread"
+    # Angel One exchange timestamps can differ by a few hundred milliseconds
+    # between near/far contracts even when both belong to the same 1-second
+    # market snapshot. Do not require nanosecond identity for pairing.
+    TIMESTAMP_TOLERANCE_NS = 500_000_000
 
     def __init__(self, *, minimum_gap_points: float = 0.0, minimum_gross_profit: float = 0.0, alerts: CalendarSpreadAlertService | None = None):
         if minimum_gap_points < 0 or minimum_gross_profit < 0:
@@ -72,7 +76,7 @@ class LiveCalendarSpreadScanner:
                 return None
             ordered=sorted(self._latest[key].items(), key=lambda item: (item[1].expiry or item[0], item[0]))
             near_m, near=ordered[0]; far_m, far=ordered[1]
-            if near.timestamp_ns != far.timestamp_ns or near.lot_size != far.lot_size or near.instrument.exchange != far.instrument.exchange:
+            if abs(near.timestamp_ns - far.timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS or near.lot_size != far.lot_size or near.instrument.exchange != far.instrument.exchange:
                 return None
             long_edge=float(far.bid)-float(near.ask); short_edge=float(near.bid)-float(far.ask)
             if long_edge < 0 and short_edge < 0:
