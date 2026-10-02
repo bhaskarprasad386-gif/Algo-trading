@@ -1,12 +1,14 @@
 from __future__ import annotations
 import json
 from datetime import datetime, timezone, time
+from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 from app.models.live_paper_trade import LivePaperTrade
 from app.models.global_paper_setting import GlobalPaperSetting
 
 IST_OFFSET = timezone.utc
 MARKET_CLOSE = time(15, 30)
+IST = ZoneInfo("Asia/Kolkata")
 
 def _now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -98,13 +100,18 @@ class LivePaperTradeService:
         return trade
 
     def close_expired(self, db: Session, *, now=None):
-        now = now or _now()
+        if now is None:
+            local_now = datetime.now(timezone.utc).astimezone(IST).replace(tzinfo=None)
+        elif now.tzinfo is None:
+            local_now = now
+        else:
+            local_now = now.astimezone(IST).replace(tzinfo=None)
         closed = []
         for trade in db.query(LivePaperTrade).filter(LivePaperTrade.status == "ONGOING").all():
             expiry = _parse_date(trade.earliest_expiry)
             if expiry is None:
                 continue
-            if now.date() > expiry or (now.date() == expiry and now.time() >= MARKET_CLOSE):
+            if local_now.date() > expiry or (local_now.date() == expiry and local_now.time() >= MARKET_CLOSE):
                 closed.append(self.close(db, trade, "EXPIRY_CLOSE"))
         return closed
 
