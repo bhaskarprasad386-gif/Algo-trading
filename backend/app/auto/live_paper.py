@@ -3,6 +3,7 @@ import json
 from datetime import datetime, timezone, time
 from sqlalchemy.orm import Session
 from app.models.live_paper_trade import LivePaperTrade
+from app.models.global_paper_setting import GlobalPaperSetting
 
 IST_OFFSET = timezone.utc
 MARKET_CLOSE = time(15, 30)
@@ -36,6 +37,15 @@ class LivePaperTradeService:
             return existing, False
         if lot_size <= 0 or lots <= 0 or edge < 0:
             return None, False
+        setting = db.query(GlobalPaperSetting).first()
+        if setting is None or not setting.enabled or setting.emergency_stop or float(setting.paper_amount) <= 0:
+            return None, False
+        capital_per_lot = max(0.0, float(capital_used)) / max(1, int(lots))
+        if capital_per_lot > 0:
+            lots = min(int(lots), int(float(setting.paper_amount) // capital_per_lot))
+            if lots <= 0:
+                return None, False
+            capital_used = capital_per_lot * lots
         trade = LivePaperTrade(
             user_id=int(user_id),
             strategy_id=str(strategy_id).strip().lower(),
