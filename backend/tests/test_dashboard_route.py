@@ -23,7 +23,10 @@ def test_dashboard_contains_paper_execution_connectors():
     assert "/api/v1/execution/paper/position" in body
     assert "/api/v1/execution/paper/exit" in body
     assert '"price",exit' in body or 'price:exit' in body
-    assert "pnl_pct" not in body
+    # Live Paper Trading now intentionally renders P&L percentage; the legacy
+    # paper execution connector contract above remains unchanged.
+    assert "livePaperState.ongoing_pnl" in body
+    assert "x.pnl_pct" in body
 
 
 def test_dashboard_contains_paper_position_check_ui():
