@@ -106,11 +106,27 @@ class LiveSyntheticRunner:
             expiry = target.expiry
             if not expiry:
                 continue
+            cls = target.instrument_class.strip().upper()
+            exchange_segment = (
+                "MCX" if cls == "COMMODITY"
+                else (
+                    "BFO"
+                    if cls == "INDEX" and target.underlying.strip().upper() in {"SENSEX", "BANKEX"}
+                    else "NFO"
+                )
+            )
+            instrument_types = {
+                "STOCK": frozenset({"OPTSTK"}),
+                "INDEX": frozenset({"OPTIDX"}),
+                "COMMODITY": frozenset({"OPTFUT"}),
+            }[cls]
             result.update(
                 concrete_strikes_from_master(
                     self.instrument_master.instruments,
                     symbols=(target.underlying,),
                     expiry=expiry,
+                    exchange_segment=exchange_segment,
+                    instrument_types=instrument_types,
                 )
             )
         return result
@@ -128,10 +144,21 @@ class LiveSyntheticRunner:
             if target.underlying.strip().upper() not in strikes
         ]
         if missing:
-            raise LookupError(
-                "no concrete option strikes found for live expiry: "
-                + ", ".join(sorted(set(missing)))
+            app_logger.warning(
+                "Synthetic live targets skipped because no concrete option strikes "
+                "exist for their selected expiry: %s",
+                ", ".join(sorted(set(missing))),
             )
+            supported = tuple(
+                target for target in self.targets
+                if target.underlying.strip().upper() in strikes
+            )
+            if not supported:
+                raise LookupError(
+                    "no concrete option strikes found for live expiry: "
+                    + ", ".join(sorted(set(missing)))
+                )
+            self.targets = supported
         self._atm_tracker = LiveSyntheticAtmTracker(strikes_by_symbol=strikes)
         return self._atm_tracker.atm
 
