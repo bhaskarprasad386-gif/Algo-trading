@@ -39,22 +39,17 @@ class SyntheticAlertService:
         if not results or not self._notifier.configured:
             return 0
         sent = 0
-        now = datetime.utcnow()
         for result in results:
-            key_base = (result.option.underlying, result.direction)
-            for user in db.query(User).filter(User.is_active.is_(True), User.mobile_number.isnot(None)).all():
-                key = (int(user.id), *key_base)
-                with self._lock:
-                    previous = self._last_sent.get(key, 0)
-                    cooldown_ns = int(float(getattr(settings, "LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS", 60.0)) * 1_000_000_000)
-                    if result.option.timestamp_ns - previous < cooldown_ns:
-                        continue
-                if self._alerts.dispatch_user(user, AlertEvent(strategy_id="synthetic-future-cash-carry", event_id=f"{result.option.underlying}:{result.option.expiry}:{result.option.strike:g}:{result.direction}", symbol=result.option.underlying, timestamp_ns=result.option.timestamp_ns, message=self._message(result))):
-                    with self._lock:
-                        self._last_sent[key] = result.option.timestamp_ns
-                    sent += 1
+            o, fut = result.option, result.future
+            event = AlertEvent(
+                strategy_id="synthetic-future-cash-carry",
+                event_id=f"{o.underlying}:{o.expiry}:{o.strike:g}:{result.direction}",
+                symbol=o.underlying, timestamp_ns=o.timestamp_ns,
+                message=self._message(result),
+                metadata={"gross_profit": result.gross_pnl, "edge": result.executable_edge},
+            )
+            sent += self._alerts.dispatch(db, event)
         return sent
-
     def persist(self, db, results) -> int:
         retention_days = max(1, int(settings.LIVE_SYNTHETIC_RESULT_RETENTION_DAYS))
         cutoff = datetime.utcnow() - timedelta(days=retention_days)
