@@ -58,5 +58,5 @@ class CalendarSpreadAlertService:
             event_id=f"{signal.underlying}:{signal.near_contract_month}:{signal.far_contract_month}:{signal.direction}",
             symbol=signal.underlying, timestamp_ns=signal.timestamp_ns,
             message=self._message(signal),
-            metadata={"exchange": signal.exchange, "gap_points": signal.gap_points},
+            metadata={"exchange": signal.exchange, "gap_points": signal.gap_points, "gross_profit": signal.gross_profit},
         ))
