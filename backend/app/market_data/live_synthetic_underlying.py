@@ -155,6 +155,13 @@ class LiveSyntheticUnderlyingFeed:
                 self._feed.stop()
                 self._feed = None
 
+    def snapshot(self) -> dict:
+        """Return non-persistent runtime telemetry for this feed."""
+        if self._feed is None:
+            return {"started": False, "consumer": self.consumer}
+        snapshot = self._feed.snapshot()
+        return {"started": True, "consumer": self.consumer, "feed": snapshot}
+
     def stop(self) -> None:
         self.stop_event.set()
         if self._feed:
