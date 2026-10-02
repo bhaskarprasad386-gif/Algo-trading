@@ -30,6 +30,7 @@ class LivePaperTradeService:
         event_id = str(event_id)
         existing = db.query(LivePaperTrade).filter(
             LivePaperTrade.event_id == event_id,
+            LivePaperTrade.user_id == int(user_id),
             LivePaperTrade.status == "ONGOING",
         ).first()
         if existing:
