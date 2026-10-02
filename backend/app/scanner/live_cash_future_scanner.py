@@ -35,7 +35,6 @@ class LiveCashFutureSignal:
     gap: float
     gap_pct: float
     timestamp_ns: int
-    expiry: str | None = None
     cash_day_high: float
     cash_day_low: float
     future_day_high: float
@@ -57,6 +56,7 @@ class LiveCashFutureSignal:
     observation_ref: str
     alert_event: str | None
     quality_score: float
+    expiry: str | None = None
 
 
 class LiveCashFutureScanner:
