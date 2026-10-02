@@ -150,6 +150,34 @@ def get_live_data_health():
         catalog.close()
 
 
+@router.get("/common-feed-health")
+def get_common_feed_health():
+    """Return process-local Angel common WebSocket telemetry; raw ticks are never persisted."""
+    from app.core.config import settings
+    from app.market_data.common_strategy_feed import shared_common_manager_snapshot
+
+    snapshot = shared_common_manager_snapshot()
+    return {
+        "status": "success",
+        "initialized": snapshot is not None,
+        "raw_market_data_persistence": bool(settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED),
+        "live_orders": "OFF",
+        "feed": snapshot or {
+            "subscriptions": 0,
+            "active_instruments": 0,
+            "socket_groups": 0,
+            "max_socket_sessions": 3,
+            "consumers": [],
+            "delivery_errors": 0,
+            "ticks_received": 0,
+            "ticks_by_exchange_type": {},
+            "last_tick": None,
+            "connected_groups": [],
+            "disconnected_groups": [],
+        },
+    }
+
+
 @router.get("/overview")
 def get_market_overview():
     """Return a bounded live overview for configured NSE/BSE indices and MCX commodities."""
