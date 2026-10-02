@@ -50,6 +50,13 @@ jobs:
           fi
 
           echo "=== RUNTIME SNAPSHOT ==="
+          common_code=$(curl -sS --connect-timeout 2 --max-time 8 -o /tmp/common_body -w "%{http_code}" http://127.0.0.1:8000/api/v1/market-data/common-feed-health 2>/dev/null || true)
+          echo "COMMON_FEED_HEALTH_HTTP=$common_code"
+          if [ "$common_code" != "000" ]; then
+            cat /tmp/common_body || true
+            echo
+          fi
+
           runtime_code=$(curl -sS --connect-timeout 2 --max-time 8 -o /tmp/runtime_body -w "%{http_code}" http://127.0.0.1:8000/api/v1/market-data/runtime/health 2>/dev/null || true)
           echo "RUNTIME_HEALTH_HTTP=$runtime_code"
           if [ "$runtime_code" != "000" ]; then
