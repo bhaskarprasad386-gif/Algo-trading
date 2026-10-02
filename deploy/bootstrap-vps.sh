@@ -60,7 +60,7 @@ systemctl restart "$SERVICE_NAME"
 
 log "Waiting for local API health"
 healthy=0
-for _ in {1..20}; do
+for _ in {1..60}; do
   if curl --fail --silent --show-error --max-time 3 http://127.0.0.1:8000/health >/tmp/algo-health.json 2>/dev/null; then
     healthy=1
     break
