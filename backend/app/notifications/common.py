@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Any, Mapping
 from app.core.config import settings
 from app.notifications.whatsapp import WhatsAppConfig, WhatsAppNotifier
+from app.models import AlertRule
 
 @dataclass(frozen=True)
 class AlertEvent:
@@ -51,10 +52,34 @@ class AlertService:
     def dispatch(self, db, event: AlertEvent) -> int:
         if not self._notifier.configured:
             return 0
+        gross = event.metadata.get("gross_profit", event.metadata.get("gross_pnl", event.metadata.get("gross_profit_rupees")))
+        try:
+            gross_value = float(gross) if gross is not None else None
+        except (TypeError, ValueError):
+            gross_value = None
+        rules = db.query(AlertRule).filter(
+            AlertRule.enabled.is_(True),
+            AlertRule.strategy_id == event.strategy_id.strip().lower(),
+        ).order_by(AlertRule.priority.desc(), AlertRule.id.asc()).all()
+        if rules:
+            sent = 0
+            for rule in rules:
+                if not rule.whatsapp_enabled or not rule.mobile_number.strip():
+                    continue
+                if gross_value is not None and gross_value < float(rule.min_gross_profit):
+                    continue
+                key = (int(rule.id), event.event_id)
+                cooldown_ns = int(max(0.0, float(rule.cooldown_seconds)) * 1_000_000_000)
+                previous = self._last_sent.get(key, 0)
+                if event.timestamp_ns - previous < cooldown_ns:
+                    continue
+                if self._notifier.send_text(rule.mobile_number, event.message):
+                    self._last_sent[key] = event.timestamp_ns
+                    sent += 1
+            return sent
         from app.models import User
         users = db.query(User).filter(User.is_active.is_(True), User.mobile_number.isnot(None)).all()
         return sum(1 for user in users if self.dispatch_user(user, event))
-
     @staticmethod
     def cutoff(days: int) -> datetime:
         return datetime.utcnow() - timedelta(days=max(1, int(days)))
