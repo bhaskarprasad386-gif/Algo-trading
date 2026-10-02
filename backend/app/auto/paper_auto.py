@@ -9,7 +9,6 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from app.models.strategy_auto_setting import StrategyAutoSetting
 from app.models.strategy_auto_paper_position import StrategyAutoPaperPosition
 from app.models.global_paper_setting import GlobalPaperSetting
 
@@ -27,20 +26,20 @@ class GlobalPaperAutoService:
     def is_enabled(self, db: Session, strategy_id: str) -> bool:
         setting = db.query(GlobalPaperSetting).first()
         return bool(setting and setting.enabled and not setting.emergency_stop)
-    def set_enabled(self, db: Session, strategy_id: str, enabled: bool) -> StrategyAutoSetting:
-        key = strategy_id.strip().lower()
-        if not key:
-            raise ValueError("strategy_id is required")
-        row = db.query(StrategyAutoSetting).filter(StrategyAutoSetting.strategy_id == key).first()
-        if row is None:
-            row = StrategyAutoSetting(strategy_id=key, enabled=bool(enabled))
-            db.add(row)
+
+    def set_enabled(self, db: Session, strategy_id: str, enabled: bool) -> GlobalPaperSetting:
+        """Set the single global paper-auto switch; strategy_id is retained for API compatibility."""
+        setting = db.query(GlobalPaperSetting).first()
+        if setting is None:
+            setting = GlobalPaperSetting(user_id=1, enabled=bool(enabled))
+            db.add(setting)
         else:
-            row.enabled = bool(enabled)
-            row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            setting.enabled = bool(enabled)
+            setting.emergency_stop = False
+            setting.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.commit()
-        db.refresh(row)
-        return row
+        db.refresh(setting)
+        return setting
 
     def qualify_and_enter(self, db: Session, signal: AutoSignal) -> StrategyAutoPaperPosition | None:
         if not self.is_enabled(db, signal.strategy_id):
@@ -62,7 +61,7 @@ class GlobalPaperAutoService:
         ).first()
         if existing is not None:
             return existing
-        pnl = (float(signal.current_price) - float(signal.entry_price)) * int(signal.quantity)
+        pnl = (float(signal.current_price) - float(signal.entry_price)) * quantity
         position = StrategyAutoPaperPosition(
             strategy_id=key,
             symbol=signal.symbol.strip().upper(),
