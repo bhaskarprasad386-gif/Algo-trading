@@ -21,6 +21,7 @@ IST = ZoneInfo("Asia/Kolkata")
 class LiveCashFutureSignal:
     symbol: str
     contract_month: str
+    expiry: str | None
     cash_ltp: float
     future_ltp: float
     cash_bid: float | None
@@ -117,6 +118,7 @@ class LiveCashFutureScanner:
                 alert = LiveCashFutureAlert(
                     symbol=signal.symbol,
                     contract_month=signal.contract_month,
+                    expiry=signal.expiry,
                     cash_ask=float(signal.cash_ask),
                     future_bid=float(signal.future_bid),
                     gap=signal.gap,
@@ -486,6 +488,7 @@ class LiveCashFutureScanner:
         signal = LiveCashFutureSignal(
             symbol=symbol,
             contract_month=month,
+            expiry=future.get("expiry"),
             cash_ltp=cash["ltp"],
             future_ltp=future["ltp"],
             cash_bid=cash["bid"],
