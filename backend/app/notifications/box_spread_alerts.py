@@ -28,13 +28,16 @@ class BoxSpreadAlertService:
             db.add(LiveBoxSpreadAlertHistory(observed_at=datetime.utcnow(),timestamp_ns=l.timestamp_ns,symbol=l.underlying,instrument_class=l.instrument_class,expiry=l.expiry,low_strike=l.strike,high_strike=h.strike,direction=r.direction,low_call_bid=l.call_bid,low_call_ask=l.call_ask,low_put_bid=l.put_bid,low_put_ask=l.put_ask,high_call_bid=h.call_bid,high_call_ask=h.call_ask,high_put_bid=h.put_bid,high_put_ask=h.put_ask,executable_edge=r.executable_edge,edge_per_lot=r.edge_per_lot,gross_pnl=r.gross_pnl,lot_size=l.lot_size)); added+=1
         db.commit(); return added
     def notify_users(self,db,results):
-        if not results or not self._notifier.configured:return 0
+        if not results or not self._notifier.configured: return 0
         sent=0
         for r in results:
-            key=(r.low.underlying,r.low.expiry,r.low.strike,r.high.strike,r.direction)
-            for user in db.query(User).filter(User.is_active.is_(True),User.mobile_number.isnot(None)).all():
-                k=(int(user.id),*key); previous=self._last_sent.get(k,0)
-                if r.low.timestamp_ns-previous < int(float(settings.LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS)*1_000_000_000):continue
-                if self._alerts.dispatch_user(user, AlertEvent(strategy_id="box-spread", event_id=f"{r.low.underlying}:{r.low.expiry}:{r.low.strike:g}:{r.high.strike:g}:{r.direction}", symbol=r.low.underlying, timestamp_ns=r.low.timestamp_ns, message=self._message(r))):self._last_sent[k]=r.low.timestamp_ns;sent+=1
+            l,h=r.low,r.high
+            sent += self._alerts.dispatch(db, AlertEvent(
+                strategy_id="box-spread",
+                event_id=f"{l.underlying}:{l.expiry}:{l.strike:g}:{h.strike:g}:{r.direction}",
+                symbol=l.underlying, timestamp_ns=l.timestamp_ns,
+                message=self._message(r),
+                metadata={"gross_profit": r.gross_pnl, "edge": r.executable_edge},
+            ))
         return sent
 __all__=["BoxSpreadAlertService"]
