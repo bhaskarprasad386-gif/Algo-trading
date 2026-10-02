@@ -52,7 +52,7 @@ def test_box_rejects_illiquid_volume_oi_and_wide_spread():
         quotes,
         atm_strike=100.0,
         instrument_class="STOCK",
-        config=BoxSpreadScanConfig(max_option_spread_pct=5.0),
+        config=BoxSpreadScanConfig(allowed_stock_symbols=frozenset({"ABC"}), max_option_spread_pct=5.0),
         policy=__import__("app.backtesting.arbitrage_scan_policy", fromlist=["ScanPolicy"]).ScanPolicy(stock_box_distances=(3,)),
     )
     assert not results
@@ -67,7 +67,7 @@ def test_box_requires_both_call_and_put_to_be_liquid():
         quotes,
         atm_strike=100.0,
         instrument_class="STOCK",
-        config=BoxSpreadScanConfig(max_option_spread_pct=5.0),
+        config=BoxSpreadScanConfig(allowed_stock_symbols=frozenset({"ABC"}), max_option_spread_pct=5.0),
         policy=__import__("app.backtesting.arbitrage_scan_policy", fromlist=["ScanPolicy"]).ScanPolicy(stock_box_distances=(1,)),
     )
     assert not results
