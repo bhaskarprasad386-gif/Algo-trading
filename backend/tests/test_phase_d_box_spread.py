@@ -1,4 +1,5 @@
 from app.backtesting.arbitrage_backtester import OptionQuote
+from app.backtesting.arbitrage_scan_policy import ScanPolicy
 from app.scanner.box_spread import BOX_SCAN_POLICY, BoxSpreadScanConfig, scan_box_snapshot
 
 
@@ -59,13 +60,17 @@ def test_min_arbitrage_points_filters_before_result():
 
 def test_crossed_quote_is_rejected():
     chain = make_chain((1,))
-    bad = chain[0]
+    bad = next(q for q in chain if q.strike == 100.0)
     bad = OptionQuote(
         bad.timestamp_ns, bad.underlying, bad.expiry, bad.strike,
         3.0, 2.0, bad.put_bid, bad.put_ask, bad.lot_size,
         bad.instrument_class, bad.volume, bad.oi,
     )
-    results = scan_box_snapshot([bad, *chain[1:]], atm_strike=100, instrument_class="INDEX")
+    results = scan_box_snapshot(
+        [bad, *[q for q in chain if q.strike != 100.0]],
+        atm_strike=100, instrument_class="INDEX",
+        policy=ScanPolicy(index_box_distances=(1,)),
+    )
     assert not results
 
 
