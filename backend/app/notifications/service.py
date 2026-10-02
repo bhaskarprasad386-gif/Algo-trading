@@ -58,6 +58,26 @@ class NotificationService:
             },
         ))
 
+    def dispatch(self, db, alert: LiveCashFutureAlert) -> int:
+        return self._common.dispatch(db, AlertEvent(
+            strategy_id="cash-future",
+            event_id=f"{alert.symbol}:{alert.contract_month}",
+            symbol=alert.symbol,
+            timestamp_ns=alert.timestamp_ns,
+            message=self._message(alert),
+            metadata={
+                "gross_profit": alert.gross_profit,
+                "paper_trade": {
+                    "direction": "LONG", "expiry": alert.expiry or alert.contract_month,
+                    "earliest_expiry": alert.expiry or alert.contract_month,
+                    "lot_size": int(alert.lot_size or 1), "lots": int(alert.alert_lots or 1),
+                    "edge": float(alert.gap),
+                    "capital_used": (float(alert.cash_ask) + float(alert.future_bid)) * int(alert.lot_size or 1) * int(alert.alert_lots or 1),
+                    "legs": [{"instrument": "CASH", "side": "BUY", "price": alert.cash_ask}, {"instrument": "FUTURE", "side": "SELL", "price": alert.future_bid}],
+                },
+            },
+        ))
+
     @property
     def whatsapp_configured(self) -> bool:
         return bool(self._common.configured_channels)
