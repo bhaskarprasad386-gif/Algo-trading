@@ -23,11 +23,12 @@ from app.models.strategy_auto_setting import StrategyAutoSetting
 from app.models.strategy_auto_paper_position import StrategyAutoPaperPosition
 from app.models.alert_rule import AlertRule
 from app.models.global_paper_setting import GlobalPaperSetting
+from app.models.live_paper_trade import LivePaperTrade
 
 __all__ = [
     "User", "TradingAccount", "Session", "Instrument", "Tick", "Candle", "CashFutureHistory",
     "Order", "Position", "SystemLog", "BacktestJob", "BacktestJobResultChunk", "PasswordResetToken",
     "HistoricalMarketBar", "BacktestDataCoverage", "LiveCashFutureScannerResult", "LiveCashFutureAlertHistory",
     "LiveSyntheticAlertHistory", "LiveBoxSpreadAlertHistory", "LiveBoxSpreadPaperPosition",
-    "LiveCalendarSpreadAlertHistory", "StrategyAutoSetting", "StrategyAutoPaperPosition", "AlertRule", "GlobalPaperSetting",
+    "LiveCalendarSpreadAlertHistory", "StrategyAutoSetting", "StrategyAutoPaperPosition", "AlertRule", "GlobalPaperSetting", "LivePaperTrade",
 ]
