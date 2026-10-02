@@ -24,7 +24,6 @@ def payload(p):
         "last_mark_at": p.last_mark_at,
     }
 
-@router.get("/status")
 def _refresh_marks(db: Session, trades):
     try:
         from app import main as runtime
@@ -59,6 +58,7 @@ def _refresh_marks(db: Session, trades):
     except Exception:
         pass
 
+@router.get("/status")
 def status(db: Session = Depends(get_db)):
     user = current_user_id(db)
     service.close_expired(db)
