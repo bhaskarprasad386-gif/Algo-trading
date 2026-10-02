@@ -21,7 +21,6 @@ IST = ZoneInfo("Asia/Kolkata")
 class LiveCashFutureSignal:
     symbol: str
     contract_month: str
-    expiry: str | None
     cash_ltp: float
     future_ltp: float
     cash_bid: float | None
@@ -36,6 +35,7 @@ class LiveCashFutureSignal:
     gap: float
     gap_pct: float
     timestamp_ns: int
+    expiry: str | None = None
     cash_day_high: float
     cash_day_low: float
     future_day_high: float
