@@ -1,9 +1,12 @@
 from datetime import datetime, time
 from app.auto.live_paper import LivePaperTradeService
 from app.models.live_paper_trade import LivePaperTrade
+from app.models.global_paper_setting import GlobalPaperSetting
 
 def test_live_paper_trade_lifecycle_and_ranking(db_session):
     svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=10_000_000, emergency_stop=False))
+    db_session.commit()
     a,_ = svc.enter_or_mark(db_session, strategy_id="calendar-spread", symbol="ABC",
         event_id="A", direction="LONG", expiry="2026-10-10", earliest_expiry="2026-10-10",
         lot_size=100, lots=1, edge=5, capital_used=100000, legs=[{"side":"BUY","symbol":"ABC"}])
@@ -22,6 +25,8 @@ def test_live_paper_trade_lifecycle_and_ranking(db_session):
 
 def test_calendar_earlier_expiry_closes_both_as_one_trade(db_session):
     svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=10_000_000, emergency_stop=False))
+    db_session.commit()
     trade,_ = svc.enter_or_mark(db_session, strategy_id="calendar-spread", symbol="NIFTY",
         event_id="CAL-1", direction="LONG", expiry="2026-10-30", earliest_expiry="2026-10-10",
         lot_size=50, lots=1, edge=4, capital_used=100000)
