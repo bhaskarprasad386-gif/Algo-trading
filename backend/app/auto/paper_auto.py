@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from app.models.strategy_auto_setting import StrategyAutoSetting
 from app.models.strategy_auto_paper_position import StrategyAutoPaperPosition
+from app.models.global_paper_setting import GlobalPaperSetting
 
 @dataclass(frozen=True)
 class AutoSignal:
@@ -24,11 +25,8 @@ class AutoSignal:
 
 class GlobalPaperAutoService:
     def is_enabled(self, db: Session, strategy_id: str) -> bool:
-        row = db.query(StrategyAutoSetting).filter(
-            StrategyAutoSetting.strategy_id == strategy_id.strip().lower()
-        ).first()
-        return bool(row and row.enabled)
-
+        setting = db.query(GlobalPaperSetting).first()
+        return bool(setting and setting.enabled and not setting.emergency_stop)
     def set_enabled(self, db: Session, strategy_id: str, enabled: bool) -> StrategyAutoSetting:
         key = strategy_id.strip().lower()
         if not key:
@@ -50,6 +48,13 @@ class GlobalPaperAutoService:
         if signal.quantity <= 0 or signal.entry_price <= 0 or signal.current_price <= 0:
             raise ValueError("paper-auto signal prices and quantity must be positive")
         key = signal.strategy_id.strip().lower()
+        setting = db.query(GlobalPaperSetting).first()
+        if setting is None or float(setting.paper_amount) <= 0:
+            return None
+        max_quantity = int(float(setting.paper_amount) // float(signal.entry_price))
+        quantity = min(int(signal.quantity), max_quantity)
+        if quantity <= 0:
+            return None
         existing = db.query(StrategyAutoPaperPosition).filter(
             StrategyAutoPaperPosition.strategy_id == key,
             StrategyAutoPaperPosition.symbol == signal.symbol.strip().upper(),
@@ -63,7 +68,7 @@ class GlobalPaperAutoService:
             symbol=signal.symbol.strip().upper(),
             entry_price=float(signal.entry_price),
             current_price=float(signal.current_price),
-            quantity=int(signal.quantity),
+            quantity=quantity,
             pnl=round(pnl, 8),
             expiry=signal.expiry,
             status="ACTIVE",
