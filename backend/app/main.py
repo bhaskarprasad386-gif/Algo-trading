@@ -50,6 +50,8 @@ from app.execution.live_paper_routes import router as live_paper_execution_route
 from app.auto.routes import router as global_auto_router
 from app.alert_routes import router as alert_router
 from app.live_paper_routes import router as live_paper_router
+from app.auto.live_paper import LivePaperTradeService
+from app.models.live_paper_trade import LivePaperTrade
 from app.backtesting.replay_routes import create_replay_router
 from app.scanner.cash_future_collector import CashFutureHistoryCollector
 from app.brokers.routes import router as brokers_router
@@ -87,7 +89,7 @@ configure_live_box_spread(lambda: live_box_spread_latest_results)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _paper_box_spread_cycle_task
+    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _paper_box_spread_cycle_task, _live_paper_monitor_task
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     # Recovery is intentionally deferred until application startup so the schema
     # migration module has no dependency on scanner/backtest job modules.
@@ -107,10 +109,12 @@ async def lifespan(app: FastAPI):
         _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
     if settings.PAPER_BOX_SPREAD_AUTO_CYCLE_ENABLED and _paper_box_spread_cycle_task is None:
         _paper_box_spread_cycle_task = asyncio.create_task(_paper_box_spread_cycle_loop())
+    if _live_paper_monitor_task is None:
+        _live_paper_monitor_task = asyncio.create_task(_live_paper_monitor_loop())
     try:
         yield
     finally:
-        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _paper_box_spread_cycle_task):
+        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _paper_box_spread_cycle_task, _live_paper_monitor_task):
             if task is not None:
                 task.cancel()
         shutdown_tasks = tuple(
@@ -123,6 +127,7 @@ async def lifespan(app: FastAPI):
                 _live_synthetic_task,
                 _live_box_spread_task,
                 _paper_box_spread_cycle_task,
+                _live_paper_monitor_task,
             )
             if task is not None
         )
@@ -141,6 +146,7 @@ async def lifespan(app: FastAPI):
         _live_synthetic_task = None
         _live_box_spread_task = None
         _paper_box_spread_cycle_task = None
+        _live_paper_monitor_task = None
         if backtest_download_manager is not None:
             backtest_download_manager.close()
         if backtest_status_store is not None:
@@ -370,6 +376,7 @@ IST = ZoneInfo("Asia/Kolkata")
 _live_synthetic_task: asyncio.Task | None = None
 _live_box_spread_task: asyncio.Task | None = None
 _paper_box_spread_cycle_task: asyncio.Task | None = None
+_live_paper_monitor_task: asyncio.Task | None = None
 MARKET_OPEN = time(9, 15)
 MARKET_CLOSE = time(15, 30)
 
@@ -551,6 +558,43 @@ async def _paper_box_spread_cycle_loop() -> None:
         except Exception as exc:
             app_logger.error("Box Spread paper auto-cycle failed: %s", exc)
         await asyncio.sleep(interval)
+
+
+async def _live_paper_monitor_loop() -> None:
+    """Continuously mark alert-driven paper trades and close them at expiry."""
+    service = LivePaperTradeService()
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                active = db.query(LivePaperTrade).filter(LivePaperTrade.status == "ONGOING").all()
+                if active:
+                    cash = live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=500)
+                    cash_map = {f"{x.get('symbol')}:{x.get('contract_month')}": x for x in cash}
+                    cal_map = {f"{x.underlying}:{x.near_contract_month}:{x.far_contract_month}:{x.direction}": x for x in live_calendar_spread_scanner.snapshot(limit=500)}
+                    syn_map = {f"{x.option.underlying}:{x.option.expiry}:{x.option.strike:g}:{x.direction}": x for x in live_synthetic_latest_results}
+                    box_map = {f"{x.low.underlying}:{x.low.expiry}:{x.low.strike:g}:{x.high.strike:g}:{x.direction}": x for x in live_box_spread_latest_results}
+                    for trade in active:
+                        edge = None
+                        if trade.strategy_id == "cash-future":
+                            row = cash_map.get(trade.event_id); edge = None if row is None else row.get("gap")
+                        elif trade.strategy_id == "calendar-spread":
+                            row = cal_map.get(trade.event_id); edge = None if row is None else row.gap_points
+                        elif trade.strategy_id == "synthetic-future-cash-carry":
+                            row = syn_map.get(trade.event_id); edge = None if row is None else row.executable_edge
+                        elif trade.strategy_id == "box-spread":
+                            row = box_map.get(trade.event_id); edge = None if row is None else row.executable_edge
+                        if edge is not None:
+                            service.mark(db, trade, edge=float(edge))
+                    db.commit()
+                service.close_expired(db)
+            finally:
+                db.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            app_logger.error("Live paper monitor failed: %s", exc)
+        await asyncio.sleep(2.0)
 
 
 async def _live_box_spread_loop() -> None:
