@@ -48,8 +48,8 @@ class NotificationService:
             metadata={
                 "gross_profit": alert.gross_profit,
                 "paper_trade": {
-                    "direction": "LONG", "expiry": alert.contract_month,
-                    "earliest_expiry": alert.contract_month, "lot_size": int(alert.lot_size or 1),
+                    "direction": "LONG", "expiry": alert.expiry or alert.contract_month,
+                    "earliest_expiry": alert.expiry or alert.contract_month, "lot_size": int(alert.lot_size or 1),
                     "lots": int(alert.alert_lots or 1), "edge": float(alert.gap),
                     "capital_used": (float(alert.cash_ask) + float(alert.future_bid)) * int(alert.lot_size or 1),
                     "legs": [{"instrument": "CASH", "side": "BUY", "price": alert.cash_ask}, {"instrument": "FUTURE", "side": "SELL", "price": alert.future_bid}],
