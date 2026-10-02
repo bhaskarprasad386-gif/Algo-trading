@@ -114,7 +114,6 @@ class LiveCashFutureScanner:
             return
         try:
             with session_factory() as db:
-                users = db.query(User).filter(User.is_active.is_(True), User.mobile_number.isnot(None)).all()
                 alert = LiveCashFutureAlert(
                     symbol=signal.symbol,
                     contract_month=signal.contract_month,
@@ -129,8 +128,7 @@ class LiveCashFutureScanner:
                     gross_profit=signal.gross_profit,
                     net_profit=signal.net_profit,
                 )
-                for user in users:
-                    self.notifier.notify_user(user, alert)
+                self.notifier.dispatch(db, alert)
         except Exception as exc:
             from app.core.logger import app_logger
             app_logger.error("Cash-Future alert notification failed: %s", exc)
