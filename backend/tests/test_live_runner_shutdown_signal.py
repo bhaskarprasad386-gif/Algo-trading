@@ -1,3 +1,4 @@
+import asyncio
 import threading
 
 from app import main
@@ -50,3 +51,31 @@ def test_signal_live_runner_shutdown_does_not_call_blocking_stop(monkeypatch):
 
     assert runner.stop_event.is_set()
     assert calls == []
+
+
+def test_live_runner_uses_daemon_thread_and_stops_on_cancellation():
+    async def scenario():
+        stopped = threading.Event()
+
+        class Runner:
+            def run_forever(self):
+                stopped.wait()
+
+            def stop(self):
+                stopped.set()
+
+        runner = Runner()
+        task = asyncio.create_task(
+            main._run_live_runner_in_daemon_thread(
+                runner, name="test-live-runner"
+            )
+        )
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        assert stopped.is_set()
+
+    asyncio.run(scenario())
