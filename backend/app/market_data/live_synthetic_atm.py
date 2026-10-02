@@ -16,6 +16,7 @@ def concrete_strikes_from_master(
     symbols: tuple[str, ...],
     expiry: str,
     exchange_segment: str = "NFO",
+    instrument_types: frozenset[str] = frozenset({"OPTSTK", "OPTIDX", "OPTFUT"}),
 ) -> dict[str, tuple[float, ...]]:
     """Extract only concrete option strikes for the requested live expiry."""
     requested = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
@@ -29,7 +30,9 @@ def concrete_strikes_from_master(
             continue
         if str(item.get("expiry") or "").strip().upper() != expiry_key:
             continue
-        if str(item.get("instrumenttype") or "").strip().upper() not in {"OPTSTK", "OPTIDX"}:
+        if str(item.get("instrumenttype") or "").strip().upper() not in {
+            str(value).strip().upper() for value in instrument_types
+        }:
             continue
         try:
             raw = float(item.get("strike"))
