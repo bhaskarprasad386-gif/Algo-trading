@@ -28,7 +28,7 @@ class BoxSpreadAlertService:
             db.add(LiveBoxSpreadAlertHistory(observed_at=datetime.utcnow(),timestamp_ns=l.timestamp_ns,symbol=l.underlying,instrument_class=l.instrument_class,expiry=l.expiry,low_strike=l.strike,high_strike=h.strike,direction=r.direction,low_call_bid=l.call_bid,low_call_ask=l.call_ask,low_put_bid=l.put_bid,low_put_ask=l.put_ask,high_call_bid=h.call_bid,high_call_ask=h.call_ask,high_put_bid=h.put_bid,high_put_ask=h.put_ask,executable_edge=r.executable_edge,edge_per_lot=r.edge_per_lot,gross_pnl=r.gross_pnl,lot_size=l.lot_size)); added+=1
         db.commit(); return added
     def notify_users(self,db,results):
-        if not results or not self._notifier.configured: return 0
+        if not results: return 0
         sent=0
         for r in results:
             l,h=r.low,r.high
