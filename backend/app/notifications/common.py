@@ -70,8 +70,8 @@ class AlertService:
                     continue
                 key = (int(rule.id), event.event_id)
                 cooldown_ns = int(max(0.0, float(rule.cooldown_seconds)) * 1_000_000_000)
-                previous = self._last_sent.get(key, 0)
-                if event.timestamp_ns - previous < cooldown_ns:
+                previous = self._last_sent.get(key)
+                if previous is not None and event.timestamp_ns - previous < cooldown_ns:
                     continue
                 if self._notifier.send_text(rule.mobile_number, event.message):
                     self._last_sent[key] = event.timestamp_ns
