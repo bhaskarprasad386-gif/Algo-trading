@@ -49,6 +49,7 @@ from app.execution.paper_routes import router as paper_execution_router
 from app.execution.live_paper_routes import router as live_paper_execution_router
 from app.auto.routes import router as global_auto_router
 from app.alert_routes import router as alert_router
+from app.live_paper_routes import router as live_paper_router
 from app.backtesting.replay_routes import create_replay_router
 from app.scanner.cash_future_collector import CashFutureHistoryCollector
 from app.brokers.routes import router as brokers_router
@@ -163,6 +164,7 @@ app.include_router(paper_execution_router)
 app.include_router(live_paper_execution_router)
 app.include_router(global_auto_router)
 app.include_router(alert_router)
+app.include_router(live_paper_router)
 if settings.BACKTESTING_ENABLED:
     app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))
 app.include_router(calendar_spread_paper_router)
