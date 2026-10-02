@@ -13,7 +13,9 @@ def test_alert_rule_filters_by_strategy_and_gross_profit(db_session, monkeypatch
     db_session.add(rule); db_session.commit()
     service = AlertService()
     sent = []
-    monkeypatch.setattr(service._notifier, "configured", True, raising=False)
+    service._notifier.config.enabled = True
+    service._notifier.config.access_token = "token"
+    service._notifier.config.phone_number_id = "id"
     monkeypatch.setattr(service._notifier, "send_text", lambda mobile, msg: sent.append((mobile, msg)) or True)
     low = AlertEvent("cash-future","e1","ABC",10,"low",metadata={"gross_profit":999})
     high = AlertEvent("cash-future","e2","ABC",20,"high",metadata={"gross_profit":1000})
