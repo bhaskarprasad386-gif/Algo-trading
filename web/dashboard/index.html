@@ -280,6 +280,11 @@ th{font-size:7px!important}
 .workspace-launcher{position:fixed;inset:0;background:rgba(2,6,10,.78);backdrop-filter:blur(10px);z-index:140;display:none;align-items:flex-end;justify-content:center;padding:18px}.workspace-launcher.open{display:flex}.workspace-sheet{width:min(720px,100%);background:#0b1218;border:1px solid #214052;border-radius:14px;padding:14px;box-shadow:0 28px 90px rgba(0,0,0,.6)}.workspace-sheet-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.workspace-sheet-head b{font-size:12px}.workspace-sheet-head span{font-size:9px;color:var(--muted)}.workspace-close{background:#101a22;border:1px solid var(--line);color:#b9cbd5;border-radius:7px;padding:6px 9px}.workspace-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.workspace-tile{min-height:58px;text-align:left;background:#0e171e;border:1px solid #1e303b;color:#dce8ee;border-radius:9px;padding:9px;touch-action:manipulation}.workspace-tile b{display:block;font-size:10px}.workspace-tile small{display:block;color:#718591;font-size:8px;margin-top:4px}.workspace-tile:active{transform:scale(.98);border-color:#0878ad}.ux-shortcuts{display:flex;gap:6px;overflow:auto;margin-top:8px}.ux-shortcuts button{white-space:nowrap}.mobile-nav-more{display:none}
 @media(max-width:720px){.workspace-launcher{padding:0}.workspace-sheet{border-radius:15px 15px 0 0;padding:13px 11px calc(13px + env(safe-area-inset-bottom));max-height:82vh;overflow:auto}.workspace-grid{grid-template-columns:repeat(2,1fr)}.workspace-tile{min-height:64px}.mobile-nav-more{display:block}.bottom-nav button{min-height:42px;touch-action:manipulation}}
 @media(min-width:721px){.workspace-launcher{align-items:center}.workspace-sheet{border-radius:14px}}
+
+/* Live Paper Trading lifecycle */
+.live-paper-section{margin-bottom:10px}.live-paper-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin:8px 0}.live-paper-kpi{background:#0D1319;border:1px solid #1C2832;border-radius:7px;padding:9px}.live-paper-kpi b{display:block;color:#71838F;font-size:7px}.live-paper-kpi strong{display:block;font-size:14px;margin-top:4px}.live-paper-tabs{display:flex;gap:6px;margin:8px 0}.live-paper-tab{border:1px solid #263540;background:#081016;color:#9FB0BC;border-radius:6px;padding:6px 10px;font-size:8px}.live-paper-tab.active{border-color:#00B0FF;color:#DDF5FF;background:#08253A}.live-paper-table{overflow:auto;border:1px solid #1B2730;border-radius:7px}.live-paper-row{display:grid;grid-template-columns:34px 1.1fr .85fr .7fr .7fr .7fr .75fr .8fr .8fr;gap:6px;min-width:920px;padding:8px;border-bottom:1px solid #18232C;align-items:center;font-size:8px}.live-paper-row.head{color:#71838F;font-size:7px;text-transform:uppercase}.live-paper-row.clickable{cursor:pointer}.live-paper-row.clickable:hover{background:#0F171E}.live-paper-empty{padding:22px;text-align:center;color:#71838F;font-size:9px}.live-paper-legs{color:#8FA2AE;font-size:7px;margin-top:3px}.live-paper-status{font-size:8px;color:#7F919F}
+@media(max-width:900px){.live-paper-kpis{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:600px){.live-paper-kpis{grid-template-columns:repeat(2,1fr)}.live-paper-row{min-width:900px}}
 </style>
 </head>
 <body>
@@ -639,6 +644,19 @@ th{font-size:7px!important}
 
 <section id="paperPortfolioPage" hidden><div class="paper-page">
  <div class="page-head"><div><h1>Paper Portfolio</h1><p>₹1 crore virtual capital • positions, P&amp;L and complete paper execution ledger</p></div><div class="refresh-box"><span id="paperPortfolioStatus">PAPER ACCOUNT • CHECKING</span><button class="secondary" onclick="refreshPaperPortfolio(true)">↻ REFRESH</button></div></div>
+
+ <div class="card live-paper-section" id="livePaperTradingSection">
+  <div class="card-head"><div><h2>Live Paper Trading</h2><div class="sub">Alert → automatic paper entry • live P&amp;L • expiry lifecycle • broker orders OFF</div></div><span id="livePaperStatus" class="live-paper-status">SYNCING…</span></div>
+  <div class="live-paper-kpis">
+   <div class="live-paper-kpi"><b>ONGOING</b><strong id="lpOngoingCount">0</strong></div>
+   <div class="live-paper-kpi"><b>ONGOING P&amp;L</b><strong id="lpOngoingPnl">₹0</strong></div>
+   <div class="live-paper-kpi"><b>COMPLETED</b><strong id="lpCompletedCount">0</strong></div>
+   <div class="live-paper-kpi"><b>COMPLETED P&amp;L</b><strong id="lpCompletedPnl">₹0</strong></div>
+   <div class="live-paper-kpi"><b>EXECUTION</b><strong class="up">PAPER ONLY</strong></div>
+  </div>
+  <div class="live-paper-tabs"><button id="lpTabOngoing" class="live-paper-tab active" onclick="setLivePaperTab('ongoing')">ONGOING • PROFIT → LOSS</button><button id="lpTabCompleted" class="live-paper-tab" onclick="setLivePaperTab('completed')">COMPLETED • PROFIT → LOSS</button><button class="secondary" onclick="refreshLivePaperTrading(true)">↻ REFRESH</button></div>
+  <div id="lpTradeTable" class="live-paper-table"></div>
+ </div>
  <div class="card paper-toolbar"><div class="paper-field"><label>LEDGER VIEW</label><select id="paperLedgerView"><option value="ALL">ALL ORDERS</option><option value="BUY">BUY / ENTRY</option><option value="SELL">SELL / EXIT</option></select></div><div class="paper-field"><label>SYMBOL</label><input id="paperLedgerSymbol" placeholder="ALL SYMBOLS"></div><button class="secondary" onclick="refreshPaperPortfolio(true)">SYNC ACCOUNT</button><button class="primary" onclick="openPaperModal()">NEW PAPER TRADE</button></div>
  <div class="paper-kpis"><div class="paper-kpi"><b>STARTING CAPITAL</b><strong id="ppStarting">₹1,00,00,000</strong></div><div class="paper-kpi"><b>AVAILABLE CAPITAL</b><strong id="ppAvailable">₹—</strong></div><div class="paper-kpi"><b>REALIZED P&amp;L</b><strong id="ppRealized">₹—</strong></div><div class="paper-kpi"><b>LIVE MTM</b><strong id="ppMtm">₹—</strong></div><div class="paper-kpi"><b>OPEN POSITIONS</b><strong id="ppPositions">—</strong></div><div class="paper-kpi"><b>BROKER ORDERS</b><strong class="up">OFF</strong></div></div>
  <div class="paper-grid">
@@ -1212,6 +1230,39 @@ async function paperPortfolioExit(){
 document.getElementById('paperLedgerView')?.addEventListener('change',()=>renderPaperLedger(paperPortfolioState.orders));
 document.getElementById('paperLedgerSymbol')?.addEventListener('input',()=>renderPaperLedger(paperPortfolioState.orders));
 
+
+
+// Live Paper Trading lifecycle workspace
+let livePaperTab='ongoing';
+let livePaperTimer=null;
+let livePaperState={ongoing:[],completed:[],ongoing_pnl:0,completed_pnl:0};
+function livePaperMoney(v){return '₹'+fmt(Number(v||0))}
+function setLivePaperTab(tab){livePaperTab=tab;document.getElementById('lpTabOngoing')?.classList.toggle('active',tab==='ongoing');document.getElementById('lpTabCompleted')?.classList.toggle('active',tab==='completed');renderLivePaperTrading()}
+function renderLivePaperTrading(){
+ const rows=livePaperTab==='ongoing'?livePaperState.ongoing:livePaperState.completed;
+ const head='<div class="live-paper-row head"><span>#</span><span>STRATEGY / SYMBOL</span><span>DIRECTION</span><span>LOTS</span><span>P&amp;L</span><span>P&amp;L %</span><span>EXPIRY</span><span>STATUS</span><span>EXIT</span></div>';
+ const body=rows.map((x,i)=>{const pnl=livePaperTab==='ongoing'?x.unrealized_pnl:x.realized_pnl;const legs=(x.legs||[]).length;return '<div class="live-paper-row clickable" onclick="showLivePaperDetail('+Number(x.id)+')"><span>'+(i+1)+'</span><span><strong>'+x.strategy+'</strong> • '+x.symbol+'<div class="live-paper-legs">'+legs+' leg'+(legs===1?'':'s')+' • alert '+String(x.event_id||'').slice(-24)+'</div></span><span>'+x.direction+'</span><span>'+fmt(x.lots)+'</span><span class="'+paperPnlClass(pnl)+'">'+livePaperMoney(pnl)+'</span><span class="'+paperPnlClass(pnl)+'">'+pct(x.pnl_pct)+'</span><span>'+(x.earliest_expiry||x.expiry||'—')+'</span><span>'+(livePaperTab==='ongoing'?'ONGOING':'COMPLETED')+'</span><span>'+(livePaperTab==='completed'?(x.exit_reason||'—'):'—')+'</span></div>'}).join('');
+ document.getElementById('lpTradeTable').innerHTML=head+(body||'<div class="live-paper-empty">No '+livePaperTab+' live-paper trades yet.</div>');
+}
+async function refreshLivePaperTrading(showToast=false){
+ try{
+  const r=await fetch(base()+'/api/v1/live-paper/status',{cache:'no-store'});if(!r.ok)throw new Error('Live paper API '+r.status);
+  livePaperState=await r.json();
+  document.getElementById('lpOngoingCount').textContent=fmt(livePaperState.ongoing_count);
+  document.getElementById('lpOngoingPnl').textContent=livePaperMoney(livePaperState.ongoing_pnl);document.getElementById('lpOngoingPnl').className=paperPnlClass(livePaperState.ongoing_pnl);
+  document.getElementById('lpCompletedCount').textContent=fmt(livePaperState.completed_count);
+  document.getElementById('lpCompletedPnl').textContent=livePaperMoney(livePaperState.completed_pnl);document.getElementById('lpCompletedPnl').className=paperPnlClass(livePaperState.completed_pnl);
+  document.getElementById('livePaperStatus').textContent='LIVE • '+new Date().toLocaleTimeString('en-IN');renderLivePaperTrading();
+  if(showToast)toast('Live Paper Trading synced');
+ }catch(e){document.getElementById('livePaperStatus').textContent='ERROR • '+e.message}
+}
+function showLivePaperDetail(id){
+ const all=[...(livePaperState.ongoing||[]),...(livePaperState.completed||[])],x=all.find(v=>Number(v.id)===Number(id));if(!x)return;
+ const pnl=livePaperTab==='ongoing'?x.unrealized_pnl:x.realized_pnl;
+ alert('Live Paper #'+x.id+'\\n'+x.strategy+' • '+x.symbol+'\\nP&L: '+livePaperMoney(pnl)+' ('+pct(x.pnl_pct)+')\\nExpiry: '+(x.earliest_expiry||x.expiry||'—')+'\\nStatus: '+x.status+'\\nExit: '+(x.exit_reason||'—'));
+}
+function startLivePaperMonitor(){if(livePaperTimer)clearInterval(livePaperTimer);refreshLivePaperTrading(false);livePaperTimer=setInterval(()=>{if(!document.getElementById('paperPortfolioPage')?.hidden)refreshLivePaperTrading(false)},2000)}
+startLivePaperMonitor();
 
 // Batch-9 Trading Journal runtime
 const JOURNAL_KEY='algo.dashboard.journal.v1';
