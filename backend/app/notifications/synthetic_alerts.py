@@ -36,7 +36,7 @@ class SyntheticAlertService:
         )
 
     def notify_users(self, db, results) -> int:
-        if not results or not self._notifier.configured:
+        if not results:
             return 0
         sent = 0
         for result in results:
