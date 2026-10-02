@@ -34,3 +34,15 @@ def test_calendar_earlier_expiry_closes_both_as_one_trade(db_session):
     assert len(closed) == 1
     assert closed[0].status == "COMPLETED"
     assert closed[0].exit_reason == "EXPIRY_CLOSE"
+
+
+def test_numeric_expiry_closes_synthetic_trade(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=10_000_000, emergency_stop=False))
+    db_session.commit()
+    trade,_ = svc.enter_or_mark(db_session, strategy_id="synthetic-future-cash-carry", symbol="NIFTY",
+        event_id="SYN-1", direction="LONG", expiry="20261010", earliest_expiry="20261010",
+        lot_size=50, lots=1, edge=4, capital_used=100000)
+    closed = svc.close_expired(db_session, now=datetime(2026,10,10,15,30))
+    assert len(closed) == 1
+    assert closed[0].exit_reason == "EXPIRY_CLOSE"
