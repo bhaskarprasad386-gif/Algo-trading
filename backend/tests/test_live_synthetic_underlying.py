@@ -44,15 +44,25 @@ def test_index_token_resolution_uses_exact_master_entry():
     assert master.resolve_index_token("NIFTY") == "99926000"
 
 
-def test_index_token_resolution_rejects_ambiguous_master_entries():
+def test_index_token_resolution_prefers_migrated_angel_index_entry():
     master = InstrumentMaster()
     master.instruments = [
-        {"exch_seg": "NSE", "symbol": "NIFTY", "token": "99926000"},
-        {"exch_seg": "NSE", "symbol": "NIFTY", "token": "26000"},
+        {"exch_seg": "NSE", "symbol": "NIFTY", "token": "26000", "instrumenttype": "AMXIDX"},
+        {"exch_seg": "NSE", "symbol": "NIFTY", "token": "99926000", "instrumenttype": "AMXIDX"},
+    ]
+    master._loaded = True
+    assert master.resolve_index_token("NIFTY") == "99926000"
+
+
+def test_index_token_resolution_still_rejects_multiple_migrated_entries():
+    master = InstrumentMaster()
+    master.instruments = [
+        {"exch_seg": "BSE", "symbol": "BANKEX", "token": "99919012", "instrumenttype": "AMXIDX"},
+        {"exch_seg": "BSE", "symbol": "BANKEX", "token": "99919099", "instrumenttype": "AMXIDX"},
     ]
     master._loaded = True
     try:
-        master.resolve_index_token("NIFTY")
+        master.resolve_index_token("BANKEX", "BSE")
     except LookupError as exc:
         assert "expected exactly one index instrument" in str(exc)
     else:
