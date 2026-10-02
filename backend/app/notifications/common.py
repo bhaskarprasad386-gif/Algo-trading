@@ -50,6 +50,21 @@ class AlertService:
         return sent
 
     def dispatch(self, db, event: AlertEvent) -> int:
+        paper = event.metadata.get("paper_trade")
+        if isinstance(paper, Mapping):
+            try:
+                from app.auto.live_paper import LivePaperTradeService
+                LivePaperTradeService().enter_or_mark(
+                    db, strategy_id=event.strategy_id, symbol=event.symbol,
+                    event_id=event.event_id, direction=paper.get("direction", "LONG"),
+                    expiry=paper.get("expiry"), earliest_expiry=paper.get("earliest_expiry") or paper.get("expiry"),
+                    lot_size=int(paper.get("lot_size", 1) or 1), lots=int(paper.get("lots", 1) or 1),
+                    edge=float(paper.get("edge", 0.0) or 0.0), capital_used=float(paper.get("capital_used", 0.0) or 0.0),
+                    legs=paper.get("legs") or [], metadata=dict(paper),
+                )
+            except Exception as exc:
+                from app.core.logger import app_logger
+                app_logger.error("Live paper auto-entry failed: %s", exc)
         if not self._notifier.configured:
             return 0
         gross = event.metadata.get("gross_profit", event.metadata.get("gross_pnl", event.metadata.get("gross_profit_rupees")))
