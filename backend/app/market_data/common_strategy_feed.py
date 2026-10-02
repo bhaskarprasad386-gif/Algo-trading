@@ -24,6 +24,13 @@ _SHARED_MANAGER: CommonWebSocketManager | None = None
 _SHARED_AUTH: AngelOneAuth | None = None
 
 
+def shared_common_manager_snapshot() -> dict[str, Any] | None:
+    """Return runtime state without creating the shared manager or persisting ticks."""
+    with _SHARED_LOCK:
+        manager = _SHARED_MANAGER
+    return None if manager is None else manager.snapshot()
+
+
 def shared_common_manager(
     auth: AngelOneAuth | None = None,
     socket_factory: Callable[[], Any] | None = None,
