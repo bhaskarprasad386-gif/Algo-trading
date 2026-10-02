@@ -114,6 +114,9 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # Signal blocking worker threads before cancelling their asyncio wrappers.
+        # This makes to_thread(run_forever) unwind promptly during service stop.
+        _signal_live_runner_shutdown()
         for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _paper_box_spread_cycle_task, _live_paper_monitor_task):
             if task is not None:
                 task.cancel()
@@ -378,6 +381,35 @@ _live_box_spread_task: asyncio.Task | None = None
 _paper_box_spread_cycle_task: asyncio.Task | None = None
 _live_paper_monitor_task: asyncio.Task | None = None
 MARKET_OPEN = time(9, 15)
+
+
+def _signal_live_runner_shutdown() -> None:
+    """Signal worker-thread runners before cancelling their asyncio wrappers.
+
+    The live runners execute blocking run_forever() methods through
+    asyncio.to_thread(). Cancelling the asyncio task does not itself stop the
+    worker thread. Set each runner's interrupt event first so run_forever() can
+    unwind and perform its normal cleanup instead of reaching systemd's
+    30-second stop deadline.
+    """
+    for runner in (
+        live_cash_future_runner,
+        live_calendar_spread_runner,
+        live_synthetic_runner,
+        live_box_spread_runner,
+    ):
+        if runner is None:
+            continue
+        stop_event = getattr(runner, "stop_event", None)
+        if stop_event is not None:
+            stop_event.set()
+            continue
+        stop_requested = getattr(runner, "_stop_requested", None)
+        if stop_requested is not None:
+            stop_requested.set()
+            continue
+        app_logger.warning("Live runner has no interrupt event during shutdown: %s", type(runner).__name__)
+
 MARKET_CLOSE = time(15, 30)
 
 
