@@ -25,8 +25,45 @@ def payload(p):
     }
 
 @router.get("/status")
+def _refresh_marks(db: Session, trades):
+    try:
+        from app import main as runtime
+        cash = runtime.live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=500)
+        cash_map = {f"{x.get('symbol')}:{x.get('contract_month')}": x for x in cash}
+        calendar = runtime.live_calendar_spread_scanner.snapshot(limit=500)
+        cal_map = {f"{x.underlying}:{x.near_contract_month}:{x.far_contract_month}:{x.direction}": x for x in calendar}
+        syn_map = {}
+        for x in runtime.live_synthetic_latest_results:
+            syn_map[f"{x.option.underlying}:{x.option.expiry}:{x.option.strike:g}:{x.direction}"] = x
+        box_map = {}
+        for x in runtime.live_box_spread_latest_results:
+            box_map[f"{x.low.underlying}:{x.low.expiry}:{x.low.strike:g}:{x.high.strike:g}:{x.direction}"] = x
+        for trade in trades:
+            if trade.strategy_id == "cash-future":
+                row = cash_map.get(trade.event_id)
+                edge = None if row is None else row.get("gap")
+            elif trade.strategy_id == "calendar-spread":
+                row = cal_map.get(trade.event_id)
+                edge = None if row is None else row.gap_points
+            elif trade.strategy_id == "synthetic-future-cash-carry":
+                row = syn_map.get(trade.event_id)
+                edge = None if row is None else row.executable_edge
+            elif trade.strategy_id == "box-spread":
+                row = box_map.get(trade.event_id)
+                edge = None if row is None else row.executable_edge
+            else:
+                edge = None
+            if edge is not None:
+                service.mark(db, trade, edge=float(edge))
+        db.commit()
+    except Exception:
+        pass
+
 def status(db: Session = Depends(get_db)):
     user = current_user_id(db)
+    service.close_expired(db)
+    ongoing = service.ongoing(db, user)
+    _refresh_marks(db, ongoing)
     service.close_expired(db)
     ongoing = service.ongoing(db, user)
     completed = service.completed(db, user)
@@ -41,10 +78,11 @@ def status(db: Session = Depends(get_db)):
 
 @router.post("/refresh")
 def refresh(db: Session = Depends(get_db)):
-    # The strategy runners remain the source of live marks. This endpoint is
-    # intentionally a thin lifecycle hook; it only enforces expiry closure.
     user = current_user_id(db)
     closed = service.close_expired(db)
+    ongoing = service.ongoing(db, user)
+    _refresh_marks(db, ongoing)
+    service.close_expired(db)
     ongoing = service.ongoing(db, user)
     completed = service.completed(db, user)
     return {
