@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from threading import RLock
 from app.core.config import settings
 from app.market_data.contracts import MarketDataRecord, InstrumentType
@@ -89,11 +89,17 @@ class LiveCalendarSpreadScanner:
                 legs=(OpportunityLeg(near,OrderSide.SELL,"near-entry"),OpportunityLeg(far,OrderSide.BUY,"far-entry"))
             lot=int(near.lot_size); gross=gross_profit_from_points(gap,lot)
             qualifies=qualifies_opportunity(gap_points=gap,gross_profit=gross,minimum_gap_points=self.minimum_gap_points,minimum_gross_profit=self.minimum_gross_profit)
+            # OpportunitySignal requires leg timestamps to be identical. Once the
+            # pair passes Calendar-specific skew tolerance, anchor both leg snapshots
+            # to the near-leg timestamp. Original feed records remain unchanged.
+            signal_near = replace(near, timestamp_ns=near.timestamp_ns)
+            signal_far = replace(far, timestamp_ns=near.timestamp_ns)
+            signal_legs = (OpportunityLeg(signal_near, OrderSide.BUY if direction == "LONG_NEAR_SHORT_FAR" else OrderSide.SELL, "near-entry"), OpportunityLeg(signal_far, OrderSide.SELL if direction == "LONG_NEAR_SHORT_FAR" else OrderSide.BUY, "far-entry"))
             base=max(float(near.ask),float(far.ask),1e-12)
             nq=min(float(near.bid_qty or 0),float(near.ask_qty or 0)); fq=min(float(far.bid_qty or 0),float(far.ask_qty or 0))
             liquidity=min(nq,fq) if nq>0 and fq>0 else 0.0
             cap=int(settings.LIVE_CASH_FUTURE_CAPITAL/(base*lot)) if settings.LIVE_CASH_FUTURE_CAPITAL>0 else 0
-            signal=OpportunitySignal(strategy_id=self.strategy_id,opportunity_type="calendar-spread",symbol=key[0],timestamp_ns=near.timestamp_ns,gap_points=gap,gross_profit=gross,lot_size=lot,qualifies=qualifies,minimum_gap_points=self.minimum_gap_points,minimum_gross_profit=self.minimum_gross_profit,legs=legs,expiry=far.expiry,metadata={"direction":direction,"exchange":key[1],"near_contract_month":near_m,"far_contract_month":far_m,"source":"common-market-data","live_orders":False})
+            signal=OpportunitySignal(strategy_id=self.strategy_id,opportunity_type="calendar-spread",symbol=key[0],timestamp_ns=near.timestamp_ns,gap_points=gap,gross_profit=gross,lot_size=lot,qualifies=qualifies,minimum_gap_points=self.minimum_gap_points,minimum_gross_profit=self.minimum_gross_profit,legs=signal_legs,expiry=far.expiry,metadata={"direction":direction,"exchange":key[1],"near_contract_month":near_m,"far_contract_month":far_m,"source":"common-market-data","live_orders":False})
             result=CalendarSpreadSignal(key[0],key[1],str(near.instrument_type.value),near_m,far_m,near.timestamp_ns,float(near.bid),float(near.ask),float(far.bid),float(far.ask),lot,long_edge,short_edge,long_edge/base*100,short_edge/base*100,liquidity,cap,gap/base,direction,gap,gross,qualifies,signal)
             self._signals[key]=result
         if qualifies and (session_factory := getattr(self, "_session_factory", None)):
