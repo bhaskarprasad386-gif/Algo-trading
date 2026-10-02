@@ -10,7 +10,7 @@ def test_box_live_scanner_uses_real_bid_ask_for_both_directions():
     quotes=[q(1,100,10,11,1,2),q(1,110,8,9,2,3)]
     result=scan_box_snapshot(
         quotes,atm_strike=100,instrument_class="STOCK",
-        config=BoxSpreadScanConfig(allowed_stock_symbols=frozenset({"ABC"})),
+        config=BoxSpreadScanConfig(allowed_stock_symbols=frozenset({"ABC"}), max_option_spread_pct=5.0),
         policy=ScanPolicy(stock_box_distances=(1,)),
     )
     # With executable bid/ask prices, only the LONG box is profitable here.\n    # LONG debit = 11 + 2 - 8 - 2 = 3; width = 10; edge = 7.\n    assert len(result) == 1\n    assert result[0].direction == "LONG"\n    assert result[0].executable_edge == 7
@@ -23,11 +23,11 @@ def test_live_box_scanner_waits_for_matching_ce_pe_pairs():
     )
     base={"underlying":"ABC","instrument_class":"STOCK","source_timestamp_ns":1,
           "expiry":"31DEC2026","strike":100,"lot_size":10,"volume":100,"oi":100}
-    assert scanner.observe({**base,"option_type":"CE","bid":10,"ask":11})==()
-    assert scanner.observe({**base,"option_type":"PE","bid":1,"ask":2})==()
+    assert scanner.observe({**base,"option_type":"CE","bid":10,"ask":10.2})==()
+    assert scanner.observe({**base,"option_type":"PE","bid":1,"ask":1.02})==()
     upper={**base,"strike":110}
-    assert scanner.observe({**upper,"option_type":"CE","bid":8,"ask":9})==()
-    result=scanner.observe({**upper,"option_type":"PE","bid":2,"ask":3})
+    assert scanner.observe({**upper,"option_type":"CE","bid":8,"ask":8.2})==()
+    result=scanner.observe({**upper,"option_type":"PE","bid":2,"ask":2.02})
     assert any(r.direction=="LONG" for r in result)
 
 
