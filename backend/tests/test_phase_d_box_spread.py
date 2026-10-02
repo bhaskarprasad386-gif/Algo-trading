@@ -48,10 +48,13 @@ def test_stock_scanner_stops_at_five():
 
 def test_min_arbitrage_points_filters_before_result():
     chain = make_chain((1,), cls="INDEX")
+    policy = ScanPolicy(index_box_distances=(1,))
     assert scan_box_snapshot(chain, atm_strike=100, instrument_class="INDEX",
-                             config=BoxSpreadScanConfig(min_executable_edge=1.0))
+                             config=BoxSpreadScanConfig(min_executable_edge=1.0),
+                             policy=policy)
     assert not scan_box_snapshot(chain, atm_strike=100, instrument_class="INDEX",
-                                 config=BoxSpreadScanConfig(min_executable_edge=1.01))
+                                 config=BoxSpreadScanConfig(min_executable_edge=1.01),
+                                 policy=policy)
 
 
 def test_crossed_quote_is_rejected():
@@ -62,11 +65,8 @@ def test_crossed_quote_is_rejected():
         3.0, 2.0, bad.put_bid, bad.put_ask, bad.lot_size,
         bad.instrument_class, bad.volume, bad.oi,
     )
-    try:
-        scan_box_snapshot([bad, *chain[1:]], atm_strike=100, instrument_class="INDEX")
-    except ValueError:
-        return
-    raise AssertionError("crossed quote must be rejected")
+    results = scan_box_snapshot([bad, *chain[1:]], atm_strike=100, instrument_class="INDEX")
+    assert not results
 
 
 def test_timestamp_mismatch_is_rejected():
