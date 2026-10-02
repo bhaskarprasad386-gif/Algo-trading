@@ -89,6 +89,21 @@ class GlobalPaperAutoService:
         if user_id is not None: q=q.filter(StrategyAutoPaperPosition.user_id==int(user_id))
         return q.order_by(StrategyAutoPaperPosition.realized_pnl.desc(),StrategyAutoPaperPosition.closed_at.desc()).limit(max(1,min(int(limit),1000))).all()
 
+    def update_mark(self, db: Session, position_id: int, current_price: float) -> bool:
+        """Update an active paper position from its latest mark price."""
+        row = db.query(StrategyAutoPaperPosition).filter(
+            StrategyAutoPaperPosition.id == int(position_id),
+            StrategyAutoPaperPosition.status == "ACTIVE",
+        ).first()
+        if row is None:
+            return False
+        price = float(current_price)
+        row.current_price = price
+        row.pnl = round((price - float(row.entry_price)) * int(row.quantity), 8)
+        row.pnl_pct = round((row.pnl / row.capital_allocated * 100.0) if row.capital_allocated else 0.0, 8)
+        db.commit()
+        return True
+
     def update_pnl(self, db: Session, trade_key: str, pnl: float) -> bool:
         row=db.query(StrategyAutoPaperPosition).filter(StrategyAutoPaperPosition.trade_key==trade_key,StrategyAutoPaperPosition.status=="ACTIVE").first()
         if row is None: return False
