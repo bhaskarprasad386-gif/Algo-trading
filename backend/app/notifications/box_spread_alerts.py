@@ -37,7 +37,7 @@ class BoxSpreadAlertService:
                 event_id=f"{l.underlying}:{l.expiry}:{l.strike:g}:{h.strike:g}:{r.direction}",
                 symbol=l.underlying, timestamp_ns=l.timestamp_ns,
                 message=self._message(r),
-                metadata={"gross_profit": r.gross_pnl, "edge": r.executable_edge},
+                metadata={"gross_profit": r.gross_pnl, "edge": r.executable_edge, "paper_trade": {"direction": r.direction, "expiry": l.expiry, "earliest_expiry": l.expiry, "lot_size": l.lot_size, "lots": 1, "edge": r.executable_edge, "capital_used": abs(float(h.strike) - float(l.strike)) * l.lot_size, "legs": [{"strike": l.strike, "side": "LOW"}, {"strike": h.strike, "side": "HIGH"}]},
             ))
         return sent
 __all__=["BoxSpreadAlertService"]
