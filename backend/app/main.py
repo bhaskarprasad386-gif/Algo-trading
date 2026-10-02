@@ -467,13 +467,23 @@ async def _cash_future_history_loop() -> None:
 
 
 
+def _stop_live_runner_nonblocking(runner, *, name: str) -> None:
+    """Request runner shutdown without blocking the asyncio event loop.
+
+    Runner stop paths also close shared broker sockets and can legitimately take
+    longer than the systemd 30-second service deadline. The runner's interrupt
+    event is set synchronously by stop(); potentially blocking cleanup runs in a
+    daemon thread so application shutdown can finish promptly.
+    """
+    threading.Thread(target=runner.stop, name=name, daemon=True).start()
+
+
 async def _run_live_runner_in_daemon_thread(runner, *, name: str) -> None:
     """Run a long-lived blocking market runner outside asyncio's default executor.
 
-    asyncio.to_thread() is intended for bounded work. Cancelling a task awaiting
-    to_thread() cannot stop its worker thread, and asyncio shutdown can then wait
-    on that executor thread. Live runners are therefore owned by daemon threads;
-    their explicit stop events remain the authoritative shutdown signal.
+    Live runners are owned by daemon threads. Their explicit stop events remain
+    authoritative, while cleanup is deliberately non-blocking for asyncio
+    shutdown.
     """
     worker = threading.Thread(target=runner.run_forever, name=name, daemon=True)
     worker.start()
@@ -481,7 +491,7 @@ async def _run_live_runner_in_daemon_thread(runner, *, name: str) -> None:
         while worker.is_alive():
             await asyncio.sleep(0.25)
     finally:
-        runner.stop()
+        _stop_live_runner_nonblocking(runner, name=f"{name}-stop")
 
 
 async def _live_cash_future_loop() -> None:
@@ -563,7 +573,7 @@ async def _live_synthetic_loop() -> None:
     finally:
         runner = live_synthetic_runner
         if runner is not None:
-            runner.stop()
+            _stop_live_runner_nonblocking(runner, name="live-synthetic-final-stop")
         live_synthetic_runner = None
 
 def _update_live_synthetic_results(results: tuple) -> None:
@@ -702,7 +712,7 @@ async def _live_box_spread_loop() -> None:
     finally:
         runner = live_box_spread_runner
         if runner is not None:
-            runner.stop()
+            _stop_live_runner_nonblocking(runner, name="live-box-spread-final-stop")
         live_box_spread_runner = None
 
 
@@ -725,7 +735,7 @@ async def _live_calendar_spread_loop() -> None:
             collector, name="live-calendar-spread-runner"
         )
     finally:
-        collector.stop()
+        _stop_live_runner_nonblocking(collector, name="live-calendar-final-stop")
         live_calendar_spread_runner = None
 
 
