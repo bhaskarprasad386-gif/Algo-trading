@@ -13,6 +13,7 @@ def test_box_scanner_accepts_explicit_non_nifty50_stock_universe():
         instrument_class="STOCK",
         config=BoxSpreadScanConfig(
             allowed_stock_symbols=frozenset({"ABC"}),
+            max_option_spread_pct=100.0,
         ),
         policy=__import__("app.backtesting.arbitrage_scan_policy", fromlist=["ScanPolicy"]).ScanPolicy(stock_box_distances=(1,)),
     )
