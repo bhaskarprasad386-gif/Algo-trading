@@ -9,6 +9,7 @@ from app.notifications.common import AlertEvent, AlertService
 class LiveCashFutureAlert:
     symbol: str
     contract_month: str
+    expiry: str | None = None
     cash_ask: float
     future_bid: float
     gap: float
