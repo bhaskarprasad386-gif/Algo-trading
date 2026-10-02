@@ -1461,5 +1461,41 @@ function setMobileNav(id){document.querySelectorAll('#responsiveQuickNav button'
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',mount); else mount();
 })();
 </script>
+<script>
+(function initLivePaperTradingPanel(){
+  function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+  function money(v){const n=Number(v||0);return (n>=0?'+':'')+'₹'+Math.abs(n).toLocaleString('en-IN',{maximumFractionDigits:2})}
+  function row(x,completed){
+    const pnl=completed?Number(x.realized_pnl||0):Number(x.unrealized_pnl||0);
+    return '<tr><td>'+esc(x.strategy)+'</td><td><b>'+esc(x.symbol)+'</b><br><small>'+esc(x.direction)+'</small></td><td>'+esc(x.lots)+' × '+esc(x.lot_size)+'</td><td>'+esc(x.earliest_expiry||x.expiry||'—')+'</td><td>'+money(pnl)+'<br><small>'+Number(x.pnl_pct||0).toFixed(2)+'%</small></td><td>'+esc(completed?(x.exit_reason||'CLOSED'):'LIVE')+'</td><td>'+(!completed?'<button class="secondary lp-close" data-id="'+x.id+'">Close</button>':esc(x.closed_at||'—'))+'</td></tr>'
+  }
+  function mount(){
+    if(document.getElementById('livePaperTradingPanel')) return;
+    const host=document.querySelector('.container'); if(!host)return;
+    const box=document.createElement('section'); box.id='livePaperTradingPanel'; box.className='card';
+    box.style.cssText='margin:14px 0;border-left:3px solid #00B0FF';
+    box.innerHTML='<div class="card-head"><div><h2>LIVE PAPER TRADING</h2><div class="sub">Alert → automatic paper entry • broker orders OFF • expiry lifecycle enforced</div></div><div id="lpSummary" style="font-size:11px;text-align:right">Loading…</div></div>'+
+      '<div style="display:grid;grid-template-columns:1fr;gap:12px">'+
+      '<div><h3 style="margin:8px 0">ONGOING <span id="lpOngoingCount"></span></h3><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr><th>Strategy</th><th>Trade</th><th>Lots</th><th>Expiry</th><th>Live P&L</th><th>Status</th><th>Action</th></tr></thead><tbody id="lpOngoing"></tbody></table></div></div>'+
+      '<div><h3 style="margin:8px 0">COMPLETED <span id="lpCompletedCount"></span></h3><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr><th>Strategy</th><th>Trade</th><th>Lots</th><th>Expiry</th><th>Realized P&L</th><th>Exit</th><th>Closed</th></tr></thead><tbody id="lpCompleted"></tbody></table></div></div></div>';
+    host.prepend(box);
+    async function load(){
+      try{
+        const rr=await fetch('/api/v1/live-paper/refresh',{method:'POST',cache:'no-store'});
+        if(!rr.ok) throw new Error('API '+rr.status);
+        const d=await rr.json(), o=d.ongoing||[], c=d.completed||[];
+        document.getElementById('lpOngoingCount').textContent='('+o.length+')';
+        document.getElementById('lpCompletedCount').textContent='('+c.length+')';
+        document.getElementById('lpSummary').innerHTML='<b>'+money(d.ongoing.reduce((s,x)=>s+Number(x.unrealized_pnl||0),0))+'</b> unrealized • '+money(c.reduce((s,x)=>s+Number(x.realized_pnl||0),0))+' completed';
+        document.getElementById('lpOngoing').innerHTML=o.length?o.map(x=>row(x,false)).join(''):'<tr><td colspan="7">No ongoing paper trades.</td></tr>';
+        document.getElementById('lpCompleted').innerHTML=c.length?c.map(x=>row(x,true)).join(''):'<tr><td colspan="7">No completed paper trades.</td></tr>';
+        box.querySelectorAll('.lp-close').forEach(b=>b.onclick=async()=>{if(!confirm('Close this paper trade now?'))return;await fetch('/api/v1/live-paper/positions/'+b.dataset.id+'/close',{method:'POST'});load()});
+      }catch(e){document.getElementById('lpSummary').textContent='Live Paper API unavailable: '+e.message}
+    }
+    load(); setInterval(load,2000);
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',mount);else mount();
+})();
+</script>
 </body>
 </html>
