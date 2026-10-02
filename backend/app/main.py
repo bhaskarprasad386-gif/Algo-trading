@@ -467,6 +467,23 @@ async def _cash_future_history_loop() -> None:
 
 
 
+async def _run_live_runner_in_daemon_thread(runner, *, name: str) -> None:
+    """Run a long-lived blocking market runner outside asyncio's default executor.
+
+    asyncio.to_thread() is intended for bounded work. Cancelling a task awaiting
+    to_thread() cannot stop its worker thread, and asyncio shutdown can then wait
+    on that executor thread. Live runners are therefore owned by daemon threads;
+    their explicit stop events remain the authoritative shutdown signal.
+    """
+    worker = threading.Thread(target=runner.run_forever, name=name, daemon=True)
+    worker.start()
+    try:
+        while worker.is_alive():
+            await asyncio.sleep(0.25)
+    finally:
+        runner.stop()
+
+
 async def _live_cash_future_loop() -> None:
     global live_cash_future_runner
     runner = LiveCashFutureCommonRunner(
@@ -478,7 +495,9 @@ async def _live_cash_future_loop() -> None:
     )
     live_cash_future_runner = runner
     try:
-        await asyncio.to_thread(runner.run_forever)
+        await _run_live_runner_in_daemon_thread(
+            runner, name="live-cash-future-runner"
+        )
     finally:
         runner.stop()
         live_cash_future_runner = None
@@ -538,7 +557,9 @@ async def _live_synthetic_loop() -> None:
             on_results=lambda results: _update_live_synthetic_results(results),
         )
         live_synthetic_runner = runner
-        await asyncio.to_thread(runner.run_forever)
+        await _run_live_runner_in_daemon_thread(
+            runner, name="live-synthetic-runner"
+        )
     finally:
         runner = live_synthetic_runner
         if runner is not None:
@@ -675,7 +696,9 @@ async def _live_box_spread_loop() -> None:
             on_results=lambda results: _update_live_box_spread_results(results),
         )
         live_box_spread_runner = runner
-        await asyncio.to_thread(runner.run_forever)
+        await _run_live_runner_in_daemon_thread(
+            runner, name="live-box-spread-runner"
+        )
     finally:
         runner = live_box_spread_runner
         if runner is not None:
@@ -698,7 +721,9 @@ async def _live_calendar_spread_loop() -> None:
     )
     live_calendar_spread_runner = collector
     try:
-        await asyncio.to_thread(collector.run_forever)
+        await _run_live_runner_in_daemon_thread(
+            collector, name="live-calendar-spread-runner"
+        )
     finally:
         collector.stop()
         live_calendar_spread_runner = None
