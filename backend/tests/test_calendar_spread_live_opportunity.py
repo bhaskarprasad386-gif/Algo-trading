@@ -37,10 +37,18 @@ def test_calendar_reverse_direction_and_threshold_filter():
     assert result.qualifies is True
     assert scanner.snapshot()[0].gross_profit==250
 
-def test_calendar_mismatched_timestamp_is_not_paired():
+def test_calendar_subsecond_timestamp_skew_is_paired():
     scanner=LiveCalendarSpreadScanner()
-    scanner.update(rec("1","NIFTY-CUR",3,99,100))
-    assert scanner.update(rec("2","NIFTY-NEAR",4,104,105,expiry="2026-11-26")) is None
+    scanner.update(rec("1","NIFTY-CUR",3_000_000_000,99,100))
+    result=scanner.update(rec("2","NIFTY-NEAR",3_250_000_000,104,105,expiry="2026-11-26"))
+    assert result is not None
+    assert result.gap_points == 4
+
+
+def test_calendar_timestamp_skew_beyond_tolerance_is_not_paired():
+    scanner=LiveCalendarSpreadScanner()
+    scanner.update(rec("1","NIFTY-CUR",3_000_000_000,99,100))
+    assert scanner.update(rec("2","NIFTY-NEAR",3_500_000_001,104,105,expiry="2026-11-26")) is None
 
 def test_calendar_crossed_quote_is_rejected_by_canonical_contract():
     scanner=LiveCalendarSpreadScanner()
