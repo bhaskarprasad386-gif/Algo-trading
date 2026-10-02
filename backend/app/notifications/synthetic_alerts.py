@@ -46,7 +46,7 @@ class SyntheticAlertService:
                 event_id=f"{o.underlying}:{o.expiry}:{o.strike:g}:{result.direction}",
                 symbol=o.underlying, timestamp_ns=o.timestamp_ns,
                 message=self._message(result),
-                metadata={"gross_profit": result.gross_pnl, "edge": result.executable_edge},
+                metadata={"gross_profit": result.gross_pnl, "edge": result.executable_edge, "paper_trade": {"direction": result.direction, "expiry": o.expiry, "earliest_expiry": o.expiry, "lot_size": f.lot_size, "lots": 1, "edge": result.executable_edge, "capital_used": f.ask * f.lot_size, "legs": [{"instrument": "FUTURE", "side": "BUY" if result.direction == "LONG" else "SELL", "price": f.ask if result.direction == "LONG" else f.bid}, {"instrument": "OPTION", "side": "SELL" if result.direction == "LONG" else "BUY", "price": result.executable_edge}]},
             )
             sent += self._alerts.dispatch(db, event)
         return sent
