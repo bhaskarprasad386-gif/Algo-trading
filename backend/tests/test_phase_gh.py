@@ -1,5 +1,4 @@
 from app.auto.paper_auto import AutoSignal, GlobalPaperAutoService
-from app.models.strategy_auto_setting import StrategyAutoSetting
 from app.models.strategy_auto_paper_position import StrategyAutoPaperPosition
 
 def test_global_auto_gate_and_lifecycle(db_session):
@@ -17,8 +16,8 @@ def test_global_auto_gate_and_lifecycle(db_session):
     service.close(db_session, position.id)
     assert db_session.get(StrategyAutoPaperPosition, position.id).status == "CLOSED"
 
-def test_auto_setting_is_strategy_scoped(db_session):
+def test_auto_setting_is_global(db_session):
     service = GlobalPaperAutoService()
     service.set_enabled(db_session, "box-spread", True)
     assert service.is_enabled(db_session, "box-spread")
-    assert not service.is_enabled(db_session, "synthetic-future-cash-carry")
+    assert service.is_enabled(db_session, "synthetic-future-cash-carry")
