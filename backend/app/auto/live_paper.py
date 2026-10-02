@@ -38,7 +38,7 @@ class LivePaperTradeService:
             return existing, False
         if lot_size <= 0 or lots <= 0 or edge < 0:
             return None, False
-        setting = db.query(GlobalPaperSetting).first()
+        setting = db.query(GlobalPaperSetting).filter(GlobalPaperSetting.user_id == int(user_id)).first()
         if setting is None or not setting.enabled or setting.emergency_stop or float(setting.paper_amount) <= 0:
             return None, False
         capital_per_lot = max(0.0, float(capital_used)) / max(1, int(lots))
