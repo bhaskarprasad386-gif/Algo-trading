@@ -58,6 +58,20 @@ def run_schema_migrations() -> None:
                 if name not in position_columns:
                     connection.execute(text(f"ALTER TABLE positions ADD COLUMN {name} {definition}"))
 
+        if "strategy_auto_paper_positions" in account_tables:
+            paper_columns = {column["name"] for column in inspect(connection).get_columns("strategy_auto_paper_positions")}
+            paper_additions = {
+                "user_id": "INTEGER", "trade_key": "VARCHAR(256)", "alert_event_id": "VARCHAR(256)",
+                "direction": "VARCHAR(64)", "entry_pnl": "FLOAT DEFAULT 0.0", "realized_pnl": "FLOAT",
+                "pnl_pct": "FLOAT DEFAULT 0.0", "capital_allocated": "FLOAT DEFAULT 0.0",
+                "first_expiry": "VARCHAR(64)", "exit_reason": "VARCHAR(64)",
+                "emergency_closed": "BOOLEAN DEFAULT 0", "legs_json": "TEXT DEFAULT '[]'",
+            }
+            for name, definition in paper_additions.items():
+                if name not in paper_columns:
+                    connection.execute(text(f"ALTER TABLE strategy_auto_paper_positions ADD COLUMN {name} {definition}"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_strategy_auto_paper_trade_key ON strategy_auto_paper_positions (trade_key)"))
+
         if "backtest_jobs" not in account_tables:
             connection.execute(text("""
                 CREATE TABLE backtest_jobs (
