@@ -11,7 +11,7 @@ class LivePaperTrade(Base):
     user_id = Column(Integer, nullable=False, index=True, default=1)
     strategy_id = Column(String(128), nullable=False, index=True)
     symbol = Column(String(128), nullable=False, index=True)
-    event_id = Column(String(512), nullable=False, unique=True, index=True)
+    event_id = Column(String(512), nullable=False, index=True)
     direction = Column(String(32), nullable=False)
     expiry = Column(String(64), nullable=True, index=True)
     earliest_expiry = Column(String(64), nullable=True, index=True)
