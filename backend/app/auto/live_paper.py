@@ -17,7 +17,7 @@ def _parse_date(value):
     if not value:
         return None
     text = str(value).strip()
-    for fmt in ("%Y-%m-%d", "%d%b%Y", "%d%b%y", "%d-%m-%Y"):
+    for fmt in ("%Y-%m-%d", "%Y%m%d", "%d%b%Y", "%d%b%y", "%d-%m-%Y"):
         try:
             return datetime.strptime(text.upper(), fmt).date()
         except ValueError:
@@ -111,7 +111,13 @@ class LivePaperTradeService:
             expiry = _parse_date(trade.earliest_expiry)
             if expiry is None:
                 continue
-            if local_now.date() > expiry or (local_now.date() == expiry and local_now.time() >= MARKET_CLOSE):
+            try:
+                metadata = json.loads(trade.metadata_json or "{}")
+            except Exception:
+                metadata = {}
+            exchange = str(metadata.get("exchange") or "").strip().upper()
+            close_time = time(23, 30) if exchange == "MCX" else MARKET_CLOSE
+            if local_now.date() > expiry or (local_now.date() == expiry and local_now.time() >= close_time):
                 closed.append(self.close(db, trade, "EXPIRY_CLOSE"))
         return closed
 
