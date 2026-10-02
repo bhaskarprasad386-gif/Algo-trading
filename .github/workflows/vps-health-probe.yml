@@ -72,7 +72,7 @@ jobs:
                         safe_name=$(printf '%s' "$endpoint" | tr '\/?=&' '____')
             code=$(curl -sS --connect-timeout 2 --max-time 8 -o "/tmp/scanner_$safe_name" -w "%{http_code}" "http://127.0.0.1:8000$endpoint" 2>/dev/null || true)
             echo "SCANNER_ENDPOINT=$endpoint HTTP=$code"
-            if [ "\$code" != "000" ]; then
+            if [ "$code" != "000" ]; then
               head -c 6000 "/tmp/scanner_$safe_name" || true
               echo
             fi
