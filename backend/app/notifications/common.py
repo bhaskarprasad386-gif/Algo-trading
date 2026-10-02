@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Mapping
 from app.core.config import settings
+from app.core.database import SessionLocal
 from app.notifications.whatsapp import WhatsAppConfig, WhatsAppNotifier
 from app.models import AlertRule
 
@@ -37,6 +38,24 @@ class AlertService:
         return ("whatsapp",) if self._notifier.configured else ()
 
     def dispatch_user(self, user, event: AlertEvent) -> bool:
+        paper = event.metadata.get("paper_trade")
+        if isinstance(paper, Mapping):
+            paper_db = SessionLocal()
+            try:
+                from app.auto.live_paper import LivePaperTradeService
+                LivePaperTradeService().enter_or_mark(
+                    paper_db, strategy_id=event.strategy_id, symbol=event.symbol, event_id=event.event_id,
+                    direction=paper.get("direction", "LONG"), expiry=paper.get("expiry"),
+                    earliest_expiry=paper.get("earliest_expiry") or paper.get("expiry"),
+                    lot_size=int(paper.get("lot_size", 1) or 1), lots=int(paper.get("lots", 1) or 1),
+                    edge=float(paper.get("edge", 0.0) or 0.0), capital_used=float(paper.get("capital_used", 0.0) or 0.0),
+                    legs=paper.get("legs") or [], metadata=dict(paper), user_id=int(user.id),
+                )
+            except Exception as exc:
+                from app.core.logger import app_logger
+                app_logger.error("Live paper auto-entry failed: %s", exc)
+            finally:
+                paper_db.close()
         if not user.mobile_number:
             return False
         key = (int(user.id), event.event_id)
