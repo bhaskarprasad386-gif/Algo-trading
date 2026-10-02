@@ -161,11 +161,26 @@ class InstrumentMaster:
             item for item in self.search(tradingsymbol=symbol, exchange=exch)
             if str(item.get("token", "")).strip()
         ]
-        if len(results) != 1:
-            raise LookupError(
-                f"expected exactly one index instrument for {exch}:{symbol}, found {len(results)}"
-            )
-        return results[0]
+        if len(results) == 1:
+            return results[0]
+
+        # Angel One migrated index tokens to the 999xxxxx series and exposes
+        # those rows as AMXIDX. Some masters can temporarily contain both the
+        # legacy and migrated row for the same trading symbol. Prefer the
+        # unique migrated index row; retain fail-closed behavior if ambiguity
+        # remains after that documented preference.
+        preferred = [
+            item
+            for item in results
+            if str(item.get("instrumenttype", "")).strip().upper() == "AMXIDX"
+            and str(item.get("token", "")).strip().startswith("999")
+        ]
+        if len(preferred) == 1:
+            return preferred[0]
+
+        raise LookupError(
+            f"expected exactly one index instrument for {exch}:{symbol}, found {len(results)}"
+        )
 
     def resolve_index_token(self, tradingsymbol: str, exchange: str = "NSE") -> str:
         """Resolve a concrete Angel One token for an index underlying."""
