@@ -28,17 +28,6 @@ const health = (api: string, ws: string) => [
   ["Broker Orders", "OFF", "error"],
 ] as const;
 
-const scannerStatus = [
-  { label: "Signals Detected", value: snapshot.opportunities.toLocaleString("en-IN") },
-  { label: "Cash-Future Rows", value: snapshot.cashFuture.toLocaleString("en-IN") },
-  { label: "Calendar Rows", value: snapshot.calendar.toLocaleString("en-IN") },
-  { label: "Synthetic Rows", value: snapshot.synthetic.toLocaleString("en-IN") },
-  { label: "Orders Placed", value: "0 orders" },
-  { label: "Fills", value: "0 fills" },
-  { label: "Errors", value: "0 errors" },
-  { label: "Box Rows", value: snapshot.box.toLocaleString("en-IN") },
-];
-
 export default function HomePage() {
   const [capital, setCapital] = useState("10000000");
   const [apiStatus, setApiStatus] = useState<"checking" | "connected" | "error">("checking");
@@ -97,6 +86,16 @@ export default function HomePage() {
 
   const apiLabel = apiStatus === "connected" ? "CONNECTED" : apiStatus === "error" ? "ERROR" : "CONNECTING";
   const wsLabel = wsStatus === "connected" ? "CONNECTED" : wsStatus === "error" ? "ERROR" : "CONNECTING";
+  const scannerStatus = [
+    { label: "Signals Detected", value: snapshot.opportunities.toLocaleString("en-IN") },
+    { label: "Cash-Future Rows", value: snapshot.cashFuture.toLocaleString("en-IN") },
+    { label: "Calendar Rows", value: snapshot.calendar.toLocaleString("en-IN") },
+    { label: "Synthetic Rows", value: snapshot.synthetic.toLocaleString("en-IN") },
+    { label: "Orders Placed", value: "0 orders" },
+    { label: "Fills", value: "0 fills" },
+    { label: "Errors", value: "0 errors" },
+    { label: "Box Rows", value: snapshot.box.toLocaleString("en-IN") },
+  ];
 
   return (
     <div className="min-h-screen bg-white p-4 text-[#0F172A]">
