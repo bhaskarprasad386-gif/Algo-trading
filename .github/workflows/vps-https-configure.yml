@@ -34,8 +34,20 @@ jobs:
           NGINX_LINK="/etc/nginx/sites-enabled/algo-trading"
 
           echo "== PRECHECK =="
-          systemctl is-active --quiet algo-trading.service
-          curl -fsS http://127.0.0.1:8000/openapi.json >/dev/null
+          SERVICE_STATE="$(systemctl is-active algo-trading.service || true)"
+          echo "SERVICE_STATE=$SERVICE_STATE"
+          if [ "$SERVICE_STATE" != "active" ]; then
+            echo "== SERVICE STATUS =="
+            systemctl --no-pager --full status algo-trading.service || true
+            echo "== RECENT JOURNAL =="
+            journalctl -u algo-trading.service -n 80 --no-pager || true
+            echo "== LISTEN PORT 8000 =="
+            ss -lntp | grep ':8000 ' || true
+          fi
+          if ! curl -fsS --max-time 10 http://127.0.0.1:8000/openapi.json >/dev/null; then
+            echo "FASTAPI_LOCAL_FAILED"
+            exit 1
+          fi
           echo "FASTAPI_LOCAL_OK"
 
           if ! command -v certbot >/dev/null 2>&1 || ! certbot --version 2>&1 | awk '{print $2}' | awk -F. '{exit !($1 > 5 || ($1 == 5 && $2 >= 4))}'; then
