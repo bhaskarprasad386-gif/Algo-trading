@@ -157,6 +157,16 @@ export default function HomePage() {
         </div>
       </section>
 
+      <section className="mt-7" aria-label="Today's activity">
+        <SectionHeading icon={<Activity size={18} />} title="Today's Activity" action="View History" href="/history" />
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <ActivityCard label="Alerts" value="—" detail="Awaiting backend activity data" />
+          <ActivityCard label="Paper Entries" value="—" detail="No live entry count available" />
+          <ActivityCard label="Paper Exits" value="—" detail="No live exit count available" />
+          <ActivityCard label="Completed Trades" value="—" detail="Awaiting saved trade data" />
+        </div>
+      </section>
+
       <section className="mt-7" aria-label="Operations">
         <SectionHeading icon={<Activity size={18} />} title="Operations" />
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -179,6 +189,16 @@ export default function HomePage() {
         </div>
       </Card>
     </div>
+  );
+}
+
+function ActivityCard({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <Card className="p-4">
+      <div className="text-xs font-medium text-algo-muted">{label}</div>
+      <div className="mt-4 text-xl font-semibold text-white">{value}</div>
+      <div className="mt-1 text-[11px] leading-5 text-algo-muted">{detail}</div>
+    </Card>
   );
 }
 
