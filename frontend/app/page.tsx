@@ -32,6 +32,7 @@ export default function HomePage() {
   const [apiStatus, setApiStatus] = useState<"checking" | "connected" | "error">("checking");
   const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [snapshot, setSnapshot] = useState({ cashFuture: 0, calendar: 0, synthetic: 0, box: 0, opportunities: 0, timestamp: null as string | null });
+  const [indexLtps, setIndexLtps] = useState<Record<string, number | null>>({});
 
   useEffect(() => {
     const controller = new AbortController();
@@ -61,6 +62,33 @@ export default function HomePage() {
     socket.onerror = () => setWsStatus("error");
     socket.onclose = () => setWsStatus("error");
     return () => socket.close();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadMarketOverview = async () => {
+      try {
+        const response = await fetch(
+          appConfig.apiBaseUrl.replace(/\\/$/, "") + "/api/v1/market-data/overview",
+          { cache: "no-store" },
+        );
+        if (!response.ok) throw new Error("market overview");
+        const body = await response.json();
+        const next: Record<string, number | null> = {};
+        for (const row of Array.isArray(body?.indices) ? body.indices : []) {
+          if (row?.symbol) next[String(row.symbol).toUpperCase()] = row?.ltp == null ? null : Number(row.ltp);
+        }
+        if (!cancelled) setIndexLtps(next);
+      } catch {
+        if (!cancelled) setIndexLtps({});
+      }
+    };
+    loadMarketOverview();
+    const timer = window.setInterval(loadMarketOverview, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -125,8 +153,10 @@ export default function HomePage() {
               <Card className="rounded-xl border-[#D7E0E8] bg-white p-4 transition hover:border-sky-500/40">
                 <div className="text-center">
                   <div className="text-[12px] font-semibold tracking-wide">{symbol}</div>
-                  <div className="mt-3 text-lg text-[#64748B]">—</div>
-                  <div className="mt-2 text-[11px] text-[#64748B]">{wsLabel === "CONNECTED" ? "Live feed" : "Awaiting feed"}</div>
+                  <div className="mt-3 text-lg font-bold text-slate-900">
+                    {indexLtps[symbol] == null ? "—" : indexLtps[symbol]!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <div className="mt-2 text-[11px] text-[#64748B]">{indexLtps[symbol] == null ? "Waiting for LTP" : "Live LTP"}</div>
                 </div>
               </Card>
             </Link>
