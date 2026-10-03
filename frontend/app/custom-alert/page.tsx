@@ -9,8 +9,6 @@ const scanners = [
   "Calendar Spread",
   "Synthetic Arbitrage",
   "Box Spread",
-  "Debit Strategy",
-  "Credit Strategy",
 ];
 
 const metricsByScanner: Record<string, string[]> = {
@@ -18,8 +16,6 @@ const metricsByScanner: Record<string, string[]> = {
   "Calendar Spread": ["Gap", "Gross Profit", "Net Profit", "Volume / OI"],
   "Synthetic Arbitrage": ["Gap", "Gross Profit", "Net Profit", "IV / Premium"],
   "Box Spread": ["Gross Profit", "Net Profit", "Spread Value"],
-  "Debit Strategy": ["Gross Profit", "Net Profit", "Premium", "ROI"],
-  "Credit Strategy": ["Gross Profit", "Net Profit", "Premium", "ROI"],
 };
 
 export default function CustomAlertPage() {
@@ -127,6 +123,7 @@ export default function CustomAlertPage() {
           <button type="button" onClick={() => setPaperAutoExecute(!paperAutoExecute)} className="flex min-h-16 items-center gap-3 rounded-xl border border-algo-border bg-algo-surface px-4 text-left">
             <ShieldCheck className="h-5 w-5 text-algo-primary" />
             <span className="flex-1"><span className="block text-sm font-semibold text-white">Paper Auto-Execute</span><span className="block text-xs text-algo-muted">{paperAutoExecute ? "ON — alert will create a paper trade" : "OFF"}</span></span>
+            <span className={paperAutoExecute ? "rounded-lg border border-algo-profit/30 bg-algo-profit/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-algo-profit" : "rounded-lg border border-algo-border px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-algo-muted"}>{paperAutoExecute ? "ON" : "OFF"}</span>
           </button>
           <div className="flex min-h-16 items-center gap-3 rounded-xl border border-algo-border bg-algo-surface px-4">
             <Bot className="h-5 w-5 text-algo-muted" />
