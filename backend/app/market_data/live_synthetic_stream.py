@@ -266,6 +266,18 @@ class LiveSyntheticOptionFutureRecorder:
             except Exception:
                 sleep(10)
 
+    def snapshot(self) -> dict[str, Any]:
+        """Return lightweight recorder state for runtime diagnostics."""
+        with self._lock:
+            latest = len(self._latest)
+        feed = self._feed
+        return {
+            "running": not self.stop_event.is_set(),
+            "subscriptions": len(self.subscriptions),
+            "latest_instruments": latest,
+            "feed": None if feed is None else feed.snapshot(),
+        }
+
     def stop(self) -> None:
         self.stop_event.set()
         if self._feed:
