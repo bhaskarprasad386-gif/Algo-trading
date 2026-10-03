@@ -13,7 +13,7 @@ const configs: Record<string, WorkspaceConfig> = {
   "calendar-spread": {slug:"calendar-spread",title:"Calendar Spread",description:"Dedicated near-vs-far expiry spread scanner.",universe:"F&O + INDEX + COMMODITIES",columns:["Underlying","Near","Far","Spread","Gap / Edge","Volume / OI","Signal"],metrics:["Eligible Contracts","Spread Opportunities","Signals","Last Scan"],controls:["All Eligible","INDEX PRIORITY","Near/Far","Edge Threshold"]},
   "synthetic-arbitrage": {slug:"synthetic-arbitrage",title:"Synthetic Arbitrage",description:"Dedicated synthetic future/cash-carry scanner with strategy-specific strike universe.",universe:"INDEX + NIFTY 50",columns:["Underlying","Expiry","Strike","Option","Future","Executable Edge","Signal"],metrics:["Eligible Combos","Executable Edges","Signals","Last Scan"],controls:["All Eligible","ATM Range","Expiry","Edge Threshold"]},
   "box-spread": {slug:"box-spread",title:"Box Spread",description:"Dedicated four-leg box scanner with executable edge ranking.",universe:"INDEX + ELIGIBLE OPTIONS",columns:["Underlying","Expiry","Low Strike","High Strike","Box Edge","Liquidity","Signal"],metrics:["Eligible Boxes","Executable Edges","Signals","Last Scan"],controls:["All Eligible","Expiry","Strike Range","Edge Threshold"]},
-  "custom-strategy": {slug:"custom-strategy",title:"Custom Strategy",description:"Independent strategy workspace. It does not depend on built-in scanner signals.",universe:"LIVE ELIGIBLE F&O UNIVERSE",columns:["Symbol","Segment","Contract","Side","Live Price","Condition","Action"],metrics:["Eligible Symbols","Conditions Met","Alerts","Last Scan"],controls:["F&O Stocks","Cash / Future / Option","BUY / SELL","Condition"]}
+  "custom-strategy": {slug:"custom-strategy",title:"Custom Strategy",description:"Independent strategy workspace. It does not depend on built-in scanner signals.",universe:"CONFIGURATION ONLY",columns:["Symbol","Segment","Contract","Side","Live Price","Condition","Action"],metrics:["Eligible Symbols","Conditions Met","Alerts","Last Scan"],controls:["F&O Stocks","Cash / Future / Option","BUY / SELL","Condition"]}
 };
 
 function formatCell(slug:string,column:string,row:Record<string,unknown>){
@@ -49,7 +49,7 @@ export function StrategyWorkspace({slug}:{slug:keyof typeof configs}){
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <Card className="border-[#D7E0E8] bg-white p-4"><p className="text-xs text-[#64748B]">Universe</p><p className="mt-2 text-sm font-semibold text-[#0F172A]">{c.universe}</p></Card>
       <Card className="border-[#D7E0E8] bg-white p-4"><p className="text-xs text-[#64748B]">Scanner</p><p className="mt-2 flex items-center gap-2 text-sm font-semibold text-sky-700"><Zap className="h-4 w-4"/> {isCustom?"Custom Logic":"1-second"}</p></Card>
-      <Card className="border-[#D7E0E8] bg-white p-4"><p className="text-xs text-[#64748B]">Paper Trading</p><p className="mt-2 text-sm font-semibold text-emerald-600">AVAILABLE</p></Card>
+      <Card className="border-[#D7E0E8] bg-white p-4"><p className="text-xs text-[#64748B]">Paper Trading</p><p className="mt-2 text-sm font-semibold text-slate-600">ENDPOINT PENDING</p></Card>
       <Card className="border-[#D7E0E8] bg-white p-4"><p className="text-xs text-[#64748B]">Broker Orders</p><p className="mt-2 text-sm font-semibold text-amber-600">OFF</p></Card>
     </div>
     <Card className="border-[#D7E0E8] bg-white p-4">
