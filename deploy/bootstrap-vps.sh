@@ -60,15 +60,21 @@ systemctl restart "$SERVICE_NAME"
 
 log "Waiting for local API health"
 healthy=0
-for _ in {1..60}; do
-  if curl --fail --silent --show-error --max-time 3 http://127.0.0.1:8000/health >/tmp/algo-health.json 2>/dev/null; then
+for attempt in {1..180}; do
+  if curl --fail --silent --show-error --connect-timeout 2 --max-time 10 http://127.0.0.1:8000/health >/tmp/algo-health.json 2>/tmp/algo-health-error; then
     healthy=1
     break
+  fi
+  if (( attempt % 15 == 0 )); then
+    log "Health check still waiting (attempt $attempt/180)"
+    systemctl is-active "$SERVICE_NAME" || true
+    tail -5 /tmp/algo-health-error 2>/dev/null || true
   fi
   sleep 1
 done
 
 if [[ "$healthy" -ne 1 ]]; then
+  log "Service did not become healthy. Recent service status:"
   log "Service did not become healthy. Recent service status:"
   systemctl --no-pager --full status "$SERVICE_NAME" || true
   log "Recent logs:"
