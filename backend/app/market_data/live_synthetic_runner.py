@@ -29,7 +29,6 @@ from app.scanner.live_synthetic_scanner import LiveSyntheticScanner
 from app.scanner.synthetic_cash_carry import SyntheticScanConfig
 
 
-@dataclass(frozen=True)
 def select_nearest_option_expiry(
     instruments: Iterable[dict],
     *,
@@ -71,6 +70,7 @@ def select_nearest_option_expiry(
     return min(candidates, key=lambda item: item[0])[1]
 
 
+@dataclass(frozen=True)
 class SyntheticLiveTarget:
     """One underlying/class to stream from the real Angel One instrument master."""
 
