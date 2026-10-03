@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { Activity, ArrowUpRight, BarChart3, Bell, BriefcaseBusiness, CircleDollarSign, Database, Gauge, Layers3, Network, ShieldCheck, WalletCards } from "lucide-react";
 import Link from "next/link";
 import { Card, PageTitle, StatusDot } from "@/components/ui";
@@ -29,6 +32,25 @@ const health = [
 ] as const;
 
 export default function HomePage() {
+  const [capital, setCapital] = useState("10000000");
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("algo-paper-capital");
+    if (saved && Number(saved) > 0) setCapital(saved);
+  }, []);
+
+  const saveCapital = (value: string) => {
+    const normalized = value.replace(/[^0-9]/g, "");
+    setCapital(normalized);
+    if (Number(normalized) > 0) window.localStorage.setItem("algo-paper-capital", normalized);
+  };
+
+  const formattedCapital = Number(capital || 0).toLocaleString("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  });
+
   return (
     <div>
       <PageTitle
@@ -67,7 +89,15 @@ export default function HomePage() {
       <section className="mt-7" aria-label="Paper ledger">
         <SectionHeading icon={<WalletCards size={18} />} title="Paper Ledger" />
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <MetricCard icon={<CircleDollarSign size={18} />} label="Paper Capital" value="₹1,00,00,000" note="Configured paper ledger" />
+          <MetricCard
+            icon={<CircleDollarSign size={18} />}
+            label="Paper Capital"
+            value={formattedCapital}
+            note="Manual paper capital"
+            editable
+            inputValue={capital}
+            onInputChange={saveCapital}
+          />
           <MetricCard icon={<CircleDollarSign size={18} />} label="Available Balance" value="—" note="Awaiting backend data" />
           <MetricCard icon={<ArrowUpRight size={18} />} label="Today's P&L" value="—" note="No live position data" />
           <MetricCard icon={<BriefcaseBusiness size={18} />} label="Open Positions" value="—" note="No live position data" />
@@ -152,7 +182,23 @@ function SectionHeading({ icon, title, action, href }: { icon: React.ReactNode; 
   );
 }
 
-function MetricCard({ icon, label, value, note }: { icon: React.ReactNode; label: string; value: string; note: string }) {
+function MetricCard({
+  icon,
+  label,
+  value,
+  note,
+  editable = false,
+  inputValue = "",
+  onInputChange,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  note: string;
+  editable?: boolean;
+  inputValue?: string;
+  onInputChange?: (value: string) => void;
+}) {
   return (
     <Card className="p-5">
       <div className="flex items-center justify-between">
@@ -161,6 +207,19 @@ function MetricCard({ icon, label, value, note }: { icon: React.ReactNode; label
       </div>
       <div className="mt-4 text-xl font-semibold text-white">{value}</div>
       <div className="mt-1 text-xs text-algo-muted">{note}</div>
+      {editable && onInputChange ? (
+        <label className="mt-4 block">
+          <span className="sr-only">Paper capital amount</span>
+          <input
+            inputMode="numeric"
+            value={inputValue}
+            onChange={(e) => onInputChange(e.target.value)}
+            placeholder="Enter amount"
+            aria-label="Manual paper capital amount"
+            className="min-h-11 w-full px-3 py-2 text-sm"
+          />
+        </label>
+      ) : null}
     </Card>
   );
 }
