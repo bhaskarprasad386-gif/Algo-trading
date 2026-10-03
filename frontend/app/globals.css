@@ -19,8 +19,9 @@ body {
 body {
   margin: 0;
   background: #FFFFFF;
-  color: #0F172A;
+  color: #0B1220;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 450;
 }
 
 button,
@@ -51,7 +52,14 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px rgba(0,176,255,.10);
 }
 
-input::placeholder, textarea::placeholder { color: #64748B; }
+input::placeholder, textarea::placeholder { color: #475569; }
+
+/* Global light-theme readability: darker secondary text and slightly stronger body weight. */
+.text-slate-400 { color: #64748B !important; }
+.text-slate-500 { color: #475569 !important; }
+.text-slate-600 { color: #334155 !important; }
+.text-\[\#64748B\] { color: #475569 !important; }
+.text-\[\#334155\] { color: #1E293B !important; }
 
 /* Light command-center surface overrides. */
 .text-white { color: #0F172A !important; }
