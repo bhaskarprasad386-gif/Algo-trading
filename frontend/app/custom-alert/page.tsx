@@ -73,7 +73,7 @@ export default function CustomAlertPage() {
     setPaperAutoSaving(true);
     setPaperAutoError(null);
     try {
-      const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(`${base}/api/v1/alerts/paper`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
