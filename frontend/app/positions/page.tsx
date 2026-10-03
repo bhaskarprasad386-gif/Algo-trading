@@ -61,58 +61,58 @@ export default function PositionsPage() {
       description="Active paper positions from the backend position engine. Broker orders remain OFF." />
 
     <div className="grid gap-3 sm:grid-cols-3">
-      <Card className="p-4"><p className="text-xs uppercase tracking-wider text-slate-600">Open Positions</p>
-        <p className="mt-2 text-2xl font-bold text-slate-900">{loading ? "…" : positions.length}</p></Card>
-      <Card className="p-4"><p className="text-xs uppercase tracking-wider text-slate-600">Unrealized P&L</p>
-        <p className={`mt-2 text-2xl font-bold ${totalPnl >= 0 ? "text-emerald-700" : "text-red-700"}`}>{money(totalPnl)}</p></Card>
-      <Card className="p-4"><p className="text-xs uppercase tracking-wider text-slate-600">Allocated Capital</p>
-        <p className="mt-2 text-2xl font-bold text-slate-900">{money(allocated)}</p></Card>
+      <Card className="p-4"><p className="text-xs uppercase tracking-wider theme-muted">Open Positions</p>
+        <p className="mt-2 text-2xl font-bold theme-text">{loading ? "…" : positions.length}</p></Card>
+      <Card className="p-4"><p className="text-xs uppercase tracking-wider theme-muted">Unrealized P&L</p>
+        <p className={`mt-2 text-2xl font-bold ${totalPnl >= 0 ? "theme-success" : "theme-danger"}`}>{money(totalPnl)}</p></Card>
+      <Card className="p-4"><p className="text-xs uppercase tracking-wider theme-muted">Allocated Capital</p>
+        <p className="mt-2 text-2xl font-bold theme-text">{money(allocated)}</p></Card>
     </div>
 
     <Card className="p-4">
       <div className="flex flex-wrap items-center gap-2">
         {["all", ...strategies].map(s => <button key={s} type="button" onClick={() => setFilter(s)}
-          className={`min-h-10 rounded-lg px-3 text-sm ${filter === s ? "bg-sky-50 text-sky-700" : "bg-slate-50 text-slate-600"}`}>
+          className={`min-h-10 rounded-lg px-3 text-sm ${filter === s ? "theme-accent-bg theme-accent" : "theme-surface-2 theme-muted"}`}>
           {s === "all" ? "All" : label(s)}
         </button>)}
         <button type="button" onClick={() => void load()} disabled={loading}
-          className="ml-auto inline-flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm text-slate-900 disabled:opacity-50">
+          className="ml-auto inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border px-3 text-sm theme-text disabled:opacity-50">
           <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh
         </button>
       </div>
     </Card>
 
-    {error && <Card className="border-red-300 bg-red-50 p-4 text-sm text-red-700">{error}</Card>}
+    {error && <Card className="theme-border theme-danger-bg p-4 text-sm theme-danger">{error}</Card>}
 
     <Card className="overflow-hidden">
-      <div className="flex items-center gap-2 border-b border-slate-200 p-5">
-        <BriefcaseBusiness className="h-5 w-5 text-sky-700" />
-        <div><h2 className="text-base font-semibold text-slate-900">Open Paper Positions</h2>
-          <p className="text-sm text-slate-600">Backend-supplied values only; no fabricated market data.</p></div>
+      <div className="flex items-center gap-2 border-b theme-border p-5">
+        <BriefcaseBusiness className="h-5 w-5 theme-accent" />
+        <div><h2 className="text-base font-semibold theme-text">Open Paper Positions</h2>
+          <p className="text-sm theme-muted">Backend-supplied values only; no fabricated market data.</p></div>
       </div>
-      {loading ? <div className="p-8 text-sm text-slate-600">Loading positions…</div> :
-       filtered.length === 0 ? <div className="p-8 text-sm text-slate-600">No active paper positions.</div> :
+      {loading ? <div className="p-8 text-sm theme-muted">Loading positions…</div> :
+       filtered.length === 0 ? <div className="p-8 text-sm theme-muted">No active paper positions.</div> :
        <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-sm">
-        <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-600">
+        <thead className="border-b theme-border theme-surface-2 text-xs uppercase tracking-wider theme-muted">
           <tr>{["Strategy","Symbol","Side","Qty","Entry","Current","P&L","Expiry","Action"].map(h => <th key={h} className="px-5 py-3">{h}</th>)}</tr>
         </thead>
-        <tbody>{filtered.map(p => { const pnl = Number(p.pnl) || 0; return <tr key={p.id} className="border-b border-slate-200/70 last:border-0">
-          <td className="px-5 py-4 font-medium text-slate-900">{label(p.strategy)}</td>
-          <td className="px-5 py-4 text-slate-900">{p.symbol || "—"}</td><td className="px-5 py-4 text-slate-600">{p.direction || "—"}</td>
-          <td className="px-5 py-4 text-slate-900">{p.quantity ?? "—"}</td><td className="px-5 py-4 text-slate-900">{money(Number(p.entry))}</td>
-          <td className="px-5 py-4 text-slate-900">{money(Number(p.current))}</td>
-          <td className={`px-5 py-4 font-semibold ${pnl >= 0 ? "text-emerald-700" : "text-red-700"}`}>{money(pnl)} {typeof p.pnl_pct === "number" ? `(${p.pnl_pct.toFixed(2)}%)` : ""}</td>
-          <td className="px-5 py-4 text-slate-600">{p.expiry || "—"}</td>
+        <tbody>{filtered.map(p => { const pnl = Number(p.pnl) || 0; return <tr key={p.id} className="border-b theme-border/70 last:border-0">
+          <td className="px-5 py-4 font-medium theme-text">{label(p.strategy)}</td>
+          <td className="px-5 py-4 theme-text">{p.symbol || "—"}</td><td className="px-5 py-4 theme-muted">{p.direction || "—"}</td>
+          <td className="px-5 py-4 theme-text">{p.quantity ?? "—"}</td><td className="px-5 py-4 theme-text">{money(Number(p.entry))}</td>
+          <td className="px-5 py-4 theme-text">{money(Number(p.current))}</td>
+          <td className={`px-5 py-4 font-semibold ${pnl >= 0 ? "theme-success" : "theme-danger"}`}>{money(pnl)} {typeof p.pnl_pct === "number" ? `(${p.pnl_pct.toFixed(2)}%)` : ""}</td>
+          <td className="px-5 py-4 theme-muted">{p.expiry || "—"}</td>
           <td className="px-5 py-4"><button type="button" onClick={() => void closePosition(p.id)} disabled={closingId !== null}
-            className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-red-300 px-3 text-xs font-semibold text-red-700 disabled:opacity-50">
+            className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border px-3 text-xs font-semibold theme-danger disabled:opacity-50">
             <XCircle className="h-4 w-4" />{closingId === p.id ? "Closing…" : "Close"}</button></td>
         </tr>; })}</tbody>
        </table></div>}
     </Card>
 
-    <Card className="flex items-start gap-3 p-4"><ShieldCheck className="mt-0.5 h-5 w-5 text-emerald-700" />
-      <div><p className="text-sm font-semibold text-slate-900">Paper-only safety</p>
-        <p className="mt-1 text-xs leading-5 text-slate-600">Close actions use the paper-trading API. Live broker orders remain disabled.</p></div>
+    <Card className="flex items-start gap-3 rounded-xl theme-surface-2 p-4"><ShieldCheck className="mt-0.5 h-5 w-5 theme-success" />
+      <div><p className="text-sm font-semibold theme-text">Paper-only safety</p>
+        <p className="mt-1 text-xs leading-5 theme-muted">Close actions use the paper-trading API. Live broker orders remain disabled.</p></div>
     </Card>
   </div>;
 }
