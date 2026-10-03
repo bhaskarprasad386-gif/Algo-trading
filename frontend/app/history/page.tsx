@@ -135,7 +135,7 @@ export default function HistoryPage() {
             <div><span className="text-[#64748B]">Entry Edge</span><p className="text-[#0F172A]">{selected.entry_edge ?? "—"}</p></div>
             <div><span className="text-[#64748B]">Exit Edge</span><p className="text-[#0F172A]">{selected.current_edge ?? "—"}</p></div>
             <div><span className="text-[#64748B]">Capital Used</span><p className="text-[#0F172A]">{money(selected.capital_used)}</p></div>
-            <div><span className="text-[#64748B]">Realized P&L</span><p className="text-emerald-600">{money(selected.realized_pnl)}</p></div>
+            <div><span className="text-[#64748B]">Realized P&L</span><p className={Number(selected.realized_pnl || 0) >= 0 ? "text-emerald-700 font-semibold" : "text-red-700 font-semibold"}>{money(selected.realized_pnl)}</p></div>
             <div><span className="text-[#64748B]">Exit Reason</span><p className="text-[#0F172A]">{selected.exit_reason || "—"}</p></div>
             <div><span className="text-[#64748B]">Closed</span><p className="text-[#0F172A]">{selected.closed_at ? new Date(selected.closed_at).toLocaleString("en-IN") : "—"}</p></div>
           </div>
