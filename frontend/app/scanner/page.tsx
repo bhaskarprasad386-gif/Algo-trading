@@ -62,7 +62,9 @@ export default function ScannerPage() {
     const q = search.trim().toUpperCase();
     return rows.filter((row) => {
       const symbol = String(row.symbol ?? row.underlying ?? "").toUpperCase();
-      const marketMatch = market === "ALL F&O" || symbol.includes(market);
+      const normalizedSymbol = symbol.replace(/\s+/g, "");
+      const normalizedMarket = market.replace(/\s+/g, "");
+      const marketMatch = market === "ALL F&O" || normalizedSymbol === normalizedMarket || (market === "NIFTY" && normalizedSymbol === "NIFTY50");
       const searchMatch = !q || Object.values(row).some((value) => String(value ?? "").toUpperCase().includes(q));
       return marketMatch && searchMatch;
     });
