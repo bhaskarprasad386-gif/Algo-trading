@@ -126,7 +126,7 @@ export default function ScannerPage() {
       {error && <Card className="theme-border theme-danger-bg p-4 text-sm theme-danger">{error}</Card>}
 
       <Card className="overflow-hidden theme-border theme-surface">
-        <div className="flex flex-col gap-2 border-b border-[#D7E0E8] p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-2 border-b theme-border p-4 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="font-semibold theme-text">Live Opportunities</h2><p className="mt-1 text-xs theme-muted">Live rows from the FastAPI scanner. Broker orders remain OFF.</p></div>
           <span className="text-xs theme-muted">Market: {market}{search ? " • Search: " + search : ""}</span>
         </div>
