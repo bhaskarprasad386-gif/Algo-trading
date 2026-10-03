@@ -160,7 +160,14 @@ async def lifespan(app: FastAPI):
             universal_result_ledger.close()
 
 app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug, lifespan=lifespan)
-app.add_middleware(\n    CORSMiddleware,\n    allow_origin_regex=r"https://([a-z0-9-]+\\.)?vercel\\.app$|http://localhost(:\\d+)?$|http://127\\.0\\.0\\.1(:\\d+)?$",\n    allow_credentials=False,\n    allow_methods=["*"],\n    allow_headers=["*"],\n)\napp.add_exception_handler(TradingAppException, trading_exception_handler)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"https://([a-z0-9-]+\.)?vercel\.app$|http://localhost(:\d+)?$|http://127\.0\.0\.1(:\d+)?$",
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.add_exception_handler(TradingAppException, trading_exception_handler)
 app.add_exception_handler(Exception, global_exception_handler)
 
 app.include_router(brokers_router)
