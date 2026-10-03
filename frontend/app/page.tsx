@@ -76,7 +76,12 @@ export default function HomePage() {
         const body = await response.json();
         const next: Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null }> = {};
         for (const row of Array.isArray(body?.indices) ? body.indices : []) {
-          if (row?.symbol) {\n            const ltp = row?.ltp == null ? null : Number(row.ltp);\n            const previousClose = row?.close == null ? null : Number(row.close);\n            const changePercent = ltp != null && previousClose != null && previousClose !== 0 ? ((ltp - previousClose) / previousClose) * 100 : null;\n            next[String(row.symbol).toUpperCase()] = { ltp, previousClose, changePercent };\n          }
+          if (row?.symbol) {
+            const ltp = row?.ltp == null ? null : Number(row.ltp);
+            const previousClose = row?.close == null ? null : Number(row.close);
+            const changePercent = ltp != null && previousClose != null && previousClose !== 0 ? ((ltp - previousClose) / previousClose) * 100 : null;
+            next[String(row.symbol).toUpperCase()] = { ltp, previousClose, changePercent };
+          }
         }
         if (!cancelled) setIndexLtps(next);
       } catch {
