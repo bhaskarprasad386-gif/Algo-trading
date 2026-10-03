@@ -95,8 +95,9 @@ class LiveSyntheticUnderlyingFeed:
         self.instrument_master.download()
         result = {}
         for symbol in self.symbols:
-            token = self.concrete_tokens.get(symbol)
-            if token:
+            try:
+                token = self.concrete_tokens.get(symbol)
+                if token:
                 result[symbol] = token
             elif symbol in self.index_symbols:
                 exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS else "NSE"
@@ -105,8 +106,12 @@ class LiveSyntheticUnderlyingFeed:
                 result[symbol] = self.instrument_master.get_token(symbol, "MCX") or ""
                 if not result[symbol]:
                     raise LookupError(f"no MCX underlying token for {symbol}")
-            else:
-                result[symbol] = self.instrument_master.resolve_cash_token(symbol, "NSE")
+                else:
+                    token = self.instrument_master.resolve_cash_token(symbol, "NSE")
+                    if token:
+                        result[symbol] = token
+            except (LookupError, ValueError) as exc:
+                app_logger.warning("Synthetic underlying skipped unresolved symbol %s: %s", symbol, exc)
         return result
 
     def _exchange_type(self, symbol: str) -> int:
@@ -121,22 +126,15 @@ class LiveSyntheticUnderlyingFeed:
 
     def _descriptors(self):
         self.instrument_master.download()
+        tokens = self._tokens()
         descriptors = []
-        for symbol in self.symbols:
-            token = self.concrete_tokens.get(symbol)
-            if token:
-                exchange = "MCX" if symbol in self.commodity_symbols else ("BSE" if symbol in BSE_INDEX_SYMBOLS and symbol in self.index_symbols else "NSE")
-            elif symbol in self.index_symbols:
-                exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS else "NSE"
-                token = self.instrument_master.resolve_index_token(symbol, exchange)
-            elif symbol in self.commodity_symbols:
+        for symbol, token in tokens.items():
+            if symbol in self.commodity_symbols:
                 exchange = "MCX"
-                token = self.instrument_master.get_token(symbol, exchange)
-                if not token:
-                    raise LookupError(f"no MCX underlying token for {symbol}")
+            elif symbol in BSE_INDEX_SYMBOLS and symbol in self.index_symbols:
+                exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS else "NSE"
             else:
-                exchange = "NSE"
-                token = self.instrument_master.resolve_cash_token(symbol, exchange)
+                exchange = "MCX"
             descriptors.append(
                 CommonStrategyMarketFeed.descriptor(
                     exchange=exchange,
@@ -163,7 +161,11 @@ class LiveSyntheticUnderlyingFeed:
             self.consumer,
             auth=self.auth,
         )
-        self._feed.start(self._descriptors(), self._on_record)
+        descriptors = self._descriptors()
+        if not descriptors:
+            app_logger.warning("Synthetic underlying feed found no resolvable live symbols")
+            return
+        self._feed.start(descriptors, self._on_record)
         try:
             while not self.stop_event.wait(1.0):
                 pass
