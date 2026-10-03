@@ -147,6 +147,16 @@ export default function HomePage() {
         </section>
       </div>
 
+      <section className="mt-7" aria-label="Scanner status">
+        <SectionHeading icon={<Activity size={18} />} title="Scanner Status" action="Open Scanner" href="/scanner" />
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <StatusCard label="Scanner engine" value="AWAITING API" detail="Runtime state will come from backend" state="muted" />
+          <StatusCard label="Live feed" value="NOT CONNECTED" detail="No live stream is claimed here" state="muted" />
+          <StatusCard label="Last update" value="—" detail="No backend timestamp available" state="muted" />
+          <StatusCard label="Alerts" value="—" detail="No live alert count available" state="muted" />
+        </div>
+      </section>
+
       <section className="mt-7" aria-label="Operations">
         <SectionHeading icon={<Activity size={18} />} title="Operations" />
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -169,6 +179,22 @@ export default function HomePage() {
         </div>
       </Card>
     </div>
+  );
+}
+
+function StatusCard({ label, value, detail, state }: { label: string; value: string; detail: string; state: "muted" | "ready" | "safe" }) {
+  const valueClass =
+    state === "safe" ? "text-algo-profit" : state === "ready" ? "text-algo-primary" : "text-algo-muted";
+
+  return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-medium text-algo-muted">{label}</span>
+        <StatusDot live={state === "ready" || state === "safe"} />
+      </div>
+      <div className={`mt-4 text-sm font-semibold ${valueClass}`}>{value}</div>
+      <div className="mt-1 text-[11px] leading-5 text-algo-muted">{detail}</div>
+    </Card>
   );
 }
 
