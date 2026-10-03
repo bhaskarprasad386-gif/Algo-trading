@@ -36,3 +36,23 @@ button {
 ::selection {
   background: rgba(0, 176, 255, .25);
 }
+
+
+input, select, textarea {
+  border-radius: 0.75rem;
+  border: 1px solid #27313A;
+  background: #0F1419;
+  color: #E8EEF3;
+  outline: none;
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: rgba(0,176,255,.65);
+  box-shadow: 0 0 0 3px rgba(0,176,255,.10);
+}
+
+input::placeholder, textarea::placeholder { color: #687581; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
