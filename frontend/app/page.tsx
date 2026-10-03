@@ -197,7 +197,7 @@ export default function HomePage() {
                   className={
                     `rounded-full px-2 py-0.5 text-[10px] font-semibold ${
                       state === "ok"
-                        ? "bg-emerald-500/20 text-emerald-300"
+                        ? "bg-emerald-100 text-emerald-700"
                         : state === "warn"
                           ? "bg-amber-500/20 text-amber-700"
                           : "bg-red-500/20 text-red-700"
