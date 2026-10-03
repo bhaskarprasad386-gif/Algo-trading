@@ -132,9 +132,9 @@ class LiveSyntheticUnderlyingFeed:
             if symbol in self.commodity_symbols:
                 exchange = "MCX"
             elif symbol in BSE_INDEX_SYMBOLS and symbol in self.index_symbols:
-                exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS else "NSE"
+                exchange = "BSE"
             else:
-                exchange = "MCX"
+                exchange = "NSE"
             descriptors.append(
                 CommonStrategyMarketFeed.descriptor(
                     exchange=exchange,
