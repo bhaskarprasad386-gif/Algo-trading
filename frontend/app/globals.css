@@ -97,3 +97,5 @@ input::placeholder, textarea::placeholder { color: var(--app-subtle); }
     scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important;
   }
 }
+
+.theme-overlay { background: color-mix(in srgb, var(--app-bg) 78%, transparent) !important; }
