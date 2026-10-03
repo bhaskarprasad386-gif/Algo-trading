@@ -214,6 +214,35 @@ class LiveCashFutureCommonRunner:
                 except Exception as exc:
                     app_logger.error("Cash-Future result callback failed: %s", exc)
 
+    def _register_descriptors(self, descriptors: tuple[InstrumentDescriptor, ...]) -> None:
+        """Register only canonical descriptors; shared consumers may already own a key."""
+        fresh: list[InstrumentDescriptor] = []
+        for descriptor in descriptors:
+            existing = self.manager.registry.get(descriptor.key)
+            if existing is None:
+                fresh.append(descriptor)
+                continue
+            if existing == descriptor:
+                continue
+            compatible = (
+                existing.instrument_type == descriptor.instrument_type
+                and existing.exchange == descriptor.exchange
+                and existing.segment == descriptor.segment
+            )
+            if not compatible:
+                raise ValueError(
+                    f"conflicting descriptor for {descriptor.key.value}: "
+                    f"{existing.instrument_type}/{existing.exchange}/{existing.segment} "
+                    f"vs {descriptor.instrument_type}/{descriptor.exchange}/{descriptor.segment}"
+                )
+            app_logger.debug(
+                "Cash-Future reusing shared descriptor for %s; canonical symbol=%s",
+                descriptor.key.value,
+                existing.symbol,
+            )
+        if fresh:
+            self.manager.registry.register_many(tuple(fresh))
+
     def run_forever(self) -> None:
         if self.stop_event.is_set():
             return
@@ -223,7 +252,7 @@ class LiveCashFutureCommonRunner:
         if not descriptors:
             app_logger.warning("Common Cash-Future runner found no eligible F&O stock contracts")
             return
-        self.manager.registry.register_many(descriptors)
+        self._register_descriptors(descriptors)
         self.manager.register_normalized_callback(self.CONSUMER, self._on_record)
         if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
             self._repository = DailySQLiteMarketDataRepository(self.data_db)
