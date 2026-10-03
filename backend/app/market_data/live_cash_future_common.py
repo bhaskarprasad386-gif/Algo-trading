@@ -120,6 +120,7 @@ class LiveCashFutureCommonRunner:
             counts[underlying] = counts.get(underlying, 0) + 1
 
         descriptors: list[InstrumentDescriptor] = []
+        registered_cash: set[InstrumentKey] = set()
         for row in selected:
             underlying = row["_underlying"]
             cash = row["_cash"]
@@ -127,10 +128,12 @@ class LiveCashFutureCommonRunner:
             future_key = InstrumentKey("NFO", "NFO", str(row["token"]))
             cash_symbol = str(cash.get("symbol") or f"{underlying}-EQ")
             lot = int(row.get("lotsize") or row.get("lotSize") or 0) or None
-            descriptors.append(InstrumentDescriptor(
-                key=cash_key, symbol=cash_symbol, instrument_type="equity",
-                exchange="NSE", segment="NSE", lot_size=None,
-            ))
+            if cash_key not in registered_cash:
+                descriptors.append(InstrumentDescriptor(
+                    key=cash_key, symbol=cash_symbol, instrument_type="equity",
+                    exchange="NSE", segment="NSE", lot_size=None,
+                ))
+                registered_cash.add(cash_key)
             descriptors.append(InstrumentDescriptor(
                 key=future_key, symbol=str(row["symbol"]), instrument_type="future",
                 exchange="NFO", segment="NFO", expiry=row["_expiry"].isoformat(),
