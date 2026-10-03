@@ -42,7 +42,7 @@ export function StrategyWorkspace({slug}:{slug:keyof typeof configs}){
 
   return <div className="min-h-screen space-y-5 theme-bg p-4 theme-text">
     <div className="flex items-center justify-between gap-3">
-      <Link href="/scanner" className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold text-[#475569] hover:border-sky-500/60"><ArrowLeft className="h-4 w-4"/> Overall Scanner</Link>
+      <Link href="/scanner" className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted hover:theme-border"><ArrowLeft className="h-4 w-4"/> Overall Scanner</Link>
       <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold ${loading?"theme-border theme-warning-bg theme-warning":error?"theme-border theme-danger-bg theme-danger":"theme-border theme-success-bg theme-success"}`}>{loading?"CONNECTING":error?"BACKEND ERROR":isCustom?"CONFIGURATION ONLY":"LIVE DATA CONNECTED"}</span>
     </div>
     <PageTitle eyebrow="Phase 11 • Strategy Workspace" title={c.title+" Dedicated Scanner"} description={c.description}/>
