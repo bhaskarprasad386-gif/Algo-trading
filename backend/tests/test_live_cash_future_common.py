@@ -137,3 +137,17 @@ def test_runner_persistence_coalesces_multiple_ticks_within_one_second(monkeypat
     runner.stop()
     assert len(ingestor.records) == 2
     assert ingestor.records[1].timestamp_ns == 2_100_000_000
+
+
+def test_runner_reuses_compatible_shared_cash_descriptor_without_conflict():
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+    manager = CommonWebSocketManager(socket_factory=lambda: object())
+    key = InstrumentKey("NSE", "NSE", "25")
+    manager.registry.register_many((
+        InstrumentDescriptor(key, "CANONICAL-EQ", "equity", "NSE", "NSE"),
+    ))
+    runner = LiveCashFutureCommonRunner("ignored", manager=manager)
+    runner._register_descriptors((
+        InstrumentDescriptor(key, "ALIAS-EQ", "equity", "NSE", "NSE"),
+    ))
+    assert manager.registry.get(key).symbol == "CANONICAL-EQ"
