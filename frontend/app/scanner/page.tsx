@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Bell, Filter, RefreshCw, Search, SlidersHorizontal, Zap } from "lucide-react";
+import { Activity, Bell, Filter, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Zap } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 
@@ -84,33 +84,33 @@ export default function ScannerPage() {
   };
 
   return (
-    <div className="min-h-screen space-y-5 bg-white p-4 text-[#0F172A]">
+    <div className="min-h-screen space-y-5 theme-bg p-4 theme-text">
       <PageTitle eyebrow="Phase 3 • Live Scanner" title="Live Scanner" description="All F&O instruments with live 1-second scanner output, executable bid/ask gap, volume/OI and strategy signals." />
 
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-wrap items-center gap-2">
-          <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold ${loading ? "border-amber-200 bg-amber-50 text-amber-700" : error ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+          <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold ${loading ? "theme-border theme-warning-bg theme-warning" : error ? "theme-border theme-danger-bg theme-danger" : "theme-border theme-success-bg theme-success"}`}>
             <span className="h-2 w-2 rounded-full bg-current" />
             {loading ? "CONNECTING" : error ? "BACKEND ERROR" : "LIVE FEED CONNECTED"}
           </span>
-          <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-[#D7E0E8] bg-white px-3 text-xs font-semibold text-[#64748B]"><Zap className="h-4 w-4" /> 1s scanner</span>
-          <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-[#D7E0E8] bg-white px-3 text-xs font-semibold text-[#64748B]"><Bell className="h-4 w-4" /> Alerts: —</span>
+          <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Zap className="h-4 w-4" /> 1s scanner</span>
+          <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Bell className="h-4 w-4" /> Alerts: —</span>
         </div>
         <div className="flex gap-2">
-          <Link href="/custom-alert" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#D7E0E8] bg-white px-4 text-sm font-semibold text-[#0F172A] hover:border-sky-500/60"><Bell className="h-4 w-4" /> Custom Alert</Link>
-          <button type="button" onClick={refresh} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#D7E0E8] bg-white px-4 text-sm font-semibold text-[#0F172A] hover:border-sky-500/60"><RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} /> Refresh</button>
+          <Link href="/custom-alert" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border theme-border theme-surface px-4 text-sm font-semibold theme-text hover:theme-border"><Bell className="h-4 w-4" /> Custom Alert</Link>
+          <button type="button" onClick={refresh} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border theme-border theme-surface px-4 text-sm font-semibold theme-text hover:theme-border"><RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} /> Refresh</button>
         </div>
       </div>
 
-      <Card className="border-[#D7E0E8] bg-white p-4">
+      <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-4">
-          <div className="flex items-center gap-2 text-sm font-semibold text-[#0F172A]"><SlidersHorizontal className="h-4 w-4 text-sky-600" /> Scanner Controls</div>
+          <div className="flex items-center gap-2 text-sm font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /><SlidersHorizontal className="h-4 w-4 theme-accent" /> Scanner Controls</div>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.2fr_1fr_auto]">
-            <label className="relative block"><span className="sr-only">Search symbol</span><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#64748B]" /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search symbol" className="min-h-11 w-full rounded-xl border border-[#D7E0E8] bg-white pl-9 pr-3 text-sm text-[#0F172A]" /></label>
-            <select value={market} onChange={(e) => setMarket(e.target.value)} className="min-h-11 w-full rounded-xl border border-[#D7E0E8] bg-white px-3 text-sm text-[#0F172A]">{markets.map((item) => <option key={item}>{item}</option>)}</select>
-            <button type="button" disabled className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#D7E0E8] bg-white px-4 text-sm font-semibold text-[#64748B] opacity-70"><Filter className="h-4 w-4" /> Filters</button>
+            <label className="relative block"><span className="sr-only">Search symbol</span><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 theme-muted" /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search symbol" className="min-h-11 w-full rounded-xl border theme-border theme-surface pl-9 pr-3 text-sm theme-text" /></label>
+            <select value={market} onChange={(e) => setMarket(e.target.value)} className="min-h-11 w-full rounded-xl border theme-border theme-surface px-3 text-sm theme-text">{markets.map((item) => <option key={item}>{item}</option>)}</select>
+            <button type="button" disabled className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border theme-border theme-surface px-4 text-sm font-semibold theme-muted opacity-70"><Filter className="h-4 w-4" /> Filters</button>
           </div>
-          <div className="flex flex-wrap gap-2">{markets.map((item) => <button key={item} type="button" onClick={() => setMarket(item)} className={`min-h-10 rounded-xl border px-3 text-xs font-semibold ${market === item ? "border-sky-500/70 bg-sky-50 text-sky-700" : "border-[#D7E0E8] bg-white text-[#64748B]"}`}>{item}</button>)}</div>
+          <div className="flex flex-wrap gap-2">{markets.map((item) => <button key={item} type="button" onClick={() => setMarket(item)} className={`min-h-10 rounded-xl border px-3 text-xs font-semibold ${market === item ? "theme-accent theme-accent-bg" : "theme-border theme-surface theme-muted"}`}>{item}</button>)}</div>
         </div>
       </Card>
 
@@ -120,38 +120,38 @@ export default function ScannerPage() {
           ["Signals Detected", loading ? "…" : signals.toLocaleString("en-IN")],
           ["Executable Gaps", loading ? "…" : gaps.toLocaleString("en-IN")],
           ["Last Scan", loading ? "…" : rows.length ? "LIVE" : "—"],
-        ].map(([label, value]) => <Card key={label} className="border-[#D7E0E8] bg-white p-4"><p className="text-xs text-[#64748B]">{label}</p><p className="mt-2 text-xl font-semibold text-[#0F172A]">{value}</p></Card>)}
+        ].map(([label, value]) => <Card key={label} className="theme-border theme-surface p-4"><p className="text-xs theme-muted">{label}</p><p className="mt-2 text-xl font-semibold theme-text">{value}</p></Card>)}
       </div>
 
-      {error && <Card className="border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</Card>}
+      {error && <Card className="theme-border theme-danger-bg p-4 text-sm theme-danger">{error}</Card>}
 
-      <Card className="overflow-hidden border-[#D7E0E8] bg-white">
+      <Card className="overflow-hidden theme-border theme-surface">
         <div className="flex flex-col gap-2 border-b border-[#D7E0E8] p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="font-semibold text-[#0F172A]">Live Opportunities</h2><p className="mt-1 text-xs text-[#64748B]">Live rows from the FastAPI scanner. Broker orders remain OFF.</p></div>
-          <span className="text-xs text-[#64748B]">Market: {market}{search ? " • Search: " + search : ""}</span>
+          <div><h2 className="font-semibold theme-text">Live Opportunities</h2><p className="mt-1 text-xs theme-muted">Live rows from the FastAPI scanner. Broker orders remain OFF.</p></div>
+          <span className="text-xs theme-muted">Market: {market}{search ? " • Search: " + search : ""}</span>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-[1000px] w-full text-left text-sm">
-            <thead className="bg-[#F8FAFC] text-xs uppercase tracking-wider text-[#64748B]"><tr>{columns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
+            <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{columns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
             <tbody>
-              {loading ? <tr><td colSpan={columns.length} className="px-4 py-14 text-center text-sm text-[#64748B]">Loading live data…</td></tr>
-                : filteredRows.length === 0 ? <tr><td colSpan={columns.length} className="px-4 py-14 text-center text-sm text-[#64748B]">No live data</td></tr>
-                : filteredRows.map((row, index) => <tr key={String(row.id ?? row.event_id ?? `scanner-${index}`)} className="border-b border-[#E2E8F0] last:border-0">
-                  <td className="px-4 py-3 font-semibold text-[#0F172A]">{cell(row, "symbol", "underlying")}</td>
-                  <td className="px-4 py-3 text-[#64748B]">{cell(row, "contract_month", "expiry")}</td>
-                  <td className="px-4 py-3 text-[#64748B]">{cell(row, "cash_execution_price", "cash_bid", "cash_ask")}</td>
-                  <td className="px-4 py-3 text-[#64748B]">{cell(row, "future_execution_price", "future_bid", "future_ask")}</td>
-                  <td className="px-4 py-3 text-[#64748B]">{cell(row, "executable_gap", "net_gap", "gap")}</td>
-                  <td className="px-4 py-3 text-[#64748B]">{cell(row, "volume", "open_interest", "oi")}</td>
-                  <td className="px-4 py-3 font-semibold text-[#0F172A]">{row.executable === true ? "SIGNAL" : numberValue(row, "executable_gap", "gap", "net_gap") > 0 ? "OPPORTUNITY" : "—"}</td>
+              {loading ? <tr><td colSpan={columns.length} className="px-4 py-14 text-center text-sm theme-muted">Loading live data…</td></tr>
+                : filteredRows.length === 0 ? <tr><td colSpan={columns.length} className="px-4 py-14 text-center text-sm theme-muted">No live data</td></tr>
+                : filteredRows.map((row, index) => <tr key={String(row.id ?? row.event_id ?? `scanner-${index}`)} className="border-b theme-border last:border-0">
+                  <td className="px-4 py-3 font-semibold theme-text">{cell(row, "symbol", "underlying")}</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "contract_month", "expiry")}</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "cash_execution_price", "cash_bid", "cash_ask")}</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "future_execution_price", "future_bid", "future_ask")}</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "executable_gap", "net_gap", "gap")}</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "volume", "open_interest", "oi")}</td>
+                  <td className="px-4 py-3 font-semibold theme-text">{row.executable === true ? "SIGNAL" : numberValue(row, "executable_gap", "gap", "net_gap") > 0 ? "OPPORTUNITY" : "—"}</td>
                 </tr>)}
             </tbody>
           </table>
         </div>
       </Card>
 
-      <Card className="border-[#D7E0E8] bg-white p-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-semibold text-[#0F172A]">Scanner safety boundary</p><p className="mt-1 text-xs leading-5 text-[#64748B]">Scanner output is paper-safe. Broker orders remain OFF.</p></div><span className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">BROKER ORDERS OFF</span></div>
+      <Card className="theme-border theme-surface p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="flex items-center gap-2 text-sm font-semibold theme-text"><ShieldCheck className="h-4 w-4 theme-success" /> Scanner safety boundary</p><p className="mt-1 text-xs leading-5 theme-muted">Scanner output is paper-safe. Broker orders remain OFF.</p></div><span className="shrink-0 rounded-lg border theme-border theme-danger-bg px-3 py-2 text-xs font-semibold theme-danger">BROKER ORDERS OFF</span></div>
       </Card>
     </div>
   );
