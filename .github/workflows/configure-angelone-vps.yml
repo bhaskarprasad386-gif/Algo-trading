@@ -4,7 +4,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: vps-angelone-config
+  # Shared lock: never overlap VPS service restarts/configuration.
+  group: vps-service-mutation
   cancel-in-progress: false
 
 jobs:
