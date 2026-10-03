@@ -206,3 +206,28 @@ def test_runner_reuses_alert_service_across_pipeline_refreshes():
     assert first.alerts is alerts
     assert second.alerts is alerts
     assert first.alerts is second.alerts
+
+
+def test_runner_retries_when_selected_expiry_has_no_concrete_strikes(monkeypatch):
+    master = InstrumentMaster()
+    master.instruments = [
+        {"exch_seg": "NFO", "instrumenttype": "FUTIDX", "token": "f1",
+         "name": "NIFTY", "symbol": "NIFTY29OCT26FUT",
+         "expiry": "29OCT2026", "lotsize": "50"},
+    ]
+    master._loaded = True
+    master.download = lambda force=False: master.instruments
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", None, "29OCT2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=master,
+    )
+    sleeps = []
+    monkeypatch.setattr(
+        "app.market_data.live_synthetic_runner.sleep",
+        lambda seconds: (sleeps.append(seconds), runner.stop()),
+    )
+    runner.run_forever()
+    assert sleeps == [30.0]
+    assert runner._stop_requested.is_set()
