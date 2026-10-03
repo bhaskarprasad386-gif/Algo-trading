@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Bell, Bot, Mail, MessageSquare, ShieldCheck, Smartphone } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
 
 const scanners = [
@@ -18,6 +19,16 @@ const metricsByScanner: Record<string, string[]> = {
   "Box Spread": ["Gross Profit", "Net Profit", "Spread Value"],
 };
 
+const notificationOptions: Array<{
+  Icon: LucideIcon;
+  label: string;
+  key: "sms" | "app" | "email";
+}> = [
+  { Icon: MessageSquare, label: "SMS Alert", key: "sms" },
+  { Icon: Smartphone, label: "App Notification", key: "app" },
+  { Icon: Mail, label: "Email Alert", key: "email" },
+];
+
 export default function CustomAlertPage() {
   const [mobile, setMobile] = useState("");
   const [sms, setSms] = useState(true);
@@ -27,6 +38,8 @@ export default function CustomAlertPage() {
   const [scanner, setScanner] = useState("Cash-Future");
   const [metric, setMetric] = useState("Gap");
   const metrics = metricsByScanner[scanner];
+  const notificationState = { sms, app, email };
+  const notificationSetters = { sms: setSms, app: setApp, email: setEmail };
 
   return (
     <div className="space-y-5">
@@ -98,16 +111,16 @@ export default function CustomAlertPage() {
           <span className="block text-xs text-algo-muted">SMS delivery will be connected to the notification backend later. No SMS is sent by this UI.</span>
         </label>
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
-          {[
-            [MessageSquare, "SMS Alert", sms, setSms],
-            [Smartphone, "App Notification", app, setApp],
-            [Mail, "Email Alert", email, setEmail],
-          ].map(([Icon, label, enabled, setter]) => (
-            <button key={label as string} type="button" onClick={() => (setter as (value: boolean) => void)(!(enabled as boolean))} className="flex min-h-14 items-center gap-3 rounded-xl border border-algo-border bg-algo-surface px-4 text-left">
-              <Icon className="h-5 w-5 text-algo-primary" />
-              <span className="flex-1"><span className="block text-sm font-semibold text-white">{label as string}</span><span className="block text-xs text-algo-muted">{enabled ? "ON" : "OFF"}</span></span>
-            </button>
-          ))}
+          {notificationOptions.map(({ Icon, label, key }) => {
+            const enabled = notificationState[key];
+            const setter = notificationSetters[key];
+            return (
+              <button key={label} type="button" onClick={() => setter(!enabled)} className="flex min-h-14 items-center gap-3 rounded-xl border border-algo-border bg-algo-surface px-4 text-left">
+                <Icon className="h-5 w-5 text-algo-primary" />
+                <span className="flex-1"><span className="block text-sm font-semibold text-white">{label}</span><span className="block text-xs text-algo-muted">{enabled ? "ON" : "OFF"}</span></span>
+              </button>
+            );
+          })}
         </div>
       </Card>
 
