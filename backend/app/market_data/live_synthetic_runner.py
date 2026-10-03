@@ -160,6 +160,11 @@ class LiveSyntheticRunner:
                     "no concrete option strikes found for live expiry: "
                     + ", ".join(sorted(set(missing)))
                 )
+        if not strikes:
+            raise LookupError(
+                "no concrete option strikes found for live expiry: "
+                + ", ".join(sorted(set(missing or [target.underlying for target in self.targets])))
+            )
         self._atm_tracker = LiveSyntheticAtmTracker(strikes_by_symbol=strikes)
         return self._atm_tracker.atm
 
