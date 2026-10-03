@@ -225,7 +225,7 @@ class LiveSyntheticRunner:
             for target in self.targets
             if target.instrument_class.strip().upper() == "COMMODITY"
         )
-        return LiveSyntheticUnderlyingFeed(
+        feed = LiveSyntheticUnderlyingFeed(
             symbols,
             tracker=self._atm_tracker,
             instrument_master=self.instrument_master,
@@ -233,6 +233,15 @@ class LiveSyntheticRunner:
             index_symbols=index_symbols,
             commodity_symbols=commodity_symbols,
         )
+        resolvable = set(feed._tokens())
+        self.targets = tuple(
+            target for target in self.targets
+            if target.underlying.strip().upper() in resolvable
+        )
+        if not self.targets:
+            app_logger.warning("Synthetic live runner has no resolvable underlying tokens")
+            return None
+        return feed
 
     def build_subscriptions(self) -> tuple:
         """Resolve concrete current/near contracts from the Angel One master."""
@@ -315,6 +324,9 @@ class LiveSyntheticRunner:
             return
 
         feed = self._ensure_underlying_feed()
+        if feed is None:
+            sleep(30.0)
+            return
         feed_thread = None
         self._active_underlying_feed = feed
         if feed is not None:
@@ -325,7 +337,12 @@ class LiveSyntheticRunner:
             )
             feed_thread.start()
         try:
-            self._wait_for_live_atm(atm_provider)
+            try:
+                self._wait_for_live_atm(atm_provider)
+            except TimeoutError as exc:
+                app_logger.warning("Synthetic live underlying feed timeout; retrying: %s", exc)
+                sleep(5.0)
+                return
             while not self._stop_requested.is_set() and (self._recorder is None or not self._recorder.stop_event.is_set()):
                 self._refresh_requested.clear()
                 try:
