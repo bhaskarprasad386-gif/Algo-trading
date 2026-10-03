@@ -36,6 +36,7 @@ export default function CustomAlertPage() {
   const [app, setApp] = useState(true);
   const [email, setEmail] = useState(false);
   const [paperAutoExecute, setPaperAutoExecute] = useState(false);
+  const [paperAutoAmount, setPaperAutoAmount] = useState(10000000);
   const [paperAutoLoading, setPaperAutoLoading] = useState(true);
   const [paperAutoSaving, setPaperAutoSaving] = useState(false);
   const [paperAutoError, setPaperAutoError] = useState<string | null>(null);
@@ -56,6 +57,8 @@ export default function CustomAlertPage() {
       .then((data) => {
         if (!active) return;
         setPaperAutoExecute(Boolean(data?.paper?.enabled));
+        const amount = Number(data?.paper?.paper_amount);
+        if (Number.isFinite(amount) && amount >= 0) setPaperAutoAmount(amount);
         setPaperAutoError(null);
       })
       .catch(() => {
@@ -77,11 +80,13 @@ export default function CustomAlertPage() {
       const response = await fetch(`${base}/api/v1/alerts/paper`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: next, paper_amount: 10000000, emergency_stop: false }),
+        body: JSON.stringify({ enabled: next, paper_amount: paperAutoAmount, emergency_stop: false }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`);
       setPaperAutoExecute(Boolean(data?.paper?.enabled));
+      const amount = Number(data?.paper?.paper_amount);
+      if (Number.isFinite(amount) && amount >= 0) setPaperAutoAmount(amount);
     } catch (error) {
       setPaperAutoError(error instanceof Error ? error.message : "Unable to update paper auto-execute");
     } finally {
