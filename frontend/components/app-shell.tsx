@@ -63,13 +63,23 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Navigation pathname={pathname} />
         </aside>
 
-        {mobileOpen ? (
-          <div className="fixed inset-16 inset-x-0 z-20 bg-black/60 lg:hidden" onClick={() => setMobileOpen(false)}>
-            <aside className="h-full w-72 border-r border-algo-border bg-algo-surface" onClick={(e) => e.stopPropagation()}>
-              <Navigation pathname={pathname} onNavigate={() => setMobileOpen(false)} />
-            </aside>
-          </div>
-        ) : null}
+        <div
+          className={`fixed inset-16 inset-x-0 z-20 bg-black/60 transition-opacity duration-200 lg:hidden ${
+            mobileOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+          }`}
+          onClick={() => setMobileOpen(false)}
+          aria-hidden={!mobileOpen}
+        >
+          <aside
+            className={`h-full w-[min(18rem,86vw)] border-r border-algo-border bg-algo-surface shadow-2xl transition-transform duration-200 ease-out ${
+              mobileOpen ? "translate-x-0" : "-translate-x-full"
+            }`}
+            onClick={(e) => e.stopPropagation()}
+            aria-label="Mobile navigation"
+          >
+            <Navigation pathname={pathname} onNavigate={() => setMobileOpen(false)} />
+          </aside>
+        </div>
 
         <main className="min-h-[calc(100vh-4rem)] w-full lg:ml-64">
           <div className="mx-auto w-full max-w-[1600px] p-4 pb-24 sm:p-6 lg:p-8">{children}</div>
@@ -101,7 +111,7 @@ function Navigation({ pathname, onNavigate }: { pathname: string; onNavigate?: (
       <div className="space-y-1">
         {nav.map((item) => {
           const Icon = item.icon;
-          const active = pathname === item.href;
+          const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href + "/"));
           return (
             <Link
               key={item.href}
