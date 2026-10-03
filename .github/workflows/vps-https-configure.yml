@@ -82,10 +82,23 @@ jobs:
           echo "NGINX_HTTP_PROXY_OK"
           test "$(curl -sS -H 'Host: 82.41.67.22' -o /dev/null -w '%{http_code}' http://127.0.0.1/openapi.json)" = "200"
 
+          echo "== ACME HTTP-01 PRECHECK =="
+          ACME_TOKEN="algo-trading-acme-$(date +%s)"
+          echo "$ACME_TOKEN" > "$ACME_ROOT/.well-known/acme-challenge/$ACME_TOKEN"
+          chmod 644 "$ACME_ROOT/.well-known/acme-challenge/$ACME_TOKEN"
+          echo "ACME_LOCAL=$(curl -sS -o - -w ' HTTP_STATUS=%{http_code}' -H 'Host: 82.41.67.22' http://127.0.0.1/.well-known/acme-challenge/$ACME_TOKEN || true)"
+          if ! curl -fsS --max-time 15 "http://$IP/.well-known/acme-challenge/$ACME_TOKEN" | grep -Fxq "$ACME_TOKEN"; then
+            echo "ACME_PUBLIC_HTTP_FAILED"
+            rm -f "$ACME_ROOT/.well-known/acme-challenge/$ACME_TOKEN"
+            exit 1
+          fi
+          echo "ACME_PUBLIC_HTTP_OK"
+          rm -f "$ACME_ROOT/.well-known/acme-challenge/$ACME_TOKEN"
+
           echo "== CERTIFICATE =="
           if [ ! -f "/etc/letsencrypt/live/$IP/fullchain.pem" ]; then
             echo "REQUESTING_LETSENCRYPT_IP_CERT_STAGING"
-            certbot certonly --staging --non-interactive --agree-tos --register-unsafely-without-email               --preferred-profile shortlived --webroot --webroot-path "$ACME_ROOT"               --ip-address "$IP"
+            certbot certonly --staging --non-interactive --agree-tos --register-unsafely-without-email               --preferred-profile shortlived --webroot --webroot-path "$ACME_ROOT"               --ip-address "$IP" --verbose
             rm -rf "/etc/letsencrypt/live/$IP" "/etc/letsencrypt/archive/$IP" "/etc/letsencrypt/renewal/$IP.conf"
             echo "REQUESTING_LETSENCRYPT_IP_CERT_PRODUCTION"
             certbot certonly --non-interactive --agree-tos --register-unsafely-without-email               --preferred-profile shortlived --webroot --webroot-path "$ACME_ROOT"               --ip-address "$IP"
