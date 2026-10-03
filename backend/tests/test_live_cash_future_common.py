@@ -151,3 +151,12 @@ def test_runner_reuses_compatible_shared_cash_descriptor_without_conflict():
         InstrumentDescriptor(key, "ALIAS-EQ", "equity", "NSE", "NSE"),
     ))
     assert manager.registry.get(key).symbol == "CANONICAL-EQ"
+
+
+def test_runner_skips_incompatible_shared_descriptor_instead_of_crashing():
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+    manager = CommonWebSocketManager(socket_factory=lambda: object())
+    key = InstrumentKey("NSE", "NSE", "25")
+    manager.registry.register_many((InstrumentDescriptor(key, "NIFTY-INDEX", "index", "NSE", "NSE"),))
+    runner = LiveCashFutureCommonRunner("ignored", manager=manager)
+    assert runner._register_descriptors((InstrumentDescriptor(key, "ABC-EQ", "equity", "NSE", "NSE"),)) == set()
