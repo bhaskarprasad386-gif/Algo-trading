@@ -96,7 +96,20 @@ jobs:
           systemctl reload nginx
 
           echo "NGINX_HTTP_PROXY_OK"
-          test "$(curl -sS -H 'Host: 82.41.67.22' -o /dev/null -w '%{http_code}' http://127.0.0.1/openapi.json)" = "200"
+          HTTP_STATUS="$(curl -sS -H 'Host: 82.41.67.22' -o /tmp/nginx-openapi-body -w '%{http_code}' http://127.0.0.1/openapi.json || true)"
+          echo "NGINX_OPENAPI_STATUS=$HTTP_STATUS"
+          echo "NGINX_OPENAPI_HEADERS="
+          curl -sSI -H 'Host: 82.41.67.22' http://127.0.0.1/openapi.json || true
+          echo "NGINX_OPENAPI_BODY_HEAD="
+          head -c 500 /tmp/nginx-openapi-body 2>/dev/null || true
+          echo
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "== NGINX_ACTIVE_CONFIG =="
+            nginx -T 2>&1 | sed -n '/server_name 82.41.67.22/,/^[[:space:]]*}/p' | head -n 120 || true
+            echo "== LISTENERS =="
+            ss -lntp | grep -E ':(80|443) ' || true
+            exit 1
+          fi
 
           echo "== ACME HTTP-01 PRECHECK =="
           ACME_TOKEN="algo-trading-acme-$(date +%s)"
