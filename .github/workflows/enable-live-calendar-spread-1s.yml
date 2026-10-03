@@ -6,6 +6,11 @@ on:
 permissions:
   contents: read
 
+# Shared lock: serialize VPS service restarts/configuration.
+concurrency:
+  group: vps-service-mutation
+  cancel-in-progress: false
+
 jobs:
   enable:
     runs-on: ubuntu-latest
