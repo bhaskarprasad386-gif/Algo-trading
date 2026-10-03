@@ -89,12 +89,15 @@ class GlobalPaperAutoService:
         if user_id is not None: q=q.filter(StrategyAutoPaperPosition.user_id==int(user_id))
         return q.order_by(StrategyAutoPaperPosition.realized_pnl.desc(),StrategyAutoPaperPosition.closed_at.desc()).limit(max(1,min(int(limit),1000))).all()
 
-    def update_mark(self, db: Session, position_id: int, current_price: float) -> bool:
+    def update_mark(self, db: Session, position_id: int, current_price: float, user_id: int | None = None) -> bool:
         """Update an active paper position from its latest mark price."""
-        row = db.query(StrategyAutoPaperPosition).filter(
+        query = db.query(StrategyAutoPaperPosition).filter(
             StrategyAutoPaperPosition.id == int(position_id),
             StrategyAutoPaperPosition.status == "ACTIVE",
-        ).first()
+        )
+        if user_id is not None:
+            query = query.filter(StrategyAutoPaperPosition.user_id == int(user_id))
+        row = query.first()
         if row is None:
             return False
         price = float(current_price)
@@ -116,8 +119,11 @@ class GlobalPaperAutoService:
         if changed: db.commit()
         return changed
 
-    def close(self, db: Session, position_id: int, reason: str="MANUAL_CLOSE") -> StrategyAutoPaperPosition:
-        row=db.query(StrategyAutoPaperPosition).filter(StrategyAutoPaperPosition.id==int(position_id),StrategyAutoPaperPosition.status=="ACTIVE").first()
+    def close(self, db: Session, position_id: int, reason: str="MANUAL_CLOSE", user_id: int | None = None) -> StrategyAutoPaperPosition:
+        query=db.query(StrategyAutoPaperPosition).filter(StrategyAutoPaperPosition.id==int(position_id),StrategyAutoPaperPosition.status=="ACTIVE")
+        if user_id is not None:
+            query=query.filter(StrategyAutoPaperPosition.user_id==int(user_id))
+        row=query.first()
         if row is None: raise LookupError("paper-auto position not found")
         row.status="CLOSED"; row.realized_pnl=round(float(row.pnl),8); row.closed_at=_now(); row.exit_reason=reason.upper()[:64]; db.commit(); db.refresh(row); return row
 
