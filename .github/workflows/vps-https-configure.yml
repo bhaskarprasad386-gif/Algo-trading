@@ -103,14 +103,13 @@ jobs:
           echo "NGINX_OPENAPI_BODY_HEAD="
           head -c 500 /tmp/nginx-openapi-body 2>/dev/null || true
           echo
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "== NGINX_ACTIVE_CONFIG =="
-            nginx -T 2>&1 | sed -n '/server_name 82.41.67.22/,/^[[:space:]]*}/p' | head -n 120 || true
+          if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "301" ]; then
+            echo "== NGINX_ACTIVE_CONFIG_MATCHES =="
+            nginx -T 2>&1 | grep -n -B 8 -A 30 'server_name 82.41.67.22' | head -n 240 || true
             echo "== LISTENERS =="
             ss -lntp | grep -E ':(80|443) ' || true
             exit 1
           fi
-
           echo "== ACME HTTP-01 PRECHECK =="
           ACME_TOKEN="algo-trading-acme-$(date +%s)"
           echo "$ACME_TOKEN" > "$ACME_ROOT/.well-known/acme-challenge/$ACME_TOKEN"
