@@ -80,7 +80,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="mx-auto flex max-w-lg items-center justify-around">
           {nav.slice(0, 5).map((item) => {
             const Icon = item.icon;
-            const active = pathname === item.href;
+            const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href + "/"));
             return (
               <Link key={item.href} href={item.href} className={`flex min-w-14 flex-col items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] ${active ? "text-algo-primary" : "text-algo-muted"}`}>
                 <Icon size={18} />
