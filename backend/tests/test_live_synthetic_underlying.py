@@ -103,3 +103,13 @@ def test_underlying_feed_keeps_bse_exchange_routing_only_for_bse_indices():
     )
     assert feed._exchange_type("SENSEX") == 4
     assert feed._exchange_type("NIFTY") == 1
+
+
+def test_filter_resolvable_index_symbols_skips_unresolvable_index():
+    from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
+    master = InstrumentMaster()
+    master.instruments = [
+        {"exch_seg": "NSE", "symbol": "NIFTY", "token": "99926000"},
+    ]
+    master._loaded = True
+    assert filter_resolvable_index_symbols(master, ("NIFTY", "NIFTYFPI")) == ("NIFTY",)
