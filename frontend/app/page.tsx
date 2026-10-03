@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, ArrowUpRight, BarChart3, Bell, BriefcaseBusiness, CircleDollarSign, Database, Gauge, Layers3, Network, ShieldCheck, WalletCards } from "lucide-react";
+import { Bell, BriefcaseBusiness, Clock, Database, Gauge, ShieldCheck, Zap } from "lucide-react";
 import Link from "next/link";
-import { Card, PageTitle, StatusDot } from "@/components/ui";
+import { Card, PageTitle } from "@/components/ui";
 
 const markets = [
   ["NIFTY", "No live data"],
@@ -14,22 +14,35 @@ const markets = [
 ];
 
 const strategies = [
-  { name: "Cash-Future", href: "/paper-trading", detail: "Cash + current/near future" },
-  { name: "Calendar Spread", href: "/paper-trading", detail: "Expiry spread workspace" },
-  { name: "Synthetic Arbitrage", href: "/paper-trading", detail: "Live option/future structure" },
-  { name: "Box Spread", href: "/paper-trading", detail: "Four-leg paper structure" },
-  { name: "Debit Strategy", href: "/paper-trading", detail: "Supported debit setups" },
-  { name: "Credit Strategy", href: "/paper-trading", detail: "Supported credit setups" },
+  { name: "Cash-Future", detail: "Pairs • Cash vs Futures •" },
+  { name: "Calendar Spread", detail: "Time spread • NIFTY •" },
+  { name: "Synthetic Arbitrage", detail: "Cash-Synth • Arbitrage •" },
+  { name: "Box Strategy", detail: "" },
+  { name: "Box Spread", detail: "Options • Box •" },
+  { name: "Debit Strategy", detail: "Debit • Defined risk •" },
+  { name: "Credit Strategy", detail: "Credit • Premium collect •" },
+  { name: "Broker Orders", detail: "" },
 ];
 
 const health = [
   ["Frontend", "READY", "ok"],
-  ["FastAPI", "NOT CONNECTED", "muted"],
-  ["WebSocket", "NOT CONNECTED", "muted"],
-  ["Scanner", "AWAITING API", "muted"],
-  ["Database", "AWAITING API", "muted"],
-  ["Broker Orders", "OFF", "safe"],
+  ["FastAPI", "NOT CONNECTED", "error"],
+  ["WebSocket", "NOT CONNECTED", "error"],
+  ["Scanner", "AWAITING API", "warn"],
+  ["Database", "AWAITING API", "warn"],
+  ["Broker Orders", "OFF", "error"],
 ] as const;
+
+const scannerStatus = [
+  { label: "Signals Detected", value: "No signals" },
+  { label: "Active Filters", value: "None" },
+  { label: "Last Scan", value: "--:--:--" },
+  { label: "Avg Latency", value: "-- ms" },
+  { label: "Orders Placed", value: "0 orders" },
+  { label: "Fills", value: "0 fills" },
+  { label: "Errors", value: "0 errors" },
+  { label: "Logs", value: "0 entries" },
+];
 
 export default function HomePage() {
   const [capital, setCapital] = useState("10000000");
@@ -42,7 +55,10 @@ export default function HomePage() {
   const saveCapital = (value: string) => {
     const normalized = value.replace(/[^0-9]/g, "");
     setCapital(normalized);
-    if (Number(normalized) > 0) window.localStorage.setItem("algo-paper-capital", normalized);
+
+    if (Number(normalized) > 0) {
+      window.localStorage.setItem("algo-paper-capital", normalized);
+    }
   };
 
   const formattedCapital = Number(capital || 0).toLocaleString("en-IN", {
@@ -52,74 +68,132 @@ export default function HomePage() {
   });
 
   return (
-    <div>
+    <div className="min-h-screen bg-[#0a0a0f] p-4 text-white">
       <PageTitle
-        eyebrow="Phase 2 · Home / Command Center"
+        eyebrow="Phase 2 • Home / Command Center"
         title="Command Center"
-        description="A single operational view for market status, paper capital, scanner health, positions and strategy workspaces. Live values appear only after the existing FastAPI/WebSocket integration is connected."
+        description=""
       />
 
-      <div className="mb-6 flex flex-wrap gap-3">
-        <div className="flex items-center gap-2 rounded-full border border-algo-border bg-algo-surface px-3 py-2 text-xs text-algo-muted">
-          <StatusDot />
-          Market feed · not connected
+      <div className="-mt-8 mb-4 flex justify-end gap-2">
+        <div className="inline-flex items-center gap-2 rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-[11px] font-medium text-orange-300">
+          <span className="h-2 w-2 rounded-full bg-orange-400" />
+          Market feed not connected
         </div>
-        <div className="flex items-center gap-2 rounded-full border border-algo-border bg-algo-surface px-3 py-2 text-xs text-algo-muted">
-          <ShieldCheck size={14} className="text-algo-profit" />
-          Paper-safe · broker orders OFF
+
+        <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-300">
+          <span className="h-2 w-2 rounded-full bg-emerald-400" />
+          Paper-safe broker orders OFF
         </div>
       </div>
 
-      <section aria-label="Market overview">
-        <SectionHeading icon={<BarChart3 size={18} />} title="Market Overview" action="Live Scanner" href="/scanner" />
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <section className="mt-6" aria-label="Market overview">
+        <h2 className="mb-3 text-[15px] font-semibold">Market Overview</h2>
+
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
           {markets.map(([symbol, status]) => (
-            <Link key={symbol} href={`/scanner?market=${encodeURIComponent(symbol)}`} className="group block min-w-0">
-              <Card className="h-full p-4 transition group-hover:border-algo-primary/50 group-hover:bg-algo-surface group-focus-visible:border-algo-primary/70 group-focus-visible:outline-none">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-semibold text-white">{symbol}</span>
-                  <StatusDot />
+            <Link key={symbol} href={`/scanner?market=${encodeURIComponent(symbol)}`} className="block">
+              <Card className="rounded-xl border-[#2a2a33] bg-[#18181f] p-4 transition hover:border-sky-500/40">
+                <div className="text-center">
+                  <div className="text-[12px] font-semibold tracking-wide">{symbol}</div>
+                  <div className="mt-3 text-lg text-zinc-500">—</div>
+                  <div className="mt-2 text-[11px] text-zinc-400">{status}</div>
                 </div>
-                <div className="mt-4 text-lg font-semibold text-algo-muted">—</div>
-                <div className="mt-1 text-[11px] text-algo-muted">{status}</div>
               </Card>
             </Link>
           ))}
         </div>
       </section>
 
-      <section className="mt-7" aria-label="Paper ledger">
-        <SectionHeading icon={<WalletCards size={18} />} title="Paper Ledger" />
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <MetricCard
-            icon={<CircleDollarSign size={18} />}
-            label="Paper Capital"
-            value={formattedCapital}
-            note="Manual paper capital"
-            editable
-            inputValue={capital}
-            onInputChange={saveCapital}
-          />
-          <MetricCard icon={<CircleDollarSign size={18} />} label="Available Balance" value="—" note="Awaiting backend data" />
-          <MetricCard icon={<ArrowUpRight size={18} />} label="Today's P&L" value="—" note="No live position data" />
-          <MetricCard icon={<BriefcaseBusiness size={18} />} label="Open Positions" value="—" note="No live position data" />
-        </div>
-      </section>
+      <div className="mt-6 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
+        <section aria-label="Paper ledger">
+          <h2 className="mb-3 text-[15px] font-semibold">Paper Ledger</h2>
 
-      <div className="mt-7 grid gap-6 xl:grid-cols-[1.35fr_.65fr]">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Card className="rounded-xl border-[#2a2a33] bg-[#18181f] p-3">
+              <div className="text-[11px] text-zinc-400">Paper Capital</div>
+              <div className="mt-1 text-[16px] font-bold">{formattedCapital}</div>
+              <input
+                inputMode="numeric"
+                value={capital}
+                onChange={(event) => saveCapital(event.target.value)}
+                aria-label="Manual paper capital amount"
+                className="mt-3 min-h-9 w-full rounded-lg border border-[#2a2a33] bg-[#0a0a0f] px-2 text-xs text-white outline-none focus:border-sky-500/60"
+              />
+            </Card>
+
+            <Card className="rounded-xl border-[#2a2a33] bg-[#18181f] p-3">
+              <div className="flex gap-6">
+                <div>
+                  <div className="text-[11px] text-zinc-400">Available Balance</div>
+                  <div className="mt-1 text-sm">—</div>
+                </div>
+
+                <div>
+                  <div className="text-[11px] text-zinc-400">Today&apos;s P&amp;L</div>
+                  <div className="mt-1 text-sm">—</div>
+                </div>
+              </div>
+            </Card>
+
+            <Card className="rounded-xl border-[#2a2a33] bg-[#18181f] p-3">
+              <div className="text-[11px] text-zinc-400">Open Positions</div>
+              <div className="mt-1 text-sm">—</div>
+            </Card>
+          </div>
+        </section>
+
+        <section aria-label="System health">
+          <h2 className="mb-3 text-[15px] font-semibold">System Health</h2>
+
+          <Card className="rounded-xl border-[#2a2a33] bg-[#18181f] p-2">
+            {health.map(([name, value, state]) => (
+              <div key={name} className="flex items-center justify-between px-2 py-1.5">
+                <div className="flex items-center gap-2 text-[12px] text-zinc-300">
+                  <span
+                    className={
+                      `h-2 w-2 rounded-full ${
+                        state === "ok"
+                          ? "bg-emerald-400"
+                          : state === "warn"
+                            ? "bg-amber-400"
+                            : "bg-red-400"
+                      }`
+                    }
+                  />
+                  {name}
+                </div>
+
+                <span
+                  className={
+                    `rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      state === "ok"
+                        ? "bg-emerald-500/20 text-emerald-300"
+                        : state === "warn"
+                          ? "bg-amber-500/20 text-amber-300"
+                          : "bg-red-500/20 text-red-300"
+                    }`
+                  }
+                >
+                  {value}
+                </span>
+              </div>
+            ))}
+          </Card>
+        </section>
+      </div>
+
+      <div className="mt-6 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
         <section aria-label="Strategy workspaces">
-          <SectionHeading icon={<Layers3 size={18} />} title="Strategy Workspaces" action="Paper Trading" href="/paper-trading" />
-          <div className="grid gap-3 sm:grid-cols-2">
+          <h2 className="mb-3 text-[15px] font-semibold">Strategy Workspaces</h2>
+
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             {strategies.map((strategy) => (
-              <Link key={strategy.name} href={strategy.href} className="group">
-                <Card className="h-full p-4 transition group-hover:border-algo-primary/50 group-hover:bg-algo-surface">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm font-semibold text-white">{strategy.name}</span>
-                    <ArrowUpRight size={16} className="text-algo-muted transition group-hover:text-algo-primary" />
-                  </div>
-                  <p className="mt-2 text-xs leading-5 text-algo-muted">{strategy.detail}</p>
-                  <div className="mt-4 inline-flex rounded-full border border-algo-border px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-algo-muted">
-                    Paper workspace
+              <Link key={strategy.name} href="/paper-trading" className="block">
+                <Card className="min-h-[85px] rounded-xl border-[#2a2a33] bg-[#18181f] p-3 transition hover:border-sky-500/40">
+                  <div className="text-[12px] font-semibold">{strategy.name}</div>
+                  <div className="mt-1 text-[10px] text-zinc-500">
+                    {strategy.detail ? `${strategy.detail} —` : " "}
                   </div>
                 </Card>
               </Link>
@@ -127,161 +201,79 @@ export default function HomePage() {
           </div>
         </section>
 
-        <section aria-label="System health">
-          <SectionHeading icon={<Gauge size={18} />} title="System Health" />
-          <Card className="p-5">
-            <div className="space-y-4">
-              {health.map(([label, value, state]) => (
-                <div key={label} className="flex items-center justify-between gap-3 border-b border-algo-border pb-3 last:border-0 last:pb-0">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <StatusDot live={state === "ok" || state === "safe"} />
-                    <span className="text-sm text-algo-muted">{label}</span>
-                  </div>
-                  <span className={state === "safe" ? "text-xs font-semibold text-algo-profit" : state === "ok" ? "text-xs font-semibold text-algo-primary" : "text-right text-[10px] font-semibold text-algo-muted"}>
-                    {value}
-                  </span>
-                </div>
+        <div className="space-y-4">
+          <section aria-label="Scanner status">
+            <h2 className="mb-3 text-[15px] font-semibold">Scanner Status</h2>
+
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {scannerStatus.map((item) => (
+                <Card key={item.label} className="rounded-xl border-[#2a2a33] bg-[#18181f] p-2.5">
+                  <div className="text-[10px] text-zinc-400">{item.label}</div>
+                  <div className="mt-1 text-[11px] text-zinc-300">{item.value}</div>
+                </Card>
               ))}
             </div>
-          </Card>
-        </section>
+          </section>
+
+          <section aria-label="Operations">
+            <h2 className="mb-3 text-[15px] font-semibold">Operations</h2>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <Link href="/scanner">
+                <Card className="rounded-xl border-[#2a2a33] bg-[#18181f] p-3 transition hover:border-sky-500/40">
+                  <div className="flex gap-2">
+                    <Zap size={14} />
+                    <div>
+                      <div className="text-[12px] font-semibold">Live Scanner</div>
+                      <div className="text-[10px] text-zinc-500">Open scanner console</div>
+                    </div>
+                  </div>
+                </Card>
+              </Link>
+
+              <Link href="/custom-alert">
+                <Card className="rounded-xl border-[#2a2a33] bg-[#18181f] p-3 transition hover:border-sky-500/40">
+                  <div className="flex gap-2">
+                    <Bell size={14} />
+                    <div>
+                      <div className="text-[12px] font-semibold">Custom Alerts</div>
+                      <div className="text-[10px] text-zinc-500">Manage alerts</div>
+                    </div>
+                  </div>
+                </Card>
+              </Link>
+
+              <Link href="/history">
+                <Card className="rounded-xl border-[#2a2a33] bg-[#18181f] p-3 transition hover:border-sky-500/40">
+                  <div className="flex gap-2">
+                    <Clock size={14} />
+                    <div>
+                      <div className="text-[12px] font-semibold">History</div>
+                      <div className="text-[10px] text-zinc-500">Trade history & logs</div>
+                    </div>
+                  </div>
+                </Card>
+              </Link>
+            </div>
+          </section>
+        </div>
       </div>
 
-      <section className="mt-7" aria-label="Scanner status">
-        <SectionHeading icon={<Activity size={18} />} title="Scanner Status" action="Open Scanner" href="/scanner" />
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <StatusCard label="Scanner engine" value="AWAITING API" detail="Runtime state will come from backend" state="muted" />
-          <StatusCard label="Live feed" value="NOT CONNECTED" detail="No live stream is claimed here" state="muted" />
-          <StatusCard label="Last update" value="—" detail="No backend timestamp available" state="muted" />
-          <StatusCard label="Alerts" value="—" detail="No live alert count available" state="muted" />
-        </div>
-      </section>
-
-      <section className="mt-7" aria-label="Today's activity">
-        <SectionHeading icon={<Activity size={18} />} title="Today's Activity" action="View History" href="/history" />
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <ActivityCard label="Alerts" value="—" detail="Awaiting backend activity data" />
-          <ActivityCard label="Paper Entries" value="—" detail="No live entry count available" />
-          <ActivityCard label="Paper Exits" value="—" detail="No live exit count available" />
-          <ActivityCard label="Completed Trades" value="—" detail="Awaiting saved trade data" />
-        </div>
-      </section>
-
-      <section className="mt-7" aria-label="Operations">
-        <SectionHeading icon={<Activity size={18} />} title="Operations" />
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <QuickLink href="/scanner" icon={<Activity size={18} />} title="Live Scanner" description="All supported live scanner output" />
-          <QuickLink href="/custom-alert" icon={<Bell size={18} />} title="Custom Alerts" description="Create and monitor alert conditions" />
-          <QuickLink href="/positions" icon={<BriefcaseBusiness size={18} />} title="Positions" description="Open paper positions and P&L" />
-          <QuickLink href="/history" icon={<Database size={18} />} title="History" description="Saved alerts, trades and journal data" />
-        </div>
-      </section>
-
-      <Card className="mt-7 p-4">
-        <div className="flex items-start gap-3">
-          <Network size={18} className="mt-0.5 shrink-0 text-algo-primary" />
-          <div>
-            <div className="text-sm font-medium text-white">Integration boundary</div>
-            <p className="mt-1 text-xs leading-5 text-algo-muted">
-              This command center does not manufacture market prices, signals or P&L. Phase 10 will connect these panels to the existing FastAPI and WebSocket services.
-            </p>
+      <Card className="mt-6 flex items-center justify-between rounded-xl border-[#2a2a33] bg-[#18181f] p-3">
+        <div className="min-w-0">
+          <div className="text-[13px] font-semibold">Integration Boundary</div>
+          <div className="text-[11px] text-zinc-500">
+            External integrations are disabled in Paper-safe mode. Connect FastAPI and Broker to enable live trading.
           </div>
         </div>
+
+        <button
+          type="button"
+          className="ml-3 shrink-0 rounded-lg bg-[#2a2a33] px-3 py-1.5 text-[11px] transition hover:bg-[#34343e]"
+        >
+          View Connections
+        </button>
       </Card>
     </div>
-  );
-}
-
-function ActivityCard({ label, value, detail }: { label: string; value: string; detail: string }) {
-  return (
-    <Card className="p-4">
-      <div className="text-xs font-medium text-algo-muted">{label}</div>
-      <div className="mt-4 text-xl font-semibold text-white">{value}</div>
-      <div className="mt-1 text-[11px] leading-5 text-algo-muted">{detail}</div>
-    </Card>
-  );
-}
-
-function StatusCard({ label, value, detail, state }: { label: string; value: string; detail: string; state: "muted" | "ready" | "safe" }) {
-  const valueClass =
-    state === "safe" ? "text-algo-profit" : state === "ready" ? "text-algo-primary" : "text-algo-muted";
-
-  return (
-    <Card className="p-4">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-medium text-algo-muted">{label}</span>
-        <StatusDot live={state === "ready" || state === "safe"} />
-      </div>
-      <div className={`mt-4 text-sm font-semibold ${valueClass}`}>{value}</div>
-      <div className="mt-1 text-[11px] leading-5 text-algo-muted">{detail}</div>
-    </Card>
-  );
-}
-
-function SectionHeading({ icon, title, action, href }: { icon: React.ReactNode; title: string; action?: string; href?: string }) {
-  return (
-    <div className="mb-3 flex items-center justify-between gap-3">
-      <div className="flex items-center gap-2">
-        <span className="text-algo-primary">{icon}</span>
-        <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-white">{title}</h2>
-      </div>
-      {action && href ? <Link href={href} className="text-xs font-medium text-algo-primary hover:underline">{action} →</Link> : null}
-    </div>
-  );
-}
-
-function MetricCard({
-  icon,
-  label,
-  value,
-  note,
-  editable = false,
-  inputValue = "",
-  onInputChange,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  note: string;
-  editable?: boolean;
-  inputValue?: string;
-  onInputChange?: (value: string) => void;
-}) {
-  return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-algo-muted">{label}</span>
-        <span className="text-algo-primary">{icon}</span>
-      </div>
-      <div className="mt-4 text-xl font-semibold text-white">{value}</div>
-      <div className="mt-1 text-xs text-algo-muted">{note}</div>
-      {editable && onInputChange ? (
-        <label className="mt-4 block">
-          <span className="sr-only">Paper capital amount</span>
-          <input
-            inputMode="numeric"
-            value={inputValue}
-            onChange={(e) => onInputChange(e.target.value)}
-            placeholder="Enter amount"
-            aria-label="Manual paper capital amount"
-            className="min-h-11 w-full px-3 py-2 text-sm"
-          />
-        </label>
-      ) : null}
-    </Card>
-  );
-}
-
-function QuickLink({ href, icon, title, description }: { href: string; icon: React.ReactNode; title: string; description: string }) {
-  return (
-    <Link href={href} className="group">
-      <Card className="flex h-full items-start gap-3 p-4 transition group-hover:border-algo-primary/50 group-hover:bg-algo-surface">
-        <span className="mt-0.5 text-algo-primary">{icon}</span>
-        <span>
-          <span className="block text-sm font-semibold text-white">{title}</span>
-          <span className="mt-1 block text-xs leading-5 text-algo-muted">{description}</span>
-        </span>
-      </Card>
-    </Link>
   );
 }
