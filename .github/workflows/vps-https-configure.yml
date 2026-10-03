@@ -1,4 +1,5 @@
 name: VPS HTTPS + Nginx Configure
+# Endpoint repair run: keep Vercel HTTPS/WSS connectivity aligned with VPS.
 
 on:
   workflow_dispatch:
