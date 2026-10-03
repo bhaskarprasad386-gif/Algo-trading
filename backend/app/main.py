@@ -27,6 +27,7 @@ from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 from app.market_data.common_strategy_feed import shared_common_manager
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry
+from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.nifty50_universe import NIFTY50_STOCK_SYMBOLS, NIFTY50_INDEX_SYMBOLS
@@ -546,8 +547,15 @@ async def _live_synthetic_loop() -> None:
                 commodity_symbols.add(name)
 
         stock_symbols = sorted(nifty50_stocks)
-        index_symbols = sorted(index_symbols)
+        raw_index_symbols = sorted(index_symbols)
+        index_symbols = list(filter_resolvable_index_symbols(master, raw_index_symbols))
+        missing_index_underlyings = sorted(set(raw_index_symbols) - set(index_symbols))
         commodity_symbols = sorted(commodity_symbols)
+        if missing_index_underlyings:
+            app_logger.warning(
+                "Synthetic live index underlyings skipped because no concrete Angel token exists: %s",
+                ", ".join(missing_index_underlyings),
+            )
 
         target_specs = (
             [(symbol, "STOCK") for symbol in stock_symbols]
