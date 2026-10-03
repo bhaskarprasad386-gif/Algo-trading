@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Bell, Filter, RefreshCw, Search, SlidersHorizontal, Zap } from "lucide-react";
 import { Card, PageTitle, StatusDot } from "@/components/ui";
@@ -11,6 +11,11 @@ const columns = ["Symbol", "Expiry", "Cash", "Future", "Gap", "Volume / OI", "Si
 export default function ScannerPage() {
   const [market, setMarket] = useState("ALL F&O");
   const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    const requestedMarket = new URLSearchParams(window.location.search).get("market");
+    if (requestedMarket && markets.includes(requestedMarket)) setMarket(requestedMarket);
+  }, []);
 
   return (
     <div className="space-y-5">
