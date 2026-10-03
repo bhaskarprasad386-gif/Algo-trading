@@ -52,7 +52,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               PAPER MODE · LIVE ORDERS OFF
             </div>
           </div>
-          <button className="rounded-lg p-2 text-algo-muted hover:text-white" aria-label="Settings">
+          <button className="min-h-10 min-w-10 rounded-lg p-2 text-algo-muted hover:text-white" aria-label="Settings">
             <Settings2 size={19} />
           </button>
         </div>
@@ -81,7 +81,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </aside>
         </div>
 
-        <main className="min-h-[calc(100vh-4rem)] w-full lg:ml-64">
+        <main className="min-h-[calc(100vh-4rem)] w-full min-w-0 lg:ml-64">
           <div className="mx-auto w-full max-w-[1600px] p-4 pb-24 sm:p-6 lg:p-8">{children}</div>
         </main>
       </div>
@@ -92,7 +92,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             const Icon = item.icon;
             const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href + "/"));
             return (
-              <Link key={item.href} href={item.href} className={`flex min-w-14 flex-col items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] ${active ? "text-algo-primary" : "text-algo-muted"}`}>
+              <Link key={item.href} href={item.href} className={`flex min-h-11 min-w-14 flex-col items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] ${active ? "text-algo-primary" : "text-algo-muted"}`}>
                 <Icon size={18} />
                 <span>{item.label.split(" ")[0]}</span>
               </Link>
