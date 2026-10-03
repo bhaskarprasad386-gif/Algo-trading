@@ -98,20 +98,26 @@ class LiveSyntheticUnderlyingFeed:
             try:
                 token = self.concrete_tokens.get(symbol)
                 if token:
-                result[symbol] = token
-            elif symbol in self.index_symbols:
-                exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS else "NSE"
-                result[symbol] = self.instrument_master.resolve_index_token(symbol, exchange)
-            elif symbol in self.commodity_symbols:
-                result[symbol] = self.instrument_master.get_token(symbol, "MCX") or ""
-                if not result[symbol]:
-                    raise LookupError(f"no MCX underlying token for {symbol}")
+                    result[symbol] = token
+                elif symbol in self.index_symbols:
+                    exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS else "NSE"
+                    token = self.instrument_master.resolve_index_token(symbol, exchange)
+                    if token:
+                        result[symbol] = token
+                elif symbol in self.commodity_symbols:
+                    token = self.instrument_master.get_token(symbol, "MCX") or ""
+                    if token:
+                        result[symbol] = token
                 else:
                     token = self.instrument_master.resolve_cash_token(symbol, "NSE")
                     if token:
                         result[symbol] = token
             except (LookupError, ValueError) as exc:
-                app_logger.warning("Synthetic underlying skipped unresolved symbol %s: %s", symbol, exc)
+                app_logger.warning(
+                    "Synthetic underlying skipped unresolved symbol %s: %s",
+                    symbol,
+                    exc,
+                )
         return result
 
     def _exchange_type(self, symbol: str) -> int:
