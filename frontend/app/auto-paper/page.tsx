@@ -15,8 +15,8 @@ type Position = {
   id?: number | string;
   strategy?: string;
   symbol?: string;
-  entry_price?: number;
-  current_price?: number;
+  entry?: number;
+  current?: number;
   pnl?: number;
   status?: string;
 };
@@ -45,7 +45,7 @@ export default function AutoPaperPage() {
       setPaper(config?.paper ?? {});
       if (positionsResponse.ok) {
         const data = await positionsResponse.json();
-        const rows = Array.isArray(data) ? data : (data?.positions ?? data?.items ?? []);
+        const rows = Array.isArray(data) ? data : (data?.data ?? data?.positions ?? []);
         setPositions(Array.isArray(rows) ? rows : []);
       } else {
         setPositions([]);
@@ -86,8 +86,6 @@ export default function AutoPaperPage() {
   };
 
   const totalCapital = Number.isFinite(Number(paper.paper_amount)) ? Number(paper.paper_amount) : null;
-  const usedCapital = positions.length ? null : 0;
-  const availableCapital = totalCapital === null || usedCapital === null ? null : totalCapital - usedCapital;
 
   return (
     <div className="space-y-5">
@@ -161,13 +159,14 @@ export default function AutoPaperPage() {
             <p className="mt-2 text-lg font-bold text-slate-900">{money(totalCapital)}</p>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <p className="text-xs uppercase tracking-wider text-slate-600">Used Capital</p>
-            <p className="mt-2 text-lg font-bold text-slate-900">{money(usedCapital)}</p>
-            <p className="mt-1 text-xs text-slate-600">{positions.length ? "Position allocation endpoint pending" : "No active positions reported"}</p>
+            <p className="text-xs uppercase tracking-wider text-slate-600">Active Positions</p>
+            <p className="mt-2 text-lg font-bold text-slate-900">{positions.length}</p>
+            <p className="mt-1 text-xs text-slate-600">Backend-reported active paper positions</p>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <p className="text-xs uppercase tracking-wider text-slate-600">Available</p>
-            <p className="mt-2 text-lg font-bold text-slate-900">{money(availableCapital)}</p>
+            <p className="text-xs uppercase tracking-wider text-slate-600">Capital Allocation</p>
+            <p className="mt-2 text-lg font-bold text-slate-900">Backend controlled</p>
+            <p className="mt-1 text-xs text-slate-600">No estimated available balance shown</p>
           </div>
         </div>
       </Card>
@@ -213,8 +212,8 @@ export default function AutoPaperPage() {
                   <tr key={position.id ?? index} className="border-t border-slate-200">
                     <td className="px-3 py-3 text-slate-900">{position.strategy ?? "—"}</td>
                     <td className="px-3 py-3 text-slate-900">{position.symbol ?? "—"}</td>
-                    <td className="px-3 py-3">{money(Number.isFinite(Number(position.entry_price)) ? Number(position.entry_price) : null)}</td>
-                    <td className="px-3 py-3">{money(Number.isFinite(Number(position.current_price)) ? Number(position.current_price) : null)}</td>
+                    <td className="px-3 py-3">{money(Number.isFinite(Number(position.entry)) ? Number(position.entry) : null)}</td>
+                    <td className="px-3 py-3">{money(Number.isFinite(Number(position.current)) ? Number(position.current) : null)}</td>
                     <td className="px-3 py-3">{money(Number.isFinite(Number(position.pnl)) ? Number(position.pnl) : null)}</td>
                     <td className="px-3 py-3 text-slate-600">{position.status ?? "—"}</td>
                   </tr>
