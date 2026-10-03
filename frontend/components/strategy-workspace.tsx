@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Bell, Filter, RefreshCw, Search, ShieldCheck, Zap } from "lucide-react";
 import { Card, PageTitle, StatusDot } from "@/components/ui";
+import { appConfig } from "@/lib/config";
 
 export type WorkspaceConfig = {
   slug: string;
@@ -48,18 +49,74 @@ const configs: Record<string, WorkspaceConfig> = {
   },
 };
 
+function formatCell(slug: string, column: string, row: Record<string, unknown>) {
+  const keys: Record<string, string[]> = {
+    "cash-future": [["Symbol","symbol"],["Expiry","contract_month"],["Cash Bid/Ask","cash_execution_price"],["Future Bid/Ask","future_execution_price"],["Executable Gap","executable_gap"],["Volume / OI","volume"],["Signal","executable"]].reduce((a,[k,v]) => (a[k]=v,a), {} as Record<string,string>),
+    "calendar-spread": {Underlying:"underlying",Near:"near_contract_month",Far:"far_contract_month",Spread:"gap_points","Gap / Edge":"long_edge", "Volume / OI":"liquidity_qty",Signal:"qualifies"},
+    "synthetic-arbitrage": {Underlying:"underlying",Expiry:"expiry",Strike:"strike",Option:"call_bid",Future:"future_bid","Executable Edge":"executable_edge",Signal:"direction"},
+    "box-spread": {Underlying:"symbol",Expiry:"expiry","Low Strike":"low_strike","High Strike":"high_strike","Box Edge":"executable_edge",Liquidity:"liquidity_qty",Signal:"direction"},
+  };
+  const key = keys[slug]?.[column];
+  const value = key ? row[key] : undefined;
+  if (value === undefined || value === null || value === "") return "—";
+  if (typeof value === "boolean") return value ? "YES" : "NO";
+  if (typeof value === "number") return Number.isFinite(value) ? value.toLocaleString("en-IN", { maximumFractionDigits: 4 }) : "—";
+  return String(value);
+}
+
 export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const c = configs[slug];
   const [search, setSearch] = useState("");
   const [control, setControl] = useState(c.controls[0]);
   const [refreshing, setRefreshing] = useState(false);
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const endpoint = slug === "cash-future" ? "/api/v1/scanner/cash-future/live/fast?limit=50"
+    : slug === "calendar-spread" ? "/api/v1/scanner/calendar-spread/live?limit=50"
+    : slug === "synthetic-arbitrage" ? "/api/v1/scanner/synthetic-cash-carry/live?limit=50"
+    : slug === "box-spread" ? "/api/v1/scanner/box-spread/live?limit=50"
+    : null;
+
+  const load = async () => {
+    if (!endpoint) { setRows([]); setLoading(false); return; }
+    setLoading(true); setError(null);
+    try {
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+      const response = await fetch(`${base}${endpoint}`, { cache: "no-store" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.detail || `${c.title} HTTP ${response.status}`);
+      const data = Array.isArray(body?.data) ? body.data : [];
+      setRows(data.filter((item: unknown): item is Record<string, unknown> => !!item && typeof item === "object"));
+    } catch (e) {
+      setRows([]);
+      setError(e instanceof Error ? e.message : "Backend unavailable");
+    } finally { setLoading(false); }
+  };
+
+  useEffect(() => { void load(); }, [endpoint]);
 
   const rowsMessage = useMemo(() => search ? `No live data for “${search}”.` : "No live data", [search]);
 
-  function refresh() {
+  async function refresh() {
     setRefreshing(true);
-    window.setTimeout(() => setRefreshing(false), 350);
+    await load();
+    setRefreshing(false);
   }
+
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toUpperCase();
+    if (!q) return rows;
+    return rows.filter(row => Object.values(row).some(value => String(value ?? "").toUpperCase().includes(q)));
+  }, [rows, search]);
+
+  const signalCount = rows.filter(row => row.qualifies === true || Number(row.executable_edge ?? row.executable_gap ?? 0) > 0 || Number(row.gap_points ?? 0) > 0).length;
+  const lastScan = rows.reduce<string | null>((latest, row) => {
+    const raw = row.timestamp_ns ?? row.timestamp ?? null;
+    if (raw == null) return latest;
+    return latest == null || String(raw) > latest ? String(raw) : latest;
+  }, null);
 
   return (
     <div className="space-y-5">
@@ -91,15 +148,17 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       </Card>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {c.metrics.map(x=><Card key={x} className="p-4"><p className="text-xs text-algo-muted">{x}</p><p className="mt-2 text-xl font-semibold text-white">—</p></Card>)}
+        {c.metrics.map(x=><Card key={x} className="p-4"><p className="text-xs text-algo-muted">{x}</p><p className="mt-2 text-xl font-semibold text-white">{loading ? "…" : x === "Signals" ? signalCount : x === "Executable Gaps" || x === "Executable Edges" || x === "Spread Opportunities" ? signalCount : x === "Eligible F&O Stocks" || x === "Eligible Contracts" || x === "Eligible Combos" || x === "Eligible Boxes" ? rows.length : lastScan ? "Live" : "—"}</p></Card>)}
       </div>
+
+      {error && <Card className="border-algo-loss/30 bg-algo-loss/5 p-4 text-sm text-algo-loss">{error}</Card>}
 
       <Card className="overflow-hidden">
         <div className="flex flex-col gap-2 border-b border-algo-border p-4 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="font-semibold text-white">{c.title} Opportunities</h2><p className="mt-1 text-xs text-algo-muted">Dedicated strategy scanner. Rows appear only when the real backend/live feed provides data.</p></div>
           <span className="text-xs text-algo-muted">{control}{search ? ` • ${search}` : ""}</span>
         </div>
-        <div className="overflow-x-auto"><table className="min-w-[1000px] w-full text-left text-sm"><thead className="bg-algo-surface text-xs uppercase tracking-wider text-algo-muted"><tr>{c.columns.map(x=><th key={x} className="px-4 py-3 font-semibold">{x}</th>)}</tr></thead><tbody><tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm text-algo-muted">{rowsMessage}</td></tr></tbody></table></div>
+        <div className="overflow-x-auto"><table className="min-w-[1000px] w-full text-left text-sm"><thead className="bg-algo-surface text-xs uppercase tracking-wider text-algo-muted"><tr>{c.columns.map(x=><th key={x} className="px-4 py-3 font-semibold">{x}</th>)}</tr></thead><tbody>{loading ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm text-algo-muted">Loading live data…</td></tr> : filteredRows.length === 0 ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm text-algo-muted">{rowsMessage}</td></tr> : filteredRows.map((row, index) => <tr key={String(row.id ?? row.event_id ?? `${slug}-${index}`)} className="border-b border-algo-border/70 last:border-0">{c.columns.map((column, i) => <td key={column} className={`px-4 py-3 ${i === 0 ? "font-semibold text-white" : "text-algo-muted"}`}>{formatCell(slug, column, row)}</td>)}</tr>)}</tbody></table></div>
       </Card>
 
       <div className="grid gap-4 xl:grid-cols-3">
