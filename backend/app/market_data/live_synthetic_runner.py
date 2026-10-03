@@ -15,6 +15,7 @@ from typing import Callable, Iterable
 
 from app.backtesting.arbitrage_scan_policy import ScanPolicy
 from app.core.config import settings
+from app.core.logger import app_logger
 from app.core.database import SessionLocal
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.live_synthetic_stream import LiveSyntheticOptionFutureRecorder
