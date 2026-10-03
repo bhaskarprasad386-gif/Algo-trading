@@ -12,7 +12,6 @@ const strategies = [
   { name: "Cash-Future", detail: "Pairs • Cash vs Futures •", href: "/strategies/cash-future" },
   { name: "Calendar Spread", detail: "Time spread • NIFTY •", href: "/strategies/calendar-spread" },
   { name: "Synthetic Arbitrage", detail: "Cash-Synth • Arbitrage •", href: "/strategies/synthetic-arbitrage" },
-  { name: "Box Strategy", detail: "", href: "/strategies/box-spread" },
   { name: "Box Spread", detail: "Options • Box •", href: "/strategies/box-spread" },
   { name: "Custom Strategy", detail: "Independent • User-defined •", href: "/strategies/custom-strategy" },
   { name: "Strategy Scanner", detail: "Dedicated workspaces •", href: "/scanner" },
@@ -25,7 +24,7 @@ const health = (api: string, ws: string) => [
   ["WebSocket", ws, ws === "CONNECTED" ? "ok" : ws === "ERROR" ? "error" : "warn"],
   ["Scanner", ws === "CONNECTED" ? "LIVE" : "AWAITING API", ws === "CONNECTED" ? "ok" : "warn"],
   ["Database", api === "CONNECTED" ? "CONNECTED" : "AWAITING API", api === "CONNECTED" ? "ok" : "warn"],
-  ["Broker Orders", "OFF", "error"],
+  ["Broker Orders", "OFF", "warn"],
 ] as const;
 
 export default function HomePage() {
@@ -106,12 +105,12 @@ export default function HomePage() {
       />
 
       <div className="-mt-8 mb-4 flex justify-end gap-2">
-        <div className="inline-flex items-center gap-2 rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-[11px] font-medium text-orange-300">
+        <div className="inline-flex items-center gap-2 rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-[11px] font-medium text-orange-700">
           <span className="h-2 w-2 rounded-full bg-orange-400" />
           {wsLabel === "CONNECTED" ? "Live market feed connected" : "Market feed connecting"}
         </div>
 
-        <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-300">
+        <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-700">
           <span className="h-2 w-2 rounded-full bg-emerald-400" />
           Paper-safe broker orders OFF
         </div>
@@ -200,8 +199,8 @@ export default function HomePage() {
                       state === "ok"
                         ? "bg-emerald-500/20 text-emerald-300"
                         : state === "warn"
-                          ? "bg-amber-500/20 text-amber-300"
-                          : "bg-red-500/20 text-red-300"
+                          ? "bg-amber-500/20 text-amber-700"
+                          : "bg-red-500/20 text-red-700"
                     }`
                   }
                 >
@@ -293,7 +292,7 @@ export default function HomePage() {
         <div className="min-w-0">
           <div className="text-[13px] font-semibold">Integration Boundary</div>
           <div className="text-[11px] text-[#64748B]">
-            External integrations are disabled in Paper-safe mode. Connect FastAPI and Broker to enable live trading.
+            External broker orders remain OFF. FastAPI market data and paper-trading services are connected independently.
           </div>
         </div>
 
