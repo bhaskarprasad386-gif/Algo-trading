@@ -4,14 +4,9 @@ import { useEffect, useState } from "react";
 import { Bell, BriefcaseBusiness, Clock, Database, Gauge, ShieldCheck, Zap } from "lucide-react";
 import Link from "next/link";
 import { Card, PageTitle } from "@/components/ui";
+import { appConfig } from "@/lib/config";
 
-const markets = [
-  ["NIFTY", "No live data"],
-  ["BANKNIFTY", "No live data"],
-  ["FINNIFTY", "No live data"],
-  ["MIDCPNIFTY", "No live data"],
-  ["SENSEX", "No live data"],
-];
+const markets = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
 
 const strategies = [
   { name: "Cash-Future", detail: "Pairs • Cash vs Futures •", href: "/strategies/cash-future" },
@@ -24,28 +19,61 @@ const strategies = [
   { name: "Broker Orders", detail: "Always OFF • Paper safe •", href: "/paper-trading" },
 ];
 
-const health = [
+const health = (api: string, ws: string) => [
   ["Frontend", "READY", "ok"],
-  ["FastAPI", "NOT CONNECTED", "error"],
-  ["WebSocket", "NOT CONNECTED", "error"],
-  ["Scanner", "AWAITING API", "warn"],
-  ["Database", "AWAITING API", "warn"],
+  ["FastAPI", api, api === "CONNECTED" ? "ok" : api === "ERROR" ? "error" : "warn"],
+  ["WebSocket", ws, ws === "CONNECTED" ? "ok" : ws === "ERROR" ? "error" : "warn"],
+  ["Scanner", ws === "CONNECTED" ? "LIVE" : "AWAITING API", ws === "CONNECTED" ? "ok" : "warn"],
+  ["Database", api === "CONNECTED" ? "CONNECTED" : "AWAITING API", api === "CONNECTED" ? "ok" : "warn"],
   ["Broker Orders", "OFF", "error"],
 ] as const;
 
 const scannerStatus = [
-  { label: "Signals Detected", value: "No signals" },
-  { label: "Active Filters", value: "None" },
-  { label: "Last Scan", value: "--:--:--" },
-  { label: "Avg Latency", value: "-- ms" },
+  { label: "Signals Detected", value: snapshot.opportunities.toLocaleString("en-IN") },
+  { label: "Cash-Future Rows", value: snapshot.cashFuture.toLocaleString("en-IN") },
+  { label: "Calendar Rows", value: snapshot.calendar.toLocaleString("en-IN") },
+  { label: "Synthetic Rows", value: snapshot.synthetic.toLocaleString("en-IN") },
   { label: "Orders Placed", value: "0 orders" },
   { label: "Fills", value: "0 fills" },
   { label: "Errors", value: "0 errors" },
-  { label: "Logs", value: "0 entries" },
+  { label: "Box Rows", value: snapshot.box.toLocaleString("en-IN") },
 ];
 
 export default function HomePage() {
   const [capital, setCapital] = useState("10000000");
+  const [apiStatus, setApiStatus] = useState<"checking" | "connected" | "error">("checking");
+  const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "error">("connecting");
+  const [snapshot, setSnapshot] = useState({ cashFuture: 0, calendar: 0, synthetic: 0, box: 0, opportunities: 0, timestamp: null as string | null });
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/health", { cache: "no-store", signal: controller.signal })
+      .then((response) => { if (!response.ok) throw new Error("health"); setApiStatus("connected"); })
+      .catch(() => setApiStatus("error"));
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const socket = new WebSocket(appConfig.wsUrl.replace(/\/$/, "") + "/ws/dashboard");
+    socket.onopen = () => setWsStatus("connected");
+    socket.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        if (message?.type !== "dashboard_snapshot") return;
+        setSnapshot({
+          cashFuture: Number(message?.integration?.cash_future?.count ?? 0),
+          calendar: Number(message?.integration?.calendar_spread?.count ?? 0),
+          synthetic: Number(message?.integration?.synthetic_arbitrage?.count ?? 0),
+          box: Number(message?.integration?.box_spread?.count ?? 0),
+          opportunities: Number(message?.scanner?.opportunity_count ?? 0),
+          timestamp: message?.timestamp ?? null,
+        });
+      } catch { /* ignore malformed snapshots */ }
+    };
+    socket.onerror = () => setWsStatus("error");
+    socket.onclose = () => setWsStatus("error");
+    return () => socket.close();
+  }, []);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("algo-paper-capital");
@@ -67,6 +95,9 @@ export default function HomePage() {
     maximumFractionDigits: 0,
   });
 
+  const apiLabel = apiStatus === "connected" ? "CONNECTED" : apiStatus === "error" ? "ERROR" : "CONNECTING";
+  const wsLabel = wsStatus === "connected" ? "CONNECTED" : wsStatus === "error" ? "ERROR" : "CONNECTING";
+
   return (
     <div className="min-h-screen bg-white p-4 text-[#0F172A]">
       <PageTitle
@@ -78,7 +109,7 @@ export default function HomePage() {
       <div className="-mt-8 mb-4 flex justify-end gap-2">
         <div className="inline-flex items-center gap-2 rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-[11px] font-medium text-orange-300">
           <span className="h-2 w-2 rounded-full bg-orange-400" />
-          Market feed not connected
+          {wsLabel === "CONNECTED" ? "Live market feed connected" : "Market feed connecting"}
         </div>
 
         <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-300">
@@ -91,13 +122,13 @@ export default function HomePage() {
         <h2 className="mb-3 text-[15px] font-semibold">Market Overview</h2>
 
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-          {markets.map(([symbol, status]) => (
+          {markets.map((symbol) => (
             <Link key={symbol} href={`/scanner?market=${encodeURIComponent(symbol)}`} className="block">
               <Card className="rounded-xl border-[#D7E0E8] bg-white p-4 transition hover:border-sky-500/40">
                 <div className="text-center">
                   <div className="text-[12px] font-semibold tracking-wide">{symbol}</div>
                   <div className="mt-3 text-lg text-[#64748B]">—</div>
-                  <div className="mt-2 text-[11px] text-[#64748B]">{status}</div>
+                  <div className="mt-2 text-[11px] text-[#64748B]">{wsLabel === "CONNECTED" ? "Live feed" : "Awaiting feed"}</div>
                 </div>
               </Card>
             </Link>
@@ -147,7 +178,7 @@ export default function HomePage() {
           <h2 className="mb-3 text-[15px] font-semibold">System Health</h2>
 
           <Card className="rounded-xl border-[#D7E0E8] bg-white p-2">
-            {health.map(([name, value, state]) => (
+            {health(apiLabel, wsLabel).map(([name, value, state]) => (
               <div key={name} className="flex items-center justify-between px-2 py-1.5">
                 <div className="flex items-center gap-2 text-[12px] text-[#334155]">
                   <span
