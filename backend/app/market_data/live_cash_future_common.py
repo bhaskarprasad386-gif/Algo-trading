@@ -214,15 +214,18 @@ class LiveCashFutureCommonRunner:
                 except Exception as exc:
                     app_logger.error("Cash-Future result callback failed: %s", exc)
 
-    def _register_descriptors(self, descriptors: tuple[InstrumentDescriptor, ...]) -> None:
+    def _register_descriptors(self, descriptors: tuple[InstrumentDescriptor, ...]) -> set[InstrumentKey]:
         """Register only canonical descriptors; shared consumers may already own a key."""
         fresh: list[InstrumentDescriptor] = []
+        accepted: set[InstrumentKey] = set()
         for descriptor in descriptors:
             existing = self.manager.registry.get(descriptor.key)
             if existing is None:
                 fresh.append(descriptor)
+                accepted.add(descriptor.key)
                 continue
             if existing == descriptor:
+                accepted.add(descriptor.key)
                 continue
             compatible = (
                 existing.instrument_type == descriptor.instrument_type
@@ -230,11 +233,13 @@ class LiveCashFutureCommonRunner:
                 and existing.segment == descriptor.segment
             )
             if not compatible:
-                raise ValueError(
-                    f"conflicting descriptor for {descriptor.key.value}: "
-                    f"{existing.instrument_type}/{existing.exchange}/{existing.segment} "
-                    f"vs {descriptor.instrument_type}/{descriptor.exchange}/{descriptor.segment}"
+                app_logger.warning(
+                    "Cash-Future skipped conflicting shared descriptor for %s; existing=%s/%s/%s requested=%s/%s/%s",
+                    descriptor.key.value, existing.instrument_type, existing.exchange, existing.segment,
+                    descriptor.instrument_type, descriptor.exchange, descriptor.segment,
                 )
+                continue
+            accepted.add(descriptor.key)
             app_logger.debug(
                 "Cash-Future reusing shared descriptor for %s; canonical symbol=%s",
                 descriptor.key.value,
@@ -242,6 +247,7 @@ class LiveCashFutureCommonRunner:
             )
         if fresh:
             self.manager.registry.register_many(tuple(fresh))
+        return accepted
 
     def run_forever(self) -> None:
         if self.stop_event.is_set():
@@ -252,7 +258,11 @@ class LiveCashFutureCommonRunner:
         if not descriptors:
             app_logger.warning("Common Cash-Future runner found no eligible F&O stock contracts")
             return
-        self._register_descriptors(descriptors)
+        accepted = self._register_descriptors(descriptors)
+        if not accepted:
+            app_logger.warning("Common Cash-Future runner found no usable shared instrument descriptors")
+            return
+        self._metadata = {key: meta for key, meta in self._metadata.items() if key in accepted}
         self.manager.register_normalized_callback(self.CONSUMER, self._on_record)
         if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
             self._repository = DailySQLiteMarketDataRepository(self.data_db)
