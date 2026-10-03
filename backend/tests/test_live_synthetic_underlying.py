@@ -113,3 +113,14 @@ def test_filter_resolvable_index_symbols_skips_unresolvable_index():
     ]
     master._loaded = True
     assert filter_resolvable_index_symbols(master, ("NIFTY", "NIFTYFPI")) == ("NIFTY",)
+
+
+def test_underlying_feed_skips_unresolvable_symbols_without_killing_feed():
+    master = InstrumentMaster()
+    master.instruments = [{"exch_seg":"NSE","symbol":"NIFTY","token":"99926000"}]
+    master._loaded = True
+    master.download = lambda force=False: master.instruments
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0)})
+    feed = LiveSyntheticUnderlyingFeed(("NIFTY","COPPER"), tracker=tracker, instrument_master=master, index_symbols=frozenset({"NIFTY"}), commodity_symbols=frozenset({"COPPER"}))
+    assert feed._tokens() == {"NIFTY":"99926000"}
+    assert [d.symbol for d in feed._descriptors()] == ["NIFTY"]
