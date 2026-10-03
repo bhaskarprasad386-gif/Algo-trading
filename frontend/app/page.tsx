@@ -68,7 +68,7 @@ export default function HomePage() {
   });
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] p-4 text-white">
+    <div className="min-h-screen bg-white p-4 text-[#0F172A]">
       <PageTitle
         eyebrow="Phase 2 • Home / Command Center"
         title="Command Center"
@@ -93,11 +93,11 @@ export default function HomePage() {
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
           {markets.map(([symbol, status]) => (
             <Link key={symbol} href={`/scanner?market=${encodeURIComponent(symbol)}`} className="block">
-              <Card className="rounded-xl border-[#2a2a33] bg-[#18181f] p-4 transition hover:border-sky-500/40">
+              <Card className="rounded-xl border-[#D7E0E8] bg-white p-4 transition hover:border-sky-500/40">
                 <div className="text-center">
                   <div className="text-[12px] font-semibold tracking-wide">{symbol}</div>
-                  <div className="mt-3 text-lg text-zinc-500">—</div>
-                  <div className="mt-2 text-[11px] text-zinc-400">{status}</div>
+                  <div className="mt-3 text-lg text-[#64748B]">—</div>
+                  <div className="mt-2 text-[11px] text-[#64748B]">{status}</div>
                 </div>
               </Card>
             </Link>
@@ -110,34 +110,34 @@ export default function HomePage() {
           <h2 className="mb-3 text-[15px] font-semibold">Paper Ledger</h2>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Card className="rounded-xl border-[#2a2a33] bg-[#18181f] p-3">
-              <div className="text-[11px] text-zinc-400">Paper Capital</div>
+            <Card className="rounded-xl border-[#D7E0E8] bg-white p-3">
+              <div className="text-[11px] text-[#64748B]">Paper Capital</div>
               <div className="mt-1 text-[16px] font-bold">{formattedCapital}</div>
               <input
                 inputMode="numeric"
                 value={capital}
                 onChange={(event) => saveCapital(event.target.value)}
                 aria-label="Manual paper capital amount"
-                className="mt-3 min-h-9 w-full rounded-lg border border-[#2a2a33] bg-[#0a0a0f] px-2 text-xs text-white outline-none focus:border-sky-500/60"
+                className="mt-3 min-h-9 w-full rounded-lg border border-[#D7E0E8] bg-white px-2 text-xs text-[#0F172A] outline-none focus:border-sky-500/60"
               />
             </Card>
 
-            <Card className="rounded-xl border-[#2a2a33] bg-[#18181f] p-3">
+            <Card className="rounded-xl border-[#D7E0E8] bg-white p-3">
               <div className="flex gap-6">
                 <div>
-                  <div className="text-[11px] text-zinc-400">Available Balance</div>
+                  <div className="text-[11px] text-[#64748B]">Available Balance</div>
                   <div className="mt-1 text-sm">—</div>
                 </div>
 
                 <div>
-                  <div className="text-[11px] text-zinc-400">Today&apos;s P&amp;L</div>
+                  <div className="text-[11px] text-[#64748B]">Today&apos;s P&amp;L</div>
                   <div className="mt-1 text-sm">—</div>
                 </div>
               </div>
             </Card>
 
-            <Card className="rounded-xl border-[#2a2a33] bg-[#18181f] p-3">
-              <div className="text-[11px] text-zinc-400">Open Positions</div>
+            <Card className="rounded-xl border-[#D7E0E8] bg-white p-3">
+              <div className="text-[11px] text-[#64748B]">Open Positions</div>
               <div className="mt-1 text-sm">—</div>
             </Card>
           </div>
@@ -146,10 +146,10 @@ export default function HomePage() {
         <section aria-label="System health">
           <h2 className="mb-3 text-[15px] font-semibold">System Health</h2>
 
-          <Card className="rounded-xl border-[#2a2a33] bg-[#18181f] p-2">
+          <Card className="rounded-xl border-[#D7E0E8] bg-white p-2">
             {health.map(([name, value, state]) => (
               <div key={name} className="flex items-center justify-between px-2 py-1.5">
-                <div className="flex items-center gap-2 text-[12px] text-zinc-300">
+                <div className="flex items-center gap-2 text-[12px] text-[#334155]">
                   <span
                     className={
                       `h-2 w-2 rounded-full ${
@@ -190,9 +190,9 @@ export default function HomePage() {
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             {strategies.map((strategy) => (
               <Link key={strategy.name} href={strategy.href} className="block">
-                <Card className="min-h-[85px] rounded-xl border-[#2a2a33] bg-[#18181f] p-3 transition hover:border-sky-500/40">
+                <Card className="min-h-[85px] rounded-xl border-[#D7E0E8] bg-white p-3 transition hover:border-sky-500/40">
                   <div className="text-[12px] font-semibold">{strategy.name}</div>
-                  <div className="mt-1 text-[10px] text-zinc-500">
+                  <div className="mt-1 text-[10px] text-[#64748B]">
                     {strategy.detail ? `${strategy.detail} —` : " "}
                   </div>
                 </Card>
@@ -207,9 +207,9 @@ export default function HomePage() {
 
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {scannerStatus.map((item) => (
-                <Card key={item.label} className="rounded-xl border-[#2a2a33] bg-[#18181f] p-2.5">
-                  <div className="text-[10px] text-zinc-400">{item.label}</div>
-                  <div className="mt-1 text-[11px] text-zinc-300">{item.value}</div>
+                <Card key={item.label} className="rounded-xl border-[#D7E0E8] bg-white p-2.5">
+                  <div className="text-[10px] text-[#64748B]">{item.label}</div>
+                  <div className="mt-1 text-[11px] text-[#334155]">{item.value}</div>
                 </Card>
               ))}
             </div>
@@ -220,36 +220,36 @@ export default function HomePage() {
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <Link href="/scanner">
-                <Card className="rounded-xl border-[#2a2a33] bg-[#18181f] p-3 transition hover:border-sky-500/40">
+                <Card className="rounded-xl border-[#D7E0E8] bg-white p-3 transition hover:border-sky-500/40">
                   <div className="flex gap-2">
                     <Zap size={14} />
                     <div>
                       <div className="text-[12px] font-semibold">Live Scanner</div>
-                      <div className="text-[10px] text-zinc-500">Open scanner console</div>
+                      <div className="text-[10px] text-[#64748B]">Open scanner console</div>
                     </div>
                   </div>
                 </Card>
               </Link>
 
               <Link href="/custom-alert">
-                <Card className="rounded-xl border-[#2a2a33] bg-[#18181f] p-3 transition hover:border-sky-500/40">
+                <Card className="rounded-xl border-[#D7E0E8] bg-white p-3 transition hover:border-sky-500/40">
                   <div className="flex gap-2">
                     <Bell size={14} />
                     <div>
                       <div className="text-[12px] font-semibold">Custom Alerts</div>
-                      <div className="text-[10px] text-zinc-500">Manage alerts</div>
+                      <div className="text-[10px] text-[#64748B]">Manage alerts</div>
                     </div>
                   </div>
                 </Card>
               </Link>
 
               <Link href="/history">
-                <Card className="rounded-xl border-[#2a2a33] bg-[#18181f] p-3 transition hover:border-sky-500/40">
+                <Card className="rounded-xl border-[#D7E0E8] bg-white p-3 transition hover:border-sky-500/40">
                   <div className="flex gap-2">
                     <Clock size={14} />
                     <div>
                       <div className="text-[12px] font-semibold">History</div>
-                      <div className="text-[10px] text-zinc-500">Trade history & logs</div>
+                      <div className="text-[10px] text-[#64748B]">Trade history & logs</div>
                     </div>
                   </div>
                 </Card>
@@ -259,17 +259,17 @@ export default function HomePage() {
         </div>
       </div>
 
-      <Card className="mt-6 flex items-center justify-between rounded-xl border-[#2a2a33] bg-[#18181f] p-3">
+      <Card className="mt-6 flex items-center justify-between rounded-xl border-[#D7E0E8] bg-white p-3">
         <div className="min-w-0">
           <div className="text-[13px] font-semibold">Integration Boundary</div>
-          <div className="text-[11px] text-zinc-500">
+          <div className="text-[11px] text-[#64748B]">
             External integrations are disabled in Paper-safe mode. Connect FastAPI and Broker to enable live trading.
           </div>
         </div>
 
         <button
           type="button"
-          className="ml-3 shrink-0 rounded-lg bg-[#2a2a33] px-3 py-1.5 text-[11px] transition hover:bg-[#34343e]"
+          className="ml-3 shrink-0 rounded-lg bg-[#E8EEF3] px-3 py-1.5 text-[11px] transition hover:bg-[#DDE5EC]"
         >
           View Connections
         </button>
