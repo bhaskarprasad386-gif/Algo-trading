@@ -142,8 +142,9 @@ export default function HomePage() {
               <Card className="rounded-xl border-[#D7E0E8] bg-white p-4 transition hover:border-sky-500/40">
                 <div className="text-center">
                   <div className="text-[12px] font-semibold tracking-wide">{symbol}</div>
-                  <div className="mt-3 text-lg font-bold text-slate-900">{indexLtps[symbol] == null ? "—" : indexLtps[symbol]!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                  <div className="mt-2 text-[11px] text-[#64748B]">{indexLtps[symbol] == null ? "Waiting for LTP" : "Live LTP"}</div>
+                  <div className={`mt-3 text-lg font-bold ${indexLtps[symbol]?.changePercent != null && indexLtps[symbol]!.changePercent! > 0 ? "text-emerald-600" : indexLtps[symbol]?.changePercent != null && indexLtps[symbol]!.changePercent! < 0 ? "text-red-600" : "text-slate-900"}`}>{indexLtps[symbol]?.ltp == null ? "—" : indexLtps[symbol]!.ltp!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                  <div className={`mt-1 text-[12px] font-semibold ${indexLtps[symbol]?.changePercent != null && indexLtps[symbol]!.changePercent! > 0 ? "text-emerald-600" : indexLtps[symbol]?.changePercent != null && indexLtps[symbol]!.changePercent! < 0 ? "text-red-600" : "text-slate-600"}`}>{indexLtps[symbol]?.changePercent == null ? "Waiting for change" : `${indexLtps[symbol]!.changePercent! > 0 ? "+" : ""}${indexLtps[symbol]!.changePercent!.toFixed(2)}%`}</div>
+                  <div className="mt-1 text-[10px] text-[#64748B]">{indexLtps[symbol]?.previousClose == null ? "Previous close unavailable" : `Prev close: ${indexLtps[symbol]!.previousClose!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
                 </div>
               </Card>
             </Link>
