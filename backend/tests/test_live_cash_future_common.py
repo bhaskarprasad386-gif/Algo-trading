@@ -43,7 +43,8 @@ def test_runner_contract_metadata_keeps_current_and_near_separate():
     from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
     runner = LiveCashFutureCommonRunner("ignored", instrument_master=Master(), manager=CommonWebSocketManager(socket_factory=lambda: object()))
     descriptors = runner._build_descriptors()
-    assert len(descriptors) == 4
+    assert len(descriptors) == 3
+    assert len({descriptor.key for descriptor in descriptors}) == len(descriptors)
     months = {meta["contract_month"] for meta in runner._metadata.values() if meta["leg"] == "FUTURE"}
     assert months == {"CURRENT", "NEAR"}
 
