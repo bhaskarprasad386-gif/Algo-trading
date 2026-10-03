@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { History, RefreshCw } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 
@@ -72,49 +73,49 @@ export default function HistoryPage() {
       <PageTitle eyebrow="Workspace" title="History" description="Completed paper-trade history with filters and details. Replay is permanently excluded." />
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <Card className="p-4"><p className="text-xs text-[#64748B]">Completed</p><p className="mt-1 text-2xl font-semibold text-[#0F172A]">{filtered.length}</p></Card>
-        <Card className="p-4"><p className="text-xs text-[#64748B]">Realized P&L</p><p className="mt-1 text-2xl font-semibold text-emerald-600">{money(realized)}</p></Card>
-        <Card className="p-4"><p className="text-xs text-[#64748B]">Profitable</p><p className="mt-1 text-2xl font-semibold text-[#0F172A]">{profitable}</p></Card>
+        <Card className="p-4"><p className="flex items-center gap-2 text-xs theme-muted"><History className="h-4 w-4" /> Completed</p><p className="mt-1 text-2xl font-semibold theme-text">{filtered.length}</p></Card>
+        <Card className="p-4"><p className="text-xs theme-muted">Realized P&L</p><p className="mt-1 text-2xl font-semibold theme-success">{money(realized)}</p></Card>
+        <Card className="p-4"><p className="text-xs theme-muted">Profitable</p><p className="mt-1 text-2xl font-semibold theme-text">{profitable}</p></Card>
       </div>
 
       <Card className="mt-4 p-4">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <select value={strategy} onChange={(e) => setStrategy(e.target.value)} className="rounded-xl border border-[#D7E0E8] bg-white px-3 py-2 text-sm text-[#0F172A]">
+          <select value={strategy} onChange={(e) => setStrategy(e.target.value)} className="rounded-xl border theme-border theme-surface px-3 py-2 text-sm theme-text">
             <option value="ALL">All strategies</option>
             <option value="cash-future">Cash-Future</option>
             <option value="calendar-spread">Calendar Spread</option>
             <option value="synthetic-future-cash-carry">Synthetic Arbitrage</option>
             <option value="box-spread">Box Spread</option>
           </select>
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search symbol, strategy, exit..." className="rounded-xl border border-[#D7E0E8] bg-white px-3 py-2 text-sm text-[#0F172A] placeholder:text-[#64748B]" />
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="rounded-xl border border-[#D7E0E8] bg-white px-3 py-2 text-sm text-[#0F172A]" />
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="rounded-xl border border-[#D7E0E8] bg-white px-3 py-2 text-sm text-[#0F172A]" />
-          <button onClick={() => void load()} className="rounded-xl border border-[#D7E0E8] bg-white px-3 py-2 text-sm font-medium text-[#0F172A]">↻ Refresh</button>
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search symbol, strategy, exit..." className="rounded-xl border theme-border theme-surface px-3 py-2 text-sm theme-text placeholder:theme-muted" />
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="rounded-xl border theme-border theme-surface px-3 py-2 text-sm theme-text" />
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="rounded-xl border theme-border theme-surface px-3 py-2 text-sm theme-text" />
+          <button onClick={() => void load()} className="rounded-xl border theme-border theme-surface px-3 py-2 text-sm font-medium theme-text">↻ Refresh</button>
         </div>
       </Card>
 
-      {error ? <Card className="mt-4 p-5 text-sm text-red-600">{error}</Card> : null}
+      {error ? <Card className="mt-4 p-5 text-sm theme-danger">{error}</Card> : null}
       <Card className="mt-4 overflow-hidden">
-        {loading ? <div className="p-8 text-sm text-[#64748B]">Loading history…</div> : filtered.length === 0 ? (
-          <div className="p-8 text-sm text-[#64748B]">No completed paper trades match the selected filters.</div>
+        {loading ? <div className="p-8 text-sm theme-muted">Loading history…</div> : filtered.length === 0 ? (
+          <div className="p-8 text-sm theme-muted">No completed paper trades match the selected filters.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-[900px] w-full text-left text-sm">
-              <thead className="border-b border-[#D7E0E8] text-xs uppercase tracking-wide text-[#64748B]">
+              <thead className="border-b theme-border text-xs uppercase tracking-wide theme-muted">
                 <tr>{["Strategy","Symbol","Direction","Entry","Exit","Realized P&L","Exit reason","Closed",""].map((h) => <th key={h} className="px-4 py-3 font-medium">{h}</th>)}</tr>
               </thead>
               <tbody>
                 {filtered.map((trade) => (
-                  <tr key={trade.id} className="border-b border-[#D7E0E8]/70 last:border-0">
-                    <td className="px-4 py-3 text-[#0F172A]">{trade.strategy || "—"}</td>
-                    <td className="px-4 py-3 font-medium text-[#0F172A]">{trade.symbol || "—"}</td>
-                    <td className="px-4 py-3 text-[#64748B]">{trade.direction || "—"}</td>
+                  <tr key={trade.id} className="border-b theme-border/70 last:border-0">
+                    <td className="px-4 py-3 theme-text">{trade.strategy || "—"}</td>
+                    <td className="px-4 py-3 font-medium theme-text">{trade.symbol || "—"}</td>
+                    <td className="px-4 py-3 theme-muted">{trade.direction || "—"}</td>
                     <td className="px-4 py-3">{trade.entry_edge ?? "—"}</td>
                     <td className="px-4 py-3">{trade.current_edge ?? "—"}</td>
-                    <td className={`px-4 py-3 font-semibold ${Number(trade.realized_pnl || 0) >= 0 ? "text-emerald-600" : "text-red-600"}`}>{money(trade.realized_pnl)}</td>
-                    <td className="px-4 py-3 text-[#64748B]">{trade.exit_reason || "—"}</td>
-                    <td className="px-4 py-3 text-[#64748B]">{trade.closed_at ? new Date(trade.closed_at).toLocaleString("en-IN") : "—"}</td>
-                    <td className="px-4 py-3"><button onClick={() => setSelected(trade)} className="rounded-lg border border-[#D7E0E8] px-3 py-1.5 text-xs text-[#0F172A]">View</button></td>
+                    <td className={`px-4 py-3 font-semibold ${Number(trade.realized_pnl || 0) >= 0 ? "theme-success" : "theme-danger"}`}>{money(trade.realized_pnl)}</td>
+                    <td className="px-4 py-3 theme-muted">{trade.exit_reason || "—"}</td>
+                    <td className="px-4 py-3 theme-muted">{trade.closed_at ? new Date(trade.closed_at).toLocaleString("en-IN") : "—"}</td>
+                    <td className="px-4 py-3"><button onClick={() => setSelected(trade)} className="rounded-lg border theme-border px-3 py-1.5 text-xs theme-text">View</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -126,20 +127,20 @@ export default function HistoryPage() {
       {selected ? (
         <Card className="mt-4 p-5">
           <div className="flex items-center justify-between gap-3">
-            <div><p className="text-xs uppercase tracking-wide text-sky-700">Trade Detail</p><h2 className="mt-1 text-lg font-semibold text-[#0F172A]">{selected.symbol || "Trade"} · #{selected.id}</h2></div>
-            <button onClick={() => setSelected(null)} className="rounded-lg border border-[#D7E0E8] px-3 py-1.5 text-xs text-[#0F172A]">Close</button>
+            <div><p className="text-xs uppercase tracking-wide theme-accent">Trade Detail</p><h2 className="mt-1 text-lg font-semibold theme-text">{selected.symbol || "Trade"} · #{selected.id}</h2></div>
+            <button onClick={() => setSelected(null)} className="rounded-lg border theme-border px-3 py-1.5 text-xs theme-text">Close</button>
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
-            <div><span className="text-[#64748B]">Strategy</span><p className="text-[#0F172A]">{selected.strategy || "—"}</p></div>
-            <div><span className="text-[#64748B]">Direction</span><p className="text-[#0F172A]">{selected.direction || "—"}</p></div>
-            <div><span className="text-[#64748B]">Entry Edge</span><p className="text-[#0F172A]">{selected.entry_edge ?? "—"}</p></div>
-            <div><span className="text-[#64748B]">Exit Edge</span><p className="text-[#0F172A]">{selected.current_edge ?? "—"}</p></div>
-            <div><span className="text-[#64748B]">Capital Used</span><p className="text-[#0F172A]">{money(selected.capital_used)}</p></div>
-            <div><span className="text-[#64748B]">Realized P&L</span><p className={Number(selected.realized_pnl || 0) >= 0 ? "text-emerald-700 font-semibold" : "text-red-700 font-semibold"}>{money(selected.realized_pnl)}</p></div>
-            <div><span className="text-[#64748B]">Exit Reason</span><p className="text-[#0F172A]">{selected.exit_reason || "—"}</p></div>
-            <div><span className="text-[#64748B]">Closed</span><p className="text-[#0F172A]">{selected.closed_at ? new Date(selected.closed_at).toLocaleString("en-IN") : "—"}</p></div>
+            <div><span className="theme-muted">Strategy</span><p className="theme-text">{selected.strategy || "—"}</p></div>
+            <div><span className="theme-muted">Direction</span><p className="theme-text">{selected.direction || "—"}</p></div>
+            <div><span className="theme-muted">Entry Edge</span><p className="theme-text">{selected.entry_edge ?? "—"}</p></div>
+            <div><span className="theme-muted">Exit Edge</span><p className="theme-text">{selected.current_edge ?? "—"}</p></div>
+            <div><span className="theme-muted">Capital Used</span><p className="theme-text">{money(selected.capital_used)}</p></div>
+            <div><span className="theme-muted">Realized P&L</span><p className={Number(selected.realized_pnl || 0) >= 0 ? "theme-success font-semibold" : "theme-danger font-semibold"}>{money(selected.realized_pnl)}</p></div>
+            <div><span className="theme-muted">Exit Reason</span><p className="theme-text">{selected.exit_reason || "—"}</p></div>
+            <div><span className="theme-muted">Closed</span><p className="theme-text">{selected.closed_at ? new Date(selected.closed_at).toLocaleString("en-IN") : "—"}</p></div>
           </div>
-          <p className="mt-5 text-xs text-[#64748B]">Paper-only history. Broker/live orders remain OFF. Replay controls are intentionally not available.</p>
+          <p className="mt-5 text-xs theme-muted">Paper-only history. Broker/live orders remain OFF. Replay controls are intentionally not available.</p>
         </Card>
       ) : null}
     </>
