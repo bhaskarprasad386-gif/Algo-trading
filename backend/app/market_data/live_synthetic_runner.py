@@ -154,12 +154,12 @@ class LiveSyntheticRunner:
                 target for target in self.targets
                 if target.underlying.strip().upper() in strikes
             )
+            self.targets = supported
             if not supported:
                 raise LookupError(
                     "no concrete option strikes found for live expiry: "
                     + ", ".join(sorted(set(missing)))
                 )
-            self.targets = supported
         self._atm_tracker = LiveSyntheticAtmTracker(strikes_by_symbol=strikes)
         return self._atm_tracker.atm
 
@@ -272,7 +272,16 @@ class LiveSyntheticRunner:
             self._wait_for_live_atm(atm_provider)
             while not self._stop_requested.is_set() and (self._recorder is None or not self._recorder.stop_event.is_set()):
                 self._refresh_requested.clear()
-                subscriptions = self.build_subscriptions()
+                try:
+                    subscriptions = self.build_subscriptions()
+                except LookupError as exc:
+                    app_logger.warning("Synthetic live subscription skipped: %s", exc)
+                    sleep(5.0)
+                    continue
+                if not subscriptions:
+                    app_logger.warning("Synthetic live subscription skipped: no eligible contracts")
+                    sleep(5.0)
+                    continue
                 scanner = LiveSyntheticScanner(
                     atm_provider=atm_provider,
                     config_provider=self.scan_config_provider,
