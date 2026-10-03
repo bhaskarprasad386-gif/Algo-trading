@@ -75,7 +75,6 @@ done
 
 if [[ "$healthy" -ne 1 ]]; then
   log "Service did not become healthy. Recent service status:"
-  log "Service did not become healthy. Recent service status:"
   systemctl --no-pager --full status "$SERVICE_NAME" || true
   log "Recent logs:"
   journalctl -u "$SERVICE_NAME" -n 60 --no-pager || true
