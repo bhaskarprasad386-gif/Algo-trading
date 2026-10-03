@@ -31,7 +31,7 @@ function formatCell(slug:string,column:string,row:Record<string,unknown>){
 }
 
 export function StrategyWorkspace({slug}:{slug:keyof typeof configs}){
-  const c=configs[slug]; const [search,setSearch]=useState(""); const [control,setControl]=useState(c.controls[0]); const [refreshing,setRefreshing]=useState(false); const [rows,setRows]=useState<Record<string,unknown>[]>([]); const [loading,setLoading]=useState(true); const [error,setError]=useState<string|null>(null);
+  const c=configs[slug]; const isCustom=slug==="custom-strategy"; const [search,setSearch]=useState(""); const [control,setControl]=useState(c.controls[0]); const [refreshing,setRefreshing]=useState(false); const [rows,setRows]=useState<Record<string,unknown>[]>([]); const [loading,setLoading]=useState(true); const [error,setError]=useState<string|null>(null);
   const endpoint=slug==="cash-future"?"/api/v1/scanner/cash-future/live/fast?limit=50":slug==="calendar-spread"?"/api/v1/scanner/calendar-spread/live?limit=50":slug==="synthetic-arbitrage"?"/api/v1/scanner/synthetic-cash-carry/live?limit=50":slug==="box-spread"?"/api/v1/scanner/box-spread/live?limit=50":null;
   const load=async()=>{if(!endpoint){setRows([]);setLoading(false);return;}setLoading(true);setError(null);try{const base=appConfig.apiBaseUrl.replace(/\/$/,"");const response=await fetch(`${base}${endpoint}`,{cache:"no-store"});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body?.detail||`${c.title} HTTP ${response.status}`);const data=Array.isArray(body?.data)?body.data:[];setRows(data.filter((item:unknown):item is Record<string,unknown>=>!!item&&typeof item==="object"));}catch(e){setRows([]);setError(e instanceof Error?e.message:"Backend unavailable");}finally{setLoading(false);}};
   useEffect(()=>{void load();},[endpoint]);
@@ -43,12 +43,12 @@ export function StrategyWorkspace({slug}:{slug:keyof typeof configs}){
   return <div className="min-h-screen space-y-5 bg-white p-4 text-[#0F172A]">
     <div className="flex items-center justify-between gap-3">
       <Link href="/scanner" className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-[#D7E0E8] bg-white px-3 text-xs font-semibold text-[#475569] hover:border-sky-500/60"><ArrowLeft className="h-4 w-4"/> Overall Scanner</Link>
-      <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold ${loading?"border-amber-200 bg-amber-50 text-amber-700":error?"border-red-200 bg-red-50 text-red-700":"border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{loading?"CONNECTING":error?"BACKEND ERROR":"LIVE DATA CONNECTED"}</span>
+      <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold ${loading?"border-amber-200 bg-amber-50 text-amber-700":error?"border-red-200 bg-red-50 text-red-700":"border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{loading?"CONNECTING":error?"BACKEND ERROR":isCustom?"CONFIGURATION ONLY":"LIVE DATA CONNECTED"}</span>
     </div>
     <PageTitle eyebrow="Phase 11 • Strategy Workspace" title={c.title+" Dedicated Scanner"} description={c.description}/>
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <Card className="border-[#D7E0E8] bg-white p-4"><p className="text-xs text-[#64748B]">Universe</p><p className="mt-2 text-sm font-semibold text-[#0F172A]">{c.universe}</p></Card>
-      <Card className="border-[#D7E0E8] bg-white p-4"><p className="text-xs text-[#64748B]">Scanner</p><p className="mt-2 flex items-center gap-2 text-sm font-semibold text-sky-700"><Zap className="h-4 w-4"/> 1-second</p></Card>
+      <Card className="border-[#D7E0E8] bg-white p-4"><p className="text-xs text-[#64748B]">Scanner</p><p className="mt-2 flex items-center gap-2 text-sm font-semibold text-sky-700"><Zap className="h-4 w-4"/> {isCustom?"Custom Logic":"1-second"}</p></Card>
       <Card className="border-[#D7E0E8] bg-white p-4"><p className="text-xs text-[#64748B]">Paper Trading</p><p className="mt-2 text-sm font-semibold text-emerald-600">AVAILABLE</p></Card>
       <Card className="border-[#D7E0E8] bg-white p-4"><p className="text-xs text-[#64748B]">Broker Orders</p><p className="mt-2 text-sm font-semibold text-amber-600">OFF</p></Card>
     </div>
@@ -60,7 +60,7 @@ export function StrategyWorkspace({slug}:{slug:keyof typeof configs}){
         <button type="button" onClick={refresh} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#D7E0E8] bg-white px-4 text-sm font-semibold text-[#0F172A] hover:border-sky-500/60"><RefreshCw className={`h-4 w-4 ${refreshing?"animate-spin":""}`}/> Refresh</button>
       </div>
     </Card>
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{c.metrics.map(x=><Card key={x} className="border-[#D7E0E8] bg-white p-4"><p className="text-xs text-[#64748B]">{x}</p><p className="mt-2 text-xl font-semibold text-[#0F172A]">{loading?"…":x==="Signals"?signalCount:x==="Executable Gaps"||x==="Executable Edges"||x==="Spread Opportunities"?signalCount:x==="Eligible F&O Stocks"||x==="Eligible Contracts"||x==="Eligible Combos"||x==="Eligible Boxes"?rows.length:lastScan?"Live":"—"}</p></Card>)}</div>
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{c.metrics.map(x=><Card key={x} className="border-[#D7E0E8] bg-white p-4"><p className="text-xs text-[#64748B]">{x}</p><p className="mt-2 text-xl font-semibold text-[#0F172A]">{loading?"…":isCustom?"—":x==="Signals"?signalCount:x==="Executable Gaps"||x==="Executable Edges"||x==="Spread Opportunities"?signalCount:x==="Eligible F&O Stocks"||x==="Eligible Contracts"||x==="Eligible Combos"||x==="Eligible Boxes"?rows.length:lastScan?"Live":"—"}</p></Card>)}</div>
     {error&&<Card className="border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</Card>}
     <Card className="overflow-hidden border-[#D7E0E8] bg-white">
       <div className="flex flex-col gap-2 border-b border-[#D7E0E8] p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-semibold text-[#0F172A]">{c.title} Opportunities</h2><p className="mt-1 text-xs text-[#64748B]">Dedicated strategy scanner. Rows appear only when the real backend/live feed provides data.</p></div><span className="text-xs text-[#64748B]">{control}{search?` • ${search}`:""}</span></div>
