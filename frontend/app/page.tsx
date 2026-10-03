@@ -32,7 +32,7 @@ export default function HomePage() {
   const [apiStatus, setApiStatus] = useState<"checking" | "connected" | "error">("checking");
   const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [snapshot, setSnapshot] = useState({ cashFuture: 0, calendar: 0, synthetic: 0, box: 0, opportunities: 0, timestamp: null as string | null });
-  const [indexLtps, setIndexLtps] = useState<Record<string, number | null>>({});
+  const [indexLtps, setIndexLtps] = useState<Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null }>>({});
 
   useEffect(() => {
     const controller = new AbortController();
@@ -74,9 +74,9 @@ export default function HomePage() {
         );
         if (!response.ok) throw new Error("market overview");
         const body = await response.json();
-        const next: Record<string, number | null> = {};
+        const next: Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null }> = {};
         for (const row of Array.isArray(body?.indices) ? body.indices : []) {
-          if (row?.symbol) next[String(row.symbol).toUpperCase()] = row?.ltp == null ? null : Number(row.ltp);
+          if (row?.symbol) {\n            const ltp = row?.ltp == null ? null : Number(row.ltp);\n            const previousClose = row?.close == null ? null : Number(row.close);\n            const changePercent = ltp != null && previousClose != null && previousClose !== 0 ? ((ltp - previousClose) / previousClose) * 100 : null;\n            next[String(row.symbol).toUpperCase()] = { ltp, previousClose, changePercent };\n          }
         }
         if (!cancelled) setIndexLtps(next);
       } catch {
