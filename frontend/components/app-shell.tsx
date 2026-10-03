@@ -71,7 +71,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </aside>
 
         <div
-          className={`fixed inset-16 inset-x-0 z-20 bg-slate-900/20 transition-opacity duration-200 lg:hidden ${mobileOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
+          className={`fixed inset-16 inset-x-0 z-20 theme-bg/20 transition-opacity duration-200 lg:hidden ${mobileOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
           onClick={() => setMobileOpen(false)}
           aria-hidden={!mobileOpen}
         >
