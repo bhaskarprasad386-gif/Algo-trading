@@ -5,6 +5,8 @@ on:
   push:
     paths:
       - .github/workflows/vps-https-configure.yml
+      - frontend/lib/config.ts
+      - backend/app/main.py
 
 jobs:
   configure:
