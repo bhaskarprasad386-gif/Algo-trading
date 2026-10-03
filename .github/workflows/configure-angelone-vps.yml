@@ -68,15 +68,27 @@ jobs:
           grep -q '^ANGEL_CLIENT_ID=.' "$tmp_file"
           grep -q '^ANGEL_PASSWORD=.' "$tmp_file"
           grep -q '^ANGEL_TOTP_SECRET=.' "$tmp_file"
-          mv -f "$tmp_file" "$ENV_FILE"
-          chmod 600 "$ENV_FILE"
+          # Preserve the existing production SECRET_KEY; never rotate it during
+          # an idempotent credentials/configuration verification run.
+          existing_secret="$(grep '^SECRET_KEY=' "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true)"
+          if [ -z "$existing_secret" ]; then
+            existing_secret="$(openssl rand -hex 32)"
+          fi
+          printf 'SECRET_KEY=%s\n' "$existing_secret" >> "$tmp_file"
+          chmod 600 "$tmp_file"
 
-          # Production requires a 32+ character SECRET_KEY; keep it only on the VPS.
-          secret_key="$(openssl rand -hex 32)"
-          printf 'SECRET_KEY=%s\n' "$secret_key" >> "$ENV_FILE"
-          chmod 600 "$ENV_FILE"
+          config_changed=true
+          if [ -f "$ENV_FILE" ] && cmp -s "$tmp_file" "$ENV_FILE"; then
+            config_changed=false
+          fi
 
-          systemctl restart algo-trading.service
+          if [ "$config_changed" = true ]; then
+            mv -f "$tmp_file" "$ENV_FILE"
+            chmod 600 "$ENV_FILE"
+            systemctl restart algo-trading.service
+          else
+            echo "CONFIG_UNCHANGED_NO_RESTART=true"
+          fi
           for i in {1..20}; do
             if systemctl is-active --quiet algo-trading.service && curl --fail --silent --show-error http://127.0.0.1:8000/health >/tmp/algo_health.json; then
               break
