@@ -4,42 +4,87 @@ import { useState } from "react";
 import { Bell, Bot, Mail, MessageSquare, ShieldCheck, Smartphone } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
 
+const scanners = [
+  "Cash-Future",
+  "Calendar Spread",
+  "Synthetic Arbitrage",
+  "Box Spread",
+  "Debit Strategy",
+  "Credit Strategy",
+];
+
+const metricsByScanner: Record<string, string[]> = {
+  "Cash-Future": ["Gap", "Gross Profit", "Net Profit", "Volume / OI"],
+  "Calendar Spread": ["Gap", "Gross Profit", "Net Profit", "Volume / OI"],
+  "Synthetic Arbitrage": ["Gap", "Gross Profit", "Net Profit", "IV / Premium"],
+  "Box Spread": ["Gross Profit", "Net Profit", "Spread Value"],
+  "Debit Strategy": ["Gross Profit", "Net Profit", "Premium", "ROI"],
+  "Credit Strategy": ["Gross Profit", "Net Profit", "Premium", "ROI"],
+};
+
 export default function CustomAlertPage() {
   const [mobile, setMobile] = useState("");
   const [sms, setSms] = useState(true);
   const [app, setApp] = useState(true);
   const [email, setEmail] = useState(false);
   const [paperAutoExecute, setPaperAutoExecute] = useState(false);
+  const [scanner, setScanner] = useState("Cash-Future");
+  const [metric, setMetric] = useState("Gap");
+  const metrics = metricsByScanner[scanner];
 
   return (
     <div className="space-y-5">
-      <PageTitle eyebrow="Phase 4 • Custom Alert" title="Custom Alert" description="Create alerts, configure notifications, and define what should happen when an alert triggers." />
+      <PageTitle eyebrow="Phase 4 • Custom Alert" title="Custom Alert" description="Apply an alert across the selected scanner and trigger it from the strategy metric you choose." />
 
       <Card className="p-5">
         <div className="mb-5">
           <h2 className="text-base font-semibold text-white">Create Custom Alert</h2>
-          <p className="mt-1 text-sm text-algo-muted">Alert conditions are saved only when the backend alert service is connected.</p>
+          <p className="mt-1 text-sm text-algo-muted">The alert monitors the complete selected scanner, not one manually entered symbol.</p>
         </div>
+
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="space-y-2 text-sm">
             <span className="font-medium text-white">Alert Name</span>
-            <input className="min-h-11 w-full px-3" placeholder="e.g. Cash-Future Gap" />
+            <input className="min-h-11 w-full px-3" placeholder="e.g. Cash-Future Gross Profit" />
           </label>
+
           <label className="space-y-2 text-sm">
-            <span className="font-medium text-white">Strategy</span>
-            <select className="min-h-11 w-full px-3" defaultValue="">
-              <option value="" disabled>Select strategy</option>
-              <option>Cash-Future</option><option>Calendar Spread</option><option>Synthetic Arbitrage</option><option>Box Spread</option><option>Debit Strategy</option><option>Credit Strategy</option>
+            <span className="font-medium text-white">Scanner / Strategy</span>
+            <select className="min-h-11 w-full px-3" value={scanner} onChange={(event) => {
+              const next = event.target.value;
+              setScanner(next);
+              setMetric(metricsByScanner[next][0]);
+            }}>
+              {scanners.map((item) => <option key={item}>{item}</option>)}
             </select>
           </label>
+
           <label className="space-y-2 text-sm">
-            <span className="font-medium text-white">Symbol / Instrument</span>
-            <input className="min-h-11 w-full px-3" placeholder="Select or enter symbol" />
+            <span className="font-medium text-white">Metric</span>
+            <select className="min-h-11 w-full px-3" value={metric} onChange={(event) => setMetric(event.target.value)}>
+              {metrics.map((item) => <option key={item}>{item}</option>)}
+            </select>
           </label>
-          <label className="space-y-2 text-sm">
-            <span className="font-medium text-white">Condition</span>
-            <input className="min-h-11 w-full px-3" placeholder="e.g. Gap >= 1.00%" />
-          </label>
+
+          <div className="grid grid-cols-[1fr_1.4fr] gap-3">
+            <label className="space-y-2 text-sm">
+              <span className="font-medium text-white">Operator</span>
+              <select className="min-h-11 w-full px-3" defaultValue=">=">
+                <option>&gt;=</option><option>&gt;</option><option>&lt;=</option><option>&lt;</option><option>=</option>
+              </select>
+            </label>
+            <label className="space-y-2 text-sm">
+              <span className="font-medium text-white">Value</span>
+              <input className="min-h-11 w-full px-3" inputMode="decimal" placeholder={metric === "Gross Profit" || metric === "Net Profit" ? "₹ 5,000" : "1.00%"} />
+            </label>
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-algo-border bg-algo-surface p-4 text-sm">
+          <p className="font-semibold text-white">Scanner-wide condition</p>
+          <p className="mt-1 text-algo-muted">
+            Alert when <span className="text-white">{scanner}</span> scanner finds an eligible opportunity where <span className="text-white">{metric}</span> meets the configured value.
+          </p>
         </div>
       </Card>
 
@@ -75,7 +120,7 @@ export default function CustomAlertPage() {
           <Bot className="mt-0.5 h-5 w-5 shrink-0 text-algo-warning" />
           <div>
             <h2 className="text-base font-semibold text-white">Alert Action</h2>
-            <p className="mt-1 text-sm text-algo-muted">When this alert triggers, the configured action will run automatically once the corresponding execution mode is enabled.</p>
+            <p className="mt-1 text-sm text-algo-muted">When the scanner condition triggers, the configured execution mode can act automatically.</p>
           </div>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -89,7 +134,7 @@ export default function CustomAlertPage() {
             <span className="rounded-lg border border-algo-border px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-algo-warning">Locked</span>
           </div>
         </div>
-        <p className="mt-3 text-xs text-algo-muted">If Live Auto-Execute is explicitly enabled in the backend safety configuration, a triggered alert can be routed to the execution engine automatically. This UI never bypasses the broker-order safety gate.</p>
+        <p className="mt-3 text-xs text-algo-muted">If Live Auto-Execute is explicitly enabled in the backend safety configuration, a triggered scanner alert can be routed to the execution engine automatically. This UI never bypasses the broker-order safety gate.</p>
       </Card>
 
       <Card className="p-5">
