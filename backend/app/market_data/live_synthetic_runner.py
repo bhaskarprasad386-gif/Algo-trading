@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from threading import Event, Thread
 from time import sleep, time_ns
+from datetime import datetime
 from typing import Callable, Iterable
 
 from app.backtesting.arbitrage_scan_policy import ScanPolicy
@@ -29,6 +30,47 @@ from app.scanner.synthetic_cash_carry import SyntheticScanConfig
 
 
 @dataclass(frozen=True)
+def select_nearest_option_expiry(
+    instruments: Iterable[dict],
+    *,
+    underlying: str,
+    instrument_class: str,
+    today,
+) -> str | None:
+    """Return the nearest non-expired real option expiry for a target."""
+    cls = instrument_class.strip().upper()
+    segment = "MCX" if cls == "COMMODITY" else (
+        "BFO" if cls == "INDEX" and underlying.strip().upper() in {"SENSEX", "BANKEX"}
+        else "NFO"
+    )
+    instrument_types = {
+        "STOCK": frozenset({"OPTSTK"}),
+        "INDEX": frozenset({"OPTIDX"}),
+        "COMMODITY": frozenset({"OPTFUT"}),
+    }[cls]
+    candidates: list[tuple[object, str]] = []
+    for row in instruments:
+        if str(row.get("exch_seg", "")).strip().upper() != segment:
+            continue
+        if str(row.get("instrumenttype", "")).strip().upper() not in instrument_types:
+            continue
+        if str(row.get("name", "")).strip().upper() != underlying.strip().upper():
+            continue
+        expiry_text = str(row.get("expiry", "")).strip().upper()
+        parsed = None
+        for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d"):
+            try:
+                parsed = datetime.strptime(expiry_text, fmt).date()
+                break
+            except ValueError:
+                continue
+        if parsed is not None and parsed >= today and expiry_text:
+            candidates.append((parsed, expiry_text))
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: item[0])[1]
+
+
 class SyntheticLiveTarget:
     """One underlying/class to stream from the real Angel One instrument master."""
 
@@ -363,4 +405,4 @@ class LiveSyntheticRunner:
             recorder.stop()
 
 
-__all__ = ["LiveSyntheticRunner", "SyntheticLiveTarget"]
+__all__ = ["LiveSyntheticRunner", "SyntheticLiveTarget", "select_nearest_option_expiry"]
