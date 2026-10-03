@@ -195,6 +195,40 @@ jobs:
           echo "CERT_EXPIRES=$(openssl x509 -in "/etc/letsencrypt/live/$IP/cert.pem" -noout -enddate | sed 's/^notAfter=//')"
           echo "PORTS"
           ss -lntp | grep -E ':(80|443) ' || true
+          echo "== WSS HANDSHAKE CHECK ==" 
+          python3 - <<'PY'
+          import socket
+          import ssl
+          import base64
+          import os
+
+          host = "82.41.67.22"
+          key = base64.b64encode(os.urandom(16)).decode()
+          request = (
+              "GET /ws/dashboard HTTP/1.1\r\n"
+              f"Host: {host}\r\n"
+              "Upgrade: websocket\r\n"
+              "Connection: Upgrade\r\n"
+              f"Sec-WebSocket-Key: {key}\r\n"
+              "Sec-WebSocket-Version: 13\r\n"
+              "\r\n"
+          )
+          context = ssl._create_unverified_context()
+          with socket.create_connection((host, 443), timeout=10) as raw:
+              with context.wrap_socket(raw, server_hostname=host) as sock:
+                  sock.sendall(request.encode())
+                  response = b""
+                  while b"\r\n\r\n" not in response and len(response) < 16384:
+                      chunk = sock.recv(4096)
+                      if not chunk:
+                          break
+                      response += chunk
+          status_line = response.split(b"\r\n", 1)[0].decode("latin1", "replace")
+          print(f"WSS_STATUS_LINE={status_line}")
+          if not status_line.startswith("HTTP/1.1 101 "):
+              raise SystemExit("WSS_HANDSHAKE_FAILED")
+          print("WSS_HANDSHAKE_OK")
+          PY
           REMOTE
 
           rm -f /tmp/vps_key
