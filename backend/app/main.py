@@ -509,7 +509,7 @@ async def _live_cash_future_loop() -> None:
             runner, name="live-cash-future-runner"
         )
     finally:
-        runner.stop()
+        _stop_live_runner_nonblocking(runner, name="live-cash-future-final-stop")
         live_cash_future_runner = None
 
 async def _live_synthetic_loop() -> None:
