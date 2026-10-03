@@ -9,6 +9,11 @@ import { StatusDot } from "./ui";
 const nav = [
   { href: "/", label: "Command Center", icon: Home },
   { href: "/scanner", label: "Live Scanner", icon: Activity },
+  { href: "/strategies/cash-future", label: "Cash-Future Scanner", icon: Activity },
+  { href: "/strategies/calendar-spread", label: "Calendar Scanner", icon: Activity },
+  { href: "/strategies/synthetic-arbitrage", label: "Synthetic Scanner", icon: Activity },
+  { href: "/strategies/box-spread", label: "Box Scanner", icon: Activity },
+  { href: "/strategies/custom-strategy", label: "Custom Scanner", icon: Activity },
   { href: "/custom-alert", label: "Custom Alert", icon: Bell },
   { href: "/paper-trading", label: "Paper Trading", icon: WalletCards },
   { href: "/auto-paper", label: "Auto Paper Trading", icon: Bot },
