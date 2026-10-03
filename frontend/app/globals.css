@@ -55,11 +55,16 @@ input:focus, select:focus, textarea:focus {
 input::placeholder, textarea::placeholder { color: #475569; }
 
 /* Global light-theme readability: darker secondary text and slightly stronger body weight. */
-.text-slate-400 { color: #64748B !important; }
-.text-slate-500 { color: #475569 !important; }
-.text-slate-600 { color: #334155 !important; }
-.text-\[\#64748B\] { color: #475569 !important; }
+.text-slate-400 { color: #475569 !important; }
+.text-slate-500 { color: #334155 !important; }
+.text-slate-600 { color: #1E293B !important; }
+.text-slate-700 { color: #0F172A !important; }
+.text-slate-800 { color: #0B1220 !important; }
+.text-slate-900 { color: #0B1220 !important; }
+.text-\[\#64748B\] { color: #334155 !important; }
 .text-\[\#334155\] { color: #1E293B !important; }
+.text-\[\#0F172A\] { color: #0B1220 !important; }
+.text-\[\#0B1220\] { color: #0B1220 !important; }
 
 /* Light command-center surface overrides. */
 .text-white { color: #0F172A !important; }
