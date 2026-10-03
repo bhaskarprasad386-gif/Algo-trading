@@ -50,7 +50,7 @@ const configs: Record<string, WorkspaceConfig> = {
 };
 
 function formatCell(slug: string, column: string, row: Record<string, unknown>) {
-  const keys: Record<string, string[]> = {
+  const keys: Record<string, Record<string, string>> = {
     "cash-future": [["Symbol","symbol"],["Expiry","contract_month"],["Cash Bid/Ask","cash_execution_price"],["Future Bid/Ask","future_execution_price"],["Executable Gap","executable_gap"],["Volume / OI","volume"],["Signal","executable"]].reduce((a,[k,v]) => (a[k]=v,a), {} as Record<string,string>),
     "calendar-spread": {Underlying:"underlying",Near:"near_contract_month",Far:"far_contract_month",Spread:"gap_points","Gap / Edge":"long_edge", "Volume / OI":"liquidity_qty",Signal:"qualifies"},
     "synthetic-arbitrage": {Underlying:"underlying",Expiry:"expiry",Strike:"strike",Option:"call_bid",Future:"future_bid","Executable Edge":"executable_edge",Signal:"direction"},
@@ -124,8 +124,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         <Link href="/scanner" className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-algo-border bg-algo-card px-3 text-xs font-semibold text-algo-muted hover:text-white">
           <ArrowLeft className="h-4 w-4" /> Overall Scanner
         </Link>
-        <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-algo-border bg-algo-card px-3 text-xs font-semibold text-algo-warning">
-          <StatusDot /> LIVE FEED NOT CONNECTED
+        <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border border-algo-border bg-algo-card px-3 text-xs font-semibold ${loading ? "text-algo-warning" : error ? "text-algo-loss" : "text-algo-profit"}`}>
+          <StatusDot live={!loading && !error} /> {loading ? "CONNECTING" : error ? "BACKEND ERROR" : "LIVE DATA CONNECTED"}
         </span>
       </div>
 
