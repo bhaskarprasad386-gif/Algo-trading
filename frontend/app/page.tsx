@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, BriefcaseBusiness, Clock, Database, Gauge, ShieldCheck, Zap } from "lucide-react";
+import { Bell, Clock, Zap } from "lucide-react";
 import Link from "next/link";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
@@ -69,7 +69,7 @@ export default function HomePage() {
     const loadMarketOverview = async () => {
       try {
         const response = await fetch(
-          appConfig.apiBaseUrl.replace(/\\/$/, "") + "/api/v1/market-data/overview",
+          appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/market-data/overview",
           { cache: "no-store" },
         );
         if (!response.ok) throw new Error("market overview");
@@ -99,10 +99,7 @@ export default function HomePage() {
   const saveCapital = (value: string) => {
     const normalized = value.replace(/[^0-9]/g, "");
     setCapital(normalized);
-
-    if (Number(normalized) > 0) {
-      window.localStorage.setItem("algo-paper-capital", normalized);
-    }
+    if (Number(normalized) > 0) window.localStorage.setItem("algo-paper-capital", normalized);
   };
 
   const formattedCapital = Number(capital || 0).toLocaleString("en-IN", {
@@ -126,36 +123,21 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-white p-4 text-[#0F172A]">
-      <PageTitle
-        eyebrow="Phase 2 • Home / Command Center"
-        title="Command Center"
-        description=""
-      />
-
+      <PageTitle eyebrow="Phase 2 • Home / Command Center" title="Command Center" description="" />
       <div className="-mt-8 mb-4 flex justify-end gap-2">
-        <div className="inline-flex items-center gap-2 rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-[11px] font-medium text-orange-700">
-          <span className="h-2 w-2 rounded-full bg-orange-400" />
-          {wsLabel === "CONNECTED" ? "Live market feed connected" : "Market feed connecting"}
-        </div>
-
-        <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-700">
-          <span className="h-2 w-2 rounded-full bg-emerald-400" />
-          Paper-safe broker orders OFF
-        </div>
+        <div className="inline-flex items-center gap-2 rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-[11px] font-medium text-orange-700"><span className="h-2 w-2 rounded-full bg-orange-400" />{wsLabel === "CONNECTED" ? "Live market feed connected" : "Market feed connecting"}</div>
+        <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-700"><span className="h-2 w-2 rounded-full bg-emerald-400" />Paper-safe broker orders OFF</div>
       </div>
 
       <section className="mt-6" aria-label="Market overview">
         <h2 className="mb-3 text-[15px] font-semibold">Market Overview</h2>
-
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
           {markets.map((symbol) => (
             <Link key={symbol} href={`/scanner?market=${encodeURIComponent(symbol)}`} className="block">
               <Card className="rounded-xl border-[#D7E0E8] bg-white p-4 transition hover:border-sky-500/40">
                 <div className="text-center">
                   <div className="text-[12px] font-semibold tracking-wide">{symbol}</div>
-                  <div className="mt-3 text-lg font-bold text-slate-900">
-                    {indexLtps[symbol] == null ? "—" : indexLtps[symbol]!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </div>
+                  <div className="mt-3 text-lg font-bold text-slate-900">{indexLtps[symbol] == null ? "—" : indexLtps[symbol]!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                   <div className="mt-2 text-[11px] text-[#64748B]">{indexLtps[symbol] == null ? "Waiting for LTP" : "Live LTP"}</div>
                 </div>
               </Card>
@@ -167,75 +149,20 @@ export default function HomePage() {
       <div className="mt-6 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
         <section aria-label="Paper ledger">
           <h2 className="mb-3 text-[15px] font-semibold">Paper Ledger</h2>
-
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Card className="rounded-xl border-[#D7E0E8] bg-white p-3">
-              <div className="text-[11px] text-[#64748B]">Paper Capital</div>
-              <div className="mt-1 text-[16px] font-bold">{formattedCapital}</div>
-              <input
-                inputMode="numeric"
-                value={capital}
-                onChange={(event) => saveCapital(event.target.value)}
-                aria-label="Manual paper capital amount"
-                className="mt-3 min-h-9 w-full rounded-lg border border-[#D7E0E8] bg-white px-2 text-xs text-[#0F172A] outline-none focus:border-sky-500/60"
-              />
-            </Card>
-
-            <Card className="rounded-xl border-[#D7E0E8] bg-white p-3">
-              <div className="flex gap-6">
-                <div>
-                  <div className="text-[11px] text-[#64748B]">Available Balance</div>
-                  <div className="mt-1 text-sm">—</div>
-                </div>
-
-                <div>
-                  <div className="text-[11px] text-[#64748B]">Today&apos;s P&amp;L</div>
-                  <div className="mt-1 text-sm">—</div>
-                </div>
-              </div>
-            </Card>
-
-            <Card className="rounded-xl border-[#D7E0E8] bg-white p-3">
-              <div className="text-[11px] text-[#64748B]">Open Positions</div>
-              <div className="mt-1 text-sm">—</div>
-            </Card>
+            <Card className="rounded-xl border-[#D7E0E8] bg-white p-3"><div className="text-[11px] text-[#64748B]">Paper Capital</div><div className="mt-1 text-[16px] font-bold">{formattedCapital}</div><input inputMode="numeric" value={capital} onChange={(event) => saveCapital(event.target.value)} aria-label="Manual paper capital amount" className="mt-3 min-h-9 w-full rounded-lg border border-[#D7E0E8] bg-white px-2 text-xs text-[#0F172A] outline-none focus:border-sky-500/60" /></Card>
+            <Card className="rounded-xl border-[#D7E0E8] bg-white p-3"><div className="flex gap-6"><div><div className="text-[11px] text-[#64748B]">Available Balance</div><div className="mt-1 text-sm">—</div></div><div><div className="text-[11px] text-[#64748B]">Today&apos;s P&amp;L</div><div className="mt-1 text-sm">—</div></div></div></Card>
+            <Card className="rounded-xl border-[#D7E0E8] bg-white p-3"><div className="text-[11px] text-[#64748B]">Open Positions</div><div className="mt-1 text-sm">—</div></Card>
           </div>
         </section>
 
         <section aria-label="System health">
           <h2 className="mb-3 text-[15px] font-semibold">System Health</h2>
-
           <Card className="rounded-xl border-[#D7E0E8] bg-white p-2">
             {health(apiLabel, wsLabel).map(([name, value, state]) => (
               <div key={name} className="flex items-center justify-between px-2 py-1.5">
-                <div className="flex items-center gap-2 text-[12px] text-[#334155]">
-                  <span
-                    className={
-                      `h-2 w-2 rounded-full ${
-                        state === "ok"
-                          ? "bg-emerald-400"
-                          : state === "warn"
-                            ? "bg-amber-400"
-                            : "bg-red-400"
-                      }`
-                    }
-                  />
-                  {name}
-                </div>
-
-                <span
-                  className={
-                    `rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                      state === "ok"
-                        ? "bg-emerald-100 text-emerald-700"
-                        : state === "warn"
-                          ? "bg-amber-500/20 text-amber-700"
-                          : "bg-red-500/20 text-red-700"
-                    }`
-                  }
-                >
-                  {value}
-                </span>
+                <div className="flex items-center gap-2 text-[12px] text-[#334155]"><span className={`h-2 w-2 rounded-full ${state === "ok" ? "bg-emerald-400" : state === "warn" ? "bg-amber-400" : "bg-red-400"}`} />{name}</div>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${state === "ok" ? "bg-emerald-100 text-emerald-700" : state === "warn" ? "bg-amber-500/20 text-amber-700" : "bg-red-500/20 text-red-700"}`}>{value}</span>
               </div>
             ))}
           </Card>
@@ -243,96 +170,18 @@ export default function HomePage() {
       </div>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
-        <section aria-label="Strategy workspaces">
-          <h2 className="mb-3 text-[15px] font-semibold">Strategy Workspaces</h2>
-
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            {strategies.map((strategy) => (
-              <Link key={strategy.name} href={strategy.href} className="block">
-                <Card className="min-h-[85px] rounded-xl border-[#D7E0E8] bg-white p-3 transition hover:border-sky-500/40">
-                  <div className="text-[12px] font-semibold">{strategy.name}</div>
-                  <div className="mt-1 text-[10px] text-[#64748B]">
-                    {strategy.detail ? `${strategy.detail} —` : " "}
-                  </div>
-                </Card>
-              </Link>
-            ))}
-          </div>
-        </section>
-
+        <section aria-label="Strategy workspaces"><h2 className="mb-3 text-[15px] font-semibold">Strategy Workspaces</h2><div className="grid grid-cols-2 gap-3 md:grid-cols-4">{strategies.map((strategy) => <Link key={strategy.name} href={strategy.href} className="block"><Card className="min-h-[85px] rounded-xl border-[#D7E0E8] bg-white p-3 transition hover:border-sky-500/40"><div className="text-[12px] font-semibold">{strategy.name}</div><div className="mt-1 text-[10px] text-[#64748B]">{strategy.detail ? `${strategy.detail} —` : " "}</div></Card></Link>)}</div></section>
         <div className="space-y-4">
-          <section aria-label="Scanner status">
-            <h2 className="mb-3 text-[15px] font-semibold">Scanner Status</h2>
-
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {scannerStatus.map((item) => (
-                <Card key={item.label} className="rounded-xl border-[#D7E0E8] bg-white p-2.5">
-                  <div className="text-[10px] text-[#64748B]">{item.label}</div>
-                  <div className="mt-1 text-[11px] text-[#334155]">{item.value}</div>
-                </Card>
-              ))}
-            </div>
-          </section>
-
-          <section aria-label="Operations">
-            <h2 className="mb-3 text-[15px] font-semibold">Operations</h2>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <Link href="/scanner">
-                <Card className="rounded-xl border-[#D7E0E8] bg-white p-3 transition hover:border-sky-500/40">
-                  <div className="flex gap-2">
-                    <Zap size={14} />
-                    <div>
-                      <div className="text-[12px] font-semibold">Live Scanner</div>
-                      <div className="text-[10px] text-[#64748B]">Open scanner console</div>
-                    </div>
-                  </div>
-                </Card>
-              </Link>
-
-              <Link href="/custom-alert">
-                <Card className="rounded-xl border-[#D7E0E8] bg-white p-3 transition hover:border-sky-500/40">
-                  <div className="flex gap-2">
-                    <Bell size={14} />
-                    <div>
-                      <div className="text-[12px] font-semibold">Custom Alerts</div>
-                      <div className="text-[10px] text-[#64748B]">Manage alerts</div>
-                    </div>
-                  </div>
-                </Card>
-              </Link>
-
-              <Link href="/history">
-                <Card className="rounded-xl border-[#D7E0E8] bg-white p-3 transition hover:border-sky-500/40">
-                  <div className="flex gap-2">
-                    <Clock size={14} />
-                    <div>
-                      <div className="text-[12px] font-semibold">History</div>
-                      <div className="text-[10px] text-[#64748B]">Trade history & logs</div>
-                    </div>
-                  </div>
-                </Card>
-              </Link>
-            </div>
-          </section>
+          <section aria-label="Scanner status"><h2 className="mb-3 text-[15px] font-semibold">Scanner Status</h2><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{scannerStatus.map((item) => <Card key={item.label} className="rounded-xl border-[#D7E0E8] bg-white p-2.5"><div className="text-[10px] text-[#64748B]">{item.label}</div><div className="mt-1 text-[11px] text-[#334155]">{item.value}</div></Card>)}</div></section>
+          <section aria-label="Operations"><h2 className="mb-3 text-[15px] font-semibold">Operations</h2><div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Link href="/scanner"><Card className="rounded-xl border-[#D7E0E8] bg-white p-3 transition hover:border-sky-500/40"><div className="flex gap-2"><Zap size={14} /><div><div className="text-[12px] font-semibold">Live Scanner</div><div className="text-[10px] text-[#64748B]">Open scanner console</div></div></div></Card></Link>
+            <Link href="/custom-alert"><Card className="rounded-xl border-[#D7E0E8] bg-white p-3 transition hover:border-sky-500/40"><div className="flex gap-2"><Bell size={14} /><div><div className="text-[12px] font-semibold">Custom Alerts</div><div className="text-[10px] text-[#64748B]">Manage alerts</div></div></div></Card></Link>
+            <Link href="/history"><Card className="rounded-xl border-[#D7E0E8] bg-white p-3 transition hover:border-sky-500/40"><div className="flex gap-2"><Clock size={14} /><div><div className="text-[12px] font-semibold">History</div><div className="text-[10px] text-[#64748B]">Trade history & logs</div></div></div></Card></Link>
+          </div></section>
         </div>
       </div>
 
-      <Card className="mt-6 flex items-center justify-between rounded-xl border-[#D7E0E8] bg-white p-3">
-        <div className="min-w-0">
-          <div className="text-[13px] font-semibold">Integration Boundary</div>
-          <div className="text-[11px] text-[#64748B]">
-            External broker orders remain OFF. FastAPI market data and paper-trading services are connected independently.
-          </div>
-        </div>
-
-        <button
-          type="button"
-          className="ml-3 shrink-0 rounded-lg bg-[#E8EEF3] px-3 py-1.5 text-[11px] transition hover:bg-[#DDE5EC]"
-        >
-          View Connections
-        </button>
-      </Card>
+      <Card className="mt-6 flex items-center justify-between rounded-xl border-[#D7E0E8] bg-white p-3"><div className="min-w-0"><div className="text-[13px] font-semibold">Integration Boundary</div><div className="text-[11px] text-[#64748B]">External broker orders remain OFF. FastAPI market data and paper-trading services are connected independently.</div></div><button type="button" className="ml-3 shrink-0 rounded-lg bg-[#E8EEF3] px-3 py-1.5 text-[11px] transition hover:bg-[#DDE5EC]">View Connections</button></Card>
     </div>
   );
 }
