@@ -26,7 +26,7 @@ from app.market_data.live_cash_future_stream import live_cash_future_health
 from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 from app.market_data.common_strategy_feed import shared_common_manager
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
-from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget
+from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.nifty50_universe import NIFTY50_STOCK_SYMBOLS, NIFTY50_INDEX_SYMBOLS
@@ -548,13 +548,33 @@ async def _live_synthetic_loop() -> None:
         stock_symbols = sorted(nifty50_stocks)
         index_symbols = sorted(index_symbols)
         commodity_symbols = sorted(commodity_symbols)
-        targets = tuple(
-            [SyntheticLiveTarget(symbol, "STOCK") for symbol in stock_symbols]
-            + [SyntheticLiveTarget(symbol, "INDEX") for symbol in index_symbols]
-            + [SyntheticLiveTarget(symbol, "COMMODITY") for symbol in commodity_symbols]
+
+        target_specs = (
+            [(symbol, "STOCK") for symbol in stock_symbols]
+            + [(symbol, "INDEX") for symbol in index_symbols]
+            + [(symbol, "COMMODITY") for symbol in commodity_symbols]
         )
+        targets = []
+        missing_expiry = []
+        for symbol, instrument_class in target_specs:
+            expiry = select_nearest_option_expiry(
+                master.instruments,
+                underlying=symbol,
+                instrument_class=instrument_class,
+                today=today,
+            )
+            if expiry is None:
+                missing_expiry.append(symbol)
+                continue
+            targets.append(SyntheticLiveTarget(symbol, instrument_class, expiry=expiry))
+        targets = tuple(targets)
+        if missing_expiry:
+            app_logger.warning(
+                "Synthetic live targets skipped because no current option expiry exists: %s",
+                ", ".join(sorted(set(missing_expiry))),
+            )
         if not targets:
-            app_logger.warning("Synthetic live runner found no eligible NIFTY50/index/MCX targets")
+            app_logger.warning("Synthetic live runner found no eligible NIFTY50/index/MCX option targets")
             return
 
         runner = LiveSyntheticRunner(
