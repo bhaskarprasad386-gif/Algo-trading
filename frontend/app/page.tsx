@@ -74,14 +74,16 @@ export default function HomePage() {
         <SectionHeading icon={<BarChart3 size={18} />} title="Market Overview" action="Live Scanner" href="/scanner" />
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           {markets.map(([symbol, status]) => (
-            <Card key={symbol} className="p-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-semibold text-white">{symbol}</span>
-                <StatusDot />
-              </div>
-              <div className="mt-4 text-lg font-semibold text-algo-muted">—</div>
-              <div className="mt-1 text-[11px] text-algo-muted">{status}</div>
-            </Card>
+            <Link key={symbol} href={`/scanner?market=${encodeURIComponent(symbol)}`} className="group block min-w-0">
+              <Card className="h-full p-4 transition group-hover:border-algo-primary/50 group-hover:bg-algo-surface group-focus-visible:border-algo-primary/70 group-focus-visible:outline-none">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-white">{symbol}</span>
+                  <StatusDot />
+                </div>
+                <div className="mt-4 text-lg font-semibold text-algo-muted">—</div>
+                <div className="mt-1 text-[11px] text-algo-muted">{status}</div>
+              </Card>
+            </Link>
           ))}
         </div>
       </section>
