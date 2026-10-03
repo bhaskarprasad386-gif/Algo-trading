@@ -3,6 +3,11 @@ name: Enable Live Cash-Future 1s Collector (Verified VPS)
 on:
   workflow_dispatch:
 
+# Shared lock: serialize VPS service restarts/configuration.
+concurrency:
+  group: vps-service-mutation
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
