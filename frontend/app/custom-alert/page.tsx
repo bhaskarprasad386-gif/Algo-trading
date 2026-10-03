@@ -47,7 +47,7 @@ export default function CustomAlertPage() {
 
   useEffect(() => {
     let active = true;
-    const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+    const base = appConfig.apiBaseUrl.replace(/\/$/, "");
     fetch(`${base}/api/v1/alerts/config`, { cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
