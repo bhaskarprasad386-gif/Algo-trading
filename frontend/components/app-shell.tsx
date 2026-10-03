@@ -45,8 +45,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           <div className="hidden items-center gap-5 sm:flex">
             <div className="flex items-center gap-2 text-xs text-algo-muted">
-              <StatusDot live />
-              Market data connection
+              <StatusDot live={false} />
+              Market data connection · not wired
             </div>
             <div className="rounded-lg border border-algo-border bg-algo-surface px-3 py-2 text-xs font-medium text-algo-warning">
               PAPER MODE · LIVE ORDERS OFF
