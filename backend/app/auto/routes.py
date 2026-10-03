@@ -66,10 +66,10 @@ def live_paper_close(position_id:int,db:Session=Depends(get_db)):
 @router.post("/positions/{position_id}/mark")
 def mark(position_id:int,current_price:float=Query(gt=0),db:Session=Depends(get_db)):
     try:
-        return {"status":"success","position":position_payload(service.update_mark(db,position_id,current_price))}
+        return {"status":"success","position":position_payload(service.update_mark(db,position_id,current_price,user_id=_uid(db)))}
     except LookupError as exc: raise HTTPException(status_code=404,detail=str(exc)) from exc
 
 @router.post("/positions/{position_id}/close")
 def close(position_id:int,db:Session=Depends(get_db)):
-    try: return {"status":"success","position":position_payload(service.close(db,position_id))}
+    try: return {"status":"success","position":position_payload(service.close(db,position_id,user_id=_uid(db)))}
     except LookupError as exc: raise HTTPException(status_code=404,detail=str(exc)) from exc
