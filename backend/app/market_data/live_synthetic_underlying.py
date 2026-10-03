@@ -12,6 +12,23 @@ from app.market_data.live_synthetic_atm import LiveSyntheticAtmTracker
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 
 
+def filter_resolvable_index_symbols(instrument_master: InstrumentMaster, symbols) -> tuple[str, ...]:
+    """Keep only index underlyings with a concrete Angel One index token."""
+    result = []
+    for raw_symbol in symbols:
+        symbol = str(raw_symbol).strip().upper()
+        if not symbol:
+            continue
+        exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS else "NSE"
+        try:
+            token = instrument_master.resolve_index_token(symbol, exchange)
+        except (LookupError, ValueError):
+            continue
+        if token:
+            result.append(symbol)
+    return tuple(dict.fromkeys(result))
+
+
 class LiveSyntheticUnderlyingFeed:
     """Subscribe to real underlying tokens through the shared feed."""
 
