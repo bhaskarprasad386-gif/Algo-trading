@@ -14,14 +14,14 @@ const markets = [
 ];
 
 const strategies = [
-  { name: "Cash-Future", detail: "Pairs • Cash vs Futures •" },
-  { name: "Calendar Spread", detail: "Time spread • NIFTY •" },
-  { name: "Synthetic Arbitrage", detail: "Cash-Synth • Arbitrage •" },
-  { name: "Box Strategy", detail: "" },
-  { name: "Box Spread", detail: "Options • Box •" },
-  { name: "Debit Strategy", detail: "Debit • Defined risk •" },
-  { name: "Credit Strategy", detail: "Credit • Premium collect •" },
-  { name: "Broker Orders", detail: "" },
+  { name: "Cash-Future", detail: "Pairs • Cash vs Futures •", href: "/strategies/cash-future" },
+  { name: "Calendar Spread", detail: "Time spread • NIFTY •", href: "/strategies/calendar-spread" },
+  { name: "Synthetic Arbitrage", detail: "Cash-Synth • Arbitrage •", href: "/strategies/synthetic-arbitrage" },
+  { name: "Box Strategy", detail: "", href: "/strategies/box-spread" },
+  { name: "Box Spread", detail: "Options • Box •", href: "/strategies/box-spread" },
+  { name: "Custom Strategy", detail: "Independent • User-defined •", href: "/strategies/custom-strategy" },
+  { name: "Strategy Scanner", detail: "Dedicated workspaces •", href: "/scanner" },
+  { name: "Broker Orders", detail: "Always OFF • Paper safe •", href: "/paper-trading" },
 ];
 
 const health = [
@@ -189,7 +189,7 @@ export default function HomePage() {
 
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             {strategies.map((strategy) => (
-              <Link key={strategy.name} href="/paper-trading" className="block">
+              <Link key={strategy.name} href={strategy.href} className="block">
                 <Card className="min-h-[85px] rounded-xl border-[#2a2a33] bg-[#18181f] p-3 transition hover:border-sky-500/40">
                   <div className="text-[12px] font-semibold">{strategy.name}</div>
                   <div className="mt-1 text-[10px] text-zinc-500">
