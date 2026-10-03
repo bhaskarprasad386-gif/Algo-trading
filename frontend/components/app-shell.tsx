@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Bell, BriefcaseBusiness, ChartNoAxesCombined, Clock3, Home, Menu, Settings2, WalletCards, X } from "lucide-react";
+import { Activity, Bell, Bot, BriefcaseBusiness, ChartNoAxesCombined, Clock3, Home, Menu, Settings2, WalletCards, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { StatusDot } from "./ui";
 
@@ -11,6 +11,7 @@ const nav = [
   { href: "/scanner", label: "Live Scanner", icon: Activity },
   { href: "/custom-alert", label: "Custom Alert", icon: Bell },
   { href: "/paper-trading", label: "Paper Trading", icon: WalletCards },
+  { href: "/auto-paper", label: "Auto Paper Trading", icon: Bot },
   { href: "/positions", label: "Positions", icon: BriefcaseBusiness },
   { href: "/completed-trades", label: "Completed Trades", icon: ChartNoAxesCombined },
   { href: "/history", label: "History", icon: Clock3 },
@@ -64,16 +65,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         </aside>
 
         <div
-          className={`fixed inset-16 inset-x-0 z-20 bg-black/60 transition-opacity duration-200 lg:hidden ${
-            mobileOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
-          }`}
+          className={`fixed inset-16 inset-x-0 z-20 bg-black/60 transition-opacity duration-200 lg:hidden ${mobileOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
           onClick={() => setMobileOpen(false)}
           aria-hidden={!mobileOpen}
         >
           <aside
-            className={`h-full w-[min(18rem,86vw)] border-r border-algo-border bg-algo-surface shadow-2xl transition-transform duration-200 ease-out ${
-              mobileOpen ? "translate-x-0" : "-translate-x-full"
-            }`}
+            className={`h-full w-[min(18rem,86vw)] border-r border-algo-border bg-algo-surface shadow-2xl transition-transform duration-200 ease-out ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
             onClick={(e) => e.stopPropagation()}
             aria-label="Mobile navigation"
           >
