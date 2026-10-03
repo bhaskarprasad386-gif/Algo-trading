@@ -263,7 +263,7 @@ def test_runner_filters_targets_to_resolvable_underlying_tokens(monkeypatch):
     from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget
     class Feed:
         def _tokens(self): return {"NIFTY": "26000"}
-    runner = LiveSyntheticRunner(":memory:", [SyntheticLiveTarget("NIFTY","INDEX","29OCT2026"), SyntheticLiveTarget("COPPER","COMMODITY","29OCT2026")], allowed_stock_symbols=frozenset(), underlying_feed=Feed())
+    runner = LiveSyntheticRunner(":memory:", [SyntheticLiveTarget("NIFTY","INDEX","29OCT2026"), SyntheticLiveTarget("COPPER","COMMODITY","29OCT2026")], allowed_stock_symbols=frozenset())
     monkeypatch.setattr(runner, "_atm_tracker", object())
     monkeypatch.setattr("app.market_data.live_synthetic_runner.LiveSyntheticUnderlyingFeed", lambda *a, **k: Feed())
     feed = runner._ensure_underlying_feed()
