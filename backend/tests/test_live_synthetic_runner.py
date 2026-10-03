@@ -1,5 +1,5 @@
 from app.market_data.instruments import InstrumentMaster
-from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget
+from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry
 
 
 def _master():
@@ -231,3 +231,29 @@ def test_runner_retries_when_selected_expiry_has_no_concrete_strikes(monkeypatch
     runner.run_forever()
     assert sleeps == [30.0]
     assert runner._stop_requested.is_set()
+
+
+def test_select_nearest_option_expiry_uses_real_current_chain():
+    master = _master()
+    expiry = select_nearest_option_expiry(
+        master.instruments,
+        underlying="NIFTY",
+        instrument_class="INDEX",
+        today=__import__("datetime").date(2026, 10, 3),
+    )
+    assert expiry == "29OCT2026"
+
+
+def test_select_nearest_option_expiry_returns_none_without_options():
+    master = InstrumentMaster()
+    master.instruments = [
+        {"exch_seg":"NFO","instrumenttype":"FUTIDX","token":"f1","name":"NIFTY",
+         "symbol":"NIFTY29OCT26FUT","expiry":"29OCT2026","lotsize":"50"},
+    ]
+    expiry = select_nearest_option_expiry(
+        master.instruments,
+        underlying="NIFTY",
+        instrument_class="INDEX",
+        today=__import__("datetime").date(2026, 10, 3),
+    )
+    assert expiry is None
