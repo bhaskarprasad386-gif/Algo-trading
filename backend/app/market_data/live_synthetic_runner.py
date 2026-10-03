@@ -257,7 +257,16 @@ class LiveSyntheticRunner:
         )
 
     def run_forever(self) -> None:
-        atm_provider = self._ensure_atm_provider()
+        while not self._stop_requested.is_set():
+            try:
+                atm_provider = self._ensure_atm_provider()
+                break
+            except LookupError as exc:
+                app_logger.warning("Synthetic live target unavailable; retrying: %s", exc)
+                sleep(30.0)
+        else:
+            return
+
         feed = self._ensure_underlying_feed()
         feed_thread = None
         self._active_underlying_feed = feed
