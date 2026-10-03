@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Bell, Bot, Mail, MessageSquare, ShieldCheck, Smartphone } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
+import { appConfig } from "@/lib/config";
 
 const scanners = [
   "Cash-Future",
@@ -35,11 +36,58 @@ export default function CustomAlertPage() {
   const [app, setApp] = useState(true);
   const [email, setEmail] = useState(false);
   const [paperAutoExecute, setPaperAutoExecute] = useState(false);
+  const [paperAutoLoading, setPaperAutoLoading] = useState(true);
+  const [paperAutoSaving, setPaperAutoSaving] = useState(false);
+  const [paperAutoError, setPaperAutoError] = useState<string | null>(null);
   const [scanner, setScanner] = useState("Cash-Future");
   const [metric, setMetric] = useState("Gap");
   const metrics = metricsByScanner[scanner];
   const notificationState = { sms, app, email };
   const notificationSetters = { sms: setSms, app: setApp, email: setEmail };
+
+  useEffect(() => {
+    let active = true;
+    const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+    fetch(`${base}/api/v1/alerts/config`, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((data) => {
+        if (!active) return;
+        setPaperAutoExecute(Boolean(data?.paper?.enabled));
+        setPaperAutoError(null);
+      })
+      .catch(() => {
+        if (active) setPaperAutoError("Backend status unavailable");
+      })
+      .finally(() => {
+        if (active) setPaperAutoLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  const togglePaperAutoExecute = async () => {
+    if (paperAutoSaving) return;
+    const next = !paperAutoExecute;
+    setPaperAutoSaving(true);
+    setPaperAutoError(null);
+    try {
+      const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+      const response = await fetch(`${base}/api/v1/alerts/paper`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next, paper_amount: 10000000, emergency_stop: false }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`);
+      setPaperAutoExecute(Boolean(data?.paper?.enabled));
+    } catch (error) {
+      setPaperAutoError(error instanceof Error ? error.message : "Unable to update paper auto-execute");
+    } finally {
+      setPaperAutoSaving(false);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -133,10 +181,10 @@ export default function CustomAlertPage() {
           </div>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
-          <button type="button" onClick={() => setPaperAutoExecute(!paperAutoExecute)} className="flex min-h-16 items-center gap-3 rounded-xl border border-algo-border bg-algo-surface px-4 text-left">
+          <button type="button" onClick={togglePaperAutoExecute} disabled={paperAutoLoading || paperAutoSaving} className="flex min-h-16 items-center gap-3 rounded-xl border border-algo-border bg-algo-surface px-4 text-left disabled:cursor-wait disabled:opacity-70">
             <ShieldCheck className="h-5 w-5 text-algo-primary" />
-            <span className="flex-1"><span className="block text-sm font-semibold text-white">Paper Auto-Execute</span><span className="block text-xs text-algo-muted">{paperAutoExecute ? "ON — alert will create a paper trade" : "OFF"}</span></span>
-            <span className={paperAutoExecute ? "rounded-lg border border-algo-profit/30 bg-algo-profit/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-algo-profit" : "rounded-lg border border-algo-border px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-algo-muted"}>{paperAutoExecute ? "ON" : "OFF"}</span>
+            <span className="flex-1"><span className="block text-sm font-semibold text-white">Paper Auto-Execute</span><span className="block text-xs text-algo-muted">{paperAutoLoading ? "Checking backend setting…" : paperAutoSaving ? "Saving…" : paperAutoExecute ? "ON — qualifying alert will create a paper trade" : "OFF"}</span></span>
+            <span className={paperAutoExecute ? "rounded-lg border border-algo-profit/30 bg-algo-profit/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-algo-profit" : "rounded-lg border border-algo-border px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-algo-muted"}>{paperAutoLoading ? "…" : paperAutoExecute ? "ON" : "OFF"}</span>
           </button>
           <div className="flex min-h-16 items-center gap-3 rounded-xl border border-algo-border bg-algo-surface px-4">
             <Bot className="h-5 w-5 text-algo-muted" />
@@ -144,7 +192,8 @@ export default function CustomAlertPage() {
             <span className="rounded-lg border border-algo-border px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-algo-warning">Locked</span>
           </div>
         </div>
-        <p className="mt-3 text-xs text-algo-muted">If Live Auto-Execute is explicitly enabled in the backend safety configuration, a triggered scanner alert can be routed to the execution engine automatically. This UI never bypasses the broker-order safety gate.</p>
+        <p className="mt-3 text-xs text-algo-muted">Paper Auto-Execute is saved to the backend global paper setting for this user. When ON, qualifying scanner alerts may create paper trades using the alert’s executable paper legs; when OFF, alerts do not create paper trades. Live broker orders remain OFF.</p>
+        {paperAutoError && <p className="mt-2 text-xs text-algo-loss">Paper auto setting: {paperAutoError}</p>}
       </Card>
 
       <Card className="p-5">
