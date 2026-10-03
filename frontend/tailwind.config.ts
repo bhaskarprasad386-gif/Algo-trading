@@ -6,19 +6,19 @@ const config: Config = {
     extend: {
       colors: {
         algo: {
-          bg: "#070A0D",
-          surface: "#0F1419",
-          card: "#12171E",
+          bg: "#FFFFFF",
+          surface: "#FFFFFF",
+          card: "#FFFFFF",
           primary: "#00B0FF",
-          profit: "#00E676",
-          loss: "#FF1744",
-          warning: "#FFAB00",
-          border: "#202830",
-          muted: "#7D8A96",
+          profit: "#00A95C",
+          loss: "#E11D48",
+          warning: "#D97706",
+          border: "#D7E0E8",
+          muted: "#64748B",
         },
       },
       boxShadow: {
-        panel: "0 10px 30px rgba(0,0,0,.20)",
+        panel: "0 10px 30px rgba(15,23,42,.08)",
       },
     },
   },
