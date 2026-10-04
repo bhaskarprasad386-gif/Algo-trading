@@ -240,3 +240,79 @@ def test_expiry_reuse_consumes_new_daily_capital_but_not_double_reserved_capital
     assert len(completed) == 1
     assert sum(float(row.capital_used) for row in completed + ongoing) == 60000
     assert sum(float(row.capital_used) for row in ongoing) == 30000
+
+
+def test_same_user_multi_strategy_limits_share_simultaneous_daily_and_loss_budgets(db_session):
+    """Calendar/Synthetic/Box rules must consume one user's global risk budgets."""
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=90000, emergency_stop=False,
+    ))
+    for strategy in ("calendar-spread", "synthetic-future-cash-carry", "box-spread"):
+        db_session.add(AlertRule(
+            user_id=1, strategy_id=strategy, min_gross_profit=0,
+            mobile_number="", whatsapp_enabled=False, enabled=True,
+            max_daily_capital=60000, max_simultaneous_positions=1,
+            max_loss=100,
+        ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+
+    calendar_event = _event("MULTI-CAL", capital=30000, lots=1)
+    calendar_event = AlertEvent(
+        strategy_id="calendar-spread",
+        event_id=calendar_event.event_id,
+        symbol=calendar_event.symbol,
+        timestamp_ns=calendar_event.timestamp_ns,
+        message=calendar_event.message,
+        observed_at=calendar_event.observed_at,
+        metadata=calendar_event.metadata,
+    )
+    assert AlertService().dispatch(db_session, calendar_event) == 0
+    ongoing = svc.ongoing(db_session, 1)
+    assert len(ongoing) == 1
+    assert ongoing[0].strategy_id == "calendar-spread"
+
+    # The second strategy cannot create a second position for the same user:
+    # max_simultaneous_positions is a user-global budget, not a per-strategy
+    # bucket.
+    synthetic_event = AlertEvent(
+        strategy_id="synthetic-future-cash-carry",
+        event_id="MULTI-SYN",
+        symbol="SYN",
+        timestamp_ns=2,
+        message="paper",
+        observed_at=datetime.utcnow(),
+        metadata={"gross_profit": 1000, "paper_trade": {
+            "direction": "LONG", "expiry": "2026-10-30",
+            "lot_size": 10, "lots": 1, "edge": 5, "capital_used": 30000,
+        }},
+    )
+    assert AlertService().dispatch(db_session, synthetic_event) == 0
+    assert len(svc.ongoing(db_session, 1)) == 1
+
+    # Close the Calendar position at the exact max-loss boundary. Its 30k
+    # allocation remains part of today's cumulative daily-capital usage.
+    seed = svc.ongoing(db_session, 1)[0]
+    svc.mark(db_session, seed, edge=0.0, pnl_override=-100.0)
+    svc.close(db_session, seed, "MANUAL")
+
+    # Box cannot enter even though the simultaneous slot and 30k ongoing
+    # reservation were released: the same user's realized loss budget is
+    # consumed globally across strategies.
+    box_loss_event = AlertEvent(
+        strategy_id="box-spread",
+        event_id="MULTI-BOX-LOSS",
+        symbol="BOX",
+        timestamp_ns=3,
+        message="paper",
+        observed_at=datetime.utcnow(),
+        metadata={"gross_profit": 1000, "paper_trade": {
+            "direction": "LONG", "expiry": "2026-10-30",
+            "lot_size": 10, "lots": 1, "edge": 5, "capital_used": 30000,
+        }},
+    )
+    assert AlertService().dispatch(db_session, box_loss_event) == 0
+    assert len(svc.ongoing(db_session, 1)) == 0
+    assert len(svc.completed(db_session, 1)) == 1
+    assert svc.completed(db_session, 1)[0].realized_pnl == -100.0
