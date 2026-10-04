@@ -351,3 +351,102 @@ def test_completed_paper_event_cannot_reopen(db_session):
     assert completed[0].id == trade.id
     assert completed[0].realized_pnl == 1500.0
     assert completed[0].current_edge == 8
+
+def test_manual_close_and_duplicate_event_race_cannot_reopen(tmp_path):
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'close-duplicate-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    setup = Session()
+    setup.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=1000000, emergency_stop=False))
+    setup.commit()
+    trade, created = LivePaperTradeService().enter_or_mark(
+        setup,
+        strategy_id="cash-future",
+        symbol="NIFTY",
+        event_id="CLOSE-DUP-RACE",
+        direction="LONG",
+        expiry="2026-10-30",
+        lot_size=10,
+        lots=1,
+        edge=5,
+        capital_used=100000,
+        user_id=1,
+    )
+    assert created is True
+    trade_id = trade.id
+    setup.close()
+    
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+
+    def close_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            row = db.query(LivePaperTrade).filter(LivePaperTrade.id == trade_id).first()
+            if row is not None and row.status == "ONGOING":
+                result = LivePaperTradeService().close(db, row, "MANUAL")
+                results.append(("close", result.status))
+            else:
+                results.append(("close", None))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    def duplicate_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            result, created = LivePaperTradeService().enter_or_mark(
+                db,
+                strategy_id="cash-future",
+                symbol="NIFTY",
+                event_id="CLOSE-DUP-RACE",
+                direction="LONG",
+                expiry="2026-10-30",
+                lot_size=10,
+                lots=1,
+                edge=15,
+                capital_used=999999,
+                user_id=1,
+            )
+            results.append(("duplicate", created, None if result is None else result.id))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=close_worker),
+        threading.Thread(target=duplicate_worker),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    verify = Session()
+    try:
+        rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.event_id == "CLOSE-DUP-RACE",
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].id == trade_id
+        assert rows[0].status == "COMPLETED"
+        assert rows[0].capital_used == 100000
+        assert LivePaperTradeService().ongoing(verify, 1) == []
+        assert [x.id for x in LivePaperTradeService().completed(verify, 1)] == [trade_id]
+    finally:
+        verify.close()
+        engine.dispose()
