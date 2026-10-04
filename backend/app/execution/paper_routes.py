@@ -12,6 +12,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -101,7 +102,13 @@ class CashFuturePayoffRequest(BaseModel):
 
 
 def current_user_id(db: Session = Depends(get_db)) -> int:
-    """Return the single local trading identity; no login or bearer token is required."""
+    """Return the single local trading identity, failing closed on ambiguity.
+
+    Until real authentication is wired into these legacy paper endpoints,
+    account creation must also be safe when two first requests arrive at the
+    same time. The database uniqueness constraint on TradingAccount.user_id is
+    used as the serialization point for that bootstrap race.
+    """
     accounts = (
         db.query(TradingAccount)
         .filter(
@@ -112,11 +119,6 @@ def current_user_id(db: Session = Depends(get_db)) -> int:
         .all()
     )
     if len(accounts) > 1:
-        # This API currently has no authenticated-user dependency. Never
-        # silently select the first account once the database contains more
-        # than one active paper identity; doing so could expose or mutate
-        # another user's paper ledger. Multi-user API access must provide a
-        # real authenticated identity before this boundary is used.
         raise HTTPException(
             status_code=409,
             detail="multiple active paper trading accounts require authenticated user context",
@@ -126,14 +128,49 @@ def current_user_id(db: Session = Depends(get_db)) -> int:
 
     user = db.query(User).filter(User.is_active.is_(True)).order_by(User.id.asc()).first()
     if user is None:
-        user = User(
-            email="system@local.algo-trading",
-            hashed_password="",
-            full_name="Algo Trading System",
-            is_active=True,
+        try:
+            with db.begin_nested():
+                user = User(
+                    email="system@local.algo-trading",
+                    hashed_password="",
+                    full_name="Algo Trading System",
+                    is_active=True,
+                )
+                db.add(user)
+                db.flush()
+        except IntegrityError:
+            user = (
+                db.query(User)
+                .filter(User.email == "system@local.algo-trading")
+                .first()
+            )
+            if user is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="paper trading identity bootstrap unavailable",
+                )
+        if user is None or not user.is_active:
+            raise HTTPException(
+                status_code=503,
+                detail="paper trading identity bootstrap unavailable",
+            )
+
+    existing = (
+        db.query(TradingAccount)
+        .filter(
+            TradingAccount.user_id == int(user.id),
+            TradingAccount.mode == "PAPER",
         )
-        db.add(user)
-        db.flush()
+        .order_by(TradingAccount.id.asc())
+        .first()
+    )
+    if existing is not None:
+        if existing.is_active:
+            return int(existing.user_id)
+        raise HTTPException(
+            status_code=409,
+            detail="paper trading account exists but is inactive",
+        )
 
     account = TradingAccount(
         user_id=user.id,
@@ -142,7 +179,26 @@ def current_user_id(db: Session = Depends(get_db)) -> int:
         realized_pnl=0.0,
         is_active=True,
     )
-    db.add(account)
+    try:
+        with db.begin_nested():
+            db.add(account)
+            db.flush()
+    except IntegrityError:
+        account = (
+            db.query(TradingAccount)
+            .filter(
+                TradingAccount.user_id == int(user.id),
+                TradingAccount.mode == "PAPER",
+            )
+            .order_by(TradingAccount.id.asc())
+            .first()
+        )
+        if account is None or not account.is_active:
+            raise HTTPException(
+                status_code=503,
+                detail="paper trading account bootstrap unavailable",
+            )
+
     db.commit()
     db.refresh(account)
     return int(account.user_id)
