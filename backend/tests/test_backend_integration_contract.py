@@ -955,6 +955,9 @@ def test_partial_global_cap_scales_lots_and_reserved_capital_consistently(db_ses
 
 
 def test_partial_global_cap_is_counted_by_daily_capital_limit(db_session):
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
     db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=125000, emergency_stop=False))
     db_session.add(AlertRule(
         user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
@@ -989,6 +992,9 @@ def test_partial_global_cap_is_counted_by_daily_capital_limit(db_session):
 
 
 def test_partial_position_still_counts_as_one_simultaneous_position(db_session):
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
     db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=125000, emergency_stop=False))
     db_session.add(AlertRule(
         user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
