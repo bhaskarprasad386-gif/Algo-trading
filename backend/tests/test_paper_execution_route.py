@@ -10192,6 +10192,76 @@ def test_idempotent_fill_rejects_corrupted_existing_paper_order(tmp_path):
         except RuntimeError as exc: assert "pnl" in str(exc)
     finally: db.close(); engine.dispose()
 
+def test_paper_exit_idempotent_fill_fails_closed_on_corrupt_existing_order(tmp_path):
+    from app.execution.paper_routes import PaperExitRequest, paper_exit, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'paper-exit-idempotent-corruption.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        user = User(
+            email="exit-idem-corrupt@example.com",
+            hashed_password="",
+            full_name="Exit Idempotent Corrupt",
+            is_active=True,
+        )
+        db.add(user)
+        db.flush()
+        db.add(
+            TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=1000.0,
+                initial_virtual_balance=1000.0,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            )
+        )
+        db.commit()
+        user_id = user.id
+
+        paper_order(
+            PaperOrderRequest(
+                symbol="EXITIDEM",
+                transaction_type="BUY",
+                price=100.0,
+                quantity=1,
+                fill_id="EXIT-IDEM-1",
+            ),
+            user_id=user_id,
+            db=db,
+        )
+        order = (
+            db.query(Order)
+            .filter(Order.user_id == user_id, Order.fill_id == "EXIT-IDEM-1")
+            .one()
+        )
+        order.pnl = float("nan")
+        db.commit()
+
+        try:
+            paper_exit(
+                PaperExitRequest(
+                    symbol="EXITIDEM",
+                    price=100.0,
+                    fill_id="EXIT-IDEM-1",
+                ),
+                user_id=user_id,
+                db=db,
+            )
+            raise AssertionError("corrupt idempotent exit fill accepted")
+        except RuntimeError as exc:
+            assert "pnl" in str(exc)
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_paper_mutation_fails_closed_on_noncanonical_execution_metadata(tmp_path):
     from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
     from app.models.order import Order
