@@ -563,3 +563,144 @@ def test_four_way_terminal_close_risk_and_new_entry_exact_loss_boundary(tmp_path
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_same_event_duplicate_cross_strategy_entry_and_risk_limits_converge(tmp_path):
+    """Duplicate signal marking must coexist safely with a concurrent new strategy entry."""
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.core.database import Base
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'duplicate-cross-strategy-risk-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    try:
+        setup.add(GlobalPaperSetting(
+            user_id=1, enabled=True, paper_amount=60000, emergency_stop=False,
+        ))
+        for strategy in ("calendar-spread", "synthetic-future-cash-carry", "box-spread"):
+            setup.add(AlertRule(
+                user_id=1, strategy_id=strategy, min_gross_profit=0,
+                mobile_number="", whatsapp_enabled=False, enabled=True,
+                max_daily_capital=60000, max_simultaneous_positions=2,
+                max_loss=100,
+            ))
+        seed, created = LivePaperTradeService().enter_or_mark(
+            setup,
+            strategy_id="calendar-spread", symbol="DUP-RACE",
+            event_id="DUP-RACE", direction="LONG",
+            expiry="2026-10-30", earliest_expiry="2026-10-30",
+            lot_size=10, lots=1, edge=5, capital_used=30000, user_id=1,
+        )
+        assert created is True
+        setup.commit()
+    finally:
+        setup.close()
+
+    barrier = threading.Barrier(3)
+    errors = []
+    results = []
+
+    def duplicate_worker(event_id="DUP-RACE"):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            event = AlertEvent(
+                strategy_id="calendar-spread",
+                event_id=event_id,
+                symbol="DUP-RACE",
+                timestamp_ns=300,
+                message="duplicate mark",
+                observed_at=datetime(2026, 10, 4, 15, 0),
+                metadata={"gross_profit": 1000, "paper_trade": {
+                    "direction": "LONG",
+                    "expiry": "2026-10-30",
+                    "earliest_expiry": "2026-10-30",
+                    "lot_size": 10,
+                    "lots": 1,
+                    "edge": 7,
+                    "capital_used": 30000,
+                }},
+            )
+            results.append(("duplicate", AlertService().dispatch(db, event)))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    def new_entry_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            event = AlertEvent(
+                strategy_id="synthetic-future-cash-carry",
+                event_id="NEW-CROSS-RACE",
+                symbol="NEW-CROSS-RACE",
+                timestamp_ns=301,
+                message="new cross strategy",
+                observed_at=datetime(2026, 10, 4, 15, 0),
+                metadata={"gross_profit": 1000, "paper_trade": {
+                    "direction": "LONG",
+                    "expiry": "2026-10-30",
+                    "earliest_expiry": "2026-10-30",
+                    "lot_size": 10,
+                    "lots": 1,
+                    "edge": 7,
+                    "capital_used": 30000,
+                }},
+            )
+            results.append(("new", AlertService().dispatch(db, event)))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    def duplicate_same_user_worker():
+        # Second duplicate dispatcher exercises the same-event uniqueness
+        # boundary concurrently with the cross-strategy new entry.
+        duplicate_worker()
+
+    threads = [
+        threading.Thread(target=duplicate_worker),
+        threading.Thread(target=duplicate_same_user_worker),
+        threading.Thread(target=new_entry_worker),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert errors == []
+    assert len(results) == 3
+
+    verify = Session()
+    try:
+        rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+        ).all()
+        seed_rows = [r for r in rows if r.event_id == "DUP-RACE"]
+        new_rows = [r for r in rows if r.event_id == "NEW-CROSS-RACE"]
+
+        assert len(seed_rows) == 1
+        assert len(new_rows) <= 1
+        assert seed_rows[0].status == "ONGOING"
+        assert seed_rows[0].capital_used == 30000
+        assert seed_rows[0].current_edge == 7
+        if new_rows:
+            assert new_rows[0].capital_used == 30000
+
+        ongoing = [r for r in rows if r.status == "ONGOING"]
+        assert len(ongoing) <= 2
+        assert sum(float(r.capital_used) for r in ongoing) <= 60000
+        assert sum(int(r.lots) for r in ongoing) <= 2
+    finally:
+        verify.close()
+        engine.dispose()
