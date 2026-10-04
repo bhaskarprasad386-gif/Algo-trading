@@ -4645,3 +4645,240 @@ def test_paper_reconcile_http_concurrent_committed_epochs_invalidate_stale_preco
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_paper_reconcile_http_committed_new_order_audit_head_mutation_blocks_stale_precondition(tmp_path):
+    """A committed new order followed by audit-head tampering must invalidate and block an old repair precondition."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+    from app.execution.paper_routes import PaperOrderRequest, _paper_audit_payload, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-new-order-audit-head-precondition.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="http-new-order-audit-head@example.com",
+            hashed_password="",
+            full_name="HTTP New Order Audit Head",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(
+            TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=1000.0,
+                initial_virtual_balance=1000.0,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            )
+        )
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    db = TestSession()
+    try:
+        result = paper_order(
+            PaperOrderRequest(
+                symbol="AUDIT-EPOCH-BASE",
+                transaction_type="BUY",
+                price=100.0,
+                quantity=2,
+                fill_id="AUDIT-EPOCH-BASE-1",
+            ),
+            user_id=user_id,
+            db=db,
+        )
+        assert result["status"] == "success"
+    finally:
+        db.close()
+
+    def http_snapshot():
+        client = TestClient(app)
+
+        def override_db():
+            db = TestSession()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[routes.current_user_id] = lambda: user_id
+        try:
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                responses = list(
+                    pool.map(
+                        lambda _: client.get("/api/v1/execution/paper/reconcile"),
+                        range(20),
+                    )
+                )
+            assert all(response.status_code == 200 for response in responses)
+            payloads = [response.json() for response in responses]
+            assert all(payload == payloads[0] for payload in payloads)
+            return payloads[0]
+        finally:
+            app.dependency_overrides.pop(routes.current_user_id, None)
+            app.dependency_overrides.pop(get_db, None)
+
+    def mutate_account(**changes):
+        db = TestSession()
+        try:
+            account = db.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id,
+                TradingAccount.mode == "PAPER",
+            ).one()
+            for key, value in changes.items():
+                setattr(account, key, value)
+            db.commit()
+        finally:
+            db.close()
+
+    # Epoch 0: capture a SAFE_DRY_RUN precondition before the committed order.
+    mutate_account(virtual_balance=801.0)
+    safe0 = http_snapshot()
+    assert safe0["status"] == "MISMATCH"
+    assert safe0["repairability"] == "SAFE_DRY_RUN"
+    assert safe0["mismatch_categories"] == ["ACCOUNTING_STATE"]
+    pre0 = safe0["repair_plan"]["precondition"]
+
+    # Epoch 1: commit a valid new order. This changes both the order set and
+    # audit head, so the old precondition is immediately stale.
+    db = TestSession()
+    try:
+        result = paper_order(
+            PaperOrderRequest(
+                symbol="AUDIT-EPOCH-NEW",
+                transaction_type="BUY",
+                price=50.0,
+                quantity=1,
+                fill_id="AUDIT-EPOCH-NEW-1",
+            ),
+            user_id=user_id,
+            db=db,
+        )
+        assert result["status"] == "success"
+    finally:
+        db.close()
+
+    safe1 = http_snapshot()
+    assert safe1["status"] == "MISMATCH"
+    assert safe1["repairability"] == "SAFE_DRY_RUN"
+    pre1 = safe1["repair_plan"]["precondition"]
+    assert pre1 != pre0
+    assert pre1["state_hash"] != pre0["state_hash"]
+    assert pre1["order_count"] == pre0["order_count"] + 1
+    assert pre1["audit_head"] != pre0["audit_head"]
+    assert safe1["mismatches"] == ["virtual_balance_mismatch"]
+
+    # Epoch 2: commit only an audit-head corruption. This must hard-block
+    # repair, and neither pre0 nor the immediately previous safe pre1 may
+    # match the current state.
+    tamper = TestSession()
+    try:
+        latest = tamper.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+        ).order_by(Order.id.desc()).one()
+        canonical_previous = latest.previous_audit_hash
+        canonical_hash = _paper_audit_payload(
+            user_id=user_id,
+            symbol=latest.symbol,
+            side=latest.side,
+            quantity=int(latest.quantity),
+            price=float(latest.price),
+            pnl=float(latest.pnl or 0.0),
+            fill_id=latest.fill_id,
+            previous_hash=canonical_previous,
+        )
+        assert latest.audit_hash == canonical_hash
+        latest.audit_hash = "f" * 64
+        tamper.commit()
+    finally:
+        tamper.close()
+
+    blocked = http_snapshot()
+    assert blocked["status"] == "MISMATCH"
+    assert blocked["repairability"] == "BLOCKED"
+    assert blocked["repairability_reason"] == "ledger_or_baseline_integrity_failure"
+    assert blocked["baseline_status"] == "BOOTSTRAP"
+    assert blocked["mismatch_categories"] == ["AUDIT_INTEGRITY"]
+    assert blocked["mismatches"] == [f"audit_hash_mismatch:{pre1['order_count']}"]
+    assert blocked["repair_plan"]["apply"] is False
+    assert blocked["repair_plan"]["reason"] == "read_only_dry_run"
+
+    pre2 = blocked["repair_plan"]["precondition"]
+    assert pre2 != pre1
+    assert pre2 != pre0
+    assert pre2["state_hash"] != pre1["state_hash"]
+    assert pre2["audit_head"] == "f" * 64
+    assert pre2["order_count"] == pre1["order_count"]
+
+    # Epoch 3: explicitly restore the canonical audit hash. The old pre0 is
+    # still stale because the valid new order remains committed; the current
+    # state becomes safely dry-run repairable again.
+    restore = TestSession()
+    try:
+        latest = restore.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+        ).order_by(Order.id.desc()).one()
+        latest.audit_hash = _paper_audit_payload(
+            user_id=user_id,
+            symbol=latest.symbol,
+            side=latest.side,
+            quantity=int(latest.quantity),
+            price=float(latest.price),
+            pnl=float(latest.pnl or 0.0),
+            fill_id=latest.fill_id,
+            previous_hash=latest.previous_audit_hash,
+        )
+        restore.commit()
+    finally:
+        restore.close()
+
+    restored = http_snapshot()
+    assert restored["status"] == "MISMATCH"
+    assert restored["repairability"] == "SAFE_DRY_RUN"
+    assert restored["mismatch_categories"] == ["ACCOUNTING_STATE"]
+    restored_pre = restored["repair_plan"]["precondition"]
+    assert restored_pre != pre0
+    assert restored_pre["order_count"] == pre1["order_count"]
+    assert restored_pre["audit_head"] == pre1["audit_head"]
+    assert restored_pre["state_hash"] == pre1["state_hash"]
+
+    verify = TestSession()
+    try:
+        account = verify.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        orders = verify.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+        ).order_by(Order.id.asc()).all()
+        assert account.initial_balance_source == "BOOTSTRAP"
+        assert float(account.virtual_balance) == 751.0
+        assert len(orders) == 2
+        assert all(order.audit_hash for order in orders)
+        assert orders[-1].audit_hash == restored_pre["audit_head"]
+        assert verify.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+        ).count() == 2
+    finally:
+        verify.close()
+        engine.dispose()
