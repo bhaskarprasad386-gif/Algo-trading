@@ -790,6 +790,90 @@ def test_paper_multi_symbol_concurrent_exit_and_reversal_preserve_accounting(tmp
         engine.dispose()
 
 
+def test_paper_multi_symbol_partial_fills_and_reversals_preserve_accounting():
+    client, headers = _client_and_headers()
+    starting_balance = 10_000.0
+
+    # ALPHA long and BETA short coexist.
+    alpha = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "ALPHA", "transaction_type": "BUY", "price": 100.0, "quantity": 10},
+    )
+    beta = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "BETA", "transaction_type": "SELL", "price": 200.0, "quantity": 6},
+    )
+    assert alpha.status_code == 200
+    assert beta.status_code == 200
+    assert beta.json()["virtual_balance"] == 7_800.0
+
+    # Partial ALPHA close: +80 realized, 6-long remains at 100.
+    alpha_partial = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "ALPHA", "transaction_type": "SELL", "price": 120.0, "quantity": 4},
+    )
+    assert alpha_partial.status_code == 200
+    data = alpha_partial.json()
+    assert data["virtual_balance"] == 8_280.0
+    assert data["realized_pnl"] == 80.0
+    assert data["position"]["quantity"] == 6.0
+    assert data["position"]["entry_price"] == 100.0
+
+    # Partial BETA cover: release 400 short margin and realize +40.
+    beta_partial = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "BETA", "transaction_type": "BUY", "price": 180.0, "quantity": 2},
+    )
+    assert beta_partial.status_code == 200
+    data = beta_partial.json()
+    assert data["virtual_balance"] == 8_720.0
+    assert data["realized_pnl"] == 120.0
+    assert data["position"]["quantity"] == -4.0
+    assert data["position"]["entry_price"] == 200.0
+
+    # ALPHA now reverses: close 6-long (+60), open 2-short and reserve 220.
+    alpha_reverse = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "ALPHA", "transaction_type": "SELL", "price": 110.0, "quantity": 8},
+    )
+    assert alpha_reverse.status_code == 200
+    data = alpha_reverse.json()
+    assert data["virtual_balance"] == 9_380.0
+    assert data["realized_pnl"] == 180.0
+    assert data["position"]["quantity"] == -2.0
+    assert data["position"]["entry_price"] == 110.0
+
+    # Finish BETA short: release 800 margin and realize +200.
+    beta_exit = client.post(
+        "/api/v1/execution/paper/exit",
+        headers=headers,
+        json={"symbol": "BETA", "price": 150.0},
+    )
+    assert beta_exit.status_code == 200
+    data = beta_exit.json()
+    assert data["virtual_balance"] == 10_380.0
+    assert data["realized_pnl"] == 380.0
+    assert data["position"] is None
+
+    # Finish ALPHA short: release 220 margin and realize +20.
+    alpha_exit = client.post(
+        "/api/v1/execution/paper/exit",
+        headers=headers,
+        json={"symbol": "ALPHA", "price": 100.0},
+    )
+    assert alpha_exit.status_code == 200
+    data = alpha_exit.json()
+    assert data["pnl"] == 20.0
+    assert data["virtual_balance"] == starting_balance + 420.0
+    assert data["realized_pnl"] == 420.0
+    assert data["position"] is None
+
+
 def test_paper_reversal_and_exit_race_converges_to_one_terminal_transition(tmp_path):
     from app.execution.paper_routes import PaperOrderRequest, PaperExitRequest, paper_order, paper_exit
 
