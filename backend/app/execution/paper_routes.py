@@ -650,6 +650,10 @@ def _existing_fill_order(db: Session, *, user_id: int, fill_id: str | None, symb
         raise HTTPException(status_code=409, detail="fill_id already exists with different execution details")
     return {"id": existing.order_id, "symbol": existing.symbol, "transaction_type": existing.transaction_type, "price": existing.price, "quantity": float(existing.quantity), "status": existing.status, "pnl": float(existing.pnl or 0.0), "fill_id": existing.fill_id}
 
+def _latest_symbol_order(db: Session, user_id: int, symbol: str) -> Order | None:
+    return (db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True), Order.symbol == symbol.strip().upper()).order_by(Order.id.desc()).first())
+
+
 def _accounting_after_fill(*, side: str, price: float, quantity: float, current_quantity: float, current_average_price: float, current_realized_pnl: float = 0.0) -> tuple[FillAccountingState, float]:
     before = FillAccountingState(quantity=current_quantity, average_price=current_average_price, realized_pnl=current_realized_pnl)
     after = apply_executed_fill(before, ExecutedFill(side=side, price=price, quantity=quantity))
@@ -1172,18 +1176,21 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
 
     if side == "BUY":
         if active is not None and active.quantity > 0:
-            raise HTTPException(status_code=409, detail="A paper position is already active for this symbol")
-        if active is not None and active.quantity < 0:
-            short_qty = abs(int(active.quantity))
+            fill = Fill(price=request.price, quantity=quantity)
+            accounting_state, pnl = _accounting_after_fill(side="BUY", price=fill.price, quantity=fill.quantity, current_quantity=float(active.quantity), current_average_price=float(active.average_price), current_realized_pnl=account.realized_pnl)
+            _apply_accounting_to_account(account, before_quantity=float(active.quantity), before_average_price=float(active.average_price), after=accounting_state)
+            if account.virtual_balance < 0:
+                raise HTTPException(status_code=400, detail="Insufficient paper balance")
+            active.quantity = int(accounting_state.quantity)
+            active.average_price = accounting_state.average_price
+            db.flush()
+            remaining = active
+            order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl, fill_id=fill_id)
+        elif active is not None and active.quantity < 0:
             fill = Fill(price=request.price, quantity=quantity)
             accounting_state, pnl = _accounting_after_fill(side="BUY", price=fill.price, quantity=quantity, current_quantity=float(active.quantity), current_average_price=float(active.average_price), current_realized_pnl=account.realized_pnl)
             remaining_qty = int(accounting_state.quantity)
-            _apply_accounting_to_account(
-                account,
-                before_quantity=float(active.quantity),
-                before_average_price=float(active.average_price),
-                after=accounting_state,
-            )
+            _apply_accounting_to_account(account, before_quantity=float(active.quantity), before_average_price=float(active.average_price), after=accounting_state)
             if account.virtual_balance < 0:
                 raise HTTPException(status_code=400, detail="Insufficient paper balance for reversal long position")
             if remaining_qty == 0:
@@ -1196,6 +1203,9 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
                 remaining = active
             order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl, fill_id=fill_id)
         else:
+            latest = _latest_symbol_order(db, user_id, symbol)
+            if fill_id is None and latest is not None and latest.transaction_type.upper() == "BUY" and float(latest.pnl or 0.0) != 0.0 and float(latest.price) == float(request.price):
+                return {"status":"flat","position":None,"pnl":0.0,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
             cost = _buy_cost(request.price, quantity)
             if account.virtual_balance < cost:
                 raise HTTPException(status_code=400, detail="Insufficient paper balance")
@@ -1211,6 +1221,9 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
             pnl = 0.0
     else:
         if active is None:
+            latest = _latest_symbol_order(db, user_id, symbol)
+            if fill_id is None and latest is not None and latest.transaction_type.upper() == "SELL" and float(latest.pnl or 0.0) != 0.0 and float(latest.price) == float(request.price):
+                return {"status":"flat","position":None,"pnl":0.0,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
             margin = _buy_cost(request.price, quantity)
             if account.virtual_balance < margin:
                 raise HTTPException(status_code=400, detail="Insufficient paper balance for short margin")
