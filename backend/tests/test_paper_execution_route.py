@@ -4325,3 +4325,111 @@ def test_paper_reconcile_http_concurrent_readers_return_identical_clean_snapshot
         app.dependency_overrides.pop(routes.current_user_id, None)
         app.dependency_overrides.pop(get_db, None)
         engine.dispose()
+
+
+def test_paper_reconcile_http_readers_survive_uncommitted_writer(tmp_path):
+    """HTTP reconciliation never exposes an uncommitted paper mutation."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-reconcile-uncommitted-writer.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="http-uncommitted@example.com",
+            hashed_password="",
+            full_name="HTTP Uncommitted",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id,
+            mode="PAPER",
+            virtual_balance=5000.0,
+            initial_virtual_balance=5000.0,
+            initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0,
+            is_active=True,
+        ))
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    db = TestSession()
+    try:
+        paper_order(
+            PaperOrderRequest(
+                symbol="LOCK",
+                transaction_type="BUY",
+                price=100.0,
+                quantity=1,
+                fill_id="LOCK-1",
+            ),
+            user_id=user_id,
+            db=db,
+        )
+    finally:
+        db.close()
+
+    def override_db():
+        session = TestSession()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    writer = TestSession()
+    writer_account = writer.query(TradingAccount).filter(
+        TradingAccount.user_id == user_id
+    ).one()
+    original_balance = float(writer_account.virtual_balance)
+    writer_account.virtual_balance = original_balance - 777.0
+    writer.flush()
+
+    client = TestClient(app)
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            responses = list(pool.map(
+                lambda _: client.get("/api/v1/execution/paper/reconcile"),
+                range(8),
+            ))
+
+        assert all(response.status_code == 200 for response in responses)
+        for response in responses:
+            payload = response.json()
+            assert payload["user_id"] == user_id
+            assert payload["status"] == "OK"
+            assert payload["repair_plan"]["apply"] is False
+            assert payload["repair_plan"]["reason"] == "read_only_dry_run"
+            assert isinstance(payload["mismatches"], list)
+
+        # The uncommitted writer change must not become durable or visible
+        # through reconciliation.
+        writer.rollback()
+        verify = TestSession()
+        try:
+            account = verify.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id
+            ).one()
+            assert float(account.virtual_balance) == original_balance
+            response = client.get("/api/v1/execution/paper/reconcile")
+            assert response.status_code == 200
+            assert response.json()["status"] == "OK"
+        finally:
+            verify.close()
+    finally:
+        writer.close()
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
