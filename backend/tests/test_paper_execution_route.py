@@ -23,6 +23,8 @@ def _client_and_headers():
         accounts = db.query(TradingAccount).all()
         for account in accounts:
             account.virtual_balance = 10_000_000.0
+            account.initial_virtual_balance = 10_000_000.0
+            account.initial_balance_source = "BOOTSTRAP"
             account.realized_pnl = 0.0
             account.is_active = True
             account.mode = "PAPER"
@@ -375,7 +377,7 @@ def test_concurrent_same_fill_id_mutates_cash_and_pnl_once(tmp_path):
         user = User(email="same-fill-race@example.com", hashed_password="", full_name="Same Fill Race", is_active=True)
         seed.add(user)
         seed.flush()
-        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, realized_pnl=0.0, is_active=True))
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
         seed.commit()
         user_id = user.id
     finally:
@@ -570,10 +572,17 @@ def test_paper_api_fails_closed_when_multiple_active_paper_accounts_exist():
         db.query(TradingAccount).delete()
         db.commit()
         db.add_all([
+            User(id=101, email="ambiguous-101@example.com", hashed_password="", full_name="Ambiguous 101", is_active=True),
+            User(id=202, email="ambiguous-202@example.com", hashed_password="", full_name="Ambiguous 202", is_active=True),
+        ])
+        db.flush()
+        db.add_all([
             TradingAccount(
                 user_id=101,
                 mode="PAPER",
                 virtual_balance=10_000_000.0,
+                initial_virtual_balance=10_000_000.0,
+                initial_balance_source="BOOTSTRAP",
                 realized_pnl=0.0,
                 is_active=True,
             ),
@@ -581,6 +590,8 @@ def test_paper_api_fails_closed_when_multiple_active_paper_accounts_exist():
                 user_id=202,
                 mode="PAPER",
                 virtual_balance=10_000_000.0,
+                initial_virtual_balance=10_000_000.0,
+                initial_balance_source="BOOTSTRAP",
                 realized_pnl=0.0,
                 is_active=True,
             ),
@@ -791,7 +802,7 @@ def test_paper_long_to_short_reversal_preserves_realized_pnl_and_short_margin():
 
 def test_paper_mixed_reversal_chain_preserves_cash_and_realized_pnl():
     client, headers = _client_and_headers()
-    starting_balance = 10_000.0
+    starting_balance = 10_000_000.0
 
     # Build a 10-long at 100: cash 9,000.
     opened = client.post(
@@ -895,7 +906,7 @@ def test_paper_partial_short_cover_preserves_margin_pnl_and_remaining_short():
 
 def test_paper_multi_symbol_portfolio_accounting_isolated_across_reversal_and_exit():
     client, headers = _client_and_headers()
-    starting_balance = 10_000.0
+    starting_balance = 10_000_000.0
 
     # Two independent symbols consume independent capital/positions.
     a = client.post(
@@ -1001,6 +1012,8 @@ def test_paper_multi_symbol_concurrent_mutations_preserve_each_position(tmp_path
                 user_id=user.id,
                 mode="PAPER",
                 virtual_balance=10_000.0,
+                initial_virtual_balance=10_000.0,
+                initial_balance_source="BOOTSTRAP",
                 realized_pnl=0.0,
                 is_active=True,
             )
@@ -1093,6 +1106,8 @@ def test_paper_multi_symbol_concurrent_exit_and_reversal_preserve_accounting(tmp
                 user_id=user.id,
                 mode="PAPER",
                 virtual_balance=10_000.0,
+                initial_virtual_balance=10_000.0,
+                initial_balance_source="BOOTSTRAP",
                 realized_pnl=0.0,
                 is_active=True,
             )
@@ -1186,7 +1201,7 @@ def test_paper_multi_symbol_concurrent_exit_and_reversal_preserve_accounting(tmp
 
 def test_paper_multi_symbol_partial_fills_and_reversals_preserve_accounting():
     client, headers = _client_and_headers()
-    starting_balance = 10_000.0
+    starting_balance = 10_000_000.0
 
     # ALPHA long and BETA short coexist.
     alpha = client.post(
@@ -1354,6 +1369,8 @@ def test_paper_reversal_and_exit_race_converges_to_one_terminal_transition(tmp_p
                 user_id=user.id,
                 mode="PAPER",
                 virtual_balance=500.0,
+                initial_virtual_balance=500.0,
+                initial_balance_source="BOOTSTRAP",
                 realized_pnl=0.0,
                 is_active=True,
             )
@@ -1824,7 +1841,7 @@ def test_paper_concurrent_same_fill_id_preserves_single_audit_chain_entry(tmp_pa
     try:
         user = User(email="audit-race@example.com", hashed_password="", full_name="Audit Race", is_active=True)
         seed.add(user); seed.flush()
-        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, realized_pnl=0.0, is_active=True))
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
         seed.commit(); user_id = user.id
     finally: seed.close()
     barrier = threading.Barrier(2)
@@ -1861,7 +1878,7 @@ def test_paper_restart_style_retry_keeps_audit_hash_stable(tmp_path):
     try:
         user = User(email="audit-restart@example.com", hashed_password="", full_name="Audit Restart", is_active=True)
         seed.add(user); seed.flush()
-        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, realized_pnl=0.0, is_active=True))
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
         seed.commit(); user_id = user.id
     finally: seed.close()
     first_db = Session()
@@ -2875,7 +2892,12 @@ def test_paper_reconcile_precondition_invalidates_order_set_and_sequence_mutatio
                 )
                 mutate.add(extra)
             elif mutation == "order_id_resequence":
-                orders[0].id, orders[1].id = orders[1].id, orders[0].id
+                first_id, second_id = orders[0].id, orders[1].id
+                orders[0].id = -1
+                mutate.flush()
+                orders[1].id = first_id
+                mutate.flush()
+                orders[0].id = second_id
             elif mutation == "fill_id_mutation":
                 orders[0].fill_id = "MATRIX-MUTATED"
             mutate.commit()
@@ -3324,7 +3346,7 @@ def test_paper_reconcile_repair_plan_integrity_partial_fills_flat_reversals_and_
     """Repair plans stay deterministic/read-only across partial closes, reversals and symbols."""
     from app.core.database import get_db
     from app.execution import paper_routes as routes
-    from app.execution.paper_routes import PaperOrderRequest, paper_order
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
 
     engine = create_engine(
         f"sqlite:///{tmp_path / 'repair-plan-integrity-matrix.db'}",
@@ -6106,7 +6128,7 @@ def test_paper_http_concurrent_reversal_and_exit_close_short_once(tmp_path):
 
 def test_paper_http_concurrent_multi_symbol_partial_reversals_preserve_accounting():
     client, headers = _client_and_headers()
-    starting_balance = 10_000.0
+    starting_balance = 10_000_000.0
 
     alpha_open = client.post(
         "/api/v1/execution/paper/order",
@@ -6255,7 +6277,7 @@ def test_paper_http_concurrent_insufficient_balance_fails_closed_across_symbols(
 
 def test_paper_http_concurrent_exits_across_symbols_preserve_shared_accounting():
     client, headers = _client_and_headers()
-    starting_balance = 10_000.0
+    starting_balance = 10_000_000.0
 
     alpha_open = client.post(
         "/api/v1/execution/paper/order",
