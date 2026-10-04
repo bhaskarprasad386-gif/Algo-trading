@@ -2142,3 +2142,92 @@ def test_paper_audit_chain_tamper_matrix_is_blocked(tmp_path):
         finally:
             reconcile_db.close()
             engine.dispose()
+
+def test_paper_reconcile_cross_component_consistency_matrix(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    tamper_cases = (
+        ("cash", lambda account, position: setattr(account, "virtual_balance", 9999.0), "virtual_balance_mismatch"),
+        ("realized", lambda account, position: setattr(account, "realized_pnl", 9999.0), "realized_pnl_mismatch"),
+        ("position_qty", lambda account, position: setattr(position, "quantity", 99), "position_mismatch:PORT"),
+        ("position_avg", lambda account, position: setattr(position, "average_price", 999.0), "position_mismatch:PORT"),
+        ("position_open", lambda account, position: setattr(position, "is_open", False), "orphan_position:PORT"),
+    )
+
+    for name, tamper, expected in tamper_cases:
+        engine = create_engine(
+            f"sqlite:///{tmp_path / f'consistency-{name}.db'}",
+            connect_args={"check_same_thread": False, "timeout": 10},
+        )
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        seed = Session()
+        try:
+            user = User(
+                email=f"consistency-{name}@example.com",
+                hashed_password="",
+                full_name=f"Consistency {name}",
+                is_active=True,
+            )
+            seed.add(user)
+            seed.flush()
+            seed.add(
+                TradingAccount(
+                    user_id=user.id,
+                    mode="PAPER",
+                    virtual_balance=1000.0,
+                    initial_virtual_balance=1000.0,
+                    initial_balance_source="BOOTSTRAP",
+                    realized_pnl=0.0,
+                    is_active=True,
+                )
+            )
+            seed.commit()
+            user_id = user.id
+        finally:
+            seed.close()
+
+        db = Session()
+        try:
+            paper_order(
+                PaperOrderRequest(
+                    symbol="PORT",
+                    transaction_type="BUY",
+                    price=100.0,
+                    quantity=5,
+                    fill_id="PORT-1",
+                ),
+                user_id=user_id,
+                db=db,
+            )
+        finally:
+            db.close()
+
+        corrupt = Session()
+        try:
+            account = corrupt.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+            position = corrupt.query(Position).filter(
+                Position.user_id == user_id,
+                Position.symbol == "PORT",
+                Position.is_paper.is_(True),
+            ).one()
+            tamper(account, position)
+            corrupt.commit()
+        finally:
+            corrupt.close()
+
+        verify = Session()
+        try:
+            data = _reconcile_paper_ledger(verify, user_id)
+            assert data["status"] == "MISMATCH"
+            assert expected in data["mismatches"]
+            assert data["repairability"] == "SAFE_DRY_RUN"
+            assert data["repair_plan"]["apply"] is False
+            assert data["orders"] == 1
+            assert data["reconstructed_realized_pnl"] == 0.0
+            assert data["reconstructed_virtual_balance"] == 500.0
+            assert data["repair_plan"]["positions"]["PORT"]["quantity"] == 5
+            assert data["repair_plan"]["positions"]["PORT"]["average_price"] == 100.0
+        finally:
+            verify.close()
+            engine.dispose()
