@@ -10178,6 +10178,27 @@ def test_paper_mutation_fails_closed_on_corrupt_bootstrap_audit_chain(tmp_path):
     finally:
         db.close(); engine.dispose()
 
+def test_paper_mutation_fails_closed_on_noncanonical_execution_metadata(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    from app.models.order import Order
+    engine = create_engine(f"sqlite:///{tmp_path / 'paper-execution-metadata.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="paper-exec-meta@example.com", hashed_password="", full_name="Execution Metadata", is_active=True); seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); seed.commit(); user_id=user.id
+    finally: seed.close()
+    for field, value in (("order_type", "LIMIT"), ("product_type", "DELIVERY"), ("time_in_force", "IOC"), ("trigger_price", 99.0)):
+        db=Session()
+        try:
+            paper_order(PaperOrderRequest(symbol="EXECMETA", transaction_type="BUY", price=100.0, quantity=1, fill_id=f"EXEC-{field}"), user_id=user_id, db=db)
+            order=db.query(Order).filter(Order.user_id==user_id, Order.is_paper.is_(True)).order_by(Order.id.desc()).first(); setattr(order, field, value); db.commit()
+            try: _validate_paper_state(db,user_id); raise AssertionError(field)
+            except RuntimeError: pass
+            db.rollback(); db.query(Order).filter(Order.user_id==user_id, Order.is_paper.is_(True)).delete(synchronize_session=False); db.query(TradingAccount).filter(TradingAccount.user_id==user_id).update({"virtual_balance":1000.0,"realized_pnl":0.0}); db.commit()
+        finally: db.close()
+    engine.dispose()
+
 def test_paper_mutation_fails_closed_on_invalid_paper_order_identity_metadata(tmp_path):
     from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
     from app.models.order import Order
