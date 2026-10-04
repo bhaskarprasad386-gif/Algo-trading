@@ -66,6 +66,8 @@ def run_schema_migrations() -> None:
                 "average_fill_price": "FLOAT",
                 "time_in_force": "VARCHAR(16) DEFAULT 'DAY'",
                 "fill_id": "VARCHAR(128)",
+                "audit_hash": "VARCHAR(64)",
+                "previous_audit_hash": "VARCHAR(64)",
             }.items():
                 if name not in order_columns:
                     connection.execute(text(f"ALTER TABLE orders ADD COLUMN {name} {definition}"))
@@ -178,5 +180,7 @@ def run_schema_migrations() -> None:
         # A broker fill can be retried, but the same user/fill identity must
         # never create a second cash/P&L mutation. Nullable keeps legacy orders valid.
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_user_fill_id ON orders (user_id, fill_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_audit_hash ON orders (audit_hash)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_audit_chain ON orders (user_id, id, audit_hash, previous_audit_hash)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_id ON orders (user_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_positions_user_id ON positions (user_id)"))
