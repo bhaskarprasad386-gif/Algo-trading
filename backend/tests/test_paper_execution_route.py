@@ -1820,3 +1820,76 @@ def test_paper_reconcile_mixed_legacy_and_fingerprinted_orders_is_blocked(tmp_pa
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_paper_long_short_long_reversal_chain_survives_restart_and_reconciles(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order, _reconcile_paper_ledger
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'long-short-long.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="reversal-chain@example.com", hashed_password="", full_name="Reversal Chain", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id, mode="PAPER", virtual_balance=10_000.0,
+            initial_virtual_balance=10_000.0, initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0, is_active=True,
+        ))
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    fills = [
+        ("BUY", 100.0, 10, "R-L1"),
+        ("SELL", 120.0, 15, "R-S1"),
+        ("BUY", 110.0, 2, "R-B1"),
+        ("BUY", 90.0, 5, "R-B2"),
+        ("SELL", 100.0, 2, "R-S2"),
+    ]
+    for side, price, quantity, fill_id in fills:
+        db = Session()
+        try:
+            result = paper_order(
+                PaperOrderRequest(symbol="REVERSAL", transaction_type=side, price=price, quantity=quantity, fill_id=fill_id),
+                user_id=user_id, db=db,
+            )
+            assert result["status"] == "success"
+        finally:
+            db.close()
+
+    verify = Session()
+    try:
+        account = verify.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        position = verify.query(Position).filter(Position.user_id == user_id, Position.symbol == "REVERSAL").one()
+        orders = verify.query(Order).filter(Order.user_id == user_id).order_by(Order.id.asc()).all()
+        assert account.virtual_balance == 10_330.0
+        assert account.realized_pnl == 330.0
+        assert position.quantity == 0 or position.quantity == 0  # terminal SELL must flatten the 2-long position
+        assert not [p for p in verify.query(Position).filter(Position.user_id == user_id).all() if p.quantity != 0]
+        assert len(orders) == 5
+        assert all(len(item.audit_hash) == 64 for item in orders)
+        assert all(
+            current.previous_audit_hash == previous.audit_hash
+            for previous, current in zip(orders, orders[1:])
+        )
+    finally:
+        verify.close()
+
+    reconcile = Session()
+    try:
+        data = _reconcile_paper_ledger(reconcile, user_id)
+        assert data["status"] == "OK"
+        assert data["repairability"] == "NONE"
+        assert data["reconstructed_realized_pnl"] == 330.0
+        assert data["reconstructed_virtual_balance"] == 10_330.0
+        assert data["mismatches"] == []
+    finally:
+        reconcile.close()
+        engine.dispose()
