@@ -61,6 +61,7 @@ class LivePaperTradeService:
         ):
             return None, False
         from collections.abc import Mapping
+        import math
         if legs is not None:
             if not isinstance(legs, list):
                 return None, False
@@ -80,7 +81,6 @@ class LivePaperTradeService:
                     return None, False
         if metadata is not None and not isinstance(metadata, Mapping):
             return None, False
-        import math
         try:
             lot_size_value = float(lot_size)
             lots_value = float(lots)
