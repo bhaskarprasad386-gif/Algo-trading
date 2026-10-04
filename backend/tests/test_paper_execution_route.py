@@ -96,7 +96,7 @@ def test_paper_entry_persists_position_and_order_and_updates_balance():
     assert orders_after_exit.json()["orders"][-1]["transaction_type"] == "SELL"
 
 
-def test_concurrent_same_fill_id_mutates_cash_and_pnl_once():
+def test_concurrent_same_fill_id_mutates_cash_and_pnl_once(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
@@ -143,7 +143,6 @@ def test_concurrent_same_fill_id_mutates_cash_and_pnl_once():
 
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
-            results = [pool.submit(submit).result() for _ in []]
             first = pool.submit(submit)
             second = pool.submit(submit)
             results = [first.result(), second.result()]
