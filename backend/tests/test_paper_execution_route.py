@@ -2752,3 +2752,124 @@ def test_paper_reconcile_flat_symbol_excluded_from_repair_positions(tmp_path):
     finally:
         verify.close()
         engine.dispose()
+
+def test_paper_reconcile_audit_chain_and_repair_plan_agree_on_clean_ledger(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'audit-plan-agree.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="audit-agree@example.com", hashed_password="", full_name="Audit Agree", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=5000.0,
+                                initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
+                                realized_pnl=0.0, is_active=True))
+        seed.commit(); user_id = user.id
+    finally:
+        seed.close()
+
+    for req in (
+        PaperOrderRequest(symbol="A", transaction_type="BUY", price=100.0, quantity=5, fill_id="AA1"),
+        PaperOrderRequest(symbol="B", transaction_type="SELL", price=200.0, quantity=2, fill_id="BB1"),
+    ):
+        db = Session()
+        try: paper_order(req, user_id=user_id, db=db)
+        finally: db.close()
+
+    db = Session()
+    try:
+        result = _reconcile_paper_ledger(db, user_id)
+        assert result["status"] == "OK"
+        assert result["repairability"] == "NONE"
+        assert result["repair_plan"]["apply"] is False
+        assert result["repair_plan"]["proposed_virtual_balance"] == result["reconstructed_virtual_balance"]
+        assert result["repair_plan"]["proposed_realized_pnl"] == result["reconstructed_realized_pnl"]
+        assert result["repair_plan"]["positions"] == result["reconstructed_positions"]
+        assert result["repair_plan"]["precondition"]["audit_head"]
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_reconcile_tampered_pnl_blocks_repair_and_never_proposes_apply(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'audit-pnl-blocked.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="audit-pnl@example.com", hashed_password="", full_name="Audit PNL", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=5000.0,
+                                initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
+                                realized_pnl=0.0, is_active=True))
+        seed.commit(); user_id = user.id
+    finally: seed.close()
+
+    db = Session()
+    try: paper_order(PaperOrderRequest(symbol="A", transaction_type="BUY", price=100.0, quantity=5, fill_id="AP1"), user_id=user_id, db=db)
+    finally: db.close()
+
+    corrupt = Session()
+    try:
+        order = corrupt.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).one()
+        order.pnl = 99.0
+        corrupt.commit()
+        result = _reconcile_paper_ledger(corrupt, user_id)
+        assert result["status"] == "MISMATCH"
+        assert result["repairability"] == "BLOCKED"
+        assert result["repair_plan"]["apply"] is False
+        assert any("audit" in str(item).lower() or "pnl" in str(item).lower() for item in result["mismatches"])
+    finally:
+        corrupt.close(); engine.dispose()
+
+
+def test_paper_reconcile_duplicate_fill_and_broken_previous_hash_are_blocked(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    for mutation in ("duplicate_fill", "previous_hash"):
+        engine = create_engine(
+            f"sqlite:///{tmp_path / f'audit-{mutation}.db'}",
+            connect_args={"check_same_thread": False, "timeout": 10},
+        )
+        Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+        seed = Session()
+        try:
+            user = User(email=f"audit-{mutation}@example.com", hashed_password="", full_name="Audit Mutation", is_active=True)
+            seed.add(user); seed.flush()
+            seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=5000.0,
+                                    initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
+                                    realized_pnl=0.0, is_active=True))
+            seed.commit(); user_id = user.id
+        finally: seed.close()
+
+        db = Session()
+        try:
+            for req in (
+                PaperOrderRequest(symbol="A", transaction_type="BUY", price=100.0, quantity=2, fill_id="D1"),
+                PaperOrderRequest(symbol="B", transaction_type="BUY", price=50.0, quantity=2, fill_id="D2"),
+            ):
+                paper_order(req, user_id=user_id, db=db)
+        finally: db.close()
+
+        corrupt = Session()
+        try:
+            orders = corrupt.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).order_by(Order.id.asc()).all()
+            if mutation == "duplicate_fill":
+                orders[1].fill_id = orders[0].fill_id
+            else:
+                orders[1].previous_audit_hash = "f" * 64
+            corrupt.commit()
+            result = _reconcile_paper_ledger(corrupt, user_id)
+            assert result["status"] == "MISMATCH"
+            assert result["repairability"] == "BLOCKED"
+            assert result["repair_plan"]["apply"] is False
+        finally:
+            corrupt.close(); engine.dispose()
