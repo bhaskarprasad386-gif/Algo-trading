@@ -709,3 +709,49 @@ def test_direct_partial_allocation_exact_capital_boundary_preserves_all_lots(db_
     svc.mark(db_session, trade, edge=7)
     assert trade.unrealized_pnl == 40.0
     assert trade.pnl_pct == round((40.0 / 60000) * 100.0, 8)
+
+
+def test_duplicate_after_partial_allocation_cannot_reallocate_capital_or_lots(db_session):
+    from app.models.global_paper_setting import GlobalPaperSetting
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=50000, emergency_stop=False,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    first, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="DUP-PARTIAL",
+        event_id="DUP-PARTIAL-EVENT", direction="LONG",
+        expiry="2026-10-30", lot_size=10, lots=2, edge=10,
+        capital_used=60000, user_id=1,
+    )
+    assert created is True
+    assert first.lots == 1
+    assert first.capital_used == 30000
+    assert first.entry_edge == 10
+    db_session.commit()
+
+    # A duplicate may report a different requested allocation, but it is
+    # mark-only and must never reallocate the already-persisted position.
+    duplicate, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="DUP-PARTIAL",
+        event_id="DUP-PARTIAL-EVENT", direction="LONG",
+        expiry="2026-10-30", lot_size=99, lots=9, edge=14,
+        capital_used=999000, user_id=1,
+    )
+    assert created is False
+    assert duplicate.id == first.id
+    assert duplicate.lots == 1
+    assert duplicate.lot_size == 10
+    assert duplicate.capital_used == 30000
+    assert duplicate.entry_edge == 10
+    assert duplicate.current_edge == 14
+    assert duplicate.unrealized_pnl == 40.0
+    assert duplicate.pnl_pct == round((40.0 / 30000) * 100.0, 8)
+
+    persisted = db_session.query(type(first)).filter(
+        type(first).id == first.id,
+    ).one()
+    assert persisted.lots == 1
+    assert persisted.capital_used == 30000
