@@ -103,3 +103,31 @@ def test_executable_pnl_calendar_uses_contract_specific_quotes():
     row = SimpleNamespace(near_contract_month="NEAR", far_contract_month="FAR",
                           near_bid=104.0, near_ask=105.0, far_bid=106.0, far_ask=107.0)
     assert _executable_paper_pnl(trade, row) == 140.0
+
+
+def test_executable_pnl_buy_sell_uses_exit_side_quotes():
+    from app.main import _executable_paper_pnl
+    svc = LivePaperTradeService()
+    trade = LivePaperTrade(lot_size=10, lots=2, legs_json='[{"instrument":"CASH","side":"BUY","price":100},{"instrument":"FUTURE","side":"SELL","price":110}]')
+    row = {"cash_bid": 103, "cash_ask": 104, "future_bid": 106, "future_ask": 108}
+    assert _executable_paper_pnl(trade, row) == 0.0
+
+
+def test_executable_pnl_synthetic_nested_quotes():
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+    trade = LivePaperTrade(lot_size=5, lots=2, legs_json='[{"instrument":"FUTURE","side":"BUY","price":100},{"instrument":"CALL","side":"BUY","price":10},{"instrument":"PUT","side":"SELL","price":8}]')
+    option = SimpleNamespace(call_bid=12, call_ask=13, put_bid=7, put_ask=9)
+    future = SimpleNamespace(bid=102, ask=103)
+    row = SimpleNamespace(option=option, future=future)
+    assert _executable_paper_pnl(trade, row) == 0.0
+
+
+def test_executable_pnl_box_nested_quotes():
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+    trade = LivePaperTrade(lot_size=10, lots=1, legs_json='[{"instrument":"LOW_CALL","side":"BUY","price":5},{"instrument":"LOW_PUT","side":"BUY","price":6},{"instrument":"HIGH_CALL","side":"SELL","price":2},{"instrument":"HIGH_PUT","side":"SELL","price":3}]')
+    low = SimpleNamespace(call_bid=6, call_ask=7, put_bid=7, put_ask=8)
+    high = SimpleNamespace(call_bid=1, call_ask=2, put_bid=2, put_ask=3)
+    row = SimpleNamespace(low=low, high=high)
+    assert _executable_paper_pnl(trade, row) == 0.0
