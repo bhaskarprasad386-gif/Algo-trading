@@ -198,7 +198,7 @@ def get_market_overview():
         errors = []
         for exchange, symbol in specs:
             try:
-                instrument = master.get_instrument(symbol, exchange)
+                instrument = master.resolve_index_instrument(symbol, exchange) if exchange in {"NSE", "BSE"} else master.get_instrument(symbol, exchange)
                 if not instrument:
                     errors.append({"exchange": exchange, "symbol": symbol, "error": "instrument_not_found"})
                     continue
