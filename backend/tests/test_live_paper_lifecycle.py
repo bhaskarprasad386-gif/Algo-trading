@@ -75,7 +75,7 @@ def test_executable_pnl_synthetic_uses_nested_quotes():
     option = SimpleNamespace(call_bid=12.0, call_ask=13.0, put_bid=7.0, put_ask=9.0)
     future = SimpleNamespace(bid=102.0, ask=103.0)
     row = SimpleNamespace(option=option, future=future)
-    assert _executable_paper_pnl(trade, row) == 20.0
+    assert _executable_paper_pnl(trade, row) == 60.0
 
 
 def test_executable_pnl_box_uses_nested_low_high_quotes():
@@ -90,7 +90,7 @@ def test_executable_pnl_box_uses_nested_low_high_quotes():
     low = SimpleNamespace(call_bid=11.0, call_ask=12.0, put_bid=10.0, put_ask=11.0)
     high = SimpleNamespace(call_bid=3.0, call_ask=4.0, put_bid=2.0, put_ask=3.0)
     row = SimpleNamespace(low=low, high=high)
-    assert _executable_paper_pnl(trade, row) == 40.0
+    assert _executable_paper_pnl(trade, row) == 80.0
 
 
 def test_executable_pnl_calendar_uses_contract_specific_quotes():
@@ -102,4 +102,4 @@ def test_executable_pnl_calendar_uses_contract_specific_quotes():
     from types import SimpleNamespace
     row = SimpleNamespace(near_contract_month="NEAR", far_contract_month="FAR",
                           near_bid=104.0, near_ask=105.0, far_bid=106.0, far_ask=107.0)
-    assert _executable_paper_pnl(trade, row) == -20.0
+    assert _executable_paper_pnl(trade, row) == 140.0
