@@ -101,7 +101,8 @@ export default function PositionsPage() {
           <td className="px-5 py-4 font-medium theme-text">{label(p.strategy)}</td>
           <td className="px-5 py-4 theme-text">{p.symbol || "—"}</td><td className="px-5 py-4 theme-muted">{p.direction || "—"}</td>
           <td className="px-5 py-4 theme-text">{p.lots ?? "—"}</td><td className="px-5 py-4 theme-text">{money(Number(p.capital_used))}</td>
-          <td className="px-5 py-4 theme-text">{money(Number(p.current))}</td>
+          <td className="px-5 py-4 theme-text">{typeof p.entry_edge === "number" ? p.entry_edge.toFixed(2) : "—"}</td>
+          <td className="px-5 py-4 theme-text">{typeof p.current_edge === "number" ? p.current_edge.toFixed(2) : "—"}</td>
           <td className={`px-5 py-4 font-semibold ${pnl >= 0 ? "theme-success" : "theme-danger"}`}>{money(pnl)} {typeof p.pnl_pct === "number" ? `(${p.pnl_pct.toFixed(2)}%)` : ""}</td>
           <td className="px-5 py-4 theme-muted">{p.earliest_expiry || p.expiry || "—"}</td>
           <td className="px-5 py-4"><button type="button" onClick={() => void closePosition(p.id)} disabled={closingId !== null}
