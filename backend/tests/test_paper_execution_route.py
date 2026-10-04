@@ -6895,3 +6895,58 @@ def test_paper_http_concurrent_account_and_orders_endpoint_snapshot_boundary():
     assert payload["status"] == "OK"
     assert payload["mismatches"] == []
     assert payload["repairability"] == "NONE"
+
+
+def test_paper_http_multiple_active_accounts_fail_closed_across_read_endpoints():
+    """Unauthenticated account ambiguity must fail closed consistently on every paper read endpoint."""
+    client = TestClient(app)
+    db = SessionLocal()
+    try:
+        existing = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").all()
+        for account in existing:
+            db.delete(account)
+        db.commit()
+        users = []
+        for suffix in ("read-a", "read-b"):
+            user = User(
+                email=f"multi-active-read-{suffix}@example.com",
+                hashed_password="",
+                full_name=f"Multi Active Read {suffix}",
+                is_active=True,
+            )
+            db.add(user)
+            db.flush()
+            db.add(TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=1000.0,
+                initial_virtual_balance=1000.0,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            ))
+            users.append(int(user.id))
+        db.commit()
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(3)
+
+    def request(path):
+        barrier.wait(timeout=5)
+        return client.get(path)
+
+    paths = [
+        "/api/v1/execution/paper/account",
+        "/api/v1/execution/paper/orders",
+        "/api/v1/execution/paper/reconcile",
+    ]
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        responses = list(pool.map(request, paths))
+
+    assert all(response.status_code == 409 for response in responses)
+    assert all(
+        response.json()["detail"]
+        == "multiple active paper trading accounts require authenticated user context"
+        for response in responses
+    )
