@@ -1891,3 +1891,133 @@ def test_paper_long_short_long_reversal_chain_survives_restart_and_reconciles(tm
     finally:
         reconcile.close()
         engine.dispose()
+
+
+def test_paper_entry_corrupt_state_rolls_back_all_mutations(tmp_path):
+    from app.execution.paper_routes import PaperEntryRequest, paper_entry
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'entry-corrupt.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="entry-corrupt@example.com", hashed_password="", full_name="Entry Corrupt", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        seed.add(Order(user_id=user.id, symbol="BAD", transaction_type="BUY", quantity=1, filled_quantity=1, price=0.0, average_price=0.0, average_fill_price=0.0, status="FILLED", is_paper=True, pnl=0.0))
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    db = Session()
+    try:
+        try:
+            paper_entry(PaperEntryRequest(symbol="NEW", price=100.0, quantity=2, fill_id="ENTRY-ROLLBACK"), user_id=user_id, db=db)
+            assert False, "corrupt paper state must fail closed"
+        except RuntimeError as exc:
+            assert "paper order invariant" in str(exc)
+            db.rollback()
+    finally:
+        db.close()
+
+    verify = Session()
+    try:
+        account = verify.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        assert account.virtual_balance == 1000.0
+        assert account.realized_pnl == 0.0
+        assert verify.query(Position).filter(Position.user_id == user_id).count() == 0
+        assert verify.query(Order).filter(Order.user_id == user_id).count() == 1
+        assert verify.query(Order).filter(Order.user_id == user_id, Order.fill_id == "ENTRY-ROLLBACK").count() == 0
+    finally:
+        verify.close()
+        engine.dispose()
+
+
+def test_paper_order_corrupt_state_rolls_back_reversal_mutation(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'order-corrupt.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="order-corrupt@example.com", hashed_password="", full_name="Order Corrupt", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        seed.add(Position(user_id=user.id, symbol="REV", quantity=-5, average_price=100.0, is_paper=True, is_open=True))
+        seed.add(Order(user_id=user.id, symbol="BAD", transaction_type="BUY", quantity=1, filled_quantity=1, price=0.0, average_price=0.0, average_fill_price=0.0, status="FILLED", is_paper=True, pnl=0.0))
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    db = Session()
+    try:
+        try:
+            paper_order(PaperOrderRequest(symbol="REV", transaction_type="BUY", price=90.0, quantity=8, fill_id="REV-ROLLBACK"), user_id=user_id, db=db)
+            assert False, "corrupt paper state must fail closed"
+        except RuntimeError as exc:
+            assert "paper order invariant" in str(exc)
+            db.rollback()
+    finally:
+        db.close()
+
+    verify = Session()
+    try:
+        account = verify.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        position = verify.query(Position).filter(Position.user_id == user_id, Position.symbol == "REV").one()
+        assert account.virtual_balance == 1000.0
+        assert account.realized_pnl == 0.0
+        assert position.quantity == -5
+        assert position.average_price == 100.0
+        assert verify.query(Order).filter(Order.user_id == user_id, Order.fill_id == "REV-ROLLBACK").count() == 0
+    finally:
+        verify.close()
+        engine.dispose()
+
+
+def test_paper_exit_corrupt_state_rolls_back_close_mutation(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, PaperExitRequest, paper_order, paper_exit
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'exit-corrupt.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="exit-corrupt@example.com", hashed_password="", full_name="Exit Corrupt", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=900.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        seed.add(Position(user_id=user.id, symbol="EXIT", quantity=1, average_price=100.0, is_paper=True, is_open=True))
+        seed.add(Order(user_id=user.id, symbol="BAD", transaction_type="BUY", quantity=1, filled_quantity=1, price=0.0, average_price=0.0, average_fill_price=0.0, status="FILLED", is_paper=True, pnl=0.0))
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    db = Session()
+    try:
+        try:
+            paper_exit(PaperExitRequest(symbol="EXIT", price=120.0, fill_id="EXIT-ROLLBACK"), user_id=user_id, db=db)
+            assert False, "corrupt paper state must fail closed"
+        except RuntimeError as exc:
+            assert "paper order invariant" in str(exc)
+            db.rollback()
+    finally:
+        db.close()
+
+    verify = Session()
+    try:
+        account = verify.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        position = verify.query(Position).filter(Position.user_id == user_id, Position.symbol == "EXIT").one()
+        assert account.virtual_balance == 900.0
+        assert account.realized_pnl == 0.0
+        assert position.quantity == 1
+        assert position.average_price == 100.0
+        assert verify.query(Order).filter(Order.user_id == user_id, Order.fill_id == "EXIT-ROLLBACK").count() == 0
+    finally:
+        verify.close()
+        engine.dispose()
