@@ -421,3 +421,100 @@ def test_same_user_three_strategy_concurrent_entries_share_global_capital_and_po
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_same_user_three_strategy_concurrent_two_lot_requests_allocate_only_global_capital(tmp_path):
+    """Concurrent 2-lot requests must consume the shared 60k budget exactly once."""
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.core.database import Base
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'three-strategy-partial-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    try:
+        setup.add(GlobalPaperSetting(
+            user_id=1, enabled=True, paper_amount=60000, emergency_stop=False,
+        ))
+        for strategy in ("calendar-spread", "synthetic-future-cash-carry", "box-spread"):
+            setup.add(AlertRule(
+                user_id=1, strategy_id=strategy, min_gross_profit=0,
+                mobile_number="", whatsapp_enabled=False, enabled=True,
+                max_daily_capital=60000, max_simultaneous_positions=3,
+                max_loss=1000,
+            ))
+        setup.commit()
+    finally:
+        setup.close()
+
+    events = [
+        ("calendar-spread", "PARTIAL-CALENDAR"),
+        ("synthetic-future-cash-carry", "PARTIAL-SYNTHETIC"),
+        ("box-spread", "PARTIAL-BOX"),
+    ]
+    barrier = threading.Barrier(3)
+    errors = []
+    results = []
+
+    def worker(strategy_id, event_id):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            event = AlertEvent(
+                strategy_id=strategy_id,
+                event_id=event_id,
+                symbol=event_id,
+                timestamp_ns=1,
+                message="concurrent partial paper",
+                observed_at=datetime.utcnow(),
+                metadata={"gross_profit": 1000, "paper_trade": {
+                    "direction": "LONG",
+                    "expiry": "2026-10-30",
+                    "earliest_expiry": "2026-10-30",
+                    "lot_size": 10,
+                    "lots": 2,
+                    "edge": 5,
+                    "capital_used": 60000,
+                }},
+            )
+            results.append((strategy_id, AlertService().dispatch(db, event)))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=worker, args=item)
+        for item in events
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert errors == []
+    assert len(results) == 3
+
+    verify = Session()
+    try:
+        rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+        ).all()
+        assert len(rows) == 3
+        assert sum(int(row.lots) for row in rows) == 2
+        assert sum(float(row.capital_used) for row in rows) == 60000
+        assert all(int(row.lots) >= 1 for row in rows)
+
+        # Two 30k lots are globally allocatable; the third concurrent request
+        # must fail without creating a zero-lot/zero-capital phantom row.
+        assert sorted(int(row.lots) for row in rows) == [0, 1, 1] or sorted(int(row.lots) for row in rows) == [1, 1, 0]
+    finally:
+        verify.close()
+        engine.dispose()
