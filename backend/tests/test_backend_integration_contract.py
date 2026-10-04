@@ -337,3 +337,25 @@ def test_alert_risk_limits_use_ist_trading_day_boundary():
 
     now = datetime(2026, 10, 4, 18, 40, tzinfo=timezone.utc)
     assert _ist_day_start_utc_naive(now) == datetime(2026, 10, 4, 18, 30)
+
+
+def test_completed_paper_event_cannot_reopen(db_session):
+    svc = LivePaperTradeService()
+    _enable(db_session, 1)
+    first, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="REOPEN-GUARD-1", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=5, capital_used=1000, user_id=1,
+    )
+    assert created is True
+    svc.close(db_session, first, "MANUAL")
+
+    reopened, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="REOPEN-GUARD-1", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=9, capital_used=1000, user_id=1,
+    )
+    assert reopened is None
+    assert created is False
+    assert svc.ongoing(db_session, 1) == []
+    assert [x.id for x in svc.completed(db_session, 1)] == [first.id]
