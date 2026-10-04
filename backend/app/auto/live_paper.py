@@ -449,7 +449,23 @@ class LivePaperTradeService:
             exchange = str(metadata.get("exchange") or "").strip().upper()
             close_time = time(23, 30) if exchange == "MCX" else MARKET_CLOSE
             if local_now.date() > expiry or (local_now.date() == expiry and local_now.time() >= close_time):
-                closed_trade = self.close(db, trade, "EXPIRY_CLOSE")
+                # Expiry release and new-entry risk gates must serialize on the
+                # same per-user setting row. Otherwise an entry can calculate
+                # available capital while this expiry close is still pending,
+                # or the expiry close can race a max-loss/daily-cap read.
+                # Users without a paper setting cannot enter through the risk
+                # gated dispatcher, so there is no competing allocation to
+                # serialize in that case.
+                lock_count = db.query(GlobalPaperSetting).filter(
+                    GlobalPaperSetting.user_id == int(trade.user_id),
+                ).update(
+                    {GlobalPaperSetting.paper_amount: GlobalPaperSetting.paper_amount},
+                    synchronize_session=False,
+                )
+                if lock_count == 0:
+                    closed_trade = self.close(db, trade, "EXPIRY_CLOSE")
+                else:
+                    closed_trade = self.close(db, trade, "EXPIRY_CLOSE")
                 # A concurrent manual close may win the atomic status update.
                 # Only report this trade as an expiry closure when EXPIRY_CLOSE
                 # is actually the persisted terminal reason.
