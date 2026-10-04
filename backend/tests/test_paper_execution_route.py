@@ -140,6 +140,66 @@ def test_paper_reconcile_preserves_reversal_position_reconstruction(tmp_path):
         db.close()
         engine.dispose()
 
+
+def test_paper_mutation_fails_closed_when_order_timestamps_are_corrupt(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+    from app.models.order import Order
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'order-timestamp-tamper.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        user = User(email="timestamp-tamper@example.com", hashed_password="", full_name="Timestamp Tamper", is_active=True)
+        db.add(user)
+        db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        db.commit()
+        user_id = user.id
+        paper_order(PaperOrderRequest(symbol="TIME", transaction_type="BUY", price=10.0, quantity=1, fill_id="TIME-1"), user_id=user_id, db=db)
+        order = db.query(Order).filter(Order.user_id == user_id, Order.fill_id == "TIME-1").one()
+        order.updated_at = None
+        db.commit()
+        try:
+            paper_order(PaperOrderRequest(symbol="TIME2", transaction_type="BUY", price=10.0, quantity=1, fill_id="TIME-2"), user_id=user_id, db=db)
+            raise AssertionError("corrupt order timestamp must fail closed")
+        except RuntimeError as exc:
+            assert "paper order invariant" in str(exc)
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_paper_repair_precondition_changes_when_order_timestamp_changes(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order, _paper_repair_precondition
+    from app.models.order import Order
+    from app.models.position import Position
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'repair-timestamp-fingerprint.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        user = User(email="repair-time@example.com", hashed_password="", full_name="Repair Time", is_active=True)
+        db.add(user)
+        db.flush()
+        account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)
+        db.add(account)
+        db.commit()
+        user_id = user.id
+        paper_order(PaperOrderRequest(symbol="FINGER", transaction_type="BUY", price=10.0, quantity=1, fill_id="FINGER-1"), user_id=user_id, db=db)
+        order = db.query(Order).filter(Order.user_id == user_id, Order.fill_id == "FINGER-1").one()
+        positions = db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).all()
+        before = _paper_repair_precondition(db, user_id, account, [order], positions)["state_hash"]
+        order.updated_at = order.updated_at.replace(microsecond=(order.updated_at.microsecond + 1) % 1000000)
+        db.commit()
+        db.refresh(order)
+        after = _paper_repair_precondition(db, user_id, account, [order], positions)["state_hash"]
+        assert after != before
+    finally:
+        db.close()
+        engine.dispose()
+
 def test_paper_entry_route_registered():
     paths = app.openapi().get("paths", {})
     assert "/api/v1/execution/paper/entry" in paths
