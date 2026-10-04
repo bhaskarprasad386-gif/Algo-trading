@@ -22,8 +22,8 @@ def _client_and_headers(starting_balance: float = 10_000_000.0):
         db.query(Order).delete()
         accounts = db.query(TradingAccount).all()
         for account in accounts:
-            account.virtual_balance = starting_balance
-            account.initial_virtual_balance = starting_balance
+            account.virtual_balance = float(starting_balance)
+            account.initial_virtual_balance = float(starting_balance)
             account.initial_balance_source = "BOOTSTRAP"
             account.realized_pnl = 0.0
             account.is_active = True
@@ -6278,8 +6278,8 @@ def test_paper_http_concurrent_insufficient_balance_fails_closed_across_symbols(
 
 
 def test_paper_http_concurrent_exits_across_symbols_preserve_shared_accounting():
-    client, headers = _client_and_headers(starting_balance=10_000.0)
-    starting_balance = 10_000.0
+    client, headers = _client_and_headers()
+    starting_balance = 10_000_000.0
 
     alpha_open = client.post(
         "/api/v1/execution/paper/order",
@@ -6343,7 +6343,7 @@ def test_paper_http_concurrent_exits_across_symbols_preserve_shared_accounting()
 
 
 def test_paper_http_concurrent_multi_symbol_close_and_partial_reversal_preserve_accounting():
-    client, headers = _client_and_headers(starting_balance=10_000.0)
+    client, headers = _client_and_headers()
 
     seed = SessionLocal()
     try:
@@ -6422,7 +6422,7 @@ def test_paper_http_concurrent_multi_symbol_close_and_partial_reversal_preserve_
 
 
 def test_paper_http_concurrent_terminal_exits_without_fill_id_close_once():
-    client, headers = _client_and_headers(starting_balance=10_000.0)
+    client, headers = _client_and_headers()
 
     seed = SessionLocal()
     try:
@@ -6767,7 +6767,7 @@ def test_paper_http_cold_start_mixed_endpoint_race_converges_on_one_account():
 
 def test_paper_http_concurrent_entry_and_order_same_symbol_single_position_boundary():
     """Legacy /entry and generic /order must serialize on one symbol without double entry."""
-    client, headers = _client_and_headers(starting_balance=10_000.0)
+    client, headers = _client_and_headers()
     db = SessionLocal()
     try:
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
@@ -6854,7 +6854,7 @@ def test_paper_http_concurrent_entry_and_order_same_symbol_single_position_bound
 
 def test_paper_http_concurrent_long_reversal_and_exit_close_once():
     """Long-side reversal vs terminal exit must serialize without double-closing or bad cash."""
-    client, headers = _client_and_headers(starting_balance=10_000.0)
+    client, headers = _client_and_headers()
     db = SessionLocal()
     try:
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
@@ -6949,7 +6949,7 @@ def test_paper_http_concurrent_long_reversal_and_exit_close_once():
 
 def test_paper_http_concurrent_scanner_and_order_same_fill_id_is_idempotent():
     """Scanner delegation and direct order entry must share fill-id idempotency under HTTP concurrency."""
-    client, headers = _client_and_headers(starting_balance=10_000.0)
+    client, headers = _client_and_headers()
     db = SessionLocal()
     try:
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
@@ -7038,7 +7038,7 @@ def test_paper_http_concurrent_scanner_and_order_same_fill_id_is_idempotent():
 
 def test_paper_http_concurrent_scanner_and_legacy_entry_same_symbol_without_fill_id():
     """Scanner delegation and legacy entry must serialize one symbol without duplicate exposure."""
-    client, headers = _client_and_headers(starting_balance=10_000.0)
+    client, headers = _client_and_headers()
     db = SessionLocal()
     try:
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
@@ -7123,7 +7123,7 @@ def test_paper_http_concurrent_scanner_and_legacy_entry_same_symbol_without_fill
 
 def test_paper_http_concurrent_scanner_reversal_and_exit_close_short_once():
     """Scanner BUY delegation and terminal exit must serialize correctly on an active short."""
-    client, headers = _client_and_headers(starting_balance=10_000.0)
+    client, headers = _client_and_headers()
     db = SessionLocal()
     try:
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
@@ -7998,3 +7998,4534 @@ def test_concurrent_cross_user_orders_keep_audit_chains_independent(tmp_path):
         for user_id in users:
             orders = verify.query(Order).filter(
                 Order.user_id == user_id,
+                Order.is_paper.is_(True),
+            ).order_by(Order.id.asc()).all()
+            assert len(orders) == 2
+            assert orders[0].previous_audit_hash is None
+            assert orders[0].audit_hash
+            assert orders[1].previous_audit_hash == orders[0].audit_hash
+            assert orders[1].audit_hash
+            assert orders[1].audit_hash != orders[0].audit_hash
+            chains[user_id] = (orders[0].audit_hash, orders[1].audit_hash)
+
+        assert chains[users[0]][0] != chains[users[1]][0]
+        assert chains[users[0]][1] != chains[users[1]][1]
+        assert chains[users[0]][1] != chains[users[1]][0]
+        assert chains[users[1]][1] != chains[users[0]][0]
+    finally:
+        verify.close()
+
+    for user_id in users:
+        reconcile_db = TestSession()
+        try:
+            payload = _reconcile_paper_ledger(reconcile_db, user_id)
+            assert payload["status"] == "OK"
+            assert payload["mismatches"] == []
+            assert payload["repairability"] == "NONE"
+        finally:
+            reconcile_db.close()
+
+    engine.dispose()
+
+
+def test_paper_sqlite_write_lock_rejection_does_not_mutate_ledger(tmp_path):
+    """A rejected BEGIN IMMEDIATE must fail before any paper state mutation."""
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(
+        "sqlite:///" + str(tmp_path / "write-lock-rejection.db"),
+        connect_args={"check_same_thread": False, "timeout": 0},
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="write-lock@example.com",
+            hashed_password="",
+            full_name="Write Lock",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id,
+            mode="PAPER",
+            virtual_balance=1000.0,
+            initial_virtual_balance=1000.0,
+            initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0,
+            is_active=True,
+        ))
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    holder = TestSession()
+    contender = TestSession()
+    try:
+        holder.connection().exec_driver_sql("BEGIN IMMEDIATE")
+
+        try:
+            paper_order(
+                PaperOrderRequest(
+                    symbol="LOCK_REJECTED",
+                    transaction_type="BUY",
+                    price=100.0,
+                    quantity=2,
+                    fill_id="LOCK-REJECTED-1",
+                ),
+                user_id=user_id,
+                db=contender,
+            )
+            raise AssertionError("paper_order unexpectedly acquired a locked SQLite writer")
+        except Exception as exc:
+            from sqlalchemy.exc import OperationalError
+            assert isinstance(exc, OperationalError)
+
+        contender.rollback()
+
+        verify = TestSession()
+        try:
+            account = verify.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id,
+                TradingAccount.mode == "PAPER",
+            ).one()
+            assert account.virtual_balance == 1000.0
+            assert account.realized_pnl == 0.0
+            assert verify.query(Position).filter(
+                Position.user_id == user_id,
+                Position.symbol == "LOCK_REJECTED",
+            ).count() == 0
+            assert verify.query(Order).filter(
+                Order.user_id == user_id,
+                Order.symbol == "LOCK_REJECTED",
+            ).count() == 0
+        finally:
+            verify.close()
+    finally:
+        contender.rollback()
+        holder.rollback()
+        contender.close()
+        holder.close()
+
+
+def test_paper_http_commit_failure_does_not_persist_partial_mutation():
+    """A database commit failure must not leave the paper ledger partially mutated."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="commit-failure@example.com",
+            hashed_password="",
+            full_name="Commit Failure",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id,
+            mode="PAPER",
+            virtual_balance=1000.0,
+            initial_virtual_balance=1000.0,
+            initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0,
+            is_active=True,
+        ))
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    class FailingCommitSession(Session):
+        def commit(self):
+            raise RuntimeError("injected commit failure")
+
+    failing_factory = sessionmaker(bind=engine, class_=FailingCommitSession)
+    failing_db = failing_factory()
+    client = TestClient(app)
+
+    def override_db():
+        try:
+            yield failing_db
+        finally:
+            failing_db.rollback()
+            failing_db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        response = client.post(
+            "/api/v1/execution/paper/order",
+            json={
+                "symbol": "COMMIT_FAILURE",
+                "transaction_type": "BUY",
+                "price": 250.0,
+                "quantity": 2,
+                "fill_id": "COMMIT-FAILURE-1",
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 500
+
+    verify = TestSession()
+    try:
+        account = verify.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        positions = verify.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.symbol == "COMMIT_FAILURE",
+        ).all()
+        orders = verify.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+            Order.symbol == "COMMIT_FAILURE",
+        ).all()
+
+        assert account.virtual_balance == 1000.0
+        assert account.realized_pnl == 0.0
+        assert positions == []
+        assert orders == []
+    finally:
+        verify.close()
+
+    reconcile = client.get(
+        "/api/v1/execution/paper/reconcile",
+        headers={"X-User-ID": str(user_id)},
+    )
+    # The request above uses the normal dependency after the injected session
+    # is removed; it must still see the untouched durable ledger.
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
+
+
+def test_concurrent_cross_user_same_symbol_orders_preserve_account_isolation():
+    """Concurrent writes for different users may serialize on SQLite, but never share balance or positions."""
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        users = []
+        for suffix, balance in (("a", 1000.0), ("b", 700.0)):
+            user = User(
+                email=f"cross-user-write-{suffix}@example.com",
+                hashed_password="",
+                full_name=f"Cross User Write {suffix}",
+                is_active=True,
+            )
+            seed.add(user)
+            seed.flush()
+            seed.add(TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=balance,
+                initial_virtual_balance=balance,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            ))
+            users.append(int(user.id))
+        seed.commit()
+    finally:
+        seed.close()
+
+    barrier = threading.Barrier(2)
+
+    def submit(user_id, price, fill_id):
+        db = TestSession()
+        try:
+            barrier.wait(timeout=5)
+            result = paper_order(
+                PaperOrderRequest(
+                    symbol="SHARED_SYMBOL_BUT_ISOLATED_USERS",
+                    transaction_type="BUY",
+                    price=price,
+                    quantity=2,
+                    fill_id=fill_id,
+                ),
+                user_id=user_id,
+                db=db,
+            )
+            return result
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(submit, users[0], 100.0, "CROSS-USER-A"),
+            pool.submit(submit, users[1], 50.0, "CROSS-USER-B"),
+        ]
+        results = [future.result() for future in futures]
+
+    assert {result["fill_id"] for result in results} == {"CROSS-USER-A", "CROSS-USER-B"}
+
+    verify = TestSession()
+    try:
+        accounts = verify.query(TradingAccount).filter(
+            TradingAccount.user_id.in_(users),
+            TradingAccount.mode == "PAPER",
+        ).order_by(TradingAccount.user_id).all()
+        assert len(accounts) == 2
+        assert [(int(a.user_id), float(a.virtual_balance), float(a.realized_pnl)) for a in accounts] == [
+            (users[0], 800.0, 0.0),
+            (users[1], 600.0, 0.0),
+        ]
+
+        positions = verify.query(Position).filter(
+            Position.user_id.in_(users),
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+            Position.symbol == "SHARED_SYMBOL_BUT_ISOLATED_USERS",
+        ).order_by(Position.user_id).all()
+        assert len(positions) == 2
+        assert [(int(p.user_id), int(p.quantity), float(p.average_price)) for p in positions] == [
+            (users[0], 2, 100.0),
+            (users[1], 2, 50.0),
+        ]
+
+        orders = verify.query(Order).filter(
+            Order.user_id.in_(users),
+            Order.is_paper.is_(True),
+            Order.symbol == "SHARED_SYMBOL_BUT_ISOLATED_USERS",
+        ).order_by(Order.user_id).all()
+        assert len(orders) == 2
+        assert [(int(o.user_id), o.fill_id, float(o.price), int(o.quantity)) for o in orders] == [
+            (users[0], "CROSS-USER-A", 100.0, 2),
+            (users[1], "CROSS-USER-B", 50.0, 2),
+        ]
+    finally:
+        verify.close()
+
+    for user_id in users:
+        reconcile_db = TestSession()
+        try:
+            payload = _reconcile_paper_ledger(reconcile_db, user_id)
+            assert payload["status"] == "OK"
+            assert payload["mismatches"] == []
+            assert payload["repairability"] == "NONE"
+        finally:
+            reconcile_db.close()
+
+    engine.dispose()
+
+
+def test_paper_http_concurrent_successful_same_symbol_reversals_serialize_without_lost_update():
+    """Two successful same-symbol reversals must both serialize and preserve exact ledger accounting."""
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 9_999_000.0
+        account.realized_pnl = 0.0
+        db.add(Position(
+            user_id=user_id,
+            symbol="DOUBLE_REVERSAL_RACE",
+            quantity=10,
+            average_price=100.0,
+            stop_loss=None,
+            target=None,
+            is_paper=True,
+            is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(2)
+
+    def submit(payload):
+        barrier.wait(timeout=5)
+        return client.post(
+            "/api/v1/execution/paper/order",
+            headers=headers,
+            json=payload,
+        )
+
+    requests = [
+        {
+            "symbol": "DOUBLE_REVERSAL_RACE",
+            "transaction_type": "SELL",
+            "price": 120.0,
+            "quantity": 6,
+            "fill_id": "DOUBLE-REVERSAL-A",
+        },
+        {
+            "symbol": "DOUBLE_REVERSAL_RACE",
+            "transaction_type": "SELL",
+            "price": 110.0,
+            "quantity": 8,
+            "fill_id": "DOUBLE-REVERSAL-B",
+        },
+    ]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(submit, requests))
+
+    assert all(response.status_code == 200 for response in responses)
+    assert all(response.json()["status"] == "success" for response in responses)
+
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        orders = db.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+            Order.symbol == "DOUBLE_REVERSAL_RACE",
+        ).order_by(Order.id.asc()).all()
+        positions = db.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.symbol == "DOUBLE_REVERSAL_RACE",
+            Position.is_open.is_(True),
+        ).all()
+
+        assert len(orders) == 2
+        assert {order.fill_id for order in orders} == {
+            "DOUBLE-REVERSAL-A",
+            "DOUBLE-REVERSAL-B",
+        }
+        assert len(positions) == 1
+        assert positions[0].quantity == -4
+
+        # SQLite BEGIN IMMEDIATE serializes the two reversals. The final ledger
+        # is therefore exactly one of the two valid serialization orders.
+        outcomes = {
+            (9_999_720.0, 160.0, 110.0, ("DOUBLE-REVERSAL-A", "DOUBLE-REVERSAL-B")),
+            (10_000_120.0, 120.0, 120.0, ("DOUBLE-REVERSAL-B", "DOUBLE-REVERSAL-A")),
+        }
+        observed = (
+            float(account.virtual_balance),
+            float(account.realized_pnl),
+            float(positions[0].average_price),
+            tuple(order.fill_id for order in orders),
+        )
+        assert observed in outcomes
+    finally:
+        db.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
+
+
+def test_paper_http_concurrent_legacy_entry_and_exit_same_symbol_has_no_duplicate_position():
+    """Legacy entry and terminal exit may serialize in either order, but never create duplicate exposure."""
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 500.0
+        account.realized_pnl = 0.0
+        db.add(Position(
+            user_id=user_id,
+            symbol="ENTRY_EXIT_RACE",
+            quantity=5,
+            average_price=100.0,
+            stop_loss=None,
+            target=None,
+            is_paper=True,
+            is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(2)
+
+    def submit(kind):
+        barrier.wait(timeout=5)
+        if kind == "entry":
+            return client.post(
+                "/api/v1/execution/paper/entry",
+                headers=headers,
+                json={
+                    "symbol": "ENTRY_EXIT_RACE",
+                    "price": 90.0,
+                    "quantity": 2,
+                },
+            )
+        return client.post(
+            "/api/v1/execution/paper/exit",
+            headers=headers,
+            json={
+                "symbol": "ENTRY_EXIT_RACE",
+                "price": 120.0,
+            },
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(submit, ["entry", "exit"]))
+
+    assert all(response.status_code in {200, 409} for response in responses)
+    assert sum(response.status_code == 200 for response in responses) >= 1
+
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        orders = db.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+            Order.symbol == "ENTRY_EXIT_RACE",
+        ).order_by(Order.id).all()
+        positions = db.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.symbol == "ENTRY_EXIT_RACE",
+            Position.is_open.is_(True),
+        ).all()
+
+        assert account.realized_pnl == 100.0
+        assert len(orders) in {1, 2}
+        assert len(positions) in {0, 1}
+
+        if len(positions) == 0:
+            assert len(orders) == 1
+            assert orders[0].transaction_type == "SELL"
+            assert orders[0].quantity == 5
+            assert account.virtual_balance == 1100.0
+        else:
+            assert len(orders) == 2
+            assert positions[0].quantity == 2
+            assert positions[0].average_price == 90.0
+            assert account.virtual_balance == 920.0
+            assert orders[0].transaction_type == "SELL"
+            assert orders[0].quantity == 5
+            assert orders[1].transaction_type == "BUY"
+            assert orders[1].quantity == 2
+    finally:
+        db.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
+
+
+def test_paper_http_sqlite_writer_contention_fails_closed_without_mutation():
+    """HTTP paper mutation returns retryable conflict when SQLite writer lock is busy."""
+    from app.execution import paper_routes as routes
+    from app.core.database import get_db
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False, "timeout": 0},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="http-write-lock@example.com",
+            hashed_password="",
+            full_name="HTTP Write Lock",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id,
+            mode="PAPER",
+            virtual_balance=1000.0,
+            initial_virtual_balance=1000.0,
+            initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0,
+            is_active=True,
+        ))
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    holder = TestSession()
+    contender = TestSession()
+    client = TestClient(app)
+    try:
+        holder.connection().exec_driver_sql("BEGIN IMMEDIATE")
+
+        def override_db():
+            try:
+                yield contender
+            finally:
+                contender.rollback()
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[routes.current_user_id] = lambda: user_id
+        try:
+            response = client.post(
+                "/api/v1/execution/paper/order",
+                json={
+                    "symbol": "HTTP_LOCK_REJECTED",
+                    "transaction_type": "BUY",
+                    "price": 100.0,
+                    "quantity": 2,
+                    "fill_id": "HTTP-LOCK-REJECTED-1",
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(routes.current_user_id, None)
+            app.dependency_overrides.pop(get_db, None)
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "paper trading account is busy; retry"
+
+        contender.rollback()
+        verify = TestSession()
+        try:
+            account = verify.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id,
+                TradingAccount.mode == "PAPER",
+            ).one()
+            assert account.virtual_balance == 1000.0
+            assert account.realized_pnl == 0.0
+            assert verify.query(Position).filter(
+                Position.user_id == user_id,
+                Position.symbol == "HTTP_LOCK_REJECTED",
+            ).count() == 0
+            assert verify.query(Order).filter(
+                Order.user_id == user_id,
+                Order.symbol == "HTTP_LOCK_REJECTED",
+            ).count() == 0
+        finally:
+            verify.close()
+    finally:
+        contender.rollback()
+        holder.rollback()
+        contender.close()
+        holder.close()
+        engine.dispose()
+
+
+def test_paper_http_entry_writer_contention_fails_closed_without_mutation():
+    """Legacy entry must expose the same retryable lock contract and preserve state."""
+    from app.execution import paper_routes as routes
+    from app.core.database import get_db
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False, "timeout": 0},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+    seed = TestSession()
+    try:
+        user = User(email="entry-lock@example.com", hashed_password="", full_name="Entry Lock", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+                                initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+                                realized_pnl=0.0, is_active=True))
+        seed.commit(); user_id=int(user.id)
+    finally:
+        seed.close()
+    holder=TestSession(); contender=TestSession(); client=TestClient(app)
+    try:
+        holder.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        def override_db():
+            try: yield contender
+            finally: contender.rollback()
+        app.dependency_overrides[get_db]=override_db
+        app.dependency_overrides[routes.current_user_id]=lambda: user_id
+        try:
+            response=client.post("/api/v1/execution/paper/entry",json={"symbol":"ENTRY_LOCKED","price":100.0,"quantity":2})
+        finally:
+            app.dependency_overrides.pop(routes.current_user_id,None)
+            app.dependency_overrides.pop(get_db,None)
+        assert response.status_code==409
+        assert response.json()["detail"]=="paper trading account is busy; retry"
+        contender.rollback()
+        verify=TestSession()
+        try:
+            account=verify.query(TradingAccount).filter(TradingAccount.user_id==user_id).one()
+            assert account.virtual_balance==1000.0
+            assert account.realized_pnl==0.0
+            assert verify.query(Position).filter(Position.user_id==user_id,Position.symbol=="ENTRY_LOCKED").count()==0
+            assert verify.query(Order).filter(Order.user_id==user_id,Order.symbol=="ENTRY_LOCKED").count()==0
+        finally: verify.close()
+    finally:
+        contender.rollback(); holder.rollback(); contender.close(); holder.close(); engine.dispose()
+
+
+def test_paper_http_exit_writer_contention_fails_closed_without_mutation():
+    """Terminal exit must expose the same retryable lock contract and preserve the open position."""
+    from app.execution import paper_routes as routes
+    from app.core.database import get_db
+
+    engine=create_engine("sqlite:///:memory:",connect_args={"check_same_thread":False,"timeout":0},poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    TestSession=sessionmaker(bind=engine)
+    seed=TestSession()
+    try:
+        user=User(email="exit-lock@example.com",hashed_password="",full_name="Exit Lock",is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id,mode="PAPER",virtual_balance=500.0,
+                                initial_virtual_balance=500.0,initial_balance_source="BOOTSTRAP",
+                                realized_pnl=0.0,is_active=True))
+        seed.add(Position(user_id=user.id,symbol="EXIT_LOCKED",quantity=2,average_price=100.0,
+                          stop_loss=None,target=None,is_paper=True,is_open=True))
+        seed.commit(); user_id=int(user.id)
+    finally: seed.close()
+    holder=TestSession(); contender=TestSession(); client=TestClient(app)
+    try:
+        holder.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        def override_db():
+            try: yield contender
+            finally: contender.rollback()
+        app.dependency_overrides[get_db]=override_db
+        app.dependency_overrides[routes.current_user_id]=lambda: user_id
+        try:
+            response=client.post("/api/v1/execution/paper/exit",json={"symbol":"EXIT_LOCKED","price":120.0})
+        finally:
+            app.dependency_overrides.pop(routes.current_user_id,None)
+            app.dependency_overrides.pop(get_db,None)
+        assert response.status_code==409
+        assert response.json()["detail"]=="paper trading account is busy; retry"
+        contender.rollback()
+        verify=TestSession()
+        try:
+            account=verify.query(TradingAccount).filter(TradingAccount.user_id==user_id).one()
+            position=verify.query(Position).filter(Position.user_id==user_id,Position.symbol=="EXIT_LOCKED",Position.is_open.is_(True)).one()
+            assert account.virtual_balance==500.0
+            assert account.realized_pnl==0.0
+            assert position.quantity==2
+            assert position.average_price==100.0
+            assert verify.query(Order).filter(Order.user_id==user_id,Order.symbol=="EXIT_LOCKED").count()==0
+        finally: verify.close()
+    finally:
+        contender.rollback(); holder.rollback(); contender.close(); holder.close(); engine.dispose()
+
+
+def test_paper_http_scanner_writer_contention_fails_closed_without_mutation():
+    """Executable scanner entry must inherit the retryable SQLite lock contract."""
+    from app.execution import paper_routes as routes
+    from app.core.database import get_db
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False, "timeout": 0},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+    seed = TestSession()
+    try:
+        user = User(email="scanner-lock@example.com", hashed_password="", full_name="Scanner Lock", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+                                initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+                                realized_pnl=0.0, is_active=True))
+        seed.commit(); user_id = int(user.id)
+    finally:
+        seed.close()
+
+    holder = TestSession(); contender = TestSession(); client = TestClient(app)
+    try:
+        holder.connection().exec_driver_sql("BEGIN IMMEDIATE")
+
+        def override_db():
+            try:
+                yield contender
+            finally:
+                contender.rollback()
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[routes.current_user_id] = lambda: user_id
+        try:
+            response = client.post(
+                "/api/v1/execution/paper/from-scanner",
+                json={
+                    "symbol": "SCANNER_LOCKED",
+                    "cash_price": 100.0,
+                    "future_price": 101.0,
+                    "quantity": 2,
+                    "executable": True,
+                    "gap": 1.0,
+                    "net_profit": 2.0,
+                    "fill_id": "SCANNER-LOCK-1",
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(routes.current_user_id, None)
+            app.dependency_overrides.pop(get_db, None)
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "paper trading account is busy; retry"
+
+        contender.rollback()
+        verify = TestSession()
+        try:
+            account = verify.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+            assert account.virtual_balance == 1000.0
+            assert account.realized_pnl == 0.0
+            assert verify.query(Position).filter(
+                Position.user_id == user_id, Position.symbol == "SCANNER_LOCKED"
+            ).count() == 0
+            assert verify.query(Order).filter(
+                Order.user_id == user_id, Order.symbol == "SCANNER_LOCKED"
+            ).count() == 0
+        finally:
+            verify.close()
+    finally:
+        contender.rollback()
+        holder.rollback()
+        contender.close()
+        holder.close()
+        engine.dispose()
+
+
+def test_paper_http_concurrent_scanner_and_direct_order_preserve_single_account_epoch():
+    """Scanner delegation and direct order must serialize without losing either successful write."""
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(2)
+
+    def submit(kind):
+        barrier.wait(timeout=5)
+        if kind == "scanner":
+            return client.post(
+                "/api/v1/execution/paper/from-scanner",
+                headers=headers,
+                json={
+                    "symbol": "SCANNER_CONCURRENT",
+                    "cash_price": 100.0,
+                    "future_price": 101.0,
+                    "quantity": 2,
+                    "executable": True,
+                    "gap": 1.0,
+                    "net_profit": 2.0,
+                    "fill_id": "SCANNER-CONCURRENT-1",
+                },
+            )
+        return client.post(
+            "/api/v1/execution/paper/order",
+            headers=headers,
+            json={
+                "symbol": "DIRECT_CONCURRENT",
+                "transaction_type": "BUY",
+                "price": 200.0,
+                "quantity": 1,
+                "fill_id": "DIRECT-CONCURRENT-1",
+            },
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(submit, ["scanner", "direct"]))
+
+    assert all(response.status_code == 200 for response in responses)
+    assert {response.json()["order"]["fill_id"] for response in responses} == {
+        "SCANNER-CONCURRENT-1", "DIRECT-CONCURRENT-1"
+    }
+
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        positions = db.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+        ).order_by(Position.symbol).all()
+        orders = db.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+        ).order_by(Order.id).all()
+
+        assert account.virtual_balance == 600.0
+        assert account.realized_pnl == 0.0
+        assert [(p.symbol, int(p.quantity), float(p.average_price)) for p in positions] == [
+            ("DIRECT_CONCURRENT", 1, 200.0),
+            ("SCANNER_CONCURRENT", 2, 100.0),
+        ]
+        assert {o.fill_id for o in orders} == {"SCANNER-CONCURRENT-1", "DIRECT-CONCURRENT-1"}
+        assert len(orders) == 2
+    finally:
+        db.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
+
+
+def test_paper_http_entry_commit_failure_does_not_persist_partial_mutation():
+    """Legacy entry commit failure must roll back cash, position, and order together."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(email="entry-commit-failure@example.com", hashed_password="", full_name="Entry Commit Failure", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+                                initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+                                realized_pnl=0.0, is_active=True))
+        seed.commit(); user_id = int(user.id)
+    finally:
+        seed.close()
+
+    class FailingCommitSession(Session):
+        def commit(self):
+            raise RuntimeError("injected entry commit failure")
+
+    failing_db = sessionmaker(bind=engine, class_=FailingCommitSession)()
+    client = TestClient(app)
+
+    def override_db():
+        try:
+            yield failing_db
+        finally:
+            failing_db.rollback()
+            failing_db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        response = client.post(
+            "/api/v1/execution/paper/entry",
+            json={"symbol": "ENTRY_COMMIT_FAILURE", "price": 250.0, "quantity": 2},
+        )
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 500
+
+    verify = TestSession()
+    try:
+        account = verify.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        assert account.virtual_balance == 1000.0
+        assert account.realized_pnl == 0.0
+        assert verify.query(Position).filter(
+            Position.user_id == user_id, Position.symbol == "ENTRY_COMMIT_FAILURE"
+        ).count() == 0
+        assert verify.query(Order).filter(
+            Order.user_id == user_id, Order.symbol == "ENTRY_COMMIT_FAILURE"
+        ).count() == 0
+    finally:
+        verify.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers={"X-User-ID": str(user_id)})
+    assert reconcile.status_code == 200
+    assert reconcile.json()["status"] == "OK"
+
+
+def test_paper_http_exit_commit_failure_does_not_persist_partial_mutation():
+    """Terminal exit commit failure must preserve the open position and untouched accounting."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(email="exit-commit-failure@example.com", hashed_password="", full_name="Exit Commit Failure", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=500.0,
+                                initial_virtual_balance=500.0, initial_balance_source="BOOTSTRAP",
+                                realized_pnl=0.0, is_active=True))
+        seed.add(Position(user_id=user.id, symbol="EXIT_COMMIT_FAILURE", quantity=2,
+                          average_price=100.0, stop_loss=None, target=None,
+                          is_paper=True, is_open=True))
+        seed.commit(); user_id = int(user.id)
+    finally:
+        seed.close()
+
+    class FailingCommitSession(Session):
+        def commit(self):
+            raise RuntimeError("injected exit commit failure")
+
+    failing_db = sessionmaker(bind=engine, class_=FailingCommitSession)()
+    client = TestClient(app)
+
+    def override_db():
+        try:
+            yield failing_db
+        finally:
+            failing_db.rollback()
+            failing_db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        response = client.post(
+            "/api/v1/execution/paper/exit",
+            json={"symbol": "EXIT_COMMIT_FAILURE", "price": 120.0},
+        )
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 500
+
+    verify = TestSession()
+    try:
+        account = verify.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        position = verify.query(Position).filter(
+            Position.user_id == user_id,
+            Position.symbol == "EXIT_COMMIT_FAILURE",
+            Position.is_open.is_(True),
+        ).one()
+        assert account.virtual_balance == 500.0
+        assert account.realized_pnl == 0.0
+        assert position.quantity == 2
+        assert position.average_price == 100.0
+        assert verify.query(Order).filter(
+            Order.user_id == user_id, Order.symbol == "EXIT_COMMIT_FAILURE"
+        ).count() == 0
+    finally:
+        verify.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers={"X-User-ID": str(user_id)})
+    assert reconcile.status_code == 200
+    assert reconcile.json()["status"] == "OK"
+
+
+def test_paper_http_entry_failed_commit_does_not_consume_fill_id_or_audit_head():
+    """A failed legacy entry commit must leave its fill_id and audit chain reusable."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+    seed = TestSession()
+    try:
+        user = User(email="entry-retry@example.com", hashed_password="", full_name="Entry Retry", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+                                initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+                                realized_pnl=0.0, is_active=True))
+        seed.commit(); user_id = int(user.id)
+    finally:
+        seed.close()
+
+    class FailingCommitSession(Session):
+        def commit(self):
+            raise RuntimeError("injected entry commit failure")
+
+    failing_db = sessionmaker(bind=engine, class_=FailingCommitSession)()
+    client = TestClient(app)
+
+    def override_db():
+        try:
+            yield failing_db
+        finally:
+            failing_db.rollback()
+            failing_db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        failed = client.post("/api/v1/execution/paper/entry", json={
+            "symbol": "ENTRY_RETRY", "price": 250.0, "quantity": 2, "fill_id": "ENTRY-RETRY-1"
+        })
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+    assert failed.status_code == 500
+
+    retry = client.post("/api/v1/execution/paper/entry", headers={"X-User-ID": str(user_id)}, json={
+        "symbol": "ENTRY_RETRY", "price": 250.0, "quantity": 2, "fill_id": "ENTRY-RETRY-1"
+    })
+    assert retry.status_code == 200
+    assert retry.json()["order"]["fill_id"] == "ENTRY-RETRY-1"
+
+    db = TestSession()
+    try:
+        orders = db.query(Order).filter(Order.user_id == user_id, Order.symbol == "ENTRY_RETRY").all()
+        assert len(orders) == 1
+        assert orders[0].fill_id == "ENTRY-RETRY-1"
+        assert orders[0].previous_audit_hash is None
+        assert orders[0].audit_hash
+        assert db.query(Position).filter(
+            Position.user_id == user_id, Position.symbol == "ENTRY_RETRY", Position.is_open.is_(True)
+        ).count() == 1
+    finally:
+        db.close()
+
+
+def test_paper_http_exit_failed_commit_does_not_consume_fill_id_or_audit_head():
+    """A failed terminal exit commit must leave its fill_id reusable and preserve the prior audit head."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+    seed = TestSession()
+    try:
+        user = User(email="exit-retry@example.com", hashed_password="", full_name="Exit Retry", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=500.0,
+                                initial_virtual_balance=500.0, initial_balance_source="BOOTSTRAP",
+                                realized_pnl=0.0, is_active=True))
+        seed.add(Position(user_id=user.id, symbol="EXIT_RETRY", quantity=2, average_price=100.0,
+                          stop_loss=None, target=None, is_paper=True, is_open=True))
+        seed.commit(); user_id = int(user.id)
+    finally:
+        seed.close()
+
+    class FailingCommitSession(Session):
+        def commit(self):
+            raise RuntimeError("injected exit commit failure")
+
+    failing_db = sessionmaker(bind=engine, class_=FailingCommitSession)()
+    client = TestClient(app)
+
+    def override_db():
+        try:
+            yield failing_db
+        finally:
+            failing_db.rollback()
+            failing_db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        failed = client.post("/api/v1/execution/paper/exit", json={
+            "symbol": "EXIT_RETRY", "price": 120.0, "fill_id": "EXIT-RETRY-1"
+        })
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+    assert failed.status_code == 500
+
+    retry = client.post("/api/v1/execution/paper/exit", headers={"X-User-ID": str(user_id)}, json={
+        "symbol": "EXIT_RETRY", "price": 120.0, "fill_id": "EXIT-RETRY-1"
+    })
+    assert retry.status_code == 200
+    assert retry.json()["order"]["fill_id"] == "EXIT-RETRY-1"
+
+    db = TestSession()
+    try:
+        orders = db.query(Order).filter(Order.user_id == user_id, Order.symbol == "EXIT_RETRY").all()
+        assert len(orders) == 1
+        assert orders[0].fill_id == "EXIT-RETRY-1"
+        assert orders[0].previous_audit_hash is None
+        assert orders[0].audit_hash
+        assert db.query(Position).filter(
+            Position.user_id == user_id, Position.symbol == "EXIT_RETRY", Position.is_open.is_(True)
+        ).count() == 0
+    finally:
+        db.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers={"X-User-ID": str(user_id)})
+    assert reconcile.status_code == 200
+    assert reconcile.json()["status"] == "OK"
+
+def test_paper_http_reversal_commit_failure_preserves_existing_audit_head_and_retry_chain():
+    """A failed long-to-short reversal must preserve the prior audit head and retry must chain from it."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+    client = TestClient(app)
+
+    seed = TestSession()
+    try:
+        user = User(email="reversal-audit@example.com", hashed_password="", full_name="Reversal Audit", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+            initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0, is_active=True,
+        ))
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    first = client.post(
+        "/api/v1/execution/paper/order",
+        headers={"X-User-ID": str(user_id)},
+        json={"symbol": "REVERSAL_AUDIT", "transaction_type": "BUY", "price": 100.0, "quantity": 2, "fill_id": "REVERSAL-AUDIT-ENTRY"},
+    )
+    assert first.status_code == 200
+
+    db = TestSession()
+    try:
+        first_order = db.query(Order).filter(
+            Order.user_id == user_id, Order.symbol == "REVERSAL_AUDIT"
+        ).one()
+        original_head = first_order.audit_hash
+        assert original_head
+    finally:
+        db.close()
+
+    class FailingCommitSession(Session):
+        def commit(self):
+            raise RuntimeError("injected reversal commit failure")
+
+    failing_db = sessionmaker(bind=engine, class_=FailingCommitSession)()
+
+    def override_db():
+        try:
+            yield failing_db
+        finally:
+            failing_db.rollback()
+            failing_db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        failed = client.post(
+            "/api/v1/execution/paper/order",
+            json={
+                "symbol": "REVERSAL_AUDIT",
+                "transaction_type": "SELL",
+                "price": 90.0,
+                "quantity": 5,
+                "fill_id": "REVERSAL-AUDIT-RETRY",
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert failed.status_code == 500
+
+    db = TestSession()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        position = db.query(Position).filter(
+            Position.user_id == user_id, Position.symbol == "REVERSAL_AUDIT", Position.is_open.is_(True)
+        ).one()
+        orders = db.query(Order).filter(
+            Order.user_id == user_id, Order.symbol == "REVERSAL_AUDIT"
+        ).order_by(Order.id.asc()).all()
+
+        assert account.virtual_balance == 800.0
+        assert account.realized_pnl == 0.0
+        assert position.quantity == 2
+        assert position.average_price == 100.0
+        assert len(orders) == 1
+        assert orders[0].audit_hash == original_head
+    finally:
+        db.close()
+
+    retry = client.post(
+        "/api/v1/execution/paper/order",
+        headers={"X-User-ID": str(user_id)},
+        json={
+            "symbol": "REVERSAL_AUDIT",
+            "transaction_type": "SELL",
+            "price": 90.0,
+            "quantity": 5,
+            "fill_id": "REVERSAL-AUDIT-RETRY",
+        },
+    )
+    assert retry.status_code == 200
+
+    db = TestSession()
+    try:
+        orders = db.query(Order).filter(
+            Order.user_id == user_id, Order.symbol == "REVERSAL_AUDIT"
+        ).order_by(Order.id.asc()).all()
+        position = db.query(Position).filter(
+            Position.user_id == user_id, Position.symbol == "REVERSAL_AUDIT", Position.is_open.is_(True)
+        ).one()
+        account = db.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+
+        assert len(orders) == 2
+        assert orders[1].fill_id == "REVERSAL-AUDIT-RETRY"
+        assert orders[1].previous_audit_hash == original_head
+        assert orders[1].audit_hash
+        assert orders[1].audit_hash != original_head
+        assert position.quantity == -3
+        assert position.average_price == 90.0
+        assert account.virtual_balance == 1250.0
+        assert account.realized_pnl == -20.0
+    finally:
+        db.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers={"X-User-ID": str(user_id)})
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
+
+
+def test_paper_http_reverse_short_commit_failure_preserves_existing_audit_head_and_retry_chain():
+    """A failed short-to-long reversal must preserve accounting/audit state until the retry commits."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+    client = TestClient(app)
+
+    seed = TestSession()
+    try:
+        user = User(email="reverse-short-audit@example.com", hashed_password="", full_name="Reverse Short Audit", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+            initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0, is_active=True,
+        ))
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    first = client.post(
+        "/api/v1/execution/paper/order",
+        headers={"X-User-ID": str(user_id)},
+        json={"symbol": "REVERSE_SHORT_AUDIT", "transaction_type": "SELL", "price": 100.0, "quantity": 2, "fill_id": "REVERSE-SHORT-ENTRY"},
+    )
+    assert first.status_code == 200
+
+    db = TestSession()
+    try:
+        first_order = db.query(Order).filter(
+            Order.user_id == user_id, Order.symbol == "REVERSE_SHORT_AUDIT"
+        ).one()
+        original_head = first_order.audit_hash
+        assert original_head
+    finally:
+        db.close()
+
+    class FailingCommitSession(Session):
+        def commit(self):
+            raise RuntimeError("injected reverse-short commit failure")
+
+    failing_db = sessionmaker(bind=engine, class_=FailingCommitSession)()
+
+    def override_db():
+        try:
+            yield failing_db
+        finally:
+            failing_db.rollback()
+            failing_db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        failed = client.post(
+            "/api/v1/execution/paper/order",
+            json={
+                "symbol": "REVERSE_SHORT_AUDIT",
+                "transaction_type": "BUY",
+                "price": 110.0,
+                "quantity": 5,
+                "fill_id": "REVERSE-SHORT-RETRY",
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert failed.status_code == 500
+
+    db = TestSession()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        position = db.query(Position).filter(
+            Position.user_id == user_id, Position.symbol == "REVERSE_SHORT_AUDIT", Position.is_open.is_(True)
+        ).one()
+        orders = db.query(Order).filter(
+            Order.user_id == user_id, Order.symbol == "REVERSE_SHORT_AUDIT"
+        ).order_by(Order.id.asc()).all()
+
+        assert account.virtual_balance == 800.0
+        assert account.realized_pnl == 0.0
+        assert position.quantity == -2
+        assert position.average_price == 100.0
+        assert len(orders) == 1
+        assert orders[0].audit_hash == original_head
+    finally:
+        db.close()
+
+    retry = client.post(
+        "/api/v1/execution/paper/order",
+        headers={"X-User-ID": str(user_id)},
+        json={
+            "symbol": "REVERSE_SHORT_AUDIT",
+            "transaction_type": "BUY",
+            "price": 110.0,
+            "quantity": 5,
+            "fill_id": "REVERSE-SHORT-RETRY",
+        },
+    )
+    assert retry.status_code == 200
+
+    db = TestSession()
+    try:
+        orders = db.query(Order).filter(
+            Order.user_id == user_id, Order.symbol == "REVERSE_SHORT_AUDIT"
+        ).order_by(Order.id.asc()).all()
+        position = db.query(Position).filter(
+            Position.user_id == user_id, Position.symbol == "REVERSE_SHORT_AUDIT", Position.is_open.is_(True)
+        ).one()
+        account = db.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+
+        assert len(orders) == 2
+        assert orders[1].fill_id == "REVERSE-SHORT-RETRY"
+        assert orders[1].previous_audit_hash == original_head
+        assert orders[1].audit_hash
+        assert orders[1].audit_hash != original_head
+        assert position.quantity == 3
+        assert position.average_price == 110.0
+        assert account.virtual_balance == 650.0
+        assert account.realized_pnl == -20.0
+    finally:
+        db.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers={"X-User-ID": str(user_id)})
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
+
+
+
+
+
+def test_paper_reconcile_detects_noncanonical_order_symbol_even_when_audit_hash_is_rebuilt():
+    """Reconcile must reject non-canonical durable order identity fields."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(order_id=f"PAPER-{user_id}-{field}", symbol="CANONICAL", quantity=2,
+                      transaction_type="BUY", user_id=user_id, price=100.0, average_price=100.0,
+                      filled_quantity=2, average_fill_price=100.0, pnl=0.0, status="FILLED",
+                      is_paper=True, fill_id=f"{field}-1")
+        db.add(order); db.flush()
+        order.symbol = ' canonical '
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol="CANONICAL", side="BUY", quantity=2,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None)
+        db.add(Position(user_id=user_id, symbol="CANONICAL", quantity=2, average_price=100.0,
+                        stop_loss=None, target=None, is_paper=True, is_open=True))
+        db.commit()
+    finally:
+        db.close()
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("order_symbol_canonicality_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_detects_noncanonical_order_side_even_when_audit_hash_is_rebuilt():
+    """Reconcile must reject non-canonical durable order identity fields."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(order_id=f"PAPER-{user_id}-{field}", symbol="CANONICAL", quantity=2,
+                      transaction_type="BUY", user_id=user_id, price=100.0, average_price=100.0,
+                      filled_quantity=2, average_fill_price=100.0, pnl=0.0, status="FILLED",
+                      is_paper=True, fill_id=f"{field}-1")
+        db.add(order); db.flush()
+        order.transaction_type = 'buy'
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol="CANONICAL", side="BUY", quantity=2,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None)
+        db.add(Position(user_id=user_id, symbol="CANONICAL", quantity=2, average_price=100.0,
+                        stop_loss=None, target=None, is_paper=True, is_open=True))
+        db.commit()
+    finally:
+        db.close()
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("order_side_canonicality_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_detects_noncanonical_order_fill_id_even_when_audit_hash_is_rebuilt():
+    """Reconcile must reject non-canonical durable order identity fields."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(order_id=f"PAPER-{user_id}-{field}", symbol="CANONICAL", quantity=2,
+                      transaction_type="BUY", user_id=user_id, price=100.0, average_price=100.0,
+                      filled_quantity=2, average_fill_price=100.0, pnl=0.0, status="FILLED",
+                      is_paper=True, fill_id=f"{field}-1")
+        db.add(order); db.flush()
+        order.fill_id = ' fill-id-1 '
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol="CANONICAL", side="BUY", quantity=2,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None)
+        db.add(Position(user_id=user_id, symbol="CANONICAL", quantity=2, average_price=100.0,
+                        stop_loss=None, target=None, is_paper=True, is_open=True))
+        db.commit()
+    finally:
+        db.close()
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("order_fill_id_canonicality_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_detects_tampered_order_quantity_even_when_audit_hash_is_rebuilt():
+    """Reconcile must reject a stored requested quantity that differs from the filled quantity."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(
+            order_id=f"PAPER-{user_id}-QTY-TAMPER",
+            symbol="QTY_TAMPER",
+            quantity=2,
+            transaction_type="BUY",
+            user_id=user_id,
+            price=100.0,
+            average_price=100.0,
+            filled_quantity=2,
+            average_fill_price=100.0,
+            pnl=0.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="QTY-TAMPER-1",
+        )
+        db.add(order); db.flush()
+        order.quantity = 5
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol=order.symbol, side="BUY", quantity=2,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None,
+        )
+        db.add(Position(user_id=user_id, symbol="QTY_TAMPER", quantity=2, average_price=100.0,
+                        stop_loss=None, target=None, is_paper=True, is_open=True))
+        db.commit()
+    finally:
+        db.close()
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("order_quantity_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_detects_tampered_order_average_price_even_when_audit_hash_is_rebuilt():
+    """Reconcile must reject a self-consistent-but-wrong stored average price."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(
+            order_id=f"PAPER-{user_id}-AVG-TAMPER",
+            symbol="AVG_TAMPER",
+            quantity=2,
+            transaction_type="BUY",
+            user_id=user_id,
+            price=100.0,
+            average_price=100.0,
+            filled_quantity=2,
+            average_fill_price=100.0,
+            pnl=0.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="AVG-TAMPER-1",
+        )
+        db.add(order); db.flush()
+        order.average_price = 101.0
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol=order.symbol, side="BUY", quantity=2,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None,
+        )
+        db.add(Position(user_id=user_id, symbol="AVG_TAMPER", quantity=2, average_price=100.0,
+                        stop_loss=None, target=None, is_paper=True, is_open=True))
+        db.commit()
+    finally:
+        db.close()
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("order_average_price_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_detects_tampered_order_average_fill_price_even_when_audit_hash_is_rebuilt():
+    """Reconcile must reject a self-consistent-but-wrong stored fill price."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(
+            order_id=f"PAPER-{user_id}-AVG-FILL-TAMPER",
+            symbol="AVG_FILL_TAMPER",
+            quantity=2,
+            transaction_type="BUY",
+            user_id=user_id,
+            price=100.0,
+            average_price=100.0,
+            filled_quantity=2,
+            average_fill_price=100.0,
+            pnl=0.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="AVG-FILL-TAMPER-1",
+        )
+        db.add(order); db.flush()
+        order.average_fill_price = 99.0
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol=order.symbol, side="BUY", quantity=2,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None,
+        )
+        db.add(Position(user_id=user_id, symbol="AVG_FILL_TAMPER", quantity=2, average_price=100.0,
+                        stop_loss=None, target=None, is_paper=True, is_open=True))
+        db.commit()
+    finally:
+        db.close()
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("order_average_fill_price_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_detects_tampered_order_pnl_even_when_audit_hash_is_rebuilt():
+    """Reconcile must reject a self-consistent-but-wrong stored order P&L."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+
+        order = Order(
+            order_id=f"PAPER-{user_id}-PNL-TAMPER",
+            symbol="PNL_TAMPER",
+            quantity=2,
+            transaction_type="BUY",
+            user_id=user_id,
+            price=100.0,
+            average_price=100.0,
+            filled_quantity=2,
+            average_fill_price=100.0,
+            pnl=0.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="PNL-TAMPER-1",
+            audit_hash=None,
+            previous_audit_hash=None,
+        )
+        db.add(order)
+        db.flush()
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol=order.symbol, side="BUY", quantity=2,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None,
+        )
+        db.add(Position(
+            user_id=user_id, symbol="PNL_TAMPER", quantity=2,
+            average_price=100.0, stop_loss=None, target=None,
+            is_paper=True, is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    db = SessionLocal()
+    try:
+        order = db.query(Order).filter(Order.user_id == user_id, Order.symbol == "PNL_TAMPER").one()
+        order.pnl = 25.0
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol=order.symbol, side="BUY", quantity=2,
+            price=100.0, pnl=25.0, fill_id=order.fill_id, previous_hash=None,
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("order_pnl_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repairability_reason"] == "ledger_or_baseline_integrity_failure"
+    assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_detects_noncanonical_filled_status_even_when_ledger_is_otherwise_consistent():
+    """Reconcile must reject a lowercase FILLED status even when accounting is consistent."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 800.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(
+            order_id=f"PAPER-{user_id}-STATUS-CANON",
+            symbol="STATUS_CANON",
+            quantity=2,
+            transaction_type="BUY",
+            user_id=user_id,
+            price=100.0,
+            average_price=100.0,
+            filled_quantity=2,
+            average_fill_price=100.0,
+            pnl=0.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="STATUS-CANON-1",
+        )
+        db.add(order)
+        db.flush()
+        order.status = "filled"
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol=order.symbol, side="BUY", quantity=2,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None,
+        )
+        db.add(Position(
+            user_id=user_id, symbol="STATUS_CANON", quantity=2, average_price=100.0,
+            stop_loss=None, target=None, is_paper=True, is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("order_status_canonicality_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_detects_paper_order_removed_from_paper_scope():
+    """Reconcile must not silently lose a paper order when its paper flag is tampered."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 800.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(
+            order_id=f"PAPER-{user_id}-SCOPE-TAMPER",
+            symbol="SCOPE_TAMPER",
+            quantity=2,
+            transaction_type="BUY",
+            user_id=user_id,
+            price=100.0,
+            average_price=100.0,
+            filled_quantity=2,
+            average_fill_price=100.0,
+            pnl=0.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="SCOPE-TAMPER-1",
+        )
+        db.add(order)
+        db.flush()
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol=order.symbol, side="BUY", quantity=2,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None,
+        )
+        order.is_paper = False
+        db.add(Position(
+            user_id=user_id, symbol="SCOPE_TAMPER", quantity=2, average_price=100.0,
+            stop_loss=None, target=None, is_paper=True, is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("paper_scope_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_rejects_nonfinite_order_execution_fields():
+    """NaN/Inf-like numeric corruption must fail closed before integer coercion or comparisons."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 800.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(
+            order_id=f"PAPER-{user_id}-NONFINITE",
+            symbol="NONFINITE",
+            quantity=2,
+            transaction_type="BUY",
+            user_id=user_id,
+            price=float("inf"),
+            average_price=100.0,
+            filled_quantity=2,
+            average_fill_price=100.0,
+            pnl=0.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="NONFINITE-1",
+        )
+        db.add(order)
+        db.flush()
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol=order.symbol, side="BUY", quantity=2,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None,
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("invalid_order:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_rejects_fractional_filled_quantity_before_integer_coercion():
+    """SQLite must not allow a fractional filled quantity to be silently truncated."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 800.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(
+            order_id=f"PAPER-{user_id}-FRACTIONAL",
+            symbol="FRACTIONAL",
+            quantity=2,
+            transaction_type="BUY",
+            user_id=user_id,
+            price=100.0,
+            average_price=100.0,
+            filled_quantity=2.5,
+            average_fill_price=100.0,
+            pnl=0.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="FRACTIONAL-1",
+        )
+        db.add(order)
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("invalid_order:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
+
+
+def _reset_paper_ledger_for_integrity_test(db):
+    account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+    user_id = int(account.user_id)
+    account.initial_virtual_balance = 1000.0
+    account.virtual_balance = 1000.0
+    account.realized_pnl = 0.0
+    account.initial_balance_source = "BOOTSTRAP"
+    db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+    db.query(Order).filter(Order.user_id == user_id).delete(synchronize_session=False)
+    db.commit()
+    return account, user_id
+
+
+def test_paper_reconcile_rejects_nonfinite_initial_virtual_balance():
+    db = SessionLocal()
+    try:
+        account, user_id = _reset_paper_ledger_for_integrity_test(db)
+        account.initial_virtual_balance = float("nan")
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert "invalid_initial_virtual_balance" in payload["mismatches"]
+    assert "ACCOUNTING_STATE" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+
+
+def test_paper_reconcile_rejects_nonfinite_virtual_balance():
+    db = SessionLocal()
+    try:
+        account, user_id = _reset_paper_ledger_for_integrity_test(db)
+        account.virtual_balance = float("inf")
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert "invalid_virtual_balance" in payload["mismatches"]
+    assert "ACCOUNTING_STATE" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+
+
+def test_paper_reconcile_rejects_nonfinite_realized_pnl():
+    db = SessionLocal()
+    try:
+        account, user_id = _reset_paper_ledger_for_integrity_test(db)
+        account.realized_pnl = float("nan")
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert "invalid_realized_pnl" in payload["mismatches"]
+    assert "ACCOUNTING_STATE" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+
+
+def test_paper_reconcile_rejects_fractional_position_quantity():
+    db = SessionLocal()
+    try:
+        account, user_id = _reset_paper_ledger_for_integrity_test(db)
+        db.add(Position(
+            user_id=user_id,
+            symbol="POS_FRACTIONAL",
+            quantity=2.5,
+            average_price=100.0,
+            stop_loss=None,
+            target=None,
+            is_paper=True,
+            is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("invalid_position:") for item in payload["mismatches"])
+    assert "POSITION_STATE" in payload["mismatch_categories"]
+    assert payload["repairability"] == "SAFE_DRY_RUN"
+
+
+def test_paper_reconcile_rejects_nonfinite_position_average_price():
+    db = SessionLocal()
+    try:
+        account, user_id = _reset_paper_ledger_for_integrity_test(db)
+        db.add(Position(
+            user_id=user_id,
+            symbol="POS_NONFINITE",
+            quantity=2,
+            average_price=float("nan"),
+            stop_loss=None,
+            target=None,
+            is_paper=True,
+            is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("invalid_position:") for item in payload["mismatches"])
+    assert "POSITION_STATE" in payload["mismatch_categories"]
+    assert payload["repairability"] == "SAFE_DRY_RUN"
+
+
+def test_paper_reconcile_detects_duplicate_active_positions_for_same_symbol():
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.initial_virtual_balance = 1000.0
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        account.initial_balance_source = "BOOTSTRAP"
+        db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id).delete(synchronize_session=False)
+        db.commit()
+        db.add_all([
+            Position(user_id=user_id, symbol="DUP_POS", quantity=1, average_price=100.0, is_paper=True, is_open=True),
+            Position(user_id=user_id, symbol="DUP_POS", quantity=1, average_price=100.0, is_paper=True, is_open=True),
+        ])
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert "duplicate_position:DUP_POS" in payload["mismatches"]
+    assert "POSITION_STATE" in payload["mismatch_categories"]
+    assert payload["repairability"] == "SAFE_DRY_RUN"
+
+
+def test_paper_repair_precondition_does_not_truncate_fractional_position_quantity(tmp_path):
+    from app.execution.paper_routes import _paper_repair_precondition
+
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+        position = Position(
+            user_id=user_id, symbol="FP-HASH", quantity=2.1, average_price=100.0,
+            is_paper=True, is_open=True,
+        )
+        db.add(position)
+        db.flush()
+        first = _paper_repair_precondition(db, user_id, account, [], [position])
+        position.quantity = 2.9
+        db.flush()
+        second = _paper_repair_precondition(db, user_id, account, [], [position])
+        assert first["state_hash"] != second["state_hash"]
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_paper_repair_precondition_preserves_nonfinite_numeric_state(tmp_path):
+    from app.execution.paper_routes import _paper_repair_precondition
+
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = float("nan")
+        db.flush()
+        fingerprint = _paper_repair_precondition(db, user_id, account, [], [])
+        assert fingerprint["state_hash"]
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_paper_reconcile_detects_noncanonical_position_symbol():
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.initial_virtual_balance = 1000.0
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        account.initial_balance_source = "BOOTSTRAP"
+        db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id).delete(synchronize_session=False)
+        db.commit()
+        db.add(Position(user_id=user_id, symbol="  mixedCasePos  ", quantity=1,
+                        average_price=100.0, is_paper=True, is_open=True))
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("position_symbol_canonicality_mismatch:") for item in payload["mismatches"])
+    assert "POSITION_STATE" in payload["mismatch_categories"]
+
+
+def test_paper_reconcile_detects_open_zero_quantity_position_state():
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.initial_virtual_balance = 1000.0
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        account.initial_balance_source = "BOOTSTRAP"
+        db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id).delete(synchronize_session=False)
+        db.commit()
+        db.add(Position(user_id=user_id, symbol="ZERO_OPEN", quantity=0,
+                        average_price=0.0, is_paper=True, is_open=True))
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("position_state_mismatch:") for item in payload["mismatches"])
+    assert "POSITION_STATE" in payload["mismatch_categories"]
+
+
+def test_paper_reconcile_detects_closed_nonzero_position_state():
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.initial_virtual_balance = 1000.0
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        account.initial_balance_source = "BOOTSTRAP"
+        db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id).delete(synchronize_session=False)
+        db.commit()
+        db.add(Position(user_id=user_id, symbol="CLOSED_NONZERO", quantity=2,
+                        average_price=100.0, is_paper=True, is_open=False))
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("position_state_mismatch:") for item in payload["mismatches"])
+    assert "POSITION_STATE" in payload["mismatch_categories"]
+
+
+def test_paper_reconcile_detects_tampered_order_identity():
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.initial_virtual_balance = 1000.0
+        account.virtual_balance = 900.0
+        account.realized_pnl = 0.0
+        account.initial_balance_source = "BOOTSTRAP"
+        db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id).delete(synchronize_session=False)
+        db.commit()
+        from app.execution import paper_routes as routes
+        order = Order(
+            order_id=f"PAPER-{user_id}-ORDER-IDENTITY",
+            symbol="ORDER_IDENTITY",
+            quantity=1,
+            transaction_type="BUY",
+            user_id=user_id,
+            price=100.0,
+            average_price=100.0,
+            filled_quantity=1,
+            average_fill_price=100.0,
+            pnl=0.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="ORDER-ID-1",
+        )
+        db.add(order)
+        db.flush()
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol=order.symbol, side="BUY", quantity=1,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None,
+        )
+        order.order_id = "PAPER-999-TAMPERED"
+        db.add(Position(
+            user_id=user_id, symbol="ORDER_IDENTITY", quantity=1,
+            average_price=100.0, is_paper=True, is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("order_identity_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+
+
+def test_paper_reconcile_detects_missing_order_identity():
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.initial_virtual_balance = 1000.0
+        account.virtual_balance = 900.0
+        account.realized_pnl = 0.0
+        account.initial_balance_source = "BOOTSTRAP"
+        db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id).delete(synchronize_session=False)
+        db.commit()
+        order = Order(
+            order_id=f"PAPER-{user_id}-ORDER-MISSING",
+            symbol="ORDER_MISSING",
+            quantity=1,
+            transaction_type="BUY",
+            user_id=user_id,
+            price=100.0,
+            average_price=100.0,
+            filled_quantity=1,
+            average_fill_price=100.0,
+            pnl=0.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="ORDER-MISSING-1",
+        )
+        db.add(order)
+        db.flush()
+        from app.execution import paper_routes as routes
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol=order.symbol, side="BUY", quantity=1,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None,
+        )
+        order.order_id = None
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("order_identity_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+
+
+def test_paper_reconcile_detects_noncanonical_account_mode():
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.initial_virtual_balance = 1000.0
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        account.initial_balance_source = "BOOTSTRAP"
+        account.mode = "paper"
+        db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id).delete(synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert "account_mode_canonicality_mismatch" in payload["mismatches"]
+    assert "ACCOUNTING_STATE" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_detects_noncanonical_initial_balance_source():
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.initial_virtual_balance = 1000.0
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        account.initial_balance_source = " bootstrap "
+        db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id).delete(synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert "account_source_canonicality_mismatch" in payload["mismatches"]
+    assert "ACCOUNTING_STATE" in payload["mismatch_categories"]
+    assert "BASELINE_INTEGRITY" not in payload["mismatch_categories"]
+
+
+def test_paper_order_corrupt_average_price_fails_closed(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'order-average-price.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="order-average-price@example.com", hashed_password="", full_name="Order Average Price", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        seed.add(Order(
+            user_id=user.id, order_id=f"PAPER-{user.id}-BAD-AVG", symbol="BADAVG",
+            transaction_type="BUY", quantity=1, filled_quantity=1, price=100.0,
+            average_price=101.0, average_fill_price=100.0, status="FILLED",
+            is_paper=True, pnl=0.0,
+        ))
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    db = Session()
+    try:
+        try:
+            paper_order(PaperOrderRequest(symbol="NEWAVG", transaction_type="BUY", price=50.0, quantity=1, fill_id="AVG-FAIL"), user_id=user_id, db=db)
+            assert False, "corrupt average_price must fail closed"
+        except RuntimeError as exc:
+            assert "paper order invariant" in str(exc)
+            db.rollback()
+    finally:
+        db.close()
+
+    verify = Session()
+    try:
+        assert verify.query(Order).filter(Order.user_id == user_id).count() == 1
+        stored = verify.query(Order).filter(Order.user_id == user_id).one()
+        assert stored.average_price == 101.0
+        assert stored.average_fill_price == 100.0
+    finally:
+        verify.close()
+
+
+def test_paper_mutation_fails_closed_on_noncanonical_stored_paper_fields(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'paper-canonicality.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="canonicality@example.com", hashed_password="", full_name="Canonicality", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        seed.add(Position(user_id=user.id, symbol=" BADPOS ", quantity=1, average_price=100.0, is_paper=True, is_open=True))
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+    db = Session()
+    try:
+        try:
+            paper_order(PaperOrderRequest(symbol="NEW", transaction_type="BUY", price=50.0, quantity=1, fill_id="CANON-FAIL"), user_id=user_id, db=db)
+            assert False, "noncanonical stored position must fail closed"
+        except RuntimeError as exc:
+            assert "paper position invariant" in str(exc)
+            db.rollback()
+    finally:
+        db.close()
+
+def test_paper_mutation_fails_closed_on_corrupt_bootstrap_audit_chain(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    from app.models.order import Order
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'audit-mutation-integrity.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="audit-mutation@example.com", hashed_password="", full_name="Audit Mutation", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        seed.commit(); user_id = user.id
+    finally:
+        seed.close()
+    db = Session()
+    try:
+        paper_order(PaperOrderRequest(symbol="AUDIT", transaction_type="BUY", price=100.0, quantity=2, fill_id="AUDIT-1"), user_id=user_id, db=db)
+        order = db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).one()
+        order.audit_hash = "0" * 64
+        db.commit()
+        try:
+            _validate_paper_state(db, user_id)
+            raise AssertionError("corrupt audit chain must fail closed")
+        except RuntimeError as exc:
+            assert "audit" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+def test_idempotent_fill_rejects_corrupted_existing_paper_order(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'paper-idempotent-corruption.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    db=Session()
+    try:
+        user=User(email="idem-corrupt@example.com", hashed_password="", full_name="Idempotent Corrupt", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="IDEM", transaction_type="BUY", price=100.0, quantity=1, fill_id="IDEM-1"), user_id=user.id, db=db)
+        order=db.query(Order).filter(Order.user_id==user.id, Order.fill_id=="IDEM-1").one(); order.pnl=float("nan"); db.commit()
+        try: paper_order(PaperOrderRequest(symbol="IDEM", transaction_type="BUY", price=100.0, quantity=1, fill_id="IDEM-1"), user_id=user.id, db=db); raise AssertionError("corrupt idempotent fill accepted")
+        except RuntimeError as exc:
+            assert "pnl" in str(exc)
+    finally: db.close(); engine.dispose()
+
+def test_paper_exit_idempotent_fill_fails_closed_on_corrupt_existing_order(tmp_path):
+    from app.execution.paper_routes import PaperExitRequest, paper_exit, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'paper-exit-idempotent-corruption.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        user = User(
+            email="exit-idem-corrupt@example.com",
+            hashed_password="",
+            full_name="Exit Idempotent Corrupt",
+            is_active=True,
+        )
+        db.add(user)
+        db.flush()
+        db.add(
+            TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=1000.0,
+                initial_virtual_balance=1000.0,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            )
+        )
+        db.commit()
+        user_id = user.id
+
+        paper_order(
+            PaperOrderRequest(
+                symbol="EXITIDEM",
+                transaction_type="BUY",
+                price=100.0,
+                quantity=1,
+                fill_id="EXIT-IDEM-1",
+            ),
+            user_id=user_id,
+            db=db,
+        )
+        order = (
+            db.query(Order)
+            .filter(Order.user_id == user_id, Order.fill_id == "EXIT-IDEM-1")
+            .one()
+        )
+        order.pnl = float("nan")
+        db.commit()
+
+        try:
+            paper_exit(
+                PaperExitRequest(
+                    symbol="EXITIDEM",
+                    price=100.0,
+                    fill_id="EXIT-IDEM-1",
+                ),
+                user_id=user_id,
+                db=db,
+            )
+            raise AssertionError("corrupt idempotent exit fill accepted")
+        except RuntimeError as exc:
+            assert "pnl" in str(exc)
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_paper_mutation_fails_closed_on_noncanonical_execution_metadata(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    from app.models.order import Order
+    engine = create_engine(f"sqlite:///{tmp_path / 'paper-execution-metadata.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="paper-exec-meta@example.com", hashed_password="", full_name="Execution Metadata", is_active=True); seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); seed.commit(); user_id=user.id
+    finally: seed.close()
+    for field, value in (("order_type", "LIMIT"), ("product_type", "DELIVERY"), ("time_in_force", "IOC"), ("trigger_price", 99.0)):
+        db=Session()
+        try:
+            paper_order(PaperOrderRequest(symbol="EXECMETA", transaction_type="BUY", price=100.0, quantity=1, fill_id=f"EXEC-{field}"), user_id=user_id, db=db)
+            order=db.query(Order).filter(Order.user_id==user_id, Order.is_paper.is_(True)).order_by(Order.id.desc()).first(); setattr(order, field, value); db.commit()
+            try: _validate_paper_state(db,user_id); raise AssertionError(field)
+            except RuntimeError: pass
+            db.rollback(); db.query(Order).filter(Order.user_id==user_id, Order.is_paper.is_(True)).delete(synchronize_session=False); db.query(TradingAccount).filter(TradingAccount.user_id==user_id).update({"virtual_balance":1000.0,"realized_pnl":0.0}); db.commit()
+        finally: db.close()
+    engine.dispose()
+
+def test_paper_mutation_fails_closed_on_invalid_paper_order_identity_metadata(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    from app.models.order import Order
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'paper-order-identity.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="paper-order-identity@example.com", hashed_password="", full_name="Order Identity", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        seed.commit(); user_id = user.id
+    finally: seed.close()
+    for field, value in (("order_id", "LIVE-1"), ("order_id", " PAPER-1-TRIM "), ("broker_order_id", "BROKER-123")):
+        db = Session()
+        try:
+            paper_order(PaperOrderRequest(symbol="IDENTITY", transaction_type="BUY", price=100.0, quantity=1, fill_id=f"IDENTITY-{field}-{value.strip()}"), user_id=user_id, db=db)
+            order = db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).order_by(Order.id.desc()).first()
+            setattr(order, field, value); db.commit()
+            try:
+                _validate_paper_state(db, user_id); raise AssertionError(f"{field} corruption must fail closed")
+            except RuntimeError: pass
+            db.rollback(); db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+            db.query(TradingAccount).filter(TradingAccount.user_id == user_id).update({"virtual_balance": 1000.0, "realized_pnl": 0.0}); db.commit()
+        finally: db.close()
+    engine.dispose()
+
+
+def test_paper_repair_precondition_changes_for_remaining_order_metadata(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+    from app.models.order import Order
+    engine = create_engine(f"sqlite:///{tmp_path / 'repair-order-metadata.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="repair-meta@example.com", hashed_password="", full_name="Repair Meta", is_active=True); db.add(user); db.flush()
+        account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)
+        db.add(account); db.commit()
+        paper_order(PaperOrderRequest(symbol="META", transaction_type="BUY", price=10.0, quantity=1, fill_id="META-1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id, Order.fill_id == "META-1").one()
+        positions = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).all()
+        before = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+        order.message = "tampered"
+        db.commit()
+        db.refresh(order)
+        after = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+        assert after != before
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_reconcile_repairability_matrix_is_deterministic(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    from app.models.order import Order
+    engine = create_engine(f"sqlite:///{tmp_path / 'repairability-matrix.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="repairability@example.com", hashed_password="", full_name="Repairability", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        assert _reconcile_paper_ledger(db, user.id)["repairability"] == "NONE"
+        paper_order(PaperOrderRequest(symbol="MATRIX", transaction_type="BUY", price=10.0, quantity=1, fill_id="MATRIX-1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id, Order.fill_id == "MATRIX-1").one()
+        order.pnl = 1.0
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert payload["repairability_reason"] == "ledger_or_baseline_integrity_failure"
+        assert payload["repair_plan"]["apply"] is False
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_repair_plan_is_read_only_and_matches_reconstruction(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    from app.models.position import Position
+    engine = create_engine(f"sqlite:///{tmp_path / 'repair-plan-output.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="repair-plan@example.com", hashed_password="", full_name="Repair Plan", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="PLAN", transaction_type="BUY", price=100.0, quantity=2, fill_id="PLAN-1"), user_id=user.id, db=db)
+        position = db.query(Position).filter(Position.user_id == user.id, Position.symbol == "PLAN").one()
+        position.last_price = 120.0
+        position.pnl = 40.0
+        db.commit()
+        before = (position.quantity, position.average_price, position.last_price, position.pnl)
+        payload = _reconcile_paper_ledger(db, user.id)
+        plan = payload["repair_plan"]
+        assert plan["apply"] is False
+        assert plan["reason"] == "read_only_dry_run"
+        assert plan["proposed_realized_pnl"] == payload["reconstructed_realized_pnl"]
+        assert plan["proposed_virtual_balance"] == payload["reconstructed_virtual_balance"]
+        assert plan["positions"] == payload["reconstructed_positions"]
+        db.refresh(position)
+        assert (position.quantity, position.average_price, position.last_price, position.pnl) == before
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_mutation_routes_share_state_validator_for_corrupt_position(tmp_path):
+    from app.execution.paper_routes import PaperEntryRequest, PaperOrderRequest, paper_entry, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'route-validator-parity.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="route-parity@example.com", hashed_password="", full_name="Route Parity", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        db.add(Position(user_id=user.id, symbol="BAD", quantity=1, average_price=10.0, last_price=float("nan"), pnl=0.0, is_paper=True, is_open=True)); db.commit()
+        for call in (
+            lambda: paper_order(PaperOrderRequest(symbol="NEW1", transaction_type="BUY", price=5.0, quantity=1, fill_id="PARITY-1"), user_id=user.id, db=db),
+            lambda: paper_entry(PaperEntryRequest(symbol="NEW2", price=5.0, quantity=1, fill_id="PARITY-2"), user_id=user.id, db=db),
+        ):
+            try:
+                call()
+                raise AssertionError("corrupt position must block every mutation route")
+            except RuntimeError as exc:
+                assert "paper position invariant" in str(exc)
+            finally:
+                db.rollback()
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_commit_database_errors_are_normalized(tmp_path):
+    from app.execution.paper_routes import _commit_paper_mutation
+    from fastapi import HTTPException
+    from sqlalchemy.exc import IntegrityError, OperationalError
+    engine = create_engine(f"sqlite:///{tmp_path / 'commit-normalization.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        original_commit = db.commit
+        for exc, expected in (
+            (IntegrityError("duplicate", {}, Exception("duplicate")), "conflicts with existing ledger state"),
+            (OperationalError("locked", {}, Exception("locked")), "account is busy; retry"),
+        ):
+            def failing_commit(exc=exc):
+                raise exc
+            db.commit = failing_commit
+            try:
+                _commit_paper_mutation(db)
+                raise AssertionError("database error must be normalized")
+            except HTTPException as normalized:
+                assert normalized.status_code == 409
+                assert expected in str(normalized.detail)
+            finally:
+                db.commit = original_commit
+                db.rollback()
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_retry_after_failed_commit_does_not_duplicate_fill(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _commit_paper_mutation, paper_order
+    from app.models.order import Order
+    engine = create_engine(f"sqlite:///{tmp_path / 'retry-fill.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        user = User(email="retry-fill@example.com", hashed_password="", full_name="Retry Fill", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        first = paper_order(PaperOrderRequest(symbol="RETRY", transaction_type="BUY", price=100.0, quantity=1, fill_id="RETRY-1"), user_id=user.id, db=db)
+        retry = paper_order(PaperOrderRequest(symbol="RETRY", transaction_type="BUY", price=100.0, quantity=1, fill_id="RETRY-1"), user_id=user.id, db=db)
+        assert retry["idempotent"] is True
+        assert db.query(Order).filter(Order.user_id == user.id, Order.fill_id == "RETRY-1").count() == 1
+        assert retry["order"]["id"] == first["order"]["id"]
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_reconcile_detects_execution_metadata_corruption_that_mutation_blocks(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, _validate_paper_state, paper_order
+    from app.models.order import Order
+    engine = create_engine(f"sqlite:///{tmp_path / 'metadata-parity.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        user = User(email="metadata-parity@example.com", hashed_password="", full_name="Metadata Parity", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="META", transaction_type="BUY", price=10.0, quantity=1, fill_id="META-P"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id, Order.fill_id == "META-P").one()
+        order.order_type = "LIMIT"; db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["status"] == "MISMATCH"
+        assert any("invalid_order:".startswith(x.split(":")[0]) for x in payload["mismatches"] if x.startswith("invalid_order:"))
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("mutation validator must reject the same corruption")
+        except RuntimeError as exc:
+            assert "paper order invariant" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_reconcile_mixed_corruption_precedence_blocks_repair(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    from app.models.order import Order
+    from app.models.position import Position
+    engine = create_engine(f"sqlite:///{tmp_path / 'mixed-corruption.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="mixed-corruption@example.com", hashed_password="", full_name="Mixed Corruption", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="MIX", transaction_type="BUY", price=10.0, quantity=1, fill_id="MIX-1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id, Order.fill_id == "MIX-1").one()
+        position = db.query(Position).filter(Position.user_id == user.id, Position.symbol == "MIX").one()
+        order.order_type = "LIMIT"
+        position.last_price = -1.0
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+        assert "POSITION_STATE" in payload["mismatch_categories"]
+        assert payload["repair_plan"]["apply"] is False
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_reconcile_detects_duplicate_order_id_and_blocks_repair(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'duplicate-order-id.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="dup-order-id@example.com", hashed_password="", full_name="Duplicate Order ID", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="DUP1", transaction_type="BUY", price=10.0, quantity=1, fill_id="DUP1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="DUP2", transaction_type="BUY", price=11.0, quantity=1, fill_id="DUP2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        orders[1].order_id = orders[0].order_id
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert any(item.startswith("duplicate_order_id:") for item in payload["mismatches"])
+        assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_mutation_validator_rejects_duplicate_order_id(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'duplicate-order-id-validator.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="dup-order-validator@example.com", hashed_password="", full_name="Duplicate Order Validator", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="VAL1", transaction_type="BUY", price=10.0, quantity=1, fill_id="VAL1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="VAL2", transaction_type="BUY", price=11.0, quantity=1, fill_id="VAL2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        orders[1].order_id = orders[0].order_id
+        db.commit()
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("duplicate paper order_id must fail closed")
+        except RuntimeError as exc:
+            assert "duplicate paper order_id" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_repair_precondition_distinguishes_duplicate_identity_shape(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'duplicate-identity-precondition.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="dup-precondition@example.com", hashed_password="", full_name="Duplicate Precondition", is_active=True)
+        db.add(user); db.flush()
+        account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)
+        db.add(account); db.commit()
+        paper_order(PaperOrderRequest(symbol="PRE1", transaction_type="BUY", price=10.0, quantity=1, fill_id="PRE1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="PRE2", transaction_type="BUY", price=11.0, quantity=1, fill_id="PRE2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        positions = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).all()
+        before = _paper_repair_precondition(db, user.id, account, orders, positions)
+        duplicated = [orders[0], orders[0], orders[1]]
+        after = _paper_repair_precondition(db, user.id, account, duplicated, positions)
+        assert after["state_hash"] != before["state_hash"]
+        assert after["order_count"] == 3
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_repair_precondition_detects_delete_and_reinsert_identity_change(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'delete-reinsert-identity.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="reinsert@example.com", hashed_password="", full_name="Reinsert Identity", is_active=True)
+        db.add(user); db.flush()
+        account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True); db.add(account); db.commit()
+        paper_order(PaperOrderRequest(symbol="REIN", transaction_type="BUY", price=10.0, quantity=1, fill_id="REIN-1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id, Order.fill_id == "REIN-1").one()
+        positions = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).all()
+        before = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+        db.delete(order); db.commit()
+        paper_order(PaperOrderRequest(symbol="REIN", transaction_type="BUY", price=10.0, quantity=1, fill_id="REIN-2"), user_id=user.id, db=db)
+        replacement = db.query(Order).filter(Order.user_id == user.id, Order.fill_id == "REIN-2").one()
+        after = _paper_repair_precondition(db, user.id, account, [replacement], positions)["state_hash"]
+        assert replacement.id != order.id
+        assert after != before
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_duplicate_order_identity_remains_blocked_with_audit_chain_intact(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'duplicate-audit-chain.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="dup-audit@example.com", hashed_password="", full_name="Duplicate Audit", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="AUD1", transaction_type="BUY", price=10.0, quantity=1, fill_id="AUD1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="AUD2", transaction_type="BUY", price=11.0, quantity=1, fill_id="AUD2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        original_hashes = [o.audit_hash for o in orders]
+        orders[1].order_id = orders[0].order_id
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert [o.audit_hash for o in orders] == original_hashes
+        assert payload["repairability"] == "BLOCKED"
+        assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+        assert "AUDIT_INTEGRITY" not in payload["mismatch_categories"]
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_position_identity_and_order_identity_stay_distinct_in_repair_fingerprint(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'position-order-identity.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="identity-separation@example.com", hashed_password="", full_name="Identity Separation", is_active=True)
+        db.add(user); db.flush()
+        account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True); db.add(account); db.commit()
+        paper_order(PaperOrderRequest(symbol="SEP", transaction_type="BUY", price=10.0, quantity=1, fill_id="SEP-1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id, Order.fill_id == "SEP-1").one()
+        position = db.query(Position).filter(Position.user_id == user.id, Position.symbol == "SEP").one()
+        before = _paper_repair_precondition(db, user.id, account, [order], [position])["state_hash"]
+        position.symbol = "SEP2"; db.commit()
+        changed_position = _paper_repair_precondition(db, user.id, account, [order], [position])["state_hash"]
+        position.symbol = "SEP"; db.commit()
+        order.symbol = "SEP2"; db.commit()
+        changed_order = _paper_repair_precondition(db, user.id, account, [order], [position])["state_hash"]
+        assert changed_position != before
+        assert changed_order != before
+        assert changed_position != changed_order
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_cross_field_identity_aliases_fail_closed(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, _validate_paper_state, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'cross-field-identity-alias.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    try:
+        user = User(email="cross-field-identity@example.com", hashed_password="", full_name="Cross Field Identity", is_active=True)
+        db = Session(); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="CF1", transaction_type="BUY", price=10.0, quantity=1, fill_id="CF-FILL"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id).one()
+
+        original_order_id = order.order_id
+        original_fill_id = order.fill_id
+        original_audit_hash = order.audit_hash
+        original_previous = order.previous_audit_hash
+
+        order.fill_id = original_order_id
+        db.commit()
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("fill_id/order_id alias must fail closed")
+        except RuntimeError as exc:
+            assert "audit hash invariant" in str(exc) or "order invariant" in str(exc)
+        db.rollback()
+
+        order.fill_id = original_fill_id
+        order.audit_hash = original_order_id
+        db.commit()
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("audit_hash/order_id alias must fail closed")
+        except RuntimeError as exc:
+            assert "audit hash invariant" in str(exc)
+        db.rollback()
+
+        order.audit_hash = original_audit_hash
+        order.previous_audit_hash = original_order_id
+        db.commit()
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("previous_audit_hash/order_id alias must fail closed")
+        except RuntimeError as exc:
+            assert "audit chain invariant" in str(exc)
+        db.rollback()
+
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "NONE"
+        assert payload["status"] == "CONSISTENT"
+        assert original_previous is None
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_repair_fingerprint_distinguishes_cross_field_identity_swaps(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'cross-field-fingerprint.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="cross-field-fp@example.com", hashed_password="", full_name="Cross Field Fingerprint", is_active=True)
+        db.add(user); db.flush()
+        account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)
+        db.add(account); db.commit()
+        paper_order(PaperOrderRequest(symbol="CFP", transaction_type="BUY", price=10.0, quantity=1, fill_id="CFP-FILL"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id).one()
+        positions = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).all()
+        before = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+
+        order.fill_id, order.order_id = order.order_id, order.fill_id
+        db.commit()
+        swapped = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+        assert swapped != before
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_audit_chain_binds_identity_fields_without_order_id_hashing(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'audit-identity-binding.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="audit-binding@example.com", hashed_password="", full_name="Audit Binding", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="AB1", transaction_type="BUY", price=10.0, quantity=1, fill_id="AB-1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id).one()
+        baseline = _reconcile_paper_ledger(db, user.id)
+        assert baseline["status"] == "CONSISTENT"
+        order.order_id = "PAPER-%d-ALIAS" % user.id
+        db.commit()
+        # order_id is protected by identity validation, while the audit payload intentionally
+        # remains backward-compatible and does not include order_id.
+        tampered = _reconcile_paper_ledger(db, user.id)
+        assert tampered["status"] == "CONSISTENT"
+        assert tampered["repairability"] == "NONE"
+        assert tampered["mismatches"] == []
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_fill_id_null_is_allowed_but_blank_is_invalid_and_duplicate_nonnull_blocks(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, _validate_paper_state, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'fill-id-null-blank.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="fill-null-blank@example.com", hashed_password="", full_name="Fill Null Blank", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="N1", transaction_type="BUY", price=10.0, quantity=1), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="N2", transaction_type="BUY", price=11.0, quantity=1), user_id=user.id, db=db)
+        assert db.query(Order).filter(Order.user_id == user.id, Order.fill_id.is_(None)).count() == 2
+        second = db.query(Order).filter(Order.user_id == user.id, Order.symbol == "N2").one()
+        second.fill_id = ""
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert any(item.startswith("invalid_fill_id:") for item in payload["mismatches"])
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("blank fill_id must fail closed")
+        except RuntimeError as exc:
+            assert "fill_id invariant" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_duplicate_nonnull_fill_id_is_detected_even_when_audit_hashes_are_valid(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, _validate_paper_state, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'fill-id-duplicate.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="fill-duplicate@example.com", hashed_password="", full_name="Fill Duplicate", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="D1", transaction_type="BUY", price=10.0, quantity=1, fill_id="DUP-FILL"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="D2", transaction_type="BUY", price=11.0, quantity=1, fill_id="D2-FILL"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        orders[1].fill_id = orders[0].fill_id
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert "AUDIT_INTEGRITY" not in payload["mismatch_categories"]
+        assert any(item.startswith("duplicate_fill_id:") for item in payload["mismatches"])
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("duplicate fill_id must fail closed")
+        except RuntimeError as exc:
+            assert "audit hash invariant" in str(exc) or "fill_id" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_fill_id_normalization_and_idempotency_keep_null_distinct_from_value(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'fill-id-idempotency.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="fill-id-idempotency@example.com", hashed_password="", full_name="Fill Idempotency", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        first = paper_order(PaperOrderRequest(symbol="I1", transaction_type="BUY", price=10.0, quantity=1), user_id=user.id, db=db)
+        second = paper_order(PaperOrderRequest(symbol="I2", transaction_type="BUY", price=11.0, quantity=1, fill_id="ID-1"), user_id=user.id, db=db)
+        replay = paper_order(PaperOrderRequest(symbol="I2", transaction_type="BUY", price=11.0, quantity=1, fill_id="ID-1"), user_id=user.id, db=db)
+        assert first["fill_id"] is None
+        assert second["fill_id"] == "ID-1"
+        assert replay["id"] == second["id"]
+        assert replay["fill_id"] == "ID-1"
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_fill_id_repair_fingerprint_distinguishes_null_blank_and_value(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'fill-id-fingerprint.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="fill-id-fingerprint@example.com", hashed_password="", full_name="Fill Fingerprint", is_active=True)
+        db.add(user); db.flush()
+        account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True); db.add(account); db.commit()
+        paper_order(PaperOrderRequest(symbol="F1", transaction_type="BUY", price=10.0, quantity=1), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id).one()
+        positions = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).all()
+        null_hash = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+        order.fill_id = ""; db.commit()
+        blank_hash = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+        order.fill_id = "VALUE"; db.commit()
+        value_hash = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+        assert null_hash != blank_hash
+        assert blank_hash != value_hash
+        assert null_hash != value_hash
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_audit_chain_topology_follows_ledger_id_not_timestamp_order(tmp_path):
+    from datetime import timedelta
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'audit-order-topology.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="audit-topology@example.com", hashed_password="", full_name="Audit Topology", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="T1", transaction_type="BUY", price=10.0, quantity=1, fill_id="T1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="T2", transaction_type="BUY", price=11.0, quantity=1, fill_id="T2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        orders[0].created_at = orders[1].created_at + timedelta(days=1)
+        orders[0].updated_at = orders[0].created_at
+        db.commit()
+        _validate_paper_state(db, user.id)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_audit_chain_fails_closed_on_self_forward_and_disconnected_links(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'audit-links.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    mutations = ("self", "forward", "disconnected")
+    for mode in mutations:
+        db = Session()
+        try:
+            user = User(email=f"audit-links-{mode}@example.com", hashed_password="", full_name="Audit Links", is_active=True)
+            db.add(user); db.flush()
+            db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+            paper_order(PaperOrderRequest(symbol="L1", transaction_type="BUY", price=10.0, quantity=1, fill_id=f"L1-{mode}"), user_id=user.id, db=db)
+            paper_order(PaperOrderRequest(symbol="L2", transaction_type="BUY", price=11.0, quantity=1, fill_id=f"L2-{mode}"), user_id=user.id, db=db)
+            orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+            if mode == "self":
+                orders[0].previous_audit_hash = orders[0].audit_hash
+            elif mode == "forward":
+                orders[0].previous_audit_hash = orders[1].audit_hash
+            else:
+                orders[0].previous_audit_hash = "0" * 64
+            db.commit()
+            try:
+                _validate_paper_state(db, user.id)
+                raise AssertionError(f"{mode} audit link must fail closed")
+            except RuntimeError as exc:
+                assert "audit chain invariant" in str(exc)
+        finally:
+            db.close()
+    engine.dispose()
+
+
+def test_paper_legacy_audit_chain_cannot_reroot_after_first_hashed_order(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, _validate_paper_state, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'audit-reroot.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="audit-reroot@example.com", hashed_password="", full_name="Audit Reroot", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="LEGACY", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="R1", transaction_type="BUY", price=10.0, quantity=1, fill_id="R1"), user_id=user.id, db=db)
+        legacy_first = db.query(Order).filter(Order.user_id == user.id).one()
+        legacy_first.audit_hash = None
+        legacy_first.previous_audit_hash = None
+        db.commit()
+        paper_order(PaperOrderRequest(symbol="R2", transaction_type="BUY", price=11.0, quantity=1, fill_id="R2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        assert orders[1].audit_hash
+        orders[0].audit_hash = orders[1].audit_hash
+        orders[0].previous_audit_hash = None
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert "AUDIT_INTEGRITY" in payload["mismatch_categories"]
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("legacy chain reroot must fail closed")
+        except RuntimeError as exc:
+            assert "audit chain invariant" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_legacy_unhashed_orders_can_precede_first_hashed_order_but_remain_nonrepairable(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'audit-legacy-transition.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="audit-transition@example.com", hashed_password="", full_name="Audit Transition", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="LEGACY", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="P1", transaction_type="BUY", price=10.0, quantity=1, fill_id="P1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="P2", transaction_type="BUY", price=11.0, quantity=1, fill_id="P2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        for order in orders:
+            order.audit_hash = None
+            order.previous_audit_hash = None
+        db.commit()
+        paper_order(PaperOrderRequest(symbol="P3", transaction_type="BUY", price=12.0, quantity=1, fill_id="P3"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        assert orders[2].audit_hash
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["baseline_status"] == "LEGACY_UNFINGERPRINTED"
+        assert payload["repairability"] == "BLOCKED"
+    finally:
+        db.close(); engine.dispose()
+
+
+def _integrity_matrix_db(tmp_path, name, source="BOOTSTRAP"):
+    engine = create_engine(f"sqlite:///{tmp_path / (name + '.db')}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    user = User(email=f"{name}@example.com", hashed_password="", full_name=name, is_active=True)
+    db.add(user)
+    db.flush()
+    account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source=source, realized_pnl=0.0, is_active=True)
+    db.add(account)
+    db.commit()
+    return engine, db, user, account
+
+
+def test_integrity_matrix_01_replayed_audit_hash_fails_closed(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    engine, db, user, _ = _integrity_matrix_db(tmp_path, "matrix01")
+    try:
+        paper_order(PaperOrderRequest(symbol="M1", transaction_type="BUY", price=10, quantity=1, fill_id="M1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="M2", transaction_type="BUY", price=11, quantity=1, fill_id="M2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id).all()
+        orders[1].audit_hash = orders[0].audit_hash
+        db.commit()
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("replayed audit hash must fail")
+        except RuntimeError as exc:
+            assert "audit hash" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_02_tail_hash_and_stale_head_fail_closed(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    engine, db, user, _ = _integrity_matrix_db(tmp_path, "matrix02")
+    try:
+        paper_order(PaperOrderRequest(symbol="T1", transaction_type="BUY", price=10, quantity=1, fill_id="T1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="T2", transaction_type="BUY", price=11, quantity=1, fill_id="T2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id).all()
+        orders[1].audit_hash = "f" * 64
+        db.commit()
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("tail mutation must fail")
+        except RuntimeError as exc:
+            assert "audit hash" in str(exc) or "audit chain" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_03_fill_identity_change_breaks_audit_binding(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_audit_payload, _validate_paper_state, paper_order
+    engine, db, user, _ = _integrity_matrix_db(tmp_path, "matrix03")
+    try:
+        paper_order(PaperOrderRequest(symbol="F1", transaction_type="BUY", price=10, quantity=1, fill_id="F1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id).one()
+        order.fill_id = "F2"
+        db.commit()
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("fill identity mutation must fail")
+        except RuntimeError as exc:
+            assert "audit hash" in str(exc)
+        expected = _paper_audit_payload(user_id=user.id, symbol=order.symbol, side=order.transaction_type, quantity=1, price=10, pnl=0, fill_id="F2", previous_hash=None)
+        assert expected != order.audit_hash
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_04_delete_and_reinsert_changes_ledger_identity(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+    engine, db, user, account = _integrity_matrix_db(tmp_path, "matrix04")
+    try:
+        paper_order(PaperOrderRequest(symbol="D1", transaction_type="BUY", price=10, quantity=1, fill_id="D1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="D2", transaction_type="BUY", price=11, quantity=1, fill_id="D2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id).all()
+        positions = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).all()
+        before = _paper_repair_precondition(db, user.id, account, orders, positions)["state_hash"]
+        original = orders[0]
+        db.delete(original); db.commit()
+        replacement = Order(
+            order_id=original.order_id, symbol=original.symbol, quantity=original.quantity,
+            transaction_type=original.transaction_type, user_id=user.id, price=original.price,
+            average_price=original.average_price, filled_quantity=original.filled_quantity,
+            average_fill_price=original.average_fill_price, pnl=original.pnl, status=original.status,
+            is_paper=True, fill_id=original.fill_id, audit_hash=original.audit_hash,
+            previous_audit_hash=original.previous_audit_hash,
+        )
+        db.add(replacement); db.commit()
+        after_orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id).all()
+        after = _paper_repair_precondition(db, user.id, account, after_orders, positions)["state_hash"]
+        assert before != after
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_05_position_order_reconstruction_mismatch_blocks_repair(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    engine, db, user, _ = _integrity_matrix_db(tmp_path, "matrix05")
+    try:
+        paper_order(PaperOrderRequest(symbol="P1", transaction_type="BUY", price=10, quantity=2, fill_id="P1"), user_id=user.id, db=db)
+        position = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True), Position.symbol == "P1").one()
+        position.quantity = 1
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert "POSITION_STATE" in payload["mismatch_categories"]
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_06_pnl_tamper_is_not_silent(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, _validate_paper_state, paper_order
+    engine, db, user, _ = _integrity_matrix_db(tmp_path, "matrix06")
+    try:
+        paper_order(PaperOrderRequest(symbol="Q1", transaction_type="BUY", price=10, quantity=1, fill_id="Q1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id).one()
+        order.pnl = 7.0
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert "AUDIT_INTEGRITY" in payload["mismatch_categories"] or "ORDER_INTEGRITY" in payload["mismatch_categories"]
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("pnl tamper must fail")
+        except RuntimeError:
+            pass
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_07_account_conservation_tolerance_boundary(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    engine, db, user, account = _integrity_matrix_db(tmp_path, "matrix07")
+    try:
+        paper_order(PaperOrderRequest(symbol="A1", transaction_type="BUY", price=10, quantity=1, fill_id="A1"), user_id=user.id, db=db)
+        account.virtual_balance = 990.00000001
+        db.commit()
+        _validate_paper_state(db, user.id)
+        account.virtual_balance = 990.00000002
+        db.commit()
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("over-tolerance balance drift must fail")
+        except RuntimeError as exc:
+            assert "balance conservation" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_08_repair_fingerprint_tracks_account_order_position_mutations(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+    engine, db, user, account = _integrity_matrix_db(tmp_path, "matrix08")
+    try:
+        paper_order(PaperOrderRequest(symbol="R1", transaction_type="BUY", price=10, quantity=1, fill_id="R1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id).one()
+        position = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).one()
+        def h():
+            return _paper_repair_precondition(db, user.id, account, [order], [position])["state_hash"]
+        base = h()
+        account.mode = "PAPER-ALT"; db.flush(); h1 = h()
+        account.mode = "PAPER"; order.message = "changed"; db.flush(); h2 = h()
+        order.message = None; position.target = 123.0; db.flush(); h3 = h()
+        assert len({base, h1, h2, h3}) == 4
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_09_cross_user_identity_collision_is_isolated(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    engine, db, user1, _ = _integrity_matrix_db(tmp_path, "matrix09a")
+    try:
+        user2 = User(email="matrix09b@example.com", hashed_password="", full_name="Matrix09B", is_active=True)
+        db.add(user2); db.flush()
+        db.add(TradingAccount(user_id=user2.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="C1", transaction_type="BUY", price=10, quantity=1, fill_id="CROSS"), user_id=user1.id, db=db)
+        paper_order(PaperOrderRequest(symbol="C2", transaction_type="BUY", price=10, quantity=1, fill_id="CROSS"), user_id=user2.id, db=db)
+        assert db.query(Order).filter(Order.fill_id == "CROSS").count() == 2
+        _validate_paper_state(db, user1.id)
+        _validate_paper_state(db, user2.id)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_10_combined_corruption_blocks_dry_run_repair(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    engine, db, user, account = _integrity_matrix_db(tmp_path, "matrix10")
+    try:
+        paper_order(PaperOrderRequest(symbol="Z1", transaction_type="BUY", price=10, quantity=1, fill_id="Z1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id).one()
+        position = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).one()
+        order.message = "corrupt"
+        position.target = -1.0
+        account.realized_pnl = 5.0
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert payload["repair_plan"]["apply"] is False
+        assert payload["repairability_reason"] == "ledger_or_baseline_integrity_failure"
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_11_endpoint_contract_is_explicit_and_nonoverlapping():
+    from app.execution.paper_routes import router
+    routes = {(route.path, tuple(sorted(route.methods or set()))) for route in router.routes}
+    expected = {
+        ("/api/v1/execution/paper/reconcile", ("GET",)),
+        ("/api/v1/execution/paper/account", ("GET",)),
+        ("/api/v1/execution/paper/orders", ("GET",)),
+        ("/api/v1/execution/paper/position", ("GET",)),
+        ("/api/v1/execution/paper/entry", ("POST",)),
+        ("/api/v1/execution/paper/order", ("POST",)),
+        ("/api/v1/execution/paper/from-scanner", ("POST",)),
+        ("/api/v1/execution/paper/payoff", ("POST",)),
+        ("/api/v1/execution/paper/payoff/from-strategy", ("POST",)),
+        ("/api/v1/execution/paper/payoff/from-cash-future", ("POST",)),
+        ("/api/v1/execution/paper/exit", ("POST",)),
+    }
+    assert expected.issubset(routes)
+    assert not any(path.endswith("/paper/orders") and "POST" in methods for path, methods in routes)
+    assert not any(path.endswith("/paper/reconcile") and "POST" in methods for path, methods in routes)
+
+
+def test_integrity_matrix_12_http_status_contract_for_invalid_fill_and_conflict():
+    from app.execution.paper_routes import PaperOrderRequest, _normalized_fill_id
+    with pytest.raises(HTTPException) as exc:
+        _normalized_fill_id("   ")
+    assert exc.value.status_code == 422
+    assert "fill_id" in str(exc.value.detail)
+    assert _normalized_fill_id(None) is None
+    assert _normalized_fill_id(" F-12 ") == "F-12"
+
+
+def test_integrity_matrix_13_mutation_transaction_boundary_is_shared_and_locking_is_fail_closed():
+    import inspect
+    from app.execution import paper_routes as routes
+    source = inspect.getsource(routes)
+    assert source.count("def _begin_paper_mutation") == 1
+    assert "BEGIN IMMEDIATE" in inspect.getsource(routes._begin_paper_mutation)
+    for name in ("paper_entry", "paper_order", "paper_from_scanner", "paper_exit"):
+        fn = getattr(routes, name)
+        fn_source = inspect.getsource(fn)
+        assert "_begin_paper_mutation(" in fn_source
+    assert "status_code=409" in inspect.getsource(routes._begin_paper_mutation)
+
+
+def test_integrity_matrix_14_source_test_gap_scan_covers_critical_integrity_primitives():
+    import inspect
+    from app.execution import paper_routes as routes
+    source = inspect.getsource(routes)
+    required = (
+        "_reconcile_paper_ledger",
+        "_paper_repair_precondition",
+        "_validate_paper_state",
+        "_normalized_fill_id",
+        "_existing_fill_order",
+        "_begin_paper_mutation",
+        "_commit_paper_mutation",
+        "_paper_audit_payload",
+        "duplicate_order_id",
+        "duplicate_fill_id",
+        "BASELINE_INTEGRITY",
+    )
+    missing = [name for name in required if name not in source]
+    assert missing == []
+
+
+def test_integrity_matrix_15_deterministic_reconciliation_and_fingerprint_are_stable(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, _reconcile_paper_ledger, paper_order
+    engine, db, user, account = _integrity_matrix_db(tmp_path, "matrix15")
+    try:
+        paper_order(PaperOrderRequest(symbol="S1", transaction_type="BUY", price=10, quantity=2, fill_id="S1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="S2", transaction_type="SELL", price=20, quantity=1, fill_id="S2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id, Order.is_paper.is_(True)).order_by(Order.id.asc()).all()
+        positions = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).order_by(Position.id.asc()).all()
+        hashes = [_paper_repair_precondition(db, user.id, account, orders, positions)["state_hash"] for _ in range(5)]
+        reconciles = [_reconcile_paper_ledger(db, user.id) for _ in range(5)]
+        assert len(set(hashes)) == 1
+        assert all(item["status"] == "CONSISTENT" for item in reconciles)
+        assert all(item["mismatches"] == [] for item in reconciles)
+        assert all(item["repairability"] == "NONE" for item in reconciles)
+    finally:
+        db.close(); engine.dispose()
+
+
+# Production-facing HTTP integrity matrix (new boundary; actual FastAPI/TestClient requests).
+
+def _http_integrity_env(tmp_path, name: str, *, users: int = 1):
+    from app.core.database import get_db
+    from app.execution.paper_routes import current_user_id
+    engine = create_engine(
+        f"sqlite:///{tmp_path / f'{name}.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    created = []
+    try:
+        for index in range(users):
+            user = User(
+                email=f"http-matrix-{name}-{index}@example.com",
+                hashed_password="",
+                full_name=f"HTTP Matrix {index}",
+                is_active=True,
+            )
+            db.add(user)
+            db.flush()
+            account = TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=10_000_000.0,
+                initial_virtual_balance=10_000_000.0,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            )
+            db.add(account)
+            db.flush()
+            created.append(user.id)
+        db.commit()
+    finally:
+        db.close()
+
+    def override_db():
+        session = Session()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = override_db
+    return engine, created, current_user_id
+
+
+def _http_client_for_user(user_id: int, current_user_dependency):
+    app.dependency_overrides[current_user_dependency] = lambda: user_id
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _clear_http_overrides():
+    app.dependency_overrides.clear()
+
+
+def test_http_integrity_matrix_01_real_fastapi_route_invocation(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "route", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        account = client.get("/api/v1/execution/paper/account")
+        assert account.status_code == 200
+        assert account.json()["mode"] == "paper"
+
+        created = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "HTTP1", "transaction_type": "BUY", "price": 10.0, "quantity": 2, "fill_id": "HTTP-1"},
+        )
+        assert created.status_code == 200
+        assert created.json()["order"]["symbol"] == "HTTP1"
+
+        reconcile = client.get("/api/v1/execution/paper/reconcile")
+        assert reconcile.status_code == 200
+        assert reconcile.json()["status"] == "OK"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_02_authenticated_identity_isolation(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "identity", users=2)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client_a = TestClient(app, raise_server_exceptions=False)
+        first = client_a.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "ONLY-A", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "A-1"},
+        )
+        assert first.status_code == 200
+
+        app.dependency_overrides[current_user_dependency] = lambda: users[1]
+        client_b = TestClient(app, raise_server_exceptions=False)
+        orders_b = client_b.get("/api/v1/execution/paper/orders")
+        position_b = client_b.get("/api/v1/execution/paper/position")
+        assert orders_b.status_code == 200
+        assert orders_b.json()["orders"] == []
+        assert position_b.status_code == 200
+        assert position_b.json()["position"] is None
+
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        orders_a = client_a.get("/api/v1/execution/paper/orders")
+        assert orders_a.status_code == 200
+        assert [item["symbol"] for item in orders_a.json()["orders"]] == ["ONLY-A"]
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_03_concurrent_mixed_http_readers(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "mixed-readers", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        seed = TestClient(app, raise_server_exceptions=False)
+        assert seed.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "MIXED", "transaction_type": "BUY", "price": 25.0, "quantity": 2, "fill_id": "MIXED-1"},
+        ).status_code == 200
+
+        def read_once(index):
+            client = TestClient(app, raise_server_exceptions=False)
+            route = (
+                "/api/v1/execution/paper/account",
+                "/api/v1/execution/paper/orders",
+                "/api/v1/execution/paper/position",
+                "/api/v1/execution/paper/reconcile",
+            )[index % 4]
+            response = client.get(route)
+            return route, response.status_code, response.json()
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(read_once, range(24)))
+
+        assert all(status == 200 for _, status, _ in results)
+        reconcile_payloads = [payload for route, _, payload in results if route.endswith("/reconcile")]
+        assert reconcile_payloads
+        assert all(payload["status"] == "OK" for payload in reconcile_payloads)
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_04_mutation_vs_reconcile_race_is_snapshot_safe(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "race", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        barrier = threading.Barrier(2)
+
+        def mutate():
+            client = TestClient(app, raise_server_exceptions=False)
+            barrier.wait()
+            return client.post(
+                "/api/v1/execution/paper/order",
+                json={"symbol": "RACE", "transaction_type": "BUY", "price": 31.0, "quantity": 1, "fill_id": "RACE-1"},
+            )
+
+        def reconcile():
+            client = TestClient(app, raise_server_exceptions=False)
+            barrier.wait()
+            return client.get("/api/v1/execution/paper/reconcile")
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            mutation_response, reconcile_response = pool.map(lambda fn: fn(), (mutate, reconcile))
+
+        assert mutation_response.status_code == 200
+        assert reconcile_response.status_code == 200
+        assert reconcile_response.json()["status"] == "OK"
+        assert reconcile_response.json()["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_05_error_status_mapping_is_consistent(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "errors", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+
+        invalid_side = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "ERR", "transaction_type": "HOLD", "price": 10.0, "quantity": 1},
+        )
+        assert invalid_side.status_code == 400
+
+        first = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "ERR", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "ERR-1"},
+        )
+        assert first.status_code == 200
+
+        active_conflict = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "ERR", "transaction_type": "BUY", "price": 11.0, "quantity": 1, "fill_id": "ERR-2"},
+        )
+        assert active_conflict.status_code == 409
+
+        missing_account_user = users[0] + 100000
+        app.dependency_overrides[current_user_dependency] = lambda: missing_account_user
+        missing_account = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "NOACCOUNT", "transaction_type": "BUY", "price": 10.0, "quantity": 1},
+        )
+        assert missing_account.status_code == 404
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_06_malformed_json_and_missing_fields_fail_closed(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "malformed", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+
+        missing_price = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "BAD", "transaction_type": "BUY", "quantity": 1},
+        )
+        assert missing_price.status_code == 422
+
+        invalid_json = client.post(
+            "/api/v1/execution/paper/order",
+            content="{not-valid-json",
+            headers={"content-type": "application/json"},
+        )
+        assert invalid_json.status_code == 422
+
+        after = client.get("/api/v1/execution/paper/reconcile")
+        assert after.status_code == 200
+        assert after.json()["status"] == "OK"
+        assert after.json()["orders"] == 0
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_07_extreme_numeric_inputs_fail_closed(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "numeric", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+
+        fractional_quantity = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "NUM1", "transaction_type": "BUY", "price": 10.0, "quantity": 1.5},
+        )
+        assert fractional_quantity.status_code == 422
+
+        infinite_quantity = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "NUM2", "transaction_type": "BUY", "price": 10.0, "quantity": 1e309},
+        )
+        assert infinite_quantity.status_code == 422
+
+        nonpositive_price = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "NUM3", "transaction_type": "BUY", "price": 0.0, "quantity": 1},
+        )
+        assert nonpositive_price.status_code == 422
+
+        after = client.get("/api/v1/execution/paper/reconcile")
+        assert after.status_code == 200
+        assert after.json()["status"] == "OK"
+        assert after.json()["orders"] == 0
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_08_repeated_identical_http_request_is_idempotent(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "idempotent", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        payload = {"symbol": "IDEMP", "transaction_type": "BUY", "price": 12.0, "quantity": 2, "fill_id": "IDEMP-1"}
+
+        first = client.post("/api/v1/execution/paper/order", json=payload)
+        second = client.post("/api/v1/execution/paper/order", json=payload)
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json()["order"]["fill_id"] == "IDEMP-1"
+        assert second.json()["idempotent"] is True
+
+        orders = client.get("/api/v1/execution/paper/orders")
+        assert orders.status_code == 200
+        assert len(orders.json()["orders"]) == 1
+        assert orders.json()["orders"][0]["fill_id"] == "IDEMP-1"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_09_failed_http_mutation_rolls_back_for_next_request(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "rollback", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+
+        failed = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "ROLLBACK", "transaction_type": "BUY", "price": 10.0, "quantity": 1.25, "fill_id": "RB-FAIL"},
+        )
+        assert failed.status_code == 422
+
+        successful = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "ROLLBACK", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "RB-OK"},
+        )
+        assert successful.status_code == 200
+
+        reconcile = client.get("/api/v1/execution/paper/reconcile")
+        assert reconcile.status_code == 200
+        assert reconcile.json()["status"] == "OK"
+        assert reconcile.json()["orders"] == 1
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_10_final_http_storm_leaves_deterministic_ledger(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "final-storm", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        seed = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "STORM", "transaction_type": "BUY", "price": 20.0, "quantity": 3, "fill_id": "STORM-1"},
+        )
+        assert seed.status_code == 200
+
+        def storm(index):
+            local_client = TestClient(app, raise_server_exceptions=False)
+            if index % 3 == 0:
+                response = local_client.get("/api/v1/execution/paper/reconcile")
+            elif index % 3 == 1:
+                response = local_client.get("/api/v1/execution/paper/orders")
+            else:
+                response = local_client.get("/api/v1/execution/paper/account")
+            return response.status_code, response.json()
+
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            results = list(pool.map(storm, range(30)))
+
+        assert all(status == 200 for status, _ in results)
+        reconciles = [payload for _, payload in results if "mismatches" in payload]
+        assert reconciles
+        assert all(payload["status"] == "OK" and payload["mismatches"] == [] for payload in reconciles)
+
+        final = client.get("/api/v1/execution/paper/reconcile")
+        assert final.status_code == 200
+        final_payload = final.json()
+        assert final_payload["status"] == "OK"
+        assert final_payload["repairability"] == "NONE"
+        assert final_payload["orders"] == 1
+        assert final_payload["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+# HTTP mutation-concurrency matrix 11-20: writer-vs-writer boundaries through real routes.
+
+def _run_concurrent_posts(client_factory, requests):
+    barrier = threading.Barrier(len(requests))
+    def invoke(item):
+        client = client_factory()
+        barrier.wait()
+        route, payload = item
+        response = client.post(route, json=payload)
+        return response.status_code, response.json()
+    with ThreadPoolExecutor(max_workers=len(requests)) as pool:
+        return list(pool.map(invoke, requests))
+
+
+def test_http_mutation_matrix_11_concurrent_same_symbol_different_fill_ids_single_winner(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "same-symbol", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        requests = [
+            ("/api/v1/execution/paper/order", {"symbol": "WRITER", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "W-1"}),
+            ("/api/v1/execution/paper/order", {"symbol": "WRITER", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "W-2"}),
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        statuses = sorted(status for status, _ in results)
+        assert statuses == [200, 409]
+
+        client = TestClient(app, raise_server_exceptions=False)
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 1
+        assert orders[0]["fill_id"] in {"W-1", "W-2"}
+        assert client.get("/api/v1/execution/paper/reconcile").json()["status"] == "OK"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_12_concurrent_short_cover_requests_leave_one_terminal_state(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "short-cover", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        seed = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "COVER", "transaction_type": "SELL", "price": 20.0, "quantity": 2, "fill_id": "COVER-SEED"},
+        )
+        assert seed.status_code == 200
+
+        requests = [
+            ("/api/v1/execution/paper/order", {"symbol": "COVER", "transaction_type": "BUY", "price": 19.0, "quantity": 2, "fill_id": "COVER-1"}),
+            ("/api/v1/execution/paper/order", {"symbol": "COVER", "transaction_type": "BUY", "price": 19.0, "quantity": 2, "fill_id": "COVER-2"}),
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        assert all(status == 200 for status, _ in results)
+
+        final = client.get("/api/v1/execution/paper/position").json()
+        assert final["position"]["quantity"] == 2
+        reconcile = client.get("/api/v1/execution/paper/reconcile").json()
+        assert reconcile["status"] == "OK"
+        assert reconcile["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_13_concurrent_partial_reversals_produce_one_serialized_result(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "partial-reversal", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        seed = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "REV", "transaction_type": "BUY", "price": 10.0, "quantity": 4, "fill_id": "REV-SEED"},
+        )
+        assert seed.status_code == 200
+
+        requests = [
+            ("/api/v1/execution/paper/order", {"symbol": "REV", "transaction_type": "SELL", "price": 12.0, "quantity": 2, "fill_id": "REV-1"}),
+            ("/api/v1/execution/paper/order", {"symbol": "REV", "transaction_type": "SELL", "price": 13.0, "quantity": 2, "fill_id": "REV-2"}),
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        assert all(status == 200 for status, _ in results)
+
+        position = client.get("/api/v1/execution/paper/position").json()["position"]
+        assert position is None
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 3
+        reconcile = client.get("/api/v1/execution/paper/reconcile").json()
+        assert reconcile["status"] == "OK"
+        assert reconcile["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_14_concurrent_terminal_exits_create_one_exit_order(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "exit-race", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        seed = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "EXITRACE", "transaction_type": "BUY", "price": 10.0, "quantity": 2, "fill_id": "EXIT-SEED"},
+        )
+        assert seed.status_code == 200
+
+        requests = [
+            ("/api/v1/execution/paper/exit", {"symbol": "EXITRACE", "price": 12.0, "fill_id": "EXIT-1"}),
+            ("/api/v1/execution/paper/exit", {"symbol": "EXITRACE", "price": 12.0, "fill_id": "EXIT-2"}),
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        assert all(status == 200 for status, _ in results)
+
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 2
+        assert sum(item["fill_id"] in {"EXIT-1", "EXIT-2"} for item in orders) == 1
+        assert client.get("/api/v1/execution/paper/position").json()["position"] is None
+        assert client.get("/api/v1/execution/paper/reconcile").json()["status"] == "OK"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_15_concurrent_entry_and_direct_order_same_symbol_are_serialized(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "entry-order", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        requests = [
+            ("/api/v1/execution/paper/entry", {"symbol": "CROSS", "price": 10.0, "quantity": 1, "fill_id": "ENTRY-1"}),
+            ("/api/v1/execution/paper/order", {"symbol": "CROSS", "transaction_type": "BUY", "price": 11.0, "quantity": 1, "fill_id": "ORDER-1"}),
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        statuses = sorted(status for status, _ in results)
+        assert statuses == [200, 409]
+
+        client = TestClient(app, raise_server_exceptions=False)
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 1
+        assert client.get("/api/v1/execution/paper/reconcile").json()["status"] == "OK"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_16_concurrent_scanner_and_direct_order_same_symbol_are_serialized(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "scanner-order", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        requests = [
+            ("/api/v1/execution/paper/from-scanner", {"symbol": "SCAN", "cash_price": 10.0, "quantity": 1, "future_price": 11.0, "net_profit": 1.0, "executable": True, "fill_id": "SCAN-1"}),
+            ("/api/v1/execution/paper/order", {"symbol": "SCAN", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "DIRECT-1"}),
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        statuses = sorted(status for status, _ in results)
+        assert statuses == [200, 409]
+
+        client = TestClient(app, raise_server_exceptions=False)
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 1
+        assert client.get("/api/v1/execution/paper/reconcile").json()["status"] == "OK"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_17_same_fill_id_across_scanner_and_direct_routes_is_idempotent(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "cross-route-fill", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        requests = [
+            ("/api/v1/execution/paper/from-scanner", {"symbol": "FILLX", "cash_price": 10.0, "quantity": 1, "future_price": 11.0, "net_profit": 1.0, "executable": True, "fill_id": "SHARED-1"}),
+            ("/api/v1/execution/paper/order", {"symbol": "FILLX", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "SHARED-1"}),
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        assert all(status == 200 for status, _ in results)
+        assert sum(payload.get("idempotent") is True for _, payload in results) == 1
+
+        client = TestClient(app, raise_server_exceptions=False)
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 1
+        assert orders[0]["fill_id"] == "SHARED-1"
+        assert client.get("/api/v1/execution/paper/reconcile").json()["status"] == "OK"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_18_conflicting_same_fill_id_across_http_routes_fails_closed(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "conflict-fill", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        requests = [
+            ("/api/v1/execution/paper/order", {"symbol": "CONFLICT", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "CONFLICT-1"}),
+            ("/api/v1/execution/paper/order", {"symbol": "CONFLICT", "transaction_type": "BUY", "price": 11.0, "quantity": 1, "fill_id": "CONFLICT-1"}),
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        statuses = sorted(status for status, _ in results)
+        assert statuses == [200, 409]
+
+        client = TestClient(app, raise_server_exceptions=False)
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 1
+        assert orders[0]["price"] == 10.0
+        reconcile = client.get("/api/v1/execution/paper/reconcile").json()
+        assert reconcile["status"] == "OK"
+        assert reconcile["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_19_two_users_can_mutate_isolated_accounts_concurrently(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "two-users", users=2)
+    try:
+        barrier = threading.Barrier(2)
+
+        def mutate(user_id, symbol, fill_id):
+            app.dependency_overrides[current_user_dependency] = lambda uid=user_id: uid
+            client = TestClient(app, raise_server_exceptions=False)
+            barrier.wait()
+            return client.post(
+                "/api/v1/execution/paper/order",
+                json={"symbol": symbol, "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": fill_id},
+            )
+
+        # Dependency overrides are process-global, so serialize override installation
+        # and use direct route dependency injection for this isolation boundary instead.
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client_a = TestClient(app, raise_server_exceptions=False)
+        first = client_a.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "USER-A", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "UA-1"},
+        )
+        assert first.status_code == 200
+
+        app.dependency_overrides[current_user_dependency] = lambda: users[1]
+        client_b = TestClient(app, raise_server_exceptions=False)
+        second = client_b.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "USER-B", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "UB-1"},
+        )
+        assert second.status_code == 200
+
+        assert client_b.get("/api/v1/execution/paper/orders").json()["orders"][0]["symbol"] == "USER-B"
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        assert client_a.get("/api/v1/execution/paper/orders").json()["orders"][0]["symbol"] == "USER-A"
+
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        assert client_a.get("/api/v1/execution/paper/reconcile").json()["status"] == "OK"
+        app.dependency_overrides[current_user_dependency] = lambda: users[1]
+        assert client_b.get("/api/v1/execution/paper/reconcile").json()["status"] == "OK"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_20_final_writer_storm_has_deterministic_integrity(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "writer-storm", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        seed = TestClient(app, raise_server_exceptions=False).post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "WSTORM", "transaction_type": "BUY", "price": 10.0, "quantity": 5, "fill_id": "WS-SEED"},
+        )
+        assert seed.status_code == 200
+
+        requests = [
+            ("/api/v1/execution/paper/order", {"symbol": "WSTORM", "transaction_type": "SELL", "price": 11.0, "quantity": 1, "fill_id": f"WS-{i}"})
+            for i in range(1, 6)
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        assert all(status == 200 for status, _ in results)
+
+        client = TestClient(app, raise_server_exceptions=False)
+        final_position = client.get("/api/v1/execution/paper/position").json()["position"]
+        assert final_position["quantity"] == 0
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 6
+        assert client.get("/api/v1/execution/paper/reconcile").json()["status"] == "OK"
+        final = client.get("/api/v1/execution/paper/reconcile").json()
+        assert final["repairability"] == "NONE"
+        assert final["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+# HTTP request-lifecycle and retry-integrity matrix 21-30.
+
+def test_http_lifecycle_matrix_21_retry_without_fill_id_cannot_duplicate_open_position(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "retry-no-fill", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        payload = {"symbol": "RETRY", "transaction_type": "BUY", "price": 10.0, "quantity": 1}
+        first = client.post("/api/v1/execution/paper/order", json=payload)
+        second = client.post("/api/v1/execution/paper/order", json=payload)
+        assert first.status_code == 200
+        assert second.status_code == 409
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 1
+        assert client.get("/api/v1/execution/paper/reconcile").json()["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_22_successful_fill_retry_replays_idempotently(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "retry-fill", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client_a = TestClient(app, raise_server_exceptions=False)
+        payload = {"symbol": "REPLAY", "transaction_type": "BUY", "price": 10.0, "quantity": 2, "fill_id": "REPLAY-1"}
+        first = client_a.post("/api/v1/execution/paper/order", json=payload)
+        client_b = TestClient(app, raise_server_exceptions=False)
+        second = client_b.post("/api/v1/execution/paper/order", json=payload)
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.json()["idempotent"] is True
+        assert len(client_b.get("/api/v1/execution/paper/orders").json()["orders"]) == 1
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_23_lock_contention_then_retry_is_clean(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "retry-lock", users=1)
+    lock_db = None
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        lock_db = sessionmaker(bind=engine)()
+        lock_db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        client = TestClient(app, raise_server_exceptions=False)
+        blocked = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "LOCKRETRY", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "LOCK-1"},
+        )
+        assert blocked.status_code == 409
+        lock_db.rollback()
+        retried = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "LOCKRETRY", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "LOCK-1"},
+        )
+        assert retried.status_code == 200
+        assert len(client.get("/api/v1/execution/paper/orders").json()["orders"]) == 1
+        assert client.get("/api/v1/execution/paper/reconcile").json()["mismatches"] == []
+    finally:
+        if lock_db is not None:
+            lock_db.close()
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_24_validation_failure_then_valid_retry_has_no_phantom_write(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "retry-validation", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        failed = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "VALIDRETRY", "transaction_type": "BUY", "price": 10.0, "quantity": 0, "fill_id": "VR-FAIL"},
+        )
+        assert failed.status_code == 422
+        valid = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "VALIDRETRY", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "VR-OK"},
+        )
+        assert valid.status_code == 200
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert [item["fill_id"] for item in orders] == ["VR-OK"]
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_25_duplicate_requests_from_separate_clients_have_one_economic_effect(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "separate-clients", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        payload = {"symbol": "CLIENTS", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "CLIENT-1"}
+        barrier = threading.Barrier(2)
+        def invoke():
+            client = TestClient(app, raise_server_exceptions=False)
+            barrier.wait()
+            return client.post("/api/v1/execution/paper/order", json=payload)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda _: invoke(), range(2)))
+        assert all(response.status_code == 200 for response in responses)
+        assert sum(response.json().get("idempotent") is True for response in responses) == 1
+        client = TestClient(app, raise_server_exceptions=False)
+        assert len(client.get("/api/v1/execution/paper/orders").json()["orders"]) == 1
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_26_read_after_write_across_fresh_clients_is_visible(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "fresh-read", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        writer = TestClient(app, raise_server_exceptions=False)
+        created = writer.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "FRESH", "transaction_type": "BUY", "price": 15.0, "quantity": 2, "fill_id": "FRESH-1"},
+        )
+        assert created.status_code == 200
+        reader = TestClient(app, raise_server_exceptions=False)
+        assert reader.get("/api/v1/execution/paper/account").status_code == 200
+        assert len(reader.get("/api/v1/execution/paper/orders").json()["orders"]) == 1
+        assert reader.get("/api/v1/execution/paper/position").json()["position"]["quantity"] == 2
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_27_connection_recycle_between_mutation_and_reconcile_is_consistent(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "recycle", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        for index in range(3):
+            with TestClient(app, raise_server_exceptions=False) as writer:
+                response = writer.post(
+                    "/api/v1/execution/paper/order",
+                    json={"symbol": f"RECYCLE-{index}", "transaction_type": "BUY", "price": 10.0 + index, "quantity": 1, "fill_id": f"REC-{index}"},
+                )
+                assert response.status_code == 200
+            with TestClient(app, raise_server_exceptions=False) as reader:
+                reconcile = reader.get("/api/v1/execution/paper/reconcile")
+                assert reconcile.status_code == 200
+                assert reconcile.json()["status"] == "OK"
+                assert reconcile.json()["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_28_malformed_content_type_body_fails_closed(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "bad-content", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post(
+            "/api/v1/execution/paper/order",
+            content=b'{"symbol":"BAD","transaction_type":"BUY","price":10.0,',
+            headers={"content-type": "application/json"},
+        )
+        assert response.status_code == 422
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert orders == []
+        assert client.get("/api/v1/execution/paper/reconcile").json()["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_29_unknown_json_fields_do_not_change_ledger_semantics(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "unknown-fields", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post(
+            "/api/v1/execution/paper/order",
+            json={
+                "symbol": "EXTRA",
+                "transaction_type": "BUY",
+                "price": 10.0,
+                "quantity": 1,
+                "fill_id": "EXTRA-1",
+                "unexpected": "ignored",
+                "broker_order_id": "MUST-NOT-LEAK",
+            },
+        )
+        assert response.status_code == 200
+        order = client.get("/api/v1/execution/paper/orders").json()["orders"][0]
+        assert order["symbol"] == "EXTRA"
+        assert order["fill_id"] == "EXTRA-1"
+        assert order["broker_order_id"] in (None, "")
+        assert client.get("/api/v1/execution/paper/reconcile").json()["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_30_final_retry_lifecycle_storm_is_deterministic(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "lifecycle-storm", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        seed_payload = {"symbol": "LIFE", "transaction_type": "BUY", "price": 20.0, "quantity": 2, "fill_id": "LIFE-1"}
+        assert client.post("/api/v1/execution/paper/order", json=seed_payload).status_code == 200
+
+        def lifecycle(index):
+            local = TestClient(app, raise_server_exceptions=False)
+            if index % 4 == 0:
+                response = local.post("/api/v1/execution/paper/order", json=seed_payload)
+            elif index % 4 == 1:
+                response = local.post(
+                    "/api/v1/execution/paper/order",
+                    json={"symbol": "LIFE", "transaction_type": "BUY", "price": 20.0, "quantity": 1, "fill_id": f"CONFLICT-{index}"},
+                )
+            elif index % 4 == 2:
+                response = local.post(
+                    "/api/v1/execution/paper/order",
+                    json={"symbol": "LIFE", "transaction_type": "BUY", "price": 20.0, "quantity": 0, "fill_id": f"BAD-{index}"},
+                )
+            else:
+                response = local.get("/api/v1/execution/paper/reconcile")
+            return response.status_code, response.json()
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(lifecycle, range(32)))
+
+        assert all(status in {200, 409, 422} for status, _ in results)
+        assert all("mismatches" not in payload or payload["mismatches"] == [] for _, payload in results)
+        final = client.get("/api/v1/execution/paper/reconcile")
+        assert final.status_code == 200
+        payload = final.json()
+        assert payload["status"] == "OK"
+        assert payload["repairability"] == "NONE"
+        assert payload["mismatches"] == []
+        assert payload["orders"] == 1
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_paper_read_endpoints_fail_closed_on_corrupt_state_and_exclude_nonpaper_orders(tmp_path):
+    from app.models.order import Order
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "read-scope", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        created = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "READSCOPE", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "READ-1"},
+        )
+        assert created.status_code == 200
+
+        db = sessionmaker(bind=engine)()
+        try:
+            paper_order_row = db.query(Order).filter(Order.user_id == users[0], Order.is_paper.is_(True)).first()
+            db.add(Order(
+                user_id=users[0],
+                order_id=f"PAPER-{users[0]}-FAKE-LIVE",
+                symbol="FAKE-LIVE",
+                transaction_type="BUY",
+                price=99.0,
+                quantity=1,
+                filled_quantity=1,
+                average_price=99.0,
+                average_fill_price=99.0,
+                status="FILLED",
+                is_paper=False,
+                pnl=0.0,
+                order_type="MARKET",
+                product_type="INTRADAY",
+                time_in_force="DAY",
+            ))
+            db.flush()
+            assert paper_order_row is not None
+            paper_order_row.price = 11.0
+            db.commit()
+        finally:
+            db.close()
+
+        assert client.get("/api/v1/execution/paper/account").status_code == 500
+        assert client.get("/api/v1/execution/paper/orders").status_code == 500
+        assert client.get("/api/v1/execution/paper/position").status_code == 500
+
+        db = sessionmaker(bind=engine)()
+        try:
+            paper_order_row = db.query(Order).filter(Order.user_id == users[0], Order.is_paper.is_(True)).first()
+            assert paper_order_row is not None
+            paper_order_row.price = 10.0
+            db.commit()
+        finally:
+            db.close()
+
+        orders = client.get("/api/v1/execution/paper/orders")
+        assert orders.status_code == 200
+        assert all(item["id"] != f"PAPER-{users[0]}-FAKE-LIVE" for item in orders.json()["orders"])
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_paper_empty_account_read_contract_is_zero_and_reconciled(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "empty-read", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+
+        account = client.get("/api/v1/execution/paper/account")
+        orders = client.get("/api/v1/execution/paper/orders")
+        position = client.get("/api/v1/execution/paper/position")
+        reconcile = client.get("/api/v1/execution/paper/reconcile")
+
+        assert account.status_code == 200
+        assert account.json()["mode"] == "paper"
+        assert account.json()["open_positions"] == 0
+        assert account.json()["realized_pnl"] == 0.0
+
+        assert orders.status_code == 200
+        assert orders.json()["orders"] == []
+
+        assert position.status_code == 200
+        assert position.json() == {"status": "flat", "position": None, "mark_to_market": None}
+
+        assert reconcile.status_code == 200
+        assert reconcile.json()["status"] == "OK"
+        assert reconcile.json()["mismatches"] == []
+        assert reconcile.json()["repairability"] == "NONE"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
