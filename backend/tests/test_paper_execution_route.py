@@ -5041,7 +5041,6 @@ def test_paper_reconcile_http_multi_user_precondition_isolation_across_committed
     b2 = snapshot_for(user_b)
     assert a2["repairability"] == "SAFE_DRY_RUN"
     assert a2["mismatch_categories"] == ["ACCOUNTING_STATE", "POSITION_STATE"]
-    assert a2["repair_plan"]["precondition"] != pre_a1["state_hash"] if False else True
     assert a2["repair_plan"]["precondition"]["state_hash"] != pre_a1["state_hash"]
     assert b2 == b0
     assert b2["repair_plan"]["precondition"] == pre_b0
