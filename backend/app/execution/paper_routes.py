@@ -180,6 +180,8 @@ def current_user_id(db: Session = Depends(get_db)) -> int:
         user_id=user.id,
         mode="PAPER",
         virtual_balance=PAPER_STARTING_BALANCE,
+        initial_virtual_balance=PAPER_STARTING_BALANCE,
+        initial_balance_source="BOOTSTRAP",
         realized_pnl=0.0,
         is_active=True,
     )
@@ -490,7 +492,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     if abs(balance_delta) > 1e-8:
         mismatches.append("virtual_balance_mismatch")
 
-    if invalid_orders:
+    if invalid_orders or str(account.initial_balance_source).upper() != "BOOTSTRAP":
         repairability = "BLOCKED"
     elif mismatches:
         repairability = "SAFE_DRY_RUN"
@@ -500,6 +502,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     return {
         "status": "OK" if not mismatches else "MISMATCH",
         "repairability": repairability,
+        "baseline_status": str(account.initial_balance_source).upper(),
         "user_id": user_id,
         "orders": len(orders),
         "reconstructed_realized_pnl": reconstructed_realized,
