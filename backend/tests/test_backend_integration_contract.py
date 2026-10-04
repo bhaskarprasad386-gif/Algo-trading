@@ -138,6 +138,36 @@ def test_rule_driven_paper_entry_is_user_scoped(db_session):
     assert len(LivePaperTradeService().ongoing(db_session, 2)) == 1
 
 
+def test_alert_rule_position_limit_is_serialized_with_paper_allocation(db_session):
+    from app.models import AlertRule
+    from app.models.global_paper_setting import GlobalPaperSetting
+    from app.notifications.common import AlertEvent, AlertService
+    from datetime import datetime
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=1_000_000, emergency_stop=False))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_simultaneous_positions=1, max_daily_capital=1_000_000, max_loss=100_000,
+    ))
+    db_session.commit()
+    service = AlertService()
+    event1 = AlertEvent(
+        strategy_id="cash-future", event_id="RISK-SERIAL-1", symbol="AAA",
+        timestamp_ns=1, message="one", metadata={"gross_profit": 1000,
+        "paper_trade": {"direction":"LONG", "expiry":"2026-10-30", "lot_size":10,
+        "lots":1, "edge":5, "capital_used":100000}}, observed_at=datetime.utcnow(),
+    )
+    event2 = AlertEvent(
+        strategy_id="cash-future", event_id="RISK-SERIAL-2", symbol="BBB",
+        timestamp_ns=2, message="two", metadata={"gross_profit": 1000,
+        "paper_trade": {"direction":"LONG", "expiry":"2026-10-30", "lot_size":10,
+        "lots":1, "edge":5, "capital_used":100000}}, observed_at=datetime.utcnow(),
+    )
+    assert service.dispatch(db_session, event1) == 0
+    assert service.dispatch(db_session, event2) == 0
+    assert len(LivePaperTradeService().ongoing(db_session, 1)) == 1
+
+
 def test_alert_rule_threshold_and_limits_gate_paper_entry(db_session):
     from app.models import AlertRule
     from app.notifications.common import AlertEvent, AlertService
