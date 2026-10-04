@@ -297,6 +297,57 @@ def test_dispatch_expiry_does_not_commit_caller_pending_work(db_session):
     assert verify_setting.paper_amount == 30000
 
 
+def test_expiry_cleanup_database_lock_fails_closed_without_leaking_caller_transaction(db_session, monkeypatch):
+    """A locked independent expiry transaction must reject the alert safely."""
+    from sqlalchemy.exc import OperationalError
+    import app.notifications.common as common_module
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=30000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=30000, max_simultaneous_positions=1, max_loss=0,
+    ))
+    db_session.commit()
+
+    class LockedExpirySession:
+        def __init__(self):
+            self.closed = False
+
+        def close_expired(self, *args, **kwargs):
+            raise OperationalError(
+                "UPDATE live_paper_trade SET status=?",
+                {},
+                Exception("database is locked"),
+            )
+
+        def close(self):
+            self.closed = True
+
+    class LockedExpiryService(LivePaperTradeService):
+        def close_expired(self, *args, **kwargs):
+            raise OperationalError(
+                "UPDATE live_paper_trade SET status=?",
+                {},
+                Exception("database is locked"),
+            )
+
+    # The real SessionLocal is patched only for the short-lived expiry session.
+    # The production dispatcher must fail closed rather than evaluate risk gates
+    # against a potentially stale ongoing reservation/loss snapshot.
+    monkeypatch.setattr(common_module, "SessionLocal", lambda: LockedExpirySession())
+
+    event = _event("EXPIRY-DB-LOCK")
+    assert AlertService().dispatch(db_session, event) == 0
+    assert not db_session.in_transaction()
+    assert db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+        LivePaperTrade.event_id == "EXPIRY-DB-LOCK",
+    ).count() == 0
+
+
 def test_concurrent_expiry_cleanup_does_not_duplicate_close_or_entry(tmp_path):
     """Two alert sessions at the expiry boundary must converge without duplicate paper rows."""
     from datetime import datetime
