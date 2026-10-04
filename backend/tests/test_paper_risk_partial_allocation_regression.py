@@ -115,3 +115,122 @@ def test_malformed_persisted_trade_fails_closed_before_new_paper_entry(db_sessio
         LivePaperTrade.event_id == "BLOCKED-BY-CORRUPTION",
     ).all()
     assert rows == []
+
+
+def test_concurrent_different_events_respect_max_daily_capital(tmp_path):
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.core.database import Base
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'daily-cap-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    setup.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=200000, emergency_stop=False))
+    setup.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=60000, max_simultaneous_positions=5, max_loss=0,
+    ))
+    setup.commit()
+    setup.close()
+
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+
+    def worker(event_id):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            results.append(AlertService().dispatch(db, _event(event_id, capital=60000, lots=1)))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=worker, args=("DAILY-RACE-A",)),
+        threading.Thread(target=worker, args=("DAILY-RACE-B",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(results) == 2
+
+    verify = Session()
+    try:
+        rows = LivePaperTradeService().ongoing(verify, 1)
+        assert len(rows) == 1
+        assert rows[0].capital_used == 60000
+        assert rows[0].event_id in {"DAILY-RACE-A", "DAILY-RACE-B"}
+    finally:
+        verify.close()
+        engine.dispose()
+
+
+def test_concurrent_different_events_respect_max_simultaneous_positions(tmp_path):
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.core.database import Base
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'position-cap-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    setup.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=200000, emergency_stop=False))
+    setup.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0, max_simultaneous_positions=1, max_loss=0,
+    ))
+    setup.commit()
+    setup.close()
+
+    barrier = threading.Barrier(2)
+    errors = []
+    start_results = []
+
+    def worker(event_id):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            AlertService().dispatch(db, _event(event_id, capital=60000, lots=1))
+            start_results.append(event_id)
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=worker, args=("POSITION-RACE-A",)),
+        threading.Thread(target=worker, args=("POSITION-RACE-B",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+
+    verify = Session()
+    try:
+        rows = LivePaperTradeService().ongoing(verify, 1)
+        assert len(rows) == 1
+        assert rows[0].event_id in {"POSITION-RACE-A", "POSITION-RACE-B"}
+    finally:
+        verify.close()
+        engine.dispose()
