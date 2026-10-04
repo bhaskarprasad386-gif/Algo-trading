@@ -380,7 +380,7 @@ def _accounting_after_fill(*, side: str, price: float, quantity: float, current_
 
 
 def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
-    """Rebuild paper positions/P&L from durable fills and compare with state."""
+    """Rebuild paper positions, realized P&L and cash from durable fills."""
     account = _account(db, user_id)
     orders = (
         db.query(Order)
@@ -389,16 +389,77 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         .all()
     )
     rebuilt: dict[str, FillAccountingState] = {}
+    reconstructed_cash = float(account.initial_virtual_balance)
+    reconstructed_realized = 0.0
+    seen_fill_ids: set[str] = set()
+    invalid_orders: list[str] = []
+
     for order in orders:
         symbol = str(order.symbol or "").strip().upper()
+        side = str(order.transaction_type or "").strip().upper()
+        quantity = int(order.filled_quantity or 0)
+        price = float(order.average_fill_price or order.price or 0.0)
+        if (
+            not symbol
+            or side not in {"BUY", "SELL"}
+            or quantity <= 0
+            or not math.isfinite(price)
+            or price <= 0
+            or str(order.status).upper() != "FILLED"
+        ):
+            invalid_orders.append(f"invalid_order:{order.id}")
+            continue
+        if order.fill_id:
+            fill_id = str(order.fill_id).strip()
+            if fill_id in seen_fill_ids:
+                invalid_orders.append(f"duplicate_fill_id:{fill_id}")
+            seen_fill_ids.add(fill_id)
+
         state = rebuilt.get(symbol, FillAccountingState())
-        rebuilt[symbol], _ = _accounting_after_fill(
-            side=order.transaction_type.upper(),
-            price=float(order.average_fill_price or order.price),
-            quantity=float(order.filled_quantity),
+        closed_qty = min(abs(int(state.quantity)), quantity) if (
+            (state.quantity > 0 and side == "SELL") or
+            (state.quantity < 0 and side == "BUY")
+        ) else 0
+        before_qty = int(state.quantity)
+        before_avg = float(state.average_price)
+        after, pnl_delta = _accounting_after_fill(
+            side=side,
+            price=price,
+            quantity=quantity,
             current_quantity=state.quantity,
             current_average_price=state.average_price,
             current_realized_pnl=state.realized_pnl,
+        )
+
+        if side == "BUY":
+            if before_qty < 0:
+                released_margin = _buy_cost(before_avg, closed_qty)
+                remaining_long_cost = _buy_cost(price, int(after.quantity)) if after.quantity > 0 else 0.0
+                reconstructed_cash = round(
+                    reconstructed_cash + released_margin + pnl_delta - remaining_long_cost,
+                    8,
+                )
+            else:
+                reconstructed_cash = round(reconstructed_cash - _buy_cost(price, quantity), 8)
+        else:
+            if before_qty > 0:
+                proceeds = _buy_cost(price, closed_qty)
+                if after.quantity < 0:
+                    reconstructed_cash = round(
+                        reconstructed_cash + proceeds - _buy_cost(price, abs(int(after.quantity))),
+                        8,
+                    )
+                else:
+                    reconstructed_cash = round(reconstructed_cash + proceeds, 8)
+            else:
+                reconstructed_cash = round(
+                    reconstructed_cash - _buy_cost(price, quantity),
+                    8,
+                )
+
+        rebuilt[symbol] = after
+        reconstructed_realized = after.realized_pnl + sum(
+            state.realized_pnl for key, state in rebuilt.items() if key != symbol
         )
 
     actual_positions = {
@@ -407,13 +468,9 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         .filter(Position.user_id == user_id, Position.is_paper.is_(True), Position.quantity != 0)
         .all()
     }
-    mismatches: list[str] = []
-    reconstructed_realized = 0.0
-    exposure = 0.0
+    mismatches: list[str] = list(invalid_orders)
     for symbol, state in rebuilt.items():
-        reconstructed_realized += state.realized_pnl
         if abs(state.quantity) > 0:
-            exposure += _buy_cost(abs(state.average_price), abs(state.quantity))
             position = actual_positions.pop(symbol, None)
             if position is None:
                 mismatches.append(f"missing_position:{symbol}")
@@ -425,27 +482,45 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     for symbol in actual_positions:
         mismatches.append(f"orphan_position:{symbol}")
 
+    reconstructed_realized = round(sum(state.realized_pnl for state in rebuilt.values()), 8)
     realized_delta = round(float(account.realized_pnl or 0.0) - reconstructed_realized, 8)
-    expected_balance = round(
-        float(account.initial_virtual_balance) + reconstructed_realized - exposure,
-        8,
-    )
-    balance_delta = round(float(account.virtual_balance) - expected_balance, 8)
+    balance_delta = round(float(account.virtual_balance) - reconstructed_cash, 8)
     if abs(realized_delta) > 1e-8:
         mismatches.append("realized_pnl_mismatch")
     if abs(balance_delta) > 1e-8:
         mismatches.append("virtual_balance_mismatch")
 
+    if invalid_orders:
+        repairability = "BLOCKED"
+    elif mismatches:
+        repairability = "SAFE_DRY_RUN"
+    else:
+        repairability = "NONE"
+
     return {
         "status": "OK" if not mismatches else "MISMATCH",
+        "repairability": repairability,
         "user_id": user_id,
         "orders": len(orders),
-        "reconstructed_realized_pnl": round(reconstructed_realized, 8),
+        "reconstructed_realized_pnl": reconstructed_realized,
         "stored_realized_pnl": round(float(account.realized_pnl or 0.0), 8),
-        "reconstructed_open_exposure": round(exposure, 8),
-        "expected_virtual_balance": expected_balance,
+        "reconstructed_virtual_balance": reconstructed_cash,
         "stored_virtual_balance": round(float(account.virtual_balance), 8),
         "mismatches": mismatches,
+        "repair_plan": {
+            "apply": False,
+            "reason": "read_only_dry_run",
+            "proposed_realized_pnl": reconstructed_realized,
+            "proposed_virtual_balance": reconstructed_cash,
+            "positions": {
+                symbol: {
+                    "quantity": int(state.quantity),
+                    "average_price": round(float(state.average_price), 8),
+                }
+                for symbol, state in rebuilt.items()
+                if state.quantity != 0
+            },
+        },
     }
 
 
