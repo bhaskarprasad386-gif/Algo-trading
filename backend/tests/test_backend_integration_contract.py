@@ -485,3 +485,140 @@ def test_completed_paper_event_cannot_reopen(db_session):
     assert created is False
     assert svc.ongoing(db_session, 1) == []
     assert [x.id for x in svc.completed(db_session, 1)] == [first.id]
+
+
+def test_manual_close_keeps_realized_loss_limit_but_releases_position_slot(db_session):
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
+    _enable(db_session, 1)
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="111", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0.0, max_simultaneous_positions=1, max_loss=100.0,
+    ))
+    db_session.commit()
+
+    class DummyNotifier:
+        configured = False
+        def send_text(self, mobile, message):
+            return True
+
+    svc = LivePaperTradeService()
+    service = AlertService(DummyNotifier())
+    base = {
+        "direction": "LONG", "expiry": "2026-10-30", "lot_size": 10,
+        "lots": 1, "edge": 10, "capital_used": 1000,
+    }
+    first = AlertEvent(
+        strategy_id="cash-future", event_id="MANUAL-RISK-1", symbol="AAA",
+        timestamp_ns=1, message="first", metadata={"gross_profit": 1, "paper_trade": base},
+    )
+    service.dispatch(db_session, first)
+    trade = svc.ongoing(db_session, 1)[0]
+    svc.mark(db_session, trade, edge=0.0)
+    svc.close(db_session, trade, "MANUAL")
+    assert svc.ongoing(db_session, 1) == []
+    assert svc.completed(db_session, 1)[0].realized_pnl == -100.0
+
+    second = AlertEvent(
+        strategy_id="cash-future", event_id="MANUAL-RISK-2", symbol="BBB",
+        timestamp_ns=2, message="second", metadata={"gross_profit": 1, "paper_trade": base},
+    )
+    service.dispatch(db_session, second)
+    assert svc.ongoing(db_session, 1) == []
+
+
+def test_manual_close_profit_does_not_count_against_max_loss(db_session):
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
+    _enable(db_session, 1)
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="111", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0.0, max_simultaneous_positions=1, max_loss=100.0,
+    ))
+    db_session.commit()
+
+    class DummyNotifier:
+        configured = False
+        def send_text(self, mobile, message):
+            return True
+
+    svc = LivePaperTradeService()
+    service = AlertService(DummyNotifier())
+    base = {
+        "direction": "LONG", "expiry": "2026-10-30", "lot_size": 10,
+        "lots": 1, "edge": 10, "capital_used": 1000,
+    }
+    first = AlertEvent(
+        strategy_id="cash-future", event_id="MANUAL-PROFIT-1", symbol="AAA",
+        timestamp_ns=1, message="first", metadata={"gross_profit": 1, "paper_trade": base},
+    )
+    service.dispatch(db_session, first)
+    trade = svc.ongoing(db_session, 1)[0]
+    svc.mark(db_session, trade, edge=20.0)
+    svc.close(db_session, trade, "MANUAL")
+    assert svc.completed(db_session, 1)[0].realized_pnl == 100.0
+
+    second = AlertEvent(
+        strategy_id="cash-future", event_id="MANUAL-PROFIT-2", symbol="BBB",
+        timestamp_ns=2, message="second", metadata={"gross_profit": 1, "paper_trade": base},
+    )
+    service.dispatch(db_session, second)
+    assert len(svc.ongoing(db_session, 1)) == 1
+
+
+def test_daily_capital_survives_manual_close_and_resets_only_on_ist_day_boundary(db_session):
+    from datetime import datetime, timezone
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
+    _enable(db_session, 1)
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="111", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=1000.0, max_simultaneous_positions=5, max_loss=0.0,
+    ))
+    db_session.commit()
+
+    class DummyNotifier:
+        configured = False
+        def send_text(self, mobile, message):
+            return True
+
+    svc = LivePaperTradeService()
+    service = AlertService(DummyNotifier())
+    base = {
+        "direction": "LONG", "expiry": "2026-10-30", "lot_size": 10,
+        "lots": 1, "edge": 10, "capital_used": 1000,
+    }
+    first = AlertEvent(
+        strategy_id="cash-future", event_id="DAILY-CAP-1", symbol="AAA",
+        timestamp_ns=1, message="first", metadata={"gross_profit": 1, "paper_trade": base},
+    )
+    service.dispatch(db_session, first)
+    trade = svc.ongoing(db_session, 1)[0]
+    svc.close(db_session, trade, "MANUAL")
+    assert svc.completed(db_session, 1)[0].capital_used == 1000
+
+    second = AlertEvent(
+        strategy_id="cash-future", event_id="DAILY-CAP-2", symbol="BBB",
+        timestamp_ns=2, message="second", metadata={"gross_profit": 1, "paper_trade": base},
+    )
+    service.dispatch(db_session, second)
+    assert svc.ongoing(db_session, 1) == []
+
+    # Move the completed trade to the previous IST trading day. The same
+    # daily-cap rule must then permit a new entry.
+    trade.closed_at = datetime(2026, 10, 4, 17, 0)
+    trade.opened_at = datetime(2026, 10, 4, 17, 0)
+    db_session.commit()
+
+    third = AlertEvent(
+        strategy_id="cash-future", event_id="DAILY-CAP-3", symbol="CCC",
+        timestamp_ns=3, message="third", metadata={"gross_profit": 1, "paper_trade": base},
+    )
+    service.dispatch(db_session, third)
+    assert len(svc.ongoing(db_session, 1)) == 1
