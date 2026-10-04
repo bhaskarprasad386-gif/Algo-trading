@@ -2936,3 +2936,109 @@ def test_paper_reconcile_full_corruption_contract_never_allows_safe_repair(tmp_p
         finally:
             corrupt.close()
             engine.dispose()
+
+def test_paper_reconcile_repairability_precedence_account_vs_ledger_corruption(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    def setup(name):
+        engine = create_engine(f"sqlite:///{tmp_path / name}.db",
+                               connect_args={"check_same_thread": False, "timeout": 10})
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        db = Session()
+        user = User(email=f"{name}@example.com", hashed_password="", full_name="Precedence", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=5000.0,
+                              initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
+                              realized_pnl=0.0, is_active=True))
+        db.commit(); uid=user.id; db.close()
+        db = Session()
+        paper_order(PaperOrderRequest(symbol="A", transaction_type="BUY", price=100.0, quantity=2, fill_id=f"{name}-1"), user_id=uid, db=db)
+        db.close()
+        return engine, Session, uid
+
+    engine, Session, uid = setup("account-only")
+    db = Session()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.user_id == uid).one()
+        account.virtual_balance = 4999.0
+        db.commit()
+        result = _reconcile_paper_ledger(db, uid)
+        assert result["status"] == "MISMATCH"
+        assert result["repairability"] == "SAFE_DRY_RUN"
+        assert result["repair_plan"]["apply"] is False
+        assert "virtual_balance_mismatch" in result["mismatches"]
+    finally:
+        db.close(); engine.dispose()
+
+    engine, Session, uid = setup("ledger-only")
+    db = Session()
+    try:
+        order = db.query(Order).filter(Order.user_id == uid, Order.is_paper.is_(True)).one()
+        order.price = 101.0
+        db.commit()
+        result = _reconcile_paper_ledger(db, uid)
+        assert result["status"] == "MISMATCH"
+        assert result["repairability"] == "BLOCKED"
+        assert result["repair_plan"]["apply"] is False
+    finally:
+        db.close(); engine.dispose()
+
+    engine, Session, uid = setup("both")
+    db = Session()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.user_id == uid).one()
+        order = db.query(Order).filter(Order.user_id == uid, Order.is_paper.is_(True)).one()
+        account.virtual_balance = 4999.0
+        order.price = 101.0
+        db.commit()
+        result = _reconcile_paper_ledger(db, uid)
+        assert result["status"] == "MISMATCH"
+        assert result["repairability"] == "BLOCKED"
+        assert result["repair_plan"]["apply"] is False
+        assert "virtual_balance_mismatch" in result["mismatches"]
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_reconcile_safe_dry_run_is_strictly_account_or_position_state_only(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'safe-boundary.db'}.db",
+                           connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        user = User(email="safe-boundary@example.com", hashed_password="", full_name="Safe Boundary", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=5000.0,
+                              initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
+                              realized_pnl=0.0, is_active=True))
+        db.commit(); uid=user.id
+    finally: db.close()
+
+    db=Session()
+    try:
+        paper_order(PaperOrderRequest(symbol="PORT", transaction_type="BUY", price=100.0, quantity=5, fill_id="SB1"), user_id=uid, db=db)
+    finally: db.close()
+
+    for kind in ("cash", "realized", "position_qty", "position_avg", "position_open"):
+        db=Session()
+        try:
+            if kind == "cash":
+                db.query(TradingAccount).filter(TradingAccount.user_id == uid).one().virtual_balance += 1
+            elif kind == "realized":
+                db.query(TradingAccount).filter(TradingAccount.user_id == uid).one().realized_pnl += 1
+            else:
+                pos=db.query(Position).filter(Position.user_id == uid, Position.is_paper.is_(True)).one()
+                if kind == "position_qty": pos.quantity += 1
+                elif kind == "position_avg": pos.average_price += 1
+                else: pos.is_open = False
+            db.commit()
+            result=_reconcile_paper_ledger(db,uid)
+            assert result["status"]=="MISMATCH", kind
+            assert result["repairability"]=="SAFE_DRY_RUN", kind
+            assert result["repair_plan"]["apply"] is False
+        finally:
+            db.close()
+    engine.dispose()
