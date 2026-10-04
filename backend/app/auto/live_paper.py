@@ -14,6 +14,19 @@ IST = ZoneInfo("Asia/Kolkata")
 def _now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
+
+def is_fresh_market_timestamp(timestamp_ns, now_ns, max_age_ns=5_000_000_000):
+    """Accept timestamps no older than max_age and never future-dated."""
+    try:
+        timestamp_ns = int(timestamp_ns)
+        now_ns = int(now_ns)
+        max_age_ns = int(max_age_ns)
+    except (TypeError, ValueError):
+        return False
+    if timestamp_ns <= 0 or now_ns <= 0 or max_age_ns < 0:
+        return False
+    return now_ns - max_age_ns <= timestamp_ns <= now_ns
+
 def _parse_date(value):
     if not value:
         return None
