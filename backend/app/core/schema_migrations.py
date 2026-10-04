@@ -152,5 +152,10 @@ def run_schema_migrations() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_live_syn_alert_observed_at ON live_synthetic_alert_history (observed_at)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_live_syn_alert_symbol ON live_synthetic_alert_history (symbol, observed_at)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_live_syn_alert_identity ON live_synthetic_alert_history (symbol, expiry, timestamp_ns, strike, direction)"))
+        if "live_paper_trades" in account_tables:
+            # Prevent concurrent duplicate paper entries for the same user/event.
+            # Existing duplicate rows are not silently deleted; deployment must
+            # fail loudly if legacy data violates the new invariant.
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_live_paper_user_event ON live_paper_trades (user_id, event_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_id ON orders (user_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_positions_user_id ON positions (user_id)"))
