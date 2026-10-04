@@ -832,3 +832,112 @@ def test_cross_user_duplicate_mark_survives_later_user_failure(db_session, monke
         __import__("app.models.live_paper_trade", fromlist=["LivePaperTrade"]).LivePaperTrade.user_id == 2,
         __import__("app.models.live_paper_trade", fromlist=["LivePaperTrade"]).LivePaperTrade.event_id == "CROSS-USER-ROLLBACK",
     ).count() == 0
+
+
+
+def test_concurrent_different_users_get_independent_capital_reservations(tmp_path):
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.core.database import Base
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'cross-user-capital-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    setup.add_all([
+        GlobalPaperSetting(user_id=1, enabled=True, paper_amount=60000, emergency_stop=False),
+        GlobalPaperSetting(user_id=2, enabled=True, paper_amount=60000, emergency_stop=False),
+        AlertRule(
+            user_id=1, strategy_id="cash-future", min_gross_profit=0,
+            mobile_number="", whatsapp_enabled=False, enabled=True,
+            max_daily_capital=60000, max_simultaneous_positions=5, max_loss=0,
+        ),
+        AlertRule(
+            user_id=2, strategy_id="cash-future", min_gross_profit=0,
+            mobile_number="", whatsapp_enabled=False, enabled=True,
+            max_daily_capital=60000, max_simultaneous_positions=5, max_loss=0,
+        ),
+    ])
+    setup.commit()
+    setup.close()
+
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+
+    def worker(user_id, event_id):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            event = AlertEvent(
+                strategy_id="cash-future",
+                event_id=event_id,
+                symbol=event_id,
+                timestamp_ns=1,
+                message="cross-user-capital",
+                metadata={
+                    "gross_profit": 1000,
+                    "paper_trade": {
+                        "direction": "LONG",
+                        "expiry": "2026-10-30",
+                        "lot_size": 10,
+                        "lots": 2,
+                        "edge": 5,
+                        "capital_used": 60000,
+                    },
+                },
+            )
+            results.append((user_id, AlertService().dispatch(db, event)))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=worker, args=(1, "USER1-CAPITAL-RACE")),
+        threading.Thread(target=worker, args=(2, "USER2-CAPITAL-RACE")),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(results) == 2
+
+    verify = Session()
+    try:
+        rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.status == "ONGOING",
+            LivePaperTrade.event_id.in_(
+                ["USER1-CAPITAL-RACE", "USER2-CAPITAL-RACE"]
+            ),
+        ).all()
+        assert len(rows) == 2
+
+        by_user = {row.user_id: row for row in rows}
+        assert set(by_user) == {1, 2}
+        assert by_user[1].capital_used == 60000
+        assert by_user[2].capital_used == 60000
+        assert by_user[1].lots == 2
+        assert by_user[2].lots == 2
+
+        # Neither user's reservation is charged against the other user's
+        # paper amount; both users independently consume exactly their own cap.
+        for user_id in (1, 2):
+            reserved = sum(
+                float(row.capital_used)
+                for row in verify.query(LivePaperTrade).filter(
+                    LivePaperTrade.user_id == user_id,
+                    LivePaperTrade.status == "ONGOING",
+                ).all()
+            )
+            assert reserved == 60000
+    finally:
+        verify.close()
+        engine.dispose()
