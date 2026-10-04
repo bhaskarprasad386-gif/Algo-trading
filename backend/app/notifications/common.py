@@ -255,9 +255,22 @@ class AlertService:
                                 if _valid_persisted_trade(trade)
                             )
                             available_capital = max(0.0, float(setting.paper_amount) - reserved_capital)
+                            # Monetary values are persisted as floats for compatibility,
+                            # but binary float floor-division can under-allocate an exact
+                            # boundary (e.g. 60_000 / 30_000 represented just below 2).
+                            # Use Decimal from the displayed float values so exact-capital
+                            # boundaries allocate the mathematically available whole lots.
+                            from decimal import Decimal, ROUND_FLOOR
+                            available_decimal = Decimal(str(available_capital))
+                            per_lot_decimal = Decimal(str(capital_per_lot))
+                            allocatable_by_capital = int(
+                                (available_decimal / per_lot_decimal).to_integral_value(
+                                    rounding=ROUND_FLOOR
+                                )
+                            )
                             allocatable_lots = min(
                                 requested_lots,
-                                int(available_capital // capital_per_lot),
+                                max(0, allocatable_by_capital),
                             )
                             effective_capital = capital_per_lot * allocatable_lots
                 day_start = _ist_day_start_utc_naive()
