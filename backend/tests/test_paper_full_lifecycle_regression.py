@@ -46,6 +46,12 @@ def test_full_paper_lifecycle_does_not_reopen_or_reallocate_completed_event(db_s
     assert opposite.direction == "LONG"
     assert opposite.current_edge == 6
 
+    # Duplicate signals must not rewrite either expiry boundary of the
+    # existing position. The earliest expiry is the lifecycle close boundary.
+    db_session.refresh(opposite)
+    assert opposite.expiry == "2026-10-04"
+    assert opposite.earliest_expiry == "2026-10-04"
+
     svc.mark(db_session, trade, edge=7)
     assert trade.unrealized_pnl == -60.0
     assert trade.pnl_pct == -0.1
