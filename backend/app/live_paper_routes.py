@@ -96,11 +96,16 @@ def refresh(db: Session = Depends(get_db)):
     closed = service.close_expired(db)
     ongoing = service.ongoing(db, user)
     _refresh_marks(db, ongoing)
-    service.close_expired(db)
+    # A fresh mark can make an already-due trade visible to the second
+    # expiry pass. Include both passes so the response does not under-report
+    # trades closed during this refresh request.
+    closed_after_mark = service.close_expired(db)
+    closed_ids = {trade.id for trade in closed}
+    closed_ids.update(trade.id for trade in closed_after_mark)
     ongoing = service.ongoing(db, user)
     completed = service.completed(db, user)
     return {
-        "closed_count": len(closed),
+        "closed_count": len(closed_ids),
         "ongoing": [payload(x) for x in ongoing],
         "completed": [payload(x) for x in completed],
         "live_orders": False,
