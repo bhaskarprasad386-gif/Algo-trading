@@ -55,7 +55,7 @@ class LivePaperTradeService:
             # drift when a later alert reports a different capital estimate.
             self.mark(db, existing, edge=edge)
             return existing, False
-        if lot_size <= 0 or lots <= 0 or edge < 0:
+        if lot_size <= 0 or lots <= 0 or edge < 0 or float(capital_used) <= 0:
             return None, False
         # Serialize capital allocation on the per-user global paper setting
         # row before reading reservations. SQLite otherwise allows two
