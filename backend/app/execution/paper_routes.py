@@ -34,11 +34,13 @@ class PaperEntryRequest(BaseModel):
     quantity: float = Field(..., gt=0)
     stop_loss_pct: float = Field(0.02, ge=0)
     target_pct: float = Field(0.04, ge=0)
+    fill_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class PaperExitRequest(BaseModel):
     symbol: str | None = Field(default=None, min_length=1, max_length=128)
     price: float = Field(..., gt=0)
+    fill_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class PaperOrderRequest(BaseModel):
@@ -48,6 +50,7 @@ class PaperOrderRequest(BaseModel):
     quantity: float = Field(..., gt=0)
     stop_loss_pct: float = Field(0.02, ge=0)
     target_pct: float = Field(0.04, ge=0)
+    fill_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class ScannerPaperEntryRequest(BaseModel):
@@ -276,7 +279,7 @@ def _position_payload(position: Position | None) -> dict | None:
     }
 
 
-def _create_order(db: Session, *, user_id: int, symbol: str, side: str, price: float, quantity: float, pnl: float = 0.0) -> dict:
+def _create_order(db: Session, *, user_id: int, symbol: str, side: str, price: float, quantity: float, pnl: float = 0.0, fill_id: str | None = None) -> dict:
     normalized_quantity = _validate_quantity(quantity)
     order_id = f"PAPER-{user_id}-{uuid.uuid4().hex[:16]}"
     order = Order(
@@ -288,11 +291,32 @@ def _create_order(db: Session, *, user_id: int, symbol: str, side: str, price: f
         user_id=user_id,
         price=price,
         pnl=pnl,
+        fill_id=fill_id,
     )
     db.add(order)
     db.flush()
-    return {"id": order.order_id, "symbol": order.symbol, "transaction_type": order.transaction_type, "price": price, "quantity": normalized_quantity, "status": order.status, "pnl": pnl}
+    return {"id": order.order_id, "symbol": order.symbol, "transaction_type": order.transaction_type, "price": price, "quantity": normalized_quantity, "status": order.status, "pnl": pnl, "fill_id": fill_id}
 
+
+
+def _normalized_fill_id(fill_id: str | None) -> str | None:
+    if fill_id is None:
+        return None
+    value = fill_id.strip()
+    if not value:
+        raise HTTPException(status_code=422, detail="fill_id must not be blank")
+    return value
+
+
+def _existing_fill_order(db: Session, *, user_id: int, fill_id: str | None, symbol: str, side: str, price: float, quantity: int) -> dict | None:
+    if fill_id is None:
+        return None
+    existing = db.query(Order).filter(Order.user_id == user_id, Order.fill_id == fill_id).first()
+    if existing is None:
+        return None
+    if existing.symbol != symbol or existing.transaction_type.upper() != side or float(existing.price) != float(price) or int(existing.quantity) != int(quantity):
+        raise HTTPException(status_code=409, detail="fill_id already exists with different execution details")
+    return {"id": existing.order_id, "symbol": existing.symbol, "transaction_type": existing.transaction_type, "price": existing.price, "quantity": float(existing.quantity), "status": existing.status, "pnl": float(existing.pnl or 0.0), "fill_id": existing.fill_id}
 
 def _accounting_after_fill(*, side: str, price: float, quantity: float, current_quantity: float, current_average_price: float, current_realized_pnl: float = 0.0) -> tuple[FillAccountingState, float]:
     before = FillAccountingState(quantity=current_quantity, average_price=current_average_price, realized_pnl=current_realized_pnl)
