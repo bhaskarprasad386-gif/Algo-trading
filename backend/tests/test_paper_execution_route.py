@@ -297,8 +297,7 @@ def test_paper_short_reversal_deducts_cost_of_remaining_long():
     data = reversal_response.json()
 
     # Cover 5 shorts: release 500 margin and realize +50 P&L.
-    # Open the remaining 3-long reversal at 90: deduct 270 from cash.
-    assert data["realized_pnl"] == 50.0
+    # Open the remaining 3-long reversal at 90: deduct 270 from cash.    assert data["realized_pnl"] == 50.0
     assert data["virtual_balance"] == starting_balance - 220.0
     assert data["position"]["symbol"] == "REVERSAL"
     assert data["position"]["quantity"] == 3.0
@@ -597,8 +596,7 @@ def test_paper_mixed_reversal_chain_preserves_cash_and_realized_pnl():
     data = reverse_long.json()
     assert data["virtual_balance"] == 9_960.0
     assert data["realized_pnl"] == 160.0
-    assert data["position"]["quantity"] == 2.0
-    assert data["position"]["entry_price"] == 100.0
+    assert data["position"]["quantity"] == 2.0    assert data["position"]["entry_price"] == 100.0
 
     # Final long close at 90: receive 180 and realize -20.
     closed = client.post(
@@ -897,8 +895,7 @@ def test_paper_multi_symbol_concurrent_exit_and_reversal_preserve_accounting(tmp
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
             first = pool.submit(close_alpha)
-            second = pool.submit(reverse_beta)
-            results = [first.result(), second.result()]
+            second = pool.submit(reverse_beta)            results = [first.result(), second.result()]
 
         successful = [result for result in results if result[0] in {"alpha", "beta"}]
         assert len(successful) == 2
@@ -1197,8 +1194,7 @@ def test_paper_order_persists_filled_execution_fields_for_partial_lifecycle():
     opened = client.post(
         "/api/v1/execution/paper/order",
         headers=headers,
-        json={"symbol": "LIFECYCLE", "transaction_type": "BUY", "price": 100.0, "quantity": 10},
-    )
+        json={"symbol": "LIFECYCLE", "transaction_type": "BUY", "price": 100.0, "quantity": 10},    )
     assert opened.status_code == 200
 
     partial = client.post(
@@ -1498,7 +1494,6 @@ def test_paper_ledger_reconciliation_blocks_repair_plan_for_corrupt_order():
     assert data["repair_plan"]["apply"] is False
     assert any(item.startswith("invalid_order:") for item in data["mismatches"])
 
-
 def test_paper_ledger_reconciliation_fingerprint_chain_is_valid_and_tamper_detected():
     client, headers = _client_and_headers()
     for payload in [
@@ -1797,8 +1792,7 @@ def test_paper_reconcile_mixed_legacy_and_fingerprinted_orders_is_blocked(tmp_pa
             average_fill_price=100.0, status="FILLED", is_paper=True, pnl=0.0,
             fill_id=None, audit_hash=None, previous_audit_hash=None,
         ))
-        seed.commit()
-    finally:
+        seed.commit()    finally:
         seed.close()
 
     db = Session()
@@ -2097,8 +2091,7 @@ def test_paper_audit_chain_tamper_matrix_is_blocked(tmp_path):
                 ),
                 user_id=user_id,
                 db=second_db,
-            )
-        finally:
+            )        finally:
             second_db.close()
 
         tamper_db = Session()
@@ -2397,8 +2390,7 @@ def test_paper_reconcile_blocked_baseline_never_exposes_applicable_repair(tmp_pa
             ),
             user_id=user_id,
             db=db,
-        )
-    finally:
+        )    finally:
         db.close()
 
     corrupt = Session()
@@ -2699,7 +2691,6 @@ def test_paper_reconcile_repair_plan_complete_for_partial_reversal_multi_symbol(
         verify.close()
         engine.dispose()
 
-
 def test_paper_reconcile_flat_symbol_excluded_from_repair_positions(tmp_path):
     from app.execution.paper_routes import PaperOrderRequest, PaperExitRequest, _reconcile_paper_ledger, paper_order, paper_exit
 
@@ -2998,829 +2989,16 @@ def test_paper_reconcile_http_dependency_identity_can_be_changed_without_client_
         assert second.json()["user_id"] == second_id
         assert first.json()["user_id"] != second.json()["user_id"]
     finally:
-        app.dependency_overrides.pop(routes.current_user_id, None)
 
 
-def test_paper_reconcile_http_is_strictly_read_only_for_user_state():
-    from app.execution import paper_routes as routes
-
-    db = SessionLocal()
-    try:
-        accounts = (
-            db.query(TradingAccount)
-            .filter(TradingAccount.is_active.is_(True), TradingAccount.mode == "PAPER")
-            .order_by(TradingAccount.id.asc())
-            .all()
-        )
-        if not accounts:
-            pytest.skip("requires an active paper account")
-        user_id = int(accounts[0].user_id)
-
-        def snapshot():
-            account = db.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
-            orders = (
-                db.query(Order)
-                .filter(Order.user_id == user_id, Order.is_paper.is_(True))
-                .order_by(Order.id.asc())
-                .all()
-            )
-            positions = (
-                db.query(Position)
-                .filter(Position.user_id == user_id, Position.is_paper.is_(True))
-                .order_by(Position.id.asc())
-                .all()
-            )
-            def row(obj):
-                return tuple((column.name, getattr(obj, column.name)) for column in obj.__table__.columns)
-            return {
-                "account": row(account),
-                "orders": [row(order) for order in orders],
-                "positions": [row(position) for position in positions],
-            }
-
-        before = snapshot()
-        client = TestClient(app)
-        app.dependency_overrides[routes.current_user_id] = lambda: user_id
-        try:
-            response = client.get("/api/v1/execution/paper/reconcile")
-        finally:
-            app.dependency_overrides.pop(routes.current_user_id, None)
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["user_id"] == user_id
-        assert payload["repair_plan"]["apply"] is False
-
-        db.expire_all()
-        after = snapshot()
-        assert before == after
-
-        # The read-only response itself must not manufacture a repair mutation.
-        assert payload["repair_plan"]["reason"] == "read_only_dry_run"
-    finally:
-        db.close()
-
-
-def test_paper_reconcile_direct_read_only_preserves_state_hash_and_audit_head():
-    from app.execution.paper_routes import _reconcile_paper_ledger
-
-    db = SessionLocal()
-    try:
-        accounts = (
-            db.query(TradingAccount)
-            .filter(TradingAccount.is_active.is_(True), TradingAccount.mode == "PAPER")
-            .order_by(TradingAccount.id.asc())
-            .all()
-        )
-        if not accounts:
-            pytest.skip("requires an active paper account")
-        user_id = int(accounts[0].user_id)
-
-        first = _reconcile_paper_ledger(db, user_id)
-        db.expire_all()
-        second = _reconcile_paper_ledger(db, user_id)
-
-        assert first["repair_plan"]["apply"] is False
-        assert second["repair_plan"]["apply"] is False
-        assert first["repair_plan"]["precondition"] == second["repair_plan"]["precondition"]
-        assert first["repair_plan"]["precondition"]["state_hash"] == second["repair_plan"]["precondition"]["state_hash"]
-        assert first["repair_plan"]["precondition"]["audit_head"] == second["repair_plan"]["precondition"]["audit_head"]
-        assert first == second
-    finally:
-        db.close()
-
-def test_paper_reconcile_authorization_fails_closed_when_multiple_active_users_exist(tmp_path):
-    from app.execution.paper_routes import current_user_id, _reconcile_paper_ledger
-
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'reconcile-auth-boundary.db'}",
-        connect_args={"check_same_thread": False, "timeout": 10},
-    )
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    db = Session()
-    try:
-        users = [
-            User(email="auth-a@example.com", hashed_password="", full_name="Auth A", is_active=True),
-            User(email="auth-b@example.com", hashed_password="", full_name="Auth B", is_active=True),
-        ]
-        db.add_all(users); db.flush()
-        db.add_all([
-            TradingAccount(user_id=users[0].id, mode="PAPER", virtual_balance=1000.0,
-                           initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", is_active=True),
-            TradingAccount(user_id=users[1].id, mode="PAPER", virtual_balance=2000.0,
-                           initial_virtual_balance=2000.0, initial_balance_source="BOOTSTRAP", is_active=True),
-        ])
-        db.commit()
-        with pytest.raises(HTTPException) as exc:
-            current_user_id(db)
-        assert exc.value.status_code == 409
-        assert "authenticated user context" in str(exc.value.detail)
-
-        # Reconciliation itself remains explicitly scoped: there is no fallback
-        # to the first active account when identity is ambiguous.
-        with pytest.raises(HTTPException):
-            current_user_id(db)
-    finally:
-        db.close()
-        engine.dispose()
-
-
-def test_paper_reconcile_route_has_no_client_selectable_user_id(tmp_path):
-    from app.execution.paper_routes import paper_reconcile
-
-    signature = inspect.signature(paper_reconcile)
-    assert "user_id" in signature.parameters
-    parameter = signature.parameters["user_id"]
-    assert parameter.default is not inspect.Parameter.empty
-    assert "Depends" in repr(parameter.default)
-
-    # The only route-level identity source is the dependency; callers cannot
-    # provide a second user selector that competes with current_user_id.
-    assert list(signature.parameters).count("user_id") == 1
-
-def test_paper_reconcile_is_user_isolated_across_orders_positions_and_preconditions(tmp_path):
-    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
-
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'reconcile-user-isolation.db'}",
-        connect_args={"check_same_thread": False, "timeout": 10},
-    )
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    seed = Session()
-    try:
-        user_a = User(email="reconcile-a@example.com", hashed_password="", full_name="Reconcile A", is_active=True)
-        user_b = User(email="reconcile-b@example.com", hashed_password="", full_name="Reconcile B", is_active=True)
-        seed.add_all([user_a, user_b]); seed.flush()
-        seed.add_all([
-            TradingAccount(user_id=user_a.id, mode="PAPER", virtual_balance=10000.0, initial_virtual_balance=10000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True),
-            TradingAccount(user_id=user_b.id, mode="PAPER", virtual_balance=20000.0, initial_virtual_balance=20000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True),
-        ])
-        seed.commit(); a_id, b_id = user_a.id, user_b.id
-    finally:
-        seed.close()
-
-    for user_id, symbol, price, qty, fill_id in (
-        (a_id, "ALPHA", 100.0, 5, "UA-1"),
-        (b_id, "BETA", 500.0, 3, "UB-1"),
-    ):
-        db = Session()
-        try:
-            paper_order(PaperOrderRequest(symbol=symbol, transaction_type="BUY", price=price, quantity=qty, fill_id=fill_id), user_id=user_id, db=db)
-        finally:
-            db.close()
-
-    db = Session()
-    try:
-        a = _reconcile_paper_ledger(db, a_id)
-        b = _reconcile_paper_ledger(db, b_id)
-        assert a["status"] == b["status"] == "OK"
-        assert a["user_id"] == a_id and b["user_id"] == b_id
-        assert a["orders"] == b["orders"] == 1
-        assert a["reconstructed_virtual_balance"] == 9500.0
-        assert b["reconstructed_virtual_balance"] == 18500.0
-        assert a["reconstructed_positions"] == {"ALPHA": {"quantity": 5, "average_price": 100.0}}
-        assert b["reconstructed_positions"] == {"BETA": {"quantity": 3, "average_price": 500.0}}
-        assert a["repair_plan"]["positions"] == a["reconstructed_positions"]
-        assert b["repair_plan"]["positions"] == b["reconstructed_positions"]
-        assert a["repair_plan"]["precondition"]["audit_head"] != b["repair_plan"]["precondition"]["audit_head"]
-        assert a["repair_plan"]["precondition"]["state_hash"] != b["repair_plan"]["precondition"]["state_hash"]
-        assert "BETA" not in a["reconstructed_positions"]
-        assert "ALPHA" not in b["reconstructed_positions"]
-    finally:
-        db.close(); engine.dispose()
-
-
-def test_paper_reconcile_cross_user_tamper_does_not_change_other_users_result(tmp_path):
-    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
-
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'reconcile-cross-user-tamper.db'}",
-        connect_args={"check_same_thread": False, "timeout": 10},
-    )
-    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
-    seed = Session()
-    try:
-        user_a = User(email="cross-a@example.com", hashed_password="", full_name="Cross A", is_active=True)
-        user_b = User(email="cross-b@example.com", hashed_password="", full_name="Cross B", is_active=True)
-        seed.add_all([user_a, user_b]); seed.flush()
-        seed.add_all([
-            TradingAccount(user_id=user_a.id, mode="PAPER", virtual_balance=10000.0, initial_virtual_balance=10000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True),
-            TradingAccount(user_id=user_b.id, mode="PAPER", virtual_balance=10000.0, initial_virtual_balance=10000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True),
-        ])
-        seed.commit(); a_id, b_id = user_a.id, user_b.id
-    finally:
-        seed.close()
-
-    for user_id, symbol, fill_id in ((a_id, "ALPHA", "CU-A"), (b_id, "BETA", "CU-B")):
-        db = Session()
-        try:
-            paper_order(PaperOrderRequest(symbol=symbol, transaction_type="BUY", price=100.0, quantity=2, fill_id=fill_id), user_id=user_id, db=db)
-        finally:
-            db.close()
-
-    db = Session()
-    try:
-        before_b = _reconcile_paper_ledger(db, b_id)
-        order_a = db.query(Order).filter(Order.user_id == a_id, Order.is_paper.is_(True)).one()
-        order_a.price = 999.0; db.commit()
-        after_b = _reconcile_paper_ledger(db, b_id)
-        after_a = _reconcile_paper_ledger(db, a_id)
-        assert before_b == after_b
-        assert after_b["status"] == "OK"
-        assert after_b["reconstructed_positions"] == {"BETA": {"quantity": 2, "average_price": 100.0}}
-        assert after_b["repair_plan"]["positions"] == after_b["reconstructed_positions"]
-        assert after_a["status"] == "MISMATCH"
-        assert after_a["repairability"] == "BLOCKED"
-        assert "ALPHA" in after_a["reconstructed_positions"]
-        assert "BETA" not in after_a["reconstructed_positions"]
-    finally:
-        db.close(); engine.dispose()
-
-def test_paper_reconcile_reconstructed_positions_equal_repair_plan_for_reversal_and_flat_symbols(tmp_path):
-    from app.execution.paper_routes import (
-        PaperExitRequest, PaperOrderRequest, _reconcile_paper_ledger, paper_exit, paper_order
-    )
-
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'reconstructed-positions-contract.db'}",
-        connect_args={"check_same_thread": False, "timeout": 10},
-    )
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    seed = Session()
-    try:
-        user = User(email="reconstructed-contract@example.com", hashed_password="", full_name="Reconstructed Contract", is_active=True)
-        seed.add(user); seed.flush()
-        seed.add(TradingAccount(
-            user_id=user.id, mode="PAPER", virtual_balance=10000.0,
-            initial_virtual_balance=10000.0, initial_balance_source="BOOTSTRAP",
-            realized_pnl=0.0, is_active=True,
-        ))
-        seed.commit(); user_id = user.id
-    finally:
-        seed.close()
-
-    requests = (
-        PaperOrderRequest(symbol="ALPHA", transaction_type="BUY", price=100.0, quantity=10, fill_id="RC-A1"),
-        PaperOrderRequest(symbol="ALPHA", transaction_type="SELL", price=120.0, quantity=15, fill_id="RC-A2"),
-        PaperOrderRequest(symbol="ALPHA", transaction_type="BUY", price=110.0, quantity=2, fill_id="RC-A3"),
-        PaperOrderRequest(symbol="BETA", transaction_type="BUY", price=50.0, quantity=4, fill_id="RC-B1"),
-        PaperOrderRequest(symbol="BETA", transaction_type="SELL", price=60.0, quantity=4, fill_id="RC-B2"),
-        PaperOrderRequest(symbol="FLAT", transaction_type="BUY", price=25.0, quantity=2, fill_id="RC-F1"),
-    )
-    for req in requests:
-        db = Session()
-        try:
-            paper_order(req, user_id=user_id, db=db)
-        finally:
-            db.close()
-
-    db = Session()
-    try:
-        paper_exit(PaperExitRequest(symbol="FLAT", price=30.0, quantity=2, fill_id="RC-F2"), user_id=user_id, db=db)
-    finally:
-        db.close()
-
-    db = Session()
-    try:
-        result = _reconcile_paper_ledger(db, user_id)
-        assert result["status"] == "OK"
-        assert result["repairability"] == "NONE"
-        assert result["reconstructed_positions"] == {
-            "ALPHA": {"quantity": -3, "average_price": 110.0},
-        }
-        assert result["repair_plan"]["positions"] == result["reconstructed_positions"]
-        assert "BETA" not in result["reconstructed_positions"]
-        assert "FLAT" not in result["reconstructed_positions"]
-        assert result["repair_plan"]["apply"] is False
-    finally:
-        db.close()
-        engine.dispose()
-
-
-def test_paper_reconcile_corrupt_account_preserves_exact_reconstructed_position_contract(tmp_path):
-    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
-
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'reconstructed-positions-safe-dry-run.db'}",
-        connect_args={"check_same_thread": False, "timeout": 10},
-    )
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    seed = Session()
-    try:
-        user = User(email="reconstructed-safe@example.com", hashed_password="", full_name="Reconstructed Safe", is_active=True)
-        seed.add(user); seed.flush()
-        seed.add(TradingAccount(
-            user_id=user.id, mode="PAPER", virtual_balance=5000.0,
-            initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
-            realized_pnl=0.0, is_active=True,
-        ))
-        seed.commit(); user_id = user.id
-    finally:
-        seed.close()
-
-    for req in (
-        PaperOrderRequest(symbol="ONE", transaction_type="BUY", price=100.0, quantity=5, fill_id="RCS-1"),
-        PaperOrderRequest(symbol="TWO", transaction_type="BUY", price=200.0, quantity=2, fill_id="RCS-2"),
-    ):
-        db = Session()
-        try:
-            paper_order(req, user_id=user_id, db=db)
-        finally:
-            db.close()
-
-    db = Session()
-    try:
-        db.query(TradingAccount).filter(TradingAccount.user_id == user_id).one().virtual_balance += 7.0
-        db.commit()
-        result = _reconcile_paper_ledger(db, user_id)
-        assert result["status"] == "MISMATCH"
-        assert result["repairability"] == "SAFE_DRY_RUN"
-        assert result["reconstructed_positions"] == {
-            "ONE": {"quantity": 5, "average_price": 100.0},
-            "TWO": {"quantity": 2, "average_price": 200.0},
-        }
-        assert result["repair_plan"]["positions"] == result["reconstructed_positions"]
-        assert result["repair_plan"]["apply"] is False
-    finally:
-        db.close()
-        engine.dispose()
-
-def test_paper_reconcile_tampered_pnl_blocks_repair_and_never_proposes_apply(tmp_path):
-    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
-
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'audit-pnl-blocked.db'}",
-        connect_args={"check_same_thread": False, "timeout": 10},
-    )
-    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
-    seed = Session()
-    try:
-        user = User(email="audit-pnl@example.com", hashed_password="", full_name="Audit PNL", is_active=True)
-        seed.add(user); seed.flush()
-        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=5000.0,
-                                initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
-                                realized_pnl=0.0, is_active=True))
-        seed.commit(); user_id = user.id
-    finally: seed.close()
-
-    db = Session()
-    try: paper_order(PaperOrderRequest(symbol="A", transaction_type="BUY", price=100.0, quantity=5, fill_id="AP1"), user_id=user_id, db=db)
-    finally: db.close()
-
-    corrupt = Session()
-    try:
-        order = corrupt.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).one()
-        order.pnl = 99.0
-        corrupt.commit()
-        result = _reconcile_paper_ledger(corrupt, user_id)
-        assert result["status"] == "MISMATCH"
-        assert result["repairability"] == "BLOCKED"
-        assert result["repair_plan"]["apply"] is False
-        assert any("audit" in str(item).lower() or "pnl" in str(item).lower() for item in result["mismatches"])
-    finally:
-        corrupt.close(); engine.dispose()
-
-
-def test_paper_reconcile_duplicate_fill_and_broken_previous_hash_are_blocked(tmp_path):
-    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
-
-    for mutation in ("duplicate_fill", "previous_hash"):
-        engine = create_engine(
-            f"sqlite:///{tmp_path / f'audit-{mutation}.db'}",
-            connect_args={"check_same_thread": False, "timeout": 10},
-        )
-        Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
-        seed = Session()
-        try:
-            user = User(email=f"audit-{mutation}@example.com", hashed_password="", full_name="Audit Mutation", is_active=True)
-            seed.add(user); seed.flush()
-            seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=5000.0,
-                                    initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
-                                    realized_pnl=0.0, is_active=True))
-            seed.commit(); user_id = user.id
-        finally: seed.close()
-
-        db = Session()
-        try:
-            for req in (
-                PaperOrderRequest(symbol="A", transaction_type="BUY", price=100.0, quantity=2, fill_id="D1"),
-                PaperOrderRequest(symbol="B", transaction_type="BUY", price=50.0, quantity=2, fill_id="D2"),
-            ):
-                paper_order(req, user_id=user_id, db=db)
-        finally: db.close()
-
-        corrupt = Session()
-        try:
-            orders = corrupt.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).order_by(Order.id.asc()).all()
-            if mutation == "duplicate_fill":
-                orders[1].fill_id = orders[0].fill_id
-            else:
-                orders[1].previous_audit_hash = "f" * 64
-            corrupt.commit()
-            result = _reconcile_paper_ledger(corrupt, user_id)
-            assert result["status"] == "MISMATCH"
-            assert result["repairability"] == "BLOCKED"
-            assert result["repair_plan"]["apply"] is False
-        finally:
-            corrupt.close(); engine.dispose()
-
-def test_paper_reconcile_full_corruption_contract_never_allows_safe_repair(tmp_path):
-    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
-
-    mutations = ("price", "quantity", "pnl", "fill_id", "previous_hash", "audit_hash",
-                 "delete", "insert", "sequence")
-    for mutation in mutations:
-        engine = create_engine(
-            f"sqlite:///{tmp_path / f'full-{mutation}.db'}",
-            connect_args={"check_same_thread": False, "timeout": 10},
-        )
-        Base.metadata.create_all(engine)
-        Session = sessionmaker(bind=engine)
-        seed = Session()
-        try:
-            user = User(email=f"full-{mutation}@example.com", hashed_password="", full_name="Full Matrix", is_active=True)
-            seed.add(user); seed.flush()
-            seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=5000.0,
-                                    initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
-                                    realized_pnl=0.0, is_active=True))
-            seed.commit(); user_id = user.id
-        finally:
-            seed.close()
-
-        db = Session()
-        try:
-            paper_order(PaperOrderRequest(symbol="A", transaction_type="BUY", price=100.0, quantity=2, fill_id="M1"), user_id=user_id, db=db)
-            paper_order(PaperOrderRequest(symbol="B", transaction_type="BUY", price=50.0, quantity=2, fill_id="M2"), user_id=user_id, db=db)
-        finally:
-            db.close()
-
-        corrupt = Session()
-        try:
-            orders = corrupt.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).order_by(Order.id.asc()).all()
-            if mutation == "price":
-                orders[0].price = 101.0
-            elif mutation == "quantity":
-                orders[0].quantity = 3
-            elif mutation == "pnl":
-                orders[0].pnl = 7.0
-            elif mutation == "fill_id":
-                orders[1].fill_id = orders[0].fill_id
-            elif mutation == "previous_hash":
-                orders[1].previous_audit_hash = "a" * 64
-            elif mutation == "audit_hash":
-                orders[0].audit_hash = "b" * 64
-            elif mutation == "delete":
-                corrupt.delete(orders[0])
-            elif mutation == "insert":
-                corrupt.add(Order(user_id=user_id, symbol="X", transaction_type="BUY", quantity=1,
-                                  filled_quantity=1, price=10.0, average_fill_price=10.0,
-                                  pnl=0.0, status="FILLED", is_paper=True, fill_id="NEW",
-                                  audit_hash="c" * 64, previous_audit_hash=orders[-1].audit_hash))
-            elif mutation == "sequence":
-                orders[1].id, orders[0].id = orders[0].id, orders[1].id
-            corrupt.commit()
-            result = _reconcile_paper_ledger(corrupt, user_id)
-            assert result["status"] == "MISMATCH", mutation
-            assert result["repairability"] == "BLOCKED", mutation
-            assert result["repair_plan"]["apply"] is False, mutation
-        finally:
-            corrupt.close()
-            engine.dispose()
-
-def test_paper_reconcile_repairability_precedence_account_vs_ledger_corruption(tmp_path):
-    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
-
-    def setup(name):
-        engine = create_engine(f"sqlite:///{tmp_path / name}.db",
-                               connect_args={"check_same_thread": False, "timeout": 10})
-        Base.metadata.create_all(engine)
-        Session = sessionmaker(bind=engine)
-        db = Session()
-        user = User(email=f"{name}@example.com", hashed_password="", full_name="Precedence", is_active=True)
-        db.add(user); db.flush()
-        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=5000.0,
-                              initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
-                              realized_pnl=0.0, is_active=True))
-        db.commit(); uid=user.id; db.close()
-        db = Session()
-        paper_order(PaperOrderRequest(symbol="A", transaction_type="BUY", price=100.0, quantity=2, fill_id=f"{name}-1"), user_id=uid, db=db)
-        db.close()
-        return engine, Session, uid
-
-    engine, Session, uid = setup("account-only")
-    db = Session()
-    try:
-        account = db.query(TradingAccount).filter(TradingAccount.user_id == uid).one()
-        account.virtual_balance = 4999.0
-        db.commit()
-        result = _reconcile_paper_ledger(db, uid)
-        assert result["status"] == "MISMATCH"
-        assert result["repairability"] == "SAFE_DRY_RUN"
-        assert result["repair_plan"]["apply"] is False
-        assert "virtual_balance_mismatch" in result["mismatches"]
-    finally:
-        db.close(); engine.dispose()
-
-    engine, Session, uid = setup("ledger-only")
-    db = Session()
-    try:
-        order = db.query(Order).filter(Order.user_id == uid, Order.is_paper.is_(True)).one()
-        order.price = 101.0
-        db.commit()
-        result = _reconcile_paper_ledger(db, uid)
-        assert result["status"] == "MISMATCH"
-        assert result["repairability"] == "BLOCKED"
-        assert result["repair_plan"]["apply"] is False
-    finally:
-        db.close(); engine.dispose()
-
-    engine, Session, uid = setup("both")
-    db = Session()
-    try:
-        account = db.query(TradingAccount).filter(TradingAccount.user_id == uid).one()
-        order = db.query(Order).filter(Order.user_id == uid, Order.is_paper.is_(True)).one()
-        account.virtual_balance = 4999.0
-        order.price = 101.0
-        db.commit()
-        result = _reconcile_paper_ledger(db, uid)
-        assert result["status"] == "MISMATCH"
-        assert result["repairability"] == "BLOCKED"
-        assert result["repair_plan"]["apply"] is False
-        assert "virtual_balance_mismatch" in result["mismatches"]
-    finally:
-        db.close(); engine.dispose()
-
-
-def test_paper_reconcile_mismatch_classification_is_deterministic_and_complete(tmp_path):
-    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
-
-    cases = (
-        ("account", "ACCOUNTING_STATE", "SAFE_DRY_RUN"),
-        ("position", "POSITION_STATE", "SAFE_DRY_RUN"),
-        ("audit", "AUDIT_INTEGRITY", "BLOCKED"),
-        ("order", "ORDER_INTEGRITY", "BLOCKED"),
-        ("baseline", "BASELINE_INTEGRITY", "BLOCKED"),
-    )
-    for kind, expected_category, expected_repairability in cases:
-        engine = create_engine(
-            f"sqlite:///{tmp_path / f'classify-{kind}.db'}",
-            connect_args={"check_same_thread": False, "timeout": 10},
-        )
-        Base.metadata.create_all(engine)
-        Session = sessionmaker(bind=engine)
-        seed = Session()
-        try:
-            user = User(email=f"classify-{kind}@example.com", hashed_password="", full_name="Classification", is_active=True)
-            seed.add(user)
-            seed.flush()
-            seed.add(TradingAccount(
-                user_id=user.id, mode="PAPER", virtual_balance=5000.0,
-                initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
-                realized_pnl=0.0, is_active=True,
-            ))
-            seed.commit()
-            uid = user.id
-        finally:
-            seed.close()
-
-        db = Session()
-        try:
-            paper_order(
-                PaperOrderRequest(symbol="CLASSIFY", transaction_type="BUY",
-                                  price=100.0, quantity=2, fill_id=f"{kind}-1"),
-                user_id=uid, db=db,
-            )
-        finally:
-            db.close()
-
-        corrupt = Session()
-        try:
-            account = corrupt.query(TradingAccount).filter(TradingAccount.user_id == uid).one()
-            order = corrupt.query(Order).filter(Order.user_id == uid, Order.is_paper.is_(True)).one()
-            position = corrupt.query(Position).filter(
-                Position.user_id == uid, Position.is_paper.is_(True)
-            ).one()
-            if kind == "account":
-                account.virtual_balance += 1.0
-            elif kind == "position":
-                position.quantity += 1
-            elif kind == "audit":
-                order.audit_hash = "a" * 64
-            elif kind == "order":
-                order.quantity = 3
-            else:
-                account.initial_balance_source = "MIGRATED_INFERRED"
-            corrupt.commit()
-
-            result = _reconcile_paper_ledger(corrupt, uid)
-            assert result["status"] == "MISMATCH", kind
-            assert result["repairability"] == expected_repairability, kind
-            assert result["repairability_reason"] == (
-                "account_or_position_state_only"
-                if expected_repairability == "SAFE_DRY_RUN"
-                else "ledger_or_baseline_integrity_failure"
-            ), kind
-            assert expected_category in result["mismatch_categories"], kind
-            assert result["repair_plan"]["apply"] is False, kind
-        finally:
-            corrupt.close()
-            engine.dispose()
-
-
-def test_paper_reconcile_mixed_corruption_categories_always_report_all_categories_and_block(tmp_path):
-    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
-
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'classify-mixed.db'}",
-        connect_args={"check_same_thread": False, "timeout": 10},
-    )
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    seed = Session()
-    try:
-        user = User(email="classify-mixed@example.com", hashed_password="", full_name="Mixed Classification", is_active=True)
-        seed.add(user)
-        seed.flush()
-        seed.add(TradingAccount(
-            user_id=user.id, mode="PAPER", virtual_balance=5000.0,
-            initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
-            realized_pnl=0.0, is_active=True,
-        ))
-        seed.commit()
-        uid = user.id
-    finally:
-        seed.close()
-
-    db = Session()
-    try:
-        paper_order(PaperOrderRequest(
-            symbol="MIX", transaction_type="BUY", price=100.0, quantity=2, fill_id="MX1"
-        ), user_id=uid, db=db)
-    finally:
-        db.close()
-
-    corrupt = Session()
-    try:
-        account = corrupt.query(TradingAccount).filter(TradingAccount.user_id == uid).one()
-        order = corrupt.query(Order).filter(Order.user_id == uid, Order.is_paper.is_(True)).one()
-        position = corrupt.query(Position).filter(
-            Position.user_id == uid, Position.is_paper.is_(True)
-        ).one()
-        account.virtual_balance += 10.0
-        order.pnl = 5.0
-        position.quantity += 1
-        corrupt.commit()
-
-        result = _reconcile_paper_ledger(corrupt, uid)
-        assert result["status"] == "MISMATCH"
-        assert result["repairability"] == "BLOCKED"
-        assert result["repairability_reason"] == "ledger_or_baseline_integrity_failure"
-        assert result["mismatch_categories"] == [
-            "ACCOUNTING_STATE",
-            "AUDIT_INTEGRITY",
-            "POSITION_STATE",
-        ]
-        assert result["repair_plan"]["apply"] is False
-    finally:
-        corrupt.close()
-        engine.dispose()
-
-
-def test_paper_reconcile_safe_dry_run_is_strictly_account_or_position_state_only(tmp_path):
-    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
-
-    engine = create_engine(f"sqlite:///{tmp_path / 'safe-boundary.db'}.db",
-                           connect_args={"check_same_thread": False, "timeout": 10})
-    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
-    db = Session()
-    try:
-        user = User(email="safe-boundary@example.com", hashed_password="", full_name="Safe Boundary", is_active=True)
-        db.add(user); db.flush()
-        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=5000.0,
-                              initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
-                              realized_pnl=0.0, is_active=True))
-        db.commit(); uid=user.id
-    finally: db.close()
-
-    db=Session()
-    try:
-        paper_order(PaperOrderRequest(symbol="PORT", transaction_type="BUY", price=100.0, quantity=5, fill_id="SB1"), user_id=uid, db=db)
-    finally: db.close()
-
-    for kind in ("cash", "realized", "position_qty", "position_avg", "position_open"):
-        db=Session()
-        try:
-            if kind == "cash":
-                db.query(TradingAccount).filter(TradingAccount.user_id == uid).one().virtual_balance += 1
-            elif kind == "realized":
-                db.query(TradingAccount).filter(TradingAccount.user_id == uid).one().realized_pnl += 1
-            else:
-                pos=db.query(Position).filter(Position.user_id == uid, Position.is_paper.is_(True)).one()
-                if kind == "position_qty": pos.quantity += 1
-                elif kind == "position_avg": pos.average_price += 1
-                else: pos.is_open = False
-            db.commit()
-            result=_reconcile_paper_ledger(db,uid)
-            assert result["status"]=="MISMATCH", kind
-            assert result["repairability"]=="SAFE_DRY_RUN", kind
-            assert result["repair_plan"]["apply"] is False
-        finally:
-            db.close()
-    engine.dispose()
-
-
-def test_paper_reconcile_sqlite_read_snapshot_is_repeatable_during_concurrent_write(tmp_path):
-    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
-
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'reconcile-snapshot.db'}",
-        connect_args={"check_same_thread": False, "timeout": 10},
-    )
-    Base.metadata.create_all(engine)
-    with engine.begin() as conn:
-        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
-    Session = sessionmaker(bind=engine)
-    seed = Session()
-    try:
-        user = User(
-            email="snapshot@example.com",
-            hashed_password="",
-            full_name="Snapshot",
-            is_active=True,
-        )
-        seed.add(user)
-        seed.flush()
-        seed.add(TradingAccount(
-            user_id=user.id,
-            mode="PAPER",
-            virtual_balance=5000.0,
-            initial_virtual_balance=5000.0,
-            initial_balance_source="BOOTSTRAP",
-            realized_pnl=0.0,
-            is_active=True,
-        ))
-        seed.commit()
-        uid = user.id
-    finally:
-        seed.close()
-
-    writer = Session()
-    reader = Session()
-    try:
-        paper_order(
-            PaperOrderRequest(
-                symbol="SNAP",
-                transaction_type="BUY",
-                price=100.0,
-                quantity=2,
-                fill_id="SNAP-1",
-            ),
-            user_id=uid,
-            db=writer,
-        )
-        writer.commit()
-        first = _reconcile_paper_ledger(reader, uid)
-
-        writer.add(Order(
-            user_id=uid,
-            symbol="SNAP2",
-            transaction_type="BUY",
-            order_type="MARKET",
-            product_type="INTRADAY",
-            quantity=1,
-            price=50.0,
-            average_price=50.0,
-            filled_quantity=1,
-            average_fill_price=50.0,
-            status="FILLED",
-            is_paper=True,
-            fill_id="SNAP-2",
-            pnl=0.0,
-            message="snapshot test",
-        ))
-        writer.commit()
-
-        second = _reconcile_paper_ledger(reader, uid)
-        assert second == first
-        assert second["orders"] == 1
-        assert "SNAP2" not in second["reconstructed_positions"]
-    finally:
-        reader.rollback()
-        reader.close()
-        writer.close()
-        engine.dispose()
-
-def test_paper_reconcile_http_concurrent_reader_mutation_stress_matrix(tmp_path):
-    """Concurrent HTTP reconciliation never exposes a malformed or mutating response."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+def test_paper_reconcile_repair_plan_integrity_partial_fills_flat_reversals_and_multiple_symbols(tmp_path):
+    """Repair plans stay deterministic/read-only across partial closes, reversals and symbols."""
     from app.core.database import get_db
     from app.execution import paper_routes as routes
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
 
     engine = create_engine(
-        f"sqlite:///{tmp_path / 'http-reconcile-stress.db'}",
+        f"sqlite:///{tmp_path / 'repair-plan-integrity-matrix.db'}",
         connect_args={"check_same_thread": False, "timeout": 10},
     )
     Base.metadata.create_all(engine)
@@ -3831,727 +3009,163 @@ def test_paper_reconcile_http_concurrent_reader_mutation_stress_matrix(tmp_path)
     seed = TestSession()
     try:
         user = User(
-            email="http-reconcile-stress@example.com",
+            email="repair-integrity-matrix@example.com",
             hashed_password="",
-            full_name="HTTP Reconcile Stress",
+            full_name="Repair Integrity Matrix",
             is_active=True,
         )
         seed.add(user)
         seed.flush()
-        seed.add(TradingAccount(
-            user_id=user.id,
-            mode="PAPER",
-            virtual_balance=10_000_000.0,
-            initial_virtual_balance=10_000_000.0,
-            initial_balance_source="BOOTSTRAP",
-            realized_pnl=0.0,
-            is_active=True,
-        ))
-        seed.commit()
-        user_id = int(user.id)
-    finally:
-        seed.close()
-
-    def override_db():
-        db = TestSession()
-        try:
-            yield db
-        finally:
-            db.close()
-
-    client = TestClient(app)
-    app.dependency_overrides[get_db] = override_db
-    app.dependency_overrides[routes.current_user_id] = lambda: user_id
-    symbols = [f"HTTP-STRESS-{index}" for index in range(4)]
-
-    def reconcile():
-        response = client.get("/api/v1/execution/paper/reconcile")
-        return ("reconcile", response.status_code, response.json())
-
-    def entry(index: int):
-        response = client.post(
-            "/api/v1/execution/paper/order",
-            json={
-                "symbol": symbols[index],
-                "transaction_type": "BUY",
-                "price": 10.0 + index,
-                "quantity": 1,
-                "fill_id": f"HTTP-STRESS-ENTRY-{index}",
-            },
-        )
-        return ("entry", response.status_code, response.json())
-
-    def exit_(index: int):
-        response = client.post(
-            "/api/v1/execution/paper/exit",
-            json={
-                "symbol": symbols[index],
-                "price": 11.0 + index,
-                "fill_id": f"HTTP-STRESS-EXIT-{index}",
-            },
-        )
-        return ("exit", response.status_code, response.json())
-
-    try:
-        for index in range(2):
-            kind, status, payload = entry(index)
-            assert kind == "entry"
-            assert status == 200
-            assert payload["status"] == "success"
-
-        operations = []
-        with ThreadPoolExecutor(max_workers=12) as pool:
-            futures = [pool.submit(reconcile) for _ in range(8)]
-            futures.extend([
-                pool.submit(entry, 2),
-                pool.submit(exit_, 0),
-                pool.submit(exit_, 1),
-                pool.submit(reconcile),
-            ])
-            for future in as_completed(futures):
-                operations.append(future.result())
-
-        reconcile_results = [item for item in operations if item[0] == "reconcile"]
-        assert len(reconcile_results) == 10
-        for _, status, payload in reconcile_results:
-            assert status == 200
-            assert payload["status"] in {"OK", "MISMATCH"}
-            assert isinstance(payload["orders"], int)
-            assert isinstance(payload["reconstructed_positions"], dict)
-            assert isinstance(payload["mismatches"], list)
-            assert payload["repair_plan"]["apply"] is False
-            assert payload["repair_plan"]["reason"] == "read_only_dry_run"
-            assert payload["user_id"] == user_id
-
-        mutation_results = [item for item in operations if item[0] in {"entry", "exit"}]
-        assert len(mutation_results) == 3
-        for kind, status, payload in mutation_results:
-            assert status in {200, 409}
-            assert isinstance(payload, dict)
-            if kind == "entry" and status == 200:
-                assert payload["status"] == "success"
-            if kind == "exit" and status == 200:
-                assert payload["status"] in {"closed", "flat"}
-
-        final = client.get("/api/v1/execution/paper/reconcile")
-        assert final.status_code == 200
-        final_payload = final.json()
-        assert final_payload["user_id"] == user_id
-        assert final_payload["repair_plan"]["apply"] is False
-
-        verify = TestSession()
-        try:
-            stress_orders = verify.query(Order).filter(
-                Order.user_id == user_id,
-                Order.is_paper.is_(True),
-                Order.symbol.in_(symbols),
-            ).all()
-            assert len(stress_orders) >= 3
-            assert all(order.status == "FILLED" for order in stress_orders)
-            assert verify.query(Order).filter(
-                Order.user_id == user_id,
-                Order.is_paper.is_(False),
-                Order.symbol.in_(symbols),
-            ).count() == 0
-        finally:
-            verify.close()
-    finally:
-        app.dependency_overrides.pop(routes.current_user_id, None)
-        app.dependency_overrides.pop(get_db, None)
-        engine.dispose()
-\ndef test_paper_reconcile_http_concurrent_multi_user_boundary_fails_closed(tmp_path):
-    """Multiple active paper identities must fail closed under concurrent HTTP reads."""
-    from concurrent.futures import ThreadPoolExecutor
-    from app.core.database import get_db
-
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'http-reconcile-multi-user-boundary.db'}",
-        connect_args={"check_same_thread": False, "timeout": 10},
-    )
-    Base.metadata.create_all(engine)
-    TestSession = sessionmaker(bind=engine)
-
-    seed = TestSession()
-    try:
-        for suffix in ("a", "b"):
-            user = User(
-                email=f"http-boundary-{suffix}@example.com",
-                hashed_password="",
-                full_name=f"HTTP Boundary {suffix}",
-                is_active=True,
-            )
-            seed.add(user)
-            seed.flush()
-            seed.add(TradingAccount(
+        seed.add(
+            TradingAccount(
                 user_id=user.id,
                 mode="PAPER",
-                virtual_balance=100_000.0,
-                initial_virtual_balance=100_000.0,
+                virtual_balance=10_000.0,
+                initial_virtual_balance=10_000.0,
                 initial_balance_source="BOOTSTRAP",
                 realized_pnl=0.0,
                 is_active=True,
-            ))
-        seed.commit()
-    finally:
-        seed.close()
-
-    def override_db():
-        db = TestSession()
-        try:
-            yield db
-        finally:
-            db.close()
-
-    client = TestClient(app)
-    from app.execution import paper_routes as routes
-    app.dependency_overrides[get_db] = override_db
-    try:
-        with ThreadPoolExecutor(max_workers=12) as pool:
-            responses = list(pool.map(
-                lambda _: client.get("/api/v1/execution/paper/reconcile"),
-                range(12),
-            ))
-
-        assert all(response.status_code == 409 for response in responses)
-        assert all(
-            response.json()["detail"]
-            == "multiple active paper trading accounts require authenticated user context"
-            for response in responses
-        )
-
-        verify = TestSession()
-        try:
-            assert verify.query(Order).count() == 0
-            assert verify.query(Position).count() == 0
-            accounts = (
-                verify.query(TradingAccount)
-                .filter(
-                    TradingAccount.is_active.is_(True),
-                    TradingAccount.mode == "PAPER",
-                )
-                .all()
             )
-            assert len(accounts) == 2
-            assert all(float(account.virtual_balance) == 100_000.0 for account in accounts)
-            assert all(float(account.realized_pnl or 0.0) == 0.0 for account in accounts)
-        finally:
-            verify.close()
-    finally:
-        app.dependency_overrides.pop(routes.current_user_id, None)
-        app.dependency_overrides.pop(get_db, None)
-        engine.dispose()
-
-
-def test_paper_reconcile_http_edge_state_matrix_contract_and_dry_run(tmp_path):
-    """HTTP reconciliation keeps a stable contract across safe and blocked edge states."""
-    from app.core.database import get_db
-    from app.execution import paper_routes as routes
-    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
-
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'http-reconcile-edge-matrix.db'}",
-        connect_args={"check_same_thread": False, "timeout": 10},
-    )
-    Base.metadata.create_all(engine)
-    TestSession = sessionmaker(bind=engine)
-
-    seed = TestSession()
-    try:
-        user = User(
-            email="http-edge-matrix@example.com",
-            hashed_password="",
-            full_name="HTTP Edge Matrix",
-            is_active=True,
         )
-        seed.add(user)
-        seed.flush()
-        seed.add(TradingAccount(
-            user_id=user.id,
-            mode="PAPER",
-            virtual_balance=5000.0,
-            initial_virtual_balance=5000.0,
-            initial_balance_source="BOOTSTRAP",
-            realized_pnl=0.0,
-            is_active=True,
-        ))
         seed.commit()
         user_id = int(user.id)
     finally:
         seed.close()
 
-    def override_db():
+    # ALPHA: long -> partial close -> flat.
+    # BETA: short -> partial cover -> flat.
+    # GAMMA: independent long remains open.
+    sequence = (
+        PaperOrderRequest(symbol="ALPHA", transaction_type="BUY", price=100.0, quantity=10, fill_id="ALPHA-1"),
+        PaperOrderRequest(symbol="ALPHA", transaction_type="SELL", price=120.0, quantity=4, fill_id="ALPHA-2"),
+        PaperOrderRequest(symbol="ALPHA", transaction_type="SELL", price=110.0, quantity=6, fill_id="ALPHA-3"),
+        PaperOrderRequest(symbol="BETA", transaction_type="SELL", price=200.0, quantity=5, fill_id="BETA-1"),
+        PaperOrderRequest(symbol="BETA", transaction_type="BUY", price=180.0, quantity=2, fill_id="BETA-2"),
+        PaperOrderRequest(symbol="BETA", transaction_type="BUY", price=170.0, quantity=3, fill_id="BETA-3"),
+        PaperOrderRequest(symbol="GAMMA", transaction_type="BUY", price=50.0, quantity=3, fill_id="GAMMA-1"),
+    )
+
+    for request in sequence:
         db = TestSession()
         try:
-            yield db
+            result = paper_order(request, user_id=user_id, db=db)
+            assert result["status"] == "success"
         finally:
             db.close()
 
-    client = TestClient(app)
-    app.dependency_overrides[get_db] = override_db
-    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    def reconcile():
+        db = TestSession()
+        try:
+            return _reconcile_paper_ledger(db, user_id)
+        finally:
+            db.close()
 
-    expected_keys = {
-        "status", "user_id", "orders", "reconstructed_positions",
-        "mismatches", "mismatch_categories", "repairability",
-        "repairability_reason", "repair_plan",
+    clean = reconcile()
+    assert clean["status"] == "OK"
+    assert clean["repairability"] == "NONE"
+    assert clean["orders"] == 7
+    assert clean["reconstructed_realized_pnl"] == 310.0
+    assert clean["reconstructed_virtual_balance"] == 10_120.0
+    assert clean["mismatches"] == []
+    assert clean["repair_plan"]["apply"] is False
+    assert clean["repair_plan"]["reason"] == "read_only_dry_run"
+    assert clean["repair_plan"]["positions"] == {
+        "GAMMA": {"quantity": 3, "average_price": 50.0},
     }
+    clean_precondition = clean["repair_plan"]["precondition"]
+    assert clean_precondition["order_count"] == 7
+    assert clean_precondition["position_count"] == 1
+    assert len(clean_precondition["state_hash"]) == 64
+    assert clean_precondition["audit_head"]
+
+    # A safe accounting-only mismatch must expose the deterministic repair
+    # proposal while remaining strictly non-applicable.
+    corrupt = TestSession()
     try:
+        account = corrupt.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id
+        ).one()
+        account.virtual_balance += 7.25
+        corrupt.commit()
+    finally:
+        corrupt.close()
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        snapshots = list(pool.map(lambda _: reconcile(), range(12)))
+
+    assert all(snapshot["status"] == "MISMATCH" for snapshot in snapshots)
+    assert all(snapshot["repairability"] == "SAFE_DRY_RUN" for snapshot in snapshots)
+    assert all(snapshot["repair_plan"]["apply"] is False for snapshot in snapshots)
+    assert all(snapshot["repair_plan"]["reason"] == "read_only_dry_run" for snapshot in snapshots)
+    assert all(snapshot["repair_plan"]["proposed_virtual_balance"] == 10_120.0 for snapshot in snapshots)
+    assert all(snapshot["repair_plan"]["proposed_realized_pnl"] == 310.0 for snapshot in snapshots)
+    assert all(snapshot["repair_plan"]["positions"] == clean["repair_plan"]["positions"] for snapshot in snapshots)
+    assert all(snapshot["repair_plan"]["precondition"] == snapshots[0]["repair_plan"]["precondition"] for snapshot in snapshots)
+    assert all(snapshot["mismatches"] == ["virtual_balance_mismatch"] for snapshot in snapshots)
+
+    # Move the same mismatch onto a non-bootstrap baseline. This must hard
+    # block any future repair/apply path even though the reconstructed ledger
+    # itself is still internally coherent.
+    blocked = TestSession()
+    try:
+        account = blocked.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id
+        ).one()
+        account.initial_balance_source = "MIGRATED_INFERRED"
+        blocked.commit()
+    finally:
+        blocked.close()
+
+    blocked_snapshots = [reconcile() for _ in range(4)]
+    for snapshot in blocked_snapshots:
+        assert snapshot["status"] == "MISMATCH"
+        assert snapshot["repairability"] == "BLOCKED"
+        assert snapshot["baseline_status"] == "MIGRATED_INFERRED"
+        assert snapshot["repair_plan"]["apply"] is False
+        assert snapshot["repair_plan"]["reason"] == "read_only_dry_run"
+        assert snapshot["repair_plan"]["proposed_virtual_balance"] == 10_120.0
+        assert snapshot["repair_plan"]["proposed_realized_pnl"] == 310.0
+        assert snapshot["repair_plan"]["positions"] == clean["repair_plan"]["positions"]
+
+    # Restore the canonical baseline and stored balance. The same ledger must
+    # return to a clean, deterministic state with no repair side effects.
+    restore = TestSession()
+    try:
+        account = restore.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id
+        ).one()
+        account.initial_balance_source = "BOOTSTRAP"
+        account.virtual_balance = 10_120.0
+        account.realized_pnl = 310.0
+        restore.commit()
+    finally:
+        restore.close()
+
+    final = reconcile()
+    assert final == clean
+    assert final["repair_plan"]["apply"] is False
+
+    client = TestClient(app)
+    def override_db():
         db = TestSession()
         try:
-            paper_order(
-                PaperOrderRequest(
-                    symbol="EDGE",
-                    transaction_type="BUY",
-                    price=100.0,
-                    quantity=2,
-                    fill_id="EDGE-1",
-                ),
-                user_id=user_id,
-                db=db,
-            )
+            yield db
         finally:
             db.close()
 
-        cases = (
-            ("clean", None),
-            ("account", "ACCOUNTING_STATE"),
-            ("position", "POSITION_STATE"),
-            ("order", "ORDER_INTEGRITY"),
-            ("audit", "AUDIT_INTEGRITY"),
-        )
-
-        for name, category in cases:
-            db = TestSession()
-            try:
-                if category == "ACCOUNTING_STATE":
-                    db.query(TradingAccount).filter(
-                        TradingAccount.user_id == user_id
-                    ).one().virtual_balance += 1.0
-                elif category == "POSITION_STATE":
-                    db.query(Position).filter(
-                        Position.user_id == user_id, Position.is_paper.is_(True)
-                    ).one().quantity += 1
-                elif category == "ORDER_INTEGRITY":
-                    db.query(Order).filter(
-                        Order.user_id == user_id, Order.is_paper.is_(True)
-                    ).one().quantity = 3
-                elif category == "AUDIT_INTEGRITY":
-                    db.query(Order).filter(
-                        Order.user_id == user_id, Order.is_paper.is_(True)
-                    ).one().audit_hash = "f" * 64
-                db.commit()
-
-                response = client.get("/api/v1/execution/paper/reconcile")
-                assert response.status_code == 200, name
-                payload = response.json()
-                assert set(payload) >= expected_keys, name
-                assert payload["user_id"] == user_id
-                assert payload["repair_plan"]["apply"] is False
-                assert payload["repair_plan"]["reason"] == "read_only_dry_run"
-                assert isinstance(payload["orders"], int)
-                assert isinstance(payload["reconstructed_positions"], dict)
-                assert isinstance(payload["mismatches"], list)
-                assert isinstance(payload["mismatch_categories"], list)
-                assert payload["repairability"] in {"SAFE_DRY_RUN", "BLOCKED"}
-                if category is None:
-                    assert payload["status"] == "OK"
-                else:
-                    assert payload["status"] == "MISMATCH"
-                    assert category in payload["mismatch_categories"]
-            finally:
-                db.close()
-
-            # Restore the canonical ledger between cases so every case is
-            # independent rather than accumulating corruption.
-            reset = TestSession()
-            try:
-                account = reset.query(TradingAccount).filter(
-                    TradingAccount.user_id == user_id
-                ).one()
-                account.virtual_balance = 4800.0
-                account.realized_pnl = 0.0
-                position = reset.query(Position).filter(
-                    Position.user_id == user_id, Position.is_paper.is_(True)
-                ).one()
-                position.quantity = 2
-                position.average_price = 100.0
-                order = reset.query(Order).filter(
-                    Order.user_id == user_id, Order.is_paper.is_(True)
-                ).one()
-                order.quantity = 2
-                order.audit_hash = canonical_audit_hash
-                order.previous_audit_hash = canonical_previous_hash
-                reset.commit()
-            finally:
-                reset.close()
-
-        final = client.get("/api/v1/execution/paper/reconcile")
-        assert final.status_code == 200
-        assert final.json()["status"] == "OK"
-        assert final.json()["repair_plan"]["apply"] is False
-    finally:
-        app.dependency_overrides.pop(routes.current_user_id, None)
-        app.dependency_overrides.pop(get_db, None)
-        engine.dispose()
-
-
-def test_paper_reconcile_http_concurrent_readers_return_identical_clean_snapshot(tmp_path):
-    """Concurrent read-only HTTP reconciliation is deterministic on a stable SQLite snapshot."""
-    from app.core.database import get_db
-    from app.execution import paper_routes as routes
-    from app.execution.paper_routes import PaperOrderRequest, paper_order
-
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'http-reconcile-readers.db'}",
-        connect_args={"check_same_thread": False, "timeout": 10},
-    )
-    Base.metadata.create_all(engine)
-    TestSession = sessionmaker(bind=engine)
-
-    seed = TestSession()
-    try:
-        user = User(
-            email="http-readers@example.com",
-            hashed_password="",
-            full_name="HTTP Readers",
-            is_active=True,
-        )
-        seed.add(user)
-        seed.flush()
-        seed.add(TradingAccount(
-            user_id=user.id,
-            mode="PAPER",
-            virtual_balance=5000.0,
-            initial_virtual_balance=5000.0,
-            initial_balance_source="BOOTSTRAP",
-            realized_pnl=0.0,
-            is_active=True,
-        ))
-        seed.commit()
-        user_id = int(user.id)
-    finally:
-        seed.close()
-
-    db = TestSession()
-    try:
-        paper_order(
-            PaperOrderRequest(
-                symbol="READ",
-                transaction_type="BUY",
-                price=100.0,
-                quantity=2,
-                fill_id="READ-1",
-            ),
-            user_id=user_id,
-            db=db,
-        )
-    finally:
-        db.close()
-
-    def override_db():
-        session = TestSession()
-        try:
-            yield session
-        finally:
-            session.close()
-
-    client = TestClient(app)
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[routes.current_user_id] = lambda: user_id
     try:
-        before = TestSession()
-        try:
-            account = before.query(TradingAccount).filter(
-                TradingAccount.user_id == user_id
-            ).one()
-            order = before.query(Order).filter(
-                Order.user_id == user_id, Order.is_paper.is_(True)
-            ).one()
-            position = before.query(Position).filter(
-                Position.user_id == user_id, Position.is_paper.is_(True)
-            ).one()
-            before_state = (
-                float(account.virtual_balance),
-                float(account.realized_pnl or 0.0),
-                int(order.quantity),
-                order.audit_hash,
-                order.previous_audit_hash,
-                int(position.quantity),
-                float(position.average_price),
-            )
-        finally:
-            before.close()
-
-        with ThreadPoolExecutor(max_workers=12) as pool:
-            responses = list(pool.map(
-                lambda _: client.get("/api/v1/execution/paper/reconcile"),
-                range(12),
-            ))
-
-        assert all(response.status_code == 200 for response in responses)
-        payloads = [response.json() for response in responses]
-        canonical = payloads[0]
-        for payload in payloads:
-            assert payload == canonical
-            assert payload["status"] == "OK"
-            assert payload["user_id"] == user_id
-            assert payload["repair_plan"]["apply"] is False
-            assert payload["repair_plan"]["reason"] == "read_only_dry_run"
-
-        after = TestSession()
-        try:
-            account = after.query(TradingAccount).filter(
-                TradingAccount.user_id == user_id
-            ).one()
-            order = after.query(Order).filter(
-                Order.user_id == user_id, Order.is_paper.is_(True)
-            ).one()
-            position = after.query(Position).filter(
-                Position.user_id == user_id, Position.is_paper.is_(True)
-            ).one()
-            after_state = (
-                float(account.virtual_balance),
-                float(account.realized_pnl or 0.0),
-                int(order.quantity),
-                order.audit_hash,
-                order.previous_audit_hash,
-                int(position.quantity),
-                float(position.average_price),
-            )
-            assert after_state == before_state
-        finally:
-            after.close()
-    finally:
-        app.dependency_overrides.pop(routes.current_user_id, None)
-        app.dependency_overrides.pop(get_db, None)
-        engine.dispose()
-
-
-def test_paper_reconcile_http_readers_survive_uncommitted_writer(tmp_path):
-    """HTTP reconciliation never exposes an uncommitted paper mutation."""
-    from app.core.database import get_db
-    from app.execution import paper_routes as routes
-    from app.execution.paper_routes import PaperOrderRequest, paper_order
-
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'http-reconcile-uncommitted-writer.db'}",
-        connect_args={"check_same_thread": False, "timeout": 10},
-    )
-    Base.metadata.create_all(engine)
-    TestSession = sessionmaker(bind=engine)
-
-    seed = TestSession()
-    try:
-        user = User(
-            email="http-uncommitted@example.com",
-            hashed_password="",
-            full_name="HTTP Uncommitted",
-            is_active=True,
-        )
-        seed.add(user)
-        seed.flush()
-        seed.add(TradingAccount(
-            user_id=user.id,
-            mode="PAPER",
-            virtual_balance=5000.0,
-            initial_virtual_balance=5000.0,
-            initial_balance_source="BOOTSTRAP",
-            realized_pnl=0.0,
-            is_active=True,
-        ))
-        seed.commit()
-        user_id = int(user.id)
-    finally:
-        seed.close()
-
-    db = TestSession()
-    try:
-        paper_order(
-            PaperOrderRequest(
-                symbol="LOCK",
-                transaction_type="BUY",
-                price=100.0,
-                quantity=1,
-                fill_id="LOCK-1",
-            ),
-            user_id=user_id,
-            db=db,
-        )
-    finally:
-        db.close()
-
-    def override_db():
-        session = TestSession()
-        try:
-            yield session
-        finally:
-            session.close()
-
-    writer = TestSession()
-    writer_account = writer.query(TradingAccount).filter(
-        TradingAccount.user_id == user_id
-    ).one()
-    original_balance = float(writer_account.virtual_balance)
-    writer_account.virtual_balance = original_balance - 777.0
-    writer.flush()
-
-    client = TestClient(app)
-    app.dependency_overrides[get_db] = override_db
-    app.dependency_overrides[routes.current_user_id] = lambda: user_id
-    try:
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            responses = list(pool.map(
+        responses = list(
+            ThreadPoolExecutor(max_workers=8).map(
                 lambda _: client.get("/api/v1/execution/paper/reconcile"),
                 range(8),
-            ))
-
-        assert all(response.status_code == 200 for response in responses)
-        for response in responses:
-            payload = response.json()
-            assert payload["user_id"] == user_id
-            assert payload["status"] == "OK"
-            assert payload["repair_plan"]["apply"] is False
-            assert payload["repair_plan"]["reason"] == "read_only_dry_run"
-            assert isinstance(payload["mismatches"], list)
-
-        # The uncommitted writer change must not become durable or visible
-        # through reconciliation.
-        writer.rollback()
-        verify = TestSession()
-        try:
-            account = verify.query(TradingAccount).filter(
-                TradingAccount.user_id == user_id
-            ).one()
-            assert float(account.virtual_balance) == original_balance
-            response = client.get("/api/v1/execution/paper/reconcile")
-            assert response.status_code == 200
-            assert response.json()["status"] == "OK"
-        finally:
-            verify.close()
-    finally:
-        writer.close()
-        app.dependency_overrides.pop(routes.current_user_id, None)
-        app.dependency_overrides.pop(get_db, None)
-        engine.dispose()
-
-
-def test_paper_reconcile_http_committed_epoch_matrix_is_monotonic_and_read_only(tmp_path):
-    """Each committed mutation epoch is fully visible to later readers without HTTP-side mutation."""
-    from concurrent.futures import ThreadPoolExecutor
-    from app.core.database import get_db
-    from app.execution import paper_routes as routes
-
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'http-reconcile-epochs.db'}",
-        connect_args={"check_same_thread": False, "timeout": 10},
-    )
-    Base.metadata.create_all(engine)
-    with engine.begin() as conn:
-        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
-    TestSession = sessionmaker(bind=engine)
-
-    seed = TestSession()
-    try:
-        user = User(
-            email="http-epochs@example.com",
-            hashed_password="",
-            full_name="HTTP Epochs",
-            is_active=True,
+            )
         )
-        seed.add(user)
-        seed.flush()
-        seed.add(TradingAccount(
-            user_id=user.id,
-            mode="PAPER",
-            virtual_balance=100_000.0,
-            initial_virtual_balance=100_000.0,
-            initial_balance_source="BOOTSTRAP",
-            realized_pnl=0.0,
-            is_active=True,
-        ))
-        seed.commit()
-        user_id = int(user.id)
-    finally:
-        seed.close()
-
-    def override_db():
-        db = TestSession()
-        try:
-            yield db
-        finally:
-            db.close()
-
-    client = TestClient(app)
-    app.dependency_overrides[get_db] = override_db
-    app.dependency_overrides[routes.current_user_id] = lambda: user_id
-
-    def readers(expected_orders: int):
-        with ThreadPoolExecutor(max_workers=10) as pool:
-            responses = list(pool.map(
-                lambda _: client.get("/api/v1/execution/paper/reconcile"),
-                range(10),
-            ))
         assert all(response.status_code == 200 for response in responses)
         payloads = [response.json() for response in responses]
         assert all(payload == payloads[0] for payload in payloads)
-        payload = payloads[0]
-        assert payload["user_id"] == user_id
-        assert payload["status"] == "OK"
-        assert payload["orders"] == expected_orders
-        assert payload["repair_plan"]["apply"] is False
-        assert payload["repair_plan"]["reason"] == "read_only_dry_run"
-        return payload
-
-    try:
-        observed_orders = 0
-        for epoch in range(1, 6):
-            response = client.post(
-                "/api/v1/execution/paper/order",
-                json={
-                    "symbol": f"EPOCH-{epoch}",
-                    "transaction_type": "BUY",
-                    "price": 100.0 + epoch,
-                    "quantity": 1,
-                    "fill_id": f"EPOCH-{epoch}",
-                },
-            )
-            assert response.status_code == 200
-            assert response.json()["status"] == "success"
-            observed_orders += 1
-
-            payload = readers(observed_orders)
-            assert payload["orders"] == observed_orders
-            assert set(payload["reconstructed_positions"]) == {
-                f"EPOCH-{index}" for index in range(1, epoch + 1)
-            }
-
-        exit_response = client.post(
-            "/api/v1/execution/paper/exit",
-            json={
-                "symbol": "EPOCH-5",
-                "price": 110.0,
-                "fill_id": "EPOCH-5-EXIT",
-            },
-        )
-        assert exit_response.status_code == 200
-        assert exit_response.json()["status"] in {"closed", "flat"}
-
-        final_payload = readers(6)
-        assert "EPOCH-5" not in final_payload["reconstructed_positions"]
-
-        verify = TestSession()
-        try:
-            assert verify.query(Order).filter(
-                Order.user_id == user_id,
-                Order.is_paper.is_(True),
-            ).count() == 6
-            assert verify.query(Position).filter(
-                Position.user_id == user_id,
-                Position.is_paper.is_(True),
-                Position.symbol == "EPOCH-5",
-            ).count() == 0
-        finally:
-            verify.close()
+        assert payloads[0] == final
     finally:
         app.dependency_overrides.pop(routes.current_user_id, None)
         app.dependency_overrides.pop(get_db, None)
