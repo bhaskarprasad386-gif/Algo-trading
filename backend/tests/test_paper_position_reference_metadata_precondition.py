@@ -78,16 +78,18 @@ def test_repair_precondition_raw_nullable_order_metadata_is_distinct(tmp_path):
         order = db.query(Order).filter_by(user_id=user.id).one()
         positions = db.query(Position).filter_by(user_id=user.id, is_paper=True).all()
         baseline = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
-        for field in ("broker_order_id", "token", "exchange", "order_type", "product_type", "time_in_force", "message"):
+        canonical = {
+            "broker_order_id": None, "token": None, "exchange": None, "order_type": "MARKET",
+            "product_type": "INTRADAY", "time_in_force": "DAY", "message": None,
+        }
+        for field, original in canonical.items():
             setattr(order, field, "")
             empty_hash = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
             setattr(order, field, None)
             null_hash = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
             assert empty_hash != null_hash
             assert empty_hash != baseline
-            setattr(order, field, getattr(Order(), field, None))
-            if field in ("order_type", "product_type", "time_in_force"):
-                setattr(order, field, {"order_type": "MARKET", "product_type": "INTRADAY", "time_in_force": "DAY"}[field])
+            setattr(order, field, original)
     finally:
         db.close()
         engine.dispose()
