@@ -109,6 +109,9 @@ def refresh(db: Session = Depends(get_db)):
 @router.post("/positions/{position_id}/close")
 def close(position_id: int, db: Session = Depends(get_db)):
     user = current_user_id(db)
+    # Resolve an already-reached expiry before accepting a manual close. This
+    # makes the expiry/manual-close race deterministic: expiry wins once due.
+    service.close_expired(db)
     trade = db.query(LivePaperTrade).filter(
         LivePaperTrade.id == position_id,
         LivePaperTrade.user_id == user,
