@@ -606,6 +606,7 @@ def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_
     position = Position(user_id=user_id, symbol=symbol, quantity=quantity, average_price=state.entry_price, stop_loss=state.stop_loss, target=state.target)
     account.virtual_balance = round(account.virtual_balance - cost, 8)
     db.add(position)
+    _validate_paper_state(db, user_id)
     order = _create_order(db, user_id=user_id, symbol=symbol, side="BUY", price=fill.price, quantity=fill.quantity, fill_id=fill_id)
     db.commit()
     return {"status":"success","mode":state.mode.value,"fill":{"price":fill.price,"quantity":fill.quantity},"entry_price":state.entry_price,"stop_loss":state.stop_loss,"target":state.target,"position":_position_payload(position),"order":order,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
@@ -715,6 +716,7 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
                 active.quantity = remaining_qty
                 remaining = active
             order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl, fill_id=fill_id)
+    _validate_paper_state(db, user_id)
     db.commit()
     return {"status":"success","mode":"paper","order":order,"position":_position_payload(remaining),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
 
@@ -860,5 +862,6 @@ def paper_exit(request: PaperExitRequest, user_id: int = Depends(current_user_id
         side = "SELL"
     order = _create_order(db, user_id=user_id, symbol=position.symbol, side=side, price=fill.price, quantity=quantity, pnl=pnl, fill_id=fill_id)
     db.delete(position)
+    _validate_paper_state(db, user_id)
     db.commit()
     return {"status":"closed","entry_price":entry_price,"exit_price":request.price,"quantity":quantity,"pnl":pnl,"order":order,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
