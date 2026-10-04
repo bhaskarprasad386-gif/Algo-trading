@@ -9729,3 +9729,43 @@ def test_paper_reconcile_detects_duplicate_active_positions_for_same_symbol():
     assert "duplicate_position:DUP_POS" in payload["mismatches"]
     assert "POSITION_STATE" in payload["mismatch_categories"]
     assert payload["repairability"] == "SAFE_DRY_RUN"
+
+
+def test_paper_repair_precondition_does_not_truncate_fractional_position_quantity(tmp_path):
+    from app.execution.paper_routes import _paper_repair_precondition
+
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+        position = Position(
+            user_id=user_id, symbol="FP-HASH", quantity=2.1, average_price=100.0,
+            is_paper=True, is_open=True,
+        )
+        db.add(position)
+        db.flush()
+        first = _paper_repair_precondition(db, user_id, account, [], [position])
+        position.quantity = 2.9
+        db.flush()
+        second = _paper_repair_precondition(db, user_id, account, [], [position])
+        assert first["state_hash"] != second["state_hash"]
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_paper_repair_precondition_preserves_nonfinite_numeric_state(tmp_path):
+    from app.execution.paper_routes import _paper_repair_precondition
+
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = float("nan")
+        db.flush()
+        fingerprint = _paper_repair_precondition(db, user_id, account, [], [])
+        assert fingerprint["state_hash"]
+    finally:
+        db.rollback()
+        db.close()
