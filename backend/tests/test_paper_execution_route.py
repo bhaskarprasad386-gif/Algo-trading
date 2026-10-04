@@ -6035,3 +6035,69 @@ def test_paper_http_concurrent_multi_symbol_close_and_partial_reversal_preserve_
         assert len(orders) == 2
     finally:
         verify.close()
+
+
+def test_paper_http_concurrent_terminal_exits_without_fill_id_close_once():
+    client, headers = _client_and_headers()
+
+    seed = SessionLocal()
+    try:
+        accounts = seed.query(TradingAccount).order_by(TradingAccount.id.asc()).all()
+        assert accounts
+        account = accounts[0]
+        for other in accounts:
+            other.is_active = other.id == account.id
+        account.virtual_balance = 9_500.0
+        account.realized_pnl = 0.0
+        seed.add(Position(
+            user_id=account.user_id,
+            symbol="NO_FILL_EXIT",
+            quantity=5,
+            average_price=100.0,
+        ))
+        seed.commit()
+        user_id = account.user_id
+    finally:
+        seed.close()
+
+    barrier = threading.Barrier(8)
+
+    def submit_exit():
+        barrier.wait(timeout=5)
+        return client.post(
+            "/api/v1/execution/paper/exit",
+            headers=headers,
+            json={"symbol": "NO_FILL_EXIT", "price": 110.0},
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        responses = list(pool.map(lambda _: submit_exit(), range(8)))
+
+    assert all(response.status_code == 200 for response in responses)
+    payloads = [response.json() for response in responses]
+    assert sum(payload["status"] == "closed" for payload in payloads) == 1
+    assert sum(payload["status"] == "flat" for payload in payloads) == 7
+
+    verify = SessionLocal()
+    try:
+        account = verify.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id
+        ).one()
+        positions = verify.query(Position).filter(
+            Position.user_id == user_id,
+            Position.quantity != 0,
+        ).all()
+        orders = verify.query(Order).filter(
+            Order.user_id == user_id
+        ).all()
+
+        assert positions == []
+        assert len(orders) == 1
+        assert orders[0].symbol == "NO_FILL_EXIT"
+        assert orders[0].transaction_type == "SELL"
+        assert orders[0].quantity == 5
+        assert orders[0].price == 110.0
+        assert account.virtual_balance == 10_050.0
+        assert account.realized_pnl == 50.0
+    finally:
+        verify.close()
