@@ -10004,3 +10004,47 @@ def test_paper_reconcile_detects_noncanonical_initial_balance_source():
     assert "account_source_canonicality_mismatch" in payload["mismatches"]
     assert "ACCOUNTING_STATE" in payload["mismatch_categories"]
     assert "BASELINE_INTEGRITY" not in payload["mismatch_categories"]
+
+
+def test_paper_order_corrupt_average_price_fails_closed(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'order-average-price.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="order-average-price@example.com", hashed_password="", full_name="Order Average Price", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        seed.add(Order(
+            user_id=user.id, order_id=f"PAPER-{user.id}-BAD-AVG", symbol="BADAVG",
+            transaction_type="BUY", quantity=1, filled_quantity=1, price=100.0,
+            average_price=101.0, average_fill_price=100.0, status="FILLED",
+            is_paper=True, pnl=0.0,
+        ))
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    db = Session()
+    try:
+        try:
+            paper_order(PaperOrderRequest(symbol="NEWAVG", transaction_type="BUY", price=50.0, quantity=1, fill_id="AVG-FAIL"), user_id=user_id, db=db)
+            assert False, "corrupt average_price must fail closed"
+        except RuntimeError as exc:
+            assert "paper order invariant" in str(exc)
+            db.rollback()
+    finally:
+        db.close()
+
+    verify = Session()
+    try:
+        assert verify.query(Order).filter(Order.user_id == user_id).count() == 1
+        stored = verify.query(Order).filter(Order.user_id == user_id).one()
+        assert stored.average_price == 101.0
+        assert stored.average_fill_price == 100.0
+    finally:
+        verify.close()
