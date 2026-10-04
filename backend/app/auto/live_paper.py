@@ -108,6 +108,7 @@ def _valid_persisted_trade(trade) -> bool:
             or last_mark_at > closed_at
             or str(exit_reason or "").strip().upper() not in {"MANUAL", "EXPIRY_CLOSE"}
             or realized_pnl != unrealized_pnl
+            or pnl_pct != round(realized_pnl / capital_used * 100.0, 8)
         ):
             return False
         return True
