@@ -7502,6 +7502,125 @@ def test_paper_http_concurrent_reads_during_successful_short_to_long_reversal_ex
 
 
 
+
+def test_concurrent_cross_user_same_symbol_orders_preserve_account_isolation():
+    """Concurrent writes for different users may serialize on SQLite, but never share balance or positions."""
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        users = []
+        for suffix, balance in (("a", 1000.0), ("b", 700.0)):
+            user = User(
+                email=f"cross-user-write-{suffix}@example.com",
+                hashed_password="",
+                full_name=f"Cross User Write {suffix}",
+                is_active=True,
+            )
+            seed.add(user)
+            seed.flush()
+            seed.add(TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=balance,
+                initial_virtual_balance=balance,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            ))
+            users.append(int(user.id))
+        seed.commit()
+    finally:
+        seed.close()
+
+    barrier = threading.Barrier(2)
+
+    def submit(user_id, price, fill_id):
+        db = TestSession()
+        try:
+            barrier.wait(timeout=5)
+            result = paper_order(
+                PaperOrderRequest(
+                    symbol="SHARED_SYMBOL_BUT_ISOLATED_USERS",
+                    transaction_type="BUY",
+                    price=price,
+                    quantity=2,
+                    fill_id=fill_id,
+                ),
+                user_id=user_id,
+                db=db,
+            )
+            return result
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(submit, users[0], 100.0, "CROSS-USER-A"),
+            pool.submit(submit, users[1], 50.0, "CROSS-USER-B"),
+        ]
+        results = [future.result() for future in futures]
+
+    assert {result["fill_id"] for result in results} == {"CROSS-USER-A", "CROSS-USER-B"}
+
+    verify = TestSession()
+    try:
+        accounts = verify.query(TradingAccount).filter(
+            TradingAccount.user_id.in_(users),
+            TradingAccount.mode == "PAPER",
+        ).order_by(TradingAccount.user_id).all()
+        assert len(accounts) == 2
+        assert [(int(a.user_id), float(a.virtual_balance), float(a.realized_pnl)) for a in accounts] == [
+            (users[0], 800.0, 0.0),
+            (users[1], 600.0, 0.0),
+        ]
+
+        positions = verify.query(Position).filter(
+            Position.user_id.in_(users),
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+            Position.symbol == "SHARED_SYMBOL_BUT_ISOLATED_USERS",
+        ).order_by(Position.user_id).all()
+        assert len(positions) == 2
+        assert [(int(p.user_id), int(p.quantity), float(p.average_price)) for p in positions] == [
+            (users[0], 2, 100.0),
+            (users[1], 2, 50.0),
+        ]
+
+        orders = verify.query(Order).filter(
+            Order.user_id.in_(users),
+            Order.is_paper.is_(True),
+            Order.symbol == "SHARED_SYMBOL_BUT_ISOLATED_USERS",
+        ).order_by(Order.user_id).all()
+        assert len(orders) == 2
+        assert [(int(o.user_id), o.fill_id, float(o.price), int(o.quantity)) for o in orders] == [
+            (users[0], "CROSS-USER-A", 100.0, 2),
+            (users[1], "CROSS-USER-B", 50.0, 2),
+        ]
+    finally:
+        verify.close()
+
+    for user_id in users:
+        reconcile_db = TestSession()
+        try:
+            payload = _reconcile_paper_ledger(reconcile_db, user_id)
+            assert payload["status"] == "OK"
+            assert payload["mismatches"] == []
+            assert payload["repairability"] == "NONE"
+        finally:
+            reconcile_db.close()
+
+    engine.dispose()
+
+
 def test_paper_http_concurrent_successful_same_symbol_reversals_serialize_without_lost_update():
     """Two successful same-symbol reversals must both serialize and preserve exact ledger accounting."""
     client, headers = _client_and_headers()
