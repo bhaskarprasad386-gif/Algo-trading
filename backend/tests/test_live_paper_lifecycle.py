@@ -1041,3 +1041,18 @@ def test_same_event_concurrent_first_entries_create_one_trade(tmp_path):
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_market_timestamp_freshness_accepts_exact_five_seconds():
+    from app.auto.live_paper import is_fresh_market_timestamp
+    now_ns = 1_000_000_000_000
+    assert is_fresh_market_timestamp(now_ns - 5_000_000_000, now_ns) is True
+
+
+def test_market_timestamp_freshness_rejects_older_and_future_quotes():
+    from app.auto.live_paper import is_fresh_market_timestamp
+    now_ns = 1_000_000_000_000
+    assert is_fresh_market_timestamp(now_ns - 5_000_000_001, now_ns) is False
+    assert is_fresh_market_timestamp(now_ns + 1, now_ns) is False
+    assert is_fresh_market_timestamp(0, now_ns) is False
+
