@@ -305,6 +305,55 @@ def _create_order(db: Session, *, user_id: int, symbol: str, side: str, price: f
 
 
 
+def _validate_paper_state(db: Session, user_id: int) -> None:
+    """Fail closed before commit if a paper-account invariant is violated."""
+    account = _account(db, user_id)
+    if not math.isfinite(float(account.virtual_balance)) or float(account.virtual_balance) < 0:
+        raise RuntimeError("paper account virtual_balance invariant violated")
+    if not math.isfinite(float(account.realized_pnl or 0.0)):
+        raise RuntimeError("paper account realized_pnl invariant violated")
+
+    paper_positions = (
+        db.query(Position)
+        .filter(Position.user_id == user_id, Position.is_paper.is_(True))
+        .all()
+    )
+    seen_symbols: set[str] = set()
+    for position in paper_positions:
+        symbol = str(position.symbol or "").strip().upper()
+        quantity = int(position.quantity or 0)
+        average_price = float(position.average_price or 0.0)
+        if not symbol or quantity == 0 or not math.isfinite(average_price) or average_price <= 0:
+            raise RuntimeError("paper position invariant violated")
+        if symbol in seen_symbols:
+            raise RuntimeError("duplicate active paper position invariant violated")
+        seen_symbols.add(symbol)
+
+    paper_orders = (
+        db.query(Order)
+        .filter(Order.user_id == user_id, Order.is_paper.is_(True))
+        .all()
+    )
+    for order in paper_orders:
+        quantity = int(order.quantity or 0)
+        filled_quantity = int(order.filled_quantity or 0)
+        price = float(order.price or 0.0)
+        average_fill_price = float(order.average_fill_price or 0.0)
+        if (
+            quantity <= 0
+            or filled_quantity != quantity
+            or not math.isfinite(price)
+            or price <= 0
+            or not math.isfinite(average_fill_price)
+            or average_fill_price <= 0
+            or order.status != "FILLED"
+            or order.transaction_type.upper() not in {"BUY", "SELL"}
+        ):
+            raise RuntimeError("paper order invariant violated")
+        if not math.isfinite(float(order.pnl or 0.0)):
+            raise RuntimeError("paper order pnl invariant violated")
+
+
 def _normalized_fill_id(fill_id: str | None) -> str | None:
     if fill_id is None:
         return None
