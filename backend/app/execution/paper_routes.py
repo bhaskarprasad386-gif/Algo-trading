@@ -412,6 +412,9 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
         raw_order_id = str(order.order_id or "")
         expected_order_prefix = f"PAPER-{user_id}-"
         raw_broker_order_id = str(order.broker_order_id) if order.broker_order_id is not None else None
+        raw_order_type = str(order.order_type or "")
+        raw_product_type = str(order.product_type or "")
+        raw_time_in_force = str(order.time_in_force or "")
         price = float(order.price or 0.0)
         average_fill_price = float(order.average_fill_price or 0.0)
         average_price = float(order.average_price or 0.0)
@@ -437,6 +440,10 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             or raw_order_id != raw_order_id.strip()
             or not raw_order_id.startswith(expected_order_prefix)
             or (raw_broker_order_id is not None and raw_broker_order_id.strip())
+            or raw_order_type != "MARKET"
+            or raw_product_type != "INTRADAY"
+            or raw_time_in_force != "DAY"
+            or order.trigger_price is not None
             or order.status != "FILLED"
             or order.transaction_type.upper() not in {"BUY", "SELL"}
         ):
