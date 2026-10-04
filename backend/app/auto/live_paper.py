@@ -132,29 +132,64 @@ class LivePaperTradeService:
         return trade, True
 
     def mark(self, db: Session, trade: LivePaperTrade, *, edge: float, capital_used=None, pnl_override=None):
-        trade.current_edge = max(0.0, float(edge))
-        trade.unrealized_pnl = round(
-            float(pnl_override) if pnl_override is not None else (trade.current_edge - trade.entry_edge) * trade.lot_size * trade.lots,
+        if trade.status != "ONGOING":
+            return trade
+        current_edge = max(0.0, float(edge))
+        unrealized_pnl = round(
+            float(pnl_override) if pnl_override is not None else (current_edge - trade.entry_edge) * trade.lot_size * trade.lots,
             8,
         )
+        effective_capital = (
+            float(capital_used)
+            if capital_used is not None and float(capital_used) > 0
+            else float(trade.capital_used)
+        )
+        pnl_pct = round(unrealized_pnl / effective_capital * 100.0, 8) if effective_capital > 0 else 0.0
+        # Conditional UPDATE prevents a stale monitor/API object from marking a
+        # trade after another transaction has already completed it.
+        values = {
+            LivePaperTrade.current_edge: current_edge,
+            LivePaperTrade.unrealized_pnl: unrealized_pnl,
+            LivePaperTrade.pnl_pct: pnl_pct,
+            LivePaperTrade.last_mark_at: _now(),
+        }
         if capital_used is not None and float(capital_used) > 0:
-            trade.capital_used = float(capital_used)
-        trade.pnl_pct = round(
-            trade.unrealized_pnl / trade.capital_used * 100.0, 8
-        ) if trade.capital_used > 0 else 0.0
-        trade.last_mark_at = _now()
+            values[LivePaperTrade.capital_used] = effective_capital
+        updated = db.query(LivePaperTrade).filter(
+            LivePaperTrade.id == trade.id,
+            LivePaperTrade.status == "ONGOING",
+        ).update(values, synchronize_session=False)
+        if updated:
+            db.commit()
+            db.refresh(trade)
+        else:
+            db.expire(trade)
+            db.refresh(trade)
         return trade
 
     def close(self, db: Session, trade: LivePaperTrade, reason="MANUAL"):
-        if trade.status != "ONGOING":
-            return trade
-        trade.status = "COMPLETED"
-        trade.exit_reason = reason
-        trade.realized_pnl = round(trade.unrealized_pnl, 8)
-        trade.closed_at = _now()
-        trade.last_mark_at = trade.closed_at
-        db.commit()
-        db.refresh(trade)
+        # Close atomically against the current DB row. This prevents a stale
+        # in-memory P&L from overwriting a newer mark during a close race.
+        now = _now()
+        updated = db.query(LivePaperTrade).filter(
+            LivePaperTrade.id == trade.id,
+            LivePaperTrade.status == "ONGOING",
+        ).update(
+            {
+                LivePaperTrade.status: "COMPLETED",
+                LivePaperTrade.exit_reason: reason,
+                LivePaperTrade.realized_pnl: LivePaperTrade.unrealized_pnl,
+                LivePaperTrade.closed_at: now,
+                LivePaperTrade.last_mark_at: now,
+            },
+            synchronize_session=False,
+        )
+        if updated:
+            db.commit()
+            db.refresh(trade)
+        else:
+            db.expire(trade)
+            db.refresh(trade)
         return trade
 
     def close_expired(self, db: Session, *, now=None):
