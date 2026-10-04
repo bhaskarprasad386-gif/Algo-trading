@@ -1097,6 +1097,98 @@ def test_market_timestamp_freshness_rejects_older_and_future_quotes():
 
 
 
+
+def test_manual_and_expiry_close_race_has_one_terminal_winner(tmp_path):
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'manual-expiry-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    setup.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    setup.commit()
+    trade, created = LivePaperTradeService().enter_or_mark(
+        setup, strategy_id="cash-future", symbol="RACE-EXPIRY",
+        event_id="RACE-MANUAL-EXPIRY", direction="LONG",
+        expiry="2026-10-12", earliest_expiry="2026-10-12",
+        lot_size=10, lots=1, edge=10, capital_used=50000,
+        metadata={"exchange": "NFO"}, user_id=1,
+    )
+    assert created is True
+    trade_id = trade.id
+    setup.close()
+
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+
+    def manual_worker():
+        db = Session()
+        try:
+            row = db.query(LivePaperTrade).filter(
+                LivePaperTrade.id == trade_id,
+                LivePaperTrade.status == "ONGOING",
+            ).one()
+            barrier.wait(timeout=5)
+            closed = LivePaperTradeService().close(db, row, "MANUAL")
+            results.append(("manual", closed.status, closed.exit_reason))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    def expiry_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            closed = LivePaperTradeService().close_expired(
+                db, now=datetime(2026, 10, 12, 15, 30),
+            )
+            results.append(("expiry", len(closed), closed[0].exit_reason if closed else None))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=manual_worker),
+        threading.Thread(target=expiry_worker),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(results) == 2
+
+    verify = Session()
+    try:
+        current = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.id == trade_id,
+        ).one()
+        assert current.status == "COMPLETED"
+        assert current.exit_reason in {"MANUAL", "EXPIRY_CLOSE"}
+
+        expiry_results = [row for row in results if row[0] == "expiry"]
+        assert len(expiry_results) == 1
+        if current.exit_reason == "MANUAL":
+            assert expiry_results[0][1] == 0
+        else:
+            assert expiry_results[0][1] == 1
+            assert expiry_results[0][2] == "EXPIRY_CLOSE"
+    finally:
+        verify.close()
+        engine.dispose()
+
 def test_mark_does_not_update_trade_after_concurrent_close(db_session):
     svc = LivePaperTradeService()
     db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=100000, emergency_stop=False))
