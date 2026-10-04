@@ -40,16 +40,53 @@ class AlertService:
     def dispatch_user(self, user, event: AlertEvent) -> bool:
         paper = event.metadata.get("paper_trade")
         if isinstance(paper, Mapping):
-            # Paper entry must follow the same user scope as the alert rule.
-            # Never fall back to LivePaperTradeService's default user_id=1.
-            rule_user_ids = {int(rule.user_id) for rule in rules}
-            for rule_user_id in rule_user_ids:
+            paper_db = SessionLocal()
+            try:
+                from app.auto.live_paper import LivePaperTradeService
+                LivePaperTradeService().enter_or_mark(
+                    paper_db, strategy_id=event.strategy_id, symbol=event.symbol, event_id=event.event_id,
+                    direction=paper.get("direction", "LONG"), expiry=paper.get("expiry"),
+                    earliest_expiry=paper.get("earliest_expiry") or paper.get("expiry"),
+                    lot_size=int(paper.get("lot_size", 1) or 1), lots=int(paper.get("lots", 1) or 1),
+                    edge=float(paper.get("edge", 0.0) or 0.0), capital_used=float(paper.get("capital_used", 0.0) or 0.0),
+                    legs=paper.get("legs") or [], metadata=dict(paper), user_id=int(user.id),
+                )
+            except Exception as exc:
+                from app.core.logger import app_logger
+                app_logger.error("Live paper auto-entry failed: %s", exc)
+            finally:
+                paper_db.close()
+        if not user.mobile_number:
+            return False
+        key = (int(user.id), event.event_id)
+        cooldown_ns = int(max(0.0, float(settings.LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS)) * 1_000_000_000)
+        previous = self._last_sent.get(key, 0)
+        if event.timestamp_ns - previous < cooldown_ns:
+            return False
+        sent = self._notifier.send_text(user.mobile_number, event.message)
+        if sent:
+            self._last_sent[key] = event.timestamp_ns
+        return sent
+
+    def dispatch(self, db, event: AlertEvent) -> int:
+        paper = event.metadata.get("paper_trade")
+        gross = event.metadata.get("gross_profit", event.metadata.get("gross_pnl", event.metadata.get("gross_profit_rupees")))
+        try:
+            gross_value = float(gross) if gross is not None else None
+        except (TypeError, ValueError):
+            gross_value = None
+        rules = db.query(AlertRule).filter(
+            AlertRule.enabled.is_(True),
+            AlertRule.strategy_id == event.strategy_id.strip().lower(),
+        ).order_by(AlertRule.priority.desc(), AlertRule.id.asc()).all()
+        if isinstance(paper, Mapping) and rules:
+            from app.auto.live_paper import LivePaperTradeService
+            service = LivePaperTradeService()
+            for rule_user_id in {int(rule.user_id) for rule in rules}:
                 try:
-                    from app.auto.live_paper import LivePaperTradeService
-                    LivePaperTradeService().enter_or_mark(
-                        db, strategy_id=event.strategy_id, symbol=event.symbol,
-                        event_id=event.event_id, direction=paper.get("direction", "LONG"),
-                        expiry=paper.get("expiry"),
+                    service.enter_or_mark(
+                        db, strategy_id=event.strategy_id, symbol=event.symbol, event_id=event.event_id,
+                        direction=paper.get("direction", "LONG"), expiry=paper.get("expiry"),
                         earliest_expiry=paper.get("earliest_expiry") or paper.get("expiry"),
                         lot_size=int(paper.get("lot_size", 1) or 1), lots=int(paper.get("lots", 1) or 1),
                         edge=float(paper.get("edge", 0.0) or 0.0),
