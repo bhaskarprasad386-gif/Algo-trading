@@ -87,3 +87,34 @@ def test_partial_allocation_does_not_weaken_max_loss_gate(db_session):
     rows = svc.ongoing(db_session, 1)
     assert len(rows) == 1
     assert rows[0].event_id == "PARTIAL-LOSS-SEED"
+
+
+def test_malformed_persisted_trade_fails_closed_before_new_paper_entry(db_session):
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100_000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=100_000, max_simultaneous_positions=5, max_loss=1_000,
+    ))
+    db_session.add(LivePaperTradeService().enter_or_mark)
+    db_session.rollback()
+
+    from app.models import LivePaperTrade
+    db_session.add(LivePaperTrade(
+        user_id=1, strategy_id="cash-future", symbol="BAD",
+        event_id="BAD-RISK-ROW", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-30", lot_size=1, lots=1,
+        entry_edge=10, current_edge=10, capital_used=float("inf"),
+        unrealized_pnl=-10, realized_pnl=0, pnl_pct=0,
+        status="ONGOING",
+    ))
+    db_session.commit()
+
+    assert AlertService().dispatch(db_session, _event("BLOCKED-BY-CORRUPTION")) == 0
+    rows = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+        LivePaperTrade.event_id == "BLOCKED-BY-CORRUPTION",
+    ).all()
+    assert rows == []
