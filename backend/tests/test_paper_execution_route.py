@@ -7054,3 +7054,81 @@ def test_paper_http_authenticated_identity_isolates_account_orders_and_position_
         foreign_symbol = "USER_B_ONLY" if own_symbol == "USER_A_ONLY" else "USER_A_ONLY"
         foreign_position = request_as(user_id, f"/api/v1/execution/paper/position?symbol={foreign_symbol}")
         assert foreign_position["status"] == "flat"
+
+
+def test_paper_http_concurrent_reads_during_failed_mutation_never_expose_partial_state():
+    """Account/order reads must see only the committed pre-state while a mutation fails."""
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        account.virtual_balance = 500.0
+        account.realized_pnl = 0.0
+        db.commit()
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(3)
+
+    def account_read():
+        barrier.wait(timeout=5)
+        return client.get("/api/v1/execution/paper/account", headers=headers)
+
+    def orders_read():
+        barrier.wait(timeout=5)
+        return client.get("/api/v1/execution/paper/orders", headers=headers)
+
+    def failed_mutation():
+        barrier.wait(timeout=5)
+        return client.post(
+            "/api/v1/execution/paper/order",
+            headers=headers,
+            json={
+                "symbol": "FAILED_READ_RACE",
+                "transaction_type": "BUY",
+                "price": 700.0,
+                "quantity": 1,
+                "fill_id": "FAILED-READ-RACE-1",
+            },
+        )
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        responses = list(pool.map(lambda fn: fn(), [account_read, orders_read, failed_mutation]))
+
+    account_response, orders_response, mutation_response = responses
+    assert account_response.status_code == 200
+    assert orders_response.status_code == 200
+    assert mutation_response.status_code == 400
+    assert mutation_response.json()["detail"] == "Insufficient paper balance"
+
+    account_payload = account_response.json()
+    orders_payload = orders_response.json()
+
+    assert account_payload["mode"] == "paper"
+    assert account_payload["virtual_balance"] == 500.0
+    assert account_payload["realized_pnl"] == 0.0
+    assert account_payload["open_positions"] == 0
+    assert orders_payload["mode"] == "paper"
+    assert orders_payload["orders"] == []
+
+    final_account = client.get("/api/v1/execution/paper/account", headers=headers)
+    final_orders = client.get("/api/v1/execution/paper/orders", headers=headers)
+    final_position = client.get(
+        "/api/v1/execution/paper/position?symbol=FAILED_READ_RACE",
+        headers=headers,
+    )
+    assert final_account.status_code == 200
+    assert final_orders.status_code == 200
+    assert final_position.status_code == 200
+    assert final_account.json()["virtual_balance"] == 500.0
+    assert final_account.json()["realized_pnl"] == 0.0
+    assert final_account.json()["open_positions"] == 0
+    assert final_orders.json()["orders"] == []
+    assert final_position.json()["status"] == "flat"
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
