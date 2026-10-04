@@ -54,6 +54,41 @@ def _paper_trade(legs, lot_size=10, lots=2):
     return LivePaperTrade(lot_size=lot_size, lots=lots, legs_json=json.dumps(legs))
 
 
+def test_executable_pnl_scales_with_reduced_partial_lots():
+    from app.main import _executable_paper_pnl
+    trade = _paper_trade([
+        {"instrument": "CASH", "side": "BUY", "price": 100.0},
+        {"instrument": "FUTURE", "side": "SELL", "price": 105.0},
+    ], lot_size=10, lots=1)
+    row = {"cash_bid": 103.0, "cash_ask": 104.0, "future_bid": 102.0, "future_ask": 103.0}
+    # Per-lot executable P&L is 10 points; one allocated lot means 10 * lot_size.
+    assert _executable_paper_pnl(trade, row) == 100.0
+
+
+def test_partial_lots_mark_and_close_scale_pnl_and_pnl_pct(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=125000, emergency_stop=False))
+    db_session.commit()
+
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="PARTIAL-PNL-1", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=2, edge=10, capital_used=60000, user_id=1,
+    )
+    assert created is True
+    # Simulate the global-cap allocator reducing the requested 2 lots to 1.
+    trade.lots = 1
+    trade.capital_used = 30000
+    svc.mark(db_session, trade, edge=20)
+    assert trade.unrealized_pnl == 100.0
+    assert trade.pnl_pct == round(100.0 / 30000.0 * 100.0, 8)
+
+    svc.close(db_session, trade, "MANUAL")
+    assert trade.realized_pnl == 100.0
+    assert trade.lots == 1
+    assert trade.capital_used == 30000
+
+
 def test_executable_pnl_cash_future_uses_exit_bid_ask():
     from app.main import _executable_paper_pnl
     from types import SimpleNamespace
