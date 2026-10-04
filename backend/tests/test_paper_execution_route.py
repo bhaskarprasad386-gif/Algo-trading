@@ -11129,3 +11129,59 @@ def test_paper_audit_chain_fails_closed_on_self_forward_and_disconnected_links(t
         finally:
             db.close()
     engine.dispose()
+
+
+def test_paper_legacy_audit_chain_cannot_reroot_after_first_hashed_order(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, _validate_paper_state, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'audit-reroot.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="audit-reroot@example.com", hashed_password="", full_name="Audit Reroot", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="LEGACY", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="R1", transaction_type="BUY", price=10.0, quantity=1, fill_id="R1"), user_id=user.id, db=db)
+        legacy_first = db.query(Order).filter(Order.user_id == user.id).one()
+        legacy_first.audit_hash = None
+        legacy_first.previous_audit_hash = None
+        db.commit()
+        paper_order(PaperOrderRequest(symbol="R2", transaction_type="BUY", price=11.0, quantity=1, fill_id="R2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        assert orders[1].audit_hash
+        orders[0].audit_hash = orders[1].audit_hash
+        orders[0].previous_audit_hash = None
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert "AUDIT_INTEGRITY" in payload["mismatch_categories"]
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("legacy chain reroot must fail closed")
+        except RuntimeError as exc:
+            assert "audit chain invariant" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_legacy_unhashed_orders_can_precede_first_hashed_order_but_remain_nonrepairable(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'audit-legacy-transition.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="audit-transition@example.com", hashed_password="", full_name="Audit Transition", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="LEGACY", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="P1", transaction_type="BUY", price=10.0, quantity=1, fill_id="P1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="P2", transaction_type="BUY", price=11.0, quantity=1, fill_id="P2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        for order in orders:
+            order.audit_hash = None
+            order.previous_audit_hash = None
+        db.commit()
+        paper_order(PaperOrderRequest(symbol="P3", transaction_type="BUY", price=12.0, quantity=1, fill_id="P3"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        assert orders[2].audit_hash
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["baseline_status"] == "LEGACY_UNFINGERPRINTED"
+        assert payload["repairability"] == "BLOCKED"
+    finally:
+        db.close(); engine.dispose()
