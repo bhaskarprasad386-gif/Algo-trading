@@ -354,6 +354,46 @@ def test_same_user_concurrent_paper_orders_serialize_balance_and_position(tmp_pa
         engine.dispose()
 
 
+def test_paper_long_to_short_reversal_preserves_realized_pnl_and_short_margin():
+    client, headers = _client_and_headers()
+    starting_balance = 10_000_000.0
+
+    opened = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "LONGREV", "transaction_type": "BUY", "price": 100.0, "quantity": 5},
+    )
+    assert opened.status_code == 200
+
+    reversed_response = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "LONGREV", "transaction_type": "SELL", "price": 120.0, "quantity": 8},
+    )
+    assert reversed_response.status_code == 200
+    data = reversed_response.json()
+
+    # Close 5-long: +100 realized and +600 sale proceeds from the
+    # previously paid 500 cost. Open the remaining 3-short by reserving
+    # 360 at the reversal price, leaving 10,000,240 cash.
+    assert data["realized_pnl"] == 100.0
+    assert data["virtual_balance"] == starting_balance + 240.0
+    assert data["position"]["quantity"] == -3.0
+    assert data["position"]["entry_price"] == 120.0
+
+    covered = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "LONGREV", "transaction_type": "BUY", "price": 110.0, "quantity": 3},
+    )
+    assert covered.status_code == 200
+    covered_data = covered.json()
+
+    # Release the 360 short margin and realize another +30.
+    assert covered_data["realized_pnl"] == 130.0
+    assert covered_data["virtual_balance"] == starting_balance + 130.0
+    assert covered_data["position"] is None
+
 def test_paper_partial_short_cover_preserves_margin_pnl_and_remaining_short():
     client, headers = _client_and_headers()
     starting_balance = 10_000_000.0
