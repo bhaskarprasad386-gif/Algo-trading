@@ -352,9 +352,17 @@ def _create_order(db: Session, *, user_id: int, symbol: str, side: str, price: f
 def _validate_paper_state(db: Session, user_id: int) -> None:
     """Fail closed before commit if a paper-account invariant is violated."""
     account = _account(db, user_id)
-    if not math.isfinite(float(account.virtual_balance)) or float(account.virtual_balance) < 0:
+    initial_virtual_balance = float(account.initial_virtual_balance)
+    virtual_balance = float(account.virtual_balance)
+    realized_pnl = float(account.realized_pnl or 0.0)
+    if (
+        not math.isfinite(initial_virtual_balance)
+        or initial_virtual_balance <= 0
+    ):
+        raise RuntimeError("paper account initial_virtual_balance invariant violated")
+    if not math.isfinite(virtual_balance) or virtual_balance < 0:
         raise RuntimeError("paper account virtual_balance invariant violated")
-    if not math.isfinite(float(account.realized_pnl or 0.0)):
+    if not math.isfinite(realized_pnl):
         raise RuntimeError("paper account realized_pnl invariant violated")
 
     paper_positions = (
@@ -365,15 +373,21 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
     seen_symbols: set[str] = set()
     for position in paper_positions:
         symbol = str(position.symbol or "").strip().upper()
-        quantity = int(position.quantity or 0)
-        average_price = float(position.average_price or 0.0)
+        raw_quantity = float(position.quantity or 0.0)
+        raw_average_price = float(position.average_price or 0.0)
         if (
             not symbol
-            or quantity == 0
+            or not math.isfinite(raw_quantity)
+            or not raw_quantity.is_integer()
+            or raw_quantity == 0
             or not bool(position.is_open)
-            or not math.isfinite(average_price)
-            or average_price <= 0
+            or not math.isfinite(raw_average_price)
+            or raw_average_price <= 0
         ):
+            raise RuntimeError("paper position invariant violated")
+        quantity = int(raw_quantity)
+        average_price = raw_average_price
+        if (
             raise RuntimeError("paper position invariant violated")
         if symbol in seen_symbols:
             raise RuntimeError("duplicate active paper position invariant violated")
@@ -493,7 +507,17 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     )
     orders = [order for order in all_user_orders if order.is_paper is True]
     rebuilt: dict[str, FillAccountingState] = {}
-    reconstructed_cash = float(account.initial_virtual_balance)
+    initial_virtual_balance = float(account.initial_virtual_balance)
+    stored_virtual_balance = float(account.virtual_balance)
+    stored_realized_pnl = float(account.realized_pnl or 0.0)
+    account_integrity: list[str] = []
+    if not math.isfinite(initial_virtual_balance) or initial_virtual_balance <= 0:
+        account_integrity.append("invalid_initial_virtual_balance")
+    if not math.isfinite(stored_virtual_balance) or stored_virtual_balance < 0:
+        account_integrity.append("invalid_virtual_balance")
+    if not math.isfinite(stored_realized_pnl):
+        account_integrity.append("invalid_realized_pnl")
+    reconstructed_cash = initial_virtual_balance
     reconstructed_realized = 0.0
     seen_fill_ids: set[str] = set()
     invalid_orders: list[str] = []
@@ -621,12 +645,39 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         .order_by(Position.id.asc())
         .all()
     )
-    actual_positions = {
-        str(position.symbol).strip().upper(): position
-        for position in all_paper_positions
-        if position.is_open and position.quantity != 0
-    }
+    actual_positions: dict[str, Position] = {}
+    for position in all_paper_positions:
+        raw_quantity = float(position.quantity or 0.0)
+        raw_average_price = float(position.average_price or 0.0)
+        if (
+            not math.isfinite(raw_quantity)
+            or not raw_quantity.is_integer()
+            or not math.isfinite(raw_average_price)
+            or (raw_quantity != 0 and raw_average_price <= 0)
+        ):
+            mismatches_placeholder = True
+            mismatches_placeholder = False
+            # Defer categorization until the shared mismatch list is built below.
+            # The position is intentionally excluded from canonical comparison so
+            # malformed values cannot be silently truncated or NaN-compared.
+            continue
+        if position.is_open and int(raw_quantity) != 0:
+            symbol = str(position.symbol or "").strip().upper()
+            if symbol:
+                actual_positions[symbol] = position
     mismatches: list[str] = list(invalid_orders)
+    mismatches.extend(account_integrity)
+    malformed_position_ids = [
+        int(position.id)
+        for position in all_paper_positions
+        if (
+            not math.isfinite(float(position.quantity or 0.0))
+            or not float(position.quantity or 0.0).is_integer()
+            or not math.isfinite(float(position.average_price or 0.0))
+            or (float(position.quantity or 0.0) != 0 and float(position.average_price or 0.0) <= 0)
+        )
+    ]
+    mismatches.extend(f"invalid_position:{position_id}" for position_id in malformed_position_ids)
     for symbol, state in rebuilt.items():
         if abs(state.quantity) > 0:
             position = actual_positions.pop(symbol, None)
@@ -641,8 +692,8 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         mismatches.append(f"orphan_position:{symbol}")
 
     reconstructed_realized = round(sum(state.realized_pnl for state in rebuilt.values()), 8)
-    realized_delta = round(float(account.realized_pnl or 0.0) - reconstructed_realized, 8)
-    balance_delta = round(float(account.virtual_balance) - reconstructed_cash, 8)
+    realized_delta = round(stored_realized_pnl - reconstructed_realized, 8) if math.isfinite(stored_realized_pnl) else 0.0
+    balance_delta = round(stored_virtual_balance - reconstructed_cash, 8) if math.isfinite(stored_virtual_balance) and math.isfinite(reconstructed_cash) else 0.0
     if abs(realized_delta) > 1e-8:
         mismatches.append("realized_pnl_mismatch")
     if abs(balance_delta) > 1e-8:
@@ -661,9 +712,10 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             mismatch_categories.add("ORDER_INTEGRITY")
         elif mismatch.startswith(("audit_chain_mismatch:", "audit_hash_mismatch:")):
             mismatch_categories.add("AUDIT_INTEGRITY")
-        elif mismatch.startswith(("missing_position:", "position_mismatch:", "unexpected_position:", "orphan_position:")):
+        elif mismatch.startswith(("missing_position:", "position_mismatch:", "unexpected_position:", "orphan_position:", "invalid_position:")):
             mismatch_categories.add("POSITION_STATE")
-        elif mismatch in {"realized_pnl_mismatch", "virtual_balance_mismatch"}:
+        elif mismatch in {"invalid_initial_virtual_balance", "invalid_virtual_balance", "invalid_realized_pnl", "realized_pnl_mismatch", "virtual_balance_mismatch"}:
+            mismatch_categories.add("ACCOUNTING_STATE")
             mismatch_categories.add("ACCOUNTING_STATE")
         else:
             mismatch_categories.add("RECONCILIATION")
