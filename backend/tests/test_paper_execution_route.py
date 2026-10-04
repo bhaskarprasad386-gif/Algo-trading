@@ -1757,7 +1757,8 @@ def test_paper_ledger_reconciliation_fingerprint_chain_is_valid_and_tamper_detec
     try:
         orders = db.query(Order).filter(Order.symbol == "HASH").order_by(Order.id.asc()).all()
         assert len(orders) == 2
-        assert all(len(order.audit_hash) == 64 for order in orders)        assert orders[0].previous_audit_hash is None
+        assert all(len(order.audit_hash) == 64 for order in orders)
+        assert orders[0].previous_audit_hash is None
         assert orders[1].previous_audit_hash == orders[0].audit_hash
         orders[0].price = 101.0
         db.commit()
