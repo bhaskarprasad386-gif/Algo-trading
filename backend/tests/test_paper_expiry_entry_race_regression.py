@@ -160,6 +160,10 @@ def test_expiry_commit_false_does_not_commit_caller_pending_work(db_session):
 
 def test_expiry_commit_true_persists_all_expiry_transitions_in_one_boundary(db_session):
     _setup(db_session)
+    db_session.query(GlobalPaperSetting).filter(
+        GlobalPaperSetting.user_id == 1
+    ).update({GlobalPaperSetting.paper_amount: 60000})
+    db_session.commit()
     first = _expired_trade(db_session)
     second, created = LivePaperTradeService().enter_or_mark(
         db_session,
