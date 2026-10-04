@@ -1495,3 +1495,71 @@ def test_paper_ledger_reconciliation_blocks_repair_plan_for_corrupt_order():
     assert data["repairability"] == "BLOCKED"
     assert data["repair_plan"]["apply"] is False
     assert any(item.startswith("invalid_order:") for item in data["mismatches"])
+
+
+def test_paper_ledger_reconciliation_fingerprint_chain_is_valid_and_tamper_detected():
+    client, headers = _client_and_headers()
+    for payload in [
+        {"symbol": "HASH", "transaction_type": "BUY", "price": 100.0, "quantity": 5},
+        {"symbol": "HASH", "transaction_type": "SELL", "price": 120.0, "quantity": 2},
+    ]:
+        response = client.post("/api/v1/execution/paper/order", headers=headers, json=payload)
+        assert response.status_code == 200
+
+    db = SessionLocal()
+    try:
+        orders = db.query(Order).filter(Order.symbol == "HASH").order_by(Order.id.asc()).all()
+        assert len(orders) == 2
+        assert all(len(order.audit_hash) == 64 for order in orders)
+        assert orders[0].previous_audit_hash is None
+        assert orders[1].previous_audit_hash == orders[0].audit_hash
+        original_hash = orders[0].audit_hash
+        orders[0].price = 101.0
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "MISMATCH"
+    assert data["repairability"] == "BLOCKED"
+    assert data["repair_plan"]["apply"] is False
+    assert f"audit_hash_mismatch:{orders[0].id}" in data["mismatches"] or any(
+        item.startswith("audit_hash_mismatch:") for item in data["mismatches"]
+    )
+    assert original_hash != data.get("repair_plan", {}).get("audit_hash")
+
+
+def test_paper_ledger_reconciliation_blocks_legacy_unfingerprinted_orders():
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).order_by(TradingAccount.id.asc()).first()
+        db.add(
+            Order(
+                user_id=account.user_id,
+                order_id=f"LEGACY-HASH-{account.user_id}",
+                symbol="LEGACY-HASH",
+                transaction_type="BUY",
+                quantity=1,
+                price=100.0,
+                average_price=100.0,
+                filled_quantity=1,
+                average_fill_price=100.0,
+                status="FILLED",
+                is_paper=True,
+                pnl=0.0,
+                fill_id=None,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["repairability"] == "BLOCKED"
+    assert data["baseline_status"] == "LEGACY_UNFINGERPRINTED"
+    assert any(item.startswith("audit_chain_mismatch:") for item in data["mismatches"])
