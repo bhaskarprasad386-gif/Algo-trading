@@ -2924,6 +2924,57 @@ def test_paper_reconcile_response_contract_is_deterministic_for_clean_safe_and_b
         blocked_engine.dispose()
 
 
+
+def test_paper_reconcile_authorization_fails_closed_when_multiple_active_users_exist(tmp_path):
+    from app.execution.paper_routes import current_user_id, _reconcile_paper_ledger
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'reconcile-auth-boundary.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        users = [
+            User(email="auth-a@example.com", hashed_password="", full_name="Auth A", is_active=True),
+            User(email="auth-b@example.com", hashed_password="", full_name="Auth B", is_active=True),
+        ]
+        db.add_all(users); db.flush()
+        db.add_all([
+            TradingAccount(user_id=users[0].id, mode="PAPER", virtual_balance=1000.0,
+                           initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", is_active=True),
+            TradingAccount(user_id=users[1].id, mode="PAPER", virtual_balance=2000.0,
+                           initial_virtual_balance=2000.0, initial_balance_source="BOOTSTRAP", is_active=True),
+        ])
+        db.commit()
+        with pytest.raises(HTTPException) as exc:
+            current_user_id(db)
+        assert exc.value.status_code == 409
+        assert "authenticated user context" in str(exc.value.detail)
+
+        # Reconciliation itself remains explicitly scoped: there is no fallback
+        # to the first active account when identity is ambiguous.
+        with pytest.raises(HTTPException):
+            current_user_id(db)
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_paper_reconcile_route_has_no_client_selectable_user_id(tmp_path):
+    from app.execution.paper_routes import paper_reconcile
+
+    signature = inspect.signature(paper_reconcile)
+    assert "user_id" in signature.parameters
+    parameter = signature.parameters["user_id"]
+    assert parameter.default is not inspect.Parameter.empty
+    assert "Depends" in repr(parameter.default)
+
+    # The only route-level identity source is the dependency; callers cannot
+    # provide a second user selector that competes with current_user_id.
+    assert list(signature.parameters).count("user_id") == 1
+
 def test_paper_reconcile_is_user_isolated_across_orders_positions_and_preconditions(tmp_path):
     from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
 
