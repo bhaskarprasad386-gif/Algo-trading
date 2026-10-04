@@ -419,6 +419,81 @@ def test_global_paper_cap_serializes_concurrent_entries(tmp_path):
         engine.dispose()
 
 
+def test_same_event_concurrent_entries_create_one_trade_and_one_reservation(tmp_path):
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'same-event-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    setup = Session()
+    setup.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=100000, emergency_stop=False))
+    setup.commit()
+    setup.close()
+
+    results = []
+    errors = []
+    start = threading.Barrier(2)
+
+    def worker(edge):
+        db = Session()
+        try:
+            start.wait(timeout=5)
+            trade, created = LivePaperTradeService().enter_or_mark(
+                db, strategy_id="cash-future", symbol="NIFTY",
+                event_id="SAME-EVENT-RACE", direction="LONG",
+                expiry="2026-10-30", earliest_expiry="2026-10-30",
+                lot_size=10, lots=1, edge=edge, capital_used=60000, user_id=1,
+            )
+            results.append((
+                created,
+                None if trade is None else trade.id,
+                None if trade is None else trade.capital_used,
+                None if trade is None else trade.entry_edge,
+                None if trade is None else trade.current_edge,
+            ))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=worker, args=(5.0,)),
+        threading.Thread(target=worker, args=(7.0,)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(results) == 2
+    assert sum(1 for created, *_ in results if created) == 1
+    assert sum(1 for created, *_ in results if not created) == 1
+    assert all(capital == 60000 for _, _, capital, _, _ in results)
+
+    verify = Session()
+    try:
+        rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.event_id == "SAME-EVENT-RACE",
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].status == "ONGOING"
+        assert rows[0].capital_used == 60000
+        assert rows[0].lots == 1
+        assert rows[0].entry_edge in {5.0, 7.0}
+        assert rows[0].current_edge in {5.0, 7.0}
+        assert rows[0].id == results[0][1] == results[1][1]
+    finally:
+        verify.close()
+        engine.dispose()
+
+
 def test_global_paper_cap_allows_only_remaining_lots(db_session):
     svc = LivePaperTradeService()
     db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=250000, emergency_stop=False))
