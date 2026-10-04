@@ -52,6 +52,32 @@ def test_full_paper_lifecycle_does_not_reopen_or_reallocate_completed_event(db_s
     assert opposite.expiry == "2026-10-04"
     assert opposite.earliest_expiry == "2026-10-04"
 
+    # Executable legs and exchange metadata are entry-time identity. A
+    # duplicate signal with a different contract payload must remain mark-only.
+    original_legs = '[{"price":100.0,"side":"BUY"}]'
+    original_metadata = '{"exchange":"NFO","contract":"ORIGINAL"}'
+    persisted = db_session.query(type(trade)).filter(
+        type(trade).id == trade.id
+    ).one()
+    persisted.legs_json = original_legs
+    persisted.metadata_json = original_metadata
+    db_session.commit()
+
+    duplicate_payload, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="LIFECYCLE-1", direction="LONG", expiry="2026-12-31",
+        earliest_expiry="2026-12-30", lot_size=99, lots=99, edge=5,
+        capital_used=1_000_000,
+        legs=[{"price": 999.0, "side": "SELL"}],
+        metadata={"exchange": "MCX", "contract": "MALICIOUS-REPLACE"},
+        user_id=1,
+    )
+    assert created is False
+    assert duplicate_payload.id == trade.id
+    db_session.refresh(duplicate_payload)
+    assert duplicate_payload.legs_json == original_legs
+    assert duplicate_payload.metadata_json == original_metadata
+
     svc.mark(db_session, trade, edge=7)
     assert trade.unrealized_pnl == -60.0
     assert trade.pnl_pct == -0.1
