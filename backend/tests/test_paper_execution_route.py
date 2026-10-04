@@ -10656,3 +10656,98 @@ def test_paper_mutation_routes_share_state_validator_for_corrupt_position(tmp_pa
                 db.rollback()
     finally:
         db.close(); engine.dispose()
+
+
+def test_paper_commit_database_errors_are_normalized(tmp_path):
+    from app.execution.paper_routes import _commit_paper_mutation
+    from fastapi import HTTPException
+    from sqlalchemy.exc import IntegrityError, OperationalError
+    engine = create_engine(f"sqlite:///{tmp_path / 'commit-normalization.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        original_commit = db.commit
+        for exc, expected in (
+            (IntegrityError("duplicate", {}, Exception("duplicate")), "conflicts with existing ledger state"),
+            (OperationalError("locked", {}, Exception("locked")), "account is busy; retry"),
+        ):
+            def failing_commit(exc=exc):
+                raise exc
+            db.commit = failing_commit
+            try:
+                _commit_paper_mutation(db)
+                raise AssertionError("database error must be normalized")
+            except HTTPException as normalized:
+                assert normalized.status_code == 409
+                assert expected in str(normalized.detail)
+            finally:
+                db.commit = original_commit
+                db.rollback()
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_retry_after_failed_commit_does_not_duplicate_fill(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _commit_paper_mutation, paper_order
+    from app.models.order import Order
+    engine = create_engine(f"sqlite:///{tmp_path / 'retry-fill.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        user = User(email="retry-fill@example.com", hashed_password="", full_name="Retry Fill", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        first = paper_order(PaperOrderRequest(symbol="RETRY", transaction_type="BUY", price=100.0, quantity=1, fill_id="RETRY-1"), user_id=user.id, db=db)
+        retry = paper_order(PaperOrderRequest(symbol="RETRY", transaction_type="BUY", price=100.0, quantity=1, fill_id="RETRY-1"), user_id=user.id, db=db)
+        assert retry["idempotent"] is True
+        assert db.query(Order).filter(Order.user_id == user.id, Order.fill_id == "RETRY-1").count() == 1
+        assert retry["order"]["id"] == first["order"]["id"]
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_reconcile_detects_execution_metadata_corruption_that_mutation_blocks(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, _validate_paper_state, paper_order
+    from app.models.order import Order
+    engine = create_engine(f"sqlite:///{tmp_path / 'metadata-parity.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        user = User(email="metadata-parity@example.com", hashed_password="", full_name="Metadata Parity", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="META", transaction_type="BUY", price=10.0, quantity=1, fill_id="META-P"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id, Order.fill_id == "META-P").one()
+        order.order_type = "LIMIT"; db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["status"] == "MISMATCH"
+        assert any("invalid_order:".startswith(x.split(":")[0]) for x in payload["mismatches"] if x.startswith("invalid_order:"))
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("mutation validator must reject the same corruption")
+        except RuntimeError as exc:
+            assert "paper order invariant" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_reconcile_mixed_corruption_precedence_blocks_repair(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    from app.models.order import Order
+    from app.models.position import Position
+    engine = create_engine(f"sqlite:///{tmp_path / 'mixed-corruption.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="mixed-corruption@example.com", hashed_password="", full_name="Mixed Corruption", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="MIX", transaction_type="BUY", price=10.0, quantity=1, fill_id="MIX-1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id, Order.fill_id == "MIX-1").one()
+        position = db.query(Position).filter(Position.user_id == user.id, Position.symbol == "MIX").one()
+        order.order_type = "LIMIT"
+        position.last_price = -1.0
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+        assert "POSITION_STATE" in payload["mismatch_categories"]
+        assert payload["repair_plan"]["apply"] is False
+    finally:
+        db.close(); engine.dispose()
