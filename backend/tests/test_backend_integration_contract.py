@@ -285,3 +285,47 @@ def test_duplicate_alert_marks_existing_trade_even_when_risk_limit_is_reached(db
     assert trades[0].current_edge == 15
     assert trades[0].capital_used == trade.capital_used
     assert trades[0].current_edge != first_edge
+
+
+def test_expiry_close_releases_position_slot_but_keeps_realized_loss_limit(db_session):
+    from datetime import datetime
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
+    _enable(db_session, 1)
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="111", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0.0, max_simultaneous_positions=1, max_loss=100.0,
+    ))
+    db_session.commit()
+
+    class DummyNotifier:
+        configured = False
+        def send_text(self, mobile, message):
+            return True
+
+    svc = LivePaperTradeService()
+    service = AlertService(DummyNotifier())
+    base = {
+        "direction": "LONG", "expiry": "2026-10-10", "lot_size": 10,
+        "lots": 1, "edge": 10, "capital_used": 1000,
+    }
+    first = AlertEvent(
+        strategy_id="cash-future", event_id="EXPIRY-RISK-1", symbol="AAA",
+        timestamp_ns=1, message="first", metadata={"gross_profit": 1, "paper_trade": base},
+    )
+    service.dispatch(db_session, first)
+    trade = svc.ongoing(db_session, 1)[0]
+    svc.mark(db_session, trade, edge=0.0)
+    closed = svc.close_expired(db_session, now=datetime(2026, 10, 10, 15, 30))
+    assert [x.id for x in closed] == [trade.id]
+    assert svc.ongoing(db_session, 1) == []
+    assert svc.completed(db_session, 1)[0].realized_pnl == -100.0
+
+    second = AlertEvent(
+        strategy_id="cash-future", event_id="EXPIRY-RISK-2", symbol="BBB",
+        timestamp_ns=2, message="second", metadata={"gross_profit": 1, "paper_trade": base},
+    )
+    service.dispatch(db_session, second)
+    assert svc.ongoing(db_session, 1) == []
