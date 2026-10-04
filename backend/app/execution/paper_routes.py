@@ -219,6 +219,9 @@ def _begin_paper_mutation(db: Session, user_id: int) -> TradingAccount:
     serialization boundary.
     """
     if db.bind is not None and db.bind.dialect.name == "sqlite":
+        # current_user_id() may have opened a read transaction on this session.
+        # Mutation locking must begin from a clean transaction boundary.
+        db.rollback()
         db.connection().exec_driver_sql("BEGIN IMMEDIATE")
         return _account(db, user_id)
     account = (
