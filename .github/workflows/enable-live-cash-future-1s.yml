@@ -42,13 +42,7 @@ jobs:
           test -f "$ENV_FILE"
           config_changed=false
           if grep -q '^LIVE_CASH_FUTURE_DATA_ENABLED=' "$ENV_FILE"; then
-            if ! grep -q '^LIVE_CASH_FUTURE_DATA_ENABLED=true
-          sleep 3
-          systemctl is-active --quiet algo-trading.service
-          echo "LIVE_CASH_FUTURE_DATA_ENABLED=true"
-          echo "LIVE_TRADING=OFF"
-          REMOTE
- "$ENV_FILE"; then
+            if ! grep -q '^LIVE_CASH_FUTURE_DATA_ENABLED=true$' "$ENV_FILE"; then
               sed -i 's/^LIVE_CASH_FUTURE_DATA_ENABLED=.*/LIVE_CASH_FUTURE_DATA_ENABLED=true/' "$ENV_FILE"
               config_changed=true
             fi
