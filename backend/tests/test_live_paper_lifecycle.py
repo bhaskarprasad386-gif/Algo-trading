@@ -1859,6 +1859,6 @@ def test_executable_pnl_box_both_directions_follow_leg_sides():
     )
 
     # LONG: +2 +1 -3 -3 = -3.
-    # SHORT: +2 +2 +2 +3 = +9.
+    # SHORT: (10-13) + (9-11) + (7-5) + (6-4) = -1.
     assert _executable_paper_pnl(long_trade, row) == -3.0
-    assert _executable_paper_pnl(short_trade, row) == 9.0
+    assert _executable_paper_pnl(short_trade, row) == -1.0
