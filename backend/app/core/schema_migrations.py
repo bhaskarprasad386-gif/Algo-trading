@@ -48,6 +48,7 @@ def run_schema_migrations() -> None:
                 "filled_quantity": "INTEGER DEFAULT 0",
                 "average_fill_price": "FLOAT",
                 "time_in_force": "VARCHAR(16) DEFAULT 'DAY'",
+                "fill_id": "VARCHAR(128)",
             }.items():
                 if name not in order_columns:
                     connection.execute(text(f"ALTER TABLE orders ADD COLUMN {name} {definition}"))
@@ -157,5 +158,8 @@ def run_schema_migrations() -> None:
             # Existing duplicate rows are not silently deleted; deployment must
             # fail loudly if legacy data violates the new invariant.
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_live_paper_user_event ON live_paper_trades (user_id, event_id)"))
+        # A broker fill can be retried, but the same user/fill identity must
+        # never create a second cash/P&L mutation. Nullable keeps legacy orders valid.
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_user_fill_id ON orders (user_id, fill_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_id ON orders (user_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_positions_user_id ON positions (user_id)"))
