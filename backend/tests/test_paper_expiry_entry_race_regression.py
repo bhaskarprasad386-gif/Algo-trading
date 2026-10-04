@@ -239,3 +239,159 @@ def test_mcx_expiry_uses_2330_boundary_from_paper_metadata(db_session):
     db_session.refresh(trade)
     assert trade.status == "COMPLETED"
     assert trade.exit_reason == "EXPIRY_CLOSE"
+
+
+def test_four_way_mark_manual_close_expiry_and_new_entry_race_converges(tmp_path):
+    """All four same-user paths must serialize without duplicate terminal state."""
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'four-way-paper-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    from app.core.database import Base
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    try:
+        setup.add(GlobalPaperSetting(
+            user_id=1, enabled=True, paper_amount=60000, emergency_stop=False,
+        ))
+        setup.add(AlertRule(
+            user_id=1, strategy_id="cash-future", min_gross_profit=0,
+            mobile_number="", whatsapp_enabled=False, enabled=True,
+            max_daily_capital=60000, max_simultaneous_positions=1, max_loss=1000,
+        ))
+        setup.commit()
+        seed, created = LivePaperTradeService().enter_or_mark(
+            setup,
+            strategy_id="cash-future", symbol="FOUR-WAY",
+            event_id="FOUR-WAY-SEED", direction="LONG",
+            expiry="2026-10-04", earliest_expiry="2026-10-04",
+            lot_size=10, lots=1, edge=10, capital_used=30000, user_id=1,
+        )
+        assert created is True
+        setup.commit()
+    finally:
+        setup.close()
+
+    barrier = threading.Barrier(4)
+    errors = []
+    results = []
+
+    def mark_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            trade = db.query(LivePaperTrade).filter(
+                LivePaperTrade.event_id == "FOUR-WAY-SEED",
+                LivePaperTrade.user_id == 1,
+            ).one()
+            LivePaperTradeService().mark(
+                db, trade, edge=5, pnl_override=-50,
+            )
+            db.commit()
+            results.append("mark")
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    def manual_close_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            trade = db.query(LivePaperTrade).filter(
+                LivePaperTrade.event_id == "FOUR-WAY-SEED",
+                LivePaperTrade.user_id == 1,
+            ).one()
+            LivePaperTradeService().close(db, trade, "MANUAL")
+            results.append("manual")
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    def expiry_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            closed = LivePaperTradeService().close_expired(
+                db, now=datetime(2026, 10, 4, 15, 30),
+            )
+            results.append(("expiry", len(closed)))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    def entry_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            results.append(
+                ("entry", AlertService().dispatch(db, _event("FOUR-WAY-ENTRY")))
+            )
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=mark_worker),
+        threading.Thread(target=manual_close_worker),
+        threading.Thread(target=expiry_worker),
+        threading.Thread(target=entry_worker),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert errors == []
+    assert len(results) == 4
+
+    verify = Session()
+    try:
+        seed_rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.event_id == "FOUR-WAY-SEED",
+        ).all()
+        assert len(seed_rows) == 1
+        seed = seed_rows[0]
+        assert seed.status in {"ONGOING", "COMPLETED"}
+
+        if seed.status == "COMPLETED":
+            assert seed.exit_reason in {"MANUAL", "EXPIRY_CLOSE"}
+            assert seed.realized_pnl == seed.unrealized_pnl
+            # The mark must either win before close or lose its race to the
+            # terminal conditional UPDATE; it can never resurrect the trade.
+            assert seed.closed_at is not None
+        else:
+            assert seed.exit_reason is None
+            assert seed.closed_at is None
+
+        ongoing = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.status == "ONGOING",
+        ).all()
+        assert len(ongoing) <= 1
+        if ongoing:
+            assert ongoing[0].event_id in {"FOUR-WAY-SEED", "FOUR-WAY-ENTRY"}
+            assert ongoing[0].capital_used == 30000
+
+        # At most one position can consume the single 30k free allocation.
+        assert verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.event_id == "FOUR-WAY-ENTRY",
+        ).count() <= 1
+    finally:
+        verify.close()
+        engine.dispose()
