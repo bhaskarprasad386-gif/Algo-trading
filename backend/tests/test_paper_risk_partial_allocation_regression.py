@@ -456,3 +456,54 @@ def test_max_loss_sums_multiple_completed_losses_without_float_boundary_drift(db
         db_session, _event("MULTI-LOSS-BLOCKED", capital=30000, lots=1)
     ) == 0
     assert LivePaperTradeService().ongoing(db_session, 1) == []
+
+
+def test_max_daily_capital_exact_boundary_blocks_new_allocation(db_session):
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=60000, max_simultaneous_positions=5, max_loss=0,
+    ))
+    db_session.commit()
+
+    first = _event("DAILY-EXACT-1", capital=60000, lots=1)
+    assert AlertService().dispatch(db_session, first) == 0
+    assert sum(float(row.capital_used) for row in LivePaperTradeService().ongoing(db_session, 1)) == 60000
+
+    # Exact daily-capital boundary is a hard stop for the next event.
+    assert AlertService().dispatch(
+        db_session, _event("DAILY-EXACT-2", capital=30000, lots=1)
+    ) == 0
+    rows = LivePaperTradeService().ongoing(db_session, 1)
+    assert len(rows) == 1
+    assert rows[0].event_id == "DAILY-EXACT-1"
+
+
+def test_max_daily_capital_sums_multiple_same_day_allocations(db_session):
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=90000, max_simultaneous_positions=5, max_loss=0,
+    ))
+    db_session.commit()
+
+    # Three accepted allocations consume the complete ₹90k daily budget.
+    for idx in range(3):
+        assert AlertService().dispatch(
+            db_session, _event(f"DAILY-MULTI-{idx}", capital=30000, lots=1)
+        ) == 0
+
+    rows = LivePaperTradeService().ongoing(db_session, 1)
+    assert len(rows) == 3
+    assert sum(float(row.capital_used) for row in rows) == 90000
+
+    assert AlertService().dispatch(
+        db_session, _event("DAILY-MULTI-BLOCKED", capital=30000, lots=1)
+    ) == 0
+    assert len(LivePaperTradeService().ongoing(db_session, 1)) == 3
