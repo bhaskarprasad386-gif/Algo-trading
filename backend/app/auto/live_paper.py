@@ -45,7 +45,22 @@ class LivePaperTradeService:
             return None, False
         capital_per_lot = max(0.0, float(capital_used)) / max(1, int(lots))
         if capital_per_lot > 0:
-            lots = min(int(lots), int(float(setting.paper_amount) // capital_per_lot))
+            paper_amount = max(0.0, float(setting.paper_amount))
+            reserved = float(
+                db.query(LivePaperTrade.capital_used)
+                .filter(
+                    LivePaperTrade.user_id == int(user_id),
+                    LivePaperTrade.status == "ONGOING",
+                )
+                .all()
+                and sum(float(row[0] or 0.0) for row in db.query(LivePaperTrade.capital_used).filter(
+                    LivePaperTrade.user_id == int(user_id),
+                    LivePaperTrade.status == "ONGOING",
+                ).all())
+                or 0.0
+            )
+            available = max(0.0, paper_amount - reserved)
+            lots = min(int(lots), int(available // capital_per_lot))
             if lots <= 0:
                 return None, False
             capital_used = capital_per_lot * lots
