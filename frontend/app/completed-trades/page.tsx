@@ -29,8 +29,17 @@ const money = (v: unknown) => {
 };
 const label = (v?: string | null) =>
   v ? v.replaceAll("-", " ").replace(/\b\w/g, c => c.toUpperCase()) : "—";
-const dateTime = (v?: string | null) =>
-  v ? new Date(v).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" }) : "—";
+const dateTime = (v?: string | null) => {
+  if (!v) return "—";
+  const date = new Date(/(?:Z|[+-]\d{2}:\d{2})$/.test(v) ? v : `${v}Z`);
+  return Number.isNaN(date.getTime())
+    ? "—"
+    : date.toLocaleString("en-IN", {
+        timeZone: "Asia/Kolkata",
+        dateStyle: "short",
+        timeStyle: "short",
+      });
+};
 
 export default function CompletedTradesPage() {
   const [trades, setTrades] = useState<Trade[]>([]);
