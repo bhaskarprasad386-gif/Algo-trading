@@ -7373,6 +7373,134 @@ def test_paper_http_concurrent_reads_during_successful_long_to_short_reversal_ex
     assert payload["repairability"] == "NONE"
 
 
+def test_paper_http_concurrent_reads_during_successful_short_to_long_reversal_expose_only_valid_epochs():
+    """Successful short->long reversal must expose only committed pre/post epochs to readers."""
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 9_999_500.0
+        account.realized_pnl = 0.0
+        db.add(Position(
+            user_id=user_id,
+            symbol="READ_SHORT_LONG_EPOCH",
+            quantity=-5,
+            average_price=100.0,
+            stop_loss=None,
+            target=None,
+            is_paper=True,
+            is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(4)
+
+    def account_read():
+        barrier.wait(timeout=5)
+        return client.get("/api/v1/execution/paper/account", headers=headers)
+
+    def orders_read():
+        barrier.wait(timeout=5)
+        return client.get("/api/v1/execution/paper/orders", headers=headers)
+
+    def position_read():
+        barrier.wait(timeout=5)
+        return client.get(
+            "/api/v1/execution/paper/position?symbol=READ_SHORT_LONG_EPOCH",
+            headers=headers,
+        )
+
+    def reverse():
+        barrier.wait(timeout=5)
+        return client.post(
+            "/api/v1/execution/paper/order",
+            headers=headers,
+            json={
+                "symbol": "READ_SHORT_LONG_EPOCH",
+                "transaction_type": "BUY",
+                "price": 80.0,
+                "quantity": 8,
+                "fill_id": "READ-SHORT-LONG-EPOCH-1",
+            },
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        responses = list(pool.map(lambda fn: fn(), [account_read, orders_read, position_read, reverse]))
+
+    account_response, orders_response, position_response, mutation_response = responses
+    assert all(response.status_code == 200 for response in responses)
+    mutation = mutation_response.json()
+    assert mutation["status"] == "success"
+    assert mutation["realized_pnl"] == 100.0
+    assert mutation["virtual_balance"] == 9_999_860.0
+    assert mutation["position"]["quantity"] == 3.0
+    assert mutation["position"]["entry_price"] == 80.0
+
+    account_payload = account_response.json()
+    orders_payload = orders_response.json()
+    position_payload = position_response.json()
+
+    # Readers may observe only the committed short pre-state or the committed
+    # long post-state, never the intermediate close/reopen mutation.
+    assert (
+        account_payload["virtual_balance"],
+        account_payload["realized_pnl"],
+        account_payload["open_positions"],
+    ) in {
+        (9_999_500.0, 0.0, 1),
+        (9_999_860.0, 100.0, 1),
+    }
+
+    assert orders_payload["mode"] == "paper"
+    assert len(orders_payload["orders"]) in {0, 1}
+    if orders_payload["orders"]:
+        order = orders_payload["orders"][0]
+        assert order["symbol"] == "READ_SHORT_LONG_EPOCH"
+        assert order["transaction_type"] == "BUY"
+        assert order["price"] == 80.0
+        assert order["quantity"] == 8.0
+        assert order["pnl"] == 100.0
+        assert order["fill_id"] == "READ-SHORT-LONG-EPOCH-1"
+
+    assert position_payload["status"] == "active"
+    position = position_payload["position"]
+    assert position["symbol"] == "READ_SHORT_LONG_EPOCH"
+    assert position["quantity"] in {-5.0, 3.0}
+    if position["quantity"] == -5.0:
+        assert position["entry_price"] == 100.0
+    else:
+        assert position["entry_price"] == 80.0
+
+    final_account = client.get("/api/v1/execution/paper/account", headers=headers)
+    final_orders = client.get("/api/v1/execution/paper/orders", headers=headers)
+    final_position = client.get(
+        "/api/v1/execution/paper/position?symbol=READ_SHORT_LONG_EPOCH",
+        headers=headers,
+    )
+    assert final_account.status_code == 200
+    assert final_orders.status_code == 200
+    assert final_position.status_code == 200
+    assert final_account.json()["virtual_balance"] == 9_999_860.0
+    assert final_account.json()["realized_pnl"] == 100.0
+    assert final_account.json()["open_positions"] == 1
+    assert len(final_orders.json()["orders"]) == 1
+    assert final_orders.json()["orders"][0]["transaction_type"] == "BUY"
+    assert final_orders.json()["orders"][0]["quantity"] == 8.0
+    assert final_position.json()["status"] == "active"
+    assert final_position.json()["position"]["quantity"] == 3.0
+    assert final_position.json()["position"]["entry_price"] == 80.0
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
+
+
 def test_paper_http_concurrent_legacy_entry_and_exit_same_symbol_has_no_duplicate_position():
     """Legacy entry and terminal exit may serialize in either order, but never create duplicate exposure."""
     client, headers = _client_and_headers()
