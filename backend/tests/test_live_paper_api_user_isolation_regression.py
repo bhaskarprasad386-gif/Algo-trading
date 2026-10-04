@@ -249,3 +249,59 @@ def test_close_rejects_terminal_row_with_corrupt_pnl_percent_without_mutation(db
     assert closed.status == "ONGOING"
     assert closed.exit_reason is None
     assert closed.closed_at is None
+
+
+def test_entry_rejects_invalid_metadata_before_persistence(db_session):
+    _enable(db_session, 1)
+    trade, created = LivePaperTradeService().enter_or_mark(
+        db_session,
+        strategy_id="cash-future",
+        symbol="BAD-META",
+        event_id="BAD-META-ENTRY",
+        direction="LONG",
+        expiry="2026-10-30",
+        earliest_expiry="2026-10-30",
+        lot_size=10,
+        lots=1,
+        edge=10.0,
+        capital_used=30000.0,
+        legs=[{"side": "BUY", "price": 100.0}],
+        metadata={"exchange": "INVALID"},
+        user_id=1,
+    )
+    assert trade is None
+    assert created is False
+
+    from app.models import LivePaperTrade
+    assert db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+        LivePaperTrade.event_id == "BAD-META-ENTRY",
+    ).count() == 0
+
+
+def test_entry_rejects_invalid_leg_without_persisting_accounting_row(db_session):
+    _enable(db_session, 1)
+    trade, created = LivePaperTradeService().enter_or_mark(
+        db_session,
+        strategy_id="cash-future",
+        symbol="BAD-LEG",
+        event_id="BAD-LEG-ENTRY",
+        direction="LONG",
+        expiry="2026-10-30",
+        earliest_expiry="2026-10-30",
+        lot_size=10,
+        lots=1,
+        edge=10.0,
+        capital_used=30000.0,
+        legs=[{"side": "BUY", "price": float("nan")}],
+        metadata={"exchange": "NFO"},
+        user_id=1,
+    )
+    assert trade is None
+    assert created is False
+
+    from app.models import LivePaperTrade
+    assert db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+        LivePaperTrade.event_id == "BAD-LEG-ENTRY",
+    ).count() == 0
