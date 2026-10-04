@@ -1365,3 +1365,50 @@ def test_negative_pnl_pct_uses_actual_allocated_capital_and_persists_on_close(db
     closed = db_session.query(LivePaperTrade).filter(LivePaperTrade.id == trade.id).one()
     assert closed.realized_pnl == -100.0
     assert closed.pnl_pct == round(-100.0 / 30000.0 * 100.0, 8)
+
+def test_risk_rollback_does_not_undo_expiry_close(db_session):
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=60000.0, max_simultaneous_positions=0, max_loss=0.0,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    expired, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="EXPIRED",
+        event_id="ROLLBACK-EXPIRY-OLD", direction="LONG",
+        expiry="2026-10-01", earliest_expiry="2026-10-01",
+        lot_size=10, lots=1, edge=10, capital_used=60000, user_id=1,
+    )
+    assert created is True
+
+    blocked = AlertService().dispatch(db_session, AlertEvent(
+        strategy_id="cash-future", event_id="ROLLBACK-EXPIRY-NEW",
+        symbol="NEW", timestamp_ns=1, message="blocked", metadata={
+            "gross_profit": 1,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-12-30",
+                "lot_size": 10, "lots": 1, "edge": 10,
+                "capital_used": 60000,
+            },
+        },
+    ))
+    assert blocked == 0
+
+    db_session.expire_all()
+    current = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.id == expired.id,
+    ).one()
+    assert current.status == "COMPLETED"
+    assert current.exit_reason == "EXPIRY_CLOSE"
+    assert current.realized_pnl == current.unrealized_pnl
+    assert db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.event_id == "ROLLBACK-EXPIRY-NEW",
+    ).count() == 0
