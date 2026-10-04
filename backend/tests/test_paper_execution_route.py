@@ -3730,3 +3730,85 @@ def test_paper_reconcile_safe_dry_run_is_strictly_account_or_position_state_only
         finally:
             db.close()
     engine.dispose()
+
+
+def test_paper_reconcile_sqlite_read_snapshot_is_repeatable_during_concurrent_write(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'reconcile-snapshot.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(
+            email="snapshot@example.com",
+            hashed_password="",
+            full_name="Snapshot",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id,
+            mode="PAPER",
+            virtual_balance=5000.0,
+            initial_virtual_balance=5000.0,
+            initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0,
+            is_active=True,
+        ))
+        seed.commit()
+        uid = user.id
+    finally:
+        seed.close()
+
+    writer = Session()
+    reader = Session()
+    try:
+        paper_order(
+            PaperOrderRequest(
+                symbol="SNAP",
+                transaction_type="BUY",
+                price=100.0,
+                quantity=2,
+                fill_id="SNAP-1",
+            ),
+            user_id=uid,
+            db=writer,
+        )
+        writer.commit()
+        first = _reconcile_paper_ledger(reader, uid)
+
+        writer.add(Order(
+            user_id=uid,
+            symbol="SNAP2",
+            transaction_type="BUY",
+            order_type="MARKET",
+            product_type="INTRADAY",
+            quantity=1,
+            price=50.0,
+            average_price=50.0,
+            filled_quantity=1,
+            average_fill_price=50.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="SNAP-2",
+            pnl=0.0,
+            message="snapshot test",
+        ))
+        writer.commit()
+
+        second = _reconcile_paper_ledger(reader, uid)
+        assert second == first
+        assert second["orders"] == 1
+        assert "SNAP2" not in second["reconstructed_positions"]
+    finally:
+        reader.rollback()
+        reader.close()
+        writer.close()
+        engine.dispose()
