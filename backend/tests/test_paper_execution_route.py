@@ -10751,3 +10751,137 @@ def test_paper_reconcile_mixed_corruption_precedence_blocks_repair(tmp_path):
         assert payload["repair_plan"]["apply"] is False
     finally:
         db.close(); engine.dispose()
+
+
+def test_paper_reconcile_detects_duplicate_order_id_and_blocks_repair(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'duplicate-order-id.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="dup-order-id@example.com", hashed_password="", full_name="Duplicate Order ID", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="DUP1", transaction_type="BUY", price=10.0, quantity=1, fill_id="DUP1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="DUP2", transaction_type="BUY", price=11.0, quantity=1, fill_id="DUP2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        orders[1].order_id = orders[0].order_id
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert any(item.startswith("duplicate_order_id:") for item in payload["mismatches"])
+        assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_mutation_validator_rejects_duplicate_order_id(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'duplicate-order-id-validator.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="dup-order-validator@example.com", hashed_password="", full_name="Duplicate Order Validator", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="VAL1", transaction_type="BUY", price=10.0, quantity=1, fill_id="VAL1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="VAL2", transaction_type="BUY", price=11.0, quantity=1, fill_id="VAL2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        orders[1].order_id = orders[0].order_id
+        db.commit()
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("duplicate paper order_id must fail closed")
+        except RuntimeError as exc:
+            assert "duplicate paper order_id" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_repair_precondition_distinguishes_duplicate_identity_shape(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'duplicate-identity-precondition.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="dup-precondition@example.com", hashed_password="", full_name="Duplicate Precondition", is_active=True)
+        db.add(user); db.flush()
+        account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)
+        db.add(account); db.commit()
+        paper_order(PaperOrderRequest(symbol="PRE1", transaction_type="BUY", price=10.0, quantity=1, fill_id="PRE1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="PRE2", transaction_type="BUY", price=11.0, quantity=1, fill_id="PRE2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        positions = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).all()
+        before = _paper_repair_precondition(db, user.id, account, orders, positions)
+        duplicated = [orders[0], orders[0], orders[1]]
+        after = _paper_repair_precondition(db, user.id, account, duplicated, positions)
+        assert after["state_hash"] != before["state_hash"]
+        assert after["order_count"] == 3
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_repair_precondition_detects_delete_and_reinsert_identity_change(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'delete-reinsert-identity.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="reinsert@example.com", hashed_password="", full_name="Reinsert Identity", is_active=True)
+        db.add(user); db.flush()
+        account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True); db.add(account); db.commit()
+        paper_order(PaperOrderRequest(symbol="REIN", transaction_type="BUY", price=10.0, quantity=1, fill_id="REIN-1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id, Order.fill_id == "REIN-1").one()
+        positions = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).all()
+        before = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+        db.delete(order); db.commit()
+        paper_order(PaperOrderRequest(symbol="REIN", transaction_type="BUY", price=10.0, quantity=1, fill_id="REIN-2"), user_id=user.id, db=db)
+        replacement = db.query(Order).filter(Order.user_id == user.id, Order.fill_id == "REIN-2").one()
+        after = _paper_repair_precondition(db, user.id, account, [replacement], positions)["state_hash"]
+        assert replacement.id != order.id
+        assert after != before
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_duplicate_order_identity_remains_blocked_with_audit_chain_intact(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'duplicate-audit-chain.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="dup-audit@example.com", hashed_password="", full_name="Duplicate Audit", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="AUD1", transaction_type="BUY", price=10.0, quantity=1, fill_id="AUD1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="AUD2", transaction_type="BUY", price=11.0, quantity=1, fill_id="AUD2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        original_hashes = [o.audit_hash for o in orders]
+        orders[1].order_id = orders[0].order_id
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert [o.audit_hash for o in orders] == original_hashes
+        assert payload["repairability"] == "BLOCKED"
+        assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+        assert "AUDIT_INTEGRITY" not in payload["mismatch_categories"]
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_position_identity_and_order_identity_stay_distinct_in_repair_fingerprint(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'position-order-identity.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="identity-separation@example.com", hashed_password="", full_name="Identity Separation", is_active=True)
+        db.add(user); db.flush()
+        account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True); db.add(account); db.commit()
+        paper_order(PaperOrderRequest(symbol="SEP", transaction_type="BUY", price=10.0, quantity=1, fill_id="SEP-1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id, Order.fill_id == "SEP-1").one()
+        position = db.query(Position).filter(Position.user_id == user.id, Position.symbol == "SEP").one()
+        before = _paper_repair_precondition(db, user.id, account, [order], [position])["state_hash"]
+        position.symbol = "SEP2"; db.commit()
+        changed_position = _paper_repair_precondition(db, user.id, account, [order], [position])["state_hash"]
+        position.symbol = "SEP"; db.commit()
+        order.symbol = "SEP2"; db.commit()
+        changed_order = _paper_repair_precondition(db, user.id, account, [order], [position])["state_hash"]
+        assert changed_position != before
+        assert changed_order != before
+        assert changed_position != changed_order
+    finally:
+        db.close(); engine.dispose()
