@@ -214,6 +214,14 @@ class LivePaperTradeService:
         if existing and not _valid_persisted_trade(existing):
             return None, False
         if existing:
+            # event_id is user-scoped identity, but strategy and symbol are
+            # part of the persisted trade identity too. Never let a malformed
+            # cross-strategy/cross-symbol duplicate mark the wrong position.
+            if (
+                str(existing.strategy_id).strip().lower() != strategy_text
+                or str(existing.symbol).strip().upper() != symbol_text
+            ):
+                return None, False
             # A duplicate signal updates the mark only. Entry capital is fixed
             # for the lifetime of the paper position so its reservation cannot
             # drift when a later alert reports a different capital estimate.
@@ -299,6 +307,11 @@ class LivePaperTradeService:
             ).first()
             if existing is not None:
                 if not _valid_persisted_trade(existing):
+                    return None, False
+                if (
+                    str(existing.strategy_id).strip().lower() != strategy_text
+                    or str(existing.symbol).strip().upper() != symbol_text
+                ):
                     return None, False
                 self.mark(db, existing, edge=edge)
                 return existing, False
