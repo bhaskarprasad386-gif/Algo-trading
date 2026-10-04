@@ -6353,6 +6353,8 @@ def test_paper_http_concurrent_multi_symbol_close_and_partial_reversal_preserve_
         for other in accounts:
             other.is_active = other.id == account.id
         account.virtual_balance = 8_000.0
+        account.initial_virtual_balance = 10_000.0
+        account.initial_balance_source = "BOOTSTRAP"
         account.realized_pnl = 0.0
         seed.add_all([
             Position(user_id=account.user_id, symbol="HTTP_ALPHA", quantity=10, average_price=100.0),
@@ -7127,7 +7129,7 @@ def test_paper_http_concurrent_scanner_reversal_and_exit_close_short_once():
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
         user_id = int(account.user_id)
         account.virtual_balance = 500.0
-        account.initial_virtual_balance = 500.0
+        account.initial_virtual_balance = 1_000.0
         account.initial_balance_source = "BOOTSTRAP"
         account.realized_pnl = 0.0
         db.add(Position(
@@ -7537,6 +7539,8 @@ def test_paper_http_failed_short_reversal_is_atomic_under_concurrent_reads():
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
         user_id = int(account.user_id)
         account.virtual_balance = 50.0
+        account.initial_virtual_balance = 550.0
+        account.initial_balance_source = "BOOTSTRAP"
         account.realized_pnl = 0.0
         db.add(Position(
             user_id=user_id,
