@@ -1514,7 +1514,7 @@ def test_paper_ledger_reconciliation_fingerprint_chain_is_valid_and_tamper_detec
         assert all(len(order.audit_hash) == 64 for order in orders)
         assert orders[0].previous_audit_hash is None
         assert orders[1].previous_audit_hash == orders[0].audit_hash
-            orders[0].price = 101.0
+        orders[0].price = 101.0
         db.commit()
     finally:
         db.close()
@@ -2021,3 +2021,124 @@ def test_paper_exit_corrupt_state_rolls_back_close_mutation(tmp_path):
     finally:
         verify.close()
         engine.dispose()
+
+def test_paper_audit_chain_tamper_matrix_is_blocked(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    variants = (
+        ("price", "audit_hash_mismatch:"),
+        ("quantity", "invalid_order:"),
+        ("pnl", "audit_hash_mismatch:"),
+        ("fill_id", "duplicate_fill_id:"),
+        ("previous_hash", "audit_chain_mismatch:"),
+        ("audit_hash", "audit_hash_mismatch:"),
+        ("sequence", "audit_chain_mismatch:"),
+    )
+
+    for name, expected_prefix in variants:
+        engine = create_engine(
+            f"sqlite:///{tmp_path / f'audit-tamper-{name}.db'}",
+            connect_args={"check_same_thread": False, "timeout": 10},
+        )
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        seed = Session()
+        try:
+            user = User(
+                email=f"audit-tamper-{name}@example.com",
+                hashed_password="",
+                full_name=f"Audit Tamper {name}",
+                is_active=True,
+            )
+            seed.add(user)
+            seed.flush()
+            seed.add(
+                TradingAccount(
+                    user_id=user.id,
+                    mode="PAPER",
+                    virtual_balance=1000.0,
+                    initial_virtual_balance=1000.0,
+                    initial_balance_source="BOOTSTRAP",
+                    realized_pnl=0.0,
+                    is_active=True,
+                )
+            )
+            seed.commit()
+            user_id = user.id
+        finally:
+            seed.close()
+
+        first_db = Session()
+        try:
+            paper_order(
+                PaperOrderRequest(
+                    symbol="TAMPER",
+                    transaction_type="BUY",
+                    price=100.0,
+                    quantity=5,
+                    fill_id="TAMPER-1",
+                ),
+                user_id=user_id,
+                db=first_db,
+            )
+        finally:
+            first_db.close()
+
+        second_db = Session()
+        try:
+            paper_order(
+                PaperOrderRequest(
+                    symbol="TAMPER",
+                    transaction_type="SELL",
+                    price=120.0,
+                    quantity=2,
+                    fill_id="TAMPER-2",
+                ),
+                user_id=user_id,
+                db=second_db,
+            )
+        finally:
+            second_db.close()
+
+        tamper_db = Session()
+        try:
+            orders = (
+                tamper_db.query(Order)
+                .filter(Order.user_id == user_id, Order.is_paper.is_(True))
+                .order_by(Order.id.asc())
+                .all()
+            )
+            assert len(orders) == 2
+            first, second = orders
+
+            if name == "price":
+                first.price = 101.0
+                first.average_fill_price = 101.0
+            elif name == "quantity":
+                second.quantity = 1
+            elif name == "pnl":
+                second.pnl = 41.0
+            elif name == "fill_id":
+                second.fill_id = first.fill_id
+            elif name == "previous_hash":
+                second.previous_audit_hash = "f" * 64
+            elif name == "audit_hash":
+                second.audit_hash = "0" * 64
+            elif name == "sequence":
+                first.id = 100000
+                second.id = 99999
+
+            tamper_db.commit()
+        finally:
+            tamper_db.close()
+
+        reconcile_db = Session()
+        try:
+            data = _reconcile_paper_ledger(reconcile_db, user_id)
+            assert data["status"] == "MISMATCH"
+            assert data["repairability"] == "BLOCKED"
+            assert data["repair_plan"]["apply"] is False
+            assert any(item.startswith(expected_prefix) for item in data["mismatches"])
+        finally:
+            reconcile_db.close()
+            engine.dispose()
