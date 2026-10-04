@@ -238,6 +238,7 @@ class AlertService:
                     continue
                 requested_capital = capital_value
                 effective_capital = requested_capital
+                effective_lots = lots_value
                 if requested_capital > 0:
                     requested_lots = lots_value
                     capital_per_lot = requested_capital / requested_lots
@@ -272,6 +273,7 @@ class AlertService:
                                 requested_lots,
                                 max(0, allocatable_by_capital),
                             )
+                            effective_lots = allocatable_lots
                             effective_capital = capital_per_lot * allocatable_lots
                 day_start = _ist_day_start_utc_naive()
                 max_daily_capital = _strictest_positive_limit(
@@ -319,7 +321,7 @@ class AlertService:
                         db, strategy_id=event.strategy_id, symbol=event.symbol, event_id=event.event_id,
                         direction=paper.get("direction", "LONG"), expiry=paper.get("expiry"),
                         earliest_expiry=paper.get("earliest_expiry") or paper.get("expiry"),
-                        lot_size=lot_size_value, lots=lots_value,
+                        lot_size=lot_size_value, lots=effective_lots,
                         edge=edge_value, capital_used=effective_capital,
                         legs=paper.get("legs") or [], metadata=dict(paper), user_id=rule_user_id,
                     )
