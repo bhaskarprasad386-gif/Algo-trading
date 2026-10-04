@@ -7504,6 +7504,91 @@ def test_paper_http_concurrent_reads_during_successful_short_to_long_reversal_ex
 
 
 
+
+def test_paper_sqlite_write_lock_rejection_does_not_mutate_ledger(tmp_path):
+    """A rejected BEGIN IMMEDIATE must fail before any paper state mutation."""
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(
+        "sqlite:///" + str(tmp_path / "write-lock-rejection.db"),
+        connect_args={"check_same_thread": False, "timeout": 0},
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="write-lock@example.com",
+            hashed_password="",
+            full_name="Write Lock",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id,
+            mode="PAPER",
+            virtual_balance=1000.0,
+            initial_virtual_balance=1000.0,
+            initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0,
+            is_active=True,
+        ))
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    holder = TestSession()
+    contender = TestSession()
+    try:
+        holder.connection().exec_driver_sql("BEGIN IMMEDIATE")
+
+        try:
+            paper_order(
+                PaperOrderRequest(
+                    symbol="LOCK_REJECTED",
+                    transaction_type="BUY",
+                    price=100.0,
+                    quantity=2,
+                    fill_id="LOCK-REJECTED-1",
+                ),
+                user_id=user_id,
+                db=contender,
+            )
+            raise AssertionError("paper_order unexpectedly acquired a locked SQLite writer")
+        except Exception as exc:
+            from sqlalchemy.exc import OperationalError
+            assert isinstance(exc, OperationalError)
+
+        contender.rollback()
+
+        verify = TestSession()
+        try:
+            account = verify.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id,
+                TradingAccount.mode == "PAPER",
+            ).one()
+            assert account.virtual_balance == 1000.0
+            assert account.realized_pnl == 0.0
+            assert verify.query(Position).filter(
+                Position.user_id == user_id,
+                Position.symbol == "LOCK_REJECTED",
+            ).count() == 0
+            assert verify.query(Order).filter(
+                Order.user_id == user_id,
+                Order.symbol == "LOCK_REJECTED",
+            ).count() == 0
+        finally:
+            verify.close()
+    finally:
+        contender.rollback()
+        holder.rollback()
+        contender.close()
+        holder.close()
+
+
 def test_paper_http_commit_failure_does_not_persist_partial_mutation():
     """A database commit failure must not leave the paper ledger partially mutated."""
     from app.core.database import get_db
