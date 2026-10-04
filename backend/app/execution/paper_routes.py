@@ -1306,6 +1306,37 @@ def paper_orders(user_id: int = Depends(current_user_id), db: Session = Depends(
     return {"mode":"paper","orders":[{"id":item.order_id,"symbol":item.symbol,"transaction_type":item.transaction_type,"price":item.price,"quantity":float(item.quantity),"status":item.status,"pnl":float(item.pnl or 0.0),"fill_id":item.fill_id} for item in orders]}
 
 
+@router.get("/paper/positions")
+def paper_positions(user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
+    _validate_paper_state(db, user_id)
+    positions = (
+        db.query(Position)
+        .filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+            Position.quantity != 0,
+        )
+        .order_by(Position.id.asc())
+        .all()
+    )
+    return {
+        "status": "success",
+        "mode": "paper",
+        "positions": [
+            {
+                "id": int(position.id),
+                "symbol": position.symbol,
+                "quantity": float(position.quantity),
+                "entry_price": float(position.average_price),
+                "average_price": float(position.average_price),
+                "is_open": bool(position.is_open),
+            }
+            for position in positions
+        ],
+    }
+
+
 @router.get("/paper/position")
 def paper_position(symbol: str | None = None, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     _validate_paper_state(db, user_id)
