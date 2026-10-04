@@ -853,3 +853,34 @@ def test_ineligible_high_threshold_rule_does_not_impose_risk_limits(db_session):
     assert AlertService().dispatch(db_session, event) == 0
     rows = svc.ongoing(db_session, 1)
     assert len(rows) == 2
+
+
+def test_partial_global_cap_scales_lots_and_reserved_capital_consistently(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=125000, emergency_stop=False,
+    ))
+    db_session.commit()
+
+    first, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="PARTIAL-LOTS-1", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=3, edge=5, capital_used=90000, user_id=1,
+    )
+    assert created is True
+    assert first.lots == 3
+    assert first.capital_used == 90000
+
+    # 35k remains. Each requested lot costs 30k, so only one of the
+    # requested two lots may be allocated; reservation must scale to 30k.
+    second, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="BBB",
+        event_id="PARTIAL-LOTS-2", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=2, edge=5, capital_used=60000, user_id=1,
+    )
+    assert created is True
+    assert second.lots == 1
+    assert second.capital_used == 30000
+
+    rows = svc.ongoing(db_session, 1)
+    assert sum(row.capital_used for row in rows) == 120000
