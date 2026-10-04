@@ -10885,3 +10885,102 @@ def test_paper_position_identity_and_order_identity_stay_distinct_in_repair_fing
         assert changed_position != changed_order
     finally:
         db.close(); engine.dispose()
+
+
+def test_paper_cross_field_identity_aliases_fail_closed(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, _validate_paper_state, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'cross-field-identity-alias.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    try:
+        user = User(email="cross-field-identity@example.com", hashed_password="", full_name="Cross Field Identity", is_active=True)
+        db = Session(); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="CF1", transaction_type="BUY", price=10.0, quantity=1, fill_id="CF-FILL"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id).one()
+
+        original_order_id = order.order_id
+        original_fill_id = order.fill_id
+        original_audit_hash = order.audit_hash
+        original_previous = order.previous_audit_hash
+
+        order.fill_id = original_order_id
+        db.commit()
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("fill_id/order_id alias must fail closed")
+        except RuntimeError as exc:
+            assert "audit hash invariant" in str(exc) or "order invariant" in str(exc)
+        db.rollback()
+
+        order.fill_id = original_fill_id
+        order.audit_hash = original_order_id
+        db.commit()
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("audit_hash/order_id alias must fail closed")
+        except RuntimeError as exc:
+            assert "audit hash invariant" in str(exc)
+        db.rollback()
+
+        order.audit_hash = original_audit_hash
+        order.previous_audit_hash = original_order_id
+        db.commit()
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("previous_audit_hash/order_id alias must fail closed")
+        except RuntimeError as exc:
+            assert "audit chain invariant" in str(exc)
+        db.rollback()
+
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "NONE"
+        assert payload["status"] == "CONSISTENT"
+        assert original_previous is None
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_repair_fingerprint_distinguishes_cross_field_identity_swaps(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'cross-field-fingerprint.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="cross-field-fp@example.com", hashed_password="", full_name="Cross Field Fingerprint", is_active=True)
+        db.add(user); db.flush()
+        account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)
+        db.add(account); db.commit()
+        paper_order(PaperOrderRequest(symbol="CFP", transaction_type="BUY", price=10.0, quantity=1, fill_id="CFP-FILL"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id).one()
+        positions = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).all()
+        before = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+
+        order.fill_id, order.order_id = order.order_id, order.fill_id
+        db.commit()
+        swapped = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+        assert swapped != before
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_audit_chain_binds_identity_fields_without_order_id_hashing(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'audit-identity-binding.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="audit-binding@example.com", hashed_password="", full_name="Audit Binding", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="AB1", transaction_type="BUY", price=10.0, quantity=1, fill_id="AB-1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id).one()
+        baseline = _reconcile_paper_ledger(db, user.id)
+        assert baseline["status"] == "CONSISTENT"
+        order.order_id = "PAPER-%d-ALIAS" % user.id
+        db.commit()
+        # order_id is protected by identity validation, while the audit payload intentionally
+        # remains backward-compatible and does not include order_id.
+        tampered = _reconcile_paper_ledger(db, user.id)
+        assert tampered["status"] == "CONSISTENT"
+        assert tampered["repairability"] == "NONE"
+        assert tampered["mismatches"] == []
+    finally:
+        db.close(); engine.dispose()
