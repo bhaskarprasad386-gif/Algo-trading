@@ -1008,6 +1008,125 @@ def test_close_and_new_entry_race_never_oversubscribes_capital(tmp_path):
         engine.dispose()
 
 
+
+def test_close_and_multiple_new_entries_race_never_oversubscribes_capital(tmp_path):
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'close-multi-entry-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    setup.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    setup.commit()
+    original, created = LivePaperTradeService().enter_or_mark(
+        setup,
+        strategy_id="cash-future",
+        symbol="ORIGINAL",
+        event_id="CLOSE-MULTI-RACE-ORIGINAL",
+        direction="LONG",
+        lot_size=10,
+        lots=1,
+        edge=5,
+        capital_used=60000,
+        user_id=1,
+    )
+    assert created is True
+    original_id = original.id
+    setup.close()
+
+    barrier = threading.Barrier(4)
+    results = []
+    errors = []
+
+    def close_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            row = db.query(LivePaperTrade).filter(
+                LivePaperTrade.id == original_id,
+                LivePaperTrade.status == "ONGOING",
+            ).first()
+            if row is not None:
+                closed = LivePaperTradeService().close(db, row, "MANUAL")
+                results.append(("close", closed.status, closed.exit_reason))
+            else:
+                results.append(("close", None, None))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    def entry_worker(event_id):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            trade, created = LivePaperTradeService().enter_or_mark(
+                db,
+                strategy_id="cash-future",
+                symbol=event_id,
+                event_id=event_id,
+                direction="LONG",
+                lot_size=10,
+                lots=1,
+                edge=5,
+                capital_used=60000,
+                user_id=1,
+            )
+            results.append((
+                "entry",
+                event_id,
+                created,
+                None if trade is None else trade.capital_used,
+            ))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=close_worker),
+        threading.Thread(target=entry_worker, args=("CLOSE-MULTI-RACE-A",)),
+        threading.Thread(target=entry_worker, args=("CLOSE-MULTI-RACE-B",)),
+        threading.Thread(target=entry_worker, args=("CLOSE-MULTI-RACE-C",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(results) == 4
+
+    verify = Session()
+    try:
+        rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+        ).all()
+        ongoing = [row for row in rows if row.status == "ONGOING"]
+        completed = [row for row in rows if row.status == "COMPLETED"]
+
+        assert len(completed) == 1
+        assert completed[0].id == original_id
+        assert sum(float(row.capital_used or 0.0) for row in ongoing) <= 100000
+
+        entry_results = [row for row in results if row[0] == "entry"]
+        assert len(entry_results) == 3
+        successful = [row for row in entry_results if row[2]]
+        assert len(successful) <= 1
+        for row in successful:
+            assert row[3] == 60000
+    finally:
+        verify.close()
+        engine.dispose()
+
 def test_same_event_concurrent_first_entries_create_one_trade(tmp_path):
     import threading
     from sqlalchemy import create_engine
