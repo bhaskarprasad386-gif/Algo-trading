@@ -813,9 +813,11 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
                 released_margin = _buy_cost(before_avg, closed_qty)
                 if after.quantity > 0:
                     remaining_position_cost = _buy_cost(price, int(after.quantity))
-                elif after.quantity < 0:
-                    remaining_position_cost = _buy_cost(before_avg, abs(int(after.quantity)))
                 else:
+                    # Remaining short margin was already reserved in the
+                    # opening short transaction. Do not subtract it again;
+                    # the released margin above is only for the quantity
+                    # actually covered by this BUY fill.
                     remaining_position_cost = 0.0
                 reconstructed_cash = round(
                     reconstructed_cash + released_margin + pnl_delta - remaining_position_cost,
