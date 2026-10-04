@@ -253,7 +253,12 @@ def _account(db: Session, user_id: int) -> TradingAccount:
 
 
 def _position(db: Session, user_id: int, symbol: str | None = None) -> Position | None:
-    query = db.query(Position).filter(Position.user_id == user_id, Position.quantity != 0)
+    query = db.query(Position).filter(
+        Position.user_id == user_id,
+        Position.is_paper.is_(True),
+        Position.is_open.is_(True),
+        Position.quantity != 0,
+    )
     if symbol is not None:
         query = query.filter(Position.symbol == symbol.strip().upper())
     return query.order_by(Position.id.desc()).first()
@@ -356,7 +361,13 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
         symbol = str(position.symbol or "").strip().upper()
         quantity = int(position.quantity or 0)
         average_price = float(position.average_price or 0.0)
-        if not symbol or quantity == 0 or not math.isfinite(average_price) or average_price <= 0:
+        if (
+            not symbol
+            or quantity == 0
+            or not bool(position.is_open)
+            or not math.isfinite(average_price)
+            or average_price <= 0
+        ):
             raise RuntimeError("paper position invariant violated")
         if symbol in seen_symbols:
             raise RuntimeError("duplicate active paper position invariant violated")
@@ -745,7 +756,12 @@ def paper_account(user_id: int = Depends(current_user_id), db: Session = Depends
     account = _account(db, user_id)
     open_positions = (
         db.query(Position)
-        .filter(Position.user_id == user_id, Position.quantity != 0)
+        .filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+            Position.quantity != 0,
+        )
         .count()
     )
     return {
