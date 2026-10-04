@@ -557,6 +557,12 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             invalid_orders.append(f"order_average_fill_price_mismatch:{order.id}")
         if int(order.quantity or 0) != quantity:
             invalid_orders.append(f"order_quantity_mismatch:{order.id}")
+        if str(order.symbol or "").strip() != symbol:
+            invalid_orders.append(f"order_symbol_canonicality_mismatch:{order.id}")
+        if str(order.transaction_type or "").strip().upper() != str(order.transaction_type or ""):
+            invalid_orders.append(f"order_side_canonicality_mismatch:{order.id}")
+        if order.fill_id is not None and str(order.fill_id).strip() != str(order.fill_id):
+            invalid_orders.append(f"order_fill_id_canonicality_mismatch:{order.id}")
 
         if side == "BUY":
             if before_qty < 0:
