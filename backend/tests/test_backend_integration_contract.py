@@ -33,6 +33,53 @@ def test_ist_day_start_before_ist_midnight_stays_on_previous_utc_date():
     assert _ist_day_start_utc_naive(now) == datetime(2026, 10, 3, 18, 30)
 
 
+def test_daily_capital_uses_open_day_while_loss_uses_close_day(db_session):
+    from datetime import datetime
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=500000, emergency_stop=False))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=100000.0, max_simultaneous_positions=5, max_loss=100.0,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="CROSS",
+        event_id="CROSS-DAY-1", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=10, capital_used=100000, user_id=1,
+    )
+    assert created is True
+    trade.opened_at = datetime(2026, 10, 3, 19, 0)
+    trade.unrealized_pnl = -100.0
+    trade.closed_at = datetime(2026, 10, 4, 19, 0)
+    trade.realized_pnl = -100.0
+    trade.status = "COMPLETED"
+    db_session.commit()
+
+    import app.notifications.common as common
+    original = common._ist_day_start_utc_naive
+    common._ist_day_start_utc_naive = lambda: datetime(2026, 10, 4, 18, 30)
+    try:
+        event = AlertEvent(
+            strategy_id="cash-future", event_id="CROSS-DAY-2", symbol="NEW",
+            timestamp_ns=1, message="new", metadata={
+                "gross_profit": 1,
+                "paper_trade": {
+                    "direction":"LONG", "expiry":"2026-10-30",
+                    "lot_size":10, "lots":1, "edge":5, "capital_used":50000,
+                },
+            },
+        )
+        assert AlertService().dispatch(db_session, event) == 0
+        assert svc.ongoing(db_session, 1) == []
+    finally:
+        common._ist_day_start_utc_naive = original
+
+
 def test_backend_integration_lifecycle_contract_is_user_scoped(db_session):
     svc = LivePaperTradeService()
     _enable(db_session, 1)
