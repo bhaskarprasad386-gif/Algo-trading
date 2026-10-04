@@ -97,14 +97,16 @@ def _valid_persisted_trade(trade) -> bool:
         if last_mark_at < opened_at:
             return False
         status = str(trade.status).upper()
+        exit_reason = getattr(trade, "exit_reason", None)
         if status == "ONGOING":
-            if closed_at is not None:
+            if closed_at is not None or exit_reason is not None:
                 return False
         elif (
             not isinstance(closed_at, datetime)
             or closed_at.tzinfo is not None
             or closed_at < opened_at
             or last_mark_at > closed_at
+            or str(exit_reason or "").strip().upper() not in {"MANUAL", "EXPIRY_CLOSE"}
         ):
             return False
         return True
@@ -367,6 +369,9 @@ class LivePaperTradeService:
         return trade
 
     def close(self, db: Session, trade: LivePaperTrade, reason="MANUAL"):
+        reason_text = str(reason or "").strip().upper()
+        if reason_text not in {"MANUAL", "EXPIRY_CLOSE"}:
+            return trade
         if trade.status != "ONGOING" or not _valid_persisted_trade(trade):
             return trade
         # Close atomically against the current DB row. This prevents a stale
@@ -378,7 +383,7 @@ class LivePaperTradeService:
         ).update(
             {
                 LivePaperTrade.status: "COMPLETED",
-                LivePaperTrade.exit_reason: reason,
+                LivePaperTrade.exit_reason: reason_text,
                 LivePaperTrade.realized_pnl: LivePaperTrade.unrealized_pnl,
                 LivePaperTrade.closed_at: now,
                 LivePaperTrade.last_mark_at: now,
