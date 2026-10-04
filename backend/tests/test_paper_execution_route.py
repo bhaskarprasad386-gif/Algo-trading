@@ -9051,6 +9051,117 @@ def test_paper_http_reverse_short_commit_failure_preserves_existing_audit_head_a
 
 
 
+def test_paper_reconcile_detects_noncanonical_order_symbol_even_when_audit_hash_is_rebuilt():
+    """Reconcile must reject non-canonical durable order identity fields."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(order_id=f"PAPER-{user_id}-{field}", symbol="CANONICAL", quantity=2,
+                      transaction_type="BUY", user_id=user_id, price=100.0, average_price=100.0,
+                      filled_quantity=2, average_fill_price=100.0, pnl=0.0, status="FILLED",
+                      is_paper=True, fill_id=f"{field}-1")
+        db.add(order); db.flush()
+        order.symbol = ' canonical '
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol="CANONICAL", side="BUY", quantity=2,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None)
+        db.add(Position(user_id=user_id, symbol="CANONICAL", quantity=2, average_price=100.0,
+                        stop_loss=None, target=None, is_paper=True, is_open=True))
+        db.commit()
+    finally:
+        db.close()
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("order_symbol_canonicality_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_detects_noncanonical_order_side_even_when_audit_hash_is_rebuilt():
+    """Reconcile must reject non-canonical durable order identity fields."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(order_id=f"PAPER-{user_id}-{field}", symbol="CANONICAL", quantity=2,
+                      transaction_type="BUY", user_id=user_id, price=100.0, average_price=100.0,
+                      filled_quantity=2, average_fill_price=100.0, pnl=0.0, status="FILLED",
+                      is_paper=True, fill_id=f"{field}-1")
+        db.add(order); db.flush()
+        order.transaction_type = 'buy'
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol="CANONICAL", side="BUY", quantity=2,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None)
+        db.add(Position(user_id=user_id, symbol="CANONICAL", quantity=2, average_price=100.0,
+                        stop_loss=None, target=None, is_paper=True, is_open=True))
+        db.commit()
+    finally:
+        db.close()
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("order_side_canonicality_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_detects_noncanonical_order_fill_id_even_when_audit_hash_is_rebuilt():
+    """Reconcile must reject non-canonical durable order identity fields."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(order_id=f"PAPER-{user_id}-{field}", symbol="CANONICAL", quantity=2,
+                      transaction_type="BUY", user_id=user_id, price=100.0, average_price=100.0,
+                      filled_quantity=2, average_fill_price=100.0, pnl=0.0, status="FILLED",
+                      is_paper=True, fill_id=f"{field}-1")
+        db.add(order); db.flush()
+        order.fill_id = ' fill-id-1 '
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol="CANONICAL", side="BUY", quantity=2,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None)
+        db.add(Position(user_id=user_id, symbol="CANONICAL", quantity=2, average_price=100.0,
+                        stop_loss=None, target=None, is_paper=True, is_open=True))
+        db.commit()
+    finally:
+        db.close()
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("order_fill_id_canonicality_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
+
+
 def test_paper_reconcile_detects_tampered_order_quantity_even_when_audit_hash_is_rebuilt():
     """Reconcile must reject a stored requested quantity that differs from the filled quantity."""
     from app.execution import paper_routes as routes
