@@ -660,12 +660,38 @@ async def _paper_box_spread_cycle_loop() -> None:
         await asyncio.sleep(interval)
 
 
+def _valid_executable_paper_trade(trade: LivePaperTrade) -> bool:
+    """Validate only persisted fields required to safely mark executable P&L."""
+    try:
+        import math
+        from collections.abc import Mapping
+        lot_size = float(trade.lot_size)
+        lots = float(trade.lots)
+        if (
+            not math.isfinite(lot_size) or not lot_size.is_integer() or lot_size <= 0
+            or not math.isfinite(lots) or not lots.is_integer() or lots <= 0
+        ):
+            return False
+        legs = json.loads(getattr(trade, "legs_json", None) or "[]")
+        if not isinstance(legs, list) or not legs:
+            return False
+        for leg in legs:
+            if not isinstance(leg, Mapping):
+                return False
+            side = str(leg.get("side", "")).strip().upper()
+            price = float(leg.get("price"))
+            if side not in {"BUY", "SELL"} or not math.isfinite(price) or price <= 0:
+                return False
+        return True
+    except (TypeError, ValueError, OverflowError, json.JSONDecodeError):
+        return False
+
+
 def _executable_paper_pnl(trade: LivePaperTrade, row) -> float | None:
     """Mark an alert's original legs against current executable exit quotes."""
     # Defense-in-depth: persisted corruption must never reach executable
     # quote/P&L arithmetic, even if a caller bypasses LivePaperTradeService.
-    from app.auto.live_paper import _valid_persisted_trade
-    if not _valid_persisted_trade(trade):
+    if not _valid_executable_paper_trade(trade):
         return None
     try:
         import math
