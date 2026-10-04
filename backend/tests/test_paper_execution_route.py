@@ -3959,29 +3959,25 @@ def test_paper_reconcile_http_concurrent_reader_mutation_stress_matrix(tmp_path)
         app.dependency_overrides.pop(routes.current_user_id, None)
         app.dependency_overrides.pop(get_db, None)
         engine.dispose()
-\ndef test_paper_reconcile_http_concurrent_two_user_isolation_stress(tmp_path):
-    """Concurrent reconciliation/mutations for two users cannot cross-contaminate ledgers."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+\ndef test_paper_reconcile_http_concurrent_multi_user_boundary_fails_closed(tmp_path):
+    """Multiple active paper identities must fail closed under concurrent HTTP reads."""
+    from concurrent.futures import ThreadPoolExecutor
     from app.core.database import get_db
-    from app.execution import paper_routes as routes
 
     engine = create_engine(
-        f"sqlite:///{tmp_path / 'http-reconcile-two-user.db'}",
+        f"sqlite:///{tmp_path / 'http-reconcile-multi-user-boundary.db'}",
         connect_args={"check_same_thread": False, "timeout": 10},
     )
     Base.metadata.create_all(engine)
-    with engine.begin() as conn:
-        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
     TestSession = sessionmaker(bind=engine)
 
     seed = TestSession()
     try:
-        users = []
         for suffix in ("a", "b"):
             user = User(
-                email=f"http-isolation-{suffix}@example.com",
+                email=f"http-boundary-{suffix}@example.com",
                 hashed_password="",
-                full_name=f"HTTP Isolation {suffix}",
+                full_name=f"HTTP Boundary {suffix}",
                 is_active=True,
             )
             seed.add(user)
@@ -3995,7 +3991,6 @@ def test_paper_reconcile_http_concurrent_reader_mutation_stress_matrix(tmp_path)
                 realized_pnl=0.0,
                 is_active=True,
             ))
-            users.append(int(user.id))
         seed.commit()
     finally:
         seed.close()
@@ -4008,105 +4003,37 @@ def test_paper_reconcile_http_concurrent_reader_mutation_stress_matrix(tmp_path)
             db.close()
 
     client = TestClient(app)
+    from app.execution import paper_routes as routes
     app.dependency_overrides[get_db] = override_db
-    user_a, user_b = users
-    symbols = {
-        user_a: "ISO-A",
-        user_b: "ISO-B",
-    }
-
-    def request_for(user_id, method, path, payload=None):
-        app.dependency_overrides[routes.current_user_id] = lambda: user_id
-        if method == "GET":
-            response = client.get(path)
-        else:
-            response = client.post(path, json=payload)
-        return user_id, response.status_code, response.json()
-
-    def reconcile(user_id):
-        return request_for(user_id, "GET", "/api/v1/execution/paper/reconcile")
-
-    def entry(user_id):
-        return request_for(
-            user_id,
-            "POST",
-            "/api/v1/execution/paper/order",
-            {
-                "symbol": symbols[user_id],
-                "transaction_type": "BUY",
-                "price": 100.0 if user_id == user_a else 200.0,
-                "quantity": 2,
-                "fill_id": f"ISO-ENTRY-{user_id}",
-            },
-        )
-
     try:
-        # Seed independent positions before concurrent readers/mutations.
-        assert entry(user_a)[1] == 200
-        assert entry(user_b)[1] == 200
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            responses = list(pool.map(
+                lambda _: client.get("/api/v1/execution/paper/reconcile"),
+                range(12),
+            ))
 
-        operations = []
-        with ThreadPoolExecutor(max_workers=16) as pool:
-            futures = []
-            for _ in range(6):
-                futures.extend([pool.submit(reconcile, user_a), pool.submit(reconcile, user_b)])
-            futures.extend([
-                pool.submit(entry, user_a),
-                pool.submit(entry, user_b),
-                pool.submit(
-                    request_for,
-                    user_a,
-                    "POST",
-                    "/api/v1/execution/paper/exit",
-                    {"symbol": symbols[user_a], "price": 110.0, "fill_id": f"ISO-EXIT-{user_a}"},
-                ),
-                pool.submit(
-                    request_for,
-                    user_b,
-                    "POST",
-                    "/api/v1/execution/paper/exit",
-                    {"symbol": symbols[user_b], "price": 210.0, "fill_id": f"ISO-EXIT-{user_b}"},
-                ),
-            ])
-            for future in as_completed(futures):
-                operations.append(future.result())
-
-        for owner, status, payload in operations:
-            assert isinstance(payload, dict)
-            if payload.get("user_id") is not None:
-                assert int(payload["user_id"]) == owner
-            if "repair_plan" in payload:
-                assert payload["repair_plan"]["apply"] is False
-
-        reconcile_results = [item for item in operations if "repair_plan" in item[2]]
-        assert len(reconcile_results) == 12
-        assert all(status == 200 for _, status, _ in reconcile_results)
+        assert all(response.status_code == 409 for response in responses)
+        assert all(
+            response.json()["detail"]
+            == "multiple active paper trading accounts require authenticated user context"
+            for response in responses
+        )
 
         verify = TestSession()
         try:
-            for owner, own_symbol in symbols.items():
-                own_orders = verify.query(Order).filter(
-                    Order.user_id == owner,
-                    Order.is_paper.is_(True),
-                    Order.symbol == own_symbol,
-                ).all()
-                other_symbol = symbols[user_b if owner == user_a else user_a]
-                leaked = verify.query(Order).filter(
-                    Order.user_id == owner,
-                    Order.is_paper.is_(True),
-                    Order.symbol == other_symbol,
-                ).count()
-                assert leaked == 0
-                assert own_orders
-                assert all(order.symbol == own_symbol for order in own_orders)
-
-                result = _reconcile_paper_ledger(verify, owner)
-                assert result["user_id"] == owner
-                assert result["repair_plan"]["apply"] is False
-                assert all(
-                    symbol == own_symbol
-                    for symbol in result["reconstructed_positions"]
+            assert verify.query(Order).count() == 0
+            assert verify.query(Position).count() == 0
+            accounts = (
+                verify.query(TradingAccount)
+                .filter(
+                    TradingAccount.is_active.is_(True),
+                    TradingAccount.mode == "PAPER",
                 )
+                .all()
+            )
+            assert len(accounts) == 2
+            assert all(float(account.virtual_balance) == 100_000.0 for account in accounts)
+            assert all(float(account.realized_pnl or 0.0) == 0.0 for account in accounts)
         finally:
             verify.close()
     finally:
