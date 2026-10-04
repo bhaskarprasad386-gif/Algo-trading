@@ -1,7 +1,8 @@
 """Regression coverage for stale mark/close ordering and terminal-state integrity."""
 
 from app.auto.live_paper import LivePaperTradeService
-from app.models import GlobalPaperSetting, LivePaperTrade\nfrom sqlalchemy.orm import sessionmaker
+from app.models import GlobalPaperSetting, LivePaperTrade
+from sqlalchemy.orm import sessionmaker
 
 
 def _enable(db, user_id=1, amount=100000):
