@@ -31,6 +31,11 @@ def _ist_day_start_utc_naive(now=None):
     ist = current.astimezone(ZoneInfo("Asia/Kolkata"))
     return ist.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
 
+def _strictest_positive_limit(values):
+    """Return the strictest configured positive limit; zero means unlimited."""
+    positive = [value for value in values if value > 0]
+    return min(positive) if positive else 0
+
 
 class AlertService:
     """Single outbound alert service; disabled channels are safe no-ops."""
@@ -104,20 +109,15 @@ class AlertService:
                     LivePaperTrade.event_id == str(event.event_id),
                     LivePaperTrade.status == "ONGOING",
                 ).first()
-                # A duplicate signal is a mark update, not a new capital/position.
-                # Do not let risk limits block the existing position's refresh.
                 if existing_trade is not None:
-                    # An already-open event is a mark update. Its refresh must
-                    # not depend on whether the newest alert still meets a
-                    # rule's gross-profit threshold.
                     try:
                         service.enter_or_mark(
                             db, strategy_id=event.strategy_id, symbol=event.symbol, event_id=event.event_id,
                             direction=paper.get("direction", "LONG"), expiry=paper.get("expiry"),
                             earliest_expiry=paper.get("earliest_expiry") or paper.get("expiry"),
                             lot_size=int(paper.get("lot_size", 1) or 1), lots=int(paper.get("lots", 1) or 1),
-                            edge=float(paper.get("edge", 0.0) or 0.0),
-                            capital_used=0.0, legs=paper.get("legs") or [], metadata=dict(paper), user_id=rule_user_id,
+                            edge=float(paper.get("edge", 0.0) or 0.0), capital_used=0.0,
+                            legs=paper.get("legs") or [], metadata=dict(paper), user_id=rule_user_id,
                         )
                     except Exception as exc:
                         from app.core.logger import app_logger
@@ -125,10 +125,6 @@ class AlertService:
                     continue
                 if not user_rules:
                     continue
-                # Serialize this user's alert risk checks with paper-cap
-                # allocation. Without the same per-user lock, two concurrent
-                # alerts can both pass max-position/daily-cap/loss checks
-                # before either transaction inserts its trade.
                 from app.models.global_paper_setting import GlobalPaperSetting
                 risk_lock = db.query(GlobalPaperSetting).filter(
                     GlobalPaperSetting.user_id == rule_user_id,
@@ -139,7 +135,9 @@ class AlertService:
                 if risk_lock == 0:
                     continue
 
-                max_simultaneous = min(max(0, int(rule.max_simultaneous_positions)) for rule in user_rules)
+                max_simultaneous = _strictest_positive_limit(
+                    max(0, int(rule.max_simultaneous_positions)) for rule in user_rules
+                )
                 ongoing_count = db.query(LivePaperTrade).filter(
                     LivePaperTrade.user_id == rule_user_id,
                     LivePaperTrade.status == "ONGOING",
@@ -149,7 +147,9 @@ class AlertService:
                     continue
                 requested_capital = max(0.0, float(paper.get("capital_used", 0.0) or 0.0))
                 day_start = _ist_day_start_utc_naive()
-                max_daily_capital = min(max(0.0, float(rule.max_daily_capital)) for rule in user_rules)
+                max_daily_capital = _strictest_positive_limit(
+                    max(0.0, float(rule.max_daily_capital)) for rule in user_rules
+                )
                 if max_daily_capital > 0 and requested_capital > 0:
                     daily_capital = sum(
                         float(row[0] or 0.0) for row in db.query(LivePaperTrade.capital_used).filter(
@@ -160,7 +160,9 @@ class AlertService:
                     if daily_capital + requested_capital > max_daily_capital:
                         db.rollback()
                         continue
-                max_loss = min(max(0.0, float(rule.max_loss)) for rule in user_rules)
+                max_loss = _strictest_positive_limit(
+                    max(0.0, float(rule.max_loss)) for rule in user_rules
+                )
                 if max_loss > 0:
                     open_loss = sum(
                         min(0.0, float(row[0] or 0.0)) for row in db.query(LivePaperTrade.unrealized_pnl).filter(
@@ -184,8 +186,7 @@ class AlertService:
                         direction=paper.get("direction", "LONG"), expiry=paper.get("expiry"),
                         earliest_expiry=paper.get("earliest_expiry") or paper.get("expiry"),
                         lot_size=int(paper.get("lot_size", 1) or 1), lots=int(paper.get("lots", 1) or 1),
-                        edge=float(paper.get("edge", 0.0) or 0.0),
-                        capital_used=requested_capital,
+                        edge=float(paper.get("edge", 0.0) or 0.0), capital_used=requested_capital,
                         legs=paper.get("legs") or [], metadata=dict(paper), user_id=rule_user_id,
                     )
                 except Exception as exc:
