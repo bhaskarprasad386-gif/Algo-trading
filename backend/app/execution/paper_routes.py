@@ -661,6 +661,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     )
     actual_positions: dict[str, Position] = {}
     duplicate_position_symbols: set[str] = set()
+    position_symbol_canonicality_mismatches: list[int] = []
     for position in all_paper_positions:
         raw_quantity = float(position.quantity or 0.0)
         raw_average_price = float(position.average_price or 0.0)
@@ -675,8 +676,11 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             # malformed values cannot be silently truncated or NaN-compared.
             continue
         if position.is_open and int(raw_quantity) != 0:
-            symbol = str(position.symbol or "").strip().upper()
+            raw_symbol = str(position.symbol or "")
+            symbol = raw_symbol.strip().upper()
             if symbol:
+                if raw_symbol != symbol:
+                    position_symbol_canonicality_mismatches.append(int(position.id))
                 if symbol in actual_positions:
                     duplicate_position_symbols.add(symbol)
                 actual_positions[symbol] = position
@@ -693,6 +697,10 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         )
     ]
     mismatches.extend(f"invalid_position:{position_id}" for position_id in malformed_position_ids)
+    mismatches.extend(
+        f"position_symbol_canonicality_mismatch:{position_id}"
+        for position_id in position_symbol_canonicality_mismatches
+    )
     mismatches.extend(f"duplicate_position:{symbol}" for symbol in sorted(duplicate_position_symbols))
     for symbol, state in rebuilt.items():
         if abs(state.quantity) > 0:
@@ -728,7 +736,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             mismatch_categories.add("ORDER_INTEGRITY")
         elif mismatch.startswith(("audit_chain_mismatch:", "audit_hash_mismatch:")):
             mismatch_categories.add("AUDIT_INTEGRITY")
-        elif mismatch.startswith(("missing_position:", "position_mismatch:", "unexpected_position:", "orphan_position:", "invalid_position:", "duplicate_position:")):
+        elif mismatch.startswith(("missing_position:", "position_mismatch:", "unexpected_position:", "orphan_position:", "invalid_position:", "duplicate_position:", "position_symbol_canonicality_mismatch:")):
             mismatch_categories.add("POSITION_STATE")
         elif mismatch in {"invalid_initial_virtual_balance", "invalid_virtual_balance", "invalid_realized_pnl", "realized_pnl_mismatch", "virtual_balance_mismatch"}:
             mismatch_categories.add("ACCOUNTING_STATE")
