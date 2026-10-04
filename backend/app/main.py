@@ -664,6 +664,7 @@ def _executable_paper_pnl(trade: LivePaperTrade, row) -> float | None:
     """Mark an alert's original legs against current executable exit quotes."""
     try:
         import math
+        from collections.abc import Mapping
         lot_size = float(trade.lot_size)
         lots = float(trade.lots)
         if (
@@ -672,22 +673,36 @@ def _executable_paper_pnl(trade: LivePaperTrade, row) -> float | None:
         ):
             return None
         legs = json.loads(trade.legs_json or "[]")
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError, json.JSONDecodeError):
         return None
-    if not legs:
+    if not isinstance(legs, list) or not legs:
         return None
 
     def q(bid, ask, side):
-        bid, ask = float(bid), float(ask)
-        if bid <= 0 or ask <= 0 or ask < bid:
+        try:
+            bid, ask = float(bid), float(ask)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if (
+            not math.isfinite(bid) or not math.isfinite(ask)
+            or bid <= 0 or ask <= 0 or ask < bid
+        ):
             return None
         return bid if side == "BUY" else ask
 
     total = 0.0
     for leg in legs:
+        if not isinstance(leg, Mapping):
+            return None
         side = str(leg.get("side", "")).upper()
         entry = leg.get("price")
         if side not in {"BUY", "SELL"} or entry is None:
+            return None
+        try:
+            entry = float(entry)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(entry) or entry <= 0:
             return None
         instrument = str(leg.get("instrument", "")).upper()
         contract = str(leg.get("contract", ""))
@@ -722,7 +737,7 @@ def _executable_paper_pnl(trade: LivePaperTrade, row) -> float | None:
         exit_price = q(bid, ask, side)
         if exit_price is None:
             return None
-        signed = exit_price - float(entry) if side == "BUY" else float(entry) - exit_price
+        signed = exit_price - entry if side == "BUY" else entry - exit_price
         total += signed
     return round(total * int(trade.lot_size) * int(trade.lots), 8)
 
