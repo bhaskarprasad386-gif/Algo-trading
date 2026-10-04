@@ -3001,6 +3001,141 @@ def test_paper_reconcile_repairability_precedence_account_vs_ledger_corruption(t
         db.close(); engine.dispose()
 
 
+def test_paper_reconcile_mismatch_classification_is_deterministic_and_complete(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    cases = (
+        ("account", "ACCOUNTING_STATE", "SAFE_DRY_RUN"),
+        ("position", "POSITION_STATE", "SAFE_DRY_RUN"),
+        ("audit", "AUDIT_INTEGRITY", "BLOCKED"),
+        ("order", "ORDER_INTEGRITY", "BLOCKED"),
+        ("baseline", "BASELINE_INTEGRITY", "BLOCKED"),
+    )
+    for kind, expected_category, expected_repairability in cases:
+        engine = create_engine(
+            f"sqlite:///{tmp_path / f'classify-{kind}.db'}",
+            connect_args={"check_same_thread": False, "timeout": 10},
+        )
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        seed = Session()
+        try:
+            user = User(email=f"classify-{kind}@example.com", hashed_password="", full_name="Classification", is_active=True)
+            seed.add(user)
+            seed.flush()
+            seed.add(TradingAccount(
+                user_id=user.id, mode="PAPER", virtual_balance=5000.0,
+                initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0, is_active=True,
+            ))
+            seed.commit()
+            uid = user.id
+        finally:
+            seed.close()
+
+        db = Session()
+        try:
+            paper_order(
+                PaperOrderRequest(symbol="CLASSIFY", transaction_type="BUY",
+                                  price=100.0, quantity=2, fill_id=f"{kind}-1"),
+                user_id=uid, db=db,
+            )
+        finally:
+            db.close()
+
+        corrupt = Session()
+        try:
+            account = corrupt.query(TradingAccount).filter(TradingAccount.user_id == uid).one()
+            order = corrupt.query(Order).filter(Order.user_id == uid, Order.is_paper.is_(True)).one()
+            position = corrupt.query(Position).filter(
+                Position.user_id == uid, Position.is_paper.is_(True)
+            ).one()
+            if kind == "account":
+                account.virtual_balance += 1.0
+            elif kind == "position":
+                position.quantity += 1
+            elif kind == "audit":
+                order.audit_hash = "a" * 64
+            elif kind == "order":
+                order.quantity = 3
+            else:
+                account.initial_balance_source = "MIGRATED_INFERRED"
+            corrupt.commit()
+
+            result = _reconcile_paper_ledger(corrupt, uid)
+            assert result["status"] == "MISMATCH", kind
+            assert result["repairability"] == expected_repairability, kind
+            assert result["repairability_reason"] == (
+                "account_or_position_state_only"
+                if expected_repairability == "SAFE_DRY_RUN"
+                else "ledger_or_baseline_integrity_failure"
+            ), kind
+            assert expected_category in result["mismatch_categories"], kind
+            assert result["repair_plan"]["apply"] is False, kind
+        finally:
+            corrupt.close()
+            engine.dispose()
+
+
+def test_paper_reconcile_mixed_corruption_categories_always_report_all_categories_and_block(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'classify-mixed.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="classify-mixed@example.com", hashed_password="", full_name="Mixed Classification", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id, mode="PAPER", virtual_balance=5000.0,
+            initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0, is_active=True,
+        ))
+        seed.commit()
+        uid = user.id
+    finally:
+        seed.close()
+
+    db = Session()
+    try:
+        paper_order(PaperOrderRequest(
+            symbol="MIX", transaction_type="BUY", price=100.0, quantity=2, fill_id="MX1"
+        ), user_id=uid, db=db)
+    finally:
+        db.close()
+
+    corrupt = Session()
+    try:
+        account = corrupt.query(TradingAccount).filter(TradingAccount.user_id == uid).one()
+        order = corrupt.query(Order).filter(Order.user_id == uid, Order.is_paper.is_(True)).one()
+        position = corrupt.query(Position).filter(
+            Position.user_id == uid, Position.is_paper.is_(True)
+        ).one()
+        account.virtual_balance += 10.0
+        order.pnl = 5.0
+        position.quantity += 1
+        corrupt.commit()
+
+        result = _reconcile_paper_ledger(corrupt, uid)
+        assert result["status"] == "MISMATCH"
+        assert result["repairability"] == "BLOCKED"
+        assert result["repairability_reason"] == "ledger_or_baseline_integrity_failure"
+        assert result["mismatch_categories"] == [
+            "ACCOUNTING_STATE",
+            "AUDIT_INTEGRITY",
+            "POSITION_STATE",
+        ]
+        assert result["repair_plan"]["apply"] is False
+    finally:
+        corrupt.close()
+        engine.dispose()
+
+
 def test_paper_reconcile_safe_dry_run_is_strictly_account_or_position_state_only(tmp_path):
     from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
 
