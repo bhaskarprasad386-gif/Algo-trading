@@ -415,6 +415,65 @@ def test_persisted_ledger_rejects_aware_datetimes(db_session):
     ) == []
 
 
+def test_completed_trade_requires_realized_pnl_to_match_final_unrealized_pnl(db_session):
+    _enable(db_session, amount=100_000)
+    svc = LivePaperTradeService()
+    malformed = LivePaperTrade(
+        user_id=1, strategy_id="cash-future", symbol="PNL-MISMATCH",
+        event_id="PNL-MISMATCH", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-30", lot_size=1, lots=1,
+        entry_edge=10, current_edge=8, capital_used=10_000,
+        unrealized_pnl=-2, realized_pnl=-1, pnl_pct=-0.01,
+        status="COMPLETED", exit_reason="MANUAL",
+        opened_at=datetime(2026, 10, 4, 10, 0),
+        last_mark_at=datetime(2026, 10, 4, 10, 5),
+        closed_at=datetime(2026, 10, 4, 10, 5),
+    )
+    db_session.add(malformed)
+    db_session.commit()
+
+    assert svc.completed(db_session, 1) == []
+    assert svc.ongoing(db_session, 1) == []
+    assert svc.close(db_session, malformed, "MANUAL").status == "COMPLETED"
+
+    valid, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="GOOD-PNL",
+        event_id="GOOD-PNL", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-30", lot_size=1, lots=1,
+        edge=10, capital_used=10_000, user_id=1,
+    )
+    assert valid is None
+    assert created is False
+
+
+def test_close_persists_realized_pnl_from_current_db_unrealized_pnl(db_session):
+    _enable(db_session, amount=100_000)
+    svc = LivePaperTradeService()
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="LATEST-PNL",
+        event_id="LATEST-PNL", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-30", lot_size=1, lots=1,
+        edge=10, capital_used=10_000, user_id=1,
+    )
+    assert created is True
+    stale = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.id == trade.id
+    ).one()
+
+    # Simulate the monitor producing a newer mark in a separate transaction
+    # after another caller has already loaded a stale ORM object.
+    mark_session = db_session.__class__.bind if False else None
+    trade.unrealized_pnl = -25.0
+    trade.current_edge = 5.0
+    trade.pnl_pct = -0.25
+    db_session.commit()
+
+    closed = svc.close(db_session, stale, "MANUAL")
+    assert closed.status == "COMPLETED"
+    assert closed.unrealized_pnl == -25.0
+    assert closed.realized_pnl == -25.0
+
+
 def test_exit_reason_is_terminal_state_invariant(db_session):
     _enable(db_session, amount=100_000)
     svc = LivePaperTradeService()
