@@ -2493,3 +2493,140 @@ def test_paper_reconcile_precondition_invalidates_every_core_mutation(tmp_path):
         finally:
             mutate.close()
             engine.dispose()
+
+def test_paper_reconcile_precondition_invalidates_order_set_and_sequence_mutations(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+
+    mutations = ("delete_order", "insert_order", "order_id_resequence", "fill_id_mutation")
+    for mutation in mutations:
+        engine = create_engine(
+            f"sqlite:///{tmp_path / f'precondition-order-{mutation}.db'}",
+            connect_args={"check_same_thread": False, "timeout": 10},
+        )
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        seed = Session()
+        try:
+            user = User(email=f"order-{mutation}@example.com", hashed_password="", full_name="Order Mutation", is_active=True)
+            seed.add(user)
+            seed.flush()
+            seed.add(TradingAccount(
+                user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+                initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0, is_active=True,
+            ))
+            seed.commit()
+            user_id = user.id
+        finally:
+            seed.close()
+
+        db = Session()
+        try:
+            paper_order(PaperOrderRequest(symbol="MATRIX", transaction_type="BUY", price=100.0, quantity=5, fill_id="MATRIX-1"), user_id=user_id, db=db)
+            paper_order(PaperOrderRequest(symbol="SECOND", transaction_type="BUY", price=50.0, quantity=2, fill_id="SECOND-1"), user_id=user_id, db=db)
+        finally:
+            db.close()
+
+        base = Session()
+        try:
+            account = base.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+            orders = base.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).order_by(Order.id.asc()).all()
+            positions = base.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).order_by(Position.id.asc()).all()
+            before_hash = _paper_repair_precondition(base, user_id, account, orders, positions)["state_hash"]
+        finally:
+            base.close()
+
+        mutate = Session()
+        try:
+            account = mutate.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+            orders = mutate.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).order_by(Order.id.asc()).all()
+            positions = mutate.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).order_by(Position.id.asc()).all()
+            if mutation == "delete_order":
+                mutate.delete(orders[1])
+            elif mutation == "insert_order":
+                extra = Order(
+                    user_id=user_id, order_id="PAPER-MUTATION-INSERT", symbol="INJECTED",
+                    transaction_type="BUY", order_type="MARKET", product_type="INTRADAY",
+                    quantity=1, price=10.0, average_price=10.0, filled_quantity=1,
+                    average_fill_price=10.0, time_in_force="DAY", pnl=0.0, status="FILLED",
+                    is_paper=True, fill_id="INJECTED-1", audit_hash="b" * 64,
+                    previous_audit_hash=orders[-1].audit_hash,
+                )
+                mutate.add(extra)
+            elif mutation == "order_id_resequence":
+                orders[0].id, orders[1].id = orders[1].id, orders[0].id
+            elif mutation == "fill_id_mutation":
+                orders[0].fill_id = "MATRIX-MUTATED"
+            mutate.commit()
+            current_orders = mutate.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).order_by(Order.id.asc()).all()
+            current_positions = mutate.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).order_by(Position.id.asc()).all()
+            current = _paper_repair_precondition(mutate, user_id, account, current_orders, current_positions)
+            assert current["state_hash"] != before_hash, mutation
+        finally:
+            mutate.close()
+            engine.dispose()
+
+
+def test_paper_reconcile_precondition_captures_multi_symbol_reversal_ledger(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, PaperExitRequest, _paper_repair_precondition, _reconcile_paper_ledger, paper_order, paper_exit
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'precondition-reversal.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="reversal-pre@example.com", hashed_password="", full_name="Reversal Precondition", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id, mode="PAPER", virtual_balance=10000.0,
+            initial_virtual_balance=10000.0, initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0, is_active=True,
+        ))
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    for request in (
+        PaperOrderRequest(symbol="ALPHA", transaction_type="BUY", price=100.0, quantity=10, fill_id="A1"),
+        PaperOrderRequest(symbol="ALPHA", transaction_type="SELL", price=120.0, quantity=15, fill_id="A2"),
+        PaperOrderRequest(symbol="ALPHA", transaction_type="BUY", price=110.0, quantity=2, fill_id="A3"),
+        PaperOrderRequest(symbol="BETA", transaction_type="SELL", price=200.0, quantity=6, fill_id="B1"),
+        PaperOrderRequest(symbol="BETA", transaction_type="BUY", price=180.0, quantity=2, fill_id="B2"),
+    ):
+        db = Session()
+        try:
+            paper_order(request, user_id=user_id, db=db)
+        finally:
+            db.close()
+
+    base = Session()
+    try:
+        account = base.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        orders = base.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).order_by(Order.id.asc()).all()
+        positions = base.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).order_by(Position.id.asc()).all()
+        pre = _paper_repair_precondition(base, user_id, account, orders, positions)
+        assert pre["order_count"] == 5
+        assert pre["position_count"] == 2
+        assert pre["audit_head"] == orders[-1].audit_hash
+        assert len(pre["state_hash"]) == 64
+    finally:
+        base.close()
+
+    mutate = Session()
+    try:
+        account = mutate.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        order = mutate.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).order_by(Order.id.asc()).first()
+        order.pnl = float(order.pnl or 0.0) + 1.0
+        mutate.commit()
+        now = _reconcile_paper_ledger(mutate, user_id)
+        assert now["repair_plan"]["precondition"]["state_hash"] != pre["state_hash"]
+        assert now["repairability"] == "BLOCKED"
+        assert now["repair_plan"]["apply"] is False
+    finally:
+        mutate.close()
+        engine.dispose()
