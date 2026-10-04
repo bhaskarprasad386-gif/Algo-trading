@@ -6004,8 +6004,10 @@ def test_paper_http_concurrent_multi_symbol_close_and_partial_reversal_preserve_
         )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        alpha = pool.submit(close_alpha).result()
-        beta = pool.submit(reverse_beta).result()
+        alpha_future = pool.submit(close_alpha)
+        beta_future = pool.submit(reverse_beta)
+        alpha = alpha_future.result()
+        beta = beta_future.result()
 
     assert alpha.status_code == 200
     assert beta.status_code == 200
