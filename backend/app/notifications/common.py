@@ -201,6 +201,21 @@ class AlertService:
                     continue
                 if not user_rules:
                     continue
+                # Position/capital/loss limits are user-global, not strategy-local.
+                # The current event must satisfy this strategy's gross-profit
+                # threshold, but an enabled rule on another strategy still
+                # consumes the same user's shared paper capital, daily budget,
+                # loss budget, and simultaneous-position slots.
+                global_user_rules = [
+                    rule for rule in db.query(AlertRule).filter(
+                        AlertRule.enabled.is_(True),
+                        AlertRule.user_id == rule_user_id,
+                    ).all()
+                    if _valid_alert_rule(rule)
+                ]
+                if not global_user_rules:
+                    db.rollback()
+                    continue
                 # A malformed persisted trade is not safe to ignore: doing so
                 # could release an unknown capital reservation or loss from the
                 # risk calculation. Fail closed for this user until the ledger row
@@ -228,7 +243,7 @@ class AlertService:
                     continue
 
                 max_simultaneous = _strictest_positive_limit(
-                    max(0, int(rule.max_simultaneous_positions)) for rule in user_rules
+                    max(0, int(rule.max_simultaneous_positions)) for rule in global_user_rules
                 )
                 ongoing_count = db.query(LivePaperTrade).filter(
                     LivePaperTrade.user_id == rule_user_id,
@@ -278,7 +293,7 @@ class AlertService:
                             effective_capital = capital_per_lot * allocatable_lots
                 day_start = _ist_day_start_utc_naive()
                 max_daily_capital = _strictest_positive_limit(
-                    max(0.0, float(rule.max_daily_capital)) for rule in user_rules
+                    max(0.0, float(rule.max_daily_capital)) for rule in global_user_rules
                 )
                 if max_daily_capital > 0 and effective_capital > 0:
                     daily_capital = sum(
@@ -294,7 +309,7 @@ class AlertService:
                         db.rollback()
                         continue
                 max_loss = _strictest_positive_limit(
-                    max(0.0, float(rule.max_loss)) for rule in user_rules
+                    max(0.0, float(rule.max_loss)) for rule in global_user_rules
                 )
                 if max_loss > 0:
                     open_loss = sum(
