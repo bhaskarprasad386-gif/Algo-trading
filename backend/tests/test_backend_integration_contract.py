@@ -1121,3 +1121,66 @@ def test_partial_close_uses_actual_realized_loss_for_subsequent_max_loss_gate(db
     rows = svc.ongoing(db_session, 1)
     assert len(rows) == 2
     assert any(row.symbol == "ALLOWED" for row in rows)
+
+
+def test_duplicate_partial_trade_does_not_reallocate_lots_or_capital(db_session):
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=125000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0.0, max_simultaneous_positions=5, max_loss=0.0,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    seed, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="SEED",
+        event_id="DUP-PARTIAL-SEED", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=3, edge=5, capital_used=90000, user_id=1,
+    )
+    assert created is True
+    assert seed.lots == 3
+    assert seed.capital_used == 90000
+
+    first = AlertEvent(
+        strategy_id="cash-future", event_id="DUP-PARTIAL-1", symbol="PARTIAL",
+        timestamp_ns=1, message="first", metadata={
+            "gross_profit": 10,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-30",
+                "lot_size": 10, "lots": 2, "edge": 10,
+                "capital_used": 60000,
+            },
+        },
+    )
+    assert AlertService().dispatch(db_session, first) == 0
+    partial = [row for row in svc.ongoing(db_session, 1) if row.symbol == "PARTIAL"][0]
+    assert partial.lots == 1
+    assert partial.capital_used == 30000
+    assert partial.unrealized_pnl == 0.0
+
+    duplicate = AlertEvent(
+        strategy_id="cash-future", event_id="DUP-PARTIAL-1", symbol="PARTIAL",
+        timestamp_ns=2, message="duplicate-mark", metadata={
+            "gross_profit": -999,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-30",
+                "lot_size": 10, "lots": 3, "edge": 5,
+                "capital_used": 90000,
+            },
+        },
+    )
+    assert AlertService().dispatch(db_session, duplicate) == 0
+
+    rows = [row for row in svc.ongoing(db_session, 1) if row.symbol == "PARTIAL"]
+    assert len(rows) == 1
+    assert rows[0].lots == 1
+    assert rows[0].capital_used == 30000
+    assert rows[0].current_edge == 5.0
+    assert rows[0].unrealized_pnl == -50.0
+    assert sum(row.capital_used for row in svc.ongoing(db_session, 1)) == 120000
