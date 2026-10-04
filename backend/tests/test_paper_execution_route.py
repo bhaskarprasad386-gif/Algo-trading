@@ -2923,6 +2923,106 @@ def test_paper_reconcile_response_contract_is_deterministic_for_clean_safe_and_b
     finally:
         blocked_engine.dispose()
 
+
+def test_paper_reconcile_is_user_isolated_across_orders_positions_and_preconditions(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'reconcile-user-isolation.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user_a = User(email="reconcile-a@example.com", hashed_password="", full_name="Reconcile A", is_active=True)
+        user_b = User(email="reconcile-b@example.com", hashed_password="", full_name="Reconcile B", is_active=True)
+        seed.add_all([user_a, user_b]); seed.flush()
+        seed.add_all([
+            TradingAccount(user_id=user_a.id, mode="PAPER", virtual_balance=10000.0, initial_virtual_balance=10000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True),
+            TradingAccount(user_id=user_b.id, mode="PAPER", virtual_balance=20000.0, initial_virtual_balance=20000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True),
+        ])
+        seed.commit(); a_id, b_id = user_a.id, user_b.id
+    finally:
+        seed.close()
+
+    for user_id, symbol, price, qty, fill_id in (
+        (a_id, "ALPHA", 100.0, 5, "UA-1"),
+        (b_id, "BETA", 500.0, 3, "UB-1"),
+    ):
+        db = Session()
+        try:
+            paper_order(PaperOrderRequest(symbol=symbol, transaction_type="BUY", price=price, quantity=qty, fill_id=fill_id), user_id=user_id, db=db)
+        finally:
+            db.close()
+
+    db = Session()
+    try:
+        a = _reconcile_paper_ledger(db, a_id)
+        b = _reconcile_paper_ledger(db, b_id)
+        assert a["status"] == b["status"] == "OK"
+        assert a["user_id"] == a_id and b["user_id"] == b_id
+        assert a["orders"] == b["orders"] == 1
+        assert a["reconstructed_virtual_balance"] == 9500.0
+        assert b["reconstructed_virtual_balance"] == 18500.0
+        assert a["reconstructed_positions"] == {"ALPHA": {"quantity": 5, "average_price": 100.0}}
+        assert b["reconstructed_positions"] == {"BETA": {"quantity": 3, "average_price": 500.0}}
+        assert a["repair_plan"]["positions"] == a["reconstructed_positions"]
+        assert b["repair_plan"]["positions"] == b["reconstructed_positions"]
+        assert a["repair_plan"]["precondition"]["audit_head"] != b["repair_plan"]["precondition"]["audit_head"]
+        assert a["repair_plan"]["precondition"]["state_hash"] != b["repair_plan"]["precondition"]["state_hash"]
+        assert "BETA" not in a["reconstructed_positions"]
+        assert "ALPHA" not in b["reconstructed_positions"]
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_reconcile_cross_user_tamper_does_not_change_other_users_result(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'reconcile-cross-user-tamper.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user_a = User(email="cross-a@example.com", hashed_password="", full_name="Cross A", is_active=True)
+        user_b = User(email="cross-b@example.com", hashed_password="", full_name="Cross B", is_active=True)
+        seed.add_all([user_a, user_b]); seed.flush()
+        seed.add_all([
+            TradingAccount(user_id=user_a.id, mode="PAPER", virtual_balance=10000.0, initial_virtual_balance=10000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True),
+            TradingAccount(user_id=user_b.id, mode="PAPER", virtual_balance=10000.0, initial_virtual_balance=10000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True),
+        ])
+        seed.commit(); a_id, b_id = user_a.id, user_b.id
+    finally:
+        seed.close()
+
+    for user_id, symbol, fill_id in ((a_id, "ALPHA", "CU-A"), (b_id, "BETA", "CU-B")):
+        db = Session()
+        try:
+            paper_order(PaperOrderRequest(symbol=symbol, transaction_type="BUY", price=100.0, quantity=2, fill_id=fill_id), user_id=user_id, db=db)
+        finally:
+            db.close()
+
+    db = Session()
+    try:
+        before_b = _reconcile_paper_ledger(db, b_id)
+        order_a = db.query(Order).filter(Order.user_id == a_id, Order.is_paper.is_(True)).one()
+        order_a.price = 999.0; db.commit()
+        after_b = _reconcile_paper_ledger(db, b_id)
+        after_a = _reconcile_paper_ledger(db, a_id)
+        assert before_b == after_b
+        assert after_b["status"] == "OK"
+        assert after_b["reconstructed_positions"] == {"BETA": {"quantity": 2, "average_price": 100.0}}
+        assert after_b["repair_plan"]["positions"] == after_b["reconstructed_positions"]
+        assert after_a["status"] == "MISMATCH"
+        assert after_a["repairability"] == "BLOCKED"
+        assert "ALPHA" in after_a["reconstructed_positions"]
+        assert "BETA" not in after_a["reconstructed_positions"]
+    finally:
+        db.close(); engine.dispose()
+
 def test_paper_reconcile_reconstructed_positions_equal_repair_plan_for_reversal_and_flat_symbols(tmp_path):
     from app.execution.paper_routes import (
         PaperExitRequest, PaperOrderRequest, _reconcile_paper_ledger, paper_exit, paper_order
