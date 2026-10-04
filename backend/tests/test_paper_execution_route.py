@@ -7505,6 +7505,128 @@ def test_paper_http_concurrent_reads_during_successful_short_to_long_reversal_ex
 
 
 
+
+def test_concurrent_cross_user_orders_keep_audit_chains_independent(tmp_path):
+    """Concurrent cross-user writes must never link one user's audit chain to another's."""
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(
+        "sqlite:///" + str(tmp_path / "cross-user-audit.db"),
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        users = []
+        for suffix in ("a", "b"):
+            user = User(
+                email=f"cross-user-audit-{suffix}@example.com",
+                hashed_password="",
+                full_name=f"Cross User Audit {suffix}",
+                is_active=True,
+            )
+            seed.add(user)
+            seed.flush()
+            seed.add(TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=5000.0,
+                initial_virtual_balance=5000.0,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            ))
+            users.append(int(user.id))
+        seed.commit()
+    finally:
+        seed.close()
+
+    for user_id, suffix in zip(users, ("A", "B")):
+        db = TestSession()
+        try:
+            paper_order(
+                PaperOrderRequest(
+                    symbol=f"AUDIT_SEED_{suffix}",
+                    transaction_type="BUY",
+                    price=100.0,
+                    quantity=1,
+                    fill_id=f"AUDIT-SEED-{suffix}",
+                ),
+                user_id=user_id,
+                db=db,
+            )
+        finally:
+            db.close()
+
+    barrier = threading.Barrier(2)
+
+    def submit(user_id, suffix):
+        db = TestSession()
+        try:
+            barrier.wait(timeout=5)
+            return paper_order(
+                PaperOrderRequest(
+                    symbol=f"AUDIT_CONCURRENT_{suffix}",
+                    transaction_type="BUY",
+                    price=50.0,
+                    quantity=1,
+                    fill_id=f"AUDIT-CONCURRENT-{suffix}",
+                ),
+                user_id=user_id,
+                db=db,
+            )
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(
+            lambda args: submit(*args),
+            [(users[0], "A"), (users[1], "B")],
+        ))
+
+    assert {result["fill_id"] for result in results} == {
+        "AUDIT-CONCURRENT-A",
+        "AUDIT-CONCURRENT-B",
+    }
+
+    verify = TestSession()
+    try:
+        chains = {}
+        for user_id in users:
+            orders = verify.query(Order).filter(
+                Order.user_id == user_id,
+                Order.is_paper.is_(True),
+            ).order_by(Order.id.asc()).all()
+            assert len(orders) == 2
+            assert orders[0].previous_audit_hash is None
+            assert orders[0].audit_hash
+            assert orders[1].previous_audit_hash == orders[0].audit_hash
+            assert orders[1].audit_hash
+            assert orders[1].audit_hash != orders[0].audit_hash
+            chains[user_id] = (orders[0].audit_hash, orders[1].audit_hash)
+
+        assert chains[users[0]][0] != chains[users[1]][0]
+        assert chains[users[0]][1] != chains[users[1]][1]
+        assert chains[users[0]][1] != chains[users[1]][0]
+        assert chains[users[1]][1] != chains[users[0]][0]
+    finally:
+        verify.close()
+
+    for user_id in users:
+        reconcile_db = TestSession()
+        try:
+            payload = _reconcile_paper_ledger(reconcile_db, user_id)
+            assert payload["status"] == "OK"
+            assert payload["mismatches"] == []
+            assert payload["repairability"] == "NONE"
+        finally:
+            reconcile_db.close()
+
+    engine.dispose()
+
+
 def test_paper_sqlite_write_lock_rejection_does_not_mutate_ledger(tmp_path):
     """A rejected BEGIN IMMEDIATE must fail before any paper state mutation."""
     from app.execution.paper_routes import PaperOrderRequest, paper_order
