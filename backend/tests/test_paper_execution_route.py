@@ -8638,3 +8638,137 @@ def test_paper_http_exit_commit_failure_does_not_persist_partial_mutation():
     reconcile = client.get("/api/v1/execution/paper/reconcile", headers={"X-User-ID": str(user_id)})
     assert reconcile.status_code == 200
     assert reconcile.json()["status"] == "OK"
+
+
+def test_paper_http_entry_failed_commit_does_not_consume_fill_id_or_audit_head():
+    """A failed legacy entry commit must leave its fill_id and audit chain reusable."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+    seed = TestSession()
+    try:
+        user = User(email="entry-retry@example.com", hashed_password="", full_name="Entry Retry", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+                                initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+                                realized_pnl=0.0, is_active=True))
+        seed.commit(); user_id = int(user.id)
+    finally:
+        seed.close()
+
+    class FailingCommitSession(Session):
+        def commit(self):
+            raise RuntimeError("injected entry commit failure")
+
+    failing_db = sessionmaker(bind=engine, class_=FailingCommitSession)()
+    client = TestClient(app)
+
+    def override_db():
+        try:
+            yield failing_db
+        finally:
+            failing_db.rollback()
+            failing_db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        failed = client.post("/api/v1/execution/paper/entry", json={
+            "symbol": "ENTRY_RETRY", "price": 250.0, "quantity": 2, "fill_id": "ENTRY-RETRY-1"
+        })
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+    assert failed.status_code == 500
+
+    retry = client.post("/api/v1/execution/paper/entry", headers={"X-User-ID": str(user_id)}, json={
+        "symbol": "ENTRY_RETRY", "price": 250.0, "quantity": 2, "fill_id": "ENTRY-RETRY-1"
+    })
+    assert retry.status_code == 200
+    assert retry.json()["order"]["fill_id"] == "ENTRY-RETRY-1"
+
+    db = TestSession()
+    try:
+        orders = db.query(Order).filter(Order.user_id == user_id, Order.symbol == "ENTRY_RETRY").all()
+        assert len(orders) == 1
+        assert orders[0].fill_id == "ENTRY-RETRY-1"
+        assert orders[0].previous_audit_hash is None
+        assert orders[0].audit_hash
+        assert db.query(Position).filter(
+            Position.user_id == user_id, Position.symbol == "ENTRY_RETRY", Position.is_open.is_(True)
+        ).count() == 1
+    finally:
+        db.close()
+
+
+def test_paper_http_exit_failed_commit_does_not_consume_fill_id_or_audit_head():
+    """A failed terminal exit commit must leave its fill_id reusable and preserve the prior audit head."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+    seed = TestSession()
+    try:
+        user = User(email="exit-retry@example.com", hashed_password="", full_name="Exit Retry", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=500.0,
+                                initial_virtual_balance=500.0, initial_balance_source="BOOTSTRAP",
+                                realized_pnl=0.0, is_active=True))
+        seed.add(Position(user_id=user.id, symbol="EXIT_RETRY", quantity=2, average_price=100.0,
+                          stop_loss=None, target=None, is_paper=True, is_open=True))
+        seed.commit(); user_id = int(user.id)
+    finally:
+        seed.close()
+
+    class FailingCommitSession(Session):
+        def commit(self):
+            raise RuntimeError("injected exit commit failure")
+
+    failing_db = sessionmaker(bind=engine, class_=FailingCommitSession)()
+    client = TestClient(app)
+
+    def override_db():
+        try:
+            yield failing_db
+        finally:
+            failing_db.rollback()
+            failing_db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        failed = client.post("/api/v1/execution/paper/exit", json={
+            "symbol": "EXIT_RETRY", "price": 120.0, "fill_id": "EXIT-RETRY-1"
+        })
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+    assert failed.status_code == 500
+
+    retry = client.post("/api/v1/execution/paper/exit", headers={"X-User-ID": str(user_id)}, json={
+        "symbol": "EXIT_RETRY", "price": 120.0, "fill_id": "EXIT-RETRY-1"
+    })
+    assert retry.status_code == 200
+    assert retry.json()["order"]["fill_id"] == "EXIT-RETRY-1"
+
+    db = TestSession()
+    try:
+        orders = db.query(Order).filter(Order.user_id == user_id, Order.symbol == "EXIT_RETRY").all()
+        assert len(orders) == 1
+        assert orders[0].fill_id == "EXIT-RETRY-1"
+        assert orders[0].previous_audit_hash is None
+        assert orders[0].audit_hash
+        assert db.query(Position).filter(
+            Position.user_id == user_id, Position.symbol == "EXIT_RETRY", Position.is_open.is_(True)
+        ).count() == 0
+    finally:
+        db.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers={"X-User-ID": str(user_id)})
+    assert reconcile.status_code == 200
+    assert reconcile.json()["status"] == "OK"
