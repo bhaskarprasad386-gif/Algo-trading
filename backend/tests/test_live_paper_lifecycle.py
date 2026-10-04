@@ -1106,3 +1106,59 @@ def test_close_uses_latest_db_pnl_after_mark_refresh(db_session):
     assert closed.status == "COMPLETED"
     assert closed.realized_pnl == 250.0
     assert closed.unrealized_pnl == 250.0
+
+
+def test_risk_gate_rollback_does_not_poison_next_paper_entry(db_session):
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=100000, emergency_stop=False))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=60000.0, max_simultaneous_positions=1, max_loss=0.0,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    first, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="ROLLBACK-A",
+        event_id="ROLLBACK-A", direction="LONG", expiry="2026-12-30",
+        earliest_expiry="2026-12-30", lot_size=10, lots=1, edge=10,
+        capital_used=60000, user_id=1,
+    )
+    assert created is True
+
+    blocked = AlertService().dispatch(db_session, AlertEvent(
+        strategy_id="cash-future", event_id="ROLLBACK-B", symbol="B",
+        timestamp_ns=1, message="blocked", metadata={
+            "gross_profit": 1,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-12-30",
+                "lot_size": 10, "lots": 1, "edge": 10, "capital_used": 60000,
+            },
+        },
+    ))
+    assert blocked == 0
+
+    # The risk rollback must not leave the session with a phantom reservation
+    # or stale setting/trade state. Once the first position is closed, the
+    # same session must be able to allocate the released capital.
+    svc.close(db_session, first, "MANUAL")
+    allowed = AlertService().dispatch(db_session, AlertEvent(
+        strategy_id="cash-future", event_id="ROLLBACK-C", symbol="C",
+        timestamp_ns=2, message="allowed", metadata={
+            "gross_profit": 1,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-12-30",
+                "lot_size": 10, "lots": 1, "edge": 10, "capital_used": 60000,
+            },
+        },
+    ))
+    assert allowed == 0
+
+    db_session.expire_all()
+    ongoing = svc.ongoing(db_session, 1)
+    assert len(ongoing) == 1
+    assert ongoing[0].event_id == "ROLLBACK-C"
+    assert ongoing[0].capital_used == 60000
