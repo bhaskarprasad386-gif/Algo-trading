@@ -7317,9 +7317,14 @@ def test_paper_http_concurrent_reads_during_successful_long_to_short_reversal_ex
 
     # Every independent read must be either the committed pre-state or the
     # committed post-state; no endpoint may observe an intermediate reversal.
-    assert account_payload["virtual_balance"] in {10_000_000.0, 9_999_740.0}
-    assert account_payload["realized_pnl"] in {0.0, 100.0}
-    assert account_payload["open_positions"] in {1}
+    assert (
+        account_payload["virtual_balance"],
+        account_payload["realized_pnl"],
+        account_payload["open_positions"],
+    ) in {
+        (10_000_000.0, 0.0, 1),
+        (9_999_740.0, 100.0, 1),
+    }
 
     assert orders_payload["mode"] == "paper"
     assert len(orders_payload["orders"]) in {0, 1}
