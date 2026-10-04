@@ -5893,3 +5893,68 @@ def test_paper_http_concurrent_insufficient_balance_fails_closed_across_symbols(
     account_data = account_response.json()
     assert account_data["virtual_balance"] == 300.0
     assert account_data["realized_pnl"] == 0.0
+
+
+def test_paper_http_concurrent_exits_across_symbols_preserve_shared_accounting():
+    client, headers = _client_and_headers()
+    starting_balance = 10_000.0
+
+    alpha_open = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "EXIT_A", "transaction_type": "BUY", "price": 100.0, "quantity": 5},
+    )
+    beta_open = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "EXIT_B", "transaction_type": "SELL", "price": 200.0, "quantity": 4},
+    )
+    assert alpha_open.status_code == 200
+    assert beta_open.status_code == 200
+    assert beta_open.json()["virtual_balance"] == 8_700.0
+
+    barrier = threading.Barrier(2)
+
+    def exit_alpha():
+        barrier.wait(timeout=5)
+        return client.post(
+            "/api/v1/execution/paper/exit",
+            headers=headers,
+            json={"symbol": "EXIT_A", "price": 130.0},
+        )
+
+    def exit_beta():
+        barrier.wait(timeout=5)
+        return client.post(
+            "/api/v1/execution/paper/exit",
+            headers=headers,
+            json={"symbol": "EXIT_B", "price": 170.0},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        alpha_future = pool.submit(exit_alpha)
+        beta_future = pool.submit(exit_beta)
+        alpha = alpha_future.result()
+        beta = beta_future.result()
+
+    assert alpha.status_code == 200
+    assert beta.status_code == 200
+    alpha_data = alpha.json()
+    beta_data = beta.json()
+
+    assert alpha_data["status"] == "closed"
+    assert alpha_data["pnl"] == 150.0
+    assert beta_data["status"] == "closed"
+    assert beta_data["pnl"] == 120.0
+    assert beta_data["realized_pnl"] == 270.0
+    assert beta_data["virtual_balance"] == starting_balance + 270.0
+
+    positions = client.get("/api/v1/execution/paper/positions", headers=headers)
+    assert positions.status_code == 200
+    assert [
+        item for item in positions.json()["positions"] if item["quantity"] != 0
+    ] == []
+
+    orders = client.get("/api/v1/execution/paper/orders", headers=headers)
+    assert orders.status_code == 200
+    assert len(orders.json()["orders"]) == 4
