@@ -1174,3 +1174,242 @@ def test_three_user_same_event_and_strategy_races_remain_isolated(tmp_path):
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_three_user_mixed_lifecycle_race_isolates_close_loss_and_partial_allocation(tmp_path):
+    """Three users may race different paper lifecycle paths without cross-user leakage."""
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.core.database import Base
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'three-user-mixed-lifecycle-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    # Use distinct strategy IDs so dispatch() routes each event only to its
+    # intended user's AlertRule; risk calculations themselves remain user-global.
+    strategies = {
+        1: "calendar-user-a",
+        2: "synthetic-user-b",
+        3: "box-user-c",
+    }
+
+    setup = Session()
+    try:
+        for user_id, strategy_id in strategies.items():
+            setup.add(GlobalPaperSetting(
+                user_id=user_id,
+                enabled=True,
+                paper_amount=60000,
+                emergency_stop=False,
+            ))
+            setup.add(AlertRule(
+                user_id=user_id,
+                strategy_id=strategy_id,
+                min_gross_profit=0,
+                mobile_number="",
+                whatsapp_enabled=False,
+                enabled=True,
+                max_daily_capital=60000,
+                max_simultaneous_positions=2,
+                max_loss=100,
+            ))
+
+        # User A starts with a seed that will race duplicate marks/manual close/
+        # expiry close. User B starts at the exact loss boundary. User C starts
+        # with one 30k reservation, leaving only one 30k lot for a concurrent
+        # 2-lot request.
+        service = LivePaperTradeService()
+
+        seed_a, created_a = service.enter_or_mark(
+            setup,
+            strategy_id=strategies[1],
+            symbol="USER-A-SEED",
+            event_id="USER-A-SEED",
+            direction="LONG",
+            expiry="2026-10-04",
+            earliest_expiry="2026-10-04",
+            lot_size=10,
+            lots=1,
+            edge=5,
+            capital_used=30000,
+            user_id=1,
+        )
+        assert created_a is True
+        service.mark(setup, seed_a, edge=0, pnl_override=-100)
+        setup.commit()
+
+        seed_b, created_b = service.enter_or_mark(
+            setup,
+            strategy_id=strategies[2],
+            symbol="USER-B-SEED",
+            event_id="USER-B-SEED",
+            direction="LONG",
+            expiry="2026-10-30",
+            earliest_expiry="2026-10-30",
+            lot_size=10,
+            lots=1,
+            edge=5,
+            capital_used=30000,
+            user_id=2,
+        )
+        assert created_b is True
+        service.mark(setup, seed_b, edge=0, pnl_override=-100)
+        setup.commit()
+
+        seed_c, created_c = service.enter_or_mark(
+            setup,
+            strategy_id=strategies[3],
+            symbol="USER-C-SEED",
+            event_id="USER-C-SEED",
+            direction="LONG",
+            expiry="2026-10-30",
+            earliest_expiry="2026-10-30",
+            lot_size=10,
+            lots=1,
+            edge=5,
+            capital_used=30000,
+            user_id=3,
+        )
+        assert created_c is True
+        setup.commit()
+    finally:
+        setup.close()
+
+    barrier = threading.Barrier(6)
+    errors = []
+    outcomes = []
+
+    def dispatch_worker(user_id, event_id):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            event = AlertEvent(
+                strategy_id=strategies[user_id],
+                event_id=event_id,
+                symbol=event_id,
+                timestamp_ns=900 + user_id,
+                message="mixed lifecycle race",
+                observed_at=datetime(2026, 10, 4, 15, 30),
+                metadata={"gross_profit": 1000, "paper_trade": {
+                    "direction": "LONG",
+                    "expiry": "2026-10-30",
+                    "earliest_expiry": "2026-10-30",
+                    "lot_size": 10,
+                    "lots": 2 if user_id == 3 else 1,
+                    "edge": 8,
+                    "capital_used": 60000 if user_id == 3 else 30000,
+                }},
+            )
+            outcomes.append((user_id, event_id, AlertService().dispatch(db, event)))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    def manual_a():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            trade = db.query(LivePaperTrade).filter(
+                LivePaperTrade.user_id == 1,
+                LivePaperTrade.event_id == "USER-A-SEED",
+            ).one()
+            outcomes.append(("manual-a", LivePaperTradeService().close(
+                db, trade, "MANUAL",
+            )))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    def expiry_a():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            outcomes.append(("expiry-a", LivePaperTradeService().close_expired(
+                db,
+                now=datetime(2026, 10, 4, 15, 30),
+                commit=True,
+            )))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=dispatch_worker, args=(2, "USER-B-BLOCKED")),
+        threading.Thread(target=dispatch_worker, args=(3, "USER-C-PARTIAL")),
+        threading.Thread(target=dispatch_worker, args=(1, "USER-A-NEW")),
+        threading.Thread(target=manual_a),
+        threading.Thread(target=expiry_a),
+        # A second User-C request races the first partial allocation and must
+        # consume no more than the remaining global capital.
+        threading.Thread(target=dispatch_worker, args=(3, "USER-C-PARTIAL-2")),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert errors == []
+    assert len(outcomes) == 6
+
+    verify = Session()
+    try:
+        all_rows = verify.query(LivePaperTrade).all()
+
+        rows_a = [row for row in all_rows if int(row.user_id) == 1]
+        rows_b = [row for row in all_rows if int(row.user_id) == 2]
+        rows_c = [row for row in all_rows if int(row.user_id) == 3]
+
+        # User A's expiry/manual race can terminally close the seed, but a new
+        # position is still constrained by the user's daily/max-loss accounting.
+        seed_a_rows = [row for row in rows_a if row.event_id == "USER-A-SEED"]
+        assert len(seed_a_rows) == 1
+        assert seed_a_rows[0].status == "COMPLETED"
+        assert seed_a_rows[0].exit_reason in {"MANUAL", "EXPIRY_CLOSE"}
+        assert seed_a_rows[0].realized_pnl == -100
+        assert seed_a_rows[0].unrealized_pnl == -100
+
+        # User B is already at the exact global max-loss boundary. Its new
+        # cross-strategy request must not create any position.
+        assert [row for row in rows_b if row.event_id == "USER-B-BLOCKED"] == []
+        assert len(rows_b) == 1
+        assert rows_b[0].event_id == "USER-B-SEED"
+
+        # User C has 30k reserved and a 60k request can receive only one
+        # additional 30k lot. A second concurrent request cannot over-allocate.
+        ongoing_c = [row for row in rows_c if row.status == "ONGOING"]
+        assert sum(float(row.capital_used) for row in ongoing_c) == 60000
+        assert sum(int(row.lots) for row in ongoing_c) == 2
+        assert all(float(row.capital_used) == 30000 for row in ongoing_c)
+        assert len(rows_c) <= 2
+
+        # Most importantly, each user's totals are independent: no user's
+        # rejected loss/partial path may consume another user's capital.
+        assert sum(
+            float(row.capital_used)
+            for row in rows_a
+            if row.status == "ONGOING"
+        ) <= 60000
+        assert sum(
+            float(row.capital_used)
+            for row in rows_b
+            if row.status == "ONGOING"
+        ) <= 60000
+        assert sum(
+            float(row.capital_used)
+            for row in rows_c
+            if row.status == "ONGOING"
+        ) == 60000
+    finally:
+        verify.close()
+        engine.dispose()
