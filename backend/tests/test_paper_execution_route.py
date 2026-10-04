@@ -8335,3 +8335,81 @@ def test_paper_http_exit_writer_contention_fails_closed_without_mutation():
         finally: verify.close()
     finally:
         contender.rollback(); holder.rollback(); contender.close(); holder.close(); engine.dispose()
+
+
+def test_paper_http_scanner_writer_contention_fails_closed_without_mutation():
+    """Executable scanner entry must inherit the retryable SQLite lock contract."""
+    from app.execution import paper_routes as routes
+    from app.core.database import get_db
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False, "timeout": 0},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+    seed = TestSession()
+    try:
+        user = User(email="scanner-lock@example.com", hashed_password="", full_name="Scanner Lock", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+                                initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+                                realized_pnl=0.0, is_active=True))
+        seed.commit(); user_id = int(user.id)
+    finally:
+        seed.close()
+
+    holder = TestSession(); contender = TestSession(); client = TestClient(app)
+    try:
+        holder.connection().exec_driver_sql("BEGIN IMMEDIATE")
+
+        def override_db():
+            try:
+                yield contender
+            finally:
+                contender.rollback()
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[routes.current_user_id] = lambda: user_id
+        try:
+            response = client.post(
+                "/api/v1/execution/paper/from-scanner",
+                json={
+                    "symbol": "SCANNER_LOCKED",
+                    "cash_price": 100.0,
+                    "future_price": 101.0,
+                    "quantity": 2,
+                    "executable": True,
+                    "gap": 1.0,
+                    "net_profit": 2.0,
+                    "fill_id": "SCANNER-LOCK-1",
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(routes.current_user_id, None)
+            app.dependency_overrides.pop(get_db, None)
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "paper trading account is busy; retry"
+
+        contender.rollback()
+        verify = TestSession()
+        try:
+            account = verify.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+            assert account.virtual_balance == 1000.0
+            assert account.realized_pnl == 0.0
+            assert verify.query(Position).filter(
+                Position.user_id == user_id, Position.symbol == "SCANNER_LOCKED"
+            ).count() == 0
+            assert verify.query(Order).filter(
+                Order.user_id == user_id, Order.symbol == "SCANNER_LOCKED"
+            ).count() == 0
+        finally:
+            verify.close()
+    finally:
+        contender.rollback()
+        holder.rollback()
+        contender.close()
+        holder.close()
+        engine.dispose()
