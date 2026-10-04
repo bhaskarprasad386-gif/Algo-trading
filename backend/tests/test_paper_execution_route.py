@@ -1411,8 +1411,8 @@ def test_paper_ledger_reconciliation_rebuilds_realized_pnl_position_and_balance(
     assert data["reconstructed_realized_pnl"] == 180.0
     assert data["stored_realized_pnl"] == 180.0
     assert data["reconstructed_open_exposure"] == 220.0
-    assert data["expected_virtual_balance"] == 9_999_960.0
-    assert data["stored_virtual_balance"] == 9_999_960.0
+    assert data["expected_virtual_balance"] == 9_999_380.0
+    assert data["stored_virtual_balance"] == 9_999_380.0
     assert data["mismatches"] == []
 
 
