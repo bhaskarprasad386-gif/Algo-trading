@@ -1297,3 +1297,96 @@ def test_paper_reversal_and_terminal_retry_keep_order_fill_fields_consistent():
         assert orders[2].pnl == 40.0
     finally:
         db.close()
+
+
+def test_paper_execution_rejects_and_rolls_back_duplicate_active_position_invariant():
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).order_by(TradingAccount.id.asc()).first()
+        db.add_all([
+            Position(user_id=account.user_id, symbol="CORRUPT", quantity=5, average_price=100.0, is_paper=True),
+            Position(user_id=account.user_id, symbol="CORRUPT", quantity=3, average_price=110.0, is_paper=True),
+        ])
+        starting_balance = account.virtual_balance
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "CORRUPT", "transaction_type": "SELL", "price": 120.0, "quantity": 1},
+    )
+    assert response.status_code == 500
+
+    verify = SessionLocal()
+    try:
+        account = verify.query(TradingAccount).order_by(TradingAccount.id.asc()).first()
+        positions = verify.query(Position).filter(
+            Position.user_id == account.user_id,
+            Position.symbol == "CORRUPT",
+        ).order_by(Position.id.asc()).all()
+        orders = verify.query(Order).filter(
+            Order.user_id == account.user_id,
+            Order.symbol == "CORRUPT",
+        ).all()
+        assert account.virtual_balance == starting_balance
+        assert account.realized_pnl == 0.0
+        assert [(p.quantity, p.average_price) for p in positions] == [(5, 100.0), (3, 110.0)]
+        assert orders == []
+    finally:
+        verify.close()
+
+
+def test_paper_execution_rejects_and_rolls_back_corrupt_existing_order_invariant():
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).order_by(TradingAccount.id.asc()).first()
+        corrupt = Order(
+            user_id=account.user_id,
+            order_id=f"CORRUPT-{account.user_id}",
+            symbol="ORDER-CORRUPT",
+            transaction_type="BUY",
+            quantity=5,
+            price=100.0,
+            average_price=100.0,
+            filled_quantity=4,
+            average_fill_price=100.0,
+            status="FILLED",
+            is_paper=True,
+            pnl=0.0,
+        )
+        db.add(corrupt)
+        starting_balance = account.virtual_balance
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "ORDER-CORRUPT", "transaction_type": "SELL", "price": 120.0, "quantity": 1},
+    )
+    assert response.status_code == 500
+
+    verify = SessionLocal()
+    try:
+        account = verify.query(TradingAccount).order_by(TradingAccount.id.asc()).first()
+        corrupt = verify.query(Order).filter(Order.order_id == f"CORRUPT-{account.user_id}").one()
+        orders = verify.query(Order).filter(
+            Order.user_id == account.user_id,
+            Order.symbol == "ORDER-CORRUPT",
+        ).all()
+        positions = verify.query(Position).filter(
+            Position.user_id == account.user_id,
+            Position.symbol == "ORDER-CORRUPT",
+        ).all()
+        assert account.virtual_balance == starting_balance
+        assert account.realized_pnl == 0.0
+        assert corrupt.filled_quantity == 4
+        assert len(orders) == 1
+        assert positions == []
+    finally:
+        verify.close()
