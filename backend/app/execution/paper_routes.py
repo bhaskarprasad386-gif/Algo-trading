@@ -396,8 +396,11 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
     paper_orders = (
         db.query(Order)
         .filter(Order.user_id == user_id, Order.is_paper.is_(True))
+        .order_by(Order.id.asc())
         .all()
     )
+    expected_audit_previous: str | None = None
+    bootstrap_audit_required = str(account.initial_balance_source or "").strip().upper() == "BOOTSTRAP"
     for order in paper_orders:
         raw_quantity = float(order.quantity or 0.0)
         raw_filled_quantity = float(order.filled_quantity or 0.0)
@@ -433,6 +436,31 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             raise RuntimeError("paper order invariant violated")
         if not math.isfinite(float(order.pnl or 0.0)):
             raise RuntimeError("paper order pnl invariant violated")
+
+        audit_hash = str(order.audit_hash) if order.audit_hash is not None else None
+        previous_audit_hash = str(order.previous_audit_hash) if order.previous_audit_hash is not None else None
+        if bootstrap_audit_required and audit_hash is None:
+            raise RuntimeError("paper order audit hash invariant violated")
+        if audit_hash is not None:
+            if len(audit_hash) != 64 or any(ch not in "0123456789abcdef" for ch in audit_hash.lower()):
+                raise RuntimeError("paper order audit hash invariant violated")
+            if previous_audit_hash != expected_audit_previous:
+                raise RuntimeError("paper order audit chain invariant violated")
+            expected_audit_hash = _paper_audit_payload(
+                user_id=user_id,
+                symbol=raw_symbol,
+                side=raw_side,
+                quantity=quantity,
+                price=price,
+                pnl=float(order.pnl or 0.0),
+                fill_id=raw_fill_id,
+                previous_hash=expected_audit_previous,
+            )
+            if audit_hash != expected_audit_hash:
+                raise RuntimeError("paper order audit hash invariant violated")
+            expected_audit_previous = audit_hash
+        elif previous_audit_hash is not None:
+            raise RuntimeError("paper order audit chain invariant violated")
 
 
 def _normalized_fill_id(fill_id: str | None) -> str | None:
