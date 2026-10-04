@@ -432,11 +432,6 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             raise RuntimeError("duplicate active paper position invariant violated")
         seen_symbols.add(symbol)
 
-    accounting_lhs = round(virtual_balance + open_position_cost, 8)
-    accounting_rhs = round(initial_virtual_balance + realized_pnl, 8)
-    if abs(accounting_lhs - accounting_rhs) > 1e-8:
-        raise RuntimeError("paper account balance conservation invariant violated")
-
     paper_orders = (
         db.query(Order)
         .filter(Order.user_id == user_id, Order.is_paper.is_(True))
@@ -531,6 +526,11 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
         elif previous_audit_hash is not None or expected_audit_previous is not None:
             raise RuntimeError("paper order audit chain invariant violated")
 
+    accounting_lhs = round(virtual_balance + open_position_cost, 8)
+    accounting_rhs = round(initial_virtual_balance + realized_pnl, 8)
+    if abs(accounting_lhs - accounting_rhs) > 1e-8:
+        raise RuntimeError("paper account balance conservation invariant violated")
+
 
 def _normalized_fill_id(fill_id: str | None) -> str | None:
     if fill_id is None:
@@ -544,7 +544,15 @@ def _normalized_fill_id(fill_id: str | None) -> str | None:
 def _existing_fill_order(db: Session, *, user_id: int, fill_id: str | None, symbol: str, side: str, price: float, quantity: int) -> dict | None:
     if fill_id is None:
         return None
-    existing = db.query(Order).filter(Order.user_id == user_id, Order.fill_id == fill_id).first()
+    existing = (
+        db.query(Order)
+        .filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+            Order.fill_id == fill_id,
+        )
+        .first()
+    )
     if existing is None:
         return None
     _validate_paper_state(db, user_id)
