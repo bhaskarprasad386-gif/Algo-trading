@@ -86,3 +86,23 @@ def test_backend_integration_paper_gate_blocks_disabled_user(db_session):
     assert trade is None
     assert created is False
     assert svc.ongoing(db_session, 7) == []
+
+
+def test_duplicate_signal_does_not_change_reserved_entry_capital(db_session):
+    svc = LivePaperTradeService()
+    _enable(db_session, 1)
+    first, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="CAP-DUP-1", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=5, edge=5, capital_used=100000, user_id=1,
+    )
+    assert created is True
+    second, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="CAP-DUP-1", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=5, edge=8, capital_used=25000, user_id=1,
+    )
+    assert created is False
+    assert second.id == first.id
+    assert second.capital_used == 100000
+    assert second.current_edge == 8
