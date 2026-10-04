@@ -163,3 +163,38 @@ def test_calendar_paper_capital_matches_executable_entry_prices_for_both_directi
     assert short_paper["capital_used"] == (100.0 + 107.0) * 50 * 2
     assert [leg["side"] for leg in long_paper["legs"]] == ["BUY", "SELL"]
     assert [leg["side"] for leg in short_paper["legs"]] == ["SELL", "BUY"]
+
+
+def test_synthetic_paper_capital_uses_executable_future_side_for_both_directions(monkeypatch):
+    from app.notifications.synthetic_alerts import SyntheticAlertService
+
+    captured = []
+
+    class CaptureAlerts:
+        def dispatch(self, _db, event):
+            captured.append(event)
+            return 0
+
+    service = SyntheticAlertService()
+    service._alerts = CaptureAlerts()
+
+    future = SimpleNamespace(ask=101.0, bid=100.0, lot_size=50)
+    option = SimpleNamespace(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29",
+        strike=25000.0, timestamp_ns=500,
+        call_bid=10.0, call_ask=11.0, put_bid=9.0, put_ask=10.0,
+    )
+
+    for direction in ("LONG", "SHORT"):
+        result = SimpleNamespace(
+            option=option, future=future, direction=direction,
+            executable_edge=5.0, edge_per_lot=250.0, gross_pnl=250.0,
+        )
+        service.notify_users(object(), [result])
+
+    long_paper = captured[0].metadata["paper_trade"]
+    short_paper = captured[1].metadata["paper_trade"]
+    assert long_paper["capital_used"] == 101.0 * 50
+    assert short_paper["capital_used"] == 100.0 * 50
+    assert long_paper["legs"][0]["side"] == "BUY"
+    assert short_paper["legs"][0]["side"] == "SELL"
