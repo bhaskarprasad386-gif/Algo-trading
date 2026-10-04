@@ -1062,3 +1062,115 @@ def test_five_way_duplicate_close_expiry_new_strategy_race_converges_at_global_r
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_three_user_same_event_and_strategy_races_remain_isolated(tmp_path):
+    """Users sharing event/strategy identifiers must never share paper risk or rows."""
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.core.database import Base
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'three-user-isolation-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    try:
+        for user_id in (1, 2, 3):
+            setup.add(GlobalPaperSetting(
+                user_id=user_id,
+                enabled=True,
+                paper_amount=60000,
+                emergency_stop=False,
+            ))
+            setup.add(AlertRule(
+                user_id=user_id,
+                strategy_id="calendar-spread",
+                min_gross_profit=0,
+                mobile_number="",
+                whatsapp_enabled=False,
+                enabled=True,
+                max_daily_capital=60000,
+                max_simultaneous_positions=1,
+                max_loss=100,
+            ))
+        setup.commit()
+    finally:
+        setup.close()
+
+    # All users deliberately share the same event_id/strategy/symbol. The
+    # persisted uniqueness key is user-scoped, and each user must get its own
+    # independent capital/risk reservation.
+    barrier = threading.Barrier(3)
+    errors = []
+    results = []
+
+    def worker(user_id):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            event = AlertEvent(
+                strategy_id="calendar-spread",
+                event_id="SAME-EVENT-ALL-USERS",
+                symbol="SAME-SYMBOL",
+                timestamp_ns=700,
+                message=f"user-{user_id}",
+                observed_at=datetime(2026, 10, 4, 15, 0),
+                metadata={"gross_profit": 1000, "paper_trade": {
+                    "direction": "LONG",
+                    "expiry": "2026-10-30",
+                    "earliest_expiry": "2026-10-30",
+                    "lot_size": 10,
+                    "lots": 2,
+                    "edge": 7,
+                    "capital_used": 60000,
+                    "user_id": user_id,
+                }},
+            )
+            # dispatch() normally derives user identity from AlertRule; the
+            # same event is therefore routed through each user's own rule.
+            results.append((user_id, AlertService().dispatch(db, event)))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    threads = [threading.Thread(target=worker, args=(user_id,)) for user_id in (1, 2, 3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert errors == []
+    assert len(results) == 3
+
+    verify = Session()
+    try:
+        rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.event_id == "SAME-EVENT-ALL-USERS",
+        ).all()
+
+        # Each user has an independent 60k budget, so every user may receive
+        # one or two lots without affecting another user's allocation.
+        assert len(rows) == 3
+        assert {int(row.user_id) for row in rows} == {1, 2, 3}
+        assert all(row.status == "ONGOING" for row in rows)
+        assert all(int(row.lots) == 2 for row in rows)
+        assert all(float(row.capital_used) == 60000 for row in rows)
+
+        for user_id in (1, 2, 3):
+            user_rows = [
+                row for row in rows if int(row.user_id) == user_id
+            ]
+            assert len(user_rows) == 1
+            assert len(
+                [row for row in rows if int(row.user_id) == user_id]
+            ) == 1
+    finally:
+        verify.close()
+        engine.dispose()
