@@ -181,3 +181,22 @@ def test_executable_pnl_returns_none_when_exit_quote_is_unavailable():
     ])
     row = {"cash_bid": None, "cash_ask": None}
     assert _executable_paper_pnl(trade, row) is None
+
+
+def test_expiry_close_realizes_last_executable_pnl(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=10_000_000, emergency_stop=False))
+    db_session.commit()
+    trade, _ = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="ABC",
+        event_id="REALIZE-EXPIRY", direction="LONG", expiry="2026-10-12",
+        earliest_expiry="2026-10-12", lot_size=100, lots=2, edge=5,
+        capital_used=100000, metadata={"exchange": "NFO"},
+    )
+    svc.mark(db_session, trade, edge=6, pnl_override=3750.25)
+    db_session.commit()
+    closed = svc.close_expired(db_session, now=datetime(2026, 10, 12, 15, 30))
+    assert len(closed) == 1
+    assert closed[0].realized_pnl == 3750.25
+    assert closed[0].unrealized_pnl == 3750.25
+    assert closed[0].status == "COMPLETED"
