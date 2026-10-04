@@ -220,3 +220,78 @@ def test_concurrent_partial_entries_respect_exact_max_loss_boundary(tmp_path):
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_dispatch_expiry_does_not_commit_caller_pending_work(db_session):
+    """Alert expiry cleanup must not commit unrelated caller-owned mutations."""
+    from datetime import datetime
+    from app.models import GlobalPaperSetting
+    from app.auto.live_paper import LivePaperTradeService
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=30000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=60000, max_simultaneous_positions=1, max_loss=100,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    trade, created = svc.enter_or_mark(
+        db_session,
+        strategy_id="cash-future", symbol="EXPIRING",
+        event_id="DISPATCH-TX-EXPIRY",
+        direction="LONG", expiry="2026-10-04",
+        earliest_expiry="2026-10-04", lot_size=10, lots=1,
+        edge=5, capital_used=30000, user_id=1,
+    )
+    assert created is True
+    db_session.commit()
+
+    setting = db_session.query(GlobalPaperSetting).filter(
+        GlobalPaperSetting.user_id == 1
+    ).one()
+    setting.paper_amount = 45000
+    db_session.flush()
+
+    # dispatch() invokes expiry cleanup through an independent session. The
+    # caller's 45k mutation must remain uncommitted and therefore be removable
+    # by this caller's rollback.
+    event = AlertEvent(
+        strategy_id="cash-future",
+        event_id="DISPATCH-TX-NEW",
+        symbol="NEW",
+        timestamp_ns=9,
+        message="tx-boundary",
+        observed_at=datetime.utcnow(),
+        metadata={
+            "gross_profit": 1000,
+            "paper_trade": {
+                "direction": "LONG",
+                "expiry": "2026-10-30",
+                "earliest_expiry": "2026-10-30",
+                "lot_size": 10,
+                "lots": 1,
+                "edge": 5,
+                "capital_used": 30000,
+            },
+        },
+    )
+    assert AlertService().dispatch(
+        db_session, event
+    ) == 0
+
+    # The expiry itself is durable, but the caller-owned setting mutation is
+    # not committed by dispatch.
+    db_session.rollback()
+    verify_trade = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.id == trade.id
+    ).one()
+    verify_setting = db_session.query(GlobalPaperSetting).filter(
+        GlobalPaperSetting.user_id == 1
+    ).one()
+    assert verify_trade.status == "COMPLETED"
+    assert verify_trade.exit_reason == "EXPIRY_CLOSE"
+    assert verify_setting.paper_amount == 30000
