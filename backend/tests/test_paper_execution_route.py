@@ -9850,3 +9850,105 @@ def test_paper_reconcile_detects_closed_nonzero_position_state():
     assert payload["status"] == "MISMATCH"
     assert any(item.startswith("position_state_mismatch:") for item in payload["mismatches"])
     assert "POSITION_STATE" in payload["mismatch_categories"]
+
+
+def test_paper_reconcile_detects_tampered_order_identity():
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.initial_virtual_balance = 1000.0
+        account.virtual_balance = 900.0
+        account.realized_pnl = 0.0
+        account.initial_balance_source = "BOOTSTRAP"
+        db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id).delete(synchronize_session=False)
+        db.commit()
+        from app.execution import paper_routes as routes
+        order = Order(
+            order_id=f"PAPER-{user_id}-ORDER-IDENTITY",
+            symbol="ORDER_IDENTITY",
+            quantity=1,
+            transaction_type="BUY",
+            user_id=user_id,
+            price=100.0,
+            average_price=100.0,
+            filled_quantity=1,
+            average_fill_price=100.0,
+            pnl=0.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="ORDER-ID-1",
+        )
+        db.add(order)
+        db.flush()
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol=order.symbol, side="BUY", quantity=1,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None,
+        )
+        order.order_id = "PAPER-999-TAMPERED"
+        db.add(Position(
+            user_id=user_id, symbol="ORDER_IDENTITY", quantity=1,
+            average_price=100.0, is_paper=True, is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("order_identity_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+
+
+def test_paper_reconcile_detects_missing_order_identity():
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.initial_virtual_balance = 1000.0
+        account.virtual_balance = 900.0
+        account.realized_pnl = 0.0
+        account.initial_balance_source = "BOOTSTRAP"
+        db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id).delete(synchronize_session=False)
+        db.commit()
+        order = Order(
+            order_id=f"PAPER-{user_id}-ORDER-MISSING",
+            symbol="ORDER_MISSING",
+            quantity=1,
+            transaction_type="BUY",
+            user_id=user_id,
+            price=100.0,
+            average_price=100.0,
+            filled_quantity=1,
+            average_fill_price=100.0,
+            pnl=0.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="ORDER-MISSING-1",
+        )
+        db.add(order)
+        db.flush()
+        from app.execution import paper_routes as routes
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol=order.symbol, side="BUY", quantity=1,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None,
+        )
+        order.order_id = None
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("order_identity_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
