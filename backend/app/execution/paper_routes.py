@@ -514,6 +514,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         db.connection().exec_driver_sql("BEGIN")
     account = _account(db, user_id)
     account_mode_canonicality_mismatch = str(account.mode or "") != "PAPER"
+    account_source_canonicality_mismatch = str(account.initial_balance_source or "") != str(account.initial_balance_source or "").strip().upper()
     all_user_orders = (
         db.query(Order)
         .filter(Order.user_id == user_id)
@@ -696,6 +697,8 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     mismatches.extend(account_integrity)
     if account_mode_canonicality_mismatch:
         mismatches.append("account_mode_canonicality_mismatch")
+    if account_source_canonicality_mismatch:
+        mismatches.append("account_source_canonicality_mismatch")
     malformed_position_ids = [
         int(position.id)
         for position in all_paper_positions
@@ -752,7 +755,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             mismatch_categories.add("AUDIT_INTEGRITY")
         elif mismatch.startswith(("missing_position:", "position_mismatch:", "unexpected_position:", "orphan_position:", "invalid_position:", "duplicate_position:", "position_symbol_canonicality_mismatch:", "position_state_mismatch:")):
             mismatch_categories.add("POSITION_STATE")
-        elif mismatch in {"account_mode_canonicality_mismatch", "invalid_initial_virtual_balance", "invalid_virtual_balance", "invalid_realized_pnl", "realized_pnl_mismatch", "virtual_balance_mismatch"}:
+        elif mismatch in {"account_mode_canonicality_mismatch", "account_source_canonicality_mismatch", "invalid_initial_virtual_balance", "invalid_virtual_balance", "invalid_realized_pnl", "realized_pnl_mismatch", "virtual_balance_mismatch"}:
             mismatch_categories.add("ACCOUNTING_STATE")
             mismatch_categories.add("ACCOUNTING_STATE")
         else:
