@@ -12421,3 +12421,34 @@ def test_paper_read_endpoints_fail_closed_on_corrupt_state_and_exclude_nonpaper_
     finally:
         _clear_http_overrides()
         engine.dispose()
+
+
+def test_paper_empty_account_read_contract_is_zero_and_reconciled(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "empty-read", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+
+        account = client.get("/api/v1/execution/paper/account")
+        orders = client.get("/api/v1/execution/paper/orders")
+        position = client.get("/api/v1/execution/paper/position")
+        reconcile = client.get("/api/v1/execution/paper/reconcile")
+
+        assert account.status_code == 200
+        assert account.json()["mode"] == "paper"
+        assert account.json()["open_positions"] == 0
+        assert account.json()["realized_pnl"] == 0.0
+
+        assert orders.status_code == 200
+        assert orders.json()["orders"] == []
+
+        assert position.status_code == 200
+        assert position.json() == {"status": "flat", "position": None, "mark_to_market": None}
+
+        assert reconcile.status_code == 200
+        assert reconcile.json()["status"] == "OK"
+        assert reconcile.json()["mismatches"] == []
+        assert reconcile.json()["repairability"] == "NONE"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
