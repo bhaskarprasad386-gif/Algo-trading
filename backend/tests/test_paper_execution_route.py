@@ -6378,3 +6378,88 @@ def test_paper_http_cold_start_mixed_endpoint_race_converges_on_one_account():
         finally:
             app.dependency_overrides.pop(get_db, None)
             engine.dispose()
+
+
+def test_paper_http_concurrent_entry_and_order_same_symbol_single_position_boundary():
+    """Legacy /entry and generic /order must serialize on one symbol without double entry."""
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        account.virtual_balance = 1_000.0
+        account.realized_pnl = 0.0
+        db.commit()
+        user_id = int(account.user_id)
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(8)
+
+    def submit(kind):
+        barrier.wait(timeout=5)
+        if kind == "entry":
+            return client.post(
+                "/api/v1/execution/paper/entry",
+                headers=headers,
+                json={
+                    "symbol": "ENTRY_ORDER_RACE",
+                    "price": 700.0,
+                    "quantity": 1,
+                },
+            )
+        return client.post(
+            "/api/v1/execution/paper/order",
+            headers=headers,
+            json={
+                "symbol": "ENTRY_ORDER_RACE",
+                "transaction_type": "BUY",
+                "price": 700.0,
+                "quantity": 1,
+            },
+        )
+
+    jobs = ["entry"] * 4 + ["order"] * 4
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        responses = list(pool.map(submit, jobs))
+
+    assert sum(response.status_code == 200 for response in responses) == 1
+    conflicts = [response for response in responses if response.status_code == 409]
+    assert len(conflicts) == 7
+    assert all("already active" in response.json()["detail"] for response in conflicts)
+
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        orders = db.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+            Order.symbol == "ENTRY_ORDER_RACE",
+        ).all()
+        positions = db.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.symbol == "ENTRY_ORDER_RACE",
+            Position.is_open.is_(True),
+        ).all()
+
+        assert len(orders) == 1
+        assert orders[0].transaction_type == "BUY"
+        assert orders[0].quantity == 1
+        assert orders[0].price == 700.0
+        assert len(positions) == 1
+        assert positions[0].quantity == 1
+        assert positions[0].average_price == 700.0
+        assert account.virtual_balance == 300.0
+        assert account.realized_pnl == 0.0
+    finally:
+        db.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
