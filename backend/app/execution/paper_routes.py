@@ -761,6 +761,8 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             continue
         if bool(position.is_open) != (int(raw_quantity) != 0):
             position_state_mismatches.append(int(position.id))
+        elif not bool(position.is_open) or int(raw_quantity) == 0:
+            position_state_mismatches.append(int(position.id))
         if position.is_open and int(raw_quantity) != 0:
             raw_symbol = str(position.symbol or "")
             symbol = raw_symbol.strip().upper()
