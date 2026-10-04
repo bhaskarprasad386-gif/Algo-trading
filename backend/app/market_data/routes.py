@@ -181,7 +181,7 @@ def get_common_feed_health():
 @router.get("/overview")
 def get_market_overview():
     """Return a bounded live overview for configured NSE/BSE indices and MCX commodities."""
-    from datetime import datetime, timedelta
+    from datetime import datetime, time, timedelta
     from zoneinfo import ZoneInfo
     from app.market_data.client import MarketDataClient
     from app.market_data.historical import HistoricalDataClient
@@ -196,6 +196,9 @@ def get_market_overview():
     client = MarketDataClient()
     historical_client = HistoricalDataClient(client)
     ist = ZoneInfo("Asia/Kolkata")
+
+    def market_is_open(now):
+        return now.weekday() < 5 and time(9, 15) <= now.time() < time(15, 30)
 
     def last_trading_closes(exchange, token):
         """Return latest and prior trading-day closes for closed-market fallback."""
@@ -255,7 +258,7 @@ def get_market_overview():
                     fallback_ltp = None
                     fallback_previous = None
                     status = "LIVE" if quote else "NO_QUOTE"
-                    if not quote or quote.get("ltp") is None or quote.get("close") is None:
+                    if not market_is_open(datetime.now(ist)) and (not quote or quote.get("ltp") is None or quote.get("close") is None):
                         try:
                             fallback_ltp, fallback_previous = last_trading_closes(exchange, item["symboltoken"])
                             if fallback_ltp is not None:
@@ -281,5 +284,7 @@ def get_market_overview():
 
     indices, index_errors = fetch(index_specs)
     commodities, commodity_errors = fetch(commodity_specs)
-    return {"status": "success", "mode": "live", "indices": indices, "commodities": commodities,
+    market_session = "OPEN" if market_is_open(datetime.now(ist)) else "CLOSED"
+    return {"status": "success", "mode": "live", "market_session": market_session,
+            "indices": indices, "commodities": commodities,
             "errors": index_errors + commodity_errors}
