@@ -382,3 +382,77 @@ def test_previous_ist_day_completed_trade_does_not_consume_today_risk_limits(db_
     assert len(ongoing) == 1
     assert ongoing[0].event_id == "TODAY-AFTER-ROLLOVER"
     assert ongoing[0].capital_used == 30000
+
+
+def test_max_loss_counts_only_negative_realized_pnl_and_blocks_exact_boundary(db_session):
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0, max_simultaneous_positions=5, max_loss=100,
+    ))
+    now = datetime(2026, 10, 4, 10, 0)
+    db_session.add_all([
+        LivePaperTrade(
+            user_id=1, strategy_id="cash-future", symbol="WIN",
+            event_id="WIN-CLOSED", direction="LONG", expiry="2026-10-30",
+            earliest_expiry="2026-10-30", lot_size=10, lots=1,
+            entry_edge=10, current_edge=11, capital_used=30000,
+            unrealized_pnl=500, realized_pnl=500,
+            pnl_pct=round(500 / 30000 * 100, 8),
+            status="COMPLETED", exit_reason="MANUAL",
+            opened_at=now, closed_at=now, last_mark_at=now,
+            legs_json="[]", metadata_json="{}",
+        ),
+        LivePaperTrade(
+            user_id=1, strategy_id="cash-future", symbol="LOSS",
+            event_id="LOSS-CLOSED", direction="LONG", expiry="2026-10-30",
+            earliest_expiry="2026-10-30", lot_size=10, lots=1,
+            entry_edge=10, current_edge=9, capital_used=30000,
+            unrealized_pnl=-100, realized_pnl=-100,
+            pnl_pct=round(-100 / 30000 * 100, 8),
+            status="COMPLETED", exit_reason="MANUAL",
+            opened_at=now, closed_at=now, last_mark_at=now,
+            legs_json="[]", metadata_json="{}",
+        ),
+    ])
+    db_session.commit()
+
+    # Positive realized P&L must not offset or consume the loss budget.
+    # Exact -max_loss is a hard stop, so the new event must be rejected.
+    assert AlertService().dispatch(
+        db_session, _event("EXACT-MAX-LOSS", capital=30000, lots=1)
+    ) == 0
+    assert LivePaperTradeService().ongoing(db_session, 1) == []
+
+
+def test_max_loss_sums_multiple_completed_losses_without_float_boundary_drift(db_session):
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0, max_simultaneous_positions=5, max_loss=300,
+    ))
+    now = datetime(2026, 10, 4, 10, 0)
+    for idx, loss in enumerate((-100.0, -100.0, -100.0), start=1):
+        db_session.add(LivePaperTrade(
+            user_id=1, strategy_id="cash-future", symbol=f"LOSS-{idx}",
+            event_id=f"MULTI-LOSS-{idx}", direction="LONG",
+            expiry="2026-10-30", earliest_expiry="2026-10-30",
+            lot_size=10, lots=1, entry_edge=10, current_edge=9,
+            capital_used=30000, unrealized_pnl=loss, realized_pnl=loss,
+            pnl_pct=round(loss / 30000 * 100, 8),
+            status="COMPLETED", exit_reason="EXPIRY_CLOSE",
+            opened_at=now, closed_at=now, last_mark_at=now,
+            legs_json="[]", metadata_json="{}",
+        ))
+    db_session.commit()
+
+    assert AlertService().dispatch(
+        db_session, _event("MULTI-LOSS-BLOCKED", capital=30000, lots=1)
+    ) == 0
+    assert LivePaperTradeService().ongoing(db_session, 1) == []
