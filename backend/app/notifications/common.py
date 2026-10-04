@@ -111,6 +111,31 @@ class AlertService:
             AlertRule.strategy_id == event.strategy_id.strip().lower(),
         ).order_by(AlertRule.priority.desc(), AlertRule.id.asc()).all()
         if isinstance(paper, Mapping) and rules:
+            # Reject malformed numeric paper payloads before risk gates so
+            # int()/float() coercion cannot silently change the requested
+            # allocation that the gates are evaluating.
+            try:
+                lot_size_raw = float(paper.get("lot_size", 1))
+                lots_raw = float(paper.get("lots", 1))
+                edge_raw = float(paper.get("edge", 0.0))
+                capital_raw = float(paper.get("capital_used", 0.0))
+                import math
+                if (
+                    not all(math.isfinite(x) for x in (lot_size_raw, lots_raw, edge_raw, capital_raw))
+                    or not lot_size_raw.is_integer()
+                    or not lots_raw.is_integer()
+                    or lot_size_raw <= 0
+                    or lots_raw <= 0
+                    or edge_raw < 0
+                    or capital_raw <= 0
+                ):
+                    return 0
+                lot_size_value = int(lot_size_raw)
+                lots_value = int(lots_raw)
+                edge_value = edge_raw
+                capital_value = capital_raw
+            except (TypeError, ValueError):
+                return 0
             from app.auto.live_paper import LivePaperTradeService
             from app.models.live_paper_trade import LivePaperTrade
             service = LivePaperTradeService()
@@ -135,8 +160,8 @@ class AlertService:
                             db, strategy_id=event.strategy_id, symbol=event.symbol, event_id=event.event_id,
                             direction=paper.get("direction", "LONG"), expiry=paper.get("expiry"),
                             earliest_expiry=paper.get("earliest_expiry") or paper.get("expiry"),
-                            lot_size=int(paper.get("lot_size", 1) or 1), lots=int(paper.get("lots", 1) or 1),
-                            edge=float(paper.get("edge", 0.0) or 0.0), capital_used=0.0,
+                            lot_size=lot_size_value, lots=lots_value,
+                            edge=edge_value, capital_used=0.0,
                             legs=paper.get("legs") or [], metadata=dict(paper), user_id=rule_user_id,
                         )
                     except Exception as exc:
@@ -165,10 +190,10 @@ class AlertService:
                 if max_simultaneous and ongoing_count >= max_simultaneous:
                     db.rollback()
                     continue
-                requested_capital = max(0.0, float(paper.get("capital_used", 0.0) or 0.0))
+                requested_capital = capital_value
                 effective_capital = requested_capital
                 if requested_capital > 0:
-                    requested_lots = max(1, int(paper.get("lots", 1) or 1))
+                    requested_lots = lots_value
                     capital_per_lot = requested_capital / requested_lots
                     if capital_per_lot > 0:
                         setting = db.query(GlobalPaperSetting).filter(
@@ -226,8 +251,8 @@ class AlertService:
                         db, strategy_id=event.strategy_id, symbol=event.symbol, event_id=event.event_id,
                         direction=paper.get("direction", "LONG"), expiry=paper.get("expiry"),
                         earliest_expiry=paper.get("earliest_expiry") or paper.get("expiry"),
-                        lot_size=int(paper.get("lot_size", 1) or 1), lots=int(paper.get("lots", 1) or 1),
-                        edge=float(paper.get("edge", 0.0) or 0.0), capital_used=requested_capital,
+                        lot_size=lot_size_value, lots=lots_value,
+                        edge=edge_value, capital_used=capital_value,
                         legs=paper.get("legs") or [], metadata=dict(paper), user_id=rule_user_id,
                     )
                 except Exception as exc:
