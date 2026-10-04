@@ -427,6 +427,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     reconstructed_realized = 0.0
     seen_fill_ids: set[str] = set()
     invalid_orders: list[str] = []
+    previous_hash: str | None = None
 
     for order in orders:
         symbol = str(order.symbol or "").strip().upper()
@@ -448,6 +449,21 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             if fill_id in seen_fill_ids:
                 invalid_orders.append(f"duplicate_fill_id:{fill_id}")
             seen_fill_ids.add(fill_id)
+        if not order.audit_hash or order.previous_audit_hash != previous_hash:
+            invalid_orders.append(f"audit_chain_mismatch:{order.id}")
+        expected_hash = _paper_audit_payload(
+            user_id=user_id,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+            pnl=float(order.pnl or 0.0),
+            fill_id=order.fill_id,
+            previous_hash=previous_hash,
+        )
+        if order.audit_hash != expected_hash:
+            invalid_orders.append(f"audit_hash_mismatch:{order.id}")
+        previous_hash = order.audit_hash if order.audit_hash else previous_hash
 
         state = rebuilt.get(symbol, FillAccountingState())
         closed_qty = min(abs(int(state.quantity)), quantity) if (
@@ -524,7 +540,13 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     if abs(balance_delta) > 1e-8:
         mismatches.append("virtual_balance_mismatch")
 
-    if invalid_orders or str(account.initial_balance_source).upper() != "BOOTSTRAP":
+    if not orders and str(account.initial_balance_source).upper() == "BOOTSTRAP":
+        baseline_status = "BOOTSTRAP"
+    elif all(order.audit_hash for order in orders):
+        baseline_status = "BOOTSTRAP"
+    else:
+        baseline_status = "LEGACY_UNFINGERPRINTED"
+    if invalid_orders or baseline_status != "BOOTSTRAP":
         repairability = "BLOCKED"
     elif mismatches:
         repairability = "SAFE_DRY_RUN"
@@ -534,7 +556,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     return {
         "status": "OK" if not mismatches else "MISMATCH",
         "repairability": repairability,
-        "baseline_status": str(account.initial_balance_source).upper(),
+        "baseline_status": baseline_status,
         "user_id": user_id,
         "orders": len(orders),
         "reconstructed_realized_pnl": reconstructed_realized,
