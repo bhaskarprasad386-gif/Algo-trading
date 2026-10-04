@@ -4882,3 +4882,219 @@ def test_paper_reconcile_http_committed_new_order_audit_head_mutation_blocks_sta
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_paper_reconcile_http_multi_user_precondition_isolation_across_committed_epochs(tmp_path):
+    """A repair precondition from one paper account must never become valid for another."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-multi-user-precondition-isolation.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        users = []
+        for suffix in ("a", "b"):
+            user = User(
+                email=f"precondition-isolation-{suffix}@example.com",
+                hashed_password="",
+                full_name=f"Precondition Isolation {suffix}",
+                is_active=True,
+            )
+            seed.add(user)
+            seed.flush()
+            seed.add(
+                TradingAccount(
+                    user_id=user.id,
+                    mode="PAPER",
+                    virtual_balance=1000.0,
+                    initial_virtual_balance=1000.0,
+                    initial_balance_source="BOOTSTRAP",
+                    realized_pnl=0.0,
+                    is_active=True,
+                )
+            )
+            users.append(int(user.id))
+        seed.commit()
+        user_a, user_b = users
+    finally:
+        seed.close()
+
+    for user_id, symbol, fill_id in (
+        (user_a, "ISOLATE-A", "ISOLATE-A-1"),
+        (user_b, "ISOLATE-B", "ISOLATE-B-1"),
+    ):
+        db = TestSession()
+        try:
+            result = paper_order(
+                PaperOrderRequest(
+                    symbol=symbol,
+                    transaction_type="BUY",
+                    price=100.0,
+                    quantity=2,
+                    fill_id=fill_id,
+                ),
+                user_id=user_id,
+                db=db,
+            )
+            assert result["status"] == "success"
+        finally:
+            db.close()
+
+    def snapshot_for(user_id):
+        client = TestClient(app)
+
+        def override_db():
+            db = TestSession()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[routes.current_user_id] = lambda: user_id
+        try:
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                responses = list(
+                    pool.map(
+                        lambda _: client.get("/api/v1/execution/paper/reconcile"),
+                        range(20),
+                    )
+                )
+            assert all(response.status_code == 200 for response in responses)
+            payloads = [response.json() for response in responses]
+            assert all(payload == payloads[0] for payload in payloads)
+            return payloads[0]
+        finally:
+            app.dependency_overrides.pop(routes.current_user_id, None)
+            app.dependency_overrides.pop(get_db, None)
+
+    def mutate_user(user_id, **changes):
+        db = TestSession()
+        try:
+            account = db.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id,
+                TradingAccount.mode == "PAPER",
+            ).one()
+            for key, value in changes.items():
+                setattr(account, key, value)
+            db.commit()
+        finally:
+            db.close()
+
+    # Both users begin with equivalent ledger shape, but their identity is
+    # part of the fingerprint and therefore their preconditions must differ.
+    mutate_user(user_a, virtual_balance=801.0)
+    mutate_user(user_b, virtual_balance=801.0)
+    a0 = snapshot_for(user_a)
+    b0 = snapshot_for(user_b)
+
+    assert a0["user_id"] == user_a
+    assert b0["user_id"] == user_b
+    assert a0["status"] == b0["status"] == "MISMATCH"
+    assert a0["repairability"] == b0["repairability"] == "SAFE_DRY_RUN"
+    assert a0["mismatches"] == b0["mismatches"] == ["virtual_balance_mismatch"]
+
+    pre_a0 = a0["repair_plan"]["precondition"]
+    pre_b0 = b0["repair_plan"]["precondition"]
+    assert pre_a0["order_count"] == pre_b0["order_count"] == 1
+    assert pre_a0["position_count"] == pre_b0["position_count"] == 1
+    assert pre_a0["audit_head"] != pre_b0["audit_head"]
+    assert pre_a0["state_hash"] != pre_b0["state_hash"]
+
+    # A committed mutation to user A must invalidate only A's precondition;
+    # user B's independent precondition remains byte-for-byte stable.
+    mutate_user(user_a, virtual_balance=802.0)
+    a1 = snapshot_for(user_a)
+    b1 = snapshot_for(user_b)
+
+    pre_a1 = a1["repair_plan"]["precondition"]
+    pre_b1 = b1["repair_plan"]["precondition"]
+    assert pre_a1 != pre_a0
+    assert pre_a1["state_hash"] != pre_a0["state_hash"]
+    assert pre_b1 == pre_b0
+    assert b1 == b0
+
+    # A committed position mutation to A likewise changes only A's
+    # fingerprint and repair proposal.
+    db = TestSession()
+    try:
+        position = db.query(Position).filter(
+            Position.user_id == user_a,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+        ).one()
+        position.quantity = 1
+        db.commit()
+    finally:
+        db.close()
+
+    a2 = snapshot_for(user_a)
+    b2 = snapshot_for(user_b)
+    assert a2["repairability"] == "SAFE_DRY_RUN"
+    assert a2["mismatch_categories"] == ["ACCOUNTING_STATE", "POSITION_STATE"]
+    assert a2["repair_plan"]["precondition"] != pre_a1["state_hash"] if False else True
+    assert a2["repair_plan"]["precondition"]["state_hash"] != pre_a1["state_hash"]
+    assert b2 == b0
+    assert b2["repair_plan"]["precondition"] == pre_b0
+
+    # A baseline transition on A must block only A. B must remain independently
+    # safe and must not inherit A's blocked precondition.
+    mutate_user(user_a, initial_balance_source="MIGRATED_INFERRED")
+    a3 = snapshot_for(user_a)
+    b3 = snapshot_for(user_b)
+
+    assert a3["repairability"] == "BLOCKED"
+    assert a3["baseline_status"] == "MIGRATED_INFERRED"
+    assert "BASELINE_INTEGRITY" in a3["mismatch_categories"]
+    assert a3["repair_plan"]["precondition"] != pre_a0
+    assert b3 == b0
+    assert b3["repairability"] == "SAFE_DRY_RUN"
+    assert b3["baseline_status"] == "BOOTSTRAP"
+
+    # Final database verification proves no cross-user order/position/account
+    # mutation leaked across the isolation boundary.
+    verify = TestSession()
+    try:
+        account_a = verify.query(TradingAccount).filter(
+            TradingAccount.user_id == user_a,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        account_b = verify.query(TradingAccount).filter(
+            TradingAccount.user_id == user_b,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        assert account_a.initial_balance_source == "MIGRATED_INFERRED"
+        assert float(account_a.virtual_balance) == 802.0
+        assert account_b.initial_balance_source == "BOOTSTRAP"
+        assert float(account_b.virtual_balance) == 801.0
+
+        assert verify.query(Order).filter(
+            Order.user_id == user_a,
+            Order.is_paper.is_(True),
+        ).count() == 1
+        assert verify.query(Order).filter(
+            Order.user_id == user_b,
+            Order.is_paper.is_(True),
+        ).count() == 1
+        assert verify.query(Position).filter(
+            Position.user_id == user_a,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+        ).one().quantity == 1
+        assert verify.query(Position).filter(
+            Position.user_id == user_b,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+        ).one().quantity == 2
+    finally:
+        verify.close()
+        engine.dispose()
