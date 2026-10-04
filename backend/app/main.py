@@ -687,6 +687,8 @@ def _executable_paper_pnl(trade: LivePaperTrade, row) -> float | None:
         if instrument == "CASH":
             bid = row.get("cash_bid") if isinstance(row, dict) else getattr(row, "cash_bid", None)
             ask = row.get("cash_ask") if isinstance(row, dict) else getattr(row, "cash_ask", None)
+            if bid is None or ask is None:
+                return None
         elif instrument == "FUTURE":
             if hasattr(row, "future"):
                 bid, ask = row.future.bid, row.future.ask
