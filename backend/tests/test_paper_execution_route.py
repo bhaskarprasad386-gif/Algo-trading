@@ -1146,13 +1146,17 @@ def test_paper_multi_symbol_concurrent_exit_and_reversal_preserve_accounting(tmp
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
             first = pool.submit(close_alpha)
-            second = pool.submit(reverse_beta)            results = [first.result(), second.result()]
+            second = pool.submit(reverse_beta)
+            results = [first.result(), second.result()]
 
-        successful = [result for result in results if result[0] in {"alpha", "beta"}]        assert len(successful) == 2
+        successful = [result for result in results if result[0] in {"alpha", "beta"}]
+        assert len(successful) == 2
 
-        verify = Session()        try:
+        verify = Session()
+        try:
             account = verify.query(TradingAccount).filter(
-                TradingAccount.user_id == user_id            ).one()
+                TradingAccount.user_id == user_id
+            ).one()
             positions = verify.query(Position).filter(
                 Position.user_id == user_id,
                 Position.quantity != 0,
