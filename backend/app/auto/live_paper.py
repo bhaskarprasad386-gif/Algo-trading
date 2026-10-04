@@ -74,10 +74,11 @@ class LivePaperTradeService:
         db.refresh(trade)
         return trade, True
 
-    def mark(self, db: Session, trade: LivePaperTrade, *, edge: float, capital_used=None):
+    def mark(self, db: Session, trade: LivePaperTrade, *, edge: float, capital_used=None, pnl_override=None):
         trade.current_edge = max(0.0, float(edge))
         trade.unrealized_pnl = round(
-            (trade.current_edge - trade.entry_edge) * trade.lot_size * trade.lots, 8
+            float(pnl_override) if pnl_override is not None else (trade.current_edge - trade.entry_edge) * trade.lot_size * trade.lots,
+            8,
         )
         if capital_used is not None and float(capital_used) > 0:
             trade.capital_used = float(capital_used)
