@@ -3241,7 +3241,7 @@ def test_paper_reconcile_http_failed_mutation_rollback_and_stale_precondition_bo
 
     # The HTTP mutation path must also fail closed without leaking partial
     # account/order/position state to concurrent reconciliation readers.
-    client = TestClient(app)
+    client = TestClient(app, raise_server_exceptions=False)
 
     def override_db():
         db = TestSession()
