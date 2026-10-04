@@ -200,6 +200,16 @@ class AlertService:
                     continue
                 if not user_rules:
                     continue
+                # A malformed persisted trade is not safe to ignore: doing so
+                # could release an unknown capital reservation or loss from the
+                # risk calculation. Fail closed for this user until the ledger row
+                # is repaired.
+                user_trades = db.query(LivePaperTrade).filter(
+                    LivePaperTrade.user_id == rule_user_id,
+                ).all()
+                if any(not _valid_persisted_trade(trade) for trade in user_trades):
+                    db.rollback()
+                    continue
                 from app.models.global_paper_setting import GlobalPaperSetting
                 risk_lock = db.query(GlobalPaperSetting).filter(
                     GlobalPaperSetting.user_id == rule_user_id,
