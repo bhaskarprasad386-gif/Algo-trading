@@ -16,6 +16,8 @@ class Order(Base):
     user_id = Column(Integer, index=True, nullable=True)
     order_id = Column(String, unique=True, index=True, nullable=True)
     broker_order_id = Column(String, nullable=True)
+    # Broker-confirmed execution identity; nullable for legacy/manual paper orders.
+    fill_id = Column(String, nullable=True, index=True)
 
     symbol = Column(String, index=True, nullable=False)
     token = Column(String, nullable=True)
