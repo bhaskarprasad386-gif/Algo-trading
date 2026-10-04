@@ -86,6 +86,19 @@ class AlertService:
             self._last_sent[key] = event.timestamp_ns
         return sent
 
+    def _dispatch_notification_only(self, user, event: AlertEvent) -> bool:
+        if not user.mobile_number:
+            return False
+        key = (int(user.id), event.event_id)
+        cooldown_ns = int(max(0.0, float(settings.LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS)) * 1_000_000_000)
+        previous = self._last_sent.get(key, 0)
+        if event.timestamp_ns - previous < cooldown_ns:
+            return False
+        sent = self._notifier.send_text(user.mobile_number, event.message)
+        if sent:
+            self._last_sent[key] = event.timestamp_ns
+        return sent
+
     def dispatch(self, db, event: AlertEvent) -> int:
         paper = event.metadata.get("paper_trade")
         gross = event.metadata.get("gross_profit", event.metadata.get("gross_pnl", event.metadata.get("gross_profit_rupees")))
@@ -238,6 +251,12 @@ class AlertService:
             return sent
         from app.models import User
         users = db.query(User).filter(User.is_active.is_(True), User.mobile_number.isnot(None)).all()
+        # A paper-trade payload is executed only through an enabled AlertRule,
+        # where per-user risk gates are enforced. If no rule is configured,
+        # keep the legacy fallback notification-only so a missing/disabled
+        # rule cannot silently create a paper position outside those gates.
+        if isinstance(paper, Mapping):
+            return sum(1 for user in users if self._dispatch_notification_only(user, event))
         return sum(1 for user in users if self.dispatch_user(user, event))
     @staticmethod
     def cutoff(days: int) -> datetime:
