@@ -63,6 +63,10 @@ def test_calendar_paper_payload_preserves_exchange_for_expiry_boundary():
     assert captured[0].metadata["paper_trade"]["exchange"] == "MCX"
     assert captured[0].metadata["paper_trade"]["strategy_direction"] == "LONG_NEAR_SHORT_FAR"
     assert captured[0].metadata["paper_trade"]["direction"] == "LONG"
+    legs = captured[0].metadata["paper_trade"]["legs"]
+    assert legs[0]["side"] == "BUY"
+    assert legs[1]["side"] == "SELL"
+
 
 
 
