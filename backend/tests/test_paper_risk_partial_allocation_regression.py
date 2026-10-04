@@ -342,3 +342,43 @@ def test_expiry_releases_global_reservation_but_daily_capital_and_loss_remain_en
     assert len(completed) == 1
     assert completed[0].capital_used == 30000
     assert completed[0].realized_pnl == -100
+
+
+def test_previous_ist_day_completed_trade_does_not_consume_today_risk_limits(db_session):
+    from app.models import LivePaperTrade
+    from app.notifications.common import _ist_day_start_utc_naive
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=50000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=30000, max_simultaneous_positions=5, max_loss=100,
+    ))
+    previous_day = datetime(2026, 10, 3, 18, 0)
+    db_session.add(LivePaperTrade(
+        user_id=1, strategy_id="cash-future", symbol="PREVIOUS-DAY",
+        event_id="PREVIOUS-DAY-CLOSED", direction="LONG",
+        expiry="2026-10-30", earliest_expiry="2026-10-30",
+        lot_size=10, lots=1, entry_edge=10, current_edge=9,
+        capital_used=30000, unrealized_pnl=-500, realized_pnl=-500,
+        pnl_pct=round(-500 / 30000 * 100, 8),
+        status="COMPLETED", exit_reason="EXPIRY_CLOSE",
+        opened_at=previous_day, closed_at=previous_day,
+        last_mark_at=previous_day, legs_json="[]", metadata_json="{}",
+    ))
+    db_session.commit()
+
+    # The previous IST day is outside today's daily-capital and realized-loss
+    # windows. The exact IST midnight helper is also checked at the boundary.
+    assert _ist_day_start_utc_naive(datetime(2026, 10, 4, 0, 0, tzinfo=__import__("datetime").timezone.utc)) == datetime(2026,  10, 3, 18, 30)
+
+    assert AlertService().dispatch(
+        db_session, _event("TODAY-AFTER-ROLLOVER", capital=30000, lots=1)
+    ) == 0
+
+    ongoing = LivePaperTradeService().ongoing(db_session, 1)
+    assert len(ongoing) == 1
+    assert ongoing[0].event_id == "TODAY-AFTER-ROLLOVER"
+    assert ongoing[0].capital_used == 30000
