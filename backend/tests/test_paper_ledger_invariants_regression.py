@@ -637,3 +637,50 @@ def test_new_entry_rejects_invalid_expiry_boundaries_before_persistence(db_sessi
     assert created is True
     assert valid.expiry == future_expiry
     assert valid.earliest_expiry == future_expiry
+
+
+def test_duplicate_completed_event_integrity_failure_does_not_change_reserved_capital(db_session):
+    _enable(db_session, amount=100_000)
+    svc = LivePaperTradeService()
+
+    completed, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="DONE",
+        event_id="ATOMIC-COMPLETED", direction="LONG",
+        expiry="2026-10-30", earliest_expiry="2026-10-30",
+        lot_size=10, lots=1, edge=10, capital_used=30_000, user_id=1,
+    )
+    assert created is True
+    svc.close(db_session, completed, "MANUAL")
+    assert completed.status == "COMPLETED"
+
+    ongoing, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="LIVE",
+        event_id="ATOMIC-LIVE", direction="LONG",
+        expiry="2026-10-30", earliest_expiry="2026-10-30",
+        lot_size=10, lots=1, edge=10, capital_used=40_000, user_id=1,
+    )
+    assert created is True
+
+    replay, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="DONE",
+        event_id="ATOMIC-COMPLETED", direction="LONG",
+        expiry="2026-10-30", earliest_expiry="2026-10-30",
+        lot_size=10, lots=1, edge=99, capital_used=50_000, user_id=1,
+    )
+    assert replay is None
+    assert created is False
+
+    db_session.expire_all()
+    rows = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1
+    ).order_by(LivePaperTrade.id.asc()).all()
+    assert len(rows) == 2
+    assert rows[0].status == "COMPLETED"
+    assert rows[0].capital_used == 30_000
+    assert rows[1].status == "ONGOING"
+    assert rows[1].capital_used == 40_000
+    assert sum(
+        float(row.capital_used)
+        for row in rows
+        if row.status == "ONGOING"
+    ) == 40_000
