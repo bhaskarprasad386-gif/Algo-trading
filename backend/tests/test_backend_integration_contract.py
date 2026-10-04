@@ -952,3 +952,65 @@ def test_partial_global_cap_scales_lots_and_reserved_capital_consistently(db_ses
 
     rows = svc.ongoing(db_session, 1)
     assert sum(row.capital_used for row in rows) == 120000
+
+
+def test_partial_global_cap_is_counted_by_daily_capital_limit(db_session):
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=125000, emergency_stop=False))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=120000.0, max_simultaneous_positions=5, max_loss=0.0,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    seed, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="SEED",
+        event_id="DAILY-PARTIAL-SEED", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=3, edge=5, capital_used=90000, user_id=1,
+    )
+    assert created is True
+    assert seed.lots == 3
+    assert seed.capital_used == 90000
+
+    event = AlertEvent(
+        strategy_id="cash-future", event_id="DAILY-PARTIAL-2", symbol="AAA",
+        timestamp_ns=1, message="partial", metadata={"gross_profit": 1,
+        "paper_trade": {"direction":"LONG", "expiry":"2026-10-30", "lot_size":10,
+        "lots":2, "edge":5, "capital_used":60000}},
+    )
+    assert AlertService().dispatch(db_session, event) == 0
+    rows = svc.ongoing(db_session, 1)
+    assert len(rows) == 2
+    partial = [row for row in rows if row.symbol == "AAA"][0]
+    assert partial.lots == 1
+    assert partial.capital_used == 30000
+    assert sum(row.capital_used for row in rows) == 120000
+
+
+def test_partial_position_still_counts_as_one_simultaneous_position(db_session):
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=125000, emergency_stop=False))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0.0, max_simultaneous_positions=1, max_loss=0.0,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    first, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="SEED",
+        event_id="POSITION-PARTIAL-1", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=3, edge=5, capital_used=90000, user_id=1,
+    )
+    assert created is True
+    assert first.lots == 3
+
+    event = AlertEvent(
+        strategy_id="cash-future", event_id="POSITION-PARTIAL-2", symbol="AAA",
+        timestamp_ns=1, message="blocked", metadata={"gross_profit": 1,
+        "paper_trade": {"direction":"LONG", "expiry":"2026-10-30", "lot_size":10,
+        "lots":2, "edge":5, "capital_used":60000}},
+    )
+    assert AlertService().dispatch(db_session, event) == 0
+    assert [row.symbol for row in svc.ongoing(db_session, 1)] == ["SEED"]
