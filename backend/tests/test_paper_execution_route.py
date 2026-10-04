@@ -3812,3 +3812,129 @@ def test_paper_reconcile_sqlite_read_snapshot_is_repeatable_during_concurrent_wr
         reader.close()
         writer.close()
         engine.dispose()
+
+def test_paper_reconcile_http_concurrent_reader_mutation_stress_matrix(tmp_path):
+    """Concurrent HTTP reconciliation never exposes a malformed or mutating response."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from app.execution import paper_routes as routes
+
+    # Keep the stress isolated from the process-global test database.
+    # The route dependency still exercises the real HTTP boundary while the
+    # override pins every request to one explicit test identity.
+    db = SessionLocal()
+    try:
+        accounts = (
+            db.query(TradingAccount)
+            .filter(
+                TradingAccount.is_active.is_(True),
+                TradingAccount.mode == "PAPER",
+            )
+            .order_by(TradingAccount.id.asc())
+            .all()
+        )
+        if not accounts:
+            pytest.skip("requires an active paper account")
+        user_id = int(accounts[0].user_id)
+    finally:
+        db.close()
+
+    client = TestClient(app)
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    symbols = [f"HTTP-STRESS-{index}" for index in range(4)]
+
+    def reconcile():
+        response = client.get("/api/v1/execution/paper/reconcile")
+        return ("reconcile", response.status_code, response.json())
+
+    def entry(index: int):
+        response = client.post(
+            "/api/v1/execution/paper/order",
+            json={
+                "symbol": symbols[index],
+                "transaction_type": "BUY",
+                "price": 10.0 + index,
+                "quantity": 1,
+                "fill_id": f"HTTP-STRESS-ENTRY-{index}",
+            },
+        )
+        return ("entry", response.status_code, response.json())
+
+    def exit_(index: int):
+        response = client.post(
+            "/api/v1/execution/paper/exit",
+            json={
+                "symbol": symbols[index],
+                "price": 11.0 + index,
+                "fill_id": f"HTTP-STRESS-EXIT-{index}",
+            },
+        )
+        return ("exit", response.status_code, response.json())
+
+    try:
+        # Seed two positions so entry and exit mutations can overlap readers.
+        for index in range(2):
+            kind, status, payload = entry(index)
+            assert kind == "entry"
+            assert status == 200
+            assert payload["status"] == "success"
+
+        operations = []
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            futures = []
+            for _ in range(8):
+                futures.append(pool.submit(reconcile))
+            futures.append(pool.submit(entry, 2))
+            futures.append(pool.submit(exit_, 0))
+            futures.append(pool.submit(exit_, 1))
+            futures.append(pool.submit(reconcile))
+            for future in as_completed(futures):
+                operations.append(future.result())
+
+        reconcile_results = [item for item in operations if item[0] == "reconcile"]
+        assert len(reconcile_results) == 10
+        for _, status, payload in reconcile_results:
+            assert status == 200
+            assert payload["status"] in {"OK", "MISMATCH"}
+            assert isinstance(payload["orders"], int)
+            assert isinstance(payload["reconstructed_positions"], dict)
+            assert isinstance(payload["mismatches"], list)
+            assert payload["repair_plan"]["apply"] is False
+            assert payload["repair_plan"]["reason"] == "read_only_dry_run"
+
+        # Mutation responses must remain valid even when reconciliation is
+        # concurrently reading the same account.
+        mutation_results = [item for item in operations if item[0] in {"entry", "exit"}]
+        assert len(mutation_results) == 3
+        for kind, status, payload in mutation_results:
+            assert status in {200, 409}
+            assert isinstance(payload, dict)
+            if kind == "entry" and status == 200:
+                assert payload["status"] == "success"
+            if kind == "exit" and status == 200:
+                assert payload["status"] in {"closed", "flat"}
+
+        # A final serialized reconciliation must still be a valid contract,
+        # and must never request mutation.
+        final = client.get("/api/v1/execution/paper/reconcile")
+        assert final.status_code == 200
+        final_payload = final.json()
+        assert final_payload["user_id"] == user_id
+        assert final_payload["repair_plan"]["apply"] is False
+
+        # The stress must not manufacture a cross-user or non-paper ledger row.
+        verify = SessionLocal()
+        try:
+            assert verify.query(Order).filter(
+                Order.user_id == user_id,
+                Order.is_paper.is_(True),
+                Order.symbol.in_(symbols),
+            ).count() >= 3
+            assert verify.query(Order).filter(
+                Order.user_id == user_id,
+                Order.is_paper.is_(False),
+                Order.symbol.in_(symbols),
+            ).count() == 0
+        finally:
+            verify.close()
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
