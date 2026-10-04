@@ -2386,7 +2386,10 @@ def test_paper_audit_chain_tamper_matrix_is_blocked(tmp_path):
             elif name == "pnl":
                 second.pnl = 41.0
             elif name == "fill_id":
-                second.fill_id = first.fill_id
+                # Deliberately change the fill id without violating the DB's
+                # unique(user_id, fill_id) constraint; the audit hash must
+                # still detect this persisted tamper.
+                second.fill_id = f"{first.fill_id}-TAMPER"
             elif name == "previous_hash":
                 second.previous_audit_hash = "f" * 64
             elif name == "audit_hash":
