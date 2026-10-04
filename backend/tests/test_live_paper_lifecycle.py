@@ -2032,3 +2032,214 @@ def test_strategy_executable_pnl_and_persisted_capital_use_allocated_lot_count()
     )
     # +1 +1 +2 +2 = +6 points x one allocated lot.
     assert _executable_paper_pnl(box, box_row) == 300.0
+
+
+def test_corrupt_persisted_trade_is_excluded_from_views_and_risk_gate_fails_closed(db_session):
+    """Restart-like reload must never let a malformed row participate in paper risk."""
+    import json
+    from app.models.alert_rule import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+    from app.auto.live_paper import _valid_persisted_trade
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=60000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1,
+        strategy_id="calendar-spread",
+        min_gross_profit=0,
+        mobile_number="",
+        whatsapp_enabled=False,
+        enabled=True,
+        max_daily_capital=60000,
+        max_simultaneous_positions=2,
+        max_loss=100,
+    ))
+    valid, created = LivePaperTradeService().enter_or_mark(
+        db_session,
+        strategy_id="calendar-spread",
+        symbol="VALID",
+        event_id="VALID-PERSISTED",
+        direction="LONG",
+        expiry="2026-10-30",
+        earliest_expiry="2026-10-30",
+        lot_size=10,
+        lots=1,
+        edge=5,
+        capital_used=30000,
+        user_id=1,
+    )
+    assert created is True
+    db_session.commit()
+
+    # Simulate a bad row surviving a process restart/database reload.
+    corrupt = LivePaperTrade(
+        user_id=1,
+        strategy_id="calendar-spread",
+        symbol="CORRUPT",
+        event_id="CORRUPT-PERSISTED",
+        direction="LONG",
+        expiry="2026-10-30",
+        earliest_expiry="2026-10-30",
+        lot_size=10,
+        lots=1,
+        entry_edge=5,
+        current_edge=5,
+        capital_used=30000,
+        unrealized_pnl=0,
+        realized_pnl=0,
+        pnl_pct=999,  # Violates the persisted P&L invariant.
+        legs_json=json.dumps([{"side": "BUY", "price": 100.0}]),
+        metadata_json=json.dumps({"exchange": "NFO"}),
+        status="ONGOING",
+        opened_at=valid.opened_at,
+        last_mark_at=valid.last_mark_at,
+    )
+    db_session.add(corrupt)
+    db_session.commit()
+    db_session.expire_all()
+
+    loaded_corrupt = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.event_id == "CORRUPT-PERSISTED",
+    ).one()
+    assert _valid_persisted_trade(loaded_corrupt) is False
+
+    svc = LivePaperTradeService()
+    assert [row.event_id for row in svc.ongoing(db_session, 1)] == [
+        "VALID-PERSISTED",
+    ]
+    assert svc.completed(db_session, 1) == []
+
+    # The alert dispatcher must fail closed rather than treating malformed
+    # persisted capital as free capacity after restart.
+    event = AlertEvent(
+        strategy_id="calendar-spread",
+        event_id="AFTER-RESTART-ENTRY",
+        symbol="AFTER-RESTART",
+        timestamp_ns=1000,
+        message="restart validation",
+        observed_at=datetime(2026, 10, 4, 15, 0),
+        metadata={"gross_profit": 1000, "paper_trade": {
+            "direction": "LONG",
+            "expiry": "2026-10-30",
+            "earliest_expiry": "2026-10-30",
+            "lot_size": 10,
+            "lots": 1,
+            "edge": 8,
+            "capital_used": 30000,
+        }},
+    )
+    assert AlertService().dispatch(db_session, event) == 0
+    db_session.expire_all()
+    assert db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+        LivePaperTrade.event_id == "AFTER-RESTART-ENTRY",
+    ).count() == 0
+
+
+def test_corrupt_completed_trade_is_excluded_from_completed_view_and_daily_risk(db_session):
+    """Malformed historical rows cannot inflate or corrupt same-day risk accounting."""
+    import json
+    from app.models.alert_rule import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+    from app.auto.live_paper import _valid_persisted_trade
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=90000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1,
+        strategy_id="synthetic-future-cash-carry",
+        min_gross_profit=0,
+        mobile_number="",
+        whatsapp_enabled=False,
+        enabled=True,
+        max_daily_capital=60000,
+        max_simultaneous_positions=2,
+        max_loss=1000,
+    ))
+    db_session.commit()
+
+    valid = LivePaperTrade(
+        user_id=1,
+        strategy_id="calendar-spread",
+        symbol="VALID-CLOSED",
+        event_id="VALID-CLOSED",
+        direction="LONG",
+        expiry="2026-10-30",
+        earliest_expiry="2026-10-30",
+        lot_size=10,
+        lots=1,
+        entry_edge=5,
+        current_edge=5,
+        capital_used=30000,
+        unrealized_pnl=-50,
+        realized_pnl=-50,
+        pnl_pct=round(-50 / 30000 * 100, 8),
+        legs_json=json.dumps([{"side": "BUY", "price": 100.0}]),
+        metadata_json=json.dumps({"exchange": "NFO"}),
+        status="COMPLETED",
+        opened_at=datetime(2026, 10, 4, 9, 30),
+        closed_at=datetime(2026, 10, 4, 10, 0),
+        last_mark_at=datetime(2026, 10, 4, 10, 0),
+        exit_reason="MANUAL",
+    )
+    corrupt = LivePaperTrade(
+        user_id=1,
+        strategy_id="calendar-spread",
+        symbol="CORRUPT-CLOSED",
+        event_id="CORRUPT-CLOSED",
+        direction="LONG",
+        expiry="2026-10-30",
+        earliest_expiry="2026-10-30",
+        lot_size=10,
+        lots=1,
+        entry_edge=5,
+        current_edge=5,
+        capital_used=30000,
+        unrealized_pnl=-9999,
+        realized_pnl=-9999,
+        pnl_pct=0,  # Invalid invariant.
+        legs_json=json.dumps([{"side": "BUY", "price": 100.0}]),
+        metadata_json=json.dumps({"exchange": "NFO"}),
+        status="COMPLETED",
+        opened_at=datetime(2026, 10, 4, 9, 30),
+        closed_at=datetime(2026, 10, 4, 10, 0),
+        last_mark_at=datetime(2026, 10, 4, 10, 0),
+        exit_reason="MANUAL",
+    )
+    db_session.add_all([valid, corrupt])
+    db_session.commit()
+    db_session.expire_all()
+
+    loaded_corrupt = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.event_id == "CORRUPT-CLOSED",
+    ).one()
+    assert _valid_persisted_trade(loaded_corrupt) is False
+    assert [row.event_id for row in LivePaperTradeService().completed(db_session, 1)] == [
+        "VALID-CLOSED",
+    ]
+
+    # Because the user has a malformed persisted row, dispatch must reject
+    # rather than silently calculating daily capital/loss from a partial view.
+    event = AlertEvent(
+        strategy_id="synthetic-future-cash-carry",
+        event_id="AFTER-CORRUPT-HISTORY",
+        symbol="AFTER-CORRUPT-HISTORY",
+        timestamp_ns=1001,
+        message="corrupt history validation",
+        observed_at=datetime(2026, 10, 4, 15, 0),
+        metadata={"gross_profit": 1000, "paper_trade": {
+            "direction": "LONG",
+            "expiry": "2026-10-30",
+            "earliest_expiry": "2026-10-30",
+            "lot_size": 10,
+            "lots": 1,
+            "edge": 8,
+            "capital_used": 30000,
+        }},
+    )
+    assert AlertService().dispatch(db_session, event) == 0
+    assert db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.event_id == "AFTER-CORRUPT-HISTORY",
+    ).count() == 0
