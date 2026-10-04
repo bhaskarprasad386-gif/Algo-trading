@@ -784,9 +784,14 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         if side == "BUY":
             if before_qty < 0:
                 released_margin = _buy_cost(before_avg, closed_qty)
-                remaining_long_cost = _buy_cost(price, int(after.quantity)) if after.quantity > 0 else 0.0
+                if after.quantity > 0:
+                    remaining_position_cost = _buy_cost(price, int(after.quantity))
+                elif after.quantity < 0:
+                    remaining_position_cost = _buy_cost(before_avg, abs(int(after.quantity)))
+                else:
+                    remaining_position_cost = 0.0
                 reconstructed_cash = round(
-                    reconstructed_cash + released_margin + pnl_delta - remaining_long_cost,
+                    reconstructed_cash + released_margin + pnl_delta - remaining_position_cost,
                     8,
                 )
             else:
@@ -855,6 +860,16 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
                 actual_positions[symbol] = position
     mismatches: list[str] = list(invalid_orders)
     mismatches.extend(account_integrity)
+    for position in all_paper_positions:
+        if bool(position.is_paper) and not bool(position.is_open):
+            try:
+                raw_quantity = float(position.quantity or 0.0)
+            except (TypeError, ValueError):
+                raw_quantity = 0.0
+            if math.isfinite(raw_quantity) and raw_quantity != 0:
+                symbol = str(position.symbol or "").strip().upper()
+                if symbol:
+                    mismatches.append(f"orphan_position:{symbol}")
     if account_mode_canonicality_mismatch:
         mismatches.append("account_mode_canonicality_mismatch")
     if account_source_canonicality_mismatch:
