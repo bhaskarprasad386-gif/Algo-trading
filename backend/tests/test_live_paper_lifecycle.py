@@ -200,3 +200,50 @@ def test_expiry_close_realizes_last_executable_pnl(db_session):
     assert closed[0].realized_pnl == 3750.25
     assert closed[0].unrealized_pnl == 3750.25
     assert closed[0].status == "COMPLETED"
+
+
+def test_global_paper_cap_is_shared_across_ongoing_trades(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=150000, emergency_stop=False))
+    db_session.commit()
+    first, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="CAP-1", direction="LONG", lot_size=10, lots=10,
+        edge=5, capital_used=100000, user_id=1,
+    )
+    assert created is True
+    second, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="BBB",
+        event_id="CAP-2", direction="LONG", lot_size=10, lots=10,
+        edge=5, capital_used=100000, user_id=1,
+    )
+    assert created is False
+    assert second is None
+    assert first.capital_used == 100000
+
+
+def test_global_paper_cap_allows_only_remaining_lots(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=250000, emergency_stop=False))
+    db_session.commit()
+    first, _ = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="CAP-3", direction="LONG", lot_size=10, lots=10,
+        edge=5, capital_used=100000, user_id=1,
+    )
+    second, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="BBB",
+        event_id="CAP-4", direction="LONG", lot_size=10, lots=10,
+        edge=5, capital_used=100000, user_id=1,
+    )
+    assert created is True
+    assert second.lots == 10
+    assert second.capital_used == 100000
+    third, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="CCC",
+        event_id="CAP-5", direction="LONG", lot_size=10, lots=10,
+        edge=5, capital_used=100000, user_id=1,
+    )
+    assert created is True
+    assert third.lots == 5
+    assert third.capital_used == 50000
