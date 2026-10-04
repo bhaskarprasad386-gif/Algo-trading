@@ -172,3 +172,40 @@ def test_concurrent_new_entry_never_bypasses_exact_realized_loss_boundary(tmp_pa
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_manual_close_still_works_for_legacy_trade_without_global_setting(db_session):
+    # Risk-gated entries require GlobalPaperSetting, but a legacy persisted
+    # trade may predate that setting. Terminal/manual close must remain usable.
+    trade = LivePaperTrade(
+        user_id=1,
+        strategy_id="cash-future",
+        symbol="LEGACY",
+        event_id="LEGACY-CLOSE",
+        direction="LONG",
+        expiry="2026-10-30",
+        earliest_expiry="2026-10-30",
+        lot_size=10,
+        lots=1,
+        entry_edge=10,
+        current_edge=10,
+        capital_used=30000,
+        unrealized_pnl=-25,
+        realized_pnl=0,
+        pnl_pct=round(-25 / 30000 * 100, 8),
+        legs_json='[{"side":"BUY","price":100}]',
+        metadata_json='{"exchange":"NFO"}',
+        status="ONGOING",
+    )
+    from app.auto.live_paper import _now
+    trade.opened_at = _now()
+    trade.last_mark_at = trade.opened_at
+    db_session.add(trade)
+    db_session.commit()
+
+    result = LivePaperTradeService().close(db_session, trade, "MANUAL")
+
+    assert result.status == "COMPLETED"
+    assert result.exit_reason == "MANUAL"
+    assert result.realized_pnl == -25
+    assert result.unrealized_pnl == -25
