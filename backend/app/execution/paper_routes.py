@@ -475,6 +475,11 @@ def _paper_repair_precondition(db: Session, user_id: int, account: TradingAccoun
 
 def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     """Rebuild paper positions, realized P&L and cash from durable fills."""
+    # SQLite legacy transaction mode does not necessarily begin a transaction for
+    # SELECTs. Force a read snapshot when this helper is called outside an already
+    # active transaction so account/orders/positions cannot drift mid-reconcile.
+    if db.bind is not None and db.bind.dialect.name == "sqlite" and not db.in_transaction():
+        db.connection().exec_driver_sql("BEGIN")
     account = _account(db, user_id)
     orders = (
         db.query(Order)
@@ -972,3 +977,89 @@ def paper_exit(request: PaperExitRequest, user_id: int = Depends(current_user_id
     _validate_paper_state(db, user_id)
     db.commit()
     return {"status":"closed","entry_price":entry_price,"exit_price":request.price,"quantity":quantity,"pnl":pnl,"order":order,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+
+
+def test_paper_reconcile_sqlite_read_snapshot_is_repeatable_during_concurrent_write(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'reconcile-snapshot.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(
+            email="snapshot@example.com",
+            hashed_password="",
+            full_name="Snapshot",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id,
+            mode="PAPER",
+            virtual_balance=5000.0,
+            initial_virtual_balance=5000.0,
+            initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0,
+            is_active=True,
+        ))
+        seed.commit()
+        uid = user.id
+    finally:
+        seed.close()
+
+    writer = Session()
+    reader = Session()
+    try:
+        paper_order(
+            PaperOrderRequest(
+                symbol="SNAP",
+                transaction_type="BUY",
+                price=100.0,
+                quantity=2,
+                fill_id="SNAP-1",
+            ),
+            user_id=uid,
+            db=writer,
+        )
+        writer.close()
+        writer = Session()
+
+        # The production helper explicitly starts the SQLite read transaction.
+        first = _reconcile_paper_ledger(reader, uid)
+
+        writer.add(Order(
+            user_id=uid,
+            symbol="SNAP2",
+            transaction_type="BUY",
+            order_type="MARKET",
+            product_type="INTRADAY",
+            quantity=1,
+            price=50.0,
+            average_price=50.0,
+            filled_quantity=1,
+            average_fill_price=50.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="SNAP-2",
+            pnl=0.0,
+            message="snapshot test",
+        ))
+        writer.commit()
+
+        # Same read transaction must retain the original database snapshot.
+        second = _reconcile_paper_ledger(reader, uid)
+        assert second == first
+        assert second["orders"] == 1
+        assert "SNAP2" not in second["reconstructed_positions"]
+    finally:
+        reader.rollback()
+        reader.close()
+        writer.close()
+        engine.dispose()
