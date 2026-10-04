@@ -631,7 +631,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         baseline_status = "LEGACY_UNFINGERPRINTED"
     mismatch_categories: set[str] = set()
     for mismatch in mismatches:
-        if mismatch.startswith(("invalid_order:", "duplicate_fill_id:", "order_pnl_mismatch:", "order_average_price_mismatch:", "order_average_fill_price_mismatch:")):
+        if mismatch.startswith(("invalid_order:", "duplicate_fill_id:", "order_pnl_mismatch:", "order_average_price_mismatch:", "order_average_fill_price_mismatch:", "order_quantity_mismatch:")):
             mismatch_categories.add("ORDER_INTEGRITY")
         elif mismatch.startswith(("audit_chain_mismatch:", "audit_hash_mismatch:")):
             mismatch_categories.add("AUDIT_INTEGRITY")
