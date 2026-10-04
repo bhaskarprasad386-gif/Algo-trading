@@ -3025,7 +3025,8 @@ def test_paper_reconcile_flat_symbol_excluded_from_repair_positions(tmp_path):
     engine = create_engine(
         f"sqlite:///{tmp_path / 'repair-plan-flat.db'}",
         connect_args={"check_same_thread": False, "timeout": 10},
-    )    Base.metadata.create_all(engine)
+    )
+    Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     seed = Session()
     try:
