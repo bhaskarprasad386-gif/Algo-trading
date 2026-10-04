@@ -413,3 +413,41 @@ def test_persisted_ledger_rejects_aware_datetimes(db_session):
     assert svc.close_expired(
         db_session, now=datetime(2026, 10, 10, 15, 30, tzinfo=timezone.utc)
     ) == []
+
+
+def test_exit_reason_is_terminal_state_invariant(db_session):
+    _enable(db_session, amount=100_000)
+    svc = LivePaperTradeService()
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="REASON",
+        event_id="REASON-VALID", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-30", lot_size=1, lots=1,
+        edge=10, capital_used=10_000, user_id=1,
+    )
+    assert created is True
+    assert trade.exit_reason is None
+
+    unchanged = svc.close(db_session, trade, "UNKNOWN_REASON")
+    assert unchanged.status == "ONGOING"
+    db_session.refresh(trade)
+    assert trade.exit_reason is None
+
+    closed = svc.close(db_session, trade, "manual")
+    assert closed.status == "COMPLETED"
+    assert closed.exit_reason == "MANUAL"
+    assert svc.completed(db_session, 1)[0].exit_reason == "MANUAL"
+
+    malformed = LivePaperTrade(
+        user_id=1, strategy_id="cash-future", symbol="BAD-REASON",
+        event_id="BAD-REASON", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-30", lot_size=1, lots=1,
+        entry_edge=10, current_edge=10, capital_used=10_000,
+        unrealized_pnl=0, realized_pnl=0, pnl_pct=0,
+        status="COMPLETED", exit_reason="BROKEN",
+        opened_at=datetime(2026, 10, 4, 10, 0),
+        last_mark_at=datetime(2026, 10, 4, 10, 0),
+        closed_at=datetime(2026, 10, 4, 10, 1),
+    )
+    db_session.add(malformed)
+    db_session.commit()
+    assert malformed.id not in [x.id for x in svc.completed(db_session, 1)]
