@@ -356,7 +356,14 @@ def _create_order(db: Session, *, user_id: int, symbol: str, side: str, price: f
         previous_audit_hash=previous_audit_hash,
     )
     db.add(order)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="paper trading mutation conflicts with existing ledger state") from exc
+    except OperationalError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="paper trading account is busy; retry") from exc
     return {"id": order.order_id, "symbol": order.symbol, "transaction_type": order.transaction_type, "price": price, "quantity": normalized_quantity, "status": order.status, "pnl": pnl, "fill_id": fill_id}
 
 
