@@ -140,9 +140,22 @@ def close(position_id: int, db: Session = Depends(get_db)):
 @router.get("/positions/{position_id}")
 def detail(position_id: int, db: Session = Depends(get_db)):
     user = current_user_id(db)
+    # Keep the single-position response consistent with /status and /refresh:
+    # resolve due expiry before exposing the position state.
+    service.close_expired(db)
     trade = db.query(LivePaperTrade).filter(
         LivePaperTrade.id == position_id, LivePaperTrade.user_id == user
     ).first()
     if not trade:
         raise HTTPException(404, "live paper trade not found")
+    if trade.status == "ONGOING":
+        # Detail should expose the same latest executable P&L mark as the
+        # collection endpoints, while preserving the last valid mark when
+        # fresh executable quotes are unavailable.
+        _refresh_marks(db, [trade])
+        trade = db.query(LivePaperTrade).filter(
+            LivePaperTrade.id == position_id, LivePaperTrade.user_id == user
+        ).first()
+        if not trade:
+            raise HTTPException(404, "live paper trade not found")
     return payload(trade)
