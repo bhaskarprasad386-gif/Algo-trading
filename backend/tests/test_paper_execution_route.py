@@ -874,6 +874,68 @@ def test_paper_multi_symbol_partial_fills_and_reversals_preserve_accounting():
     assert data["position"] is None
 
 
+def test_executed_fill_idempotency_prevents_duplicate_realized_pnl():
+    from app.execution.fill_accounting import ExecutedFill, FillAccountingState, apply_executed_fill
+
+    state = FillAccountingState(quantity=10, average_price=100.0, realized_pnl=0.0)
+
+    first = apply_executed_fill(
+        state,
+        ExecutedFill(side="SELL", price=120.0, quantity=4, fill_id="FILL-1"),
+    )
+    assert first.quantity == 6
+    assert first.average_price == 100.0
+    assert first.realized_pnl == 80.0
+    assert first.applied_fill_ids == ("FILL-1",)
+
+    # Broker retry of the exact same execution must be a no-op.
+    retry = apply_executed_fill(
+        first,
+        ExecutedFill(side="SELL", price=120.0, quantity=4, fill_id="FILL-1"),
+    )
+    assert retry == first
+
+    # A genuinely different fill still applies normally.
+    second = apply_executed_fill(
+        retry,
+        ExecutedFill(side="SELL", price=110.0, quantity=2, fill_id="FILL-2"),
+    )
+    assert second.quantity == 4
+    assert second.average_price == 100.0
+    assert second.realized_pnl == 100.0
+    assert second.applied_fill_ids == ("FILL-1", "FILL-2")
+
+
+def test_executed_fill_idempotency_also_holds_across_reversal():
+    from app.execution.fill_accounting import ExecutedFill, FillAccountingState, apply_executed_fill
+
+    state = FillAccountingState(quantity=-5, average_price=200.0, realized_pnl=0.0)
+
+    first = apply_executed_fill(
+        state,
+        ExecutedFill(side="BUY", price=180.0, quantity=8, fill_id="REV-1"),
+    )
+    assert first.quantity == 3
+    assert first.average_price == 180.0
+    assert first.realized_pnl == 100.0
+
+    retry = apply_executed_fill(
+        first,
+        ExecutedFill(side="BUY", price=180.0, quantity=8, fill_id="REV-1"),
+    )
+    assert retry == first
+
+    # Different fill ID can close the remaining long and realize its own P&L.
+    second = apply_executed_fill(
+        retry,
+        ExecutedFill(side="SELL", price=190.0, quantity=3, fill_id="REV-2"),
+    )
+    assert second.quantity == 0
+    assert second.average_price == 0.0
+    assert second.realized_pnl == 130.0
+    assert second.applied_fill_ids == ("REV-1", "REV-2")
+
+
 def test_paper_reversal_and_exit_race_converges_to_one_terminal_transition(tmp_path):
     from app.execution.paper_routes import PaperOrderRequest, PaperExitRequest, paper_order, paper_exit
 
