@@ -1184,3 +1184,65 @@ def test_duplicate_partial_trade_does_not_reallocate_lots_or_capital(db_session)
     assert rows[0].current_edge == 5.0
     assert rows[0].unrealized_pnl == -50.0
     assert sum(row.capital_used for row in svc.ongoing(db_session, 1)) == 120000
+
+
+def test_duplicate_mark_refreshes_loss_before_next_risk_gate(db_session):
+    from app.models import AlertRule, GlobalPaperSetting
+    from app.notifications.common import AlertEvent, AlertService
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=200000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0.0, max_simultaneous_positions=5, max_loss=100.0,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    first, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="DUP-LOSS-1", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=10, capital_used=50000, user_id=1,
+    )
+    assert created is True
+    svc.mark(db_session, first, edge=0.0)
+    db_session.commit()
+    assert first.unrealized_pnl == -100.0
+
+    # Same event is a mark-only update. Its improved edge must refresh the
+    # existing loss even though a new-entry risk gate would currently block.
+    duplicate = AlertEvent(
+        strategy_id="cash-future", event_id="DUP-LOSS-1", symbol="AAA",
+        timestamp_ns=2, message="mark", metadata={
+            "gross_profit": -999,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-30",
+                "lot_size": 10, "lots": 99, "edge": 5,
+                "capital_used": 999999,
+            },
+        },
+    )
+    assert AlertService().dispatch(db_session, duplicate) == 0
+    assert first.lots == 1
+    assert first.capital_used == 50000
+    assert first.unrealized_pnl == -50.0
+
+    # The refreshed -50 loss is below the -100 limit, so a genuinely new
+    # event may enter.
+    next_event = AlertEvent(
+        strategy_id="cash-future", event_id="DUP-LOSS-2", symbol="BBB",
+        timestamp_ns=3, message="new", metadata={
+            "gross_profit": 1,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-30",
+                "lot_size": 10, "lots": 1, "edge": 5,
+                "capital_used": 50000,
+            },
+        },
+    )
+    assert AlertService().dispatch(db_session, next_event) == 0
+    rows = svc.ongoing(db_session, 1)
+    assert len(rows) == 2
+    assert [row.symbol for row in rows] == ["AAA", "BBB"]
