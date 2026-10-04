@@ -6950,3 +6950,107 @@ def test_paper_http_multiple_active_accounts_fail_closed_across_read_endpoints()
         == "multiple active paper trading accounts require authenticated user context"
         for response in responses
     )
+
+
+def test_paper_http_authenticated_identity_isolates_account_orders_and_position_reads(tmp_path):
+    """Explicit authenticated identities must never cross-read another user's paper state."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-read-user-isolation.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    users = []
+    try:
+        for suffix, balance, symbol in (("a", 900.0, "USER_A_ONLY"), ("b", 700.0, "USER_B_ONLY")):
+            user = User(
+                email=f"authenticated-read-isolation-{suffix}@example.com",
+                hashed_password="",
+                full_name=f"Authenticated Read Isolation {suffix}",
+                is_active=True,
+            )
+            seed.add(user)
+            seed.flush()
+            seed.add(
+                TradingAccount(
+                    user_id=user.id,
+                    mode="PAPER",
+                    virtual_balance=balance,
+                    initial_virtual_balance=1000.0,
+                    initial_balance_source="BOOTSTRAP",
+                    realized_pnl=100.0 if suffix == "a" else -50.0,
+                    is_active=True,
+                )
+            )
+            seed.add(
+                Order(
+                    user_id=user.id,
+                    order_id=f"PAPER-{user.id}-READ-{suffix}",
+                    symbol=symbol,
+                    transaction_type="BUY",
+                    price=100.0,
+                    quantity=1,
+                    status="FILLED",
+                    pnl=0.0,
+                )
+            )
+            seed.add(
+                Position(
+                    user_id=user.id,
+                    symbol=symbol,
+                    quantity=1,
+                    average_price=100.0,
+                    is_paper=True,
+                    is_open=True,
+                )
+            )
+            users.append((int(user.id), symbol, balance))
+        seed.commit()
+    finally:
+        seed.close()
+
+    def request_as(user_id, path):
+        client = TestClient(app)
+
+        def override_db():
+            db = TestSession()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[routes.current_user_id] = lambda: user_id
+        try:
+            response = client.get(path)
+            assert response.status_code == 200
+            return response.json()
+        finally:
+            app.dependency_overrides.pop(routes.current_user_id, None)
+            app.dependency_overrides.pop(get_db, None)
+
+    for user_id, own_symbol, own_balance in users:
+        account = request_as(user_id, "/api/v1/execution/paper/account")
+        assert account["virtual_balance"] == own_balance
+        assert account["open_positions"] == 1
+        assert account["realized_pnl"] == (100.0 if own_symbol == "USER_A_ONLY" else -50.0)
+
+        orders = request_as(user_id, "/api/v1/execution/paper/orders")
+        assert len(orders["orders"]) == 1
+        assert orders["orders"][0]["symbol"] == own_symbol
+
+        position = request_as(user_id, f"/api/v1/execution/paper/position?symbol={own_symbol}")
+        assert position["status"] == "open"
+        assert position["position"]["symbol"] == own_symbol
+        assert position["position"]["quantity"] == 1
+
+        foreign_symbol = "USER_B_ONLY" if own_symbol == "USER_A_ONLY" else "USER_A_ONLY"
+        foreign_position = request_as(user_id, f"/api/v1/execution/paper/position?symbol={foreign_symbol}")
+        assert foreign_position["status"] == "flat"
