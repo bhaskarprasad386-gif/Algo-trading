@@ -107,6 +107,7 @@ def _valid_persisted_trade(trade) -> bool:
             or closed_at < opened_at
             or last_mark_at > closed_at
             or str(exit_reason or "").strip().upper() not in {"MANUAL", "EXPIRY_CLOSE"}
+            or realized_pnl != unrealized_pnl
         ):
             return False
         return True
