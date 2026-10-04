@@ -146,18 +146,39 @@ class AlertService:
                     db.rollback()
                     continue
                 requested_capital = max(0.0, float(paper.get("capital_used", 0.0) or 0.0))
+                effective_capital = requested_capital
+                if requested_capital > 0:
+                    requested_lots = max(1, int(paper.get("lots", 1) or 1))
+                    capital_per_lot = requested_capital / requested_lots
+                    if capital_per_lot > 0:
+                        setting = db.query(GlobalPaperSetting).filter(
+                            GlobalPaperSetting.user_id == rule_user_id,
+                        ).first()
+                        if setting is not None:
+                            reserved_capital = sum(
+                                float(row[0] or 0.0) for row in db.query(LivePaperTrade.capital_used).filter(
+                                    LivePaperTrade.user_id == rule_user_id,
+                                    LivePaperTrade.status == "ONGOING",
+                                ).all()
+                            )
+                            available_capital = max(0.0, float(setting.paper_amount) - reserved_capital)
+                            allocatable_lots = min(
+                                requested_lots,
+                                int(available_capital // capital_per_lot),
+                            )
+                            effective_capital = capital_per_lot * allocatable_lots
                 day_start = _ist_day_start_utc_naive()
                 max_daily_capital = _strictest_positive_limit(
                     max(0.0, float(rule.max_daily_capital)) for rule in user_rules
                 )
-                if max_daily_capital > 0 and requested_capital > 0:
+                if max_daily_capital > 0 and effective_capital > 0:
                     daily_capital = sum(
                         float(row[0] or 0.0) for row in db.query(LivePaperTrade.capital_used).filter(
                             LivePaperTrade.user_id == rule_user_id,
                             LivePaperTrade.opened_at >= day_start,
                         ).all()
                     )
-                    if daily_capital + requested_capital > max_daily_capital:
+                    if daily_capital + effective_capital > max_daily_capital:
                         db.rollback()
                         continue
                 max_loss = _strictest_positive_limit(
