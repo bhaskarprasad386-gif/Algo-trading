@@ -551,6 +551,10 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         )
         if abs(float(order.pnl or 0.0) - pnl_delta) > 1e-8:
             invalid_orders.append(f"order_pnl_mismatch:{order.id}")
+        if abs(float(order.average_price or 0.0) - float(order.price or 0.0)) > 1e-8:
+            invalid_orders.append(f"order_average_price_mismatch:{order.id}")
+        if abs(float(order.average_fill_price or 0.0) - float(order.price or 0.0)) > 1e-8:
+            invalid_orders.append(f"order_average_fill_price_mismatch:{order.id}")
 
         if side == "BUY":
             if before_qty < 0:
