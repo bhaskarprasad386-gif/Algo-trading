@@ -446,6 +446,36 @@ def test_completed_trade_requires_realized_pnl_to_match_final_unrealized_pnl(db_
     assert created is False
 
 
+def test_completed_trade_requires_pnl_pct_to_match_realized_pnl(db_session):
+    _enable(db_session, amount=100_000)
+    svc = LivePaperTradeService()
+    malformed = LivePaperTrade(
+        user_id=1, strategy_id="cash-future", symbol="PNL-PCT-MISMATCH",
+        event_id="PNL-PCT-MISMATCH", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-30", lot_size=1, lots=1,
+        entry_edge=10, current_edge=8, capital_used=10_000,
+        unrealized_pnl=-200, realized_pnl=-200, pnl_pct=-1.5,
+        status="COMPLETED", exit_reason="MANUAL",
+        opened_at=datetime(2026, 10, 4, 10, 0),
+        last_mark_at=datetime(2026, 10, 4, 10, 5),
+        closed_at=datetime(2026, 10, 4, 10, 5),
+    )
+    db_session.add(malformed)
+    db_session.commit()
+
+    assert svc.completed(db_session, 1) == []
+    assert svc.ongoing(db_session, 1) == []
+
+    valid, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="GOOD-PNL-PCT",
+        event_id="GOOD-PNL-PCT", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-30", lot_size=1, lots=1,
+        edge=10, capital_used=10_000, user_id=1,
+    )
+    assert valid is None
+    assert created is False
+
+
 def test_close_persists_realized_pnl_from_current_db_unrealized_pnl(db_session):
     _enable(db_session, amount=100_000)
     svc = LivePaperTradeService()
