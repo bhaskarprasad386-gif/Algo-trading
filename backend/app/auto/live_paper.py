@@ -398,7 +398,7 @@ class LivePaperTradeService:
             db.refresh(trade)
         return trade
 
-    def close(self, db: Session, trade: LivePaperTrade, reason="MANUAL"):
+    def close(self, db: Session, trade: LivePaperTrade, reason="MANUAL", *, commit=True):
         reason_text = str(reason or "").strip().upper()
         if reason_text not in {"MANUAL", "EXPIRY_CLOSE"}:
             return trade
@@ -435,7 +435,10 @@ class LivePaperTradeService:
             synchronize_session=False,
         )
         if updated:
-            db.commit()
+            if commit:
+                db.commit()
+            else:
+                db.flush()
             db.refresh(trade)
         else:
             db.expire(trade)
@@ -476,12 +479,17 @@ class LivePaperTradeService:
                     {GlobalPaperSetting.paper_amount: GlobalPaperSetting.paper_amount},
                     synchronize_session=False,
                 )
-                closed_trade = self.close(db, trade, "EXPIRY_CLOSE")
+                closed_trade = self.close(db, trade, "EXPIRY_CLOSE", commit=False)
                 # A concurrent manual close may win the atomic status update.
                 # Only report this trade as an expiry closure when EXPIRY_CLOSE
                 # is actually the persisted terminal reason.
                 if closed_trade.status == "COMPLETED" and closed_trade.exit_reason == "EXPIRY_CLOSE":
                     closed.append(closed_trade)
+        if closed:
+            # Expiry processing is one explicit transaction boundary. The
+            # caller can opt into commit=False only when it owns the session
+            # transaction; all normal expiry callers get a durable commit.
+            db.commit()
         return closed
 
     def ongoing(self, db: Session, user_id=1):
