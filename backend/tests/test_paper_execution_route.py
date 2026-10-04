@@ -2670,7 +2670,8 @@ def test_paper_reconcile_blocked_baseline_never_exposes_applicable_repair(tmp_pa
         assert result["repair_plan"]["positions"]["BLOCK"] == {
             "quantity": 2,
             "average_price": 100.0,
-        }    finally:
+        }
+    finally:
         verify.close()
         engine.dispose()
 
