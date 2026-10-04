@@ -6463,3 +6463,96 @@ def test_paper_http_concurrent_entry_and_order_same_symbol_single_position_bound
     assert payload["status"] == "OK"
     assert payload["mismatches"] == []
     assert payload["repairability"] == "NONE"
+
+
+def test_paper_http_concurrent_long_reversal_and_exit_close_once():
+    """Long-side reversal vs terminal exit must serialize without double-closing or bad cash."""
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 500.0
+        account.realized_pnl = 0.0
+        db.add(Position(
+            user_id=user_id,
+            symbol="LONG_RACE",
+            quantity=5,
+            average_price=100.0,
+            stop_loss=None,
+            target=None,
+            is_paper=True,
+            is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(2)
+
+    def submit(kind):
+        barrier.wait(timeout=5)
+        if kind == "reversal":
+            return client.post(
+                "/api/v1/execution/paper/order",
+                headers=headers,
+                json={
+                    "symbol": "LONG_RACE",
+                    "transaction_type": "SELL",
+                    "price": 120.0,
+                    "quantity": 10,
+                },
+            )
+        return client.post(
+            "/api/v1/execution/paper/exit",
+            headers=headers,
+            json={"symbol": "LONG_RACE", "price": 120.0},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(submit, ["reversal", "exit"]))
+
+    assert all(response.status_code in {200, 400} for response in responses)
+
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        orders = db.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+            Order.symbol == "LONG_RACE",
+        ).order_by(Order.id).all()
+        position = db.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.symbol == "LONG_RACE",
+            Position.is_open.is_(True),
+        ).one_or_none()
+
+        assert len(orders) in {1, 2}
+        assert account.realized_pnl in {100.0}
+        if position is None:
+            assert len(orders) == 1
+            assert orders[0].transaction_type == "SELL"
+            assert orders[0].quantity == 5
+            assert account.virtual_balance == 1100.0
+        else:
+            assert len(orders) == 1
+            assert position.quantity == -5
+            assert position.average_price == 120.0
+            assert account.virtual_balance == 500.0
+            assert orders[0].transaction_type == "SELL"
+            assert orders[0].quantity == 10
+            assert orders[0].pnl == 100.0
+    finally:
+        db.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
