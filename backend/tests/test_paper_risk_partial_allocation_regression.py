@@ -687,3 +687,65 @@ def test_daily_and_loss_gates_fail_together_after_position_slot_is_available(db_
     assert len(completed) == 1
     assert completed[0].capital_used == 30000
     assert completed[0].realized_pnl == -100
+
+
+
+def test_duplicate_event_bypasses_new_risk_limits_but_only_marks_existing_trade(db_session):
+    from app.models import LivePaperTrade
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=60000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=30000, max_simultaneous_positions=1, max_loss=100,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    seed, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="DUP-RISK",
+        event_id="DUP-RISK-SAME", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-30", lot_size=10, lots=1,
+        edge=10, capital_used=30000, user_id=1,
+    )
+    assert created is True
+    svc.mark(db_session, seed, edge=9, pnl_override=-100)
+    db_session.commit()
+
+    # Incoming payload requests impossible additional allocation, but the same
+    # event is already ongoing. It must take the duplicate mark path rather than
+    # consuming another position/capital/loss budget.
+    duplicate = _event("DUP-RISK-SAME", capital=60000, lots=2)
+    duplicate = AlertEvent(
+        strategy_id=duplicate.strategy_id,
+        event_id=duplicate.event_id,
+        symbol=duplicate.symbol,
+        timestamp_ns=duplicate.timestamp_ns,
+        message=duplicate.message,
+        metadata={
+            "gross_profit": 0,
+            "paper_trade": {
+                "direction": "LONG",
+                "expiry": "2026-10-30",
+                "lot_size": 99,
+                "lots": 99,
+                "edge": 8,
+                "capital_used": 999999,
+            },
+        },
+    )
+    assert AlertService().dispatch(db_session, duplicate) == 0
+
+    rows = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].event_id == "DUP-RISK-SAME"
+    assert rows[0].lots == 1
+    assert rows[0].lot_size == 10
+    assert rows[0].capital_used == 30000
+    assert rows[0].entry_edge == 10
+    assert rows[0].current_edge == 8
+    assert rows[0].unrealized_pnl == -20
