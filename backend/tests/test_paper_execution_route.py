@@ -164,6 +164,39 @@ def test_concurrent_same_fill_id_mutates_cash_and_pnl_once(tmp_path):
         engine.dispose()
 
 
+def test_paper_exit_fill_id_remains_idempotent_after_position_is_closed():
+    client, headers = _client_and_headers()
+    first_entry = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol":"EXITRETRY","transaction_type":"BUY","price":100.0,"quantity":5},
+    )
+    assert first_entry.status_code == 200
+
+    first_exit = client.post(
+        "/api/v1/execution/paper/exit",
+        headers=headers,
+        json={"symbol":"EXITRETRY","price":120.0,"fill_id":"EXIT-FILL-1"},
+    )
+    assert first_exit.status_code == 200
+    first_data = first_exit.json()
+    assert first_data["pnl"] == 100.0
+    balance_after_exit = first_data["virtual_balance"]
+    realized_after_exit = first_data["realized_pnl"]
+
+    retry = client.post(
+        "/api/v1/execution/paper/exit",
+        headers=headers,
+        json={"symbol":"EXITRETRY","price":120.0,"fill_id":"EXIT-FILL-1"},
+    )
+    assert retry.status_code == 200
+    retry_data = retry.json()
+    assert retry_data["idempotent"] is True
+    assert retry_data["pnl"] == 100.0
+    assert retry_data["virtual_balance"] == balance_after_exit
+    assert retry_data["realized_pnl"] == realized_after_exit
+
+
 def test_paper_fill_id_is_durable_across_client_retry_and_rejects_conflict():
     client, headers = _client_and_headers()
     starting_balance = 10_000_000.0
