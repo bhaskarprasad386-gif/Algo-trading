@@ -149,6 +149,92 @@ def test_executable_pnl_calendar_uses_contract_specific_quotes():
 
 
 
+
+def test_executable_pnl_calendar_normalized_long_and_short_directions():
+    """Calendar ledger direction is normalized, but persisted leg sides own P&L sign."""
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+
+    row = SimpleNamespace(
+        near_contract_month="NEAR", far_contract_month="FAR",
+        near_bid=103.0, near_ask=104.0,
+        far_bid=108.0, far_ask=109.0,
+    )
+
+    # LONG_NEAR_SHORT_FAR -> ledger LONG; BUY near at 100, SELL far at 110.
+    long_trade = _paper_trade([
+        {"contract": "NEAR", "side": "BUY", "price": 100.0},
+        {"contract": "FAR", "side": "SELL", "price": 110.0},
+    ])
+    assert _executable_paper_pnl(long_trade, row) == 2.0
+
+    # SHORT_NEAR_LONG_FAR -> ledger SHORT; SELL near at 110, BUY far at 100.
+    short_trade = _paper_trade([
+        {"contract": "NEAR", "side": "SELL", "price": 110.0},
+        {"contract": "FAR", "side": "BUY", "price": 100.0},
+    ])
+    assert _executable_paper_pnl(short_trade, row) == 2.0
+
+
+def test_executable_pnl_synthetic_normalized_long_and_short_directions():
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+
+    row = SimpleNamespace(
+        option=SimpleNamespace(
+            call_bid=12.0, call_ask=13.0,
+            put_bid=7.0, put_ask=8.0,
+        ),
+        future=SimpleNamespace(bid=102.0, ask=103.0),
+    )
+
+    long_trade = _paper_trade([
+        {"instrument": "FUTURE", "side": "BUY", "price": 100.0},
+        {"instrument": "CALL", "side": "BUY", "price": 10.0},
+        {"instrument": "PUT", "side": "SELL", "price": 8.0},
+    ])
+    assert _executable_paper_pnl(long_trade, row) == 4.0
+
+    short_trade = _paper_trade([
+        {"instrument": "FUTURE", "side": "SELL", "price": 100.0},
+        {"instrument": "CALL", "side": "SELL", "price": 10.0},
+        {"instrument": "PUT", "side": "BUY", "price": 8.0},
+    ])
+    assert _executable_paper_pnl(short_trade, row) == 4.0
+
+
+def test_executable_pnl_box_normalized_long_and_short_directions():
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+
+    row = SimpleNamespace(
+        low=SimpleNamespace(
+            call_bid=11.0, call_ask=12.0,
+            put_bid=10.0, put_ask=11.0,
+        ),
+        high=SimpleNamespace(
+            call_bid=3.0, call_ask=4.0,
+            put_bid=2.0, put_ask=3.0,
+        ),
+    )
+
+    long_trade = _paper_trade([
+        {"instrument": "LOW_CALL", "side": "BUY", "price": 10.0},
+        {"instrument": "LOW_PUT", "side": "BUY", "price": 9.0},
+        {"instrument": "HIGH_CALL", "side": "SELL", "price": 5.0},
+        {"instrument": "HIGH_PUT", "side": "SELL", "price": 4.0},
+    ])
+    assert _executable_paper_pnl(long_trade, row) == 4.0
+
+    short_trade = _paper_trade([
+        {"instrument": "LOW_CALL", "side": "SELL", "price": 10.0},
+        {"instrument": "LOW_PUT", "side": "SELL", "price": 9.0},
+        {"instrument": "HIGH_CALL", "side": "BUY", "price": 5.0},
+        {"instrument": "HIGH_PUT", "side": "BUY", "price": 4.0},
+    ])
+    assert _executable_paper_pnl(short_trade, row) == 4.0
+
+
 def test_expiry_close_is_strictly_at_session_boundary_for_nse(db_session):
     svc = LivePaperTradeService()
     db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=10_000_000, emergency_stop=False))
