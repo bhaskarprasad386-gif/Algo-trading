@@ -403,6 +403,7 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
         filled_quantity = int(raw_filled_quantity) if math.isfinite(raw_filled_quantity) and raw_filled_quantity.is_integer() else 0
         price = float(order.price or 0.0)
         average_fill_price = float(order.average_fill_price or 0.0)
+        average_price = float(order.average_price or 0.0)
         if (
             not math.isfinite(raw_quantity)
             or not raw_quantity.is_integer()
@@ -412,8 +413,12 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             or filled_quantity != quantity
             or not math.isfinite(price)
             or price <= 0
+            or not math.isfinite(average_price)
+            or average_price <= 0
+            or abs(average_price - price) > 1e-8
             or not math.isfinite(average_fill_price)
             or average_fill_price <= 0
+            or abs(average_fill_price - price) > 1e-8
             or order.status != "FILLED"
             or order.transaction_type.upper() not in {"BUY", "SELL"}
         ):
