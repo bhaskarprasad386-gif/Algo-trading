@@ -650,6 +650,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         .all()
     )
     actual_positions: dict[str, Position] = {}
+    duplicate_position_symbols: set[str] = set()
     for position in all_paper_positions:
         raw_quantity = float(position.quantity or 0.0)
         raw_average_price = float(position.average_price or 0.0)
@@ -666,6 +667,8 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         if position.is_open and int(raw_quantity) != 0:
             symbol = str(position.symbol or "").strip().upper()
             if symbol:
+                if symbol in actual_positions:
+                    duplicate_position_symbols.add(symbol)
                 actual_positions[symbol] = position
     mismatches: list[str] = list(invalid_orders)
     mismatches.extend(account_integrity)
@@ -680,6 +683,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         )
     ]
     mismatches.extend(f"invalid_position:{position_id}" for position_id in malformed_position_ids)
+    mismatches.extend(f"duplicate_position:{symbol}" for symbol in sorted(duplicate_position_symbols))
     for symbol, state in rebuilt.items():
         if abs(state.quantity) > 0:
             position = actual_positions.pop(symbol, None)
@@ -714,7 +718,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             mismatch_categories.add("ORDER_INTEGRITY")
         elif mismatch.startswith(("audit_chain_mismatch:", "audit_hash_mismatch:")):
             mismatch_categories.add("AUDIT_INTEGRITY")
-        elif mismatch.startswith(("missing_position:", "position_mismatch:", "unexpected_position:", "orphan_position:", "invalid_position:")):
+        elif mismatch.startswith(("missing_position:", "position_mismatch:", "unexpected_position:", "orphan_position:", "invalid_position:", "duplicate_position:")):
             mismatch_categories.add("POSITION_STATE")
         elif mismatch in {"invalid_initial_virtual_balance", "invalid_virtual_balance", "invalid_realized_pnl", "realized_pnl_mismatch", "virtual_balance_mismatch"}:
             mismatch_categories.add("ACCOUNTING_STATE")
