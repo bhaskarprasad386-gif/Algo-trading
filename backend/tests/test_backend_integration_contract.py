@@ -612,8 +612,8 @@ def test_daily_capital_survives_manual_close_and_resets_only_on_ist_day_boundary
 
     # Move the completed trade to the previous IST trading day. The same
     # daily-cap rule must then permit a new entry.
-    trade.closed_at = datetime(2026, 10, 4, 17, 0)
-    trade.opened_at = datetime(2026, 10, 4, 17, 0)
+    trade.closed_at = datetime(2026, 10, 3, 17, 0)
+    trade.opened_at = datetime(2026, 10, 3, 17, 0)
     db_session.commit()
 
     third = AlertEvent(
