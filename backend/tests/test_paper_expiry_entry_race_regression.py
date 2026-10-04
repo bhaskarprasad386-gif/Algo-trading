@@ -194,3 +194,48 @@ def test_expiry_commit_true_persists_all_expiry_transitions_in_one_boundary(db_s
         LivePaperTrade.status == "COMPLETED",
     ).all()
     assert {trade.id for trade in verify} == {first.id, second.id}
+
+
+def test_mcx_expiry_uses_2330_boundary_from_paper_metadata(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=30000, emergency_stop=False,
+    ))
+    db_session.commit()
+
+    trade, created = svc.enter_or_mark(
+        db_session,
+        strategy_id="calendar-spread",
+        symbol="CRUDEOIL",
+        event_id="MCX-2330",
+        direction="LONG",
+        expiry="2026-10-04",
+        earliest_expiry="2026-10-04",
+        lot_size=100,
+        lots=1,
+        edge=5,
+        capital_used=30000,
+        legs=[
+            {"instrument": "NEAR", "side": "BUY", "price": 100.0},
+            {"instrument": "FAR", "side": "SELL", "price": 105.0},
+        ],
+        metadata={"exchange": "MCX"},
+        user_id=1,
+    )
+    assert created is True
+
+    assert svc.close_expired(
+        db_session,
+        now=datetime(2026, 10, 4, 15, 30),
+    ) == []
+    db_session.refresh(trade)
+    assert trade.status == "ONGOING"
+
+    closed = svc.close_expired(
+        db_session,
+        now=datetime(2026, 10, 4, 23, 30),
+    )
+    assert len(closed) == 1
+    db_session.refresh(trade)
+    assert trade.status == "COMPLETED"
+    assert trade.exit_reason == "EXPIRY_CLOSE"
