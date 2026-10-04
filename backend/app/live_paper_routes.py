@@ -53,7 +53,12 @@ def _refresh_marks(db: Session, trades):
             else:
                 edge = None
             if edge is not None:
-                service.mark(db, trade, edge=float(edge))
+                from app import main as runtime
+                pnl = runtime._executable_paper_pnl(trade, row)
+                if pnl is not None:
+                    service.mark(db, trade, edge=float(edge), pnl_override=pnl)
+                else:
+                    service.mark(db, trade, edge=float(edge), pnl_override=float(trade.unrealized_pnl))
         db.commit()
     except Exception:
         pass
