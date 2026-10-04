@@ -670,3 +670,88 @@ def test_global_paper_cap_partial_allocation_cannot_bypass_daily_cap(db_session)
     rows = LivePaperTradeService().ongoing(db_session, 1)
     assert len(rows) == 1
     assert sum(float(row.capital_used or 0.0) for row in rows) == 100000
+
+
+def test_multi_rule_zero_limit_does_not_weaken_strict_positive_limits(db_session):
+    from app.models import AlertRule, GlobalPaperSetting
+    from app.notifications.common import AlertEvent, AlertService
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=500000, emergency_stop=False,
+    ))
+    db_session.add_all([
+        AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=0,
+                  mobile_number="", whatsapp_enabled=False, enabled=True,
+                  max_simultaneous_positions=0, max_daily_capital=0, max_loss=0,
+                  priority=10),
+        AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=0,
+                  mobile_number="", whatsapp_enabled=False, enabled=True,
+                  max_simultaneous_positions=1, max_daily_capital=100000,
+                  max_loss=100, priority=1),
+    ])
+    db_session.commit()
+
+    service = AlertService()
+    base = {
+        "direction": "LONG", "expiry": "2026-10-30", "lot_size": 10,
+        "lots": 1, "edge": 5, "capital_used": 100000,
+    }
+    first = AlertEvent(
+        strategy_id="cash-future", event_id="ZERO-LIMIT-1", symbol="AAA",
+        timestamp_ns=1, message="first",
+        metadata={"gross_profit": 1, "paper_trade": base},
+    )
+    assert service.dispatch(db_session, first) == 0
+    trade = LivePaperTradeService().ongoing(db_session, 1)[0]
+
+    # The zero-valued rules are unlimited, not weaker overrides.
+    second = AlertEvent(
+        strategy_id="cash-future", event_id="ZERO-LIMIT-2", symbol="BBB",
+        timestamp_ns=2, message="second",
+        metadata={"gross_profit": 1, "paper_trade": base},
+    )
+    assert service.dispatch(db_session, second) == 0
+    assert len(LivePaperTradeService().ongoing(db_session, 1)) == 1
+    assert trade.capital_used == 100000
+
+
+def test_multi_rule_partial_capital_cannot_weaken_strictest_position_limit(db_session):
+    from app.models import AlertRule, GlobalPaperSetting
+    from app.notifications.common import AlertEvent, AlertService
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=150000, emergency_stop=False,
+    ))
+    db_session.add_all([
+        AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=0,
+                  mobile_number="", whatsapp_enabled=False, enabled=True,
+                  max_simultaneous_positions=0, max_daily_capital=0, max_loss=0),
+        AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=0,
+                  mobile_number="", whatsapp_enabled=False, enabled=True,
+                  max_simultaneous_positions=1, max_daily_capital=200000,
+                  max_loss=5000),
+    ])
+    db_session.commit()
+
+    service = AlertService()
+    base = {
+        "direction": "LONG", "expiry": "2026-10-30", "lot_size": 10,
+        "lots": 1, "edge": 5, "capital_used": 100000,
+    }
+    first = AlertEvent(
+        strategy_id="cash-future", event_id="PARTIAL-MULTI-1", symbol="AAA",
+        timestamp_ns=1, message="first",
+        metadata={"gross_profit": 1, "paper_trade": base},
+    )
+    assert service.dispatch(db_session, first) == 0
+    assert len(LivePaperTradeService().ongoing(db_session, 1)) == 1
+
+    second = AlertEvent(
+        strategy_id="cash-future", event_id="PARTIAL-MULTI-2", symbol="BBB",
+        timestamp_ns=2, message="second",
+        metadata={"gross_profit": 1, "paper_trade": base},
+    )
+    assert service.dispatch(db_session, second) == 0
+    rows = LivePaperTradeService().ongoing(db_session, 1)
+    assert len(rows) == 1
+    assert rows[0].capital_used == 100000
