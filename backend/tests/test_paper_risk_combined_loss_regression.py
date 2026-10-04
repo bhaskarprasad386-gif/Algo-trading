@@ -313,3 +313,57 @@ def test_manual_close_loss_contributes_to_same_day_max_loss_for_next_entry(db_se
         LivePaperTrade.user_id == 1,
         LivePaperTrade.event_id == "MANUAL-COMBINED-BLOCKED",
     ).count() == 0
+
+
+def test_strategy_specific_realized_loss_uses_same_global_max_loss_accounting(db_session):
+    """Calendar/Synthetic/Box losses must all feed the same user risk ledger."""
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=200000, emergency_stop=False,
+    ))
+    for strategy in ("calendar-spread", "synthetic-future-cash-carry", "box-spread"):
+        db_session.add(AlertRule(
+            user_id=1, strategy_id=strategy, min_gross_profit=0.0,
+            mobile_number="", whatsapp_enabled=False, enabled=True,
+            max_daily_capital=0.0, max_simultaneous_positions=5, max_loss=100.0,
+        ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    for strategy, event_id in (
+        ("calendar-spread", "CAL-LOSS"),
+        ("synthetic-future-cash-carry", "SYN-LOSS"),
+        ("box-spread", "BOX-LOSS"),
+    ):
+        trade, created = svc.enter_or_mark(
+            db_session, strategy_id=strategy, symbol=event_id, event_id=event_id,
+            direction="LONG", expiry="2026-10-30", earliest_expiry="2026-10-30",
+            lot_size=10, lots=1, edge=10, capital_used=30000, user_id=1,
+            metadata={"exchange": "NFO"},
+        )
+        assert created is True
+        svc.mark(db_session, trade, edge=5.0)
+        svc.close(db_session, trade, "MANUAL")
+        assert trade.realized_pnl == -50.0
+
+    # Risk is user-wide, not strategy-local: the three completed -50 losses
+    # together consume the user's max_loss budget, so every strategy's next
+    # paper entry must be rejected at the exact boundary.
+    db_session.commit()
+    for strategy, event_id in (
+        ("calendar-spread", "CAL-AFTER-LOSS"),
+        ("synthetic-future-cash-carry", "SYN-AFTER-LOSS"),
+        ("box-spread", "BOX-AFTER-LOSS"),
+    ):
+        event = AlertEvent(
+            strategy_id=strategy, event_id=event_id, symbol=event_id,
+            timestamp_ns=1, message="risk",
+            metadata={"gross_profit": 1000, "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-30",
+                "earliest_expiry": "2026-10-30", "lot_size": 10, "lots": 1,
+                "edge": 5, "capital_used": 30000,
+            }},
+        )
+        assert AlertService().dispatch(db_session, event) == 0
+        assert db_session.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1, LivePaperTrade.event_id == event_id,
+        ).count() == 0
