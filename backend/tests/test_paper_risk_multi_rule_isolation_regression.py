@@ -187,9 +187,9 @@ def test_duplicate_mark_path_does_not_apply_new_entry_risk_capital(db_session):
 
 
 def test_unconfigured_user_does_not_leak_read_transaction_into_next_user(db_session):
-    _setup_user(db_session, 1, amount=30000.0, max_daily=30000.0)
+    _setup_user(db_session, 2, amount=30000.0, max_daily=30000.0)
     db_session.add(AlertRule(
-        user_id=2, strategy_id="cash-future", min_gross_profit=0.0,
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
         mobile_number="", whatsapp_enabled=False, enabled=True,
         max_daily_capital=30000.0, max_simultaneous_positions=5, max_loss=0.0,
         priority=1,
@@ -205,12 +205,12 @@ def test_unconfigured_user_does_not_leak_read_transaction_into_next_user(db_sess
     ) == 0
 
     row = db_session.query(LivePaperTrade).filter(
-        LivePaperTrade.user_id == 1,
+        LivePaperTrade.user_id == 2,
         LivePaperTrade.event_id == "UNCONFIGURED-THEN-CONFIGURED",
     ).one()
     assert row.capital_used == 30000.0
     assert row.lots == 1
     assert db_session.query(LivePaperTrade).filter(
-        LivePaperTrade.user_id == 2,
+        LivePaperTrade.user_id == 1,
     ).count() == 0
     assert not db_session.in_transaction()
