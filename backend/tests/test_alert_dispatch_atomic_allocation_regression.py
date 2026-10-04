@@ -1,0 +1,222 @@
+"""Regression coverage for atomic dispatcher allocation and fail-closed rollback."""
+
+import threading
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.auto.live_paper import LivePaperTradeService
+from app.core.database import Base
+from app.models import AlertRule, GlobalPaperSetting, LivePaperTrade
+from app.notifications.common import AlertEvent, AlertService
+
+
+def _event(event_id, *, capital=60000.0, lots=2, edge=5.0):
+    return AlertEvent(
+        strategy_id="cash-future",
+        event_id=event_id,
+        symbol=event_id,
+        timestamp_ns=1,
+        message="atomic-allocation",
+        metadata={
+            "gross_profit": 1000,
+            "paper_trade": {
+                "direction": "LONG",
+                "expiry": "2026-10-30",
+                "earliest_expiry": "2026-10-30",
+                "lot_size": 10,
+                "lots": lots,
+                "edge": edge,
+                "capital_used": capital,
+            },
+        },
+    )
+
+
+def test_fail_closed_enter_or_mark_rolls_back_dispatch_risk_lock(db_session, monkeypatch):
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=30000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=30000, max_simultaneous_positions=5, max_loss=0,
+    ))
+    db_session.commit()
+
+    original = LivePaperTradeService.enter_or_mark
+
+    def fail_closed(self, *args, **kwargs):
+        return None, False
+
+    monkeypatch.setattr(LivePaperTradeService, "enter_or_mark", fail_closed)
+
+    assert AlertService().dispatch(
+        db_session, _event("FAIL-CLOSED-ROLLBACK")
+    ) == 0
+
+    # The dispatcher acquired the per-user GlobalPaperSetting write lock before
+    # calling enter_or_mark(). A fail-closed (None, False) result is not an
+    # exception, so the dispatcher must explicitly rollback that transaction.
+    assert not db_session.in_transaction()
+    assert db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+    ).count() == 0
+
+    monkeypatch.setattr(LivePaperTradeService, "enter_or_mark", original)
+
+    # The same session must immediately be able to reserve the full budget;
+    # there must be no phantom reservation or dirty transaction from the
+    # rejected attempt.
+    assert AlertService().dispatch(
+        db_session, _event("FAIL-CLOSED-RECOVERY", capital=30000, lots=1)
+    ) == 0
+
+    row = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+        LivePaperTrade.event_id == "FAIL-CLOSED-RECOVERY",
+    ).one()
+    assert row.lots == 1
+    assert row.capital_used == 30000
+
+
+def test_partial_allocation_remains_exact_after_fail_closed_downstream_path(db_session, monkeypatch):
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=30000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=30000, max_simultaneous_positions=5, max_loss=0,
+    ))
+    db_session.commit()
+
+    original = LivePaperTradeService.enter_or_mark
+    calls = {"count": 0}
+
+    def fail_once(self, *args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            # Simulate downstream validation returning fail-closed instead of
+            # raising after the dispatcher already calculated one effective lot.
+            return None, False
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(LivePaperTradeService, "enter_or_mark", fail_once)
+
+    assert AlertService().dispatch(
+        db_session, _event("PARTIAL-FAIL-THEN-RECOVER")
+    ) == 0
+
+    assert db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+    ).count() == 0
+    assert not db_session.in_transaction()
+
+    # Original request is 2 lots / 60k, but only 30k is available. After the
+    # failed attempt, the same exact one-lot allocation must remain available.
+    assert AlertService().dispatch(
+        db_session, _event("PARTIAL-RECOVERED")
+    ) == 0
+
+    row = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+        LivePaperTrade.event_id == "PARTIAL-RECOVERED",
+    ).one()
+    assert row.lots == 1
+    assert row.capital_used == 30000
+
+
+def test_concurrent_partial_entries_respect_exact_max_loss_boundary(tmp_path):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'atomic-max-loss-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    try:
+        setup.add(GlobalPaperSetting(
+            user_id=1, enabled=True, paper_amount=90000, emergency_stop=False,
+        ))
+        setup.add(AlertRule(
+            user_id=1, strategy_id="cash-future", min_gross_profit=0,
+            mobile_number="", whatsapp_enabled=False, enabled=True,
+            max_daily_capital=60000, max_simultaneous_positions=5,
+            max_loss=100,
+        ))
+        setup.commit()
+
+        seed_service = LivePaperTradeService()
+        seed, created = seed_service.enter_or_mark(
+            setup,
+            strategy_id="cash-future",
+            symbol="LOSS-SEED",
+            event_id="LOSS-SEED",
+            direction="LONG",
+            expiry="2026-10-30",
+            earliest_expiry="2026-10-30",
+            lot_size=10,
+            lots=2,
+            edge=10,
+            capital_used=60000,
+            user_id=1,
+        )
+        assert created is True
+        assert seed.lots == 2
+        seed_service.mark(setup, seed, edge=9, pnl_override=-100)
+        setup.commit()
+    finally:
+        setup.close()
+
+    barrier = threading.Barrier(2)
+    errors = []
+    results = []
+
+    def worker(event_id):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            results.append(AlertService().dispatch(
+                db, _event(event_id, capital=60000, lots=2)
+            ))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=worker, args=("MAX-LOSS-RACE-A",)),
+        threading.Thread(target=worker, args=("MAX-LOSS-RACE-B",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(results) == 2
+
+    verify = Session()
+    try:
+        rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.status == "ONGOING",
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].event_id == "LOSS-SEED"
+        assert rows[0].capital_used == 60000
+        assert rows[0].unrealized_pnl == -100
+
+        # Exact max-loss boundary is a hard stop. Neither concurrent request
+        # may create even a one-lot partial allocation.
+        assert verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.event_id.in_(
+                ["MAX-LOSS-RACE-A", "MAX-LOSS-RACE-B"]
+            ),
+        ).count() == 0
+    finally:
+        verify.close()
+        engine.dispose()
