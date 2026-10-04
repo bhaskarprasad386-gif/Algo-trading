@@ -6101,3 +6101,163 @@ def test_paper_http_concurrent_terminal_exits_without_fill_id_close_once():
         assert account.realized_pnl == 50.0
     finally:
         verify.close()
+
+
+def test_paper_http_cold_start_bootstrap_concurrency_matrix():
+    """Concurrent first requests must bootstrap exactly one paper identity/account."""
+    from app.core.database import get_db
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+    )
+    # Each worker needs the same database, so use a temporary file-backed DB.
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        engine.dispose()
+        engine = create_engine(
+            f"sqlite:///{Path(tmp_dir) / 'cold-start-bootstrap.db'}",
+            connect_args={"check_same_thread": False, "timeout": 10},
+        )
+        with engine.begin() as conn:
+            conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+        Base.metadata.create_all(engine)
+        TestSession = sessionmaker(bind=engine)
+
+        def override_db():
+            db = TestSession()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = override_db
+        client = TestClient(app)
+
+        try:
+            # Matrix 1: concurrent first reads, with no User or TradingAccount present.
+            barrier = threading.Barrier(12)
+
+            def first_account(_):
+                barrier.wait(timeout=5)
+                return client.get("/api/v1/execution/paper/account")
+
+            with ThreadPoolExecutor(max_workers=12) as pool:
+                responses = list(pool.map(first_account, range(12)))
+
+            assert all(response.status_code == 200 for response in responses)
+            account_payloads = [response.json() for response in responses]
+            assert all(payload["mode"] == "paper" for payload in account_payloads)
+            assert all(payload["virtual_balance"] == 10_000_000.0 for payload in account_payloads)
+
+            db = TestSession()
+            try:
+                users = db.query(User).filter(User.email == "system@local.algo-trading").all()
+                accounts = db.query(TradingAccount).filter(
+                    TradingAccount.mode == "PAPER"
+                ).all()
+                assert len(users) == 1
+                assert len(accounts) == 1
+                assert accounts[0].user_id == users[0].id
+                assert accounts[0].is_active is True
+            finally:
+                db.close()
+
+            # Matrix 2: after a clean cold reset, concurrent first mutations must
+            # converge on the same bootstrapped account rather than duplicate it.
+            db = TestSession()
+            try:
+                db.query(TradingAccount).delete()
+                db.query(User).delete()
+                db.commit()
+            finally:
+                db.close()
+
+            barrier = threading.Barrier(10)
+
+            def first_order(_):
+                barrier.wait(timeout=5)
+                return client.post(
+                    "/api/v1/execution/paper/order",
+                    json={
+                        "symbol": "COLD_START",
+                        "transaction_type": "BUY",
+                        "price": 100.0,
+                        "quantity": 1,
+                    },
+                )
+
+            with ThreadPoolExecutor(max_workers=10) as pool:
+                responses = list(pool.map(first_order, range(10)))
+
+            assert all(response.status_code == 200 for response in responses)
+            assert all(response.json()["status"] == "success" for response in responses)
+
+            db = TestSession()
+            try:
+                users = db.query(User).filter(User.email == "system@local.algo-trading").all()
+                accounts = db.query(TradingAccount).filter(
+                    TradingAccount.mode == "PAPER"
+                ).all()
+                orders = db.query(Order).filter(
+                    Order.is_paper.is_(True),
+                    Order.symbol == "COLD_START",
+                ).all()
+                positions = db.query(Position).filter(
+                    Position.is_paper.is_(True),
+                    Position.symbol == "COLD_START",
+                    Position.is_open.is_(True),
+                ).all()
+
+                assert len(users) == 1
+                assert len(accounts) == 1
+                assert len(orders) == 10
+                assert len(positions) == 1
+                assert positions[0].quantity == 10
+                assert positions[0].average_price == 100.0
+                assert accounts[0].virtual_balance == 10_000_000.0 - 1_000.0
+                assert accounts[0].realized_pnl == 0.0
+            finally:
+                db.close()
+
+            # Matrix 3: clean cold reset, then concurrent first reconciliation
+            # requests must all observe the same freshly bootstrapped account.
+            db = TestSession()
+            try:
+                db.query(TradingAccount).delete()
+                db.query(User).delete()
+                db.commit()
+            finally:
+                db.close()
+
+            barrier = threading.Barrier(12)
+
+            def first_reconcile(_):
+                barrier.wait(timeout=5)
+                return client.get("/api/v1/execution/paper/reconcile")
+
+            with ThreadPoolExecutor(max_workers=12) as pool:
+                responses = list(pool.map(first_reconcile, range(12)))
+
+            assert all(response.status_code == 200 for response in responses)
+            reconcile_payloads = [response.json() for response in responses]
+            assert all(payload["status"] == "OK" for payload in reconcile_payloads)
+            assert all(payload["orders"] == [] for payload in reconcile_payloads)
+            assert all(payload["reconstructed_positions"] == [] for payload in reconcile_payloads)
+            assert all(payload["repairability"] == "NONE" for payload in reconcile_payloads)
+
+            db = TestSession()
+            try:
+                assert db.query(User).filter(
+                    User.email == "system@local.algo-trading"
+                ).count() == 1
+                assert db.query(TradingAccount).filter(
+                    TradingAccount.mode == "PAPER"
+                ).count() == 1
+            finally:
+                db.close()
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+            engine.dispose()
