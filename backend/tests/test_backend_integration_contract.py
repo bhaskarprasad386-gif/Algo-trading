@@ -329,3 +329,26 @@ def test_expiry_close_releases_position_slot_but_keeps_realized_loss_limit(db_se
     )
     service.dispatch(db_session, second)
     assert svc.ongoing(db_session, 1) == []
+
+
+def test_alert_risk_limits_use_ist_trading_day_boundary(db_session, monkeypatch):
+    from datetime import datetime, timezone
+    from app.models import AlertRule
+    from app.notifications import common as common_module
+
+    _enable(db_session, 1)
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="111", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=100.0, max_simultaneous_positions=20, max_loss=10000.0,
+    ))
+    db_session.commit()
+
+    class DummyDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 4, 18, 40, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(common_module, "datetime", DummyDateTime, raising=False)
+    # 2026-10-04 18:40 UTC is 2026-10-05 00:10 IST: the trading-day
+    # boundary must be the IST calendar date, not UTC midnight.
