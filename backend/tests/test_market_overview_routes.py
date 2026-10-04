@@ -6,6 +6,9 @@ def test_market_overview_returns_index_and_commodity_groups(monkeypatch):
         def get_instrument(self, symbol, exchange):
             return {"token": f"{exchange}-{symbol}"}
 
+        def resolve_index_instrument(self, symbol, exchange):
+            return {"token": f"{exchange}-{symbol}"}
+
     class FakeClient:
         def quote_many(self, exchange, instruments):
             return {
