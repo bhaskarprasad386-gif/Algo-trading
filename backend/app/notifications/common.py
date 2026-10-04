@@ -121,7 +121,9 @@ class AlertService:
                     continue
                 requested_capital = max(0.0, float(paper.get("capital_used", 0.0) or 0.0))
                 from datetime import datetime, timezone
-                day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
+                from zoneinfo import ZoneInfo
+                now_ist = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Kolkata"))
+                day_start = now_ist.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
                 max_daily_capital = min(max(0.0, float(rule.max_daily_capital)) for rule in user_rules)
                 if max_daily_capital > 0 and requested_capital > 0:
                     daily_capital = sum(
