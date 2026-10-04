@@ -132,6 +132,33 @@ def current_user_id(db: Session = Depends(get_db)) -> int:
     if accounts:
         return int(accounts[0].user_id)
 
+    # Cold-start bootstrap must have one database-level serialization point.
+    # Without this, concurrent first requests can all observe an empty account
+    # set before the unique user/account constraints become visible.
+    if db.bind is not None and db.bind.dialect.name == "sqlite":
+        db.rollback()
+        try:
+            db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        except OperationalError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="paper trading account bootstrap is busy; retry") from exc
+        accounts = (
+            db.query(TradingAccount)
+            .filter(
+                TradingAccount.is_active.is_(True),
+                TradingAccount.mode == "PAPER",
+            )
+            .order_by(TradingAccount.id.asc())
+            .all()
+        )
+        if len(accounts) > 1:
+            raise HTTPException(
+                status_code=409,
+                detail="multiple active paper trading accounts require authenticated user context",
+            )
+        if accounts:
+            return int(accounts[0].user_id)
+
     user = db.query(User).filter(User.is_active.is_(True)).order_by(User.id.asc()).first()
     if user is None:
         try:
