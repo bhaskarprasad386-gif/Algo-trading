@@ -81,8 +81,53 @@ class AlertService:
         ).order_by(AlertRule.priority.desc(), AlertRule.id.asc()).all()
         if isinstance(paper, Mapping) and rules:
             from app.auto.live_paper import LivePaperTradeService
+            from app.models.live_paper_trade import LivePaperTrade
             service = LivePaperTradeService()
-            for rule_user_id in {int(rule.user_id) for rule in rules}:
+            eligible_rules = [
+                rule for rule in rules
+                if gross_value is None or gross_value >= float(rule.min_gross_profit)
+            ]
+            for rule_user_id in {int(rule.user_id) for rule in eligible_rules}:
+                user_rules = [rule for rule in eligible_rules if int(rule.user_id) == rule_user_id]
+                if not user_rules:
+                    continue
+                max_simultaneous = min(max(0, int(rule.max_simultaneous_positions)) for rule in user_rules)
+                ongoing_count = db.query(LivePaperTrade).filter(
+                    LivePaperTrade.user_id == rule_user_id,
+                    LivePaperTrade.status == "ONGOING",
+                ).count()
+                if max_simultaneous and ongoing_count >= max_simultaneous:
+                    continue
+                requested_capital = max(0.0, float(paper.get("capital_used", 0.0) or 0.0))
+                max_daily_capital = min(max(0.0, float(rule.max_daily_capital)) for rule in user_rules)
+                if max_daily_capital > 0 and requested_capital > 0:
+                    from datetime import datetime, timezone
+                    day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
+                    daily_capital = sum(
+                        float(row[0] or 0.0) for row in db.query(LivePaperTrade.capital_used).filter(
+                            LivePaperTrade.user_id == rule_user_id,
+                            LivePaperTrade.opened_at >= day_start,
+                        ).all()
+                    )
+                    if daily_capital + requested_capital > max_daily_capital:
+                        continue
+                max_loss = min(max(0.0, float(rule.max_loss)) for rule in user_rules)
+                if max_loss > 0:
+                    open_loss = sum(
+                        min(0.0, float(row[0] or 0.0)) for row in db.query(LivePaperTrade.unrealized_pnl).filter(
+                            LivePaperTrade.user_id == rule_user_id,
+                            LivePaperTrade.status == "ONGOING",
+                        ).all()
+                    )
+                    today_loss = sum(
+                        min(0.0, float(row[0] or 0.0)) for row in db.query(LivePaperTrade.realized_pnl).filter(
+                            LivePaperTrade.user_id == rule_user_id,
+                            LivePaperTrade.status == "COMPLETED",
+                            LivePaperTrade.closed_at >= day_start,
+                        ).all()
+                    ) if 'day_start' in locals() else 0.0
+                    if open_loss + today_loss <= -max_loss:
+                        continue
                 try:
                     service.enter_or_mark(
                         db, strategy_id=event.strategy_id, symbol=event.symbol, event_id=event.event_id,
@@ -90,7 +135,7 @@ class AlertService:
                         earliest_expiry=paper.get("earliest_expiry") or paper.get("expiry"),
                         lot_size=int(paper.get("lot_size", 1) or 1), lots=int(paper.get("lots", 1) or 1),
                         edge=float(paper.get("edge", 0.0) or 0.0),
-                        capital_used=float(paper.get("capital_used", 0.0) or 0.0),
+                        capital_used=requested_capital,
                         legs=paper.get("legs") or [], metadata=dict(paper), user_id=rule_user_id,
                     )
                 except Exception as exc:
