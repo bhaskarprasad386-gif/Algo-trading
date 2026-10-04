@@ -1312,3 +1312,106 @@ def test_duplicate_mark_refreshes_loss_before_next_risk_gate(db_session):
     rows = svc.ongoing(db_session, 1)
     assert len(rows) == 2
     assert [row.symbol for row in rows] == ["AAA", "BBB"]
+
+
+def test_mark_and_alert_max_loss_gate_are_serialized(tmp_path):
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'mark-risk-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    from app.core.database import Base
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    setup.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    setup.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0.0, max_simultaneous_positions=5, max_loss=100.0,
+    ))
+    setup.commit()
+    seed, created = LivePaperTradeService().enter_or_mark(
+        setup, strategy_id="cash-future", symbol="SEED",
+        event_id="MARK-RISK-RACE-SEED", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=10, capital_used=1000, user_id=1,
+    )
+    assert created is True
+    seed_id = seed.id
+    setup.close()
+
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+
+    def mark_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            trade = db.query(LivePaperTrade).filter(LivePaperTrade.id == seed_id).one()
+            LivePaperTradeService().mark(db, trade, edge=0.0)
+            results.append("mark")
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    def risk_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            event = AlertEvent(
+                strategy_id="cash-future", event_id="MARK-RISK-RACE-NEW", symbol="NEW",
+                timestamp_ns=1, message="new", metadata={
+                    "gross_profit": 1,
+                    "paper_trade": {
+                        "direction": "LONG", "expiry": "2026-10-30",
+                        "lot_size": 10, "lots": 1, "edge": 5, "capital_used": 1000,
+                    },
+                },
+            )
+            AlertService().dispatch(db, event)
+            results.append("dispatch")
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [threading.Thread(target=mark_worker), threading.Thread(target=risk_worker)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert results == ["mark", "dispatch"] or results == ["dispatch", "mark"]
+
+    verify = Session()
+    try:
+        seed_row = verify.query(LivePaperTrade).filter(LivePaperTrade.id == seed_id).one()
+        new_rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.event_id == "MARK-RISK-RACE-NEW",
+        ).all()
+        if results.index("mark") < results.index("dispatch"):
+            # The loss mark committed before the risk gate. It must therefore
+            # block the new entry instead of using the stale pre-mark P&L.
+            assert new_rows == []
+            assert seed_row.unrealized_pnl == -100.0
+        else:
+            # The entry won the serialized lock first; the mark may then run
+            # and realize the loss after the already-authorized entry.
+            assert len(new_rows) == 1
+            assert new_rows[0].status == "ONGOING"
+            assert seed_row.unrealized_pnl == -100.0
+    finally:
+        verify.close()
+        engine.dispose()
