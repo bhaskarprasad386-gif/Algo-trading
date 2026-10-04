@@ -12361,3 +12361,63 @@ def test_http_lifecycle_matrix_30_final_retry_lifecycle_storm_is_deterministic(t
     finally:
         _clear_http_overrides()
         engine.dispose()
+
+
+def test_paper_read_endpoints_fail_closed_on_corrupt_state_and_exclude_nonpaper_orders(tmp_path):
+    from app.models.order import Order
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "read-scope", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        created = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "READSCOPE", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "READ-1"},
+        )
+        assert created.status_code == 200
+
+        db = sessionmaker(bind=engine)()
+        try:
+            paper_order_row = db.query(Order).filter(Order.user_id == users[0], Order.is_paper.is_(True)).first()
+            db.add(Order(
+                user_id=users[0],
+                order_id=f"PAPER-{users[0]}-FAKE-LIVE",
+                symbol="FAKE-LIVE",
+                transaction_type="BUY",
+                price=99.0,
+                quantity=1,
+                filled_quantity=1,
+                average_price=99.0,
+                average_fill_price=99.0,
+                status="FILLED",
+                is_paper=False,
+                pnl=0.0,
+                order_type="MARKET",
+                product_type="INTRADAY",
+                time_in_force="DAY",
+            ))
+            db.flush()
+            assert paper_order_row is not None
+            paper_order_row.price = 11.0
+            db.commit()
+        finally:
+            db.close()
+
+        assert client.get("/api/v1/execution/paper/account").status_code == 500
+        assert client.get("/api/v1/execution/paper/orders").status_code == 500
+        assert client.get("/api/v1/execution/paper/position").status_code == 500
+
+        db = sessionmaker(bind=engine)()
+        try:
+            paper_order_row = db.query(Order).filter(Order.user_id == users[0], Order.is_paper.is_(True)).first()
+            assert paper_order_row is not None
+            paper_order_row.price = 10.0
+            db.commit()
+        finally:
+            db.close()
+
+        orders = client.get("/api/v1/execution/paper/orders")
+        assert orders.status_code == 200
+        assert all(item["id"] != f"PAPER-{users[0]}-FAKE-LIVE" for item in orders.json()["orders"])
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
