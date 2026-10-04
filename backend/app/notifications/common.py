@@ -103,14 +103,21 @@ class AlertService:
         paper = event.metadata.get("paper_trade")
         gross = event.metadata.get("gross_profit", event.metadata.get("gross_pnl", event.metadata.get("gross_profit_rupees")))
         try:
+            import math
             gross_value = float(gross) if gross is not None else None
+            gross_valid = gross is None or math.isfinite(gross_value)
         except (TypeError, ValueError):
             gross_value = None
+            gross_valid = gross is None
         rules = db.query(AlertRule).filter(
             AlertRule.enabled.is_(True),
             AlertRule.strategy_id == event.strategy_id.strip().lower(),
         ).order_by(AlertRule.priority.desc(), AlertRule.id.asc()).all()
         if isinstance(paper, Mapping) and rules:
+            # A supplied gross-profit value participates in the paper-entry
+            # threshold. Never treat malformed/non-finite gross as "missing".
+            if not gross_valid:
+                return 0
             # Reject malformed numeric paper payloads before risk gates so
             # int()/float() coercion cannot silently change the requested
             # allocation that the gates are evaluating.
