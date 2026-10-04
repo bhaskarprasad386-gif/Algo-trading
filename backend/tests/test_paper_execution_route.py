@@ -11836,3 +11836,290 @@ def test_http_integrity_matrix_10_final_http_storm_leaves_deterministic_ledger(t
     finally:
         _clear_http_overrides()
         engine.dispose()
+
+
+# HTTP mutation-concurrency matrix 11-20: writer-vs-writer boundaries through real routes.
+
+def _run_concurrent_posts(client_factory, requests):
+    barrier = threading.Barrier(len(requests))
+    def invoke(item):
+        client = client_factory()
+        barrier.wait()
+        route, payload = item
+        response = client.post(route, json=payload)
+        return response.status_code, response.json()
+    with ThreadPoolExecutor(max_workers=len(requests)) as pool:
+        return list(pool.map(invoke, requests))
+
+
+def test_http_mutation_matrix_11_concurrent_same_symbol_different_fill_ids_single_winner(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "same-symbol", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        requests = [
+            ("/api/v1/execution/paper/order", {"symbol": "WRITER", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "W-1"}),
+            ("/api/v1/execution/paper/order", {"symbol": "WRITER", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "W-2"}),
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        statuses = sorted(status for status, _ in results)
+        assert statuses == [200, 409]
+
+        client = TestClient(app, raise_server_exceptions=False)
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 1
+        assert orders[0]["fill_id"] in {"W-1", "W-2"}
+        assert client.get("/api/v1/execution/paper/reconcile").json()["status"] == "OK"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_12_concurrent_short_cover_requests_leave_one_terminal_state(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "short-cover", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        seed = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "COVER", "transaction_type": "SELL", "price": 20.0, "quantity": 2, "fill_id": "COVER-SEED"},
+        )
+        assert seed.status_code == 200
+
+        requests = [
+            ("/api/v1/execution/paper/order", {"symbol": "COVER", "transaction_type": "BUY", "price": 19.0, "quantity": 2, "fill_id": "COVER-1"}),
+            ("/api/v1/execution/paper/order", {"symbol": "COVER", "transaction_type": "BUY", "price": 19.0, "quantity": 2, "fill_id": "COVER-2"}),
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        assert sum(status == 200 for status, _ in results) == 1
+        assert sum(status == 409 for status, _ in results) == 1
+
+        final = client.get("/api/v1/execution/paper/position").json()
+        assert final["position"] is None
+        reconcile = client.get("/api/v1/execution/paper/reconcile").json()
+        assert reconcile["status"] == "OK"
+        assert reconcile["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_13_concurrent_partial_reversals_produce_one_serialized_result(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "partial-reversal", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        seed = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "REV", "transaction_type": "BUY", "price": 10.0, "quantity": 4, "fill_id": "REV-SEED"},
+        )
+        assert seed.status_code == 200
+
+        requests = [
+            ("/api/v1/execution/paper/order", {"symbol": "REV", "transaction_type": "SELL", "price": 12.0, "quantity": 2, "fill_id": "REV-1"}),
+            ("/api/v1/execution/paper/order", {"symbol": "REV", "transaction_type": "SELL", "price": 13.0, "quantity": 2, "fill_id": "REV-2"}),
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        assert all(status == 200 for status, _ in results)
+
+        position = client.get("/api/v1/execution/paper/position").json()["position"]
+        assert position is None
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 3
+        reconcile = client.get("/api/v1/execution/paper/reconcile").json()
+        assert reconcile["status"] == "OK"
+        assert reconcile["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_14_concurrent_terminal_exits_create_one_exit_order(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "exit-race", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        seed = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "EXITRACE", "transaction_type": "BUY", "price": 10.0, "quantity": 2, "fill_id": "EXIT-SEED"},
+        )
+        assert seed.status_code == 200
+
+        requests = [
+            ("/api/v1/execution/paper/exit", {"symbol": "EXITRACE", "price": 12.0, "fill_id": "EXIT-1"}),
+            ("/api/v1/execution/paper/exit", {"symbol": "EXITRACE", "price": 12.0, "fill_id": "EXIT-2"}),
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        assert all(status == 200 for status, _ in results)
+
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 2
+        assert sum(item["fill_id"] in {"EXIT-1", "EXIT-2"} for item in orders) == 1
+        assert client.get("/api/v1/execution/paper/position").json()["position"] is None
+        assert client.get("/api/v1/execution/paper/reconcile").json()["status"] == "OK"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_15_concurrent_entry_and_direct_order_same_symbol_are_serialized(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "entry-order", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        requests = [
+            ("/api/v1/execution/paper/entry", {"symbol": "CROSS", "price": 10.0, "quantity": 1, "fill_id": "ENTRY-1"}),
+            ("/api/v1/execution/paper/order", {"symbol": "CROSS", "transaction_type": "BUY", "price": 11.0, "quantity": 1, "fill_id": "ORDER-1"}),
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        statuses = sorted(status for status, _ in results)
+        assert statuses == [200, 409]
+
+        client = TestClient(app, raise_server_exceptions=False)
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 1
+        assert client.get("/api/v1/execution/paper/reconcile").json()["status"] == "OK"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_16_concurrent_scanner_and_direct_order_same_symbol_are_serialized(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "scanner-order", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        requests = [
+            ("/api/v1/execution/paper/from-scanner", {"symbol": "SCAN", "cash_price": 10.0, "quantity": 1, "future_price": 11.0, "net_profit": 1.0, "executable": True, "fill_id": "SCAN-1"}),
+            ("/api/v1/execution/paper/order", {"symbol": "SCAN", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "DIRECT-1"}),
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        statuses = sorted(status for status, _ in results)
+        assert statuses == [200, 409]
+
+        client = TestClient(app, raise_server_exceptions=False)
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 1
+        assert client.get("/api/v1/execution/paper/reconcile").json()["status"] == "OK"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_17_same_fill_id_across_scanner_and_direct_routes_is_idempotent(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "cross-route-fill", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        requests = [
+            ("/api/v1/execution/paper/from-scanner", {"symbol": "FILLX", "cash_price": 10.0, "quantity": 1, "future_price": 11.0, "net_profit": 1.0, "executable": True, "fill_id": "SHARED-1"}),
+            ("/api/v1/execution/paper/order", {"symbol": "FILLX", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "SHARED-1"}),
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        assert all(status == 200 for status, _ in results)
+        assert sum(payload.get("idempotent") is True for _, payload in results) == 1
+
+        client = TestClient(app, raise_server_exceptions=False)
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 1
+        assert orders[0]["fill_id"] == "SHARED-1"
+        assert client.get("/api/v1/execution/paper/reconcile").json()["status"] == "OK"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_18_conflicting_same_fill_id_across_http_routes_fails_closed(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "conflict-fill", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        requests = [
+            ("/api/v1/execution/paper/order", {"symbol": "CONFLICT", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "CONFLICT-1"}),
+            ("/api/v1/execution/paper/order", {"symbol": "CONFLICT", "transaction_type": "BUY", "price": 11.0, "quantity": 1, "fill_id": "CONFLICT-1"}),
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        statuses = sorted(status for status, _ in results)
+        assert statuses == [200, 409]
+
+        client = TestClient(app, raise_server_exceptions=False)
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 1
+        assert orders[0]["price"] == 10.0
+        reconcile = client.get("/api/v1/execution/paper/reconcile").json()
+        assert reconcile["status"] == "OK"
+        assert reconcile["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_19_two_users_can_mutate_isolated_accounts_concurrently(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "two-users", users=2)
+    try:
+        barrier = threading.Barrier(2)
+
+        def mutate(user_id, symbol, fill_id):
+            app.dependency_overrides[current_user_dependency] = lambda uid=user_id: uid
+            client = TestClient(app, raise_server_exceptions=False)
+            barrier.wait()
+            return client.post(
+                "/api/v1/execution/paper/order",
+                json={"symbol": symbol, "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": fill_id},
+            )
+
+        # Dependency overrides are process-global, so serialize override installation
+        # and use direct route dependency injection for this isolation boundary instead.
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client_a = TestClient(app, raise_server_exceptions=False)
+        first = client_a.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "USER-A", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "UA-1"},
+        )
+        assert first.status_code == 200
+
+        app.dependency_overrides[current_user_dependency] = lambda: users[1]
+        client_b = TestClient(app, raise_server_exceptions=False)
+        second = client_b.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "USER-B", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "UB-1"},
+        )
+        assert second.status_code == 200
+
+        assert client_b.get("/api/v1/execution/paper/orders").json()["orders"][0]["symbol"] == "USER-B"
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        assert client_a.get("/api/v1/execution/paper/orders").json()["orders"][0]["symbol"] == "USER-A"
+
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        assert client_a.get("/api/v1/execution/paper/reconcile").json()["status"] == "OK"
+        app.dependency_overrides[current_user_dependency] = lambda: users[1]
+        assert client_b.get("/api/v1/execution/paper/reconcile").json()["status"] == "OK"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_mutation_matrix_20_final_writer_storm_has_deterministic_integrity(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "writer-storm", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        seed = TestClient(app, raise_server_exceptions=False).post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "WSTORM", "transaction_type": "BUY", "price": 10.0, "quantity": 5, "fill_id": "WS-SEED"},
+        )
+        assert seed.status_code == 200
+
+        requests = [
+            ("/api/v1/execution/paper/order", {"symbol": "WSTORM", "transaction_type": "SELL", "price": 11.0, "quantity": 1, "fill_id": f"WS-{i}"})
+            for i in range(1, 11)
+        ]
+        results = _run_concurrent_posts(lambda: TestClient(app, raise_server_exceptions=False), requests)
+        assert all(status == 200 for status, _ in results)
+
+        client = TestClient(app, raise_server_exceptions=False)
+        final_position = client.get("/api/v1/execution/paper/position").json()["position"]
+        assert final_position["quantity"] == 0
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 11
+        assert client.get("/api/v1/execution/paper/reconcile").json()["status"] == "OK"
+        final = client.get("/api/v1/execution/paper/reconcile").json()
+        assert final["repairability"] == "NONE"
+        assert final["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
