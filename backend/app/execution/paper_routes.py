@@ -14,7 +14,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -230,7 +230,11 @@ def _begin_paper_mutation(db: Session, user_id: int) -> TradingAccount:
         # current_user_id() may have opened a read transaction on this session.
         # Mutation locking must begin from a clean transaction boundary.
         db.rollback()
-        db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        try:
+            db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        except OperationalError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="paper trading account is busy; retry") from exc
         return _account(db, user_id)
     account = (
         db.query(TradingAccount)
