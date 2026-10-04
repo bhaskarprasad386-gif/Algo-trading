@@ -305,6 +305,11 @@ class AlertService:
                         legs=paper.get("legs") or [], metadata=dict(paper), user_id=rule_user_id,
                     )
                 except Exception as exc:
+                    # enter_or_mark() can fail after this per-user risk lock has
+                    # started a transaction. Roll back the failed attempt so a
+                    # later alert cannot inherit a dirty transaction or retain
+                    # the database write lock.
+                    db.rollback()
                     from app.core.logger import app_logger
                     app_logger.error("Live paper auto-entry failed for user %s: %s", rule_user_id, exc)
         if rules:
