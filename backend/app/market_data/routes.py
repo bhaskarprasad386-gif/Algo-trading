@@ -267,17 +267,23 @@ def get_market_overview():
         rows = []
         for exchange, instruments in by_exchange.items():
             try:
-                payload = client.quote_many(exchange, instruments).get("data") or {}
-                fetched = payload.get("fetched") or payload.get("data") or []
-                if isinstance(fetched, dict):
-                    fetched = [fetched]
-                by_token = {str(row.get("symbolToken", row.get("token", ""))): row for row in fetched if isinstance(row, dict)}
+                by_token = {}
+                if market_open:
+                    payload = client.quote_many(exchange, instruments).get("data") or {}
+                    fetched = payload.get("fetched") or payload.get("data") or []
+                    if isinstance(fetched, dict):
+                        fetched = [fetched]
+                    by_token = {
+                        str(row.get("symbolToken", row.get("token", ""))): row
+                        for row in fetched
+                        if isinstance(row, dict)
+                    }
                 for item in instruments:
                     quote = by_token.get(item["symboltoken"], {})
                     fallback_ltp = None
                     fallback_previous = None
                     status = "LIVE" if quote else "NO_QUOTE"
-                    if not market_open and (not quote or quote.get("ltp") is None or quote.get("close") is None):
+                    if not market_open:
                         try:
                             fallback_ltp, fallback_previous = last_trading_closes(exchange, item["symboltoken"])
                             if fallback_ltp is not None:
