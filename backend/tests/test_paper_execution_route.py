@@ -4179,7 +4179,8 @@ def test_paper_reconcile_http_edge_state_matrix_contract_and_dry_run(tmp_path):
                     Order.user_id == user_id, Order.is_paper.is_(True)
                 ).one()
                 order.quantity = 2
-                order.audit_hash = None
+                order.audit_hash = canonical_audit_hash
+                order.previous_audit_hash = canonical_previous_hash
                 reset.commit()
             finally:
                 reset.close()
@@ -4188,6 +4189,138 @@ def test_paper_reconcile_http_edge_state_matrix_contract_and_dry_run(tmp_path):
         assert final.status_code == 200
         assert final.json()["status"] == "OK"
         assert final.json()["repair_plan"]["apply"] is False
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
+
+
+def test_paper_reconcile_http_concurrent_readers_return_identical_clean_snapshot(tmp_path):
+    """Concurrent read-only HTTP reconciliation is deterministic on a stable SQLite snapshot."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-reconcile-readers.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="http-readers@example.com",
+            hashed_password="",
+            full_name="HTTP Readers",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id,
+            mode="PAPER",
+            virtual_balance=5000.0,
+            initial_virtual_balance=5000.0,
+            initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0,
+            is_active=True,
+        ))
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    db = TestSession()
+    try:
+        paper_order(
+            PaperOrderRequest(
+                symbol="READ",
+                transaction_type="BUY",
+                price=100.0,
+                quantity=2,
+                fill_id="READ-1",
+            ),
+            user_id=user_id,
+            db=db,
+        )
+    finally:
+        db.close()
+
+    def override_db():
+        session = TestSession()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    client = TestClient(app)
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        before = TestSession()
+        try:
+            account = before.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id
+            ).one()
+            order = before.query(Order).filter(
+                Order.user_id == user_id, Order.is_paper.is_(True)
+            ).one()
+            position = before.query(Position).filter(
+                Position.user_id == user_id, Position.is_paper.is_(True)
+            ).one()
+            before_state = (
+                float(account.virtual_balance),
+                float(account.realized_pnl or 0.0),
+                int(order.quantity),
+                order.audit_hash,
+                order.previous_audit_hash,
+                int(position.quantity),
+                float(position.average_price),
+            )
+        finally:
+            before.close()
+
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            responses = list(pool.map(
+                lambda _: client.get("/api/v1/execution/paper/reconcile"),
+                range(12),
+            ))
+
+        assert all(response.status_code == 200 for response in responses)
+        payloads = [response.json() for response in responses]
+        canonical = payloads[0]
+        for payload in payloads:
+            assert payload == canonical
+            assert payload["status"] == "OK"
+            assert payload["user_id"] == user_id
+            assert payload["repair_plan"]["apply"] is False
+            assert payload["repair_plan"]["reason"] == "read_only_dry_run"
+
+        after = TestSession()
+        try:
+            account = after.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id
+            ).one()
+            order = after.query(Order).filter(
+                Order.user_id == user_id, Order.is_paper.is_(True)
+            ).one()
+            position = after.query(Position).filter(
+                Position.user_id == user_id, Position.is_paper.is_(True)
+            ).one()
+            after_state = (
+                float(account.virtual_balance),
+                float(account.realized_pnl or 0.0),
+                int(order.quantity),
+                order.audit_hash,
+                order.previous_audit_hash,
+                int(position.quantity),
+                float(position.average_price),
+            )
+            assert after_state == before_state
+        finally:
+            after.close()
     finally:
         app.dependency_overrides.pop(routes.current_user_id, None)
         app.dependency_overrides.pop(get_db, None)
