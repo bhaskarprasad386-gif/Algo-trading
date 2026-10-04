@@ -210,6 +210,30 @@ def _paper_fill(mode: ExecutionMode, price: float, quantity: float) -> Fill:
     return Fill(price=price, quantity=quantity)
 
 
+def _begin_paper_mutation(db: Session, user_id: int) -> TradingAccount:
+    """Serialize account/position mutations for one paper-account transaction.
+
+    SQLite is the production trading DB, so BEGIN IMMEDIATE acquires the
+    database write lock before reading mutable balance/position state. On
+    databases with row-lock support, SELECT ... FOR UPDATE provides the same
+    serialization boundary.
+    """
+    if db.bind is not None and db.bind.dialect.name == "sqlite":
+        db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        return _account(db, user_id)
+    account = (
+        db.query(TradingAccount)
+        .filter(TradingAccount.user_id == user_id)
+        .with_for_update()
+        .first()
+    )
+    if account is None or not account.is_active:
+        raise HTTPException(status_code=404, detail="Paper trading account not found")
+    if account.mode.upper() != "PAPER":
+        raise HTTPException(status_code=409, detail="Trading account is not in paper mode")
+    return account
+
+
 def _account(db: Session, user_id: int) -> TradingAccount:
     account = db.query(TradingAccount).filter(TradingAccount.user_id == user_id).first()
     if account is None or not account.is_active:
@@ -277,9 +301,9 @@ def _accounting_after_fill(*, side: str, price: float, quantity: float, current_
 def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     quantity = _validate_quantity(request.quantity)
     symbol = request.symbol.strip().upper()
+    account = _begin_paper_mutation(db, user_id)
     if _position(db, user_id, symbol) is not None:
         raise HTTPException(status_code=409, detail="A paper position is already active for this symbol")
-    account = _account(db, user_id)
     cost = _buy_cost(request.price, quantity)
     if account.virtual_balance < cost:
         raise HTTPException(status_code=400, detail="Insufficient paper balance")
@@ -301,7 +325,7 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
         raise HTTPException(status_code=400, detail="transaction_type must be BUY or SELL")
     quantity = _validate_quantity(request.quantity)
     symbol = request.symbol.strip().upper()
-    account = _account(db, user_id)
+    account = _begin_paper_mutation(db, user_id)
     active = _position(db, user_id, symbol)
     remaining = active
 
@@ -487,7 +511,7 @@ def paper_payoff_from_cash_future(request: CashFuturePayoffRequest, user_id: int
 
 @router.post("/paper/exit")
 def paper_exit(request: PaperExitRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
-    account = _account(db, user_id)
+    account = _begin_paper_mutation(db, user_id)
     position = _position(db, user_id, request.symbol)
     if position is None:
         return {"status":"flat","position":None,"pnl":0.0,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
