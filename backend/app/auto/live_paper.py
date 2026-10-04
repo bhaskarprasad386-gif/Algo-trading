@@ -36,7 +36,10 @@ class LivePaperTradeService:
             LivePaperTrade.status == "ONGOING",
         ).first()
         if existing:
-            self.mark(db, existing, edge=edge, capital_used=capital_used)
+            # A duplicate signal updates the mark only. Entry capital is fixed
+            # for the lifetime of the paper position so its reservation cannot
+            # drift when a later alert reports a different capital estimate.
+            self.mark(db, existing, edge=edge)
             return existing, False
         if lot_size <= 0 or lots <= 0 or edge < 0:
             return None, False
