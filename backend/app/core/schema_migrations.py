@@ -184,3 +184,11 @@ def run_schema_migrations() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_audit_chain ON orders (user_id, id, audit_hash, previous_audit_hash)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_id ON orders (user_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_positions_user_id ON positions (user_id)"))
+        # Enforce the same invariant on existing SQLite deployments. Do not silently
+        # deduplicate legacy rows: duplicate active paper positions must fail schema
+        # migration and be reconciled explicitly before trading can start.
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_positions_user_symbol_active_paper "
+            "ON positions (user_id, symbol) "
+            "WHERE is_paper = 1 AND is_open = 1"
+        ))
