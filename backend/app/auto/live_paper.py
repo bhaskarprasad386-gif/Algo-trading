@@ -404,6 +404,18 @@ class LivePaperTradeService:
             return trade
         if trade.status != "ONGOING" or not _valid_persisted_trade(trade):
             return trade
+        # Serialize terminal close with P&L marks and risk gates on the
+        # same per-user paper-setting row. Without this lock, a close could
+        # commit between a mark's risk-lock/read and its conditional UPDATE,
+        # allowing a stale mark transaction to race the terminal transition.
+        lock_count = db.query(GlobalPaperSetting).filter(
+            GlobalPaperSetting.user_id == int(trade.user_id),
+        ).update(
+            {GlobalPaperSetting.paper_amount: GlobalPaperSetting.paper_amount},
+            synchronize_session=False,
+        )
+        if lock_count == 0:
+            return trade
         # Close atomically against the current DB row. This prevents a stale
         # in-memory P&L from overwriting a newer mark during a close race.
         now = _now()
