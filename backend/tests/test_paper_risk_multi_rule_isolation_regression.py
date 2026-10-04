@@ -184,3 +184,33 @@ def test_duplicate_mark_path_does_not_apply_new_entry_risk_capital(db_session):
     assert row.lots == 1
     assert row.entry_edge == 5.0
     assert row.current_edge == 99.0
+
+
+def test_unconfigured_user_does_not_leak_read_transaction_into_next_user(db_session):
+    _setup_user(db_session, 1, amount=30000.0, max_daily=30000.0)
+    db_session.add(AlertRule(
+        user_id=2, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=30000.0, max_simultaneous_positions=5, max_loss=0.0,
+        priority=1,
+    ))
+    db_session.commit()
+
+    # User 2 has an enabled rule but deliberately has no GlobalPaperSetting.
+    # The dispatcher must rollback that user's read transaction before moving
+    # to user 1; otherwise SQLite can retain a read transaction while the next
+    # user tries to acquire the GlobalPaperSetting write lock.
+    assert AlertService().dispatch(
+        db_session, _event("UNCONFIGURED-THEN-CONFIGURED")
+    ) == 0
+
+    row = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+        LivePaperTrade.event_id == "UNCONFIGURED-THEN-CONFIGURED",
+    ).one()
+    assert row.capital_used == 30000.0
+    assert row.lots == 1
+    assert db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 2,
+    ).count() == 0
+    assert not db_session.in_transaction()
