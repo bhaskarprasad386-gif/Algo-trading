@@ -670,9 +670,14 @@ async def _live_paper_monitor_loop() -> None:
                 if active:
                     cash = live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=500)
                     cash_map = {f"{x.get('symbol')}:{x.get('contract_month')}": x for x in cash}
-                    cal_map = {f"{x.underlying}:{x.near_contract_month}:{x.far_contract_month}:{x.direction}": x for x in live_calendar_spread_scanner.snapshot(limit=500)}
-                    syn_map = {f"{x.option.underlying}:{x.option.expiry}:{x.option.strike:g}:{x.direction}": x for x in live_synthetic_latest_results}
-                    box_map = {f"{x.low.underlying}:{x.low.expiry}:{x.low.strike:g}:{x.high.strike:g}:{x.direction}": x for x in live_box_spread_latest_results}
+                    now_ns = time.time_ns()
+                    freshness_cutoff_ns = now_ns - 5_000_000_000
+                    cal_rows = tuple(x for x in live_calendar_spread_scanner.snapshot(limit=500) if int(getattr(x, "timestamp_ns", 0) or 0) >= freshness_cutoff_ns)
+                    syn_rows = tuple(x for x in live_synthetic_latest_results if int(getattr(x.option, "timestamp_ns", 0) or 0) >= freshness_cutoff_ns)
+                    box_rows = tuple(x for x in live_box_spread_latest_results if int(getattr(x.low, "timestamp_ns", 0) or 0) >= freshness_cutoff_ns)
+                    cal_map = {f"{x.underlying}:{x.near_contract_month}:{x.far_contract_month}:{x.direction}": x for x in cal_rows}
+                    syn_map = {f"{x.option.underlying}:{x.option.expiry}:{x.option.strike:g}:{x.direction}": x for x in syn_rows}
+                    box_map = {f"{x.low.underlying}:{x.low.expiry}:{x.low.strike:g}:{x.high.strike:g}:{x.direction}": x for x in box_rows}
                     for trade in active:
                         edge = None
                         if trade.strategy_id == "cash-future":
