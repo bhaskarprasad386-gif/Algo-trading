@@ -109,3 +109,60 @@ def test_full_paper_lifecycle_does_not_reopen_or_reallocate_completed_event(db_s
     assert created is False
     assert svc.ongoing(db_session, 1) == []
     assert [x.id for x in svc.completed(db_session, 1)] == [trade.id]
+
+
+def test_event_identity_isolated_by_user_and_completed_replay_is_user_scoped(db_session):
+    _enable(db_session, user_id=1, amount=100_000)
+    _enable(db_session, user_id=2, amount=100_000)
+    svc = LivePaperTradeService()
+
+    user1_trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="USER-SCOPED-EVENT", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=10, capital_used=20_000, user_id=1,
+    )
+    assert created is True
+
+    user2_trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="USER-SCOPED-EVENT", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=8, capital_used=30_000, user_id=2,
+    )
+    assert created is True
+    assert user2_trade.id != user1_trade.id
+    assert user1_trade.user_id == 1
+    assert user2_trade.user_id == 2
+
+    assert [x.id for x in svc.ongoing(db_session, 1)] == [user1_trade.id]
+    assert [x.id for x in svc.ongoing(db_session, 2)] == [user2_trade.id]
+
+    # Completing user 1's event must not block or mutate user 2's same event.
+    closed = svc.close(db_session, user1_trade, "MANUAL")
+    assert closed.status == "COMPLETED"
+    assert svc.ongoing(db_session, 1) == []
+    assert [x.id for x in svc.completed(db_session, 1)] == [user1_trade.id]
+    assert [x.id for x in svc.ongoing(db_session, 2)] == [user2_trade.id]
+    assert svc.completed(db_session, 2) == []
+
+    # Replaying the completed event for user 1 must not reopen it or reserve
+    # new capital; user 2 can still mark its independent ongoing position.
+    replay, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="USER-SCOPED-EVENT", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=99, capital_used=90_000, user_id=1,
+    )
+    assert replay is None
+    assert created is False
+    db_session.refresh(user1_trade)
+    assert user1_trade.status == "COMPLETED"
+    assert user1_trade.capital_used == 20_000
+
+    marked, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="USER-SCOPED-EVENT", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=7, capital_used=90_000, user_id=2,
+    )
+    assert created is False
+    assert marked.id == user2_trade.id
+    assert marked.current_edge == 7
+    assert marked.capital_used == 30_000
