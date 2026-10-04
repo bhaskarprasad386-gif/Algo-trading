@@ -564,6 +564,82 @@ def test_expiry_close_releases_reserved_capital_for_next_entry(db_session):
     assert svc.ongoing(db_session, 1) == [second]
 
 
+def test_partial_manual_close_releases_only_allocated_capital_for_next_entry(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=125000, emergency_stop=False))
+    db_session.commit()
+
+    first, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="PARTIAL-RELEASE-1", direction="LONG", lot_size=10, lots=3,
+        edge=5, capital_used=90000, user_id=1,
+    )
+    assert created is True
+
+    partial, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="BBB",
+        event_id="PARTIAL-RELEASE-2", direction="LONG", lot_size=10, lots=2,
+        edge=5, capital_used=60000, user_id=1,
+    )
+    assert created is True
+    assert partial.lots == 1
+    assert partial.capital_used == 30000
+
+    # Only 5k remains before close. Closing the partial position must release
+    # exactly its 30k reservation, not the original requested 60k.
+    svc.close(db_session, partial, "MANUAL")
+
+    next_trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="CCC",
+        event_id="PARTIAL-RELEASE-3", direction="LONG", lot_size=10, lots=1,
+        edge=5, capital_used=30000, user_id=1,
+    )
+    assert created is True
+    assert next_trade.lots == 1
+    assert next_trade.capital_used == 30000
+    assert first.status == "ONGOING"
+    assert partial.status == "COMPLETED"
+
+
+def test_partial_expiry_close_releases_allocated_capital_for_next_entry(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=125000, emergency_stop=False))
+    db_session.commit()
+
+    first, created = svc.enter_or_mark(
+        db_session, strategy_id="calendar-spread", symbol="AAA",
+        event_id="PARTIAL-EXPIRY-1", direction="LONG",
+        expiry="2026-10-12", earliest_expiry="2026-10-12",
+        lot_size=10, lots=3, edge=5, capital_used=90000,
+        metadata={"exchange": "NFO"}, user_id=1,
+    )
+    assert created is True
+
+    partial, created = svc.enter_or_mark(
+        db_session, strategy_id="calendar-spread", symbol="BBB",
+        event_id="PARTIAL-EXPIRY-2", direction="LONG",
+        expiry="2026-10-12", earliest_expiry="2026-10-12",
+        lot_size=10, lots=2, edge=5, capital_used=60000,
+        metadata={"exchange": "NFO"}, user_id=1,
+    )
+    assert created is True
+    assert partial.lots == 1
+    assert partial.capital_used == 30000
+
+    closed = svc.close_expired(db_session, now=datetime(2026, 10, 12, 15, 30))
+    assert [row.id for row in closed] == [partial.id]
+
+    next_trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="CCC",
+        event_id="PARTIAL-EXPIRY-3", direction="LONG", lot_size=10, lots=1,
+        edge=5, capital_used=30000, user_id=1,
+    )
+    assert created is True
+    assert next_trade.capital_used == 30000
+    assert first.status == "ONGOING"
+    assert partial.status == "COMPLETED"
+
+
 def test_close_and_new_entry_race_never_oversubscribes_capital(tmp_path):
     import threading
     from sqlalchemy import create_engine
