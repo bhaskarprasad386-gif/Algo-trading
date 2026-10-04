@@ -96,6 +96,75 @@ def test_paper_entry_persists_position_and_order_and_updates_balance():
     assert orders_after_exit.json()["orders"][-1]["transaction_type"] == "SELL"
 
 
+def test_concurrent_same_fill_id_mutates_cash_and_pnl_once():
+    from concurrent.futures import ThreadPoolExecutor
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.core.database import Base
+    from app.models.account import TradingAccount
+    from app.models.order import Order
+    from app.models.user import User
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(
+        "sqlite:///" + str(tmp_path / "same-fill-race.db"),
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="same-fill-race@example.com", hashed_password="", full_name="Same Fill Race", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, realized_pnl=0.0, is_active=True))
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    barrier = threading.Barrier(2)
+
+    def submit():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            try:
+                return ("ok", paper_order(
+                    PaperOrderRequest(symbol="RACE", transaction_type="BUY", price=100.0, quantity=5, fill_id="BROKER-RACE-1"),
+                    user_id=user_id,
+                    db=db,
+                ))
+            except HTTPException as exc:
+                db.rollback()
+                return ("http", exc.status_code, exc.detail)
+        finally:
+            db.close()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = [pool.submit(submit).result() for _ in []]
+            first = pool.submit(submit)
+            second = pool.submit(submit)
+            results = [first.result(), second.result()]
+
+        successful = [item for item in results if item[0] == "ok"]
+        assert len(successful) == 2
+        assert sum(1 for item in successful if item[1].get("idempotent") is True) == 1
+
+        verify = Session()
+        try:
+            account = verify.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+            orders = verify.query(Order).filter(Order.user_id == user_id, Order.fill_id == "BROKER-RACE-1").all()
+            assert len(orders) == 1
+            assert account.virtual_balance == 500.0
+            assert account.realized_pnl == 0.0
+        finally:
+            verify.close()
+    finally:
+        engine.dispose()
+
+
 def test_paper_fill_id_is_durable_across_client_retry_and_rejects_conflict():
     client, headers = _client_and_headers()
     starting_balance = 10_000_000.0
