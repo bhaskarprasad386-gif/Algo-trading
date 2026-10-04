@@ -755,3 +755,53 @@ def test_multi_rule_partial_capital_cannot_weaken_strictest_position_limit(db_se
     rows = LivePaperTradeService().ongoing(db_session, 1)
     assert len(rows) == 1
     assert rows[0].capital_used == 100000
+
+
+def test_multi_rule_partial_capital_cannot_weaken_strictest_loss_limit(db_session):
+    from app.models import AlertRule, GlobalPaperSetting
+    from app.notifications.common import AlertEvent, AlertService
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=150000, emergency_stop=False,
+    ))
+    db_session.add_all([
+        AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=0,
+                  mobile_number="", whatsapp_enabled=False, enabled=True,
+                  max_simultaneous_positions=5, max_daily_capital=0, max_loss=0),
+        AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=0,
+                  mobile_number="", whatsapp_enabled=False, enabled=True,
+                  max_simultaneous_positions=5, max_daily_capital=200000,
+                  max_loss=100),
+    ])
+    db_session.commit()
+
+    service = AlertService()
+    svc = LivePaperTradeService()
+    first = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="LOSS-SEED",
+        event_id="LOSS-SEED-1", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=10, capital_used=100000, user_id=1,
+    )
+    assert first[1] is True
+    trade = first[0]
+    svc.mark(db_session, trade, edge=0.0)
+    db_session.commit()
+
+    # The strict positive max_loss=100 remains binding even though another
+    # same-user rule is unlimited and the global cap has only 50k left.
+    event = AlertEvent(
+        strategy_id="cash-future", event_id="LOSS-PARTIAL-1", symbol="AAA",
+        timestamp_ns=1, message="blocked",
+        metadata={
+            "gross_profit": 1,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-30",
+                "lot_size": 10, "lots": 2, "edge": 5,
+                "capital_used": 100000,
+            },
+        },
+    )
+    assert service.dispatch(db_session, event) == 0
+    rows = svc.ongoing(db_session, 1)
+    assert len(rows) == 1
+    assert rows[0].symbol == "LOSS-SEED"
