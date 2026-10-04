@@ -802,8 +802,8 @@ def test_alert_entry_resolves_expired_position_before_risk_gates(db_session):
     svc = LivePaperTradeService()
     expired, created = svc.enter_or_mark(
         db_session, strategy_id="cash-future", symbol="EXPIRED",
-        event_id="ALERT-EXPIRY-OLD", direction="LONG", expiry="2026-10-03",
-        earliest_expiry="2026-10-03", lot_size=10, lots=1, edge=10,
+        event_id="ALERT-EXPIRY-OLD", direction="LONG", expiry="2026-10-05",
+        earliest_expiry="2026-10-05", lot_size=10, lots=1, edge=10,
         capital_used=60000, metadata={"exchange": "NFO"}, user_id=1,
     )
     assert created is True
@@ -849,8 +849,8 @@ def test_alert_entry_keeps_expiry_realized_loss_in_max_loss_gate(db_session):
     svc = LivePaperTradeService()
     expired, created = svc.enter_or_mark(
         db_session, strategy_id="cash-future", symbol="LOSS-EXPIRY",
-        event_id="ALERT-LOSS-OLD", direction="LONG", expiry="2026-10-03",
-        earliest_expiry="2026-10-03", lot_size=10, lots=1, edge=10,
+        event_id="ALERT-LOSS-OLD", direction="LONG", expiry="2026-10-05",
+        earliest_expiry="2026-10-05", lot_size=10, lots=1, edge=10,
         capital_used=50000, metadata={"exchange": "NFO"}, user_id=1,
     )
     assert created is True
@@ -891,8 +891,8 @@ def test_expired_completed_event_cannot_reopen_on_duplicate_alert(db_session):
     svc = LivePaperTradeService()
     trade, created = svc.enter_or_mark(
         db_session, strategy_id="cash-future", symbol="EXPIRED",
-        event_id="EXPIRY-DUP-1", direction="LONG", expiry="2026-10-03",
-        earliest_expiry="2026-10-03", lot_size=10, lots=1, edge=10,
+        event_id="EXPIRY-DUP-1", direction="LONG", expiry="2026-10-05",
+        earliest_expiry="2026-10-05", lot_size=10, lots=1, edge=10,
         capital_used=50000, metadata={"exchange": "NFO"}, user_id=1,
     )
     assert created is True
@@ -904,8 +904,8 @@ def test_expired_completed_event_cannot_reopen_on_duplicate_alert(db_session):
         timestamp_ns=1, message="expired", metadata={
             "gross_profit": 1,
             "paper_trade": {
-                "direction": "LONG", "expiry": "2026-10-03",
-                "earliest_expiry": "2026-10-03", "lot_size": 10, "lots": 1,
+                "direction": "LONG", "expiry": "2026-10-05",
+                "earliest_expiry": "2026-10-05", "lot_size": 10, "lots": 1,
                 "edge": 8, "capital_used": 50000, "exchange": "NFO",
             },
         },
@@ -950,8 +950,8 @@ def test_expiry_close_realizes_last_valid_mark_when_new_quote_is_stale(db_sessio
     svc = LivePaperTradeService()
     trade, created = svc.enter_or_mark(
         db_session, strategy_id="cash-future", symbol="STALE-EXPIRY",
-        event_id="STALE-EXPIRY-1", direction="LONG", expiry="2026-10-03",
-        earliest_expiry="2026-10-03", lot_size=10, lots=1, edge=10,
+        event_id="STALE-EXPIRY-1", direction="LONG", expiry="2026-10-05",
+        earliest_expiry="2026-10-05", lot_size=10, lots=1, edge=10,
         capital_used=50000, metadata={"exchange": "NFO"}, user_id=1,
     )
     assert created is True
