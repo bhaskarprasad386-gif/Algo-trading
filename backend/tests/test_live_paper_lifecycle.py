@@ -617,6 +617,76 @@ def test_alert_entry_keeps_expiry_realized_loss_in_max_loss_gate(db_session):
     assert completed[0].realized_pnl == -100.0
 
 
+def test_expired_completed_event_cannot_reopen_on_duplicate_alert(db_session):
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=100000, emergency_stop=False))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0.0, max_simultaneous_positions=5, max_loss=0.0,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="EXPIRED",
+        event_id="EXPIRY-DUP-1", direction="LONG", expiry="2026-10-03",
+        earliest_expiry="2026-10-03", lot_size=10, lots=1, edge=10,
+        capital_used=50000, metadata={"exchange": "NFO"}, user_id=1,
+    )
+    assert created is True
+    svc.mark(db_session, trade, edge=8)
+    db_session.commit()
+
+    first = AlertEvent(
+        strategy_id="cash-future", event_id="EXPIRY-DUP-1", symbol="EXPIRED",
+        timestamp_ns=1, message="expired", metadata={
+            "gross_profit": 1,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-03",
+                "earliest_expiry": "2026-10-03", "lot_size": 10, "lots": 1,
+                "edge": 8, "capital_used": 50000, "exchange": "NFO",
+            },
+        },
+    )
+    assert AlertService().dispatch(db_session, first) == 0
+
+    db_session.expire_all()
+    completed = svc.completed(db_session, 1)
+    assert len(completed) == 1
+    assert completed[0].id == trade.id
+    assert completed[0].exit_reason == "EXPIRY_CLOSE"
+    original_closed_at = completed[0].closed_at
+    original_capital = completed[0].capital_used
+
+    duplicate = AlertEvent(
+        strategy_id="cash-future", event_id="EXPIRY-DUP-1", symbol="EXPIRED",
+        timestamp_ns=2, message="duplicate-after-expiry", metadata={
+            "gross_profit": 999,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-30",
+                "earliest_expiry": "2026-10-30", "lot_size": 10, "lots": 99,
+                "edge": 50, "capital_used": 999999, "exchange": "NFO",
+            },
+        },
+    )
+    assert AlertService().dispatch(db_session, duplicate) == 0
+
+    db_session.expire_all()
+    rows = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+        LivePaperTrade.event_id == "EXPIRY-DUP-1",
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].id == trade.id
+    assert rows[0].status == "COMPLETED"
+    assert rows[0].capital_used == original_capital
+    assert rows[0].closed_at == original_closed_at
+    assert rows[0].current_edge == 8.0
+
+
 def test_expiry_close_releases_reserved_capital_for_next_entry(db_session):
     svc = LivePaperTradeService()
     db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=100000, emergency_stop=False))
