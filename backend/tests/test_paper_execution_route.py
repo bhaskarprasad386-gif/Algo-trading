@@ -6262,3 +6262,119 @@ def test_paper_http_cold_start_bootstrap_concurrency_matrix():
         finally:
             app.dependency_overrides.pop(get_db, None)
             engine.dispose()
+
+
+def test_paper_http_cold_start_mixed_endpoint_race_converges_on_one_account():
+    """Account/order/reconcile bootstrap requests racing from an empty DB must converge safely."""
+    from app.core.database import get_db
+    from pathlib import Path
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        engine = create_engine(
+            f"sqlite:///{Path(tmp_dir) / 'mixed-cold-start.db'}",
+            connect_args={"check_same_thread": False, "timeout": 10},
+        )
+        with engine.begin() as conn:
+            conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+        Base.metadata.create_all(engine)
+        TestSession = sessionmaker(bind=engine)
+
+        def override_db():
+            db = TestSession()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = override_db
+        client = TestClient(app)
+
+        try:
+            barrier = threading.Barrier(15)
+
+            def account_request(_):
+                barrier.wait(timeout=5)
+                return client.get("/api/v1/execution/paper/account")
+
+            def order_request(_):
+                barrier.wait(timeout=5)
+                return client.post(
+                    "/api/v1/execution/paper/order",
+                    json={
+                        "symbol": "MIXED_COLD",
+                        "transaction_type": "BUY",
+                        "price": 100.0,
+                        "quantity": 1,
+                    },
+                )
+
+            def reconcile_request(_):
+                barrier.wait(timeout=5)
+                return client.get("/api/v1/execution/paper/reconcile")
+
+            jobs = (
+                [("account", i) for i in range(5)]
+                + [("order", i) for i in range(5)]
+                + [("reconcile", i) for i in range(5)]
+            )
+
+            def submit(job):
+                kind, index = job
+                if kind == "account":
+                    return kind, account_request(index)
+                if kind == "order":
+                    return kind, order_request(index)
+                return kind, reconcile_request(index)
+
+            with ThreadPoolExecutor(max_workers=15) as pool:
+                results = list(pool.map(submit, jobs))
+
+            account_responses = [response for kind, response in results if kind == "account"]
+            order_responses = [response for kind, response in results if kind == "order"]
+            reconcile_responses = [response for kind, response in results if kind == "reconcile"]
+
+            assert all(response.status_code == 200 for response in account_responses)
+            assert all(response.status_code == 200 for response in order_responses)
+            assert all(response.status_code == 200 for response in reconcile_responses)
+            assert all(response.json()["status"] == "success" for response in order_responses)
+
+            db = TestSession()
+            try:
+                users = db.query(User).filter(
+                    User.email == "system@local.algo-trading"
+                ).all()
+                accounts = db.query(TradingAccount).filter(
+                    TradingAccount.mode == "PAPER"
+                ).all()
+                orders = db.query(Order).filter(
+                    Order.is_paper.is_(True),
+                    Order.symbol == "MIXED_COLD",
+                ).all()
+                positions = db.query(Position).filter(
+                    Position.is_paper.is_(True),
+                    Position.symbol == "MIXED_COLD",
+                    Position.is_open.is_(True),
+                ).all()
+
+                assert len(users) == 1
+                assert len(accounts) == 1
+                assert len(orders) == 5
+                assert len(positions) == 1
+                assert positions[0].quantity == 5
+                assert positions[0].average_price == 100.0
+                assert accounts[0].virtual_balance == 10_000_000.0 - 500.0
+                assert accounts[0].realized_pnl == 0.0
+
+                for response in reconcile_responses:
+                    payload = response.json()
+                    assert payload["status"] == "OK"
+                    assert payload["mismatches"] == []
+                    assert payload["repairability"] == "NONE"
+                    assert len(payload["orders"]) in {0, 1, 2, 3, 4, 5}
+                    assert payload["orders"] == sorted(payload["orders"], key=lambda item: item["id"])
+            finally:
+                db.close()
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+            engine.dispose()
