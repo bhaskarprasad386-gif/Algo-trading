@@ -479,7 +479,7 @@ def test_four_way_terminal_close_risk_and_new_entry_exact_loss_boundary(tmp_path
         try:
             barrier.wait(timeout=5)
             outcomes.append(("expiry", LivePaperTradeService().close_expired(
-                db, now=datetime(2026, 10, 4, 10, 0), commit=True,
+                db, now=datetime(2026, 10, 4, 15, 30), commit=True,
             )))
         except Exception as exc:
             errors.append(exc)
@@ -553,6 +553,13 @@ def test_four_way_terminal_close_risk_and_new_entry_exact_loss_boundary(tmp_path
             assert new.status == "ONGOING"
             assert new.lots == 1
             assert new.capital_used == 30000
+
+        # If the entry wins the serialization race before the terminal close,
+        # it is valid for that entry to exist. Once the seed closes at -100,
+        # the combined ongoing capital must still remain within the 60k budget.
+        ongoing = [r for r in rows if r.status == "ONGOING"]
+        assert len(ongoing) <= 1
+        assert sum(float(r.capital_used) for r in ongoing) <= 60000
     finally:
         verify.close()
         engine.dispose()
