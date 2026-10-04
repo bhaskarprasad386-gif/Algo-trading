@@ -373,10 +373,12 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
     seen_symbols: set[str] = set()
     for position in paper_positions:
         symbol = str(position.symbol or "").strip().upper()
+        raw_symbol = str(position.symbol or "")
         raw_quantity = float(position.quantity or 0.0)
         raw_average_price = float(position.average_price or 0.0)
         if (
             not symbol
+            or raw_symbol != symbol
             or not math.isfinite(raw_quantity)
             or not raw_quantity.is_integer()
             or raw_quantity == 0
@@ -401,6 +403,9 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
         raw_filled_quantity = float(order.filled_quantity or 0.0)
         quantity = int(raw_quantity) if math.isfinite(raw_quantity) and raw_quantity.is_integer() else 0
         filled_quantity = int(raw_filled_quantity) if math.isfinite(raw_filled_quantity) and raw_filled_quantity.is_integer() else 0
+        raw_symbol = str(order.symbol or "")
+        raw_side = str(order.transaction_type or "")
+        raw_fill_id = str(order.fill_id) if order.fill_id is not None else None
         price = float(order.price or 0.0)
         average_fill_price = float(order.average_fill_price or 0.0)
         average_price = float(order.average_price or 0.0)
@@ -419,6 +424,9 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             or not math.isfinite(average_fill_price)
             or average_fill_price <= 0
             or abs(average_fill_price - price) > 1e-8
+            or raw_symbol != raw_symbol.strip().upper()
+            or raw_side != raw_side.strip().upper()
+            or (raw_fill_id is not None and raw_fill_id != raw_fill_id.strip())
             or order.status != "FILLED"
             or order.transaction_type.upper() not in {"BUY", "SELL"}
         ):
