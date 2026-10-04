@@ -5440,3 +5440,77 @@ def test_paper_from_scanner_http_concurrent_duplicate_fill_id_preserves_idempote
     finally:
         verify.close()
         engine.dispose()
+
+
+
+def test_paper_exit_http_concurrent_duplicate_fill_id_closes_once_and_is_idempotent(tmp_path):
+    """Concurrent retries of one exit fill must close the position exactly once."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-exit-duplicate-fill-id.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(email="exit-duplicate-fill@example.com", hashed_password="", full_name="Exit Duplicate Fill", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=800.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        seed.add(Position(user_id=user.id, symbol="EXIT-IDEMPOTENT", quantity=2, average_price=100.0, stop_loss=None, target=None, is_paper=True, is_open=True))
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    client = TestClient(app)
+    def override_db():
+        db = TestSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        def submit(_):
+            return client.post("/api/v1/execution/paper/exit", json={"symbol":"EXIT-IDEMPOTENT","price":110.0,"fill_id":"EXIT-IDEMPOTENT-1"})
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            responses = list(pool.map(submit, range(12)))
+        assert all(response.status_code == 200 for response in responses)
+        payloads = [response.json() for response in responses]
+        assert sum(payload.get("idempotent") is True for payload in payloads) == 11
+        assert sum("idempotent" not in payload for payload in payloads) == 1
+        assert all(payload["status"] == "closed" for payload in payloads)
+        assert all(float(payload["pnl"]) == 20.0 for payload in payloads)
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    verify = TestSession()
+    try:
+        account = verify.query(TradingAccount).filter(TradingAccount.user_id == user_id, TradingAccount.mode == "PAPER").one()
+        orders = verify.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).all()
+        positions = verify.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True), Position.is_open.is_(True)).all()
+        assert len(orders) == 1
+        assert orders[0].fill_id == "EXIT-IDEMPOTENT-1"
+        assert orders[0].transaction_type == "SELL"
+        assert float(orders[0].pnl) == 20.0
+        assert positions == []
+        assert float(account.virtual_balance) == 1020.0
+        assert float(account.realized_pnl) == 20.0
+        from app.execution.paper_routes import _reconcile_paper_ledger
+        reconciliation = _reconcile_paper_ledger(verify, user_id)
+        assert reconciliation["status"] == "OK"
+        assert reconciliation["mismatches"] == []
+        assert reconciliation["repairability"] == "NONE"
+    finally:
+        verify.close()
+        engine.dispose()
