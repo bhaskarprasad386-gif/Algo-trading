@@ -11472,3 +11472,367 @@ def test_integrity_matrix_15_deterministic_reconciliation_and_fingerprint_are_st
         assert all(item["repairability"] == "NONE" for item in reconciles)
     finally:
         db.close(); engine.dispose()
+
+
+# Production-facing HTTP integrity matrix (new boundary; actual FastAPI/TestClient requests).
+
+def _http_integrity_env(tmp_path, name: str, *, users: int = 1):
+    from app.core.database import get_db
+    from app.execution.paper_routes import current_user_id
+    engine = create_engine(
+        f"sqlite:///{tmp_path / f'{name}.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    created = []
+    try:
+        for index in range(users):
+            user = User(
+                email=f"http-matrix-{name}-{index}@example.com",
+                hashed_password="",
+                full_name=f"HTTP Matrix {index}",
+                is_active=True,
+            )
+            db.add(user)
+            db.flush()
+            account = TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=10_000_000.0,
+                initial_virtual_balance=10_000_000.0,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            )
+            db.add(account)
+            db.flush()
+            created.append(user.id)
+        db.commit()
+    finally:
+        db.close()
+
+    def override_db():
+        session = Session()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = override_db
+    return engine, created, current_user_id
+
+
+def _http_client_for_user(user_id: int, current_user_dependency):
+    app.dependency_overrides[current_user_dependency] = lambda: user_id
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _clear_http_overrides():
+    app.dependency_overrides.clear()
+
+
+def test_http_integrity_matrix_01_real_fastapi_route_invocation(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "route", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        account = client.get("/api/v1/execution/paper/account")
+        assert account.status_code == 200
+        assert account.json()["mode"] == "paper"
+
+        created = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "HTTP1", "transaction_type": "BUY", "price": 10.0, "quantity": 2, "fill_id": "HTTP-1"},
+        )
+        assert created.status_code == 200
+        assert created.json()["order"]["symbol"] == "HTTP1"
+
+        reconcile = client.get("/api/v1/execution/paper/reconcile")
+        assert reconcile.status_code == 200
+        assert reconcile.json()["status"] == "OK"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_02_authenticated_identity_isolation(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "identity", users=2)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client_a = TestClient(app, raise_server_exceptions=False)
+        first = client_a.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "ONLY-A", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "A-1"},
+        )
+        assert first.status_code == 200
+
+        app.dependency_overrides[current_user_dependency] = lambda: users[1]
+        client_b = TestClient(app, raise_server_exceptions=False)
+        orders_b = client_b.get("/api/v1/execution/paper/orders")
+        position_b = client_b.get("/api/v1/execution/paper/position")
+        assert orders_b.status_code == 200
+        assert orders_b.json()["orders"] == []
+        assert position_b.status_code == 200
+        assert position_b.json()["position"] is None
+
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        orders_a = client_a.get("/api/v1/execution/paper/orders")
+        assert orders_a.status_code == 200
+        assert [item["symbol"] for item in orders_a.json()["orders"]] == ["ONLY-A"]
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_03_concurrent_mixed_http_readers(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "mixed-readers", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        seed = TestClient(app, raise_server_exceptions=False)
+        assert seed.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "MIXED", "transaction_type": "BUY", "price": 25.0, "quantity": 2, "fill_id": "MIXED-1"},
+        ).status_code == 200
+
+        def read_once(index):
+            client = TestClient(app, raise_server_exceptions=False)
+            route = (
+                "/api/v1/execution/paper/account",
+                "/api/v1/execution/paper/orders",
+                "/api/v1/execution/paper/position",
+                "/api/v1/execution/paper/reconcile",
+            )[index % 4]
+            response = client.get(route)
+            return route, response.status_code, response.json()
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(read_once, range(24)))
+
+        assert all(status == 200 for _, status, _ in results)
+        reconcile_payloads = [payload for route, _, payload in results if route.endswith("/reconcile")]
+        assert reconcile_payloads
+        assert all(payload["status"] == "OK" for payload in reconcile_payloads)
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_04_mutation_vs_reconcile_race_is_snapshot_safe(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "race", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        barrier = threading.Barrier(2)
+
+        def mutate():
+            client = TestClient(app, raise_server_exceptions=False)
+            barrier.wait()
+            return client.post(
+                "/api/v1/execution/paper/order",
+                json={"symbol": "RACE", "transaction_type": "BUY", "price": 31.0, "quantity": 1, "fill_id": "RACE-1"},
+            )
+
+        def reconcile():
+            client = TestClient(app, raise_server_exceptions=False)
+            barrier.wait()
+            return client.get("/api/v1/execution/paper/reconcile")
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            mutation_response, reconcile_response = pool.map(lambda fn: fn(), (mutate, reconcile))
+
+        assert mutation_response.status_code == 200
+        assert reconcile_response.status_code == 200
+        assert reconcile_response.json()["status"] == "OK"
+        assert reconcile_response.json()["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_05_error_status_mapping_is_consistent(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "errors", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+
+        invalid_side = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "ERR", "transaction_type": "HOLD", "price": 10.0, "quantity": 1},
+        )
+        assert invalid_side.status_code == 400
+
+        first = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "ERR", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "ERR-1"},
+        )
+        assert first.status_code == 200
+
+        active_conflict = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "ERR", "transaction_type": "BUY", "price": 11.0, "quantity": 1, "fill_id": "ERR-2"},
+        )
+        assert active_conflict.status_code == 409
+
+        missing_account_user = users[0] + 100000
+        app.dependency_overrides[current_user_dependency] = lambda: missing_account_user
+        missing_account = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "NOACCOUNT", "transaction_type": "BUY", "price": 10.0, "quantity": 1},
+        )
+        assert missing_account.status_code == 404
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_06_malformed_json_and_missing_fields_fail_closed(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "malformed", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+
+        missing_price = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "BAD", "transaction_type": "BUY", "quantity": 1},
+        )
+        assert missing_price.status_code == 422
+
+        invalid_json = client.post(
+            "/api/v1/execution/paper/order",
+            content="{not-valid-json",
+            headers={"content-type": "application/json"},
+        )
+        assert invalid_json.status_code == 422
+
+        after = client.get("/api/v1/execution/paper/reconcile")
+        assert after.status_code == 200
+        assert after.json()["status"] == "OK"
+        assert after.json()["orders"] == 0
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_07_extreme_numeric_inputs_fail_closed(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "numeric", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+
+        fractional_quantity = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "NUM1", "transaction_type": "BUY", "price": 10.0, "quantity": 1.5},
+        )
+        assert fractional_quantity.status_code == 422
+
+        infinite_quantity = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "NUM2", "transaction_type": "BUY", "price": 10.0, "quantity": 1e309},
+        )
+        assert infinite_quantity.status_code == 422
+
+        nonpositive_price = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "NUM3", "transaction_type": "BUY", "price": 0.0, "quantity": 1},
+        )
+        assert nonpositive_price.status_code == 422
+
+        after = client.get("/api/v1/execution/paper/reconcile")
+        assert after.status_code == 200
+        assert after.json()["status"] == "OK"
+        assert after.json()["orders"] == 0
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_08_repeated_identical_http_request_is_idempotent(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "idempotent", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        payload = {"symbol": "IDEMP", "transaction_type": "BUY", "price": 12.0, "quantity": 2, "fill_id": "IDEMP-1"}
+
+        first = client.post("/api/v1/execution/paper/order", json=payload)
+        second = client.post("/api/v1/execution/paper/order", json=payload)
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json()["order"]["fill_id"] == "IDEMP-1"
+        assert second.json()["idempotent"] is True
+
+        orders = client.get("/api/v1/execution/paper/orders")
+        assert orders.status_code == 200
+        assert len(orders.json()["orders"]) == 1
+        assert orders.json()["orders"][0]["fill_id"] == "IDEMP-1"
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_09_failed_http_mutation_rolls_back_for_next_request(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "rollback", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+
+        failed = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "ROLLBACK", "transaction_type": "BUY", "price": 10.0, "quantity": 1.25, "fill_id": "RB-FAIL"},
+        )
+        assert failed.status_code == 422
+
+        successful = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "ROLLBACK", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "RB-OK"},
+        )
+        assert successful.status_code == 200
+
+        reconcile = client.get("/api/v1/execution/paper/reconcile")
+        assert reconcile.status_code == 200
+        assert reconcile.json()["status"] == "OK"
+        assert reconcile.json()["orders"] == 1
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_integrity_matrix_10_final_http_storm_leaves_deterministic_ledger(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "final-storm", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        seed = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "STORM", "transaction_type": "BUY", "price": 20.0, "quantity": 3, "fill_id": "STORM-1"},
+        )
+        assert seed.status_code == 200
+
+        def storm(index):
+            local_client = TestClient(app, raise_server_exceptions=False)
+            if index % 3 == 0:
+                response = local_client.get("/api/v1/execution/paper/reconcile")
+            elif index % 3 == 1:
+                response = local_client.get("/api/v1/execution/paper/orders")
+            else:
+                response = local_client.get("/api/v1/execution/paper/account")
+            return response.status_code, response.json()
+
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            results = list(pool.map(storm, range(30)))
+
+        assert all(status == 200 for status, _ in results)
+        reconciles = [payload for _, payload in results if "mismatches" in payload]
+        assert reconciles
+        assert all(payload["status"] == "OK" and payload["mismatches"] == [] for payload in reconciles)
+
+        final = client.get("/api/v1/execution/paper/reconcile")
+        assert final.status_code == 200
+        final_payload = final.json()
+        assert final_payload["status"] == "OK"
+        assert final_payload["repairability"] == "NONE"
+        assert final_payload["orders"] == 1
+        assert final_payload["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
