@@ -27,7 +27,13 @@ def _paper_user(db):
     )
     db.add(user)
     db.flush()
-    account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1_000_000.0, realized_pnl=0.0)
+    account = TradingAccount(
+        user_id=user.id,
+        mode="PAPER",
+        virtual_balance=1_000_000.0,
+        initial_virtual_balance=1_000_000.0,
+        realized_pnl=0.0,
+    )
     db.add(account)
     db.commit()
     return user
