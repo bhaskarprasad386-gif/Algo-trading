@@ -553,7 +553,11 @@ def test_paper_short_reversal_deducts_cost_of_remaining_long():
     data = reversal_response.json()
 
     # Cover 5 shorts: release 500 margin and realize +50 P&L.
-    # Open the remaining 3-long reversal at 90: deduct 270 from cash.    assert data["realized_pnl"] == 50.0    assert data["virtual_balance"] == starting_balance - 220.0    assert data["position"]["symbol"] == "REVERSAL"    assert data["position"]["quantity"] == 3.0
+    # Open the remaining 3-long reversal at 90: deduct 270 from cash.
+    assert data["realized_pnl"] == 50.0
+    assert data["virtual_balance"] == starting_balance - 220.0
+    assert data["position"]["symbol"] == "REVERSAL"
+    assert data["position"]["quantity"] == 3.0
     assert data["position"]["entry_price"] == 90.0
 
 
@@ -852,8 +856,10 @@ def test_paper_mixed_reversal_chain_preserves_cash_and_realized_pnl():
     assert data["position"]["quantity"] == 2.0
     assert data["position"]["entry_price"] == 100.0
     # Final long close at 90: receive 180 and realize -20.
-    closed = client.post(        "/api/v1/execution/paper/exit",
-        headers=headers,        json={"symbol": "CHAIN", "price": 90.0},
+    closed = client.post(
+        "/api/v1/execution/paper/exit",
+        headers=headers,
+        json={"symbol": "CHAIN", "price": 90.0},
     )
     assert closed.status_code == 200
     data = closed.json()
@@ -1458,7 +1464,8 @@ def test_paper_order_persists_filled_execution_fields_for_partial_lifecycle():
     assert partial.status_code == 200
 
     closed = client.post(
-        "/api/v1/execution/paper/exit",        headers=headers,
+        "/api/v1/execution/paper/exit",
+        headers=headers,
         json={"symbol": "LIFECYCLE", "price": 110.0},
     )
     assert closed.status_code == 200
@@ -2360,7 +2367,8 @@ def test_paper_audit_chain_tamper_matrix_is_blocked(tmp_path):
             elif name == "quantity":
                 second.quantity = 1
             elif name == "pnl":
-                second.pnl = 41.0            elif name == "fill_id":
+                second.pnl = 41.0
+            elif name == "fill_id":
                 second.fill_id = first.fill_id
             elif name == "previous_hash":
                 second.previous_audit_hash = "f" * 64
@@ -3024,7 +3032,8 @@ def test_paper_reconcile_flat_symbol_excluded_from_repair_positions(tmp_path):
         seed.add(user)
         seed.flush()
         seed.add(TradingAccount(
-            user_id=user.id, mode="PAPER", virtual_balance=1000.0,            initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+            user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+            initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
             realized_pnl=0.0, is_active=True,
         ))
         seed.commit()
