@@ -688,7 +688,6 @@ def test_partial_allocation_uses_actual_capital_and_max_loss_rejection_leaves_no
         )
         result = AlertService().dispatch(setup, event)
         assert result == 1
-        setup.expire_all() if hasattr(setup, "expire_all") else None
         rows = setup.query(LivePaperTrade).filter(
             LivePaperTrade.user_id == 1,
             LivePaperTrade.status == "ONGOING",
