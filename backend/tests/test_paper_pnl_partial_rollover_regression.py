@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 
 from app.auto.live_paper import LivePaperTradeService
-from app.models.global_paper_setting import GlobalPaperSetting, LivePaperTrade
+from app.models import GlobalPaperSetting, LivePaperTrade
 
 
 def test_partial_pnl_pct_survives_expiry_and_daily_capital_uses_allocated_amount(db_session):
