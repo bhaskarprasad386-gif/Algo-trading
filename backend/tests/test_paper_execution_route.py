@@ -6556,3 +6556,90 @@ def test_paper_http_concurrent_long_reversal_and_exit_close_once():
     assert payload["status"] == "OK"
     assert payload["mismatches"] == []
     assert payload["repairability"] == "NONE"
+
+
+def test_paper_http_concurrent_scanner_and_order_same_fill_id_is_idempotent():
+    """Scanner delegation and direct order entry must share fill-id idempotency under HTTP concurrency."""
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        account.virtual_balance = 1_000.0
+        account.realized_pnl = 0.0
+        db.commit()
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(2)
+
+    def submit(kind):
+        barrier.wait(timeout=5)
+        if kind == "scanner":
+            return client.post(
+                "/api/v1/execution/paper/from-scanner",
+                headers=headers,
+                json={
+                    "symbol": "SCANNER_ORDER_RACE",
+                    "cash_price": 100.0,
+                    "future_price": 110.0,
+                    "quantity": 1,
+                    "fill_id": "CROSS_ROUTE_FILL_1",
+                    "executable": True,
+                    "gap": 10.0,
+                    "net_profit": 10.0,
+                },
+            )
+        return client.post(
+            "/api/v1/execution/paper/order",
+            headers=headers,
+            json={
+                "symbol": "SCANNER_ORDER_RACE",
+                "transaction_type": "BUY",
+                "price": 100.0,
+                "quantity": 1,
+                "fill_id": "CROSS_ROUTE_FILL_1",
+            },
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(submit, ["scanner", "order"]))
+
+    assert all(response.status_code == 200 for response in responses)
+    assert sum(response.json().get("idempotent") is True for response in responses) == 1
+
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(
+            TradingAccount.mode == "PAPER",
+        ).one()
+        orders = db.query(Order).filter(
+            Order.user_id == account.user_id,
+            Order.is_paper.is_(True),
+            Order.symbol == "SCANNER_ORDER_RACE",
+        ).all()
+        positions = db.query(Position).filter(
+            Position.user_id == account.user_id,
+            Position.is_paper.is_(True),
+            Position.symbol == "SCANNER_ORDER_RACE",
+            Position.is_open.is_(True),
+        ).all()
+
+        assert len(orders) == 1
+        assert orders[0].transaction_type == "BUY"
+        assert orders[0].quantity == 1
+        assert orders[0].price == 100.0
+        assert orders[0].fill_id == "CROSS_ROUTE_FILL_1"
+        assert len(positions) == 1
+        assert positions[0].quantity == 1
+        assert positions[0].average_price == 100.0
+        assert account.virtual_balance == 900.0
+        assert account.realized_pnl == 0.0
+    finally:
+        db.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
