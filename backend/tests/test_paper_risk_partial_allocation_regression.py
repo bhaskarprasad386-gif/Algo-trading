@@ -98,7 +98,6 @@ def test_malformed_persisted_trade_fails_closed_before_new_paper_entry(db_sessio
         mobile_number="", whatsapp_enabled=False, enabled=True,
         max_daily_capital=100_000, max_simultaneous_positions=5, max_loss=1_000,
     ))
-    from app.models import LivePaperTrade
     db_session.add(LivePaperTrade(
         user_id=1, strategy_id="cash-future", symbol="BAD",
         event_id="BAD-RISK-ROW", direction="LONG", expiry="2026-10-30",
@@ -302,7 +301,6 @@ def test_partial_allocation_exact_capital_boundary_does_not_lose_a_lot(db_sessio
 
 
 def test_expiry_releases_global_reservation_but_daily_capital_and_loss_remain_enforced(db_session):
-    from datetime import timezone
     from app.models import LivePaperTrade
     from app.models.global_paper_setting import GlobalPaperSetting
 
