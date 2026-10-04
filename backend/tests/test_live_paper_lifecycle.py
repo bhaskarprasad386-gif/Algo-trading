@@ -1162,3 +1162,33 @@ def test_risk_gate_rollback_does_not_poison_next_paper_entry(db_session):
     assert len(ongoing) == 1
     assert ongoing[0].event_id == "ROLLBACK-C"
     assert ongoing[0].capital_used == 60000
+
+
+def test_negative_pnl_pct_uses_actual_allocated_capital_and_persists_on_close(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=125000, emergency_stop=False))
+    db_session.commit()
+
+    seed, _ = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="SEED-NEG",
+        event_id="NEG-SEED", direction="LONG", expiry="2026-12-30",
+        lot_size=10, lots=3, edge=10, capital_used=90000, user_id=1,
+    )
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="NEG",
+        event_id="NEG-1", direction="LONG", expiry="2026-12-30",
+        lot_size=10, lots=2, edge=10, capital_used=60000, user_id=1,
+    )
+    assert created is True
+    assert trade.lots == 1
+    assert trade.capital_used == 30000
+
+    svc.mark(db_session, trade, edge=0)
+    assert trade.unrealized_pnl == -100.0
+    assert trade.pnl_pct == round(-100.0 / 30000.0 * 100.0, 8)
+
+    svc.close(db_session, trade, "MANUAL")
+    db_session.expire_all()
+    closed = db_session.query(LivePaperTrade).filter(LivePaperTrade.id == trade.id).one()
+    assert closed.realized_pnl == -100.0
+    assert closed.pnl_pct == round(-100.0 / 30000.0 * 100.0, 8)
