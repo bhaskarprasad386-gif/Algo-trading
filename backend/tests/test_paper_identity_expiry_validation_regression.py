@@ -196,3 +196,91 @@ def test_concurrent_same_event_and_conflicting_identity_creates_only_one_correct
             assert created is False
 
     verify.close()
+
+
+
+def test_concurrent_same_event_across_users_is_fully_isolated(tmp_path):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'cross-user-event-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    setup.add_all([
+        GlobalPaperSetting(user_id=1, enabled=True, paper_amount=60000, emergency_stop=False),
+        GlobalPaperSetting(user_id=2, enabled=True, paper_amount=60000, emergency_stop=False),
+    ])
+    setup.commit()
+    setup.close()
+
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+
+    def worker(user_id, symbol, edge):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            trade, created = LivePaperTradeService().enter_or_mark(
+                db,
+                strategy_id="cash-future",
+                symbol=symbol,
+                event_id="SAME-EVENT-CROSS-USER",
+                direction="LONG",
+                expiry="2026-10-30",
+                earliest_expiry="2026-10-30",
+                lot_size=10,
+                lots=2,
+                edge=edge,
+                capital_used=60000,
+                user_id=user_id,
+            )
+            results.append((user_id, created, None if trade is None else trade.id))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=worker, args=(1, "USER1-SYMBOL", 10)),
+        threading.Thread(target=worker, args=(2, "USER2-SYMBOL", 20)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(results) == 2
+    assert {row[0] for row in results} == {1, 2}
+    assert all(row[1] is True for row in results)
+
+    verify = Session()
+    rows = verify.query(LivePaperTrade).filter(
+        LivePaperTrade.event_id == "SAME-EVENT-CROSS-USER",
+    ).all()
+    assert len(rows) == 2
+    by_user = {row.user_id: row for row in rows}
+
+    assert set(by_user) == {1, 2}
+    assert by_user[1].symbol == "USER1-SYMBOL"
+    assert by_user[2].symbol == "USER2-SYMBOL"
+    assert by_user[1].capital_used == 60000
+    assert by_user[2].capital_used == 60000
+    assert by_user[1].lots == 2
+    assert by_user[2].lots == 2
+    assert by_user[1].current_edge == 10
+    assert by_user[2].current_edge == 20
+
+    # Each user's reservation is isolated even though event_id is identical.
+    for user_id in (1, 2):
+        user_rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == user_id,
+            LivePaperTrade.status == "ONGOING",
+        ).all()
+        assert len(user_rows) == 1
+        assert sum(float(row.capital_used) for row in user_rows) == 60000
+
+    verify.close()
