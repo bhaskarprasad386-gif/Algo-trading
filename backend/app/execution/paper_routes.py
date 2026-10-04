@@ -409,6 +409,9 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
         raw_symbol = str(order.symbol or "")
         raw_side = str(order.transaction_type or "")
         raw_fill_id = str(order.fill_id) if order.fill_id is not None else None
+        raw_order_id = str(order.order_id or "")
+        expected_order_prefix = f"PAPER-{user_id}-"
+        raw_broker_order_id = str(order.broker_order_id) if order.broker_order_id is not None else None
         price = float(order.price or 0.0)
         average_fill_price = float(order.average_fill_price or 0.0)
         average_price = float(order.average_price or 0.0)
@@ -430,6 +433,10 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             or raw_symbol != raw_symbol.strip().upper()
             or raw_side != raw_side.strip().upper()
             or (raw_fill_id is not None and raw_fill_id != raw_fill_id.strip())
+            or not raw_order_id
+            or raw_order_id != raw_order_id.strip()
+            or not raw_order_id.startswith(expected_order_prefix)
+            or (raw_broker_order_id is not None and raw_broker_order_id.strip())
             or order.status != "FILLED"
             or order.transaction_type.upper() not in {"BUY", "SELL"}
         ):
