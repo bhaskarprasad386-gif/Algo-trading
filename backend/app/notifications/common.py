@@ -315,14 +315,20 @@ class AlertService:
                         db.rollback()
                         continue
                 try:
-                    service.enter_or_mark(
+                    created_trade, created = service.enter_or_mark(
                         db, strategy_id=event.strategy_id, symbol=event.symbol, event_id=event.event_id,
                         direction=paper.get("direction", "LONG"), expiry=paper.get("expiry"),
                         earliest_expiry=paper.get("earliest_expiry") or paper.get("expiry"),
                         lot_size=lot_size_value, lots=lots_value,
-                        edge=edge_value, capital_used=capital_value,
+                        edge=edge_value, capital_used=effective_capital,
                         legs=paper.get("legs") or [], metadata=dict(paper), user_id=rule_user_id,
                     )
+                    # Each user's accepted paper mutation is its own durable
+                    # transaction boundary. Without this commit, a later
+                    # user's risk rejection could rollback an earlier user's
+                    # successful entry/mark in the shared dispatcher session.
+                    if created_trade is not None:
+                        db.commit()
                 except Exception as exc:
                     # enter_or_mark() can fail after this per-user risk lock has
                     # started a transaction. Roll back the failed attempt so a
