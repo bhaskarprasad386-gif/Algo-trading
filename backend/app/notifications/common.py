@@ -38,6 +38,25 @@ def _strictest_positive_limit(values):
     return min(positive) if positive else 0
 
 
+def _valid_alert_rule(rule) -> bool:
+    """Fail closed if persisted risk configuration is malformed."""
+    try:
+        import math
+        return (
+            math.isfinite(float(rule.min_gross_profit))
+            and float(rule.min_gross_profit) >= 0
+            and math.isfinite(float(rule.max_loss))
+            and float(rule.max_loss) >= 0
+            and math.isfinite(float(rule.max_daily_capital))
+            and float(rule.max_daily_capital) >= 0
+            and int(rule.max_simultaneous_positions) >= 1
+            and math.isfinite(float(rule.cooldown_seconds))
+            and float(rule.cooldown_seconds) >= 0
+        )
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 class AlertService:
     """Single outbound alert service; disabled channels are safe no-ops."""
     def __init__(self, notifier: WhatsAppNotifier | None = None) -> None:
@@ -113,6 +132,10 @@ class AlertService:
             AlertRule.enabled.is_(True),
             AlertRule.strategy_id == event.strategy_id.strip().lower(),
         ).order_by(AlertRule.priority.desc(), AlertRule.id.asc()).all()
+        # DB constraints/Pydantic protect the normal API path, but persisted
+        # rows can still be malformed after imports/manual DB edits. An invalid
+        # risk rule is never allowed to become an implicit "unlimited" rule.
+        rules = [rule for rule in rules if _valid_alert_rule(rule)]
         if isinstance(paper, Mapping) and rules:
             # A supplied gross-profit value participates in the paper-entry
             # threshold. Never treat malformed/non-finite gross as "missing".
