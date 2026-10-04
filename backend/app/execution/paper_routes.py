@@ -497,8 +497,7 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             or raw_time_in_force != "DAY"
             or created_at is None
             or updated_at is None
-            or updated_at < created_at
-            or order.trigger_price is not None
+            or updated_at < created_at            or order.trigger_price is not None
             or order.status != "FILLED"
             or order.transaction_type.upper() not in {"BUY", "SELL"}
         ):
@@ -997,8 +996,7 @@ def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_
     symbol = request.symbol.strip().upper()
     fill_id = _normalized_fill_id(request.fill_id)
     account = _begin_paper_mutation(db, user_id)
-    duplicate = _existing_fill_order(db, user_id=user_id, fill_id=fill_id, symbol=symbol, side="BUY", price=request.price, quantity=quantity)
-    if duplicate is not None:
+    duplicate = _existing_fill_order(db, user_id=user_id, fill_id=fill_id, symbol=symbol, side="BUY", price=request.price, quantity=quantity)    if duplicate is not None:
         return {"status":"success","mode":"paper","idempotent":True,"order":duplicate,"position":_position_payload(_position(db, user_id, symbol)),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
     if _position(db, user_id, symbol) is not None:
         raise HTTPException(status_code=409, detail="A paper position is already active for this symbol")
@@ -1250,15 +1248,17 @@ def paper_payoff_from_cash_future(request: CashFuturePayoffRequest, user_id: int
 def paper_exit(request: PaperExitRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     account = _begin_paper_mutation(db, user_id)
     fill_id = _normalized_fill_id(request.fill_id)
-    prior_fill = (
-        db.query(Order)
-        .filter(
-            Order.user_id == user_id,
-            Order.is_paper.is_(True),
-            Order.fill_id == fill_id,
+    prior_fill = None
+    if fill_id is not None:
+        prior_fill = (
+            db.query(Order)
+            .filter(
+                Order.user_id == user_id,
+                Order.is_paper.is_(True),
+                Order.fill_id == fill_id,
+            )
+            .first()
         )
-        .first()
-    )
     if prior_fill is not None:
         _validate_paper_state(db, user_id)
         if (request.symbol is not None and prior_fill.symbol != request.symbol.strip().upper()) or float(prior_fill.price) != float(request.price):
