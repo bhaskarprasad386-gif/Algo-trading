@@ -2243,3 +2243,109 @@ def test_corrupt_completed_trade_is_excluded_from_completed_view_and_daily_risk(
     assert db_session.query(LivePaperTrade).filter(
         LivePaperTrade.event_id == "AFTER-CORRUPT-HISTORY",
     ).count() == 0
+
+
+def test_persisted_trade_tampering_matrix_fails_closed():
+    """Every persisted accounting/identity corruption variant is rejected."""
+    import json
+    import math
+    from app.auto.live_paper import _valid_persisted_trade
+
+    def make_valid(**overrides):
+        values = {
+            "user_id": 1,
+            "strategy_id": "calendar-spread",
+            "symbol": "TAMPER",
+            "event_id": "TAMPER-MATRIX",
+            "direction": "LONG",
+            "expiry": "2026-10-30",
+            "earliest_expiry": "2026-10-30",
+            "lot_size": 10,
+            "lots": 1,
+            "entry_edge": 5.0,
+            "current_edge": 6.0,
+            "capital_used": 30000.0,
+            "unrealized_pnl": 100.0,
+            "realized_pnl": 100.0,
+            "pnl_pct": round(100.0 / 30000.0 * 100.0, 8),
+            "legs_json": json.dumps([
+                {"side": "BUY", "price": 100.0, "symbol": "TAMPER"}
+            ]),
+            "metadata_json": json.dumps({"exchange": "NFO"}),
+            "status": "COMPLETED",
+            "opened_at": datetime(2026, 10, 4, 9, 30),
+            "closed_at": datetime(2026, 10, 4, 10, 0),
+            "last_mark_at": datetime(2026, 10, 4, 10, 0),
+            "exit_reason": "MANUAL",
+        }
+        values.update(overrides)
+        return LivePaperTrade(**values)
+
+    invalid_cases = [
+        ("malformed legs JSON", {"legs_json": "not-json"}),
+        ("legs must be list", {"legs_json": json.dumps({"side": "BUY", "price": 100})}),
+        ("leg must be mapping", {"legs_json": json.dumps([["BUY", 100]])}),
+        ("invalid leg side", {"legs_json": json.dumps([{"side": "HOLD", "price": 100}])}),
+        ("zero leg price", {"legs_json": json.dumps([{"side": "BUY", "price": 0}])}),
+        ("negative leg price", {"legs_json": json.dumps([{"side": "BUY", "price": -1}])}),
+        ("non-finite leg price", {"legs_json": json.dumps([{"side": "BUY", "price": "nan"}])}),
+        ("malformed metadata JSON", {"metadata_json": "not-json"}),
+        ("metadata must be mapping", {"metadata_json": json.dumps(["NFO"])}),
+        ("invalid metadata exchange", {"metadata_json": json.dumps({"exchange": "INVALID"})}),
+        ("invalid strategy identity", {"strategy_id": ""}),
+        ("oversized event identity", {"event_id": "X" * 513}),
+        ("invalid direction", {"direction": "HOLD"}),
+        ("invalid status", {"status": "CANCELLED"}),
+        ("invalid expiry", {"expiry": "not-a-date"}),
+        ("earliest expiry after expiry", {"expiry": "2026-10-20", "earliest_expiry": "2026-10-30"}),
+        ("earliest expiry before opening date", {"expiry": "2026-10-03", "earliest_expiry": "2026-10-03"}),
+        ("non-integer lot size", {"lot_size": 1.5}),
+        ("zero lots", {"lots": 0}),
+        ("negative lots", {"lots": -1}),
+        ("non-finite capital", {"capital_used": math.inf}),
+        ("zero capital", {"capital_used": 0}),
+        ("negative capital", {"capital_used": -1}),
+        ("negative entry edge", {"entry_edge": -1}),
+        ("negative current edge", {"current_edge": -1}),
+        ("non-finite unrealized P&L", {"unrealized_pnl": math.nan}),
+        ("non-finite realized P&L", {"realized_pnl": math.inf}),
+        ("invalid P&L percentage", {"pnl_pct": 999}),
+        ("aware opened timestamp", {"opened_at": datetime(2026, 10, 4, 9, 30, tzinfo=__import__("datetime").timezone.utc)}),
+        ("aware last mark timestamp", {"last_mark_at": datetime(2026, 10, 4, 10, 0, tzinfo=__import__("datetime").timezone.utc)}),
+        ("last mark before open", {"last_mark_at": datetime(2026, 10, 4, 9, 29)}),
+        ("aware closed timestamp", {"closed_at": datetime(2026, 10, 4, 10, 0, tzinfo=__import__("datetime").timezone.utc)}),
+        ("closed before open", {"closed_at": datetime(2026, 10, 4, 9, 29)}),
+        ("last mark after close", {"last_mark_at": datetime(2026, 10, 4, 10, 1)}),
+        ("invalid exit reason", {"exit_reason": "BROKER"}),
+        ("completed without realized P&L", {"realized_pnl": 99.0}),
+        ("ongoing with closed timestamp", {
+            "status": "ONGOING",
+            "closed_at": datetime(2026, 10, 4, 10, 0),
+            "exit_reason": None,
+            "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0,
+            "pnl_pct": 0.0,
+        }),
+        ("ongoing with exit reason", {
+            "status": "ONGOING",
+            "closed_at": None,
+            "exit_reason": "MANUAL",
+            "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0,
+            "pnl_pct": 0.0,
+        }),
+        ("ongoing with realized P&L", {
+            "status": "ONGOING",
+            "closed_at": None,
+            "exit_reason": None,
+            "realized_pnl": 1.0,
+        }),
+        ("completed without closed timestamp", {
+            "status": "COMPLETED",
+            "closed_at": None,
+        }),
+    ]
+
+    for label, overrides in invalid_cases:
+        trade = make_valid(**overrides)
+        assert _valid_persisted_trade(trade) is False, label
