@@ -492,6 +492,7 @@ def _existing_fill_order(db: Session, *, user_id: int, fill_id: str | None, symb
     existing = db.query(Order).filter(Order.user_id == user_id, Order.fill_id == fill_id).first()
     if existing is None:
         return None
+    _validate_paper_state(db, user_id)
     if existing.symbol != symbol or existing.transaction_type.upper() != side or float(existing.price) != float(price) or int(existing.quantity) != int(quantity):
         raise HTTPException(status_code=409, detail="fill_id already exists with different execution details")
     return {"id": existing.order_id, "symbol": existing.symbol, "transaction_type": existing.transaction_type, "price": existing.price, "quantity": float(existing.quantity), "status": existing.status, "pnl": float(existing.pnl or 0.0), "fill_id": existing.fill_id}
