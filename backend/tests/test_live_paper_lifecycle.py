@@ -1056,3 +1056,53 @@ def test_market_timestamp_freshness_rejects_older_and_future_quotes():
     assert is_fresh_market_timestamp(now_ns + 1, now_ns) is False
     assert is_fresh_market_timestamp(0, now_ns) is False
 
+
+
+def test_mark_does_not_update_trade_after_concurrent_close(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=100000, emergency_stop=False))
+    db_session.commit()
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="RACE",
+        event_id="MARK-CLOSE-RACE", direction="LONG", lot_size=10, lots=1,
+        edge=10, capital_used=50000, user_id=1,
+    )
+    assert created is True
+    svc.close(db_session, trade, "MANUAL")
+    closed_at = trade.closed_at
+    realized = trade.realized_pnl
+
+    stale = db_session.query(LivePaperTrade).filter(LivePaperTrade.id == trade.id).first()
+    assert stale.status == "COMPLETED"
+    svc.mark(db_session, stale, edge=99, pnl_override=999.0)
+
+    db_session.expire_all()
+    current = db_session.query(LivePaperTrade).filter(LivePaperTrade.id == trade.id).one()
+    assert current.status == "COMPLETED"
+    assert current.realized_pnl == realized
+    assert current.unrealized_pnl == realized
+    assert current.closed_at == closed_at
+
+
+def test_close_uses_latest_db_pnl_after_mark_refresh(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=100000, emergency_stop=False))
+    db_session.commit()
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="RACE2",
+        event_id="CLOSE-LATEST-MARK", direction="LONG", lot_size=10, lots=1,
+        edge=10, capital_used=50000, user_id=1,
+    )
+    assert created is True
+    svc.mark(db_session, trade, edge=20, pnl_override=100.0)
+    stale = db_session.query(LivePaperTrade).filter(LivePaperTrade.id == trade.id).one()
+    # Simulate another refresh transaction updating the DB after this object was loaded.
+    db_session.query(LivePaperTrade).filter(LivePaperTrade.id == trade.id).update(
+        {LivePaperTrade.unrealized_pnl: 250.0},
+        synchronize_session=False,
+    )
+    db_session.commit()
+    closed = svc.close(db_session, stale, "MANUAL")
+    assert closed.status == "COMPLETED"
+    assert closed.realized_pnl == 250.0
+    assert closed.unrealized_pnl == 250.0
