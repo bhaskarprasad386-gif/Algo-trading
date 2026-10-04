@@ -31,6 +31,21 @@ def run_schema_migrations() -> None:
                 connection.execute(text("ALTER TABLE trading_accounts ADD COLUMN realized_pnl FLOAT DEFAULT 0.0"))
             if "box_spread_auto_lots" not in account_columns:
                 connection.execute(text("ALTER TABLE trading_accounts ADD COLUMN box_spread_auto_lots INTEGER DEFAULT 1"))
+            if "initial_virtual_balance" not in account_columns:
+                connection.execute(text("ALTER TABLE trading_accounts ADD COLUMN initial_virtual_balance FLOAT DEFAULT 10000000.0"))
+                connection.execute(text("""
+                    UPDATE trading_accounts
+                    SET initial_virtual_balance =
+                        virtual_balance
+                        - COALESCE(realized_pnl, 0.0)
+                        + COALESCE((
+                            SELECT SUM(ABS(p.quantity) * p.average_price)
+                            FROM positions p
+                            WHERE p.user_id = trading_accounts.user_id
+                              AND p.is_paper = 1
+                              AND p.quantity != 0
+                        ), 0.0)
+                """))
 
         if "live_box_spread_paper_positions" in account_tables:
             box_columns = {column["name"] for column in inspect(connection).get_columns("live_box_spread_paper_positions")}
