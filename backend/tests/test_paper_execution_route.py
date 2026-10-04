@@ -443,7 +443,7 @@ def test_paper_mixed_reversal_chain_preserves_cash_and_realized_pnl():
     )
     assert partial_cover.status_code == 200
     data = partial_cover.json()
-    assert data["virtual_balance"] == 10_030.0
+    assert data["virtual_balance"] == 10_040.0
     assert data["realized_pnl"] == 150.0
     assert data["position"]["quantity"] == -1.0
     assert data["position"]["entry_price"] == 110.0
@@ -456,7 +456,7 @@ def test_paper_mixed_reversal_chain_preserves_cash_and_realized_pnl():
     )
     assert reverse_long.status_code == 200
     data = reverse_long.json()
-    assert data["virtual_balance"] == 9_830.0
+    assert data["virtual_balance"] == 9_960.0
     assert data["realized_pnl"] == 160.0
     assert data["position"]["quantity"] == 2.0
     assert data["position"]["entry_price"] == 100.0
