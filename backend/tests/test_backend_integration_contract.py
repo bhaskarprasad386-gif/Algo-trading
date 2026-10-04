@@ -214,6 +214,31 @@ def test_multiple_same_user_alert_rules_apply_strictest_limits(db_session):
     assert len(rows) == 0
 
 
+def test_duplicate_event_mark_is_not_blocked_by_current_gross_threshold(db_session):
+    from app.models import AlertRule, GlobalPaperSetting
+    from app.notifications.common import AlertEvent, AlertService
+    from app.auto.live_paper import LivePaperTradeService
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=1_000_000, emergency_stop=False))
+    db_session.add(AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=1000,
+                             mobile_number="", whatsapp_enabled=False, enabled=True,
+                             max_simultaneous_positions=1, max_daily_capital=500000, max_loss=50000))
+    db_session.commit()
+    service = LivePaperTradeService()
+    created, ok = service.enter_or_mark(db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="DUP-GROSS-1", direction="LONG", expiry="2026-10-30", lot_size=10,
+        lots=1, edge=5, capital_used=50000, user_id=1)
+    assert ok is True
+    event = AlertEvent(strategy_id="cash-future", event_id="DUP-GROSS-1", symbol="AAA",
+        timestamp_ns=2, message="duplicate", metadata={"gross_profit": 100,
+        "paper_trade":{"direction":"LONG","expiry":"2026-10-30","lot_size":10,
+        "lots":1,"edge":15,"capital_used":999999}})
+    assert AlertService().dispatch(db_session, event) == 0
+    rows = service.ongoing(db_session, 1)
+    assert len(rows) == 1
+    assert rows[0].current_edge == 15
+    assert rows[0].capital_used == 50000
+
+
 def test_multi_rule_gross_profit_uses_matching_rules_only(db_session):
     from app.models import AlertRule, GlobalPaperSetting
     from app.notifications.common import AlertEvent, AlertService
