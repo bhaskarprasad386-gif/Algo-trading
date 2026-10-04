@@ -34,6 +34,7 @@ export default function HomePage() {
   const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [snapshot, setSnapshot] = useState({ cashFuture: 0, calendar: 0, synthetic: 0, box: 0, opportunities: 0, timestamp: null as string | null });
   const [indexLtps, setIndexLtps] = useState<Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null }>>({});
+  const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -73,6 +74,7 @@ export default function HomePage() {
         if (!response.ok) throw new Error("market overview");
         const body = await response.json();
         const next: Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null }> = {};
+        const session = body?.market_session === "OPEN" ? "OPEN" : body?.market_session === "CLOSED" ? "CLOSED" : "UNKNOWN";
         for (const row of Array.isArray(body?.indices) ? body.indices : []) {
           if (row?.symbol) {
             const ltp = row?.ltp == null ? null : Number(row.ltp);
@@ -82,6 +84,7 @@ export default function HomePage() {
           }
         }
         if (!cancelled) {
+          setMarketSession(session);
           setIndexLtps((previous) => {
             const merged = { ...previous };
             for (const [symbol, value] of Object.entries(next)) {
@@ -156,13 +159,13 @@ export default function HomePage() {
                 <Card className="relative overflow-hidden rounded-2xl p-4 transition hover:-translate-y-0.5">
                   <span className="absolute inset-y-0 left-0 w-1 theme-accent-bg" />
                   <div className="pl-1">
-                    <div className="flex items-center justify-between"><span className="text-[12px] font-bold tracking-wide">{symbol}</span>{positive ? <TrendingUp size={15} className="theme-success" /> : negative ? <TrendingDown size={15} className="theme-danger" /> : <Activity size={15} className="theme-subtle" />}</div>
+                    <div className="flex items-center justify-between"><span className="text-[12px] font-bold tracking-wide">{symbol}</span>{marketSession === "CLOSED" ? <span className="rounded-full theme-warning-bg theme-warning px-2 py-0.5 text-[9px] font-bold">CLOSED</span> : null}{positive ? <TrendingUp size={15} className="theme-success" /> : negative ? <TrendingDown size={15} className="theme-danger" /> : <Activity size={15} className="theme-subtle" />}</div>
                     <div className="mt-3 flex items-center justify-between gap-2">
                       <div className={"text-lg font-bold " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-text")}>{indexLtps[symbol]?.ltp == null ? "No live data" : indexLtps[symbol]!.ltp!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       {indexLtps[symbol]?.ltp == null && <Radio size={14} className="theme-warning" aria-label="No live data" />}
                     </div>
                     <div className={"mt-1 text-[12px] font-bold " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-muted")}>{change == null ? "No live change" : (change > 0 ? "+" : "") + change.toFixed(2) + "%"}</div>
-                    <div className="mt-1 text-[10px] theme-subtle">{indexLtps[symbol]?.previousClose == null ? "Previous close unavailable" : "Prev close: " + indexLtps[symbol]!.previousClose!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    <div className="mt-1 text-[10px] theme-subtle">{indexLtps[symbol]?.previousClose == null ? "Previous close unavailable" : marketSession === "CLOSED" ? "Last close: " + indexLtps[symbol]!.previousClose!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + indexLtps[symbol]!.previousClose!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     <div className="mt-3 flex items-center justify-between border-t theme-border pt-2 text-[10px] font-semibold theme-accent">
                       <span>Open Scanner</span><Radio size={13} />
                     </div>
