@@ -1020,3 +1020,104 @@ def test_partial_position_still_counts_as_one_simultaneous_position(db_session):
     )
     assert AlertService().dispatch(db_session, event) == 0
     assert [row.symbol for row in svc.ongoing(db_session, 1)] == ["SEED"]
+
+
+def test_partial_lot_loss_counts_actual_allocated_lots_for_max_loss(db_session):
+    from app.models import AlertRule, GlobalPaperSetting
+    from app.notifications.common import AlertEvent, AlertService
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=125000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0.0, max_simultaneous_positions=5, max_loss=100.0,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    seed, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="SEED",
+        event_id="LOSS-PARTIAL-A", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=3, edge=10, capital_used=90000, user_id=1,
+    )
+    assert created is True
+
+    # Only 35k remains. A 2-lot/60k request therefore gets exactly one lot.
+    partial, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="PARTIAL",
+        event_id="LOSS-PARTIAL-B", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=2, edge=10, capital_used=60000, user_id=1,
+    )
+    assert created is True
+    assert partial.lots == 1
+    assert partial.capital_used == 30000
+
+    # One allocated lot loses 10 edge points => -100 loss, which exactly
+    # reaches the configured max-loss threshold.
+    svc.mark(db_session, partial, edge=0.0)
+    db_session.commit()
+
+    blocked = AlertEvent(
+        strategy_id="cash-future", event_id="LOSS-PARTIAL-C", symbol="BLOCKED",
+        timestamp_ns=1, message="blocked", metadata={
+            "gross_profit": 1,
+            "paper_trade": {
+                "direction":"LONG", "expiry":"2026-10-30",
+                "lot_size":10, "lots":1, "edge":5, "capital_used":10000,
+            },
+        },
+    )
+    assert AlertService().dispatch(db_session, blocked) == 0
+    assert len(svc.ongoing(db_session, 1)) == 2
+    assert partial.unrealized_pnl == -100.0
+
+
+def test_partial_close_uses_actual_realized_loss_for_subsequent_max_loss_gate(db_session):
+    from app.models import AlertRule, GlobalPaperSetting
+    from app.notifications.common import AlertEvent, AlertService
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=125000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0.0, max_simultaneous_positions=5, max_loss=100.0,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    seed, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="SEED",
+        event_id="LOSS-CLOSE-A", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=3, edge=10, capital_used=90000, user_id=1,
+    )
+    assert created is True
+
+    partial, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="PARTIAL",
+        event_id="LOSS-CLOSE-B", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=2, edge=10, capital_used=60000, user_id=1,
+    )
+    assert created is True
+    assert partial.lots == 1
+    svc.mark(db_session, partial, edge=5.0)
+    svc.close(db_session, partial, "MANUAL")
+    assert partial.realized_pnl == -50.0
+
+    allowed = AlertEvent(
+        strategy_id="cash-future", event_id="LOSS-CLOSE-C", symbol="ALLOWED",
+        timestamp_ns=1, message="allowed", metadata={
+            "gross_profit": 1,
+            "paper_trade": {
+                "direction":"LONG", "expiry":"2026-10-30",
+                "lot_size":10, "lots":1, "edge":5, "capital_used":10000,
+            },
+        },
+    )
+    assert AlertService().dispatch(db_session, allowed) == 0
+    rows = svc.ongoing(db_session, 1)
+    assert len(rows) == 2
+    assert any(row.symbol == "ALLOWED" for row in rows)
