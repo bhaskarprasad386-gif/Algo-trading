@@ -246,3 +246,81 @@ def test_completed_trade_requires_consistent_terminal_timestamps(db_session):
     closed = svc.close(db_session, malformed, "MANUAL")
     assert closed.status == "COMPLETED"
     assert closed.closed_at == datetime(2026, 10, 4, 10, 15)
+
+
+def test_malformed_persisted_json_is_excluded_from_accounting_and_expiry(db_session):
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100_000, emergency_stop=False,
+    ))
+    db_session.commit()
+    malformed_rows = [
+        ("JSON-BAD", "{", '{"exchange":"NFO"}'),
+        ("JSON-LEGS-SCALAR", '{"side":"BUY","price":10}', '{"exchange":"NFO"}'),
+        ("JSON-LEG-BAD-SIDE", '[{"side":"HOLD","price":10}]', '{"exchange":"NFO"}'),
+        ("JSON-LEG-NAN", '[{"side":"BUY","price":NaN}]', '{"exchange":"NFO"}'),
+        ("JSON-META-LIST", '[]', '[]'),
+        ("JSON-META-BAD-EXCHANGE", '[]', '{"exchange":"UNKNOWN"}'),
+    ]
+    for event_id, legs_json, metadata_json in malformed_rows:
+        db_session.add(LivePaperTrade(
+            user_id=1, strategy_id="calendar-spread", symbol=event_id,
+            event_id=event_id, direction="LONG", expiry="2026-10-12",
+            earliest_expiry="2026-10-12", lot_size=1, lots=1,
+            entry_edge=10, current_edge=10, capital_used=10_000,
+            unrealized_pnl=0, realized_pnl=0, pnl_pct=0,
+            legs_json=legs_json, metadata_json=metadata_json,
+            status="ONGOING",
+            opened_at=datetime(2026, 10, 4, 10, 0),
+            last_mark_at=datetime(2026, 10, 4, 10, 0),
+        ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    assert svc.ongoing(db_session, 1) == []
+    assert svc.close_expired(
+        db_session, now=datetime(2026, 10, 12, 23, 30)
+    ) == []
+    for row in db_session.query(LivePaperTrade).all():
+        assert row.status == "ONGOING"
+
+
+def test_valid_mcx_metadata_still_uses_mcx_expiry_boundary(db_session):
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100_000, emergency_stop=False,
+    ))
+    db_session.commit()
+    svc = LivePaperTradeService()
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="calendar-spread", symbol="GOLD",
+        event_id="VALID-MCX-META", direction="LONG", expiry="2026-10-12",
+        earliest_expiry="2026-10-12", lot_size=1, lots=1, edge=4,
+        capital_used=50_000, metadata={"exchange": "MCX"}, user_id=1,
+    )
+    assert created is True
+    assert svc.close_expired(
+        db_session, now=datetime(2026, 10, 12, 23, 29, 59)
+    ) == []
+    assert trade.status == "ONGOING"
+    closed = svc.close_expired(
+        db_session, now=datetime(2026, 10, 12, 23, 30)
+    )
+    assert [row.id for row in closed] == [trade.id]
+
+
+def test_executable_pnl_rejects_malformed_persisted_legs():
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+    cases = [
+        "{",
+        '{"side":"BUY","price":10}',
+        '[1]',
+        '[{"side":"HOLD","price":10}]',
+        '[{"side":"BUY","price":NaN}]',
+        '[{"side":"BUY","price":Infinity}]',
+    ]
+    row = {"cash_bid": 103.0, "cash_ask": 104.0}
+    for legs_json in cases:
+        trade = LivePaperTrade(
+            lot_size=10, lots=1, legs_json=legs_json,
+        )
+        assert _executable_paper_pnl(trade, row) is None
