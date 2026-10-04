@@ -1359,10 +1359,40 @@ def test_partial_allocation_and_expiry_close_race_preserve_capital(tmp_path):
                 lots=2,
                 edge=5,
                 capital_used=60000,
+                metadata={"exchange": "NFO"},
+                user_id=1,
+            )
+            results.append(("entry", created, None if trade is None else trade.id))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
 
+    threads = [
+        threading.Thread(target=expiry_worker),
+        threading.Thread(target=entry_worker),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
 
+    assert errors == []
+    assert len(results) == 2
 
-
+    verify = Session()
+    try:
+        original_row = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.id == original_id,
+        ).one()
+        assert original_row.status == "COMPLETED"
+        assert original_row.exit_reason == "EXPIRY_CLOSE"
+        assert verify.query(LivePaperTrade).filter(
+            LivePaperTrade.event_id == "PARTIAL-EXPIRY-RACE-NEW",
+        ).count() == 1
+    finally:
+        verify.close()
+        engine.dispose()
 
 
 def test_duplicate_mark_manual_close_expiry_close_three_way_preserves_terminal_pnl(tmp_path):
