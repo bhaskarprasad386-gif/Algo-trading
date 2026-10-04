@@ -1948,3 +1948,87 @@ def test_executable_pnl_box_both_directions_follow_leg_sides():
     # SHORT: (10-13) + (9-11) + (7-5) + (6-4) = -1.
     assert _executable_paper_pnl(long_trade, row) == -3.0
     assert _executable_paper_pnl(short_trade, row) == -1.0
+
+
+def test_strategy_capital_definitions_scale_with_actual_allocated_lots_and_pnl_pct(db_session):
+    """Calendar/Synthetic/Box all mark against persisted allocated lots and capital."""
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=100000, emergency_stop=False))
+    db_session.commit()
+
+    cases = [
+        ("calendar-spread", "CAL-CAP-PNL", 50, 2, 60000, 1, 30000, 120.0),
+        ("synthetic-future-cash-carry", "SYN-CAP-PNL", 50, 2, 60000, 1, 30000, 80.0),
+        ("box-spread", "BOX-CAP-PNL", 50, 2, 40000, 1, 20000, 60.0),
+    ]
+    for strategy, event_id, lot_size, requested_lots, requested_capital, expected_lots, expected_capital, pnl in cases:
+        trade, created = svc.enter_or_mark(
+            db_session,
+            strategy_id=strategy,
+            symbol=event_id,
+            event_id=event_id,
+            direction="LONG",
+            expiry="2026-10-30",
+            earliest_expiry="2026-10-30",
+            lot_size=lot_size,
+            lots=requested_lots,
+            edge=5,
+            capital_used=requested_capital,
+            metadata={"exchange": "NFO"},
+            user_id=1,
+        )
+        assert created is True
+        assert trade.lots == expected_lots
+        assert trade.capital_used == expected_capital
+
+        # P&L is deliberately supplied here to isolate ledger accounting from
+        # quote mapping: denominator must remain the actual allocated capital.
+        svc.mark(db_session, trade, edge=6, pnl_override=pnl)
+        assert trade.lots == expected_lots
+        assert trade.capital_used == expected_capital
+        assert trade.unrealized_pnl == pnl
+        assert trade.pnl_pct == round(pnl / expected_capital * 100.0, 8)
+
+        svc.close(db_session, trade, "MANUAL")
+        assert trade.realized_pnl == pnl
+        assert trade.unrealized_pnl == pnl
+        assert trade.pnl_pct == round(pnl / expected_capital * 100.0, 8)
+
+
+def test_strategy_executable_pnl_and_persisted_capital_use_allocated_lot_count():
+    """Executable multi-leg P&L is scaled by the persisted allocated lots, not request size."""
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+
+    calendar = LivePaperTrade(
+        lot_size=50, lots=1,
+        legs_json='[{"contract":"NEAR","side":"BUY","price":100.0},{"contract":"FAR","side":"SELL","price":110.0}]',
+    )
+    cal_row = SimpleNamespace(
+        near_contract_month="NEAR", far_contract_month="FAR",
+        near_bid=103.0, near_ask=104.0, far_bid=108.0, far_ask=109.0,
+    )
+    # +3 on the BUY leg and +1 on the SELL leg = +4 points x one allocated lot.
+    assert _executable_paper_pnl(calendar, cal_row) == 200.0
+
+    synthetic = LivePaperTrade(
+        lot_size=50, lots=1,
+        legs_json='[{"instrument":"FUTURE","side":"BUY","price":100.0},{"instrument":"CALL","side":"BUY","price":10.0},{"instrument":"PUT","side":"SELL","price":8.0}]',
+    )
+    syn_row = SimpleNamespace(
+        future=SimpleNamespace(bid=102.0, ask=103.0),
+        option=SimpleNamespace(call_bid=12.0, call_ask=13.0, put_bid=7.0, put_ask=9.0),
+    )
+    # +2 -1 -1 = 0 points x one allocated lot.
+    assert _executable_paper_pnl(synthetic, syn_row) == 0.0
+
+    box = LivePaperTrade(
+        lot_size=50, lots=1,
+        legs_json='[{"instrument":"LOW_CALL","side":"BUY","price":10.0},{"instrument":"LOW_PUT","side":"BUY","price":9.0},{"instrument":"HIGH_CALL","side":"SELL","price":5.0},{"instrument":"HIGH_PUT","side":"SELL","price":4.0}]',
+    )
+    box_row = SimpleNamespace(
+        low=SimpleNamespace(call_bid=11.0, call_ask=12.0, put_bid=10.0, put_ask=11.0),
+        high=SimpleNamespace(call_bid=3.0, call_ask=4.0, put_bid=2.0, put_ask=3.0),
+    )
+    # +1 +1 +2 +2 = +6 points x one allocated lot.
+    assert _executable_paper_pnl(box, box_row) == 300.0
