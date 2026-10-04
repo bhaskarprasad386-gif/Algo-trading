@@ -23,7 +23,20 @@ type Trade = {
 const money = (value: number | undefined) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value ?? 0);
 
-const dateOnly = (value: string | null | undefined) => (value ? value.slice(0, 10) : "");
+const dateOnly = (value: string | null | undefined) => {
+  if (!value) return "";
+  const date = new Date(/(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}Z`);
+  return Number.isNaN(date.getTime())
+    ? ""
+    : date.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+};
+const dateTime = (value: string | null | undefined) => {
+  if (!value) return "—";
+  const date = new Date(/(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}Z`);
+  return Number.isNaN(date.getTime())
+    ? "—"
+    : date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+};
 
 export default function HistoryPage() {
   const [trades, setTrades] = useState<Trade[]>([]);
@@ -116,7 +129,7 @@ export default function HistoryPage() {
                     <td className={`px-4 py-3 font-semibold ${Number(trade.realized_pnl || 0) >= 0 ? "theme-success" : "theme-danger"}`}>{money(trade.realized_pnl)}</td>
                     <td className="px-4 py-3 theme-text">{typeof trade.pnl_pct === "number" ? `${trade.pnl_pct.toFixed(2)}%` : "—"}</td>
                     <td className="px-4 py-3 theme-muted">{trade.exit_reason || "—"}</td>
-                    <td className="px-4 py-3 theme-muted">{trade.closed_at ? new Date(trade.closed_at).toLocaleString("en-IN") : "—"}</td>
+                    <td className="px-4 py-3 theme-muted">{dateTime(trade.closed_at)}</td>
                     <td className="px-4 py-3"><button onClick={() => setSelected(trade)} className="rounded-lg border theme-border px-3 py-1.5 text-xs theme-text">View</button></td>
                   </tr>
                 ))}
@@ -140,7 +153,7 @@ export default function HistoryPage() {
             <div><span className="theme-muted">Capital Used</span><p className="theme-text">{money(selected.capital_used)}</p></div>
             <div><span className="theme-muted">Realized P&L</span><p className={Number(selected.realized_pnl || 0) >= 0 ? "theme-success font-semibold" : "theme-danger font-semibold"}>{money(selected.realized_pnl)}</p></div>
             <div><span className="theme-muted">Exit Reason</span><p className="theme-text">{selected.exit_reason || "—"}</p></div>
-            <div><span className="theme-muted">Closed</span><p className="theme-text">{selected.closed_at ? new Date(selected.closed_at).toLocaleString("en-IN") : "—"}</p></div>
+            <div><span className="theme-muted">Closed</span><p className="theme-text">{dateTime(selected.closed_at)}</p></div>
           </div>
           <p className="mt-5 text-xs theme-muted">Paper-only history. Broker/live orders remain OFF. Replay controls are intentionally not available.</p>
         </Card>
