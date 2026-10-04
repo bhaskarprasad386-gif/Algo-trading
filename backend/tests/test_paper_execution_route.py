@@ -2926,6 +2926,80 @@ def test_paper_reconcile_response_contract_is_deterministic_for_clean_safe_and_b
 
 
 
+
+def test_paper_reconcile_http_ignores_client_user_id_override_and_uses_dependency_identity():
+    from app.execution import paper_routes as routes
+
+    db = SessionLocal()
+    try:
+        accounts = (
+            db.query(TradingAccount)
+            .filter(TradingAccount.is_active.is_(True), TradingAccount.mode == "PAPER")
+            .order_by(TradingAccount.id.asc())
+            .all()
+        )
+        if len(accounts) < 2:
+            pytest.skip("requires two active paper accounts for cross-user HTTP authorization test")
+        authorized_id = int(accounts[0].user_id)
+        attempted_id = int(accounts[1].user_id)
+    finally:
+        db.close()
+
+    client = TestClient(app)
+    app.dependency_overrides[routes.current_user_id] = lambda: authorized_id
+    try:
+        response = client.get(
+            "/api/v1/execution/paper/reconcile",
+            params={"user_id": attempted_id},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["user_id"] == authorized_id
+        assert data["user_id"] != attempted_id
+        assert data["repair_plan"]["apply"] is False
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+
+
+def test_paper_reconcile_http_dependency_identity_can_be_changed_without_client_selector():
+    from app.execution import paper_routes as routes
+
+    db = SessionLocal()
+    try:
+        accounts = (
+            db.query(TradingAccount)
+            .filter(TradingAccount.is_active.is_(True), TradingAccount.mode == "PAPER")
+            .order_by(TradingAccount.id.asc())
+            .all()
+        )
+        if len(accounts) < 2:
+            pytest.skip("requires two active paper accounts for dependency identity switching")
+        first_id = int(accounts[0].user_id)
+        second_id = int(accounts[1].user_id)
+    finally:
+        db.close()
+
+    client = TestClient(app)
+    try:
+        app.dependency_overrides[routes.current_user_id] = lambda: first_id
+        first = client.get(
+            "/api/v1/execution/paper/reconcile",
+            params={"user_id": second_id},
+        )
+        assert first.status_code == 200
+        assert first.json()["user_id"] == first_id
+
+        app.dependency_overrides[routes.current_user_id] = lambda: second_id
+        second = client.get(
+            "/api/v1/execution/paper/reconcile",
+            params={"user_id": first_id},
+        )
+        assert second.status_code == 200
+        assert second.json()["user_id"] == second_id
+        assert first.json()["user_id"] != second.json()["user_id"]
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+
 def test_paper_reconcile_authorization_fails_closed_when_multiple_active_users_exist(tmp_path):
     from app.execution.paper_routes import current_user_id, _reconcile_paper_ledger
 
