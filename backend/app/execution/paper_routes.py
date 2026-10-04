@@ -398,6 +398,9 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
         raw_average_price = float(position.average_price or 0.0)
         raw_last_price = float(position.last_price or 0.0)
         raw_position_pnl = float(position.pnl or 0.0)
+        raw_stop_loss = float(position.stop_loss) if position.stop_loss is not None else None
+        raw_target = float(position.target) if position.target is not None else None
+        raw_product_type = str(position.product_type or "")
         if (
             not symbol
             or raw_symbol != symbol
@@ -410,6 +413,12 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             or not math.isfinite(raw_last_price)
             or raw_last_price < 0
             or not math.isfinite(raw_position_pnl)
+            or (raw_stop_loss is not None and (not math.isfinite(raw_stop_loss) or raw_stop_loss < 0))
+            or (raw_target is not None and (not math.isfinite(raw_target) or raw_target < 0))
+            or raw_product_type != "INTRADAY"
+            or position.created_at is None
+            or position.updated_at is None
+            or position.updated_at < position.created_at
         ):
             raise RuntimeError("paper position invariant violated")
         quantity = int(raw_quantity)
@@ -834,6 +843,18 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             or not math.isfinite(float(position.last_price or 0.0))
             or float(position.last_price or 0.0) < 0
             or not math.isfinite(float(position.pnl or 0.0))
+            or (
+                position.stop_loss is not None
+                and (not math.isfinite(float(position.stop_loss)) or float(position.stop_loss) < 0)
+            )
+            or (
+                position.target is not None
+                and (not math.isfinite(float(position.target)) or float(position.target) < 0)
+            )
+            or str(position.product_type or "") != "INTRADAY"
+            or position.created_at is None
+            or position.updated_at is None
+            or position.updated_at < position.created_at
         )
     ]
     mismatches.extend(f"invalid_position:{position_id}" for position_id in malformed_position_ids)
