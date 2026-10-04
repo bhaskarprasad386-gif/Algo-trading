@@ -125,3 +125,41 @@ def test_calendar_short_direction_uses_short_legs():
     assert paper["direction"] == "SHORT"
     assert paper["strategy_direction"] == "SHORT_NEAR_LONG_FAR"
     assert [leg["side"] for leg in paper["legs"]] == ["SELL", "BUY"]
+
+
+def test_calendar_paper_capital_matches_executable_entry_prices_for_both_directions():
+    captured = []
+
+    class CaptureAlerts:
+        def dispatch(self, _db, event):
+            captured.append(event)
+            return 0
+
+    service = CalendarSpreadAlertService(CaptureAlerts())
+
+    long_signal = SimpleNamespace(
+        qualifies=True, underlying="NIFTY", exchange="NFO",
+        near_contract_month="2026-10-29", far_contract_month="2026-11-26",
+        timestamp_ns=400, direction="LONG_NEAR_SHORT_FAR",
+        edge_long=5.0, edge_short=-5.0, gap_points=5.0,
+        gross_profit=250.0, lot_size=50, capacity_lots=2,
+        near_bid=100.0, near_ask=101.0, far_bid=106.0, far_ask=107.0,
+    )
+    short_signal = SimpleNamespace(
+        qualifies=True, underlying="NIFTY", exchange="NFO",
+        near_contract_month="2026-10-29", far_contract_month="2026-11-26",
+        timestamp_ns=401, direction="SHORT_NEAR_LONG_FAR",
+        edge_long=-5.0, edge_short=5.0, gap_points=5.0,
+        gross_profit=250.0, lot_size=50, capacity_lots=2,
+        near_bid=100.0, near_ask=101.0, far_bid=106.0, far_ask=107.0,
+    )
+
+    service.emit(object(), long_signal)
+    service.emit(object(), short_signal)
+
+    long_paper = captured[0].metadata["paper_trade"]
+    short_paper = captured[1].metadata["paper_trade"]
+    assert long_paper["capital_used"] == (101.0 + 106.0) * 50 * 2
+    assert short_paper["capital_used"] == (100.0 + 107.0) * 50 * 2
+    assert [leg["side"] for leg in long_paper["legs"]] == ["BUY", "SELL"]
+    assert [leg["side"] for leg in short_paper["legs"]] == ["SELL", "BUY"]
