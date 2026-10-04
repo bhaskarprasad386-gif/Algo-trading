@@ -1867,11 +1867,9 @@ def test_paper_long_short_long_reversal_chain_survives_restart_and_reconciles(tm
     verify = Session()
     try:
         account = verify.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
-        position = verify.query(Position).filter(Position.user_id == user_id, Position.symbol == "REVERSAL").one()
         orders = verify.query(Order).filter(Order.user_id == user_id).order_by(Order.id.asc()).all()
         assert account.virtual_balance == 10_330.0
         assert account.realized_pnl == 330.0
-        assert position.quantity == 0 or position.quantity == 0  # terminal SELL must flatten the 2-long position
         assert not [p for p in verify.query(Position).filter(Position.user_id == user_id).all() if p.quantity != 0]
         assert len(orders) == 5
         assert all(len(item.audit_hash) == 64 for item in orders)
