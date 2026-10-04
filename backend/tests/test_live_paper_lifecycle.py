@@ -226,6 +226,65 @@ def test_executable_pnl_returns_none_when_exit_quote_is_unavailable():
     assert _executable_paper_pnl(trade, row) is None
 
 
+def test_executable_pnl_cash_future_loss_uses_buy_bid_and_sell_ask():
+    from app.main import _executable_paper_pnl
+    trade = _paper_trade([
+        {"instrument": "CASH", "side": "BUY", "price": 105.0},
+        {"instrument": "FUTURE", "side": "SELL", "price": 100.0},
+    ], lot_size=10, lots=2)
+    row = {"cash_bid": 103.0, "cash_ask": 104.0, "future_bid": 102.0, "future_ask": 103.0}
+    # BUY exits at bid: -2; SELL exits at ask: -3; total -5 * 20 = -100.
+    assert _executable_paper_pnl(trade, row) == -100.0
+
+
+def test_executable_pnl_calendar_mixed_legs_preserves_sell_sign():
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+    trade = _paper_trade([
+        {"contract": "NEAR", "side": "SELL", "price": 110.0},
+        {"contract": "FAR", "side": "BUY", "price": 100.0},
+    ], lot_size=5, lots=2)
+    row = SimpleNamespace(
+        near_contract_month="NEAR", far_contract_month="FAR",
+        near_bid=106.0, near_ask=107.0, far_bid=103.0, far_ask=104.0,
+    )
+    # SELL exits at ask: +3; BUY exits at bid: +3; total +6 * 10 = +60.
+    assert _executable_paper_pnl(trade, row) == 60.0
+
+
+def test_executable_pnl_synthetic_mixed_legs_can_realize_loss():
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+    trade = _paper_trade([
+        {"instrument": "FUTURE", "side": "SELL", "price": 100.0},
+        {"instrument": "CALL", "side": "BUY", "price": 10.0},
+        {"instrument": "PUT", "side": "SELL", "price": 8.0},
+    ], lot_size=10, lots=1)
+    row = SimpleNamespace(
+        future=SimpleNamespace(bid=101.0, ask=102.0),
+        option=SimpleNamespace(call_bid=8.0, call_ask=9.0, put_bid=9.0, put_ask=10.0),
+    )
+    # SELL future: -2; BUY call: -2; SELL put: -2 => -6 * 10 = -60.
+    assert _executable_paper_pnl(trade, row) == -60.0
+
+
+def test_executable_pnl_box_mixed_legs_preserves_each_exit_side():
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+    trade = _paper_trade([
+        {"instrument": "LOW_CALL", "side": "BUY", "price": 10.0},
+        {"instrument": "LOW_PUT", "side": "SELL", "price": 9.0},
+        {"instrument": "HIGH_CALL", "side": "SELL", "price": 5.0},
+        {"instrument": "HIGH_PUT", "side": "BUY", "price": 4.0},
+    ], lot_size=5, lots=2)
+    row = SimpleNamespace(
+        low=SimpleNamespace(call_bid=12.0, call_ask=13.0, put_bid=7.0, put_ask=8.0),
+        high=SimpleNamespace(call_bid=6.0, call_ask=7.0, put_bid=3.0, put_ask=4.0),
+    )
+    # BUY call +2, SELL put +1, SELL call -2, BUY put -1 => zero.
+    assert _executable_paper_pnl(trade, row) == 0.0
+
+
 def test_expiry_close_realizes_last_executable_pnl(db_session):
     svc = LivePaperTradeService()
     db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=10_000_000, emergency_stop=False))
