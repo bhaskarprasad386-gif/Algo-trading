@@ -33,7 +33,7 @@ def _valid_persisted_trade(trade) -> bool:
         unrealized_pnl = float(trade.unrealized_pnl)
         realized_pnl = float(trade.realized_pnl)
         pnl_pct = float(trade.pnl_pct)
-        return (
+        if not (
             math.isfinite(lot_size) and lot_size.is_integer() and lot_size > 0
             and math.isfinite(lots) and lots.is_integer() and lots > 0
             and math.isfinite(entry_edge) and entry_edge >= 0
@@ -42,7 +42,28 @@ def _valid_persisted_trade(trade) -> bool:
             and math.isfinite(unrealized_pnl)
             and math.isfinite(realized_pnl)
             and math.isfinite(pnl_pct)
-        )
+        ):
+            return False
+        if str(getattr(trade, "status", "") or "").upper() not in {"ONGOING", "COMPLETED"}:
+            return False
+        expiry = _parse_date(getattr(trade, "expiry", None))
+        earliest_expiry = _parse_date(getattr(trade, "earliest_expiry", None))
+        if expiry is None or earliest_expiry is None or earliest_expiry > expiry:
+            return False
+        opened_at = getattr(trade, "opened_at", None)
+        last_mark_at = getattr(trade, "last_mark_at", None)
+        closed_at = getattr(trade, "closed_at", None)
+        if not isinstance(opened_at, datetime) or not isinstance(last_mark_at, datetime):
+            return False
+        if last_mark_at < opened_at:
+            return False
+        status = str(trade.status).upper()
+        if status == "ONGOING":
+            if closed_at is not None:
+                return False
+        elif not isinstance(closed_at, datetime) or closed_at < opened_at or last_mark_at > closed_at:
+            return False
+        return True
     except (TypeError, ValueError, OverflowError):
         return False
 
