@@ -197,7 +197,7 @@ def get_common_feed_health():
 @router.get("/overview")
 def get_market_overview():
     """Return a bounded live overview for configured NSE/BSE indices and MCX commodities."""
-        from app.market_data.client import MarketDataClient
+    from app.market_data.client import MarketDataClient
     from app.market_data.historical import HistoricalDataClient
     from app.market_data.instruments import InstrumentMaster
 
