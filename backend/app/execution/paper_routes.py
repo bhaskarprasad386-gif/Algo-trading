@@ -408,8 +408,7 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             or not raw_quantity.is_integer()
             or not math.isfinite(raw_filled_quantity)
             or not raw_filled_quantity.is_integer()
-            or
-            quantity <= 0
+            or quantity <= 0
             or filled_quantity != quantity
             or not math.isfinite(price)
             or price <= 0
