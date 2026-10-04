@@ -535,7 +535,7 @@ def _accounting_after_fill(*, side: str, price: float, quantity: float, current_
 def _repair_fingerprint_number(value) -> object:
     """Preserve malformed numeric state instead of silently truncating it in a repair fingerprint."""
     if value is None:
-        return 0.0
+        return None
     raw = float(value)
     if not math.isfinite(raw):
         return str(raw)
