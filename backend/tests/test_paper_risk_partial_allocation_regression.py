@@ -276,3 +276,26 @@ def test_failed_risk_locked_entry_rolls_back_before_next_alert(db_session, monke
     assert len(rows) == 1
     assert rows[0].event_id == "ROLLBACK-SECOND"
     assert rows[0].capital_used == 60000
+
+
+def test_partial_allocation_exact_capital_boundary_does_not_lose_a_lot(db_session):
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=60000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=60000, max_simultaneous_positions=5, max_loss=0,
+    ))
+    db_session.commit()
+
+    # ₹60k / 2 lots = ₹30k per lot. The full ₹60k boundary must allocate
+    # exactly two lots rather than losing one lot to binary float floor division.
+    assert AlertService().dispatch(
+        db_session, _event("EXACT-CAPITAL-BOUNDARY", capital=60000, lots=2)
+    ) == 0
+
+    rows = LivePaperTradeService().ongoing(db_session, 1)
+    assert len(rows) == 1
+    assert rows[0].lots == 2
+    assert rows[0].capital_used == 60000
