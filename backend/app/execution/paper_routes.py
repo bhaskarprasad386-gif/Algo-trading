@@ -525,7 +525,12 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     actual_positions = {
         str(position.symbol).strip().upper(): position
         for position in db.query(Position)
-        .filter(Position.user_id == user_id, Position.is_paper.is_(True), Position.quantity != 0)
+        .filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+            Position.quantity != 0,
+        )
         .all()
     }
     mismatches: list[str] = list(invalid_orders)
