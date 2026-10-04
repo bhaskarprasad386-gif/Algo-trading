@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Index
 
 from app.core.database import Base
 
@@ -11,6 +11,12 @@ def utc_now() -> datetime:
 
 class Order(Base):
     __tablename__ = "orders"
+    __table_args__ = (
+        # A broker fill identity is single-use per paper user. Nullable fill_id
+        # keeps legacy/manual orders repeatable while enforcing non-null retry
+        # idempotency on fresh test databases as well as migrated databases.
+        Index("uq_orders_user_fill_id", "user_id", "fill_id", unique=True),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, index=True, nullable=True)
