@@ -276,12 +276,26 @@ def _begin_paper_mutation(db: Session, user_id: int) -> TradingAccount:
     if db.bind is not None and db.bind.dialect.name == "sqlite":
         # current_user_id() may have opened a read transaction on this session.
         # Mutation locking must begin from a clean transaction boundary.
-        db.rollback()
-        try:
-            db.connection().exec_driver_sql("BEGIN IMMEDIATE")
-        except OperationalError as exc:
+        # Under concurrent HTTP load, wait briefly for the current paper
+        # mutation to commit so duplicate fill retries can observe the
+        # committed ledger entry and become idempotent instead of surfacing
+        # transient "busy" conflicts.
+        import time as _time
+        last_error = None
+        for _attempt in range(40):
             db.rollback()
-            raise HTTPException(status_code=409, detail="paper trading account is busy; retry") from exc
+            try:
+                db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+                last_error = None
+                break
+            except OperationalError as exc:
+                last_error = exc
+                db.rollback()
+                if _attempt == 39:
+                    raise HTTPException(status_code=409, detail="paper trading account is busy; retry") from exc
+                _time.sleep(0.025)
+        if last_error is not None:
+            raise HTTPException(status_code=409, detail="paper trading account is busy; retry") from last_error
         return _account(db, user_id)
     account = (
         db.query(TradingAccount)
