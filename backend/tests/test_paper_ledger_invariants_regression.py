@@ -324,3 +324,44 @@ def test_executable_pnl_rejects_malformed_persisted_legs():
             lot_size=10, lots=1, legs_json=legs_json,
         )
         assert _executable_paper_pnl(trade, row) is None
+
+
+def test_malformed_persisted_identity_is_excluded_and_cannot_consume_risk_state(db_session):
+    _enable(db_session, amount=100_000)
+    svc = LivePaperTradeService()
+    cases = [
+        {"strategy_id": "", "symbol": "AAA", "event_id": "ID-1", "direction": "LONG"},
+        {"strategy_id": "cash-future", "symbol": "", "event_id": "ID-2", "direction": "LONG"},
+        {"strategy_id": "cash-future", "symbol": "AAA", "event_id": "", "direction": "LONG"},
+        {"strategy_id": "cash-future", "symbol": "AAA", "event_id": "ID-4", "direction": "HOLD"},
+        {"strategy_id": "cash-future", "symbol": "AAA", "event_id": "ID-5", "direction": "LONG", "strategy_over": "x" * 129},
+    ]
+    for index, values in enumerate(cases):
+        strategy_id = values["strategy_id"]
+        if values.get("strategy_over"):
+            strategy_id = "x" * 129
+        db_session.add(LivePaperTrade(
+            user_id=1,
+            strategy_id=strategy_id,
+            symbol=values["symbol"],
+            event_id=values["event_id"],
+            direction=values["direction"],
+            expiry="2026-10-30",
+            earliest_expiry="2026-10-30",
+            lot_size=1, lots=1, entry_edge=10, current_edge=10,
+            capital_used=10_000, unrealized_pnl=0, realized_pnl=0, pnl_pct=0,
+            status="ONGOING",
+            opened_at=datetime(2026, 10, 4, 10, 0),
+            last_mark_at=datetime(2026, 10, 4, 10, 0),
+        ))
+    db_session.commit()
+
+    assert svc.ongoing(db_session, 1) == []
+    valid, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="GOOD",
+        event_id="GOOD-ID", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-30", lot_size=1, lots=1,
+        edge=10, capital_used=10_000, user_id=1,
+    )
+    assert valid is None
+    assert created is False
