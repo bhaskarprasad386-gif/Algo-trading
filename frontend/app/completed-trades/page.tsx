@@ -122,7 +122,7 @@ export default function CompletedTradesPage() {
        filtered.length === 0 ? <div className="p-8 text-sm theme-muted">No completed paper trades.</div> :
        <div className="overflow-x-auto"><table className="w-full min-w-[1200px] text-left text-sm">
         <thead className="border-b theme-border theme-surface-2 text-xs uppercase tracking-wider theme-muted">
-          <tr>{["Strategy","Symbol","Side","Lots","Entry Edge","Exit/Mark","Realized P&L","Exit","Closed","Detail"].map(h => <th key={h} className="px-5 py-3">{h}</th>)}</tr>
+          <tr>{["Strategy","Symbol","Side","Lots","Entry Edge","Exit Edge","Realized P&L","Exit","Closed","Detail"].map(h => <th key={h} className="px-5 py-3">{h}</th>)}</tr>
         </thead>
         <tbody>{filtered.map(t => { const pnl = Number(t.realized_pnl) || 0; return <tr key={t.id} className="border-b theme-border/70 last:border-0">
           <td className="px-5 py-4 font-medium theme-text">{label(t.strategy)}</td>
