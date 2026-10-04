@@ -304,3 +304,50 @@ def test_global_paper_cap_allows_only_remaining_lots(db_session):
     assert created is True
     assert third.lots == 5
     assert third.capital_used == 50000
+
+def test_completed_paper_event_cannot_reopen(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=500000, emergency_stop=False))
+    db_session.commit()
+
+    trade, created = svc.enter_or_mark(
+        db_session,
+        strategy_id="cash-future",
+        symbol="NIFTY",
+        event_id="REOPEN-GUARD",
+        direction="LONG",
+        expiry="2026-10-30",
+        earliest_expiry="2026-10-30",
+        lot_size=50,
+        lots=1,
+        edge=5,
+        capital_used=100000,
+        user_id=1,
+    )
+    assert created is True
+    svc.mark(db_session, trade, edge=8, pnl_override=1500.0)
+    svc.close(db_session, trade, "MANUAL")
+
+    reopened, reopened_created = svc.enter_or_mark(
+        db_session,
+        strategy_id="cash-future",
+        symbol="NIFTY",
+        event_id="REOPEN-GUARD",
+        direction="LONG",
+        expiry="2026-10-30",
+        earliest_expiry="2026-10-30",
+        lot_size=50,
+        lots=1,
+        edge=20,
+        capital_used=100000,
+        user_id=1,
+    )
+
+    assert reopened is None
+    assert reopened_created is False
+    assert svc.ongoing(db_session, 1) == []
+    completed = svc.completed(db_session, 1)
+    assert len(completed) == 1
+    assert completed[0].id == trade.id
+    assert completed[0].realized_pnl == 1500.0
+    assert completed[0].current_edge == 8
