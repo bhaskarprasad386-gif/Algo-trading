@@ -33,3 +33,29 @@ def test_repair_precondition_preserves_raw_identity_metadata(tmp_path):
     finally:
         db.close()
         engine.dispose()
+
+
+def test_repair_precondition_distinguishes_null_and_empty_string_metadata(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'nullable-strings.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        user = User(email="nullable-strings@example.com", hashed_password="", full_name="Nullable Strings", is_active=True)
+        db.add(user)
+        db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+                               initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+                               realized_pnl=0.0, is_active=True))
+        db.commit()
+        paper_order(PaperOrderRequest(symbol="NULLABLE", transaction_type="BUY", price=10.0, quantity=1, fill_id="NULLABLE-1"), user_id=user.id, db=db)
+        account = db.query(TradingAccount).filter_by(user_id=user.id).one()
+        baseline = _paper_repair_precondition(db, user.id, account, db.query(Order).filter_by(user_id=user.id).all(), db.query(Position).filter_by(user_id=user.id, is_paper=True).all())["state_hash"]
+        account.initial_balance_source = None
+        null_hash = _paper_repair_precondition(db, user.id, account, db.query(Order).filter_by(user_id=user.id).all(), db.query(Position).filter_by(user_id=user.id, is_paper=True).all())["state_hash"]
+        assert null_hash != baseline
+        account.initial_balance_source = ""
+        empty_hash = _paper_repair_precondition(db, user.id, account, db.query(Order).filter_by(user_id=user.id).all(), db.query(Position).filter_by(user_id=user.id, is_paper=True).all())["state_hash"]
+        assert empty_hash != null_hash
+    finally:
+        db.close()
+        engine.dispose()
