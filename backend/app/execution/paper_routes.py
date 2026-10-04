@@ -612,6 +612,22 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         baseline_status = "BOOTSTRAP"
     else:
         baseline_status = "LEGACY_UNFINGERPRINTED"
+    mismatch_categories: set[str] = set()
+    for mismatch in mismatches:
+        if mismatch.startswith(("invalid_order:", "duplicate_fill_id:")):
+            mismatch_categories.add("ORDER_INTEGRITY")
+        elif mismatch.startswith(("audit_chain_mismatch:", "audit_hash_mismatch:")):
+            mismatch_categories.add("AUDIT_INTEGRITY")
+        elif mismatch.startswith(("missing_position:", "position_mismatch:", "unexpected_position:", "orphan_position:")):
+            mismatch_categories.add("POSITION_STATE")
+        elif mismatch in {"realized_pnl_mismatch", "virtual_balance_mismatch"}:
+            mismatch_categories.add("ACCOUNTING_STATE")
+        else:
+            mismatch_categories.add("RECONCILIATION")
+
+    if baseline_status != "BOOTSTRAP":
+        mismatch_categories.add("BASELINE_INTEGRITY")
+
     if invalid_orders or baseline_status != "BOOTSTRAP":
         repairability = "BLOCKED"
     elif mismatches:
@@ -619,11 +635,20 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     else:
         repairability = "NONE"
 
+    if repairability == "BLOCKED":
+        repairability_reason = "ledger_or_baseline_integrity_failure"
+    elif repairability == "SAFE_DRY_RUN":
+        repairability_reason = "account_or_position_state_only"
+    else:
+        repairability_reason = "no_mismatch"
+
     precondition = _paper_repair_precondition(db, user_id, account, orders, all_paper_positions)
 
     return {
         "status": "OK" if not mismatches else "MISMATCH",
         "repairability": repairability,
+        "repairability_reason": repairability_reason,
+        "mismatch_categories": sorted(mismatch_categories),
         "baseline_status": baseline_status,
         "user_id": user_id,
         "orders": len(orders),
