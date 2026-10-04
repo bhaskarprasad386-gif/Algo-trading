@@ -1300,7 +1300,8 @@ def test_paper_reversal_and_terminal_retry_keep_order_fill_fields_consistent():
 
 
 def test_paper_execution_rejects_and_rolls_back_duplicate_active_position_invariant():
-    client, headers = _client_and_headers()
+    _, headers = _client_and_headers()
+    client = TestClient(app, raise_server_exceptions=False)
     db = SessionLocal()
     try:
         account = db.query(TradingAccount).order_by(TradingAccount.id.asc()).first()
@@ -1340,7 +1341,8 @@ def test_paper_execution_rejects_and_rolls_back_duplicate_active_position_invari
 
 
 def test_paper_execution_rejects_and_rolls_back_corrupt_existing_order_invariant():
-    client, headers = _client_and_headers()
+    _, headers = _client_and_headers()
+    client = TestClient(app, raise_server_exceptions=False)
     db = SessionLocal()
     try:
         account = db.query(TradingAccount).order_by(TradingAccount.id.asc()).first()
