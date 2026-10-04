@@ -222,10 +222,18 @@ class LivePaperTradeService:
         return db.query(LivePaperTrade).filter(
             LivePaperTrade.user_id == int(user_id),
             LivePaperTrade.status == "ONGOING",
-        ).order_by(LivePaperTrade.unrealized_pnl.desc(), LivePaperTrade.opened_at.asc()).all()
+        ).order_by(
+            LivePaperTrade.unrealized_pnl.desc(),
+            LivePaperTrade.opened_at.asc(),
+            LivePaperTrade.id.asc(),
+        ).all()
 
     def completed(self, db: Session, user_id=1):
         return db.query(LivePaperTrade).filter(
             LivePaperTrade.user_id == int(user_id),
             LivePaperTrade.status == "COMPLETED",
-        ).order_by(LivePaperTrade.realized_pnl.desc(), LivePaperTrade.closed_at.desc()).all()
+        ).order_by(
+            LivePaperTrade.realized_pnl.desc(),
+            LivePaperTrade.closed_at.desc(),
+            LivePaperTrade.id.desc(),
+        ).all()
