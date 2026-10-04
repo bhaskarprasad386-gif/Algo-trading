@@ -169,6 +169,11 @@ class LivePaperTradeService:
         setting = db.query(GlobalPaperSetting).filter(
             GlobalPaperSetting.user_id == int(user_id),
         ).first()
+        user_trades = db.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == int(user_id),
+        ).all()
+        if any(not _valid_persisted_trade(trade) for trade in user_trades):
+            return None, False
         if (
             setting is None
             or not _valid_paper_setting(setting)
@@ -237,6 +242,21 @@ class LivePaperTradeService:
     def mark(self, db: Session, trade: LivePaperTrade, *, edge: float, capital_used=None, pnl_override=None):
         if trade.status != "ONGOING" or not _valid_persisted_trade(trade):
             return trade
+        try:
+            import math
+            edge_value = float(edge)
+            if not math.isfinite(edge_value) or edge_value < 0:
+                return trade
+            if capital_used is not None:
+                capital_value = float(capital_used)
+                if not math.isfinite(capital_value) or capital_value <= 0:
+                    return trade
+            if pnl_override is not None:
+                pnl_value = float(pnl_override)
+                if not math.isfinite(pnl_value):
+                    return trade
+        except (TypeError, ValueError, OverflowError):
+            return trade
         # Serialize P&L marks with alert risk gates on the same per-user
         # paper-setting row. Without this, a risk check could read an old
         # unrealized loss, then a concurrent mark could worsen the loss before
@@ -249,14 +269,14 @@ class LivePaperTradeService:
         )
         if lock_count == 0:
             return trade
-        current_edge = max(0.0, float(edge))
+        current_edge = edge_value
         unrealized_pnl = round(
-            float(pnl_override) if pnl_override is not None else (current_edge - trade.entry_edge) * trade.lot_size * trade.lots,
+            pnl_value if pnl_override is not None else (current_edge - trade.entry_edge) * trade.lot_size * trade.lots,
             8,
         )
         effective_capital = (
-            float(capital_used)
-            if capital_used is not None and float(capital_used) > 0
+            capital_value
+            if capital_used is not None
             else float(trade.capital_used)
         )
         pnl_pct = round(unrealized_pnl / effective_capital * 100.0, 8) if effective_capital > 0 else 0.0
@@ -282,6 +302,8 @@ class LivePaperTradeService:
         return trade
 
     def close(self, db: Session, trade: LivePaperTrade, reason="MANUAL"):
+        if trade.status != "ONGOING" or not _valid_persisted_trade(trade):
+            return trade
         # Close atomically against the current DB row. This prevents a stale
         # in-memory P&L from overwriting a newer mark during a close race.
         now = _now()
