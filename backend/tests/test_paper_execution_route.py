@@ -4233,7 +4233,6 @@ def test_paper_reconcile_http_baseline_transition_invalidates_stale_repair_preco
 
 def test_paper_reconcile_http_repair_plan_audit_chain_consistency_matrix(tmp_path):
     """Audit tampering must stay deterministic, dry-run only, and never expose a repairable plan."""
-    from app import execution
     from app.execution import paper_routes as routes
     from app.core.database import get_db
 
@@ -4263,10 +4262,10 @@ def test_paper_reconcile_http_repair_plan_audit_chain_consistency_matrix(tmp_pat
                 TradingAccount(
                     user_id=user.id,
                     mode="PAPER",
-                    virtual_balance=740.0,
+                    virtual_balance=1000.0,
                     initial_virtual_balance=1000.0,
                     initial_balance_source="BOOTSTRAP",
-                    realized_pnl=40.0,
+                    realized_pnl=0.0,
                     is_active=True,
                 )
             )
@@ -4380,7 +4379,6 @@ def test_paper_reconcile_http_repair_plan_audit_chain_consistency_matrix(tmp_pat
             assert data["repair_plan"]["precondition"]["algorithm"] == "SHA256"
             assert len(data["repair_plan"]["precondition"]["state_hash"]) == 64
             assert data["repair_plan"]["precondition"]["order_count"] in {1, 2}
-            assert data["repair_plan"]["precondition"] == data["repair_plan"]["precondition"]
 
             verify = Session()
             try:
