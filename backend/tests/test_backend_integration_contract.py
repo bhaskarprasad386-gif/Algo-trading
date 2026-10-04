@@ -214,6 +214,31 @@ def test_multiple_same_user_alert_rules_apply_strictest_limits(db_session):
     assert len(rows) == 0
 
 
+def test_multi_rule_gross_profit_uses_matching_rules_only(db_session):
+    from app.models import AlertRule, GlobalPaperSetting
+    from app.notifications.common import AlertEvent, AlertService
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=1_000_000, emergency_stop=False))
+    db_session.add_all([
+        AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=100,
+                  mobile_number="", whatsapp_enabled=False, enabled=True,
+                  max_simultaneous_positions=5, max_daily_capital=500000, max_loss=50000),
+        AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=1000,
+                  mobile_number="", whatsapp_enabled=False, enabled=True,
+                  max_simultaneous_positions=1, max_daily_capital=100000, max_loss=10000),
+    ])
+    db_session.commit()
+    event = AlertEvent(
+        strategy_id="cash-future", event_id="GROSS-MULTI-1", symbol="AAA", timestamp_ns=1,
+        message="gross", metadata={"gross_profit": 500,
+        "paper_trade": {"direction":"LONG", "expiry":"2026-10-30", "lot_size":10,
+        "lots":1, "edge":5, "capital_used":50000}},
+    )
+    assert AlertService().dispatch(db_session, event) == 0
+    rows = LivePaperTradeService().ongoing(db_session, 1)
+    assert len(rows) == 1
+    assert rows[0].capital_used == 50000
+
+
 def test_alert_rule_threshold_and_limits_gate_paper_entry(db_session):
     from app.models import AlertRule
     from app.notifications.common import AlertEvent, AlertService
