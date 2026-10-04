@@ -5744,3 +5744,90 @@ def test_paper_http_concurrent_reversal_and_exit_close_short_once(tmp_path):
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_paper_http_concurrent_multi_symbol_partial_reversals_preserve_accounting():
+    client, headers = _client_and_headers()
+    starting_balance = 10_000.0
+
+    alpha_open = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "ALPHA", "transaction_type": "BUY", "price": 100.0, "quantity": 10},
+    )
+    beta_open = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "BETA", "transaction_type": "SELL", "price": 200.0, "quantity": 6},
+    )
+    assert alpha_open.status_code == 200
+    assert beta_open.status_code == 200
+    assert beta_open.json()["virtual_balance"] == 7_800.0
+
+    barrier = threading.Barrier(2)
+
+    def reverse_alpha():
+        barrier.wait(timeout=5)
+        return client.post(
+            "/api/v1/execution/paper/order",
+            headers=headers,
+            json={
+                "symbol": "ALPHA",
+                "transaction_type": "SELL",
+                "price": 120.0,
+                "quantity": 14,
+            },
+        )
+
+    def reverse_beta():
+        barrier.wait(timeout=5)
+        return client.post(
+            "/api/v1/execution/paper/order",
+            headers=headers,
+            json={
+                "symbol": "BETA",
+                "transaction_type": "BUY",
+                "price": 180.0,
+                "quantity": 10,
+            },
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        alpha_future = pool.submit(reverse_alpha)
+        beta_future = pool.submit(reverse_beta)
+        alpha = alpha_future.result()
+        beta = beta_future.result()
+
+    assert alpha.status_code == 200
+    assert beta.status_code == 200
+    alpha_data = alpha.json()
+    beta_data = beta.json()
+
+    assert alpha_data["realized_pnl"] == 200.0
+    assert alpha_data["position"]["symbol"] == "ALPHA"
+    assert alpha_data["position"]["quantity"] == -4.0
+    assert alpha_data["position"]["entry_price"] == 120.0
+
+    assert beta_data["realized_pnl"] == 320.0
+    assert beta_data["position"]["symbol"] == "BETA"
+    assert beta_data["position"]["quantity"] == 4.0
+    assert beta_data["position"]["entry_price"] == 180.0
+    assert beta_data["virtual_balance"] == starting_balance - 880.0
+
+    positions = client.get("/api/v1/execution/paper/positions", headers=headers)
+    assert positions.status_code == 200
+    rows = sorted(
+        [
+            (item["symbol"], item["quantity"], item["entry_price"])
+            for item in positions.json()["positions"]
+            if item["quantity"] != 0
+        ]
+    )
+    assert rows == [
+        ("ALPHA", -4.0, 120.0),
+        ("BETA", 4.0, 180.0),
+    ]
+
+    orders = client.get("/api/v1/execution/paper/orders", headers=headers)
+    assert orders.status_code == 200
+    assert len(orders.json()["orders"]) == 4
