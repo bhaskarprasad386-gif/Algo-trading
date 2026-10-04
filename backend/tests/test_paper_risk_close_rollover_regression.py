@@ -727,3 +727,113 @@ def test_partial_allocation_uses_actual_capital_and_max_loss_rejection_leaves_no
     finally:
         setup.close()
         engine.dispose()
+
+
+def test_expiry_realized_loss_and_concurrent_entries_hit_global_max_loss_boundary(tmp_path):
+    """Expiry realization must count before concurrent cross-strategy risk gates."""
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.core.database import Base
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'expiry-loss-concurrent-entry.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    try:
+        setup.add(GlobalPaperSetting(
+            user_id=1, enabled=True, paper_amount=90000, emergency_stop=False,
+        ))
+        for strategy in ("calendar-spread", "synthetic-future-cash-carry", "box-spread"):
+            setup.add(AlertRule(
+                user_id=1, strategy_id=strategy, min_gross_profit=0,
+                mobile_number="", whatsapp_enabled=False, enabled=True,
+                max_daily_capital=90000, max_simultaneous_positions=3,
+                max_loss=100,
+            ))
+        setup.commit()
+
+        seed, created = LivePaperTradeService().enter_or_mark(
+            setup,
+            strategy_id="calendar-spread", symbol="EXPIRY-LOSS-SEED",
+            event_id="EXPIRY-LOSS-SEED", direction="LONG",
+            expiry="2026-10-04", earliest_expiry="2026-10-04",
+            lot_size=10, lots=1, edge=5, capital_used=30000, user_id=1,
+        )
+        assert created is True
+        LivePaperTradeService().mark(
+            setup, seed, edge=0.0, pnl_override=-100.0,
+        )
+        setup.commit()
+    finally:
+        setup.close()
+
+    events = [
+        ("synthetic-future-cash-carry", "AFTER-EXPIRY-SYN"),
+        ("box-spread", "AFTER-EXPIRY-BOX"),
+        ("calendar-spread", "AFTER-EXPIRY-CAL"),
+    ]
+    barrier = threading.Barrier(3)
+    errors = []
+    results = []
+
+    def worker(strategy_id, event_id):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            event = AlertEvent(
+                strategy_id=strategy_id,
+                event_id=event_id,
+                symbol=event_id,
+                timestamp_ns=100,
+                message="expiry realized loss boundary",
+                observed_at=datetime(2026, 10, 4, 15, 30),
+                metadata={"gross_profit": 1000, "paper_trade": {
+                    "direction": "LONG",
+                    "expiry": "2026-10-30",
+                    "earliest_expiry": "2026-10-30",
+                    "lot_size": 10,
+                    "lots": 1,
+                    "edge": 5,
+                    "capital_used": 30000,
+                }},
+            )
+            results.append((strategy_id, AlertService().dispatch(db, event)))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    threads = [threading.Thread(target=worker, args=item) for item in events]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert errors == []
+    assert len(results) == 3
+
+    verify = Session()
+    try:
+        completed = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.status == "COMPLETED",
+        ).all()
+        ongoing = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.status == "ONGOING",
+        ).all()
+
+        assert len(completed) == 1
+        assert completed[0].exit_reason == "EXPIRY_CLOSE"
+        assert completed[0].realized_pnl == -100.0
+        assert completed[0].unrealized_pnl == -100.0
+        assert ongoing == []
+    finally:
+        verify.close()
+        engine.dispose()
