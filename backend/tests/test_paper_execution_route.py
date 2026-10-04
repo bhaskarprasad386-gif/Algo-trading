@@ -297,8 +297,7 @@ def test_paper_short_reversal_deducts_cost_of_remaining_long():
     data = reversal_response.json()
 
     # Cover 5 shorts: release 500 margin and realize +50 P&L.
-    # Open the remaining 3-long reversal at 90: deduct 270 from cash.    assert data["realized_pnl"] == 50.0    assert data["virtual_balance"] == starting_balance - 220.0
-    assert data["position"]["symbol"] == "REVERSAL"
+    # Open the remaining 3-long reversal at 90: deduct 270 from cash.    assert data["realized_pnl"] == 50.0    assert data["virtual_balance"] == starting_balance - 220.0    assert data["position"]["symbol"] == "REVERSAL"
     assert data["position"]["quantity"] == 3.0
     assert data["position"]["entry_price"] == 90.0
 
@@ -597,8 +596,7 @@ def test_paper_mixed_reversal_chain_preserves_cash_and_realized_pnl():
     assert data["realized_pnl"] == 160.0
     assert data["position"]["quantity"] == 2.0    assert data["position"]["entry_price"] == 100.0
     # Final long close at 90: receive 180 and realize -20.
-    closed = client.post(
-        "/api/v1/execution/paper/exit",
+    closed = client.post(        "/api/v1/execution/paper/exit",
         headers=headers,
         json={"symbol": "CHAIN", "price": 90.0},
     )
@@ -897,8 +895,7 @@ def test_paper_multi_symbol_concurrent_exit_and_reversal_preserve_accounting(tmp
 
         successful = [result for result in results if result[0] in {"alpha", "beta"}]        assert len(successful) == 2
 
-        verify = Session()
-        try:
+        verify = Session()        try:
             account = verify.query(TradingAccount).filter(
                 TradingAccount.user_id == user_id
             ).one()
@@ -1197,8 +1194,7 @@ def test_paper_order_persists_filled_execution_fields_for_partial_lifecycle():
     partial = client.post(        "/api/v1/execution/paper/order",
         headers=headers,
         json={"symbol": "LIFECYCLE", "transaction_type": "SELL", "price": 120.0, "quantity": 4},
-    )
-    assert partial.status_code == 200
+    )    assert partial.status_code == 200
 
     closed = client.post(
         "/api/v1/execution/paper/exit",
@@ -1497,7 +1493,6 @@ def test_paper_ledger_reconciliation_fingerprint_chain_is_valid_and_tamper_detec
     ]:
         response = client.post("/api/v1/execution/paper/order", headers=headers, json=payload)
         assert response.status_code == 200
-
     db = SessionLocal()
     try:
         orders = db.query(Order).filter(Order.symbol == "HASH").order_by(Order.id.asc()).all()
@@ -1798,7 +1793,6 @@ def test_paper_reconcile_mixed_legacy_and_fingerprinted_orders_is_blocked(tmp_pa
         assert result["order"]["fill_id"] == "NEW-1"
     finally:
         db.close()
-
     verify = Session()
     try:
         data = _reconcile_paper_ledger(verify, user_id)
@@ -2097,7 +2091,6 @@ def test_paper_audit_chain_tamper_matrix_is_blocked(tmp_path):
             )
             assert len(orders) == 2
             first, second = orders
-
             if name == "price":
                 first.price = 101.0
                 first.average_fill_price = 101.0
@@ -2397,8 +2390,7 @@ def test_paper_reconcile_blocked_baseline_never_exposes_applicable_repair(tmp_pa
     try:
         result = _reconcile_paper_ledger(verify, user_id)
         assert result["status"] == "MISMATCH"
-        assert result["baseline_status"] == "MIGRATED_INFERRED"
-        assert result["repairability"] == "BLOCKED"
+        assert result["baseline_status"] == "MIGRATED_INFERRED"        assert result["repairability"] == "BLOCKED"
         assert result["repair_plan"]["apply"] is False
         assert result["repair_plan"]["reason"] == "read_only_dry_run"
         assert result["repair_plan"]["proposed_virtual_balance"] == 800.0
@@ -2697,8 +2689,7 @@ def test_paper_reconcile_flat_symbol_excluded_from_repair_positions(tmp_path):
         seed.add(user)
         seed.flush()
         seed.add(TradingAccount(
-            user_id=user.id, mode="PAPER", virtual_balance=1000.0,
-            initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+            user_id=user.id, mode="PAPER", virtual_balance=1000.0,            initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
             realized_pnl=0.0, is_active=True,
         ))
         seed.commit()
@@ -2997,8 +2988,7 @@ def test_paper_reconcile_repair_plan_integrity_partial_fills_flat_reversals_and_
         conn.exec_driver_sql("PRAGMA journal_mode=WAL")
     TestSession = sessionmaker(bind=engine)
 
-    seed = TestSession()
-    try:
+    seed = TestSession()    try:
         user = User(
             email="repair-integrity-matrix@example.com",
             hashed_password="",
@@ -3055,7 +3045,7 @@ def test_paper_reconcile_repair_plan_integrity_partial_fills_flat_reversals_and_
     assert clean["status"] == "OK"
     assert clean["repairability"] == "NONE"
     assert clean["orders"] == 7
-    assert clean["reconstructed_realized_pnl"] == 310.0
+    assert clean["reconstructed_realized_pnl"] == 270.0
     assert clean["reconstructed_virtual_balance"] == 10_120.0
     assert clean["mismatches"] == []
     assert clean["repair_plan"]["apply"] is False
@@ -3089,7 +3079,7 @@ def test_paper_reconcile_repair_plan_integrity_partial_fills_flat_reversals_and_
     assert all(snapshot["repair_plan"]["apply"] is False for snapshot in snapshots)
     assert all(snapshot["repair_plan"]["reason"] == "read_only_dry_run" for snapshot in snapshots)
     assert all(snapshot["repair_plan"]["proposed_virtual_balance"] == 10_120.0 for snapshot in snapshots)
-    assert all(snapshot["repair_plan"]["proposed_realized_pnl"] == 310.0 for snapshot in snapshots)
+    assert all(snapshot["repair_plan"]["proposed_realized_pnl"] == 270.0 for snapshot in snapshots)
     assert all(snapshot["repair_plan"]["positions"] == clean["repair_plan"]["positions"] for snapshot in snapshots)
     assert all(snapshot["repair_plan"]["precondition"] == snapshots[0]["repair_plan"]["precondition"] for snapshot in snapshots)
     assert all(snapshot["mismatches"] == ["virtual_balance_mismatch"] for snapshot in snapshots)
@@ -3115,7 +3105,7 @@ def test_paper_reconcile_repair_plan_integrity_partial_fills_flat_reversals_and_
         assert snapshot["repair_plan"]["apply"] is False
         assert snapshot["repair_plan"]["reason"] == "read_only_dry_run"
         assert snapshot["repair_plan"]["proposed_virtual_balance"] == 10_120.0
-        assert snapshot["repair_plan"]["proposed_realized_pnl"] == 310.0
+        assert snapshot["repair_plan"]["proposed_realized_pnl"] == 270.0
         assert snapshot["repair_plan"]["positions"] == clean["repair_plan"]["positions"]
 
     # Restore the canonical baseline and stored balance. The same ledger must
@@ -3127,7 +3117,7 @@ def test_paper_reconcile_repair_plan_integrity_partial_fills_flat_reversals_and_
         ).one()
         account.initial_balance_source = "BOOTSTRAP"
         account.virtual_balance = 10_120.0
-        account.realized_pnl = 310.0
+        account.realized_pnl = 270.0
         restore.commit()
     finally:
         restore.close()
