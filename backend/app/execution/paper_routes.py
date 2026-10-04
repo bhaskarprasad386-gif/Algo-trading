@@ -569,10 +569,15 @@ def paper_payoff_from_cash_future(request: CashFuturePayoffRequest, user_id: int
 @router.post("/paper/exit")
 def paper_exit(request: PaperExitRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     account = _begin_paper_mutation(db, user_id)
+    fill_id = _normalized_fill_id(request.fill_id)
+    prior_fill = _fill_order_by_id(db, user_id=user_id, fill_id=fill_id)
+    if prior_fill is not None:
+        if (request.symbol is not None and prior_fill.symbol != request.symbol.strip().upper()) or float(prior_fill.price) != float(request.price):
+            raise HTTPException(status_code=409, detail="fill_id already exists with different execution details")
+        return {"status":"closed","idempotent":True,"quantity":float(prior_fill.quantity),"pnl":float(prior_fill.pnl or 0.0),"order":{"id":prior_fill.order_id,"symbol":prior_fill.symbol,"transaction_type":prior_fill.transaction_type,"price":prior_fill.price,"quantity":float(prior_fill.quantity),"status":prior_fill.status,"pnl":float(prior_fill.pnl or 0.0),"fill_id":prior_fill.fill_id},"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
     position = _position(db, user_id, request.symbol)
     if position is None:
         return {"status":"flat","position":None,"pnl":0.0,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
-    fill_id = _normalized_fill_id(request.fill_id)
     exit_side = "BUY" if position.quantity < 0 else "SELL"
     exit_quantity = abs(int(position.quantity))
     duplicate = _existing_fill_order(db, user_id=user_id, fill_id=fill_id, symbol=position.symbol, side=exit_side, price=request.price, quantity=exit_quantity)
