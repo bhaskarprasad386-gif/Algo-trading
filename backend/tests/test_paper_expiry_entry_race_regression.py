@@ -126,3 +126,67 @@ def test_expiry_loss_is_realized_before_next_entry_max_loss_gate(db_session):
         LivePaperTrade.user_id == 1,
         LivePaperTrade.event_id == "AFTER-EXPIRY-LOSS",
     ).count() == 0
+
+
+def test_expiry_commit_false_does_not_commit_caller_pending_work(db_session):
+    _setup(db_session)
+    trade = _expired_trade(db_session)
+    setting = db_session.query(GlobalPaperSetting).filter(
+        GlobalPaperSetting.user_id == 1
+    ).one()
+    setting.paper_amount = 45000
+
+    closed = LivePaperTradeService().close_expired(
+        db_session,
+        now=datetime(2026, 10, 4, 15, 30),
+        commit=False,
+    )
+    assert len(closed) == 1
+    assert trade.status == "COMPLETED"
+
+    # The expiry mutation and the caller's unrelated setting mutation are still
+    # inside the caller-owned transaction. A rollback must undo both together.
+    db_session.rollback()
+
+    verify = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.id == trade.id
+    ).one()
+    verify_setting = db_session.query(GlobalPaperSetting).filter(
+        GlobalPaperSetting.user_id == 1
+    ).one()
+    assert verify.status == "ONGOING"
+    assert verify_setting.paper_amount == 30000
+
+
+def test_expiry_commit_true_persists_all_expiry_transitions_in_one_boundary(db_session):
+    _setup(db_session)
+    first = _expired_trade(db_session)
+    second, created = LivePaperTradeService().enter_or_mark(
+        db_session,
+        strategy_id="cash-future",
+        symbol="EXPIRING-2",
+        event_id="EXPIRING-AT-BOUNDARY-2",
+        direction="LONG",
+        expiry="2026-10-04",
+        earliest_expiry="2026-10-04",
+        lot_size=10,
+        lots=1,
+        edge=5,
+        capital_used=30000,
+        user_id=1,
+    )
+    assert created is True
+
+    closed = LivePaperTradeService().close_expired(
+        db_session,
+        now=datetime(2026, 10, 4, 15, 30),
+        commit=True,
+    )
+    assert {trade.id for trade in closed} == {first.id, second.id}
+
+    db_session.rollback()
+    verify = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+        LivePaperTrade.status == "COMPLETED",
+    ).all()
+    assert {trade.id for trade in verify} == {first.id, second.id}
