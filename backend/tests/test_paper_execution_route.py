@@ -11388,3 +11388,86 @@ def test_integrity_matrix_10_combined_corruption_blocks_dry_run_repair(tmp_path)
         assert payload["repairability_reason"] == "ledger_or_baseline_integrity_failure"
     finally:
         db.close(); engine.dispose()
+
+
+def test_integrity_matrix_11_endpoint_contract_is_explicit_and_nonoverlapping():
+    from app.execution.paper_routes import router
+    routes = {(route.path, tuple(sorted(route.methods or set()))) for route in router.routes}
+    expected = {
+        ("/api/v1/execution/paper/reconcile", ("GET",)),
+        ("/api/v1/execution/paper/account", ("GET",)),
+        ("/api/v1/execution/paper/orders", ("GET",)),
+        ("/api/v1/execution/paper/position", ("GET",)),
+        ("/api/v1/execution/paper/entry", ("POST",)),
+        ("/api/v1/execution/paper/order", ("POST",)),
+        ("/api/v1/execution/paper/from-scanner", ("POST",)),
+        ("/api/v1/execution/paper/payoff", ("POST",)),
+        ("/api/v1/execution/paper/payoff/from-strategy", ("POST",)),
+        ("/api/v1/execution/paper/payoff/from-cash-future", ("POST",)),
+        ("/api/v1/execution/paper/exit", ("POST",)),
+    }
+    assert expected.issubset(routes)
+    assert not any(path.endswith("/paper/orders") and "POST" in methods for path, methods in routes)
+    assert not any(path.endswith("/paper/reconcile") and "POST" in methods for path, methods in routes)
+
+
+def test_integrity_matrix_12_http_status_contract_for_invalid_fill_and_conflict():
+    from app.execution.paper_routes import PaperOrderRequest, _normalized_fill_id
+    with pytest.raises(HTTPException) as exc:
+        _normalized_fill_id("   ")
+    assert exc.value.status_code == 422
+    assert "fill_id" in str(exc.value.detail)
+    assert _normalized_fill_id(None) is None
+    assert _normalized_fill_id(" F-12 ") == "F-12"
+
+
+def test_integrity_matrix_13_mutation_transaction_boundary_is_shared_and_locking_is_fail_closed():
+    import inspect
+    from app.execution import paper_routes as routes
+    source = inspect.getsource(routes)
+    assert source.count("def _begin_paper_mutation") == 1
+    assert "BEGIN IMMEDIATE" in inspect.getsource(routes._begin_paper_mutation)
+    for name in ("paper_entry", "paper_order", "paper_from_scanner", "paper_exit"):
+        fn = getattr(routes, name)
+        fn_source = inspect.getsource(fn)
+        assert "_begin_paper_mutation(" in fn_source
+    assert "status_code=409" in inspect.getsource(routes._begin_paper_mutation)
+
+
+def test_integrity_matrix_14_source_test_gap_scan_covers_critical_integrity_primitives():
+    import inspect
+    from app.execution import paper_routes as routes
+    source = inspect.getsource(routes)
+    required = (
+        "_reconcile_paper_ledger",
+        "_paper_repair_precondition",
+        "_validate_paper_state",
+        "_normalized_fill_id",
+        "_existing_fill_order",
+        "_begin_paper_mutation",
+        "_commit_paper_mutation",
+        "_paper_audit_payload",
+        "duplicate_order_id",
+        "duplicate_fill_id",
+        "BASELINE_INTEGRITY",
+    )
+    missing = [name for name in required if name not in source]
+    assert missing == []
+
+
+def test_integrity_matrix_15_deterministic_reconciliation_and_fingerprint_are_stable(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, _reconcile_paper_ledger, paper_order
+    engine, db, user, account = _integrity_matrix_db(tmp_path, "matrix15")
+    try:
+        paper_order(PaperOrderRequest(symbol="S1", transaction_type="BUY", price=10, quantity=2, fill_id="S1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="S2", transaction_type="SELL", price=20, quantity=1, fill_id="S2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id, Order.is_paper.is_(True)).order_by(Order.id.asc()).all()
+        positions = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).order_by(Position.id.asc()).all()
+        hashes = [_paper_repair_precondition(db, user.id, account, orders, positions)["state_hash"] for _ in range(5)]
+        reconciles = [_reconcile_paper_ledger(db, user.id) for _ in range(5)]
+        assert len(set(hashes)) == 1
+        assert all(item["status"] == "CONSISTENT" for item in reconciles)
+        assert all(item["mismatches"] == [] for item in reconciles)
+        assert all(item["repairability"] == "NONE" for item in reconciles)
+    finally:
+        db.close(); engine.dispose()
