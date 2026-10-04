@@ -224,6 +224,12 @@ class AlertService:
                     synchronize_session=False,
                 )
                 if risk_lock == 0:
+                    # The lookup above starts a session transaction even when
+                    # this user has no GlobalPaperSetting. Roll it back before
+                    # evaluating another user so a read transaction from an
+                    # unconfigured user cannot leak into the next user's
+                    # risk-lock/write transaction.
+                    db.rollback()
                     continue
 
                 max_simultaneous = _strictest_positive_limit(
