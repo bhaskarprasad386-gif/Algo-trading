@@ -60,6 +60,27 @@ class LivePaperTradeService:
             or _parse_date(earliest_expiry_text) is None
         ):
             return None, False
+        from collections.abc import Mapping
+        if legs is not None:
+            if not isinstance(legs, list):
+                return None, False
+            for leg in legs:
+                if not isinstance(leg, Mapping):
+                    return None, False
+                side = str(leg.get("side", "")).strip().upper()
+                if side not in {"BUY", "SELL"}:
+                    return None, False
+                if leg.get("price") is None:
+                    return None, False
+                try:
+                    price = float(leg.get("price"))
+                except (TypeError, ValueError):
+                    return None, False
+                if not math.isfinite(price) or price <= 0:
+                    return None, False
+        if metadata is not None and not isinstance(metadata, Mapping):
+            return None, False
+        import math
         try:
             lot_size_value = float(lot_size)
             lots_value = float(lots)
@@ -67,7 +88,6 @@ class LivePaperTradeService:
             capital_value = float(capital_used)
         except (TypeError, ValueError):
             return None, False
-        import math
         if (
             not math.isfinite(lot_size_value)
             or not math.isfinite(lots_value)
