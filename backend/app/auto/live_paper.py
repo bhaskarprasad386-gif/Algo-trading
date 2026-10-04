@@ -70,6 +70,14 @@ def _valid_persisted_trade(trade) -> bool:
             and math.isfinite(pnl_pct)
         ):
             return False
+        strategy_id = str(getattr(trade, "strategy_id", "") or "").strip()
+        symbol = str(getattr(trade, "symbol", "") or "").strip()
+        event_id = str(getattr(trade, "event_id", "") or "").strip()
+        direction = str(getattr(trade, "direction", "") or "").strip().upper()
+        if not strategy_id or not symbol or not event_id or direction not in {"LONG", "SHORT"}:
+            return False
+        if len(strategy_id) > 128 or len(symbol) > 128 or len(event_id) > 512:
+            return False
         if str(getattr(trade, "status", "") or "").upper() not in {"ONGOING", "COMPLETED"}:
             return False
         expiry = _parse_date(getattr(trade, "expiry", None))
