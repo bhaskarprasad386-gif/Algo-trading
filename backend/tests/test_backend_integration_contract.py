@@ -1415,3 +1415,92 @@ def test_mark_and_alert_max_loss_gate_are_serialized(tmp_path):
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_multi_rule_max_loss_exact_boundary_allows_duplicate_mark_but_blocks_new_entry(db_session):
+    from app.models import AlertRule, GlobalPaperSetting
+    from app.notifications.common import AlertEvent, AlertService
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=200000, emergency_stop=False,
+    ))
+    db_session.add_all([
+        AlertRule(
+            user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+            mobile_number="", whatsapp_enabled=False, enabled=True,
+            max_daily_capital=0.0, max_simultaneous_positions=5, max_loss=100.0,
+            priority=10,
+        ),
+        AlertRule(
+            user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+            mobile_number="", whatsapp_enabled=False, enabled=True,
+            max_daily_capital=0.0, max_simultaneous_positions=5, max_loss=50.0,
+            priority=1,
+        ),
+    ])
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    seed, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="SEED",
+        event_id="MULTI-LOSS-SEED", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=5, capital_used=50000, user_id=1,
+    )
+    assert created is True
+    svc.mark(db_session, seed, edge=0.0)
+    db_session.commit()
+    assert seed.unrealized_pnl == -50.0
+
+    # The strictest positive max_loss is 50. A duplicate mark is still a
+    # mark-only update and must remain allowed at the exact loss boundary.
+    duplicate = AlertEvent(
+        strategy_id="cash-future", event_id="MULTI-LOSS-SEED", symbol="SEED",
+        timestamp_ns=2, message="duplicate-mark", metadata={
+            "gross_profit": -999,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-30",
+                "lot_size": 10, "lots": 99, "edge": 2,
+                "capital_used": 999999,
+            },
+        },
+    )
+    assert AlertService().dispatch(db_session, duplicate) == 0
+    assert seed.current_edge == 2.0
+    assert seed.unrealized_pnl == -30.0
+    assert seed.capital_used == 50000
+    assert seed.lots == 1
+
+    # Once the duplicate mark improves the loss below the strictest boundary,
+    # a genuinely new event is allowed.
+    allowed = AlertEvent(
+        strategy_id="cash-future", event_id="MULTI-LOSS-NEW-1", symbol="ALLOWED",
+        timestamp_ns=3, message="allowed", metadata={
+            "gross_profit": 1,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-30",
+                "lot_size": 10, "lots": 1, "edge": 5, "capital_used": 50000,
+            },
+        },
+    )
+    assert AlertService().dispatch(db_session, allowed) == 0
+    assert len(svc.ongoing(db_session, 1)) == 2
+
+    # Restore the seed to the exact -50 boundary and prove that a new entry
+    # is blocked by the strictest rule while the existing event remains open.
+    svc.mark(db_session, seed, edge=0.0)
+    db_session.commit()
+    assert seed.unrealized_pnl == -50.0
+
+    blocked = AlertEvent(
+        strategy_id="cash-future", event_id="MULTI-LOSS-NEW-2", symbol="BLOCKED",
+        timestamp_ns=4, message="blocked", metadata={
+            "gross_profit": 1,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-30",
+                "lot_size": 10, "lots": 1, "edge": 5, "capital_used": 50000,
+            },
+        },
+    )
+    assert AlertService().dispatch(db_session, blocked) == 0
+    assert [row.symbol for row in svc.ongoing(db_session, 1)].count("BLOCKED") == 0
+    assert seed.unrealized_pnl == -50.0
