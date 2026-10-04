@@ -147,7 +147,17 @@ class AlertService:
             # Resolve due expiries before position/capital/loss gates. The
             # background monitor is periodic, so an alert can arrive at the
             # exact expiry boundary before that monitor gets a turn.
-            service.close_expired(db)
+            #
+            # Expiry processing owns its own durable transaction. Committing
+            # through the caller session here could accidentally commit unrelated
+            # pending work that the caller deliberately has not committed yet.
+            # A later per-user risk rejection must also not be able to rollback
+            # an expiry release that has already been accepted.
+            expiry_db = SessionLocal()
+            try:
+                service.close_expired(expiry_db, commit=True)
+            finally:
+                expiry_db.close()
             eligible_rules = [
                 rule for rule in rules
                 if gross_value is None or gross_value >= float(rule.min_gross_profit)
