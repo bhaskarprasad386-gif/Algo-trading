@@ -1596,3 +1596,34 @@ def test_paper_concurrent_same_fill_id_preserves_single_audit_chain_entry(tmp_pa
         assert len(orders[0].audit_hash) == 64
         assert orders[0].previous_audit_hash is None
     finally: db.close(); engine.dispose()
+
+
+def test_paper_restart_style_retry_keeps_audit_hash_stable(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'audit-restart.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="audit-restart@example.com", hashed_password="", full_name="Audit Restart", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, realized_pnl=0.0, is_active=True))
+        seed.commit(); user_id = user.id
+    finally: seed.close()
+    first_db = Session()
+    try:
+        first = paper_order(PaperOrderRequest(symbol="RESTART", transaction_type="BUY", price=100.0, quantity=5, fill_id="RESTART-FILL-1"), user_id=user_id, db=first_db)
+    finally: first_db.close()
+    second_db = Session()
+    try:
+        retry = paper_order(PaperOrderRequest(symbol="RESTART", transaction_type="BUY", price=100.0, quantity=5, fill_id="RESTART-FILL-1"), user_id=user_id, db=second_db)
+        assert retry["idempotent"] is True
+    finally: second_db.close()
+    verify = Session()
+    try:
+        orders = verify.query(Order).filter(Order.user_id == user_id).order_by(Order.id.asc()).all()
+        assert len(orders) == 1
+        assert orders[0].order_id == first["id"]
+        assert len(orders[0].audit_hash) == 64
+        assert orders[0].previous_audit_hash is None
+    finally: verify.close(); engine.dispose()
