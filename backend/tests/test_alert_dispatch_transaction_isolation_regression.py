@@ -113,6 +113,10 @@ def test_missing_global_setting_does_not_rollback_other_user_state(db_session):
 
 def test_notification_failure_does_not_undo_paper_trade(db_session):
     _user(db_session, 1, amount=30000)
+    rule = db_session.query(AlertRule).filter(AlertRule.user_id == 1).one()
+    rule.mobile_number = "9999999999"
+    rule.whatsapp_enabled = True
+    db_session.commit()
 
     class FailingNotifier:
         configured = True
@@ -122,8 +126,8 @@ def test_notification_failure_does_not_undo_paper_trade(db_session):
 
     service = AlertService(notifier=FailingNotifier())
 
-    # Paper entry is committed by dispatch's normal transaction. Notification
-    # happens afterward, so an outbound provider failure must not erase it.
+    # Paper entry is committed before outbound notification. A provider
+    # exception therefore cannot erase the durable paper trade.
     assert service.dispatch(db_session, _event("NOTIFY-FAIL")) == 0
 
     row = db_session.query(LivePaperTrade).filter(
