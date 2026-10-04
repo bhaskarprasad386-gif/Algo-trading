@@ -662,6 +662,11 @@ async def _paper_box_spread_cycle_loop() -> None:
 
 def _executable_paper_pnl(trade: LivePaperTrade, row) -> float | None:
     """Mark an alert's original legs against current executable exit quotes."""
+    # Defense-in-depth: persisted corruption must never reach executable
+    # quote/P&L arithmetic, even if a caller bypasses LivePaperTradeService.
+    from app.auto.live_paper import _valid_persisted_trade
+    if not _valid_persisted_trade(trade):
+        return None
     try:
         import math
         from collections.abc import Mapping
@@ -748,7 +753,12 @@ async def _live_paper_monitor_loop() -> None:
         try:
             db = SessionLocal()
             try:
-                active = db.query(LivePaperTrade).filter(LivePaperTrade.status == "ONGOING").all()
+                active = [
+                    trade for trade in db.query(LivePaperTrade).filter(
+                        LivePaperTrade.status == "ONGOING",
+                    ).all()
+                    if __import__("app.auto.live_paper", fromlist=["_valid_persisted_trade"])._valid_persisted_trade(trade)
+                ]
                 if active:
                     cash = live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=500)
                     cash_map = {f"{x.get('symbol')}:{x.get('contract_month')}": x for x in cash}
