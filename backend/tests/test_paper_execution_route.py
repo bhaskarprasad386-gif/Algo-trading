@@ -30,6 +30,116 @@ def _client_and_headers():
         db.close()
     return TestClient(app), {}
 
+
+def test_paper_mutation_fails_closed_when_initial_balance_is_tampered(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'initial-balance-tamper.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        user = User(email="initial-tamper@example.com", hashed_password="", full_name="Initial Tamper", is_active=True)
+        db.add(user)
+        db.flush()
+        db.add(TradingAccount(
+            user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+            initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0, is_active=True,
+        ))
+        db.commit()
+        user_id = user.id
+        db.query(TradingAccount).filter(TradingAccount.user_id == user_id).update(
+            {"initial_virtual_balance": 900.0},
+            synchronize_session=False,
+        )
+        db.commit()
+        try:
+            paper_order(
+                PaperOrderRequest(symbol="BASELINE", transaction_type="BUY", price=10.0, quantity=1, fill_id="BASELINE-FAIL"),
+                user_id=user_id,
+                db=db,
+            )
+            raise AssertionError("tampered initial balance must fail closed")
+        except RuntimeError as exc:
+            assert "balance conservation" in str(exc)
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_paper_reconcile_detects_nonempty_first_audit_previous_hash(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order, _paper_audit_payload, _validate_paper_state
+    from app.models.order import Order
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'first-audit-head.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        user = User(email="first-head@example.com", hashed_password="", full_name="First Head", is_active=True)
+        db.add(user)
+        db.flush()
+        db.add(TradingAccount(
+            user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+            initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0, is_active=True,
+        ))
+        db.commit()
+        user_id = user.id
+        paper_order(
+            PaperOrderRequest(symbol="HEAD", transaction_type="BUY", price=10.0, quantity=1, fill_id="HEAD-1"),
+            user_id=user_id,
+            db=db,
+        )
+        order = db.query(Order).filter(Order.user_id == user_id, Order.fill_id == "HEAD-1").one()
+        order.previous_audit_hash = "a" * 64
+        db.commit()
+        try:
+            _validate_paper_state(db, user_id)
+            raise AssertionError("first audit head must require a null previous hash")
+        except RuntimeError as exc:
+            assert "audit chain" in str(exc)
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_paper_reconcile_preserves_reversal_position_reconstruction(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order, _reconcile_paper_ledger
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'reversal-reconcile.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        user = User(email="reversal-reconcile@example.com", hashed_password="", full_name="Reversal Reconcile", is_active=True)
+        db.add(user)
+        db.flush()
+        db.add(TradingAccount(
+            user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+            initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0, is_active=True,
+        ))
+        db.commit()
+        user_id = user.id
+
+        paper_order(PaperOrderRequest(symbol="REV", transaction_type="BUY", price=100.0, quantity=10, fill_id="REV-1"), user_id=user_id, db=db)
+        paper_order(PaperOrderRequest(symbol="REV", transaction_type="SELL", price=110.0, quantity=15, fill_id="REV-2"), user_id=user_id, db=db)
+        paper_order(PaperOrderRequest(symbol="REV", transaction_type="BUY", price=90.0, quantity=5, fill_id="REV-3"), user_id=user_id, db=db)
+
+        payload = _reconcile_paper_ledger(db, user_id)
+        assert payload["status"] == "OK"
+        assert payload["mismatches"] == []
+        assert payload["reconstructed_realized_pnl"] == 200.0
+        assert payload["stored_realized_pnl"] == 200.0
+        assert payload["reconstructed_virtual_balance"] == 1200.0
+        assert payload["stored_virtual_balance"] == 1200.0
+        assert payload["reconstructed_positions"] == {}
+    finally:
+        db.close()
+        engine.dispose()
+
 def test_paper_entry_route_registered():
     paths = app.openapi().get("paths", {})
     assert "/api/v1/execution/paper/entry" in paths
