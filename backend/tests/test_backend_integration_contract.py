@@ -168,6 +168,52 @@ def test_alert_rule_position_limit_is_serialized_with_paper_allocation(db_sessio
     assert len(LivePaperTradeService().ongoing(db_session, 1)) == 1
 
 
+def test_multiple_same_user_alert_rules_apply_strictest_limits(db_session):
+    from app.models import AlertRule
+    from app.models.global_paper_setting import GlobalPaperSetting
+    from app.notifications.common import AlertEvent, AlertService
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=1_000_000, emergency_stop=False))
+    db_session.add_all([
+        AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=100,
+                  mobile_number="", whatsapp_enabled=False, enabled=True,
+                  max_simultaneous_positions=5, max_daily_capital=500000, max_loss=50000,
+                  priority=10),
+        AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=100,
+                  mobile_number="", whatsapp_enabled=False, enabled=True,
+                  max_simultaneous_positions=1, max_daily_capital=100000, max_loss=10000,
+                  priority=1),
+    ])
+    db_session.commit()
+    svc = LivePaperTradeService()
+    first, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="PREEXISTING",
+        event_id="MULTI-RULE-PRE", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=5, capital_used=50000, user_id=1,
+    )
+    assert created is True
+
+    event = AlertEvent(
+        strategy_id="cash-future", event_id="MULTI-RULE-1", symbol="AAA", timestamp_ns=1,
+        message="multi", metadata={"gross_profit": 200,
+        "paper_trade": {"direction":"LONG", "expiry":"2026-10-30", "lot_size":10,
+        "lots":1, "edge":5, "capital_used":50000}},
+    )
+    assert AlertService().dispatch(db_session, event) == 0
+    assert len(svc.ongoing(db_session, 1)) == 1
+
+    db_session.delete(first)
+    db_session.commit()
+    second = AlertService().dispatch(db_session, AlertEvent(
+        strategy_id="cash-future", event_id="MULTI-RULE-2", symbol="BBB", timestamp_ns=2,
+        message="multi2", metadata={"gross_profit": 200,
+        "paper_trade": {"direction":"LONG", "expiry":"2026-10-30", "lot_size":10,
+        "lots":1, "edge":5, "capital_used":120000}},
+    ))
+    assert second == 0
+    rows = svc.ongoing(db_session, 1)
+    assert len(rows) == 0
+
+
 def test_alert_rule_threshold_and_limits_gate_paper_entry(db_session):
     from app.models import AlertRule
     from app.notifications.common import AlertEvent, AlertService
