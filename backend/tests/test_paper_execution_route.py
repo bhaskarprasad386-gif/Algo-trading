@@ -5716,8 +5716,10 @@ def test_paper_http_concurrent_reversal_and_exit_close_short_once(tmp_path):
             return client.post("/api/v1/execution/paper/exit", json={"symbol":"HTTP-RACE","price":90.0})
         with ThreadPoolExecutor(max_workers=2) as pool:
             responses = list(pool.map(lambda fn: fn(), (reversal, terminal_exit)))
-        assert sum(response.status_code == 200 for response in responses) == 1
-        assert all(response.status_code in {200, 409, 422} for response in responses)
+        assert all(response.status_code == 200 for response in responses)
+        payloads = [response.json() for response in responses]
+        assert sum(payload.get("status") == "success" for payload in payloads) == 1
+        assert sum(payload.get("status") == "flat" for payload in payloads) == 1
     finally:
         app.dependency_overrides.pop(routes.current_user_id, None)
         app.dependency_overrides.pop(get_db, None)
