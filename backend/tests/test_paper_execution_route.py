@@ -3581,3 +3581,194 @@ def test_paper_reconcile_http_concurrent_corruption_matrix_is_deterministic_and_
     finally:
         verify.close()
         engine.dispose()
+\n
+
+def test_paper_reconcile_http_mixed_corruption_precedence_is_complete_and_deterministic(tmp_path):
+    """Mixed corruption must report every category and always block repair."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-mixed-corruption.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="http-mixed-corruption@example.com",
+            hashed_password="",
+            full_name="HTTP Mixed Corruption",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(
+            TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=1_000.0,
+                initial_virtual_balance=1_000.0,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            )
+        )
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    db = TestSession()
+    try:
+        created = paper_order(
+            PaperOrderRequest(
+                symbol="MIXED",
+                transaction_type="BUY",
+                price=100.0,
+                quantity=2,
+                fill_id="MIXED-1",
+            ),
+            user_id=user_id,
+            db=db,
+        )
+        assert created["status"] == "success"
+    finally:
+        db.close()
+
+    def http_reconcile():
+        client = TestClient(app)
+
+        def override_db():
+            db = TestSession()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[routes.current_user_id] = lambda: user_id
+        try:
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                responses = list(
+                    pool.map(
+                        lambda _: client.get("/api/v1/execution/paper/reconcile"),
+                        range(20),
+                    )
+                )
+            assert all(response.status_code == 200 for response in responses)
+            payloads = [response.json() for response in responses]
+            assert all(payload == payloads[0] for payload in payloads)
+            return payloads[0]
+        finally:
+            app.dependency_overrides.pop(routes.current_user_id, None)
+            app.dependency_overrides.pop(get_db, None)
+
+    clean = http_reconcile()
+    assert clean["status"] == "OK"
+    assert clean["repairability"] == "NONE"
+    assert clean["mismatch_categories"] == []
+    assert clean["mismatches"] == []
+
+    corrupt = TestSession()
+    try:
+        order = corrupt.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+        ).one()
+        position = corrupt.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+        ).one()
+        account = corrupt.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+
+        # Deliberately introduce three independent corruption classes in one
+        # durable state: audit integrity, position state, and accounting state.
+        order.audit_hash = "f" * 64
+        position.quantity = 1
+        account.virtual_balance = 801.0
+        corrupt.commit()
+    finally:
+        corrupt.close()
+
+    expected_categories = [
+        "ACCOUNTING_STATE",
+        "AUDIT_INTEGRITY",
+        "POSITION_STATE",
+    ]
+    expected_mismatches = [
+        "audit_hash_mismatch:1",
+        "position_mismatch:MIXED",
+        "virtual_balance_mismatch",
+    ]
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        snapshots = list(pool.map(lambda _: http_reconcile(), range(4)))
+
+    for snapshot in snapshots:
+        assert snapshot["status"] == "MISMATCH"
+        assert snapshot["repairability"] == "BLOCKED"
+        assert snapshot["repairability_reason"] == "ledger_or_baseline_integrity_failure"
+        assert snapshot["mismatch_categories"] == expected_categories
+        assert snapshot["mismatches"] == expected_mismatches
+        assert snapshot["orders"] == 1
+        assert snapshot["user_id"] == user_id
+        assert snapshot["repair_plan"]["apply"] is False
+        assert snapshot["repair_plan"]["reason"] == "read_only_dry_run"
+        assert snapshot["repair_plan"]["precondition"]["order_count"] == 1
+        assert snapshot["repair_plan"]["positions"] == {
+            "MIXED": {"quantity": 2, "average_price": 100.0},
+        }
+        assert snapshot["repair_plan"]["proposed_virtual_balance"] == 800.0
+        assert snapshot["repair_plan"]["proposed_realized_pnl"] == 0.0
+
+    # All concurrent reads must be byte-for-byte equivalent at the JSON object
+    # level, not merely equivalent in status/category fields.
+    assert all(snapshot == snapshots[0] for snapshot in snapshots)
+
+    verify = TestSession()
+    try:
+        order = verify.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+        ).one()
+        position = verify.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+        ).one()
+        account = verify.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+
+        assert order.audit_hash == "f" * 64
+        assert int(position.quantity) == 1
+        assert float(account.virtual_balance) == 801.0
+        assert verify.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+        ).count() == 1
+        assert verify.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+        ).count() == 1
+    finally:
+        verify.close()
+
+    # Re-running the same corruption without any mutation must reproduce the
+    # exact same reconciliation result.
+    repeated = http_reconcile()
+    assert repeated == snapshots[0]
+
+    engine.dispose()
