@@ -656,6 +656,14 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         "stored_realized_pnl": round(float(account.realized_pnl or 0.0), 8),
         "reconstructed_virtual_balance": reconstructed_cash,
         "stored_virtual_balance": round(float(account.virtual_balance), 8),
+        "reconstructed_positions": {
+            symbol: {
+                "quantity": int(state.quantity),
+                "average_price": round(float(state.average_price), 8),
+            }
+            for symbol, state in rebuilt.items()
+            if state.quantity != 0
+        },
         "mismatches": mismatches,
         "repair_plan": {
             "apply": False,
