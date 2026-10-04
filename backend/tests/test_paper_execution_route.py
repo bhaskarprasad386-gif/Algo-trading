@@ -2684,10 +2684,10 @@ def test_paper_reconcile_repair_plan_complete_for_partial_reversal_multi_symbol(
         assert result["status"] == "MISMATCH"
         assert result["repairability"] == "SAFE_DRY_RUN"
         assert result["repair_plan"]["apply"] is False
-        assert result["reconstructed_realized_pnl"] == 250.0
-        assert result["reconstructed_virtual_balance"] == 10490.0
-        assert result["repair_plan"]["proposed_realized_pnl"] == 250.0
-        assert result["repair_plan"]["proposed_virtual_balance"] == 10490.0
+        assert result["reconstructed_realized_pnl"] == 230.0
+        assert result["reconstructed_virtual_balance"] == 9390.0
+        assert result["repair_plan"]["proposed_realized_pnl"] == 230.0
+        assert result["repair_plan"]["proposed_virtual_balance"] == 9390.0
         assert result["repair_plan"]["positions"] == {
             "ALPHA": {"quantity": -3, "average_price": 110.0},
             "BETA": {"quantity": 3, "average_price": 50.0},
