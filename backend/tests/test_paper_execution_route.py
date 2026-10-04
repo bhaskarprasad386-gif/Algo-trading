@@ -4229,3 +4229,172 @@ def test_paper_reconcile_http_baseline_transition_invalidates_stale_repair_preco
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_paper_reconcile_http_repair_plan_audit_chain_consistency_matrix(tmp_path):
+    """Audit tampering must stay deterministic, dry-run only, and never expose a repairable plan."""
+    from app import execution
+    from app.execution import paper_routes as routes
+    from app.core.database import get_db
+
+    variants = ("pnl", "delete_order", "duplicate_fill", "previous_hash")
+
+    for variant in variants:
+        engine = create_engine(
+            f"sqlite:///{tmp_path / f'repair-audit-http-{variant}.db'}",
+            connect_args={"check_same_thread": False, "timeout": 10},
+        )
+        with engine.connect() as connection:
+            connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+
+        seed = Session()
+        try:
+            user = User(
+                email=f"repair-audit-http-{variant}@example.com",
+                hashed_password="",
+                full_name="Repair Audit HTTP",
+                is_active=True,
+            )
+            seed.add(user)
+            seed.flush()
+            seed.add(
+                TradingAccount(
+                    user_id=user.id,
+                    mode="PAPER",
+                    virtual_balance=740.0,
+                    initial_virtual_balance=1000.0,
+                    initial_balance_source="BOOTSTRAP",
+                    realized_pnl=40.0,
+                    is_active=True,
+                )
+            )
+            seed.commit()
+            user_id = user.id
+        finally:
+            seed.close()
+
+        db = Session()
+        try:
+            from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+            paper_order(
+                PaperOrderRequest(
+                    symbol="AUDIT-MATRIX",
+                    transaction_type="BUY",
+                    price=100.0,
+                    quantity=5,
+                    fill_id="AUDIT-MATRIX-1",
+                ),
+                user_id=user_id,
+                db=db,
+            )
+            paper_order(
+                PaperOrderRequest(
+                    symbol="AUDIT-MATRIX",
+                    transaction_type="SELL",
+                    price=120.0,
+                    quantity=2,
+                    fill_id="AUDIT-MATRIX-2",
+                ),
+                user_id=user_id,
+                db=db,
+            )
+        finally:
+            db.close()
+
+        tamper = Session()
+        try:
+            orders = (
+                tamper.query(Order)
+                .filter(Order.user_id == user_id, Order.is_paper.is_(True))
+                .order_by(Order.id.asc())
+                .all()
+            )
+            assert len(orders) == 2
+            first, second = orders
+
+            if variant == "pnl":
+                second.pnl = 41.0
+            elif variant == "delete_order":
+                tamper.delete(first)
+            elif variant == "duplicate_fill":
+                second.fill_id = first.fill_id
+            elif variant == "previous_hash":
+                second.previous_audit_hash = "f" * 64
+
+            tamper.commit()
+        finally:
+            tamper.close()
+
+        def db_override():
+            session = Session()
+            try:
+                yield session
+            finally:
+                session.close()
+
+        app.dependency_overrides[get_db] = db_override
+        app.dependency_overrides[routes.current_user_id] = lambda: user_id
+        client = TestClient(app)
+
+        try:
+            def read_reconcile():
+                response = client.get("/api/v1/execution/paper/reconcile")
+                assert response.status_code == 200
+                return response.json()
+
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                results = list(pool.map(lambda _: read_reconcile(), range(20)))
+
+            assert all(result == results[0] for result in results)
+            data = results[0]
+            assert data["user_id"] == user_id
+            assert data["status"] == "MISMATCH"
+            assert data["repairability"] == "BLOCKED"
+            assert data["repair_plan"]["apply"] is False
+            assert data["repair_plan"]["reason"] == "read_only_dry_run"
+            assert data["baseline_status"] == "BOOTSTRAP"
+
+            if variant == "pnl":
+                assert data["mismatches"] == ["audit_hash_mismatch:2"]
+                assert data["mismatch_categories"] == ["AUDIT_INTEGRITY"]
+                assert data["repair_plan"]["proposed_realized_pnl"] == 40.0
+                assert data["repair_plan"]["proposed_virtual_balance"] == 740.0
+                assert data["repair_plan"]["positions"]["AUDIT-MATRIX"] == {
+                    "quantity": 3,
+                    "average_price": 100.0,
+                }
+            elif variant == "delete_order":
+                assert data["repairability"] == "BLOCKED"
+                assert "audit_chain_mismatch:2" in data["mismatches"]
+                assert "AUDIT_INTEGRITY" in data["mismatch_categories"]
+            elif variant == "duplicate_fill":
+                assert "duplicate_fill_id:AUDIT-MATRIX-1" in data["mismatches"]
+                assert "AUDIT_INTEGRITY" in data["mismatch_categories"]
+            elif variant == "previous_hash":
+                assert data["mismatches"] == ["audit_chain_mismatch:2", "audit_hash_mismatch:2"]
+                assert data["mismatch_categories"] == ["AUDIT_INTEGRITY"]
+
+            assert data["repair_plan"]["precondition"]["algorithm"] == "SHA256"
+            assert len(data["repair_plan"]["precondition"]["state_hash"]) == 64
+            assert data["repair_plan"]["precondition"]["order_count"] in {1, 2}
+            assert data["repair_plan"]["precondition"] == data["repair_plan"]["precondition"]
+
+            verify = Session()
+            try:
+                assert verify.query(Order).filter(
+                    Order.user_id == user_id,
+                    Order.is_paper.is_(True),
+                ).count() in {1, 2}
+                assert verify.query(Position).filter(
+                    Position.user_id == user_id,
+                    Position.is_paper.is_(True),
+                ).count() == 1
+            finally:
+                verify.close()
+        finally:
+            app.dependency_overrides.pop(routes.current_user_id, None)
+            app.dependency_overrides.pop(get_db, None)
+            engine.dispose()
