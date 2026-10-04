@@ -464,6 +464,8 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
         price = float(order.price or 0.0)
         average_fill_price = float(order.average_fill_price or 0.0)
         average_price = float(order.average_price or 0.0)
+        if raw_fill_id == "":
+            raise RuntimeError("paper order fill_id invariant violated")
         if (
             not math.isfinite(raw_quantity)
             or not raw_quantity.is_integer()
@@ -711,9 +713,11 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         price = raw_average_fill_price or raw_price
         if str(order.status) != "FILLED":
             invalid_orders.append(f"order_status_canonicality_mismatch:{order.id}")
-        if order.fill_id:
-            fill_id = str(order.fill_id).strip()
-            if fill_id in seen_fill_ids:
+        if order.fill_id is not None:
+            fill_id = str(order.fill_id)
+            if not fill_id.strip():
+                invalid_orders.append(f"invalid_fill_id:{order.id}")
+            elif fill_id in seen_fill_ids:
                 invalid_orders.append(f"duplicate_fill_id:{fill_id}")
             seen_fill_ids.add(fill_id)
         if not order.audit_hash or order.previous_audit_hash != previous_hash:
@@ -905,7 +909,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         baseline_status = "LEGACY_UNFINGERPRINTED"
     mismatch_categories: set[str] = set()
     for mismatch in mismatches:
-        if mismatch.startswith(("invalid_order:", "duplicate_fill_id:", "order_pnl_mismatch:", "order_average_price_mismatch:", "order_average_fill_price_mismatch:", "order_quantity_mismatch:", "order_symbol_canonicality_mismatch:", "order_side_canonicality_mismatch:", "order_fill_id_canonicality_mismatch:", "order_status_canonicality_mismatch:", "order_identity_mismatch:", "duplicate_order_id:", "paper_scope_mismatch:")):
+        if mismatch.startswith(("invalid_order:", "invalid_fill_id:", "duplicate_fill_id:", "order_pnl_mismatch:", "order_average_price_mismatch:", "order_average_fill_price_mismatch:", "order_quantity_mismatch:", "order_symbol_canonicality_mismatch:", "order_side_canonicality_mismatch:", "order_fill_id_canonicality_mismatch:", "order_status_canonicality_mismatch:", "order_identity_mismatch:", "duplicate_order_id:", "paper_scope_mismatch:")):
             mismatch_categories.add("ORDER_INTEGRITY")
         elif mismatch.startswith(("audit_chain_mismatch:", "audit_hash_mismatch:")):
             mismatch_categories.add("AUDIT_INTEGRITY")
