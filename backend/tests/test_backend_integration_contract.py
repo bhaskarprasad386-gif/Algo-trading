@@ -622,3 +622,51 @@ def test_daily_capital_survives_manual_close_and_resets_only_on_ist_day_boundary
     )
     service.dispatch(db_session, third)
     assert len(svc.ongoing(db_session, 1)) == 1
+
+
+def test_global_paper_cap_partial_allocation_cannot_bypass_daily_cap(db_session):
+    from app.models import AlertRule, GlobalPaperSetting
+    from app.notifications.common import AlertEvent, AlertService
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=150000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=100000.0, max_simultaneous_positions=5, max_loss=0.0,
+    ))
+    db_session.commit()
+
+    service = AlertService()
+    first = AlertEvent(
+        strategy_id="cash-future", event_id="PARTIAL-RISK-1", symbol="AAA",
+        timestamp_ns=1, message="first", metadata={
+            "gross_profit": 1,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-30",
+                "lot_size": 10, "lots": 2, "edge": 5, "capital_used": 100000,
+            },
+        },
+    )
+    assert service.dispatch(db_session, first) == 0
+    first_rows = LivePaperTradeService().ongoing(db_session, 1)
+    assert len(first_rows) == 1
+    assert first_rows[0].capital_used == 100000
+
+    # Only 50k remains in the global paper cap. A second 100k request must
+    # not use that remaining 50k to circumvent the daily 100k risk limit.
+    second = AlertEvent(
+        strategy_id="cash-future", event_id="PARTIAL-RISK-2", symbol="BBB",
+        timestamp_ns=2, message="second", metadata={
+            "gross_profit": 1,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-30",
+                "lot_size": 10, "lots": 2, "edge": 5, "capital_used": 100000,
+            },
+        },
+    )
+    assert service.dispatch(db_session, second) == 0
+    rows = LivePaperTradeService().ongoing(db_session, 1)
+    assert len(rows) == 1
+    assert sum(float(row.capital_used or 0.0) for row in rows) == 100000
