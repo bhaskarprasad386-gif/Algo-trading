@@ -249,6 +249,18 @@ def _begin_paper_mutation(db: Session, user_id: int) -> TradingAccount:
     return account
 
 
+def _commit_paper_mutation(db: Session) -> None:
+    """Commit a paper mutation without leaking database exceptions to callers."""
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="paper trading mutation conflicts with existing ledger state") from exc
+    except OperationalError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="paper trading account is busy; retry") from exc
+
+
 def _account(db: Session, user_id: int) -> TradingAccount:
     account = db.query(TradingAccount).filter(TradingAccount.user_id == user_id).first()
     if account is None or not account.is_active:
@@ -951,7 +963,7 @@ def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_
     db.add(position)
     _validate_paper_state(db, user_id)
     order = _create_order(db, user_id=user_id, symbol=symbol, side="BUY", price=fill.price, quantity=fill.quantity, fill_id=fill_id)
-    db.commit()
+    _commit_paper_mutation(db)
     return {"status":"success","mode":state.mode.value,"fill":{"price":fill.price,"quantity":fill.quantity},"entry_price":state.entry_price,"stop_loss":state.stop_loss,"target":state.target,"position":_position_payload(position),"order":order,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
 
 
@@ -1060,7 +1072,7 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
                 remaining = active
             order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl, fill_id=fill_id)
     _validate_paper_state(db, user_id)
-    db.commit()
+    _commit_paper_mutation(db)
     return {"status":"success","mode":"paper","order":order,"position":_position_payload(remaining),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
 
 
@@ -1220,5 +1232,5 @@ def paper_exit(request: PaperExitRequest, user_id: int = Depends(current_user_id
     order = _create_order(db, user_id=user_id, symbol=position.symbol, side=side, price=fill.price, quantity=quantity, pnl=pnl, fill_id=fill_id)
     db.delete(position)
     _validate_paper_state(db, user_id)
-    db.commit()
+    _commit_paper_mutation(db)
     return {"status":"closed","entry_price":entry_price,"exit_price":request.price,"quantity":quantity,"pnl":pnl,"order":order,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
