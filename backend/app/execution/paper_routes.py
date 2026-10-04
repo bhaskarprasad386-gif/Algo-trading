@@ -477,6 +477,8 @@ def _paper_repair_precondition(db: Session, user_id: int, account: TradingAccoun
         "account": {
             "initial_virtual_balance": _repair_fingerprint_number(account.initial_virtual_balance),
             "initial_balance_source": str(account.initial_balance_source or ""),
+            "mode": str(account.mode or ""),
+            "is_active": bool(account.is_active),
             "virtual_balance": _repair_fingerprint_number(account.virtual_balance),
             "realized_pnl": _repair_fingerprint_number(account.realized_pnl),
         },
@@ -489,11 +491,14 @@ def _paper_repair_precondition(db: Session, user_id: int, account: TradingAccoun
                 "quantity": _repair_fingerprint_number(order.quantity),
                 "filled_quantity": _repair_fingerprint_number(order.filled_quantity),
                 "price": _repair_fingerprint_number(order.price),
+                "average_price": _repair_fingerprint_number(order.average_price),
                 "average_fill_price": _repair_fingerprint_number(order.average_fill_price),
                 "pnl": _repair_fingerprint_number(order.pnl),
                 "status": str(order.status or ""),
                 "audit_hash": order.audit_hash,
                 "previous_audit_hash": order.previous_audit_hash,
+                "broker_order_id": order.broker_order_id,
+                "is_paper": bool(order.is_paper),
             }
             for order in orders
         ],
@@ -504,6 +509,7 @@ def _paper_repair_precondition(db: Session, user_id: int, account: TradingAccoun
                 "quantity": _repair_fingerprint_number(position.quantity),
                 "average_price": _repair_fingerprint_number(position.average_price),
                 "is_open": bool(position.is_open),
+                "is_paper": bool(position.is_paper),
             }
             for position in sorted(positions, key=lambda item: int(item.id))
         ],
