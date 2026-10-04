@@ -1127,6 +1127,126 @@ def test_close_and_multiple_new_entries_race_never_oversubscribes_capital(tmp_pa
         verify.close()
         engine.dispose()
 
+
+def test_partial_allocation_and_expiry_close_race_preserve_capital(tmp_path):
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'partial-expiry-entry-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    setup.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    setup.commit()
+
+    original, created = LivePaperTradeService().enter_or_mark(
+        setup,
+        strategy_id="calendar-spread",
+        symbol="ORIGINAL",
+        event_id="PARTIAL-EXPIRY-RACE-ORIGINAL",
+        direction="LONG",
+        expiry="2026-10-12",
+        earliest_expiry="2026-10-12",
+        lot_size=10,
+        lots=2,
+        edge=5,
+        capital_used=60000,
+        metadata={"exchange": "NFO"},
+        user_id=1,
+    )
+    assert created is True
+    assert original.lots == 2
+    assert original.capital_used == 60000
+    original_id = original.id
+    setup.close()
+
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+
+    def expiry_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            closed = LivePaperTradeService().close_expired(
+                db, now=datetime(2026, 10, 12, 15, 30),
+            )
+            results.append(("expiry", len(closed)))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    def entry_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            trade, created = LivePaperTradeService().enter_or_mark(
+                db,
+                strategy_id="cash-future",
+                symbol="NEW",
+                event_id="PARTIAL-EXPIRY-RACE-NEW",
+                direction="LONG",
+                lot_size=10,
+                lots=2,
+                edge=5,
+                capital_used=60000,
+                user_id=1,
+            )
+            results.append((
+                "entry",
+                created,
+                None if trade is None else trade.lots,
+                None if trade is None else trade.capital_used,
+            ))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=expiry_worker),
+        threading.Thread(target=entry_worker),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(results) == 2
+
+    verify = Session()
+    try:
+        rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+        ).all()
+        original_row = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.id == original_id,
+        ).one()
+        ongoing = [row for row in rows if row.status == "ONGOING"]
+
+        assert original_row.status == "COMPLETED"
+        assert original_row.exit_reason == "EXPIRY_CLOSE"
+        assert sum(float(row.capital_used or 0.0) for row in ongoing) <= 100000
+
+        entry_results = [row for row in results if row[0] == "entry"]
+        assert len(entry_results) == 1
+        if entry_results[0][1]:
+            assert entry_results[0][2] in {1, 2}
+            assert entry_results[0][3] in {30000, 60000}
+            assert entry_results[0][3] == entry_results[0][2] * 30000
+    finally:
+        verify.close()
+        engine.dispose()
+
 def test_same_event_concurrent_first_entries_create_one_trade(tmp_path):
     import threading
     from sqlalchemy import create_engine
