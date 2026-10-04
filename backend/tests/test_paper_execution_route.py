@@ -297,8 +297,7 @@ def test_paper_short_reversal_deducts_cost_of_remaining_long():
     data = reversal_response.json()
 
     # Cover 5 shorts: release 500 margin and realize +50 P&L.
-    # Open the remaining 3-long reversal at 90: deduct 270 from cash.    assert data["realized_pnl"] == 50.0
-    assert data["virtual_balance"] == starting_balance - 220.0
+    # Open the remaining 3-long reversal at 90: deduct 270 from cash.    assert data["realized_pnl"] == 50.0    assert data["virtual_balance"] == starting_balance - 220.0
     assert data["position"]["symbol"] == "REVERSAL"
     assert data["position"]["quantity"] == 3.0
     assert data["position"]["entry_price"] == 90.0
@@ -597,7 +596,6 @@ def test_paper_mixed_reversal_chain_preserves_cash_and_realized_pnl():
     assert data["virtual_balance"] == 9_960.0
     assert data["realized_pnl"] == 160.0
     assert data["position"]["quantity"] == 2.0    assert data["position"]["entry_price"] == 100.0
-
     # Final long close at 90: receive 180 and realize -20.
     closed = client.post(
         "/api/v1/execution/paper/exit",
@@ -897,8 +895,7 @@ def test_paper_multi_symbol_concurrent_exit_and_reversal_preserve_accounting(tmp
             first = pool.submit(close_alpha)
             second = pool.submit(reverse_beta)            results = [first.result(), second.result()]
 
-        successful = [result for result in results if result[0] in {"alpha", "beta"}]
-        assert len(successful) == 2
+        successful = [result for result in results if result[0] in {"alpha", "beta"}]        assert len(successful) == 2
 
         verify = Session()
         try:
@@ -1197,8 +1194,7 @@ def test_paper_order_persists_filled_execution_fields_for_partial_lifecycle():
         json={"symbol": "LIFECYCLE", "transaction_type": "BUY", "price": 100.0, "quantity": 10},    )
     assert opened.status_code == 200
 
-    partial = client.post(
-        "/api/v1/execution/paper/order",
+    partial = client.post(        "/api/v1/execution/paper/order",
         headers=headers,
         json={"symbol": "LIFECYCLE", "transaction_type": "SELL", "price": 120.0, "quantity": 4},
     )
@@ -1497,8 +1493,7 @@ def test_paper_ledger_reconciliation_blocks_repair_plan_for_corrupt_order():
 def test_paper_ledger_reconciliation_fingerprint_chain_is_valid_and_tamper_detected():
     client, headers = _client_and_headers()
     for payload in [
-        {"symbol": "HASH", "transaction_type": "BUY", "price": 100.0, "quantity": 5},
-        {"symbol": "HASH", "transaction_type": "SELL", "price": 120.0, "quantity": 2},
+        {"symbol": "HASH", "transaction_type": "BUY", "price": 100.0, "quantity": 5},        {"symbol": "HASH", "transaction_type": "SELL", "price": 120.0, "quantity": 2},
     ]:
         response = client.post("/api/v1/execution/paper/order", headers=headers, json=payload)
         assert response.status_code == 200
@@ -1797,8 +1792,7 @@ def test_paper_reconcile_mixed_legacy_and_fingerprinted_orders_is_blocked(tmp_pa
 
     db = Session()
     try:
-        result = paper_order(
-            PaperOrderRequest(symbol="NEW", transaction_type="BUY", price=100.0, quantity=1, fill_id="NEW-1"),
+        result = paper_order(            PaperOrderRequest(symbol="NEW", transaction_type="BUY", price=100.0, quantity=1, fill_id="NEW-1"),
             user_id=user_id, db=db,
         )
         assert result["order"]["fill_id"] == "NEW-1"
@@ -2097,8 +2091,7 @@ def test_paper_audit_chain_tamper_matrix_is_blocked(tmp_path):
         tamper_db = Session()
         try:
             orders = (
-                tamper_db.query(Order)
-                .filter(Order.user_id == user_id, Order.is_paper.is_(True))
+                tamper_db.query(Order)                .filter(Order.user_id == user_id, Order.is_paper.is_(True))
                 .order_by(Order.id.asc())
                 .all()
             )
@@ -2397,8 +2390,7 @@ def test_paper_reconcile_blocked_baseline_never_exposes_applicable_repair(tmp_pa
     try:
         account = corrupt.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
         account.virtual_balance = 999.0
-        corrupt.commit()
-    finally:
+        corrupt.commit()    finally:
         corrupt.close()
 
     verify = Session()
@@ -2697,8 +2689,7 @@ def test_paper_reconcile_flat_symbol_excluded_from_repair_positions(tmp_path):
     engine = create_engine(
         f"sqlite:///{tmp_path / 'repair-plan-flat.db'}",
         connect_args={"check_same_thread": False, "timeout": 10},
-    )
-    Base.metadata.create_all(engine)
+    )    Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     seed = Session()
     try:
@@ -2989,6 +2980,7 @@ def test_paper_reconcile_http_dependency_identity_can_be_changed_without_client_
         assert second.json()["user_id"] == second_id
         assert first.json()["user_id"] != second.json()["user_id"]
     finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
 
 
 def test_paper_reconcile_repair_plan_integrity_partial_fills_flat_reversals_and_multiple_symbols(tmp_path):
@@ -2997,8 +2989,7 @@ def test_paper_reconcile_repair_plan_integrity_partial_fills_flat_reversals_and_
     from app.execution import paper_routes as routes
     from app.execution.paper_routes import PaperOrderRequest, paper_order
 
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'repair-plan-integrity-matrix.db'}",
+    engine = create_engine(        f"sqlite:///{tmp_path / 'repair-plan-integrity-matrix.db'}",
         connect_args={"check_same_thread": False, "timeout": 10},
     )
     Base.metadata.create_all(engine)
