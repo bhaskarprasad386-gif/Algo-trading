@@ -5097,3 +5097,149 @@ def test_paper_reconcile_http_multi_user_precondition_isolation_across_committed
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_paper_order_http_concurrent_duplicate_fill_id_is_idempotent(tmp_path):
+    """Concurrent retries of one fill must create exactly one paper order."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-duplicate-fill-idempotency.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="duplicate-fill-http@example.com",
+            hashed_password="",
+            full_name="Duplicate Fill HTTP",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(
+            TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=1000.0,
+                initial_virtual_balance=1000.0,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            )
+        )
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    # Confirm the direct mutation path has the same fill semantics before
+    # exercising the HTTP boundary.
+    direct_db = TestSession()
+    try:
+        direct = paper_order(
+            PaperOrderRequest(
+                symbol="HTTP-IDEMPOTENT",
+                transaction_type="BUY",
+                price=100.0,
+                quantity=2,
+                fill_id="HTTP-IDEMPOTENT-1",
+            ),
+            user_id=user_id,
+            db=direct_db,
+        )
+        assert direct["status"] == "success"
+    finally:
+        direct_db.rollback()
+        direct_db.close()
+
+    # The direct transaction above was rolled back, so the isolated account is
+    # still at its original state. The real test is the concurrent HTTP race.
+    verify_reset = TestSession()
+    try:
+        account = verify_reset.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        assert float(account.virtual_balance) == 1000.0
+        assert verify_reset.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+        ).count() == 0
+    finally:
+        verify_reset.close()
+
+    client = TestClient(app)
+
+    def override_db():
+        db = TestSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        def submit(_):
+            return client.post(
+                "/api/v1/execution/paper/order",
+                json={
+                    "symbol": "HTTP-IDEMPOTENT",
+                    "transaction_type": "BUY",
+                    "price": 100.0,
+                    "quantity": 2,
+                    "fill_id": "HTTP-IDEMPOTENT-1",
+                },
+            )
+
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            responses = list(pool.map(submit, range(12)))
+
+        assert all(response.status_code == 200 for response in responses)
+        payloads = [response.json() for response in responses]
+        assert sum(payload.get("idempotent") is True for payload in payloads) == 11
+        assert sum("idempotent" not in payload for payload in payloads) == 1
+        assert all(payload["status"] == "success" for payload in payloads)
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    final_db = TestSession()
+    try:
+        account = final_db.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        orders = final_db.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+        ).all()
+        positions = final_db.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+        ).all()
+
+        assert len(orders) == 1
+        assert len(positions) == 1
+        assert positions[0].quantity == 2
+        assert float(account.virtual_balance) == 800.0
+        assert float(account.realized_pnl or 0.0) == 0.0
+        assert orders[0].fill_id == "HTTP-IDEMPOTENT-1"
+
+        from app.execution.paper_routes import _reconcile_paper_ledger
+        reconciliation = _reconcile_paper_ledger(final_db, user_id)
+        assert reconciliation["status"] == "OK"
+        assert reconciliation["mismatches"] == []
+        assert reconciliation["repairability"] == "NONE"
+    finally:
+        final_db.close()
+        engine.dispose()
