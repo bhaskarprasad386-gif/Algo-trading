@@ -377,6 +377,8 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
         raw_symbol = str(position.symbol or "")
         raw_quantity = float(position.quantity or 0.0)
         raw_average_price = float(position.average_price or 0.0)
+        raw_last_price = float(position.last_price or 0.0)
+        raw_position_pnl = float(position.pnl or 0.0)
         if (
             not symbol
             or raw_symbol != symbol
@@ -386,6 +388,9 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             or not bool(position.is_open)
             or not math.isfinite(raw_average_price)
             or raw_average_price <= 0
+            or not math.isfinite(raw_last_price)
+            or raw_last_price < 0
+            or not math.isfinite(raw_position_pnl)
         ):
             raise RuntimeError("paper position invariant violated")
         quantity = int(raw_quantity)
@@ -566,6 +571,8 @@ def _paper_repair_precondition(db: Session, user_id: int, account: TradingAccoun
                 "symbol": str(position.symbol or "").strip().upper(),
                 "quantity": _repair_fingerprint_number(position.quantity),
                 "average_price": _repair_fingerprint_number(position.average_price),
+                "last_price": _repair_fingerprint_number(position.last_price),
+                "pnl": _repair_fingerprint_number(position.pnl),
                 "is_open": bool(position.is_open),
                 "is_paper": bool(position.is_paper),
             }
@@ -749,11 +756,16 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     for position in all_paper_positions:
         raw_quantity = float(position.quantity or 0.0)
         raw_average_price = float(position.average_price or 0.0)
+        raw_last_price = float(position.last_price or 0.0)
+        raw_position_pnl = float(position.pnl or 0.0)
         if (
             not math.isfinite(raw_quantity)
             or not raw_quantity.is_integer()
             or not math.isfinite(raw_average_price)
             or (raw_quantity != 0 and raw_average_price <= 0)
+            or not math.isfinite(raw_last_price)
+            or raw_last_price < 0
+            or not math.isfinite(raw_position_pnl)
         ):
             # Defer categorization until the shared mismatch list is built below.
             # The position is intentionally excluded from canonical comparison so
