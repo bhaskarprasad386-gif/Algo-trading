@@ -172,3 +172,12 @@ def test_expiry_close_does_not_close_before_earliest_expiry(db_session):
     )
     assert svc.close_expired(db_session, now=datetime(2026, 10, 11, 23, 59, 59)) == []
     assert trade.status == "ONGOING"
+
+
+def test_executable_pnl_returns_none_when_exit_quote_is_unavailable():
+    from app.main import _executable_paper_pnl
+    trade = _paper_trade([
+        {"instrument": "CASH", "side": "BUY", "price": 100.0},
+    ])
+    row = {"cash_bid": None, "cash_ask": None}
+    assert _executable_paper_pnl(trade, row) is None
