@@ -313,20 +313,12 @@ def test_expiry_cleanup_database_lock_fails_closed_without_leaking_caller_transa
     db_session.commit()
 
     class LockedExpirySession:
-        def __init__(self):
-            self.closed = False
-
-        def close_expired(self, *args, **kwargs):
-            raise OperationalError(
-                "UPDATE live_paper_trade SET status=?",
-                {},
-                Exception("database is locked"),
-            )
+        def rollback(self):
+            pass
 
         def close(self):
-            self.closed = True
+            pass
 
-    class LockedExpiryService(LivePaperTradeService):
         def close_expired(self, *args, **kwargs):
             raise OperationalError(
                 "UPDATE live_paper_trade SET status=?",
