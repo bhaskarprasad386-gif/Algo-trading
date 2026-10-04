@@ -598,7 +598,7 @@ def _paper_repair_precondition(db: Session, user_id: int, account: TradingAccoun
                 "created_at": order.created_at,
                 "updated_at": order.updated_at,
             }
-            for order in orders
+            for order in sorted(orders, key=lambda item: int(item.id))
         ],
         "positions": [
             {
@@ -626,7 +626,7 @@ def _paper_repair_precondition(db: Session, user_id: int, account: TradingAccoun
         "algorithm": "SHA256",
         "order_count": len(orders),
         "position_count": len(positions),
-        "audit_head": orders[-1].audit_hash if orders else None,
+        "audit_head": sorted(orders, key=lambda item: int(item.id))[-1].audit_hash if orders else None,
         "state_hash": hashlib.sha256(canonical).hexdigest(),
     }
 
