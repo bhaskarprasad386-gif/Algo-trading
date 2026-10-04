@@ -749,7 +749,19 @@ async def _live_paper_monitor_loop() -> None:
                             row = box_map.get(trade.event_id); edge = None if row is None else row.executable_edge
                         if edge is not None:
                             pnl = _executable_paper_pnl(trade, row)
-                            service.mark(db, trade, edge=float(edge), pnl_override=pnl)
+                            if pnl is not None:
+                                service.mark(db, trade, edge=float(edge), pnl_override=pnl)
+                            else:
+                                # Never replace a real executable P&L mark with an
+                                # opportunity-edge delta merely because a live quote
+                                # is temporarily unavailable. Preserve the last
+                                # executable mark until a fresh executable quote arrives.
+                                service.mark(
+                                    db,
+                                    trade,
+                                    edge=float(edge),
+                                    pnl_override=float(trade.unrealized_pnl),
+                                )
                     db.commit()
                 service.close_expired(db)
             finally:
