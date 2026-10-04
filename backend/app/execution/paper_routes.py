@@ -422,6 +422,8 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
         raw_order_type = str(order.order_type or "")
         raw_product_type = str(order.product_type or "")
         raw_time_in_force = str(order.time_in_force or "")
+        created_at = order.created_at
+        updated_at = order.updated_at
         price = float(order.price or 0.0)
         average_fill_price = float(order.average_fill_price or 0.0)
         average_price = float(order.average_price or 0.0)
@@ -450,6 +452,9 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             or raw_order_type != "MARKET"
             or raw_product_type != "INTRADAY"
             or raw_time_in_force != "DAY"
+            or created_at is None
+            or updated_at is None
+            or updated_at < created_at
             or order.trigger_price is not None
             or order.status != "FILLED"
             or order.transaction_type.upper() not in {"BUY", "SELL"}
@@ -550,6 +555,8 @@ def _paper_repair_precondition(db: Session, user_id: int, account: TradingAccoun
                 "previous_audit_hash": order.previous_audit_hash,
                 "broker_order_id": order.broker_order_id,
                 "is_paper": bool(order.is_paper),
+                "created_at": order.created_at,
+                "updated_at": order.updated_at,
             }
             for order in orders
         ],
