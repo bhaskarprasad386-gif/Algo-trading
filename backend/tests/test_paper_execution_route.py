@@ -10048,3 +10048,32 @@ def test_paper_order_corrupt_average_price_fails_closed(tmp_path):
         assert stored.average_fill_price == 100.0
     finally:
         verify.close()
+
+
+def test_paper_mutation_fails_closed_on_noncanonical_stored_paper_fields(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'paper-canonicality.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="canonicality@example.com", hashed_password="", full_name="Canonicality", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        seed.add(Position(user_id=user.id, symbol=" BADPOS ", quantity=1, average_price=100.0, is_paper=True, is_open=True))
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+    db = Session()
+    try:
+        try:
+            paper_order(PaperOrderRequest(symbol="NEW", transaction_type="BUY", price=50.0, quantity=1, fill_id="CANON-FAIL"), user_id=user_id, db=db)
+            assert False, "noncanonical stored position must fail closed"
+        except RuntimeError as exc:
+            assert "paper position invariant" in str(exc)
+            db.rollback()
+    finally:
+        db.close()
