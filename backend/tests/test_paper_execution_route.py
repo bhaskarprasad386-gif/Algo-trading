@@ -2630,3 +2630,125 @@ def test_paper_reconcile_precondition_captures_multi_symbol_reversal_ledger(tmp_
     finally:
         mutate.close()
         engine.dispose()
+
+def test_paper_reconcile_repair_plan_complete_for_partial_reversal_multi_symbol(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'repair-plan-complete.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="complete-plan@example.com", hashed_password="", full_name="Complete Plan", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id, mode="PAPER", virtual_balance=10000.0,
+            initial_virtual_balance=10000.0, initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0, is_active=True,
+        ))
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    requests = (
+        PaperOrderRequest(symbol="ALPHA", transaction_type="BUY", price=100.0, quantity=10, fill_id="A1"),
+        PaperOrderRequest(symbol="ALPHA", transaction_type="SELL", price=120.0, quantity=15, fill_id="A2"),
+        PaperOrderRequest(symbol="ALPHA", transaction_type="BUY", price=110.0, quantity=2, fill_id="A3"),
+        PaperOrderRequest(symbol="BETA", transaction_type="BUY", price=50.0, quantity=4, fill_id="B1"),
+        PaperOrderRequest(symbol="BETA", transaction_type="SELL", price=60.0, quantity=1, fill_id="B2"),
+    )
+    for request in requests:
+        db = Session()
+        try:
+            paper_order(request, user_id=user_id, db=db)
+        finally:
+            db.close()
+
+    corrupt = Session()
+    try:
+        account = corrupt.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        account.virtual_balance = 1.0
+        account.realized_pnl = 999.0
+        corrupt.commit()
+    finally:
+        corrupt.close()
+
+    verify = Session()
+    try:
+        result = _reconcile_paper_ledger(verify, user_id)
+        assert result["status"] == "MISMATCH"
+        assert result["repairability"] == "SAFE_DRY_RUN"
+        assert result["repair_plan"]["apply"] is False
+        assert result["reconstructed_realized_pnl"] == 250.0
+        assert result["reconstructed_virtual_balance"] == 10490.0
+        assert result["repair_plan"]["proposed_realized_pnl"] == 250.0
+        assert result["repair_plan"]["proposed_virtual_balance"] == 10490.0
+        assert result["repair_plan"]["positions"] == {
+            "ALPHA": {"quantity": -3, "average_price": 110.0},
+            "BETA": {"quantity": 3, "average_price": 50.0},
+        }
+        assert "ALPHA" in result["repair_plan"]["positions"]
+        assert "BETA" in result["repair_plan"]["positions"]
+    finally:
+        verify.close()
+        engine.dispose()
+
+
+def test_paper_reconcile_flat_symbol_excluded_from_repair_positions(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, PaperExitRequest, _reconcile_paper_ledger, paper_order, paper_exit
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'repair-plan-flat.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="flat-plan@example.com", hashed_password="", full_name="Flat Plan", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+            initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0, is_active=True,
+        ))
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    db = Session()
+    try:
+        paper_order(PaperOrderRequest(symbol="FLAT", transaction_type="BUY", price=100.0, quantity=2, fill_id="F1"), user_id=user_id, db=db)
+    finally:
+        db.close()
+    db = Session()
+    try:
+        paper_exit(PaperExitRequest(symbol="FLAT", price=110.0, fill_id="F2"), user_id=user_id, db=db)
+    finally:
+        db.close()
+
+    corrupt = Session()
+    try:
+        account = corrupt.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        account.virtual_balance = 999.0
+        corrupt.commit()
+    finally:
+        corrupt.close()
+
+    verify = Session()
+    try:
+        result = _reconcile_paper_ledger(verify, user_id)
+        assert result["repairability"] == "SAFE_DRY_RUN"
+        assert result["reconstructed_realized_pnl"] == 20.0
+        assert result["reconstructed_virtual_balance"] == 1020.0
+        assert result["repair_plan"]["positions"] == {}
+    finally:
+        verify.close()
+        engine.dispose()
