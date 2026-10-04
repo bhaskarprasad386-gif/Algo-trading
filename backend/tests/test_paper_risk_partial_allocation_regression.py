@@ -1032,6 +1032,106 @@ def test_concurrent_same_user_different_events_respect_single_position_slot(tmp_
         verify.close()
         engine.dispose()
 
+
+def test_concurrent_same_user_partial_allocation_serializes_daily_capital_and_loss(tmp_path):
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.core.database import Base
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'partial-daily-loss-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    setup.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=90000, emergency_stop=False,
+    ))
+    setup.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=60000, max_simultaneous_positions=5, max_loss=100,
+    ))
+    setup.commit()
+
+    # Seed through partial allocation: request ₹60k / 2 lots against a ₹30k
+    # available paper budget, so exactly one ₹30k lot is persisted. Mark it to
+    # a ₹50 open loss; this simultaneously establishes the daily-capital and
+    # max-loss accounting that both concurrent entries must observe.
+    seed_service = LivePaperTradeService()
+    seed, created = seed_service.enter_or_mark(
+        setup, strategy_id="cash-future", symbol="PARTIAL-RISK-SEED",
+        event_id="PARTIAL-RISK-SEED", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-30", lot_size=10, lots=2,
+        edge=10, capital_used=60000, user_id=1,
+    )
+    assert created is True
+    assert seed.lots == 1
+    assert seed.capital_used == 30000
+    seed_service.mark(setup, seed, edge=5, pnl_override=-50)
+    setup.commit()
+    setup.close()
+
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+
+    def worker(event_id):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            results.append(AlertService().dispatch(
+                db, _event(event_id, capital=30000, lots=1)
+            ))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=worker, args=("PARTIAL-RISK-A",)),
+        threading.Thread(target=worker, args=("PARTIAL-RISK-B",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(results) == 2
+
+    verify = Session()
+    try:
+        rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.status == "ONGOING",
+        ).all()
+        # Seed consumed ₹30k. The ₹60k daily budget therefore leaves room for
+        # exactly one ₹30k new entry. Both concurrent events have enough global
+        # capital individually, so the second event must lose on serialized
+        # daily-capital accounting rather than capital reservation.
+        assert len(rows) == 2
+        new_rows = [row for row in rows if row.event_id != "PARTIAL-RISK-SEED"]
+        assert len(new_rows) == 1
+        assert new_rows[0].capital_used == 30000
+        assert new_rows[0].lots == 1
+
+        reserved = sum(float(row.capital_used) for row in rows)
+        assert reserved == 60000
+
+        seed_row = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.event_id == "PARTIAL-RISK-SEED",
+            LivePaperTrade.user_id == 1,
+        ).one()
+        assert seed_row.capital_used == 30000
+        assert seed_row.unrealized_pnl == -50
+    finally:
+        verify.close()
+        engine.dispose()
+
 def test_concurrent_same_user_different_events_respect_single_capital_budget(tmp_path):
     import threading
     from sqlalchemy import create_engine
