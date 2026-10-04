@@ -597,3 +597,43 @@ def test_exit_reason_is_terminal_state_invariant(db_session):
     db_session.add(malformed)
     db_session.commit()
     assert malformed.id not in [x.id for x in svc.completed(db_session, 1)]
+
+
+def test_new_entry_rejects_invalid_expiry_boundaries_before_persistence(db_session):
+    _enable(db_session, amount=100_000)
+    svc = LivePaperTradeService()
+
+    future_expiry = "2099-12-31"
+    bad_order, created = svc.enter_or_mark(
+        db_session, strategy_id="calendar-spread", symbol="AAA",
+        event_id="ENTRY-BAD-ORDER", direction="LONG",
+        expiry="2026-10-10", earliest_expiry="2026-10-11",
+        lot_size=1, lots=1, edge=10, capital_used=10_000, user_id=1,
+    )
+    assert bad_order is None
+    assert created is False
+
+    past_expiry, created = svc.enter_or_mark(
+        db_session, strategy_id="calendar-spread", symbol="AAA",
+        event_id="ENTRY-PAST-EXPIRY", direction="LONG",
+        expiry="2020-01-01", earliest_expiry="2020-01-01",
+        lot_size=1, lots=1, edge=10, capital_used=10_000, user_id=1,
+    )
+    assert past_expiry is None
+    assert created is False
+
+    assert db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.event_id.in_([
+            "ENTRY-BAD-ORDER", "ENTRY-PAST-EXPIRY"
+        ])
+    ).count() == 0
+
+    valid, created = svc.enter_or_mark(
+        db_session, strategy_id="calendar-spread", symbol="AAA",
+        event_id="ENTRY-FUTURE-VALID", direction="LONG",
+        expiry=future_expiry, earliest_expiry=future_expiry,
+        lot_size=1, lots=1, edge=10, capital_used=10_000, user_id=1,
+    )
+    assert created is True
+    assert valid.expiry == future_expiry
+    assert valid.earliest_expiry == future_expiry
