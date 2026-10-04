@@ -505,18 +505,32 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     for order in orders:
         symbol = str(order.symbol or "").strip().upper()
         side = str(order.transaction_type or "").strip().upper()
-        quantity = int(order.filled_quantity or 0)
-        price = float(order.average_fill_price or order.price or 0.0)
+        raw_filled_quantity = float(order.filled_quantity or 0.0)
+        raw_quantity = float(order.quantity or 0.0)
+        raw_price = float(order.price) if order.price is not None else 0.0
+        raw_average_price = float(order.average_price) if order.average_price is not None else 0.0
+        raw_average_fill_price = float(order.average_fill_price) if order.average_fill_price is not None else 0.0
+        raw_pnl = float(order.pnl) if order.pnl is not None else 0.0
         if (
             not symbol
             or side not in {"BUY", "SELL"}
-            or quantity <= 0
-            or not math.isfinite(price)
-            or price <= 0
+            or not math.isfinite(raw_filled_quantity)
+            or not raw_filled_quantity.is_integer()
+            or raw_filled_quantity <= 0
+            or not math.isfinite(raw_quantity)
+            or not raw_quantity.is_integer()
+            or raw_quantity <= 0
+            or not math.isfinite(raw_price)
+            or not math.isfinite(raw_average_price)
+            or not math.isfinite(raw_average_fill_price)
+            or not math.isfinite(raw_pnl)
+            or raw_average_fill_price <= 0
             or str(order.status).upper() != "FILLED"
         ):
             invalid_orders.append(f"invalid_order:{order.id}")
             continue
+        quantity = int(raw_filled_quantity)
+        price = raw_average_fill_price or raw_price
         if str(order.status) != "FILLED":
             invalid_orders.append(f"order_status_canonicality_mismatch:{order.id}")
         if order.fill_id:
@@ -532,7 +546,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             side=side,
             quantity=quantity,
             price=price,
-            pnl=float(order.pnl or 0.0),
+            pnl=raw_pnl,
             fill_id=order.fill_id,
             previous_hash=previous_hash,
         )
@@ -555,13 +569,13 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             current_average_price=state.average_price,
             current_realized_pnl=state.realized_pnl,
         )
-        if abs(float(order.pnl or 0.0) - pnl_delta) > 1e-8:
+        if abs(raw_pnl - pnl_delta) > 1e-8:
             invalid_orders.append(f"order_pnl_mismatch:{order.id}")
         if abs(float(order.average_price or 0.0) - float(order.price or 0.0)) > 1e-8:
             invalid_orders.append(f"order_average_price_mismatch:{order.id}")
         if abs(float(order.average_fill_price or 0.0) - float(order.price or 0.0)) > 1e-8:
             invalid_orders.append(f"order_average_fill_price_mismatch:{order.id}")
-        if int(order.quantity or 0) != quantity:
+        if int(raw_quantity) != quantity:
             invalid_orders.append(f"order_quantity_mismatch:{order.id}")
         if str(order.symbol or "").strip() != symbol:
             invalid_orders.append(f"order_symbol_canonicality_mismatch:{order.id}")
