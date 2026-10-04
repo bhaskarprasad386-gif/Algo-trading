@@ -8,7 +8,8 @@ from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
 from app.algo.auth import AngelOneAuth
-from app.market_data.common_strategy_feed import CommonStrategyMarketFeed\nfrom app.core.config import settings
+from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
+from app.core.config import settings
 from app.market_data.ingestion import BoundedMarketDataIngestor
 from app.market_data.persistence import DailySQLiteMarketDataRepository
 from app.market_data.instruments import InstrumentMaster
@@ -149,9 +150,10 @@ class LiveCommodityMarketDataRecorder:
             (("MCX" if x.exchange_type == 5 else "NCDEX"), x.token): x
             for x in subscriptions
         }
-        self._repository = DailySQLiteMarketDataRepository(self.data_db)
-        self._ingestor = BoundedMarketDataIngestor(self._repository, record_source=self.SOURCE)
-        self._ingestor.start()
+        if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
+            self._repository = DailySQLiteMarketDataRepository(self.data_db)
+            self._ingestor = BoundedMarketDataIngestor(self._repository, record_source=self.SOURCE)
+            self._ingestor.start()
         self._feed = CommonStrategyMarketFeed("commodity-market-data", auth=self.auth)
         descriptors = tuple(self._descriptor(x) for x in subscriptions)
         self._feed.start(descriptors, self._observe)
