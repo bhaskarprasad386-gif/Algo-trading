@@ -156,6 +156,16 @@ class AlertService:
             expiry_db = SessionLocal()
             try:
                 service.close_expired(expiry_db, commit=True)
+            except Exception as exc:
+                # Expiry cleanup owns a separate SQLite transaction. If that
+                # transaction cannot acquire the database lock, risk gates must
+                # fail closed rather than evaluate stale ongoing capital/loss
+                # state and potentially create an unsafe new position.
+                expiry_db.rollback()
+                db.rollback()
+                from app.core.logger import app_logger
+                app_logger.warning("Live paper expiry cleanup unavailable; rejecting alert dispatch: %s", exc)
+                return 0
             finally:
                 expiry_db.close()
             eligible_rules = [
