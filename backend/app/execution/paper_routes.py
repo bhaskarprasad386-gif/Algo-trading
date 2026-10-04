@@ -541,6 +541,10 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         if order.is_paper is not True and order.audit_hash:
             invalid_orders.append(f"paper_scope_mismatch:{order.id}")
     for order in orders:
+        raw_order_id = str(order.order_id or "")
+        expected_order_prefix = f"PAPER-{user_id}-"
+        if not raw_order_id or not raw_order_id.startswith(expected_order_prefix) or raw_order_id != raw_order_id.strip():
+            invalid_orders.append(f"order_identity_mismatch:{order.id}")
         symbol = str(order.symbol or "").strip().upper()
         side = str(order.transaction_type or "").strip().upper()
         raw_filled_quantity = float(order.filled_quantity or 0.0)
@@ -739,7 +743,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         baseline_status = "LEGACY_UNFINGERPRINTED"
     mismatch_categories: set[str] = set()
     for mismatch in mismatches:
-        if mismatch.startswith(("invalid_order:", "duplicate_fill_id:", "order_pnl_mismatch:", "order_average_price_mismatch:", "order_average_fill_price_mismatch:", "order_quantity_mismatch:", "order_symbol_canonicality_mismatch:", "order_side_canonicality_mismatch:", "order_fill_id_canonicality_mismatch:", "order_status_canonicality_mismatch:", "paper_scope_mismatch:")):
+        if mismatch.startswith(("invalid_order:", "duplicate_fill_id:", "order_pnl_mismatch:", "order_average_price_mismatch:", "order_average_fill_price_mismatch:", "order_quantity_mismatch:", "order_symbol_canonicality_mismatch:", "order_side_canonicality_mismatch:", "order_fill_id_canonicality_mismatch:", "order_status_canonicality_mismatch:", "order_identity_mismatch:", "paper_scope_mismatch:")):
             mismatch_categories.add("ORDER_INTEGRITY")
         elif mismatch.startswith(("audit_chain_mismatch:", "audit_hash_mismatch:")):
             mismatch_categories.add("AUDIT_INTEGRITY")
