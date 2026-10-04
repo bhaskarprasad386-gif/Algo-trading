@@ -395,3 +395,164 @@ def test_four_way_mark_manual_close_expiry_and_new_entry_race_converges(tmp_path
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_four_way_terminal_close_risk_and_new_entry_exact_loss_boundary(tmp_path):
+    """Mark/manual-close/expiry/new-entry converge without terminal duplication."""
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.core.database import Base
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'four-way-loss-boundary.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    try:
+        setup.add(GlobalPaperSetting(
+            user_id=1, enabled=True, paper_amount=60000, emergency_stop=False,
+        ))
+        for strategy in ("calendar-spread", "synthetic-future-cash-carry", "box-spread"):
+            setup.add(AlertRule(
+                user_id=1, strategy_id=strategy, min_gross_profit=0,
+                mobile_number="", whatsapp_enabled=False, enabled=True,
+                max_daily_capital=60000, max_simultaneous_positions=3,
+                max_loss=100,
+            ))
+        seed, created = LivePaperTradeService().enter_or_mark(
+            setup,
+            strategy_id="calendar-spread", symbol="FOUR-WAY-LOSS",
+            event_id="FOUR-WAY-LOSS", direction="LONG",
+            expiry="2026-10-04", earliest_expiry="2026-10-04",
+            lot_size=10, lots=1, edge=5, capital_used=30000, user_id=1,
+        )
+        assert created is True
+        setup.commit()
+    finally:
+        setup.close()
+
+    barrier = threading.Barrier(4)
+    errors = []
+    outcomes = []
+
+    def mark_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            trade = db.query(LivePaperTrade).filter(
+                LivePaperTrade.event_id == "FOUR-WAY-LOSS",
+                LivePaperTrade.user_id == 1,
+            ).one()
+            outcomes.append(("mark", LivePaperTradeService().mark(
+                db, trade, edge=0.0, pnl_override=-100.0,
+            )))
+            db.commit()
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    def manual_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            trade = db.query(LivePaperTrade).filter(
+                LivePaperTrade.event_id == "FOUR-WAY-LOSS",
+                LivePaperTrade.user_id == 1,
+            ).one()
+            outcomes.append(("manual", LivePaperTradeService().close(
+                db, trade, "MANUAL",
+            )))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    def expiry_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            outcomes.append(("expiry", LivePaperTradeService().close_expired(
+                db, now=datetime(2026, 10, 4, 10, 0), commit=True,
+            )))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    def entry_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            event = AlertEvent(
+                strategy_id="synthetic-future-cash-carry",
+                event_id="FOUR-WAY-NEW",
+                symbol="FOUR-WAY-NEW",
+                timestamp_ns=200,
+                message="four-way exact max loss",
+                observed_at=datetime(2026, 10, 4, 15, 30),
+                metadata={"gross_profit": 1000, "paper_trade": {
+                    "direction": "LONG",
+                    "expiry": "2026-10-30",
+                    "earliest_expiry": "2026-10-30",
+                    "lot_size": 10,
+                    "lots": 1,
+                    "edge": 5,
+                    "capital_used": 30000,
+                }},
+            )
+            outcomes.append(("entry", AlertService().dispatch(db, event)))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=mark_worker),
+        threading.Thread(target=manual_worker),
+        threading.Thread(target=expiry_worker),
+        threading.Thread(target=entry_worker),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert errors == []
+
+    verify = Session()
+    try:
+        rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+        ).all()
+        seed_rows = [r for r in rows if r.event_id == "FOUR-WAY-LOSS"]
+        new_rows = [r for r in rows if r.event_id == "FOUR-WAY-NEW"]
+        assert len(seed_rows) == 1
+        assert len(new_rows) <= 1
+
+        seed = seed_rows[0]
+        if seed.status == "COMPLETED":
+            assert seed.exit_reason in {"MANUAL", "EXPIRY_CLOSE"}
+            assert seed.realized_pnl == seed.unrealized_pnl
+            assert seed.realized_pnl == -100.0
+        else:
+            assert seed.status == "ONGOING"
+            assert seed.realized_pnl == 0.0
+            assert seed.current_edge == 0.0
+
+        if new_rows:
+            new = new_rows[0]
+            assert new.status == "ONGOING"
+            assert new.lots == 1
+            assert new.capital_used == 30000
+    finally:
+        verify.close()
+        engine.dispose()
