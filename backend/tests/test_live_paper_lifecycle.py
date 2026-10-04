@@ -1,3 +1,4 @@
+from app.core.database import Base
 from datetime import datetime, time
 from app.auto.live_paper import LivePaperTradeService
 from app.models.live_paper_trade import LivePaperTrade
@@ -220,6 +221,62 @@ def test_global_paper_cap_is_shared_across_ongoing_trades(db_session):
     assert created is False
     assert second is None
     assert first.capital_used == 100000
+
+
+def test_global_paper_cap_serializes_concurrent_entries(tmp_path):
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'paper-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    setup = Session()
+    setup.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=100000, emergency_stop=False))
+    setup.commit()
+    setup.close()
+
+    results = []
+    errors = []
+    start = threading.Barrier(2)
+
+    def worker(event_id):
+        db = Session()
+        try:
+            start.wait(timeout=5)
+            trade, created = LivePaperTradeService().enter_or_mark(
+                db, strategy_id="cash-future", symbol=event_id,
+                event_id=event_id, direction="LONG", lot_size=10, lots=1,
+                edge=5, capital_used=60000, user_id=1,
+            )
+            results.append((event_id, created, None if trade is None else trade.capital_used))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [threading.Thread(target=worker, args=(event_id,)) for event_id in ("RACE-A", "RACE-B")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(results) == 2
+    assert sum(1 for _, created, _ in results if created) == 1
+    assert sum(float(capital or 0) for _, created, capital in results if created) == 60000
+
+    verify = Session()
+    try:
+        ongoing = LivePaperTradeService().ongoing(verify, 1)
+        assert len(ongoing) == 1
+        assert ongoing[0].capital_used == 60000
+    finally:
+        verify.close()
+        engine.dispose()
 
 
 def test_global_paper_cap_allows_only_remaining_lots(db_session):
