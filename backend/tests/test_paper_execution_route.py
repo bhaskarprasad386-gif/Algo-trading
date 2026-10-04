@@ -4037,3 +4037,195 @@ def test_paper_reconcile_http_baseline_integrity_precedence_with_mixed_ledger_co
         assert http_reconcile() == clean
 
     engine.dispose()
+
+
+def test_paper_reconcile_http_baseline_transition_invalidates_stale_repair_precondition(tmp_path):
+    """Baseline transitions must invalidate a previously safe dry-run precondition."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-baseline-transition.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="http-baseline-transition@example.com",
+            hashed_password="",
+            full_name="HTTP Baseline Transition",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(
+            TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=1_000.0,
+                initial_virtual_balance=1_000.0,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            )
+        )
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    db = TestSession()
+    try:
+        result = paper_order(
+            PaperOrderRequest(
+                symbol="TRANSITION",
+                transaction_type="BUY",
+                price=100.0,
+                quantity=2,
+                fill_id="TRANSITION-1",
+            ),
+            user_id=user_id,
+            db=db,
+        )
+        assert result["status"] == "success"
+    finally:
+        db.close()
+
+    def http_snapshots():
+        client = TestClient(app)
+
+        def override_db():
+            db = TestSession()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[routes.current_user_id] = lambda: user_id
+        try:
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                responses = list(
+                    pool.map(
+                        lambda _: client.get("/api/v1/execution/paper/reconcile"),
+                        range(20),
+                    )
+                )
+            assert all(response.status_code == 200 for response in responses)
+            payloads = [response.json() for response in responses]
+            assert all(payload == payloads[0] for payload in payloads)
+            return payloads
+        finally:
+            app.dependency_overrides.pop(routes.current_user_id, None)
+            app.dependency_overrides.pop(get_db, None)
+
+    def mutate(**changes):
+        db = TestSession()
+        try:
+            account = db.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id,
+                TradingAccount.mode == "PAPER",
+            ).one()
+            for key, value in changes.items():
+                setattr(account, key, value)
+            db.commit()
+        finally:
+            db.close()
+
+    def restore():
+        db = TestSession()
+        try:
+            account = db.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id,
+                TradingAccount.mode == "PAPER",
+            ).one()
+            account.virtual_balance = 801.0
+            account.initial_balance_source = "BOOTSTRAP"
+            db.commit()
+        finally:
+            db.close()
+
+    # Epoch A: a normal accounting mismatch is safely dry-run repairable.
+    mutate(virtual_balance=801.0)
+    safe_payloads = http_snapshots()
+    safe = safe_payloads[0]
+    assert all(payload == safe for payload in safe_payloads)
+    assert safe["status"] == "MISMATCH"
+    assert safe["repairability"] == "SAFE_DRY_RUN"
+    assert safe["repairability_reason"] == "account_or_position_state_only"
+    assert safe["baseline_status"] == "BOOTSTRAP"
+    assert safe["mismatch_categories"] == ["ACCOUNTING_STATE"]
+    assert safe["mismatches"] == ["virtual_balance_mismatch"]
+    assert safe["repair_plan"]["apply"] is False
+    assert safe["repair_plan"]["reason"] == "read_only_dry_run"
+
+    stale_precondition = safe["repair_plan"]["precondition"]
+    assert stale_precondition["order_count"] == 1
+    assert stale_precondition["position_count"] == 1
+    assert stale_precondition["audit_head"]
+
+    # Epoch B: changing only the baseline classification must invalidate the
+    # old precondition and hard-block repair, even though the ledger mismatch
+    # itself is unchanged.
+    mutate(initial_balance_source="MIGRATED_INFERRED")
+    blocked_payloads = http_snapshots()
+    blocked = blocked_payloads[0]
+    assert all(payload == blocked for payload in blocked_payloads)
+    assert blocked["status"] == "MISMATCH"
+    assert blocked["repairability"] == "BLOCKED"
+    assert blocked["repairability_reason"] == "ledger_or_baseline_integrity_failure"
+    assert blocked["baseline_status"] == "MIGRATED_INFERRED"
+    assert blocked["mismatch_categories"] == [
+        "ACCOUNTING_STATE",
+        "BASELINE_INTEGRITY",
+    ]
+    assert blocked["mismatches"] == ["virtual_balance_mismatch"]
+    assert blocked["repair_plan"]["apply"] is False
+    assert blocked["repair_plan"]["reason"] == "read_only_dry_run"
+
+    blocked_precondition = blocked["repair_plan"]["precondition"]
+    assert blocked_precondition != stale_precondition
+    assert blocked_precondition["state_hash"] != stale_precondition["state_hash"]
+    assert blocked_precondition["audit_head"] == stale_precondition["audit_head"]
+    assert blocked_precondition["order_count"] == stale_precondition["order_count"]
+    assert blocked_precondition["position_count"] == stale_precondition["position_count"]
+
+    # A stale SAFE_DRY_RUN precondition must never equal the current blocked
+    # state. This is the exact equality a future apply endpoint must require.
+    assert stale_precondition["state_hash"] != blocked_precondition["state_hash"]
+
+    # Epoch C: restoring the canonical baseline returns to the same safe state
+    # only after the stored state is explicitly restored; no reconciliation
+    # call performs this restoration.
+    restore()
+    restored_payloads = http_snapshots()
+    restored = restored_payloads[0]
+    assert all(payload == restored for payload in restored_payloads)
+    assert restored == safe
+
+    verify = TestSession()
+    try:
+        account = verify.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        assert account.initial_balance_source == "BOOTSTRAP"
+        assert float(account.virtual_balance) == 801.0
+        assert verify.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+        ).count() == 1
+        assert verify.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+        ).count() == 1
+    finally:
+        verify.close()
+        engine.dispose()
