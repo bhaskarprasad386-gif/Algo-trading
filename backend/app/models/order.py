@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-import hashlib
 
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean
 
