@@ -232,7 +232,7 @@ def test_dispatch_expiry_does_not_commit_caller_pending_work(db_session):
         user_id=1, enabled=True, paper_amount=30000, emergency_stop=False,
     ))
     db_session.add(AlertRule(
-        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        user_id=1, strategy_id="cash-future", min_gross_profit=100,
         mobile_number="", whatsapp_enabled=False, enabled=True,
         max_daily_capital=60000, max_simultaneous_positions=1, max_loss=100,
     ))
@@ -254,7 +254,6 @@ def test_dispatch_expiry_does_not_commit_caller_pending_work(db_session):
         GlobalPaperSetting.user_id == 1
     ).one()
     setting.paper_amount = 45000
-    db_session.flush()
 
     # dispatch() invokes expiry cleanup through an independent session. The
     # caller's 45k mutation must remain uncommitted and therefore be removable
@@ -267,7 +266,7 @@ def test_dispatch_expiry_does_not_commit_caller_pending_work(db_session):
         message="tx-boundary",
         observed_at=datetime.utcnow(),
         metadata={
-            "gross_profit": 1000,
+            "gross_profit": 0,
             "paper_trade": {
                 "direction": "LONG",
                 "expiry": "2026-10-30",
