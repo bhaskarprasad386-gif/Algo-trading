@@ -684,3 +684,28 @@ def test_duplicate_completed_event_integrity_failure_does_not_change_reserved_ca
         for row in rows
         if row.status == "ONGOING"
     ) == 40_000
+
+
+def test_direct_partial_allocation_exact_capital_boundary_preserves_all_lots(db_session):
+    from app.models.global_paper_setting import GlobalPaperSetting
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=60000, emergency_stop=False,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="DIRECT-EXACT",
+        event_id="DIRECT-EXACT-BOUNDARY", direction="LONG",
+        expiry="2026-10-30", lot_size=10, lots=2, edge=5,
+        capital_used=60000, user_id=1,
+    )
+
+    assert created is True
+    assert trade is not None
+    assert trade.lots == 2
+    assert trade.capital_used == 60000
+    svc.mark(db_session, trade, edge=7)
+    assert trade.unrealized_pnl == 40.0
+    assert trade.pnl_pct == round((40.0 / 60000) * 100.0, 8)
