@@ -727,3 +727,77 @@ def test_close_and_new_entry_race_never_oversubscribes_capital(tmp_path):
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_same_event_concurrent_first_entries_create_one_trade(tmp_path):
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'same-event-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    setup.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    setup.commit()
+    setup.close()
+
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+
+    def worker(edge):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            trade, created = LivePaperTradeService().enter_or_mark(
+                db,
+                strategy_id="cash-future",
+                symbol="NIFTY",
+                event_id="SAME-EVENT-RACE",
+                direction="LONG",
+                lot_size=10,
+                lots=1,
+                edge=edge,
+                capital_used=60000,
+                user_id=1,
+            )
+            results.append((created, None if trade is None else trade.id))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=worker, args=(5.0,)),
+        threading.Thread(target=worker, args=(7.0,)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(results) == 2
+    assert sum(1 for created, _ in results if created) == 1
+
+    verify = Session()
+    try:
+        rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.event_id == "SAME-EVENT-RACE",
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].capital_used == 60000
+        assert rows[0].lots == 1
+        assert rows[0].status == "ONGOING"
+        assert rows[0].current_edge == 5.0 or rows[0].current_edge == 7.0
+    finally:
+        verify.close()
+        engine.dispose()
