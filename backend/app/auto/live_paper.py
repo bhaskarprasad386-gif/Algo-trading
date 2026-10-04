@@ -44,6 +44,27 @@ class LivePaperTradeService:
                       edge=0.0, capital_used=0.0, legs=None, metadata=None,
                       user_id=1):
         event_id = str(event_id)
+        try:
+            lot_size_value = float(lot_size)
+            lots_value = float(lots)
+            edge_value = float(edge)
+            capital_value = float(capital_used)
+        except (TypeError, ValueError):
+            return None, False
+        import math
+        if (
+            not math.isfinite(lot_size_value)
+            or not math.isfinite(lots_value)
+            or not math.isfinite(edge_value)
+            or not math.isfinite(capital_value)
+            or not lot_size_value.is_integer()
+            or not lots_value.is_integer()
+        ):
+            return None, False
+        lot_size = int(lot_size_value)
+        lots = int(lots_value)
+        edge = edge_value
+        capital_used = capital_value
         existing = db.query(LivePaperTrade).filter(
             LivePaperTrade.event_id == event_id,
             LivePaperTrade.user_id == int(user_id),
@@ -55,7 +76,7 @@ class LivePaperTradeService:
             # drift when a later alert reports a different capital estimate.
             self.mark(db, existing, edge=edge)
             return existing, False
-        if lot_size <= 0 or lots <= 0 or edge < 0 or float(capital_used) <= 0:
+        if lot_size <= 0 or lots <= 0 or edge < 0 or capital_used <= 0:
             return None, False
         # Serialize capital allocation on the per-user global paper setting
         # row before reading reservations. SQLite otherwise allows two
