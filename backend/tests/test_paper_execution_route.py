@@ -9376,3 +9376,109 @@ def test_paper_reconcile_detects_tampered_order_pnl_even_when_audit_hash_is_rebu
     assert payload["repairability"] == "BLOCKED"
     assert payload["repairability_reason"] == "ledger_or_baseline_integrity_failure"
     assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_detects_noncanonical_filled_status_even_when_ledger_is_otherwise_consistent():
+    """Reconcile must reject a lowercase FILLED status even when accounting is consistent."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 800.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(
+            order_id=f"PAPER-{user_id}-STATUS-CANON",
+            symbol="STATUS_CANON",
+            quantity=2,
+            transaction_type="BUY",
+            user_id=user_id,
+            price=100.0,
+            average_price=100.0,
+            filled_quantity=2,
+            average_fill_price=100.0,
+            pnl=0.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="STATUS-CANON-1",
+        )
+        db.add(order)
+        db.flush()
+        order.status = "filled"
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol=order.symbol, side="BUY", quantity=2,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None,
+        )
+        db.add(Position(
+            user_id=user_id, symbol="STATUS_CANON", quantity=2, average_price=100.0,
+            stop_loss=None, target=None, is_paper=True, is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("order_status_canonicality_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_detects_paper_order_removed_from_paper_scope():
+    """Reconcile must not silently lose a paper order when its paper flag is tampered."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 800.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(
+            order_id=f"PAPER-{user_id}-SCOPE-TAMPER",
+            symbol="SCOPE_TAMPER",
+            quantity=2,
+            transaction_type="BUY",
+            user_id=user_id,
+            price=100.0,
+            average_price=100.0,
+            filled_quantity=2,
+            average_fill_price=100.0,
+            pnl=0.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="SCOPE-TAMPER-1",
+        )
+        db.add(order)
+        db.flush()
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol=order.symbol, side="BUY", quantity=2,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None,
+        )
+        order.is_paper = False
+        db.add(Position(
+            user_id=user_id, symbol="SCOPE_TAMPER", quantity=2, average_price=100.0,
+            stop_loss=None, target=None, is_paper=True, is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("paper_scope_mismatch:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
