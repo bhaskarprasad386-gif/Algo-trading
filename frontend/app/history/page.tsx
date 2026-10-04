@@ -12,6 +12,7 @@ type Trade = {
   direction?: string;
   entry_edge?: number;
   current_edge?: number;
+  pnl_pct?: number;
   realized_pnl?: number;
   capital_used?: number;
   closed_at?: string | null;
@@ -102,7 +103,7 @@ export default function HistoryPage() {
           <div className="overflow-x-auto">
             <table className="min-w-[900px] w-full text-left text-sm">
               <thead className="border-b theme-border text-xs uppercase tracking-wide theme-muted">
-                <tr>{["Strategy","Symbol","Direction","Entry","Exit","Realized P&L","Exit reason","Closed",""].map((h) => <th key={h} className="px-4 py-3 font-medium">{h}</th>)}</tr>
+                <tr>{["Strategy","Symbol","Direction","Entry Edge","Exit Edge","Realized P&L","P&L %","Exit reason","Closed",""].map((h) => <th key={h} className="px-4 py-3 font-medium">{h}</th>)}</tr>
               </thead>
               <tbody>
                 {filtered.map((trade) => (
@@ -113,6 +114,7 @@ export default function HistoryPage() {
                     <td className="px-4 py-3">{trade.entry_edge ?? "—"}</td>
                     <td className="px-4 py-3">{trade.current_edge ?? "—"}</td>
                     <td className={`px-4 py-3 font-semibold ${Number(trade.realized_pnl || 0) >= 0 ? "theme-success" : "theme-danger"}`}>{money(trade.realized_pnl)}</td>
+                    <td className="px-4 py-3 theme-text">{typeof trade.pnl_pct === "number" ? `${trade.pnl_pct.toFixed(2)}%` : "—"}</td>
                     <td className="px-4 py-3 theme-muted">{trade.exit_reason || "—"}</td>
                     <td className="px-4 py-3 theme-muted">{trade.closed_at ? new Date(trade.closed_at).toLocaleString("en-IN") : "—"}</td>
                     <td className="px-4 py-3"><button onClick={() => setSelected(trade)} className="rounded-lg border theme-border px-3 py-1.5 text-xs theme-text">View</button></td>
