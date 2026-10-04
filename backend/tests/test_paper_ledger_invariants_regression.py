@@ -392,3 +392,24 @@ def test_expiry_cannot_precede_opening_trade_date(db_session):
         expiry="2026-10-10", earliest_expiry="2026-10-10",
         lot_size=1, lots=1, edge=10, capital_used=10_000, user_id=1,
     )[0] is None
+
+
+def test_persisted_ledger_rejects_aware_datetimes(db_session):
+    _enable(db_session, amount=100_000)
+    malformed = LivePaperTrade(
+        user_id=1, strategy_id="cash-future", symbol="AWARE-TIME",
+        event_id="AWARE-TIME", direction="LONG",
+        expiry="2026-10-10", earliest_expiry="2026-10-10",
+        lot_size=1, lots=1, entry_edge=10, current_edge=10,
+        capital_used=10_000, unrealized_pnl=0, realized_pnl=0, pnl_pct=0,
+        status="ONGOING",
+        opened_at=datetime(2026, 10, 4, 10, 0, tzinfo=timezone.utc),
+        last_mark_at=datetime(2026, 10, 4, 10, 0, tzinfo=timezone.utc),
+    )
+    db_session.add(malformed)
+    db_session.commit()
+    svc = LivePaperTradeService()
+    assert svc.ongoing(db_session, 1) == []
+    assert svc.close_expired(
+        db_session, now=datetime(2026, 10, 10, 15, 30, tzinfo=timezone.utc)
+    ) == []
