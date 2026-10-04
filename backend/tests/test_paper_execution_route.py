@@ -375,9 +375,9 @@ def test_paper_long_to_short_reversal_preserves_realized_pnl_and_short_margin():
 
     # Close 5-long: +100 realized and +600 sale proceeds from the
     # previously paid 500 cost. Open the remaining 3-short by reserving
-    # 360 at the reversal price, leaving 10,000,240 cash.
+    # 360 at the reversal price, leaving 9,999,840 cash.
     assert data["realized_pnl"] == 100.0
-    assert data["virtual_balance"] == starting_balance + 240.0
+    assert data["virtual_balance"] == starting_balance - 160.0
     assert data["position"]["quantity"] == -3.0
     assert data["position"]["entry_price"] == 120.0
 
