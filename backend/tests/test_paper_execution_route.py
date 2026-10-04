@@ -9051,6 +9051,7 @@ def test_paper_http_reverse_short_commit_failure_preserves_existing_audit_head_a
 
 def test_paper_reconcile_detects_tampered_order_pnl_even_when_audit_hash_is_rebuilt():
     """Reconcile must reject a self-consistent-but-wrong stored order P&L."""
+    from app.execution import paper_routes as routes
     db = SessionLocal()
     try:
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
