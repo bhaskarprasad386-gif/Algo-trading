@@ -5667,3 +5667,78 @@ def test_paper_exit_http_concurrent_duplicate_fill_id_closes_short_once(tmp_path
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_paper_http_concurrent_reversal_and_exit_close_short_once(tmp_path):
+    """HTTP reversal and terminal exit racing for the same short must converge to one close."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+    from app.execution.paper_routes import _reconcile_paper_ledger
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-reversal-exit-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(email="http-reversal-exit-race@example.com", hashed_password="", full_name="HTTP Reversal Exit Race", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=500.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        seed.add(Position(user_id=user.id, symbol="HTTP-RACE", quantity=-5, average_price=100.0, stop_loss=None, target=None, is_paper=True, is_open=True))
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    client = TestClient(app)
+    def override_db():
+        db = TestSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    barrier = threading.Barrier(2)
+    try:
+        def reversal():
+            barrier.wait(timeout=5)
+            return client.post("/api/v1/execution/paper/order", json={"symbol":"HTTP-RACE","transaction_type":"BUY","price":90.0,"quantity":5})
+        def terminal_exit():
+            barrier.wait(timeout=5)
+            return client.post("/api/v1/execution/paper/exit", json={"symbol":"HTTP-RACE","price":90.0})
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda fn: fn(), (reversal, terminal_exit)))
+        assert sum(response.status_code == 200 for response in responses) == 1
+        assert all(response.status_code in {200, 409, 422} for response in responses)
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    verify = TestSession()
+    try:
+        account = verify.query(TradingAccount).filter(TradingAccount.user_id == user_id, TradingAccount.mode == "PAPER").one()
+        orders = verify.query(Order).filter(Order.user_id == user_id, Order.symbol == "HTTP-RACE", Order.is_paper.is_(True)).all()
+        positions = verify.query(Position).filter(Position.user_id == user_id, Position.symbol == "HTTP-RACE", Position.is_paper.is_(True), Position.is_open.is_(True)).all()
+        assert len(orders) == 1
+        assert orders[0].quantity == 5
+        assert orders[0].price == 90.0
+        assert orders[0].transaction_type == "BUY"
+        assert orders[0].pnl == 50.0
+        assert positions == []
+        assert account.virtual_balance == 550.0
+        assert account.realized_pnl == 50.0
+        reconciliation = _reconcile_paper_ledger(verify, user_id)
+        assert reconciliation["status"] == "OK"
+        assert reconciliation["mismatches"] == []
+        assert reconciliation["repairability"] == "NONE"
+    finally:
+        verify.close()
+        engine.dispose()
