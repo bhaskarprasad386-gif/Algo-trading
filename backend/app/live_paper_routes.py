@@ -5,6 +5,7 @@ from app.core.database import get_db
 from app.auto.live_paper import LivePaperTradeService, is_fresh_market_timestamp
 from app.execution.paper_routes import current_user_id
 from app.models.live_paper_trade import LivePaperTrade
+from app.core.logger import app_logger
 
 router = APIRouter(prefix="/api/v1/live-paper", tags=["Live Paper Trading"])
 service = LivePaperTradeService()
@@ -69,8 +70,12 @@ def _refresh_marks(db: Session, trades):
                 else:
                     service.mark(db, trade, edge=float(edge), pnl_override=float(trade.unrealized_pnl))
         db.commit()
-    except Exception:
-        pass
+    except Exception as exc:
+        # Mark updates are intentionally batched. If one quote/DB operation
+        # fails, do not partially persist earlier marks from this refresh.
+        # Keep the previously persisted valid P&L snapshot instead.
+        db.rollback()
+        app_logger.warning("Live paper mark refresh rolled back: %s", exc)
 
 @router.get("/status")
 def status(db: Session = Depends(get_db)):
