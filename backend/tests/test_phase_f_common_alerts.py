@@ -101,3 +101,27 @@ def test_calendar_alert_dispatch_creates_normalized_paper_trade(db_session):
     assert trade.direction == "LONG"
     assert trade.capital_used > 0
     assert trade.lots == 1
+
+
+def test_calendar_short_direction_uses_short_legs():
+    captured = []
+
+    class CaptureAlerts:
+        def dispatch(self, _db, event):
+            captured.append(event)
+            return 0
+
+    service = CalendarSpreadAlertService(CaptureAlerts())
+    signal = SimpleNamespace(
+        qualifies=True, underlying="NIFTY", exchange="NFO",
+        near_contract_month="2026-10-29", far_contract_month="2026-11-26",
+        timestamp_ns=201, direction="SHORT_NEAR_LONG_FAR",
+        edge_long=1.0, edge_short=5.0, gap_points=5.0,
+        gross_profit=250.0, lot_size=50, capacity_lots=1,
+        near_bid=100.0, near_ask=101.0, far_bid=106.0, far_ask=107.0,
+    )
+    assert service.emit(object(), signal) == 0
+    paper = captured[0].metadata["paper_trade"]
+    assert paper["direction"] == "SHORT"
+    assert paper["strategy_direction"] == "SHORT_NEAR_LONG_FAR"
+    assert [leg["side"] for leg in paper["legs"]] == ["SELL", "BUY"]
