@@ -8,7 +8,7 @@ from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
 from app.algo.auth import AngelOneAuth
-from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
+from app.market_data.common_strategy_feed import CommonStrategyMarketFeed\nfrom app.core.config import settings
 from app.market_data.ingestion import BoundedMarketDataIngestor
 from app.market_data.persistence import DailySQLiteMarketDataRepository
 from app.market_data.instruments import InstrumentMaster
