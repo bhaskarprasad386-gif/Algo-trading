@@ -7460,6 +7460,8 @@ def test_paper_http_concurrent_reads_during_failed_mutation_never_expose_partial
     try:
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
         account.virtual_balance = 500.0
+        account.initial_virtual_balance = 500.0
+        account.initial_balance_source = "BOOTSTRAP"
         account.realized_pnl = 0.0
         db.commit()
     finally:
