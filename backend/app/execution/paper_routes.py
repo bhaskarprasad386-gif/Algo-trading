@@ -102,14 +102,27 @@ class CashFuturePayoffRequest(BaseModel):
 
 def current_user_id(db: Session = Depends(get_db)) -> int:
     """Return the single local trading identity; no login or bearer token is required."""
-    account = (
+    accounts = (
         db.query(TradingAccount)
-        .filter(TradingAccount.is_active.is_(True), TradingAccount.mode == "PAPER")
+        .filter(
+            TradingAccount.is_active.is_(True),
+            TradingAccount.mode == "PAPER",
+        )
         .order_by(TradingAccount.id.asc())
-        .first()
+        .all()
     )
-    if account is not None:
-        return int(account.user_id)
+    if len(accounts) > 1:
+        # This API currently has no authenticated-user dependency. Never
+        # silently select the first account once the database contains more
+        # than one active paper identity; doing so could expose or mutate
+        # another user's paper ledger. Multi-user API access must provide a
+        # real authenticated identity before this boundary is used.
+        raise HTTPException(
+            status_code=409,
+            detail="multiple active paper trading accounts require authenticated user context",
+        )
+    if accounts:
+        return int(accounts[0].user_id)
 
     user = db.query(User).filter(User.is_active.is_(True)).order_by(User.id.asc()).first()
     if user is None:
