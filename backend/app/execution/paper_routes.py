@@ -528,6 +528,7 @@ def _paper_repair_precondition(db: Session, user_id: int, account: TradingAccoun
         "orders": [
             {
                 "id": int(order.id),
+                "order_id": order.order_id,
                 "fill_id": order.fill_id,
                 "symbol": str(order.symbol or "").strip().upper(),
                 "side": str(order.transaction_type or "").strip().upper(),
