@@ -4433,3 +4433,126 @@ def test_paper_reconcile_http_readers_survive_uncommitted_writer(tmp_path):
         app.dependency_overrides.pop(routes.current_user_id, None)
         app.dependency_overrides.pop(get_db, None)
         engine.dispose()
+
+
+def test_paper_reconcile_http_committed_epoch_matrix_is_monotonic_and_read_only(tmp_path):
+    """Each committed mutation epoch is fully visible to later readers without HTTP-side mutation."""
+    from concurrent.futures import ThreadPoolExecutor
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-reconcile-epochs.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="http-epochs@example.com",
+            hashed_password="",
+            full_name="HTTP Epochs",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id,
+            mode="PAPER",
+            virtual_balance=100_000.0,
+            initial_virtual_balance=100_000.0,
+            initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0,
+            is_active=True,
+        ))
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    def override_db():
+        db = TestSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    client = TestClient(app)
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+
+    def readers(expected_orders: int):
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            responses = list(pool.map(
+                lambda _: client.get("/api/v1/execution/paper/reconcile"),
+                range(10),
+            ))
+        assert all(response.status_code == 200 for response in responses)
+        payloads = [response.json() for response in responses]
+        assert all(payload == payloads[0] for payload in payloads)
+        payload = payloads[0]
+        assert payload["user_id"] == user_id
+        assert payload["status"] == "OK"
+        assert payload["orders"] == expected_orders
+        assert payload["repair_plan"]["apply"] is False
+        assert payload["repair_plan"]["reason"] == "read_only_dry_run"
+        return payload
+
+    try:
+        observed_orders = 0
+        for epoch in range(1, 6):
+            response = client.post(
+                "/api/v1/execution/paper/order",
+                json={
+                    "symbol": f"EPOCH-{epoch}",
+                    "transaction_type": "BUY",
+                    "price": 100.0 + epoch,
+                    "quantity": 1,
+                    "fill_id": f"EPOCH-{epoch}",
+                },
+            )
+            assert response.status_code == 200
+            assert response.json()["status"] == "success"
+            observed_orders += 1
+
+            payload = readers(observed_orders)
+            assert payload["orders"] == observed_orders
+            assert set(payload["reconstructed_positions"]) == {
+                f"EPOCH-{index}" for index in range(1, epoch + 1)
+            }
+
+        exit_response = client.post(
+            "/api/v1/execution/paper/exit",
+            json={
+                "symbol": "EPOCH-5",
+                "price": 110.0,
+                "fill_id": "EPOCH-5-EXIT",
+            },
+        )
+        assert exit_response.status_code == 200
+        assert exit_response.json()["status"] in {"closed", "flat"}
+
+        final_payload = readers(6)
+        assert "EPOCH-5" not in final_payload["reconstructed_positions"]
+
+        verify = TestSession()
+        try:
+            assert verify.query(Order).filter(
+                Order.user_id == user_id,
+                Order.is_paper.is_(True),
+            ).count() == 6
+            assert verify.query(Position).filter(
+                Position.user_id == user_id,
+                Position.is_paper.is_(True),
+                Position.symbol == "EPOCH-5",
+            ).count() == 0
+        finally:
+            verify.close()
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
