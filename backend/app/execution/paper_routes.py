@@ -1143,6 +1143,7 @@ def paper_from_scanner(request: ScannerPaperEntryRequest, user_id: int = Depends
 @router.get("/paper/account")
 def paper_account(user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     """Return the lightweight paper-account summary used by the Home command center."""
+    _validate_paper_state(db, user_id)
     account = _account(db, user_id)
     open_positions = (
         db.query(Position)
@@ -1165,12 +1166,18 @@ def paper_account(user_id: int = Depends(current_user_id), db: Session = Depends
 
 @router.get("/paper/orders")
 def paper_orders(user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
-    orders = db.query(Order).filter(Order.user_id == user_id, Order.order_id.like(f"PAPER-{user_id}-%")).order_by(Order.id.asc()).all()
+    _validate_paper_state(db, user_id)
+    orders = db.query(Order).filter(
+        Order.user_id == user_id,
+        Order.is_paper.is_(True),
+        Order.order_id.like(f"PAPER-{user_id}-%"),
+    ).order_by(Order.id.asc()).all()
     return {"mode":"paper","orders":[{"id":item.order_id,"symbol":item.symbol,"transaction_type":item.transaction_type,"price":item.price,"quantity":float(item.quantity),"status":item.status,"pnl":float(item.pnl or 0.0),"fill_id":item.fill_id} for item in orders]}
 
 
 @router.get("/paper/position")
 def paper_position(symbol: str | None = None, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
+    _validate_paper_state(db, user_id)
     position = _position(db, user_id, symbol)
     if position is None:
         return {"status":"flat","position":None,"mark_to_market":None}
