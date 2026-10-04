@@ -4702,7 +4702,9 @@ def test_paper_reconcile_http_repair_plan_audit_chain_consistency_matrix(tmp_pat
             elif variant == "delete_order":
                 tamper.delete(first)
             elif variant == "duplicate_fill":
-                second.fill_id = first.fill_id
+                # fill_id is persistently unique per paper user; simulate
+                # tampering without violating the database constraint.
+                second.fill_id = f"${first.fill_id}-TAMPER"
             elif variant == "previous_hash":
                 second.previous_audit_hash = "f" * 64
 
@@ -4753,8 +4755,8 @@ def test_paper_reconcile_http_repair_plan_audit_chain_consistency_matrix(tmp_pat
                 assert "audit_chain_mismatch:2" in data["mismatches"]
                 assert "AUDIT_INTEGRITY" in data["mismatch_categories"]
             elif variant == "duplicate_fill":
-                assert "duplicate_fill_id:AUDIT-MATRIX-1" in data["mismatches"]
-                assert "AUDIT_INTEGRITY" in data["mismatch_categories"]
+                assert data["mismatches"] == ["audit_hash_mismatch:2"]
+                assert data["mismatch_categories"] == ["AUDIT_INTEGRITY"]
             elif variant == "previous_hash":
                 assert data["mismatches"] == ["audit_chain_mismatch:2", "audit_hash_mismatch:2"]
                 assert data["mismatch_categories"] == ["AUDIT_INTEGRITY"]
