@@ -3142,4 +3142,216 @@ def test_paper_reconcile_repair_plan_integrity_partial_fills_flat_reversals_and_
     finally:
         app.dependency_overrides.pop(routes.current_user_id, None)
         app.dependency_overrides.pop(get_db, None)
+        engine.dispose()\n
+
+def test_paper_reconcile_http_failed_mutation_rollback_and_stale_precondition_boundary(tmp_path):
+    """Concurrent readers never observe a failed mutation, and dry-run preconditions become stale after a commit."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-rollback-precondition.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="http-rollback-precondition@example.com",
+            hashed_password="",
+            full_name="HTTP Rollback Precondition",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(
+            TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=1_000.0,
+                initial_virtual_balance=1_000.0,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            )
+        )
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    # Establish a committed ledger snapshot that every reader must agree on.
+    db = TestSession()
+    try:
+        created = paper_order(
+            PaperOrderRequest(
+                symbol="ROLLBACK",
+                transaction_type="BUY",
+                price=100.0,
+                quantity=2,
+                fill_id="RB-1",
+            ),
+            user_id=user_id,
+            db=db,
+        )
+        assert created["status"] == "success"
+    finally:
+        db.close()
+
+    def reconcile():
+        db = TestSession()
+        try:
+            return _reconcile_paper_ledger(db, user_id)
+        finally:
+            db.close()
+
+    baseline = reconcile()
+    assert baseline["status"] == "OK"
+    assert baseline["repairability"] == "NONE"
+    assert baseline["orders"] == 1
+    assert baseline["reconstructed_virtual_balance"] == 800.0
+    assert baseline["repair_plan"]["apply"] is False
+
+    # A separate writer may temporarily hold uncommitted state, but readers
+    # must continue seeing the last committed snapshot and never dirty state.
+    writer = TestSession()
+    try:
+        writer.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        account = writer.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id
+        ).one()
+        account.virtual_balance = 123.0
+        writer.flush()
+
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            snapshots = list(pool.map(lambda _: reconcile(), range(12)))
+
+        assert all(snapshot == baseline for snapshot in snapshots)
+        writer.rollback()
+    finally:
+        writer.close()
+
+    assert reconcile() == baseline
+
+    # The HTTP mutation path must also fail closed without leaking partial
+    # account/order/position state to concurrent reconciliation readers.
+    client = TestClient(app)
+
+    def override_db():
+        db = TestSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        def read_http(_):
+            response = client.get("/api/v1/execution/paper/reconcile")
+            assert response.status_code == 200
+            return response.json()
+
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            reader_future = [pool.submit(read_http, index) for index in range(12)]
+            failed = client.post(
+                "/api/v1/execution/paper/order",
+                json={
+                    "symbol": "SHOULD-ROLLBACK",
+                    "transaction_type": "BUY",
+                    "price": 1_000.0,
+                    "quantity": 2,
+                    "fill_id": "RB-FAILED",
+                },
+            )
+            reader_payloads = [future.result() for future in reader_future]
+
+        assert failed.status_code == 400
+        assert failed.json()["detail"] == "Insufficient paper balance"
+        assert all(payload == baseline for payload in reader_payloads)
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    final = reconcile()
+    assert final == baseline
+
+    # A safe dry-run repair plan is intentionally read-only. Once a new
+    # committed mutation occurs, its old precondition must no longer describe
+    # the current durable state.
+    corrupt = TestSession()
+    try:
+        account = corrupt.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id
+        ).one()
+        account.virtual_balance = 801.0
+        corrupt.commit()
+    finally:
+        corrupt.close()
+
+    stale_candidate = reconcile()
+    assert stale_candidate["status"] == "MISMATCH"
+    assert stale_candidate["repairability"] == "SAFE_DRY_RUN"
+    assert stale_candidate["repair_plan"]["apply"] is False
+    stale_precondition = stale_candidate["repair_plan"]["precondition"]
+    assert stale_candidate["repair_plan"]["proposed_virtual_balance"] == 800.0
+
+    db = TestSession()
+    try:
+        committed = paper_order(
+            PaperOrderRequest(
+                symbol="NEXT-EPOCH",
+                transaction_type="BUY",
+                price=50.0,
+                quantity=2,
+                fill_id="RB-2",
+            ),
+            user_id=user_id,
+            db=db,
+        )
+        assert committed["status"] == "success"
+    finally:
+        db.close()
+
+    current = reconcile()
+    assert current["status"] == "MISMATCH"
+    assert current["repairability"] == "SAFE_DRY_RUN"
+    assert current["repair_plan"]["apply"] is False
+    assert current["repair_plan"]["proposed_virtual_balance"] == 700.0
+    assert current["repair_plan"]["precondition"]["order_count"] == 2
+    assert current["repair_plan"]["precondition"]["state_hash"] != stale_precondition["state_hash"]
+    assert current["repair_plan"]["precondition"]["audit_head"] != stale_precondition["audit_head"]
+    assert current["repair_plan"]["positions"] == {
+        "ROLLBACK": {"quantity": 2, "average_price": 100.0},
+        "NEXT-EPOCH": {"quantity": 2, "average_price": 50.0},
+    }
+
+    # The previously captured dry-run plan is stale by construction and cannot
+    # be treated as an apply token after the durable ledger changed.
+    assert stale_precondition["order_count"] == 1
+    assert current["repair_plan"]["reason"] == "read_only_dry_run"
+
+    # Final concurrent readers must converge on one identical current snapshot.
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        final_snapshots = list(pool.map(lambda _: reconcile(), range(12)))
+    assert all(snapshot == current for snapshot in final_snapshots)
+
+    verify = TestSession()
+    try:
+        assert verify.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+        ).count() == 2
+        assert verify.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+        ).count() == 2
+    finally:
+        verify.close()
         engine.dispose()
