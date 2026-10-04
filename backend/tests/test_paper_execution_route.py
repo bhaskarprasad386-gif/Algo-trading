@@ -1,4 +1,10 @@
 from fastapi.testclient import TestClient
+from concurrent.futures import ThreadPoolExecutor
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.core.database import Base
+from app.models import User
 
 from app.main import app
 from app.core.database import SessionLocal
@@ -196,3 +202,61 @@ def test_paper_api_fails_closed_when_multiple_active_paper_accounts_exist():
         db.query(TradingAccount).delete()
         db.commit()
         db.close()
+
+
+def test_paper_identity_bootstrap_converges_under_two_first_request_race(tmp_path):
+    from app.execution.paper_routes import current_user_id
+    import threading
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'paper-bootstrap.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        seed.add(
+            User(
+                email="system@local.algo-trading",
+                hashed_password="",
+                full_name="Algo Trading System",
+                is_active=True,
+            )
+        )
+        seed.commit()
+    finally:
+        seed.close()
+
+    barrier = threading.Barrier(2)
+
+    def first_request():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            return current_user_id(db)
+        finally:
+            db.close()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: first_request(), range(2)))
+
+        assert results[0] == results[1]
+
+        verify = Session()
+        try:
+            accounts = (
+                verify.query(TradingAccount)
+                .filter(
+                    TradingAccount.mode == "PAPER",
+                    TradingAccount.is_active.is_(True),
+                )
+                .all()
+            )
+            assert len(accounts) == 1
+            assert accounts[0].user_id == results[0]
+        finally:
+            verify.close()
+    finally:
+        engine.dispose()
