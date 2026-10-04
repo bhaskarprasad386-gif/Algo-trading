@@ -116,6 +116,9 @@ def close(position_id: int, db: Session = Depends(get_db)):
     ).first()
     if not trade:
         raise HTTPException(404, "live paper trade not found")
+    # Manual close must use the freshest executable mark available. If quotes
+    # are stale/missing, _refresh_marks preserves the last valid executable P&L.
+    _refresh_marks(db, [trade])
     return {"status": "success", "trade": payload(service.close(db, trade, "MANUAL"))}
 
 @router.get("/positions/{position_id}")
