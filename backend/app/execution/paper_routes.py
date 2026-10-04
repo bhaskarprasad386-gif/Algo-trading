@@ -320,7 +320,6 @@ def _create_order(db: Session, *, user_id: int, symbol: str, side: str, price: f
         symbol=symbol.strip().upper(),
         quantity=normalized_quantity,
         transaction_type=side,
-        status="FILLED",
         user_id=user_id,
         price=price,
         average_price=price,
