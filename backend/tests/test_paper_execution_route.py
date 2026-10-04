@@ -1446,13 +1446,16 @@ def test_paper_order_persists_filled_execution_fields_for_partial_lifecycle():
     opened = client.post(
         "/api/v1/execution/paper/order",
         headers=headers,
-        json={"symbol": "LIFECYCLE", "transaction_type": "BUY", "price": 100.0, "quantity": 10},    )
+        json={"symbol": "LIFECYCLE", "transaction_type": "BUY", "price": 100.0, "quantity": 10},
+    )
     assert opened.status_code == 200
 
-    partial = client.post(        "/api/v1/execution/paper/order",
+    partial = client.post(
+        "/api/v1/execution/paper/order",
         headers=headers,
         json={"symbol": "LIFECYCLE", "transaction_type": "SELL", "price": 120.0, "quantity": 4},
-    )    assert partial.status_code == 200
+    )
+    assert partial.status_code == 200
 
     closed = client.post(
         "/api/v1/execution/paper/exit",        headers=headers,
