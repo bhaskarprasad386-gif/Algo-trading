@@ -755,3 +755,58 @@ def test_duplicate_after_partial_allocation_cannot_reallocate_capital_or_lots(db
     ).one()
     assert persisted.lots == 1
     assert persisted.capital_used == 30000
+
+
+def test_partial_allocation_expiry_close_releases_reservation_without_reopen(db_session):
+    from app.models.global_paper_setting import GlobalPaperSetting
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=50000, emergency_stop=False,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="EXPIRY-PARTIAL",
+        event_id="EXPIRY-PARTIAL-EVENT", direction="LONG",
+        expiry="2026-10-04", earliest_expiry="2026-10-04",
+        lot_size=10, lots=2, edge=10, capital_used=60000, user_id=1,
+    )
+    assert created is True
+    assert trade.lots == 1
+    assert trade.capital_used == 30000
+
+    svc.mark(db_session, trade, edge=8)
+    closed = svc.close_expired(
+        db_session, now=datetime(2026, 10, 4, 15, 30, 0)
+    )
+    assert [row.id for row in closed] == [trade.id]
+    assert trade.status == "COMPLETED"
+    assert trade.exit_reason == "EXPIRY_CLOSE"
+    assert trade.lots == 1
+    assert trade.lot_size == 10
+    assert trade.capital_used == 30000
+    assert trade.unrealized_pnl == -20.0
+    assert trade.realized_pnl == -20.0
+    assert trade.pnl_pct == round((-20.0 / 30000) * 100.0, 8)
+
+    reserved = sum(
+        float(row.capital_used)
+        for row in db_session.query(type(trade)).filter(
+            type(trade).user_id == 1,
+            type(trade).status == "ONGOING",
+        ).all()
+    )
+    assert reserved == 0.0
+
+    # Replaying the consumed event after expiry must not reopen it.
+    replay, replay_created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="EXPIRY-PARTIAL",
+        event_id="EXPIRY-PARTIAL-EVENT", direction="LONG",
+        expiry="2026-10-04", earliest_expiry="2026-10-04",
+        lot_size=10, lots=2, edge=99, capital_used=60000, user_id=1,
+    )
+    assert replay is None
+    assert replay_created is False
+    assert len(svc.ongoing(db_session, 1)) == 0
+    assert len(svc.completed(db_session, 1)) == 1
