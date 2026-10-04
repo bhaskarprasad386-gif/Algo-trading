@@ -36,25 +36,17 @@ router = APIRouter(prefix="/api/v1/execution", tags=["Execution"])
 # cross-process write serialization, while this lock keeps concurrent FastAPI
 # requests in one worker from racing through ORM identity-map state between
 # fill lookup, position transition, audit append, and commit.
-_paper_lock_guard = threading.Lock()
-_paper_user_locks: dict[int, threading.RLock] = {}
+_paper_mutation_lock = threading.RLock()
 _paper_bootstrap_lock = threading.RLock()
-
-
-def _paper_user_lock(user_id: int) -> threading.RLock:
-    with _paper_lock_guard:
-        return _paper_user_locks.setdefault(int(user_id), threading.RLock())
 
 
 def _serialized_paper_mutation(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        user_id = kwargs.get("user_id")
-        if user_id is None:
-            user_id = next((value for value in args if isinstance(value, int)), None)
-        if user_id is None:
-            return func(*args, **kwargs)
-        with _paper_user_lock(int(user_id)):
+        # Paper execution is deliberately serialized at the process boundary.
+        # SQLite already serializes writers across processes; this lock also
+        # protects the ORM/session transition inside one FastAPI worker.
+        with _paper_mutation_lock:
             return func(*args, **kwargs)
     return wrapper
 
@@ -664,6 +656,22 @@ def _accounting_after_fill(*, side: str, price: float, quantity: float, current_
     return after, round(after.realized_pnl - before.realized_pnl, 8)
 
 
+def _apply_accounting_to_account(
+    account: TradingAccount,
+    *,
+    before_quantity: float,
+    before_average_price: float,
+    after: FillAccountingState,
+) -> None:
+    """Apply one fill using the conservation identity for every long/short transition."""
+    before_cost = _buy_cost(before_average_price, abs(int(before_quantity))) if before_quantity else 0.0
+    after_cost = _buy_cost(after.average_price, abs(int(after.quantity))) if after.quantity else 0.0
+    realized_delta = round(after.realized_pnl - float(account.realized_pnl or 0.0), 8)
+    cash_delta = round(realized_delta - (after_cost - before_cost), 8)
+    account.virtual_balance = round(float(account.virtual_balance) + cash_delta, 8)
+    account.realized_pnl = after.realized_pnl
+
+
 def _repair_fingerprint_number(value) -> object:
     """Preserve malformed numeric state instead of silently truncating it in a repair fingerprint."""
     if value is None:
@@ -1169,15 +1177,15 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
             short_qty = abs(int(active.quantity))
             fill = Fill(price=request.price, quantity=quantity)
             accounting_state, pnl = _accounting_after_fill(side="BUY", price=fill.price, quantity=quantity, current_quantity=float(active.quantity), current_average_price=float(active.average_price), current_realized_pnl=account.realized_pnl)
-            closed_qty = min(short_qty, quantity)
-            margin_released = _buy_cost(active.average_price, closed_qty)
-            cash_after_close = round(account.virtual_balance + margin_released + pnl, 8)
             remaining_qty = int(accounting_state.quantity)
-            remaining_cost = _buy_cost(fill.price, remaining_qty) if remaining_qty > 0 else 0.0
-            if cash_after_close < remaining_cost:
+            _apply_accounting_to_account(
+                account,
+                before_quantity=float(active.quantity),
+                before_average_price=float(active.average_price),
+                after=accounting_state,
+            )
+            if account.virtual_balance < 0:
                 raise HTTPException(status_code=400, detail="Insufficient paper balance for reversal long position")
-            account.virtual_balance = round(cash_after_close - remaining_cost, 8)
-            account.realized_pnl = accounting_state.realized_pnl
             if remaining_qty == 0:
                 db.delete(active)
                 remaining = None
@@ -1218,24 +1226,12 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
                 raise HTTPException(status_code=409, detail="Use BUY to cover the active short position")
             fill = Fill(price=request.price, quantity=quantity)
             accounting_state, pnl = _accounting_after_fill(side="SELL", price=fill.price, quantity=quantity, current_quantity=float(active.quantity), current_average_price=float(active.average_price), current_realized_pnl=account.realized_pnl)
-            closed_qty = min(int(active.quantity), quantity)
-            proceeds = _buy_cost(fill.price, closed_qty)
-            if accounting_state.quantity < 0:
-                remaining_short_qty = abs(int(accounting_state.quantity))
-                margin = _buy_cost(fill.price, remaining_short_qty)
-                account.virtual_balance = round(
-                    account.virtual_balance + proceeds - margin,
-                    8,
-                )
-            else:
-                # Sale proceeds already include the economic value of the
-                # closing fill. Realized P&L is ledger state, not additional
-                # cash, so never add pnl on top of sale proceeds.
-                account.virtual_balance = round(
-                    account.virtual_balance + proceeds,
-                    8,
-                )
-            account.realized_pnl = accounting_state.realized_pnl
+            _apply_accounting_to_account(
+                account,
+                before_quantity=float(active.quantity),
+                before_average_price=float(active.average_price),
+                after=accounting_state,
+            )
             remaining_qty = int(accounting_state.quantity)
             if remaining_qty == 0:
                 db.delete(active)
@@ -1411,14 +1407,22 @@ def paper_exit(request: PaperExitRequest, user_id: int = Depends(current_user_id
     if position.quantity < 0:
         fill = Fill(price=request.price, quantity=quantity)
         accounting_state, pnl = _accounting_after_fill(side="BUY", price=fill.price, quantity=quantity, current_quantity=float(position.quantity), current_average_price=entry_price, current_realized_pnl=account.realized_pnl)
-        account.virtual_balance = round(account.virtual_balance + _buy_cost(entry_price, quantity) + pnl, 8)
-        account.realized_pnl = accounting_state.realized_pnl
+        _apply_accounting_to_account(
+            account,
+            before_quantity=float(position.quantity),
+            before_average_price=entry_price,
+            after=accounting_state,
+        )
         side = "BUY"
     else:
         fill = Fill(price=request.price, quantity=quantity)
         accounting_state, pnl = _accounting_after_fill(side="SELL", price=fill.price, quantity=quantity, current_quantity=float(position.quantity), current_average_price=entry_price, current_realized_pnl=account.realized_pnl)
-        account.virtual_balance = round(account.virtual_balance + _buy_cost(fill.price, quantity), 8)
-        account.realized_pnl = accounting_state.realized_pnl
+        _apply_accounting_to_account(
+            account,
+            before_quantity=float(position.quantity),
+            before_average_price=entry_price,
+            after=accounting_state,
+        )
         side = "SELL"
     order = _create_order(db, user_id=user_id, symbol=position.symbol, side=side, price=fill.price, quantity=quantity, pnl=pnl, fill_id=fill_id)
     db.delete(position)
