@@ -8772,3 +8772,279 @@ def test_paper_http_exit_failed_commit_does_not_consume_fill_id_or_audit_head():
     reconcile = client.get("/api/v1/execution/paper/reconcile", headers={"X-User-ID": str(user_id)})
     assert reconcile.status_code == 200
     assert reconcile.json()["status"] == "OK"
+
+def test_paper_http_reversal_commit_failure_preserves_existing_audit_head_and_retry_chain():
+    """A failed long-to-short reversal must preserve the prior audit head and retry must chain from it."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+    client = TestClient(app)
+
+    seed = TestSession()
+    try:
+        user = User(email="reversal-audit@example.com", hashed_password="", full_name="Reversal Audit", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+            initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0, is_active=True,
+        ))
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    first = client.post(
+        "/api/v1/execution/paper/order",
+        headers={"X-User-ID": str(user_id)},
+        json={"symbol": "REVERSAL_AUDIT", "transaction_type": "BUY", "price": 100.0, "quantity": 2, "fill_id": "REVERSAL-AUDIT-ENTRY"},
+    )
+    assert first.status_code == 200
+
+    db = TestSession()
+    try:
+        first_order = db.query(Order).filter(
+            Order.user_id == user_id, Order.symbol == "REVERSAL_AUDIT"
+        ).one()
+        original_head = first_order.audit_hash
+        assert original_head
+    finally:
+        db.close()
+
+    class FailingCommitSession(Session):
+        def commit(self):
+            raise RuntimeError("injected reversal commit failure")
+
+    failing_db = sessionmaker(bind=engine, class_=FailingCommitSession)()
+
+    def override_db():
+        try:
+            yield failing_db
+        finally:
+            failing_db.rollback()
+            failing_db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        failed = client.post(
+            "/api/v1/execution/paper/order",
+            json={
+                "symbol": "REVERSAL_AUDIT",
+                "transaction_type": "SELL",
+                "price": 90.0,
+                "quantity": 5,
+                "fill_id": "REVERSAL-AUDIT-RETRY",
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert failed.status_code == 500
+
+    db = TestSession()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        position = db.query(Position).filter(
+            Position.user_id == user_id, Position.symbol == "REVERSAL_AUDIT", Position.is_open.is_(True)
+        ).one()
+        orders = db.query(Order).filter(
+            Order.user_id == user_id, Order.symbol == "REVERSAL_AUDIT"
+        ).order_by(Order.id.asc()).all()
+
+        assert account.virtual_balance == 800.0
+        assert account.realized_pnl == 0.0
+        assert position.quantity == 2
+        assert position.average_price == 100.0
+        assert len(orders) == 1
+        assert orders[0].audit_hash == original_head
+    finally:
+        db.close()
+
+    retry = client.post(
+        "/api/v1/execution/paper/order",
+        headers={"X-User-ID": str(user_id)},
+        json={
+            "symbol": "REVERSAL_AUDIT",
+            "transaction_type": "SELL",
+            "price": 90.0,
+            "quantity": 5,
+            "fill_id": "REVERSAL-AUDIT-RETRY",
+        },
+    )
+    assert retry.status_code == 200
+
+    db = TestSession()
+    try:
+        orders = db.query(Order).filter(
+            Order.user_id == user_id, Order.symbol == "REVERSAL_AUDIT"
+        ).order_by(Order.id.asc()).all()
+        position = db.query(Position).filter(
+            Position.user_id == user_id, Position.symbol == "REVERSAL_AUDIT", Position.is_open.is_(True)
+        ).one()
+        account = db.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+
+        assert len(orders) == 2
+        assert orders[1].fill_id == "REVERSAL-AUDIT-RETRY"
+        assert orders[1].previous_audit_hash == original_head
+        assert orders[1].audit_hash
+        assert orders[1].audit_hash != original_head
+        assert position.quantity == -3
+        assert position.average_price == 90.0
+        assert account.virtual_balance == 1250.0
+        assert account.realized_pnl == -20.0
+    finally:
+        db.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers={"X-User-ID": str(user_id)})
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
+
+
+def test_paper_http_reverse_short_commit_failure_preserves_existing_audit_head_and_retry_chain():
+    """A failed short-to-long reversal must preserve accounting/audit state until the retry commits."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+    client = TestClient(app)
+
+    seed = TestSession()
+    try:
+        user = User(email="reverse-short-audit@example.com", hashed_password="", full_name="Reverse Short Audit", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+            initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0, is_active=True,
+        ))
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    first = client.post(
+        "/api/v1/execution/paper/order",
+        headers={"X-User-ID": str(user_id)},
+        json={"symbol": "REVERSE_SHORT_AUDIT", "transaction_type": "SELL", "price": 100.0, "quantity": 2, "fill_id": "REVERSE-SHORT-ENTRY"},
+    )
+    assert first.status_code == 200
+
+    db = TestSession()
+    try:
+        first_order = db.query(Order).filter(
+            Order.user_id == user_id, Order.symbol == "REVERSE_SHORT_AUDIT"
+        ).one()
+        original_head = first_order.audit_hash
+        assert original_head
+    finally:
+        db.close()
+
+    class FailingCommitSession(Session):
+        def commit(self):
+            raise RuntimeError("injected reverse-short commit failure")
+
+    failing_db = sessionmaker(bind=engine, class_=FailingCommitSession)()
+
+    def override_db():
+        try:
+            yield failing_db
+        finally:
+            failing_db.rollback()
+            failing_db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        failed = client.post(
+            "/api/v1/execution/paper/order",
+            json={
+                "symbol": "REVERSE_SHORT_AUDIT",
+                "transaction_type": "BUY",
+                "price": 110.0,
+                "quantity": 5,
+                "fill_id": "REVERSE-SHORT-RETRY",
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert failed.status_code == 500
+
+    db = TestSession()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        position = db.query(Position).filter(
+            Position.user_id == user_id, Position.symbol == "REVERSE_SHORT_AUDIT", Position.is_open.is_(True)
+        ).one()
+        orders = db.query(Order).filter(
+            Order.user_id == user_id, Order.symbol == "REVERSE_SHORT_AUDIT"
+        ).order_by(Order.id.asc()).all()
+
+        assert account.virtual_balance == 800.0
+        assert account.realized_pnl == 0.0
+        assert position.quantity == -2
+        assert position.average_price == 100.0
+        assert len(orders) == 1
+        assert orders[0].audit_hash == original_head
+    finally:
+        db.close()
+
+    retry = client.post(
+        "/api/v1/execution/paper/order",
+        headers={"X-User-ID": str(user_id)},
+        json={
+            "symbol": "REVERSE_SHORT_AUDIT",
+            "transaction_type": "BUY",
+            "price": 110.0,
+            "quantity": 5,
+            "fill_id": "REVERSE-SHORT-RETRY",
+        },
+    )
+    assert retry.status_code == 200
+
+    db = TestSession()
+    try:
+        orders = db.query(Order).filter(
+            Order.user_id == user_id, Order.symbol == "REVERSE_SHORT_AUDIT"
+        ).order_by(Order.id.asc()).all()
+        position = db.query(Position).filter(
+            Position.user_id == user_id, Position.symbol == "REVERSE_SHORT_AUDIT", Position.is_open.is_(True)
+        ).one()
+        account = db.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+
+        assert len(orders) == 2
+        assert orders[1].fill_id == "REVERSE-SHORT-RETRY"
+        assert orders[1].previous_audit_hash == original_head
+        assert orders[1].audit_hash
+        assert orders[1].audit_hash != original_head
+        assert position.quantity == 3
+        assert position.average_price == 110.0
+        assert account.virtual_balance == 650.0
+        assert account.realized_pnl == -20.0
+    finally:
+        db.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers={"X-User-ID": str(user_id)})
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
+\n
