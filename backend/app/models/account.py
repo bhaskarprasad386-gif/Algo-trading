@@ -19,6 +19,7 @@ class TradingAccount(Base):
     mode = Column(String(10), nullable=False, default="PAPER")
     virtual_balance = Column(Float, nullable=False, default=PAPER_STARTING_BALANCE)
     initial_virtual_balance = Column(Float, nullable=False, default=PAPER_STARTING_BALANCE)
+    initial_balance_source = Column(String(32), nullable=False, default="BOOTSTRAP")
     realized_pnl = Column(Float, nullable=False, default=0.0)
     is_active = Column(Boolean, default=True, nullable=False)
     box_spread_auto_lots = Column(Integer, nullable=False, default=1)
