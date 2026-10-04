@@ -151,7 +151,7 @@ def test_positive_realized_pnl_cannot_offset_combined_open_and_realized_loss(db_
     ).count() == 0
 
 
-def test_expiry_close_moves_open_loss_into_same_day_realized_loss_before_gate(db_session):
+def test_expiry_close_moves_open_loss_into_same_day_realized_loss_before_gate(db_session, monkeypatch):
     _setup(db_session, max_loss=100.0)
 
     svc = LivePaperTradeService()
@@ -174,6 +174,18 @@ def test_expiry_close_moves_open_loss_into_same_day_realized_loss_before_gate(db
     db_session.commit()
     assert expired.unrealized_pnl == -50.0
 
+    # Pin the dispatcher at the exact NSE expiry boundary so the regression
+    # is independent of the machine wall clock.
+    monkeypatch.setattr(
+        "app.auto.live_paper.datetime",
+        __import__("datetime").datetime,
+    )
+    monkeypatch.setattr(
+        "app.notifications.common.LivePaperTradeService.close_expired",
+        lambda self, db, now=None: LivePaperTradeService.close_expired(
+            self, db, now=datetime(2026, 10, 4, 15, 30)
+        ),
+    )
     # A new alert after NSE close must first expire the old trade. Its -50
     # then becomes today's realized loss and still participates in max_loss.
     assert AlertService().dispatch(
@@ -195,7 +207,7 @@ def test_expiry_close_moves_open_loss_into_same_day_realized_loss_before_gate(db
     assert new_row.status == "ONGOING"
 
 
-def test_expiry_loss_plus_existing_realized_loss_blocks_new_entry(db_session):
+def test_expiry_loss_plus_existing_realized_loss_blocks_new_entry(db_session, monkeypatch):
     _setup(db_session, max_loss=100.0)
 
     _completed_trade(db_session, "REALIZED-50", -50.0)
@@ -220,6 +232,12 @@ def test_expiry_loss_plus_existing_realized_loss_blocks_new_entry(db_session):
     svc.mark(db_session, expired, edge=5.0)
     db_session.commit()
 
+    monkeypatch.setattr(
+        "app.notifications.common.LivePaperTradeService.close_expired",
+        lambda self, db, now=None: LivePaperTradeService.close_expired(
+            self, db, now=datetime(2026, 10, 4, 15, 30)
+        ),
+    )
     # Expiry close realizes -50; existing same-day realized loss is -50.
     # The new event must see the combined exact -100 boundary and block.
     assert AlertService().dispatch(
