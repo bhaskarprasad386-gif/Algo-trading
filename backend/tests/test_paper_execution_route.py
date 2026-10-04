@@ -2231,3 +2231,180 @@ def test_paper_reconcile_cross_component_consistency_matrix(tmp_path):
         finally:
             verify.close()
             engine.dispose()
+
+def test_paper_reconcile_safe_dry_run_plan_is_deterministic_and_read_only(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'repair-plan-safe.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    seed = Session()
+    try:
+        user = User(
+            email="repair-safe@example.com",
+            hashed_password="",
+            full_name="Repair Safe",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(
+            TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=1000.0,
+                initial_virtual_balance=1000.0,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            )
+        )
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    db = Session()
+    try:
+        paper_order(
+            PaperOrderRequest(
+                symbol="SAFE",
+                transaction_type="BUY",
+                price=100.0,
+                quantity=5,
+                fill_id="SAFE-1",
+            ),
+            user_id=user_id,
+            db=db,
+        )
+    finally:
+        db.close()
+
+    corrupt = Session()
+    try:
+        account = corrupt.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        account.virtual_balance = 777.0
+        corrupt.commit()
+    finally:
+        corrupt.close()
+
+    before = Session()
+    try:
+        before_account = before.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        before_orders = before.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).count()
+        before_positions = before.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).count()
+        before_values = (before_account.virtual_balance, before_account.realized_pnl, before_orders, before_positions)
+    finally:
+        before.close()
+
+    first = Session()
+    second = Session()
+    try:
+        plan1 = _reconcile_paper_ledger(first, user_id)
+        plan2 = _reconcile_paper_ledger(second, user_id)
+        assert plan1 == plan2
+        assert plan1["status"] == "MISMATCH"
+        assert plan1["repairability"] == "SAFE_DRY_RUN"
+        assert plan1["repair_plan"]["apply"] is False
+        assert plan1["repair_plan"]["reason"] == "read_only_dry_run"
+        assert plan1["repair_plan"]["proposed_virtual_balance"] == 500.0
+        assert plan1["repair_plan"]["proposed_realized_pnl"] == 0.0
+        assert plan1["repair_plan"]["positions"]["SAFE"] == {
+            "quantity": 5,
+            "average_price": 100.0,
+        }
+    finally:
+        first.close()
+        second.close()
+
+    after = Session()
+    try:
+        after_account = after.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        after_orders = after.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).count()
+        after_positions = after.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).count()
+        assert (after_account.virtual_balance, after_account.realized_pnl, after_orders, after_positions) == before_values
+    finally:
+        after.close()
+        engine.dispose()
+
+
+def test_paper_reconcile_blocked_baseline_never_exposes_applicable_repair(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'repair-plan-blocked.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    seed = Session()
+    try:
+        user = User(
+            email="repair-blocked@example.com",
+            hashed_password="",
+            full_name="Repair Blocked",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(
+            TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=1000.0,
+                initial_virtual_balance=1000.0,
+                initial_balance_source="MIGRATED_INFERRED",
+                realized_pnl=0.0,
+                is_active=True,
+            )
+        )
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    db = Session()
+    try:
+        paper_order(
+            PaperOrderRequest(
+                symbol="BLOCK",
+                transaction_type="BUY",
+                price=100.0,
+                quantity=2,
+                fill_id="BLOCK-1",
+            ),
+            user_id=user_id,
+            db=db,
+        )
+    finally:
+        db.close()
+
+    corrupt = Session()
+    try:
+        account = corrupt.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        account.virtual_balance = 999.0
+        corrupt.commit()
+    finally:
+        corrupt.close()
+
+    verify = Session()
+    try:
+        result = _reconcile_paper_ledger(verify, user_id)
+        assert result["status"] == "MISMATCH"
+        assert result["baseline_status"] == "MIGRATED_INFERRED"
+        assert result["repairability"] == "BLOCKED"
+        assert result["repair_plan"]["apply"] is False
+        assert result["repair_plan"]["reason"] == "read_only_dry_run"
+        assert result["repair_plan"]["proposed_virtual_balance"] == 800.0
+        assert result["repair_plan"]["positions"]["BLOCK"] == {
+            "quantity": 2,
+            "average_price": 100.0,
+        }
+    finally:
+        verify.close()
+        engine.dispose()
