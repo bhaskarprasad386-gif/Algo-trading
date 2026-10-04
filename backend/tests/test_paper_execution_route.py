@@ -7245,3 +7245,102 @@ def test_paper_http_failed_short_reversal_is_atomic_under_concurrent_reads():
     assert payload["status"] == "OK"
     assert payload["mismatches"] == []
     assert payload["repairability"] == "NONE"
+
+
+def test_paper_http_concurrent_legacy_entry_and_exit_same_symbol_has_no_duplicate_position():
+    """Legacy entry and terminal exit may serialize in either order, but never create duplicate exposure."""
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 500.0
+        account.realized_pnl = 0.0
+        db.add(Position(
+            user_id=user_id,
+            symbol="ENTRY_EXIT_RACE",
+            quantity=5,
+            average_price=100.0,
+            stop_loss=None,
+            target=None,
+            is_paper=True,
+            is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(2)
+
+    def submit(kind):
+        barrier.wait(timeout=5)
+        if kind == "entry":
+            return client.post(
+                "/api/v1/execution/paper/entry",
+                headers=headers,
+                json={
+                    "symbol": "ENTRY_EXIT_RACE",
+                    "price": 90.0,
+                    "quantity": 2,
+                },
+            )
+        return client.post(
+            "/api/v1/execution/paper/exit",
+            headers=headers,
+            json={
+                "symbol": "ENTRY_EXIT_RACE",
+                "price": 120.0,
+            },
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(submit, ["entry", "exit"]))
+
+    assert all(response.status_code in {200, 409} for response in responses)
+    assert sum(response.status_code == 200 for response in responses) >= 1
+
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        orders = db.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+            Order.symbol == "ENTRY_EXIT_RACE",
+        ).order_by(Order.id).all()
+        positions = db.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.symbol == "ENTRY_EXIT_RACE",
+            Position.is_open.is_(True),
+        ).all()
+
+        assert account.realized_pnl == 100.0
+        assert len(orders) in {1, 2}
+        assert len(positions) in {0, 1}
+
+        if len(positions) == 0:
+            assert len(orders) == 1
+            assert orders[0].transaction_type == "SELL"
+            assert orders[0].quantity == 5
+            assert account.virtual_balance == 1100.0
+        else:
+            assert len(orders) == 2
+            assert positions[0].quantity == 2
+            assert positions[0].average_price == 90.0
+            assert account.virtual_balance == 920.0
+            assert orders[0].transaction_type == "SELL"
+            assert orders[0].quantity == 5
+            assert orders[1].transaction_type == "BUY"
+            assert orders[1].quantity == 2
+    finally:
+        db.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
