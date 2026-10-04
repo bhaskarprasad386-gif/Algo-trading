@@ -11185,3 +11185,206 @@ def test_paper_legacy_unhashed_orders_can_precede_first_hashed_order_but_remain_
         assert payload["repairability"] == "BLOCKED"
     finally:
         db.close(); engine.dispose()
+
+
+def _integrity_matrix_db(tmp_path, name, source="BOOTSTRAP"):
+    engine = create_engine(f"sqlite:///{tmp_path / (name + '.db')}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    user = User(email=f"{name}@example.com", hashed_password="", full_name=name, is_active=True)
+    db.add(user)
+    db.flush()
+    account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source=source, realized_pnl=0.0, is_active=True)
+    db.add(account)
+    db.commit()
+    return engine, db, user, account
+
+
+def test_integrity_matrix_01_replayed_audit_hash_fails_closed(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    engine, db, user, _ = _integrity_matrix_db(tmp_path, "matrix01")
+    try:
+        paper_order(PaperOrderRequest(symbol="M1", transaction_type="BUY", price=10, quantity=1, fill_id="M1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="M2", transaction_type="BUY", price=11, quantity=1, fill_id="M2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id).all()
+        orders[1].audit_hash = orders[0].audit_hash
+        db.commit()
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("replayed audit hash must fail")
+        except RuntimeError as exc:
+            assert "audit hash" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_02_tail_hash_and_stale_head_fail_closed(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    engine, db, user, _ = _integrity_matrix_db(tmp_path, "matrix02")
+    try:
+        paper_order(PaperOrderRequest(symbol="T1", transaction_type="BUY", price=10, quantity=1, fill_id="T1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="T2", transaction_type="BUY", price=11, quantity=1, fill_id="T2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id).all()
+        orders[1].audit_hash = "f" * 64
+        db.commit()
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("tail mutation must fail")
+        except RuntimeError as exc:
+            assert "audit hash" in str(exc) or "audit chain" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_03_fill_identity_change_breaks_audit_binding(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_audit_payload, _validate_paper_state, paper_order
+    engine, db, user, _ = _integrity_matrix_db(tmp_path, "matrix03")
+    try:
+        paper_order(PaperOrderRequest(symbol="F1", transaction_type="BUY", price=10, quantity=1, fill_id="F1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id).one()
+        order.fill_id = "F2"
+        db.commit()
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("fill identity mutation must fail")
+        except RuntimeError as exc:
+            assert "audit hash" in str(exc)
+        expected = _paper_audit_payload(user_id=user.id, symbol=order.symbol, side=order.transaction_type, quantity=1, price=10, pnl=0, fill_id="F2", previous_hash=None)
+        assert expected != order.audit_hash
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_04_delete_and_reinsert_changes_ledger_identity(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+    engine, db, user, account = _integrity_matrix_db(tmp_path, "matrix04")
+    try:
+        paper_order(PaperOrderRequest(symbol="D1", transaction_type="BUY", price=10, quantity=1, fill_id="D1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="D2", transaction_type="BUY", price=11, quantity=1, fill_id="D2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id).all()
+        positions = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).all()
+        before = _paper_repair_precondition(db, user.id, account, orders, positions)["state_hash"]
+        original = orders[0]
+        db.delete(original); db.commit()
+        replacement = Order(
+            order_id=original.order_id, symbol=original.symbol, quantity=original.quantity,
+            transaction_type=original.transaction_type, user_id=user.id, price=original.price,
+            average_price=original.average_price, filled_quantity=original.filled_quantity,
+            average_fill_price=original.average_fill_price, pnl=original.pnl, status=original.status,
+            is_paper=True, fill_id=original.fill_id, audit_hash=original.audit_hash,
+            previous_audit_hash=original.previous_audit_hash,
+        )
+        db.add(replacement); db.commit()
+        after_orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id).all()
+        after = _paper_repair_precondition(db, user.id, account, after_orders, positions)["state_hash"]
+        assert before != after
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_05_position_order_reconstruction_mismatch_blocks_repair(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    engine, db, user, _ = _integrity_matrix_db(tmp_path, "matrix05")
+    try:
+        paper_order(PaperOrderRequest(symbol="P1", transaction_type="BUY", price=10, quantity=2, fill_id="P1"), user_id=user.id, db=db)
+        position = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True), Position.symbol == "P1").one()
+        position.quantity = 1
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert "POSITION_STATE" in payload["mismatch_categories"]
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_06_pnl_tamper_is_not_silent(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, _validate_paper_state, paper_order
+    engine, db, user, _ = _integrity_matrix_db(tmp_path, "matrix06")
+    try:
+        paper_order(PaperOrderRequest(symbol="Q1", transaction_type="BUY", price=10, quantity=1, fill_id="Q1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id).one()
+        order.pnl = 7.0
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert "AUDIT_INTEGRITY" in payload["mismatch_categories"] or "ORDER_INTEGRITY" in payload["mismatch_categories"]
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("pnl tamper must fail")
+        except RuntimeError:
+            pass
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_07_account_conservation_tolerance_boundary(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    engine, db, user, account = _integrity_matrix_db(tmp_path, "matrix07")
+    try:
+        paper_order(PaperOrderRequest(symbol="A1", transaction_type="BUY", price=10, quantity=1, fill_id="A1"), user_id=user.id, db=db)
+        account.virtual_balance = 990.00000001
+        db.commit()
+        _validate_paper_state(db, user.id)
+        account.virtual_balance = 990.00000002
+        db.commit()
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("over-tolerance balance drift must fail")
+        except RuntimeError as exc:
+            assert "balance conservation" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_08_repair_fingerprint_tracks_account_order_position_mutations(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+    engine, db, user, account = _integrity_matrix_db(tmp_path, "matrix08")
+    try:
+        paper_order(PaperOrderRequest(symbol="R1", transaction_type="BUY", price=10, quantity=1, fill_id="R1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id).one()
+        position = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).one()
+        def h():
+            return _paper_repair_precondition(db, user.id, account, [order], [position])["state_hash"]
+        base = h()
+        account.mode = "PAPER-ALT"; db.flush(); h1 = h()
+        account.mode = "PAPER"; order.message = "changed"; db.flush(); h2 = h()
+        order.message = None; position.target = 123.0; db.flush(); h3 = h()
+        assert len({base, h1, h2, h3}) == 4
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_09_cross_user_identity_collision_is_isolated(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    engine, db, user1, _ = _integrity_matrix_db(tmp_path, "matrix09a")
+    try:
+        user2 = User(email="matrix09b@example.com", hashed_password="", full_name="Matrix09B", is_active=True)
+        db.add(user2); db.flush()
+        db.add(TradingAccount(user_id=user2.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="C1", transaction_type="BUY", price=10, quantity=1, fill_id="CROSS"), user_id=user1.id, db=db)
+        paper_order(PaperOrderRequest(symbol="C2", transaction_type="BUY", price=10, quantity=1, fill_id="CROSS"), user_id=user2.id, db=db)
+        assert db.query(Order).filter(Order.fill_id == "CROSS").count() == 2
+        _validate_paper_state(db, user1.id)
+        _validate_paper_state(db, user2.id)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_integrity_matrix_10_combined_corruption_blocks_dry_run_repair(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    engine, db, user, account = _integrity_matrix_db(tmp_path, "matrix10")
+    try:
+        paper_order(PaperOrderRequest(symbol="Z1", transaction_type="BUY", price=10, quantity=1, fill_id="Z1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id).one()
+        position = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).one()
+        order.message = "corrupt"
+        position.target = -1.0
+        account.realized_pnl = 5.0
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert payload["repair_plan"]["apply"] is False
+        assert payload["repairability_reason"] == "ledger_or_baseline_integrity_failure"
+    finally:
+        db.close(); engine.dispose()
