@@ -181,9 +181,11 @@ def get_common_feed_health():
 @router.get("/overview")
 def get_market_overview():
     """Return a bounded live overview for configured NSE/BSE indices and MCX commodities."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
     from app.market_data.client import MarketDataClient
+    from app.market_data.historical import HistoricalDataClient
     from app.market_data.instruments import InstrumentMaster
-    from app.market_data.nifty50_universe import NIFTY50_INDEX_SYMBOLS
 
     index_specs = [
         *(("NSE", symbol) for symbol in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY")),
@@ -192,6 +194,33 @@ def get_market_overview():
     commodity_specs = [("MCX", symbol) for symbol in ("GOLD", "SILVER", "CRUDEOIL", "NATURALGAS")]
     master = InstrumentMaster()
     client = MarketDataClient()
+    historical_client = HistoricalDataClient(client)
+    ist = ZoneInfo("Asia/Kolkata")
+
+    def last_trading_closes(exchange, token):
+        """Return latest and prior trading-day closes for closed-market fallback."""
+        now = datetime.now(ist)
+        from_date = (now - timedelta(days=10)).strftime("%Y-%m-%d 00:00")
+        to_date = now.strftime("%Y-%m-%d %H:%M")
+        response = historical_client.get_candles(
+            exchange=exchange,
+            symboltoken=token,
+            interval="ONE_DAY",
+            from_date=from_date,
+            to_date=to_date,
+        )
+        candles = response.get("data") or []
+        if not isinstance(candles, list):
+            return None, None
+        valid = [
+            row for row in candles
+            if isinstance(row, (list, tuple)) and len(row) >= 5 and row[4] is not None
+        ]
+        if not valid:
+            return None, None
+        latest = float(valid[-1][4])
+        prior = float(valid[-2][4]) if len(valid) >= 2 else latest
+        return latest, prior
 
     def resolve(specs):
         resolved = []
@@ -223,13 +252,29 @@ def get_market_overview():
                 by_token = {str(row.get("symbolToken", row.get("token", ""))): row for row in fetched if isinstance(row, dict)}
                 for item in instruments:
                     quote = by_token.get(item["symboltoken"], {})
+                    fallback_ltp = None
+                    fallback_previous = None
+                    status = "LIVE" if quote else "NO_QUOTE"
+                    if not quote or quote.get("ltp") is None or quote.get("close") is None:
+                        try:
+                            fallback_ltp, fallback_previous = last_trading_closes(exchange, item["symboltoken"])
+                            if fallback_ltp is not None:
+                                status = "CLOSED_LAST_CLOSE"
+                        except Exception as fallback_exc:
+                            errors.append({
+                                "exchange": exchange,
+                                "symbol": item["symbol"],
+                                "error": f"last_close_fallback_failed: {fallback_exc}",
+                            })
+                    ltp = quote.get("ltp") if quote.get("ltp") is not None else fallback_ltp
+                    close = quote.get("close") if quote.get("close") is not None else fallback_previous
                     rows.append({"exchange": exchange, "symbol": item["symbol"], "token": item["symboltoken"],
-                                 "ltp": quote.get("ltp"), "open": quote.get("open"), "high": quote.get("high"),
-                                 "low": quote.get("low"), "close": quote.get("close"), "change_percent": quote.get("percentChange"),
+                                 "ltp": ltp, "open": quote.get("open"), "high": quote.get("high"),
+                                 "low": quote.get("low"), "close": close, "change_percent": quote.get("percentChange"),
                                  "volume": quote.get("tradeVolume"), "oi": quote.get("opnInterest"),
                                  "bid": (quote.get("depth", {}).get("buy", [{}])[0].get("price") if quote.get("depth") else None),
                                  "ask": (quote.get("depth", {}).get("sell", [{}])[0].get("price") if quote.get("depth") else None),
-                                 "status": "LIVE" if quote else "NO_QUOTE"})
+                                 "status": status})
             except Exception as exc:
                 errors.extend({"exchange": exchange, "symbol": item["symbol"], "error": str(exc)} for item in instruments)
         return rows, errors
