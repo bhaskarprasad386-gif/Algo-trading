@@ -539,8 +539,9 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     if abs(balance_delta) > 1e-8:
         mismatches.append("virtual_balance_mismatch")
 
-    if not orders and str(account.initial_balance_source).upper() == "BOOTSTRAP":
-        baseline_status = "BOOTSTRAP"
+    source = str(account.initial_balance_source or "").strip().upper()
+    if source != "BOOTSTRAP":
+        baseline_status = source or "LEGACY_BASELINE"
     elif all(order.audit_hash for order in orders):
         baseline_status = "BOOTSTRAP"
     else:
