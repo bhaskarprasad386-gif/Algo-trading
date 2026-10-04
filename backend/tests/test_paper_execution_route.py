@@ -11078,3 +11078,54 @@ def test_paper_fill_id_repair_fingerprint_distinguishes_null_blank_and_value(tmp
         assert null_hash != value_hash
     finally:
         db.close(); engine.dispose()
+
+
+def test_paper_audit_chain_topology_follows_ledger_id_not_timestamp_order(tmp_path):
+    from datetime import timedelta
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'audit-order-topology.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="audit-topology@example.com", hashed_password="", full_name="Audit Topology", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="T1", transaction_type="BUY", price=10.0, quantity=1, fill_id="T1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="T2", transaction_type="BUY", price=11.0, quantity=1, fill_id="T2"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        orders[0].created_at = orders[1].created_at + timedelta(days=1)
+        orders[0].updated_at = orders[0].created_at
+        db.commit()
+        _validate_paper_state(db, user.id)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_audit_chain_fails_closed_on_self_forward_and_disconnected_links(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'audit-links.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    mutations = ("self", "forward", "disconnected")
+    for mode in mutations:
+        db = Session()
+        try:
+            user = User(email=f"audit-links-{mode}@example.com", hashed_password="", full_name="Audit Links", is_active=True)
+            db.add(user); db.flush()
+            db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+            paper_order(PaperOrderRequest(symbol="L1", transaction_type="BUY", price=10.0, quantity=1, fill_id=f"L1-{mode}"), user_id=user.id, db=db)
+            paper_order(PaperOrderRequest(symbol="L2", transaction_type="BUY", price=11.0, quantity=1, fill_id=f"L2-{mode}"), user_id=user.id, db=db)
+            orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+            if mode == "self":
+                orders[0].previous_audit_hash = orders[0].audit_hash
+            elif mode == "forward":
+                orders[0].previous_audit_hash = orders[1].audit_hash
+            else:
+                orders[0].previous_audit_hash = "0" * 64
+            db.commit()
+            try:
+                _validate_paper_state(db, user.id)
+                raise AssertionError(f"{mode} audit link must fail closed")
+            except RuntimeError as exc:
+                assert "audit chain invariant" in str(exc)
+        finally:
+            db.close()
+    engine.dispose()
