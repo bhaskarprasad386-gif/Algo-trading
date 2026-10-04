@@ -2796,6 +2796,133 @@ def test_paper_reconcile_audit_chain_and_repair_plan_agree_on_clean_ledger(tmp_p
 
 
 
+
+def test_paper_reconcile_response_contract_is_deterministic_for_clean_safe_and_blocked(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    def seed_db(path, email):
+        engine = create_engine(
+            f"sqlite:///{path}",
+            connect_args={"check_same_thread": False, "timeout": 10},
+        )
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        db = Session()
+        user = User(email=email, hashed_password="", full_name="Contract", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(
+            user_id=user.id, mode="PAPER", virtual_balance=5000.0,
+            initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0, is_active=True,
+        ))
+        db.commit()
+        user_id = user.id
+        db.close()
+        return engine, Session, user_id
+
+    def assert_contract(result):
+        assert set(result) == {
+            "status", "repairability", "repairability_reason", "mismatch_categories",
+            "baseline_status", "user_id", "orders", "reconstructed_realized_pnl",
+            "stored_realized_pnl", "reconstructed_virtual_balance", "stored_virtual_balance",
+            "reconstructed_positions", "mismatches", "repair_plan",
+        }
+        assert result["status"] in {"OK", "MISMATCH"}
+        assert result["repairability"] in {"NONE", "SAFE_DRY_RUN", "BLOCKED"}
+        assert result["repairability_reason"] in {
+            "no_mismatch", "account_or_position_state_only", "ledger_or_baseline_integrity_failure"
+        }
+        assert isinstance(result["mismatch_categories"], list)
+        assert result["mismatch_categories"] == sorted(set(result["mismatch_categories"]))
+        assert isinstance(result["mismatches"], list)
+        assert isinstance(result["orders"], int) and result["orders"] >= 0
+        assert isinstance(result["reconstructed_positions"], dict)
+        assert isinstance(result["repair_plan"], dict)
+        assert set(result["repair_plan"]) == {
+            "apply", "reason", "precondition", "proposed_realized_pnl",
+            "proposed_virtual_balance", "positions",
+        }
+        assert result["repair_plan"]["apply"] is False
+        assert result["repair_plan"]["reason"] == "read_only_dry_run"
+        assert result["repair_plan"]["positions"] == result["reconstructed_positions"]
+        assert isinstance(result["repair_plan"]["precondition"], dict)
+        assert set(result["repair_plan"]["precondition"]) == {
+            "algorithm", "order_count", "position_count", "audit_head", "state_hash"
+        }
+        assert result["repair_plan"]["precondition"]["algorithm"] == "SHA256"
+        assert isinstance(result["repair_plan"]["precondition"]["state_hash"], str)
+        assert len(result["repair_plan"]["precondition"]["state_hash"]) == 64
+        assert result["repair_plan"]["proposed_realized_pnl"] == result["reconstructed_realized_pnl"]
+        assert result["repair_plan"]["proposed_virtual_balance"] == result["reconstructed_virtual_balance"]
+
+    # CLEAN
+    clean_engine, clean_session, clean_user = seed_db(tmp_path / "contract-clean.db", "contract-clean@example.com")
+    try:
+        db = clean_session()
+        try:
+            paper_order(PaperOrderRequest(symbol="CLEAN", transaction_type="BUY", price=100.0, quantity=2, fill_id="CC1"), user_id=clean_user, db=db)
+        finally:
+            db.close()
+        db = clean_session()
+        try:
+            first = _reconcile_paper_ledger(db, clean_user)
+            second = _reconcile_paper_ledger(db, clean_user)
+            assert_contract(first)
+            assert first == second
+            assert first["status"] == "OK"
+            assert first["repairability"] == "NONE"
+        finally:
+            db.close()
+    finally:
+        clean_engine.dispose()
+
+    # SAFE_DRY_RUN: account-only mutation must not alter the reconstructed ledger.
+    safe_engine, safe_session, safe_user = seed_db(tmp_path / "contract-safe.db", "contract-safe@example.com")
+    try:
+        db = safe_session()
+        try:
+            paper_order(PaperOrderRequest(symbol="SAFE", transaction_type="BUY", price=100.0, quantity=2, fill_id="SC1"), user_id=safe_user, db=db)
+        finally:
+            db.close()
+        db = safe_session()
+        try:
+            db.query(TradingAccount).filter(TradingAccount.user_id == safe_user).one().virtual_balance += 1.0
+            db.commit()
+            result = _reconcile_paper_ledger(db, safe_user)
+            assert_contract(result)
+            assert result["status"] == "MISMATCH"
+            assert result["repairability"] == "SAFE_DRY_RUN"
+            assert result["mismatch_categories"] == ["ACCOUNTING_STATE"]
+        finally:
+            db.close()
+    finally:
+        safe_engine.dispose()
+
+    # BLOCKED: order/audit corruption takes precedence over any proposed repair.
+    blocked_engine, blocked_session, blocked_user = seed_db(tmp_path / "contract-blocked.db", "contract-blocked@example.com")
+    try:
+        db = blocked_session()
+        try:
+            paper_order(PaperOrderRequest(symbol="BLOCKED", transaction_type="BUY", price=100.0, quantity=2, fill_id="BC1"), user_id=blocked_user, db=db)
+        finally:
+            db.close()
+        db = blocked_session()
+        try:
+            order = db.query(Order).filter(Order.user_id == blocked_user, Order.is_paper.is_(True)).one()
+            order.price = 101.0
+            db.commit()
+            result = _reconcile_paper_ledger(db, blocked_user)
+            assert_contract(result)
+            assert result["status"] == "MISMATCH"
+            assert result["repairability"] == "BLOCKED"
+            assert "ORDER_INTEGRITY" in result["mismatch_categories"]
+            assert "AUDIT_INTEGRITY" in result["mismatch_categories"]
+            assert result["repair_plan"]["apply"] is False
+        finally:
+            db.close()
+    finally:
+        blocked_engine.dispose()
+
 def test_paper_reconcile_reconstructed_positions_equal_repair_plan_for_reversal_and_flat_symbols(tmp_path):
     from app.execution.paper_routes import (
         PaperExitRequest, PaperOrderRequest, _reconcile_paper_ledger, paper_exit, paper_order
