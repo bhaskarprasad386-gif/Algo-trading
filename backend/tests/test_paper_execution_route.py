@@ -6128,7 +6128,7 @@ def test_paper_http_concurrent_reversal_and_exit_close_short_once(tmp_path):
 
 def test_paper_http_concurrent_multi_symbol_partial_reversals_preserve_accounting():
     client, headers = _client_and_headers(starting_balance=10_000.0)
-    starting_balance = 10_000_000.0
+    starting_balance = 10_000.0
 
     alpha_open = client.post(
         "/api/v1/execution/paper/order",
@@ -6279,7 +6279,7 @@ def test_paper_http_concurrent_insufficient_balance_fails_closed_across_symbols(
 
 def test_paper_http_concurrent_exits_across_symbols_preserve_shared_accounting():
     client, headers = _client_and_headers(starting_balance=10_000.0)
-    starting_balance = 10_000_000.0
+    starting_balance = 10_000.0
 
     alpha_open = client.post(
         "/api/v1/execution/paper/order",
