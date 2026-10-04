@@ -682,11 +682,17 @@ def _executable_paper_pnl(trade: LivePaperTrade, row) -> float | None:
         if side not in {"BUY", "SELL"} or entry is None:
             return None
         instrument = str(leg.get("instrument", "")).upper()
-        strike = leg.get("strike")
+        contract = str(leg.get("contract", ""))
         bid = ask = None
-        if instrument in {"CASH", "FUTURE"}:
-            bid = getattr(row, f"{instrument.lower()}_bid", None) if not isinstance(row, dict) else row.get(f"{instrument.lower()}_bid")
-            ask = getattr(row, f"{instrument.lower()}_ask", None) if not isinstance(row, dict) else row.get(f"{instrument.lower()}_ask")
+        if instrument == "CASH":
+            bid = row.get("cash_bid") if isinstance(row, dict) else getattr(row, "cash_bid", None)
+            ask = row.get("cash_ask") if isinstance(row, dict) else getattr(row, "cash_ask", None)
+        elif instrument == "FUTURE":
+            if hasattr(row, "future"):
+                bid, ask = row.future.bid, row.future.ask
+            else:
+                bid = row.get("future_bid") if isinstance(row, dict) else getattr(row, "future_bid", None)
+                ask = row.get("future_ask") if isinstance(row, dict) else getattr(row, "future_ask", None)
         elif instrument == "CALL":
             source = row.option
             bid, ask = source.call_bid, source.call_ask
@@ -697,9 +703,10 @@ def _executable_paper_pnl(trade: LivePaperTrade, row) -> float | None:
             source = row.low if instrument.startswith("LOW_") else row.high
             kind = "call" if instrument.endswith("CALL") else "put"
             bid, ask = getattr(source, f"{kind}_bid"), getattr(source, f"{kind}_ask")
-        elif instrument in {"NEAR", "FAR"}:
-            bid = getattr(row, f"{instrument.lower()}_bid", None)
-            ask = getattr(row, f"{instrument.lower()}_ask", None)
+        elif contract and contract == getattr(row, "near_contract_month", None):
+            bid, ask = row.near_bid, row.near_ask
+        elif contract and contract == getattr(row, "far_contract_month", None):
+            bid, ask = row.far_bid, row.far_ask
         else:
             return None
         exit_price = q(bid, ask, side)
