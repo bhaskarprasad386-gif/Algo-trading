@@ -58,7 +58,7 @@ def test_partial_pnl_pct_survives_expiry_and_daily_capital_uses_allocated_amount
     assert closed[0].exit_reason == "EXPIRY_CLOSE"
     assert closed[0].realized_pnl == -100.0
     assert closed[0].unrealized_pnl == -100.0
-    assert closed[0].pnl_pct == round(100.0 / 30000.0 * 100.0, 8)
+    assert closed[0].pnl_pct == round(-100.0 / 30000.0 * 100.0, 8)
     assert closed[0].capital_used == 30000
 
     # A capital-risk day beginning at 2026-10-04 00:00 IST (2026-10-03
