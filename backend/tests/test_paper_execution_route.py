@@ -9796,3 +9796,57 @@ def test_paper_reconcile_detects_noncanonical_position_symbol():
     assert payload["status"] == "MISMATCH"
     assert any(item.startswith("position_symbol_canonicality_mismatch:") for item in payload["mismatches"])
     assert "POSITION_STATE" in payload["mismatch_categories"]
+
+
+def test_paper_reconcile_detects_open_zero_quantity_position_state():
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.initial_virtual_balance = 1000.0
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        account.initial_balance_source = "BOOTSTRAP"
+        db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id).delete(synchronize_session=False)
+        db.commit()
+        db.add(Position(user_id=user_id, symbol="ZERO_OPEN", quantity=0,
+                        average_price=0.0, is_paper=True, is_open=True))
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("position_state_mismatch:") for item in payload["mismatches"])
+    assert "POSITION_STATE" in payload["mismatch_categories"]
+
+
+def test_paper_reconcile_detects_closed_nonzero_position_state():
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.initial_virtual_balance = 1000.0
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        account.initial_balance_source = "BOOTSTRAP"
+        db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id).delete(synchronize_session=False)
+        db.commit()
+        db.add(Position(user_id=user_id, symbol="CLOSED_NONZERO", quantity=2,
+                        average_price=100.0, is_paper=True, is_open=False))
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("position_state_mismatch:") for item in payload["mismatches"])
+    assert "POSITION_STATE" in payload["mismatch_categories"]
