@@ -805,3 +805,51 @@ def test_multi_rule_partial_capital_cannot_weaken_strictest_loss_limit(db_sessio
     rows = svc.ongoing(db_session, 1)
     assert len(rows) == 1
     assert rows[0].symbol == "LOSS-SEED"
+
+
+def test_ineligible_high_threshold_rule_does_not_impose_risk_limits(db_session):
+    from app.models import AlertRule, GlobalPaperSetting
+    from app.notifications.common import AlertEvent, AlertService
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=200000, emergency_stop=False,
+    ))
+    db_session.add_all([
+        AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=0,
+                  mobile_number="", whatsapp_enabled=False, enabled=True,
+                  max_simultaneous_positions=5, max_daily_capital=200000,
+                  max_loss=10000, priority=1),
+        # This rule must be completely ineligible at gross=100, so its
+        # restrictive risk limits must not affect paper entry.
+        AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=1000,
+                  mobile_number="", whatsapp_enabled=False, enabled=True,
+                  max_simultaneous_positions=1, max_daily_capital=50000,
+                  max_loss=50, priority=10),
+    ])
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    seed, ok = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="SEED",
+        event_id="INELIGIBLE-RISK-SEED", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=10, capital_used=50000, user_id=1,
+    )
+    assert ok is True
+    svc.mark(db_session, seed, edge=0.0)
+    db_session.commit()
+
+    event = AlertEvent(
+        strategy_id="cash-future", event_id="INELIGIBLE-RISK-1", symbol="AAA",
+        timestamp_ns=1, message="eligible-low-threshold-only",
+        metadata={
+            "gross_profit": 100,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-30",
+                "lot_size": 10, "lots": 1, "edge": 5,
+                "capital_used": 50000,
+            },
+        },
+    )
+    assert AlertService().dispatch(db_session, event) == 0
+    rows = svc.ongoing(db_session, 1)
+    assert len(rows) == 2
