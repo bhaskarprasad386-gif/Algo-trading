@@ -663,6 +663,14 @@ async def _paper_box_spread_cycle_loop() -> None:
 def _executable_paper_pnl(trade: LivePaperTrade, row) -> float | None:
     """Mark an alert's original legs against current executable exit quotes."""
     try:
+        import math
+        lot_size = float(trade.lot_size)
+        lots = float(trade.lots)
+        if (
+            not math.isfinite(lot_size) or not lot_size.is_integer() or lot_size <= 0
+            or not math.isfinite(lots) or not lots.is_integer() or lots <= 0
+        ):
+            return None
         legs = json.loads(trade.legs_json or "[]")
     except (TypeError, ValueError):
         return None
