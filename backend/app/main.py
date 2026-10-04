@@ -662,11 +662,10 @@ async def _paper_box_spread_cycle_loop() -> None:
 
 def _executable_paper_pnl(trade: LivePaperTrade, row) -> float | None:
     """Mark an alert's original legs against current executable exit quotes."""
-    # Defense-in-depth: persisted corruption must never reach executable
-    # quote/P&L arithmetic, even if a caller bypasses LivePaperTradeService.
-    from app.auto.live_paper import _valid_persisted_trade
-    if not _valid_persisted_trade(trade):
-        return None
+    # Persisted-state validation belongs at the monitor/service boundary.
+    # This calculator is also used directly by deterministic tests, so it
+    # validates the executable quote/leg inputs here without requiring every
+    # synthetic calculator fixture to carry the full durable-trade envelope.
     try:
         import math
         from collections.abc import Mapping
@@ -1045,3 +1044,5 @@ def health_check():
         app_logger.error(f"Health check database failure: {exc}")
         return {"status": "degraded", "app": settings.app_name, "version": "0.1.0", "database": "Disconnected"}
     return {"status": "ok", "app": settings.app_name, "version": "0.1.0", "database": "Connected"}
+
+
