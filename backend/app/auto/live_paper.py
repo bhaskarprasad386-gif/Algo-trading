@@ -98,8 +98,15 @@ def _valid_persisted_trade(trade) -> bool:
             return False
         status = str(trade.status).upper()
         exit_reason = getattr(trade, "exit_reason", None)
+        expected_pnl_pct = round(unrealized_pnl / capital_used * 100.0, 8)
+        if pnl_pct != expected_pnl_pct:
+            return False
         if status == "ONGOING":
-            if closed_at is not None or exit_reason is not None:
+            if (
+                closed_at is not None
+                or exit_reason is not None
+                or realized_pnl != 0.0
+            ):
                 return False
         elif (
             not isinstance(closed_at, datetime)
@@ -108,7 +115,6 @@ def _valid_persisted_trade(trade) -> bool:
             or last_mark_at > closed_at
             or str(exit_reason or "").strip().upper() not in {"MANUAL", "EXPIRY_CLOSE"}
             or realized_pnl != unrealized_pnl
-            or pnl_pct != round(realized_pnl / capital_used * 100.0, 8)
         ):
             return False
         return True
