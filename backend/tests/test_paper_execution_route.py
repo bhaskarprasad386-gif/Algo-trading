@@ -10563,3 +10563,96 @@ def test_paper_mutation_fails_closed_on_invalid_paper_order_identity_metadata(tm
             db.query(TradingAccount).filter(TradingAccount.user_id == user_id).update({"virtual_balance": 1000.0, "realized_pnl": 0.0}); db.commit()
         finally: db.close()
     engine.dispose()
+
+
+def test_paper_repair_precondition_changes_for_remaining_order_metadata(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+    from app.models.order import Order
+    engine = create_engine(f"sqlite:///{tmp_path / 'repair-order-metadata.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="repair-meta@example.com", hashed_password="", full_name="Repair Meta", is_active=True); db.add(user); db.flush()
+        account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)
+        db.add(account); db.commit()
+        paper_order(PaperOrderRequest(symbol="META", transaction_type="BUY", price=10.0, quantity=1, fill_id="META-1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id, Order.fill_id == "META-1").one()
+        positions = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).all()
+        before = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+        order.message = "tampered"
+        db.commit()
+        db.refresh(order)
+        after = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+        assert after != before
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_reconcile_repairability_matrix_is_deterministic(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    from app.models.order import Order
+    engine = create_engine(f"sqlite:///{tmp_path / 'repairability-matrix.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="repairability@example.com", hashed_password="", full_name="Repairability", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        assert _reconcile_paper_ledger(db, user.id)["repairability"] == "NONE"
+        paper_order(PaperOrderRequest(symbol="MATRIX", transaction_type="BUY", price=10.0, quantity=1, fill_id="MATRIX-1"), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id, Order.fill_id == "MATRIX-1").one()
+        order.pnl = 1.0
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert payload["repairability_reason"] == "ledger_or_baseline_integrity_failure"
+        assert payload["repair_plan"]["apply"] is False
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_repair_plan_is_read_only_and_matches_reconstruction(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+    from app.models.position import Position
+    engine = create_engine(f"sqlite:///{tmp_path / 'repair-plan-output.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="repair-plan@example.com", hashed_password="", full_name="Repair Plan", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="PLAN", transaction_type="BUY", price=100.0, quantity=2, fill_id="PLAN-1"), user_id=user.id, db=db)
+        position = db.query(Position).filter(Position.user_id == user.id, Position.symbol == "PLAN").one()
+        position.last_price = 120.0
+        position.pnl = 40.0
+        db.commit()
+        before = (position.quantity, position.average_price, position.last_price, position.pnl)
+        payload = _reconcile_paper_ledger(db, user.id)
+        plan = payload["repair_plan"]
+        assert plan["apply"] is False
+        assert plan["reason"] == "read_only_dry_run"
+        assert plan["proposed_realized_pnl"] == payload["reconstructed_realized_pnl"]
+        assert plan["proposed_virtual_balance"] == payload["reconstructed_virtual_balance"]
+        assert plan["positions"] == payload["reconstructed_positions"]
+        db.refresh(position)
+        assert (position.quantity, position.average_price, position.last_price, position.pnl) == before
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_mutation_routes_share_state_validator_for_corrupt_position(tmp_path):
+    from app.execution.paper_routes import PaperEntryRequest, PaperOrderRequest, paper_entry, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'route-validator-parity.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="route-parity@example.com", hashed_password="", full_name="Route Parity", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        db.add(Position(user_id=user.id, symbol="BAD", quantity=1, average_price=10.0, last_price=float("nan"), pnl=0.0, is_paper=True, is_open=True)); db.commit()
+        for call in (
+            lambda: paper_order(PaperOrderRequest(symbol="NEW1", transaction_type="BUY", price=5.0, quantity=1, fill_id="PARITY-1"), user_id=user.id, db=db),
+            lambda: paper_entry(PaperEntryRequest(symbol="NEW2", price=5.0, quantity=1, fill_id="PARITY-2"), user_id=user.id, db=db),
+        ):
+            try:
+                call()
+                raise AssertionError("corrupt position must block every mutation route")
+            except RuntimeError as exc:
+                assert "paper position invariant" in str(exc)
+            finally:
+                db.rollback()
+    finally:
+        db.close(); engine.dispose()
