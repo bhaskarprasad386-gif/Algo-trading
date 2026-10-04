@@ -210,7 +210,12 @@ class LivePaperTradeService:
             exchange = str(metadata.get("exchange") or "").strip().upper()
             close_time = time(23, 30) if exchange == "MCX" else MARKET_CLOSE
             if local_now.date() > expiry or (local_now.date() == expiry and local_now.time() >= close_time):
-                closed.append(self.close(db, trade, "EXPIRY_CLOSE"))
+                closed_trade = self.close(db, trade, "EXPIRY_CLOSE")
+                # A concurrent manual close may win the atomic status update.
+                # Only report this trade as an expiry closure when EXPIRY_CLOSE
+                # is actually the persisted terminal reason.
+                if closed_trade.status == "COMPLETED" and closed_trade.exit_reason == "EXPIRY_CLOSE":
+                    closed.append(closed_trade)
         return closed
 
     def ongoing(self, db: Session, user_id=1):
