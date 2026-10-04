@@ -70,15 +70,22 @@ def test_partial_lots_mark_and_close_scale_pnl_and_pnl_pct(db_session):
     db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=125000, emergency_stop=False))
     db_session.commit()
 
+    seed, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="SEED",
+        event_id="PARTIAL-PNL-SEED", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=3, edge=5, capital_used=90000, user_id=1,
+    )
+    assert created is True
+
     trade, created = svc.enter_or_mark(
         db_session, strategy_id="cash-future", symbol="AAA",
         event_id="PARTIAL-PNL-1", direction="LONG", expiry="2026-10-30",
         lot_size=10, lots=2, edge=10, capital_used=60000, user_id=1,
     )
     assert created is True
-    # Simulate the global-cap allocator reducing the requested 2 lots to 1.
-    trade.lots = 1
-    trade.capital_used = 30000
+    assert trade.lots == 1
+    assert trade.capital_used == 30000
+
     svc.mark(db_session, trade, edge=20)
     assert trade.unrealized_pnl == 100.0
     assert trade.pnl_pct == round(100.0 / 30000.0 * 100.0, 8)
