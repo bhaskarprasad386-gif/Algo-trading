@@ -44,7 +44,23 @@ class LivePaperTradeService:
             return existing, False
         if lot_size <= 0 or lots <= 0 or edge < 0:
             return None, False
-        setting = db.query(GlobalPaperSetting).filter(GlobalPaperSetting.user_id == int(user_id)).first()
+        # Serialize capital allocation on the per-user global paper setting
+        # row before reading reservations. SQLite otherwise allows two
+        # deferred read transactions to observe the same free capital and
+        # both insert trades. The no-op UPDATE acquires the database write
+        # lock (and a row lock on databases that support it) without changing
+        # the configured amount.
+        lock_count = db.query(GlobalPaperSetting).filter(
+            GlobalPaperSetting.user_id == int(user_id),
+        ).update(
+            {GlobalPaperSetting.paper_amount: GlobalPaperSetting.paper_amount},
+            synchronize_session=False,
+        )
+        if lock_count == 0:
+            return None, False
+        setting = db.query(GlobalPaperSetting).filter(
+            GlobalPaperSetting.user_id == int(user_id),
+        ).first()
         if setting is None or not setting.enabled or setting.emergency_stop or float(setting.paper_amount) <= 0:
             return None, False
         capital_per_lot = max(0.0, float(capital_used)) / max(1, int(lots))
