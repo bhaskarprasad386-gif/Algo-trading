@@ -134,6 +134,18 @@ class LivePaperTradeService:
     def mark(self, db: Session, trade: LivePaperTrade, *, edge: float, capital_used=None, pnl_override=None):
         if trade.status != "ONGOING":
             return trade
+        # Serialize P&L marks with alert risk gates on the same per-user
+        # paper-setting row. Without this, a risk check could read an old
+        # unrealized loss, then a concurrent mark could worsen the loss before
+        # the new entry commits.
+        lock_count = db.query(GlobalPaperSetting).filter(
+            GlobalPaperSetting.user_id == int(trade.user_id),
+        ).update(
+            {GlobalPaperSetting.paper_amount: GlobalPaperSetting.paper_amount},
+            synchronize_session=False,
+        )
+        if lock_count == 0:
+            return trade
         current_edge = max(0.0, float(edge))
         unrealized_pnl = round(
             float(pnl_override) if pnl_override is not None else (current_edge - trade.entry_edge) * trade.lot_size * trade.lots,
