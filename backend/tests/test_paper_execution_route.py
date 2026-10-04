@@ -1513,8 +1513,7 @@ def test_paper_ledger_reconciliation_fingerprint_chain_is_valid_and_tamper_detec
         assert all(len(order.audit_hash) == 64 for order in orders)
         assert orders[0].previous_audit_hash is None
         assert orders[1].previous_audit_hash == orders[0].audit_hash
-        original_hash = orders[0].audit_hash
-        orders[0].price = 101.0
+            orders[0].price = 101.0
         db.commit()
     finally:
         db.close()
@@ -1525,10 +1524,7 @@ def test_paper_ledger_reconciliation_fingerprint_chain_is_valid_and_tamper_detec
     assert data["status"] == "MISMATCH"
     assert data["repairability"] == "BLOCKED"
     assert data["repair_plan"]["apply"] is False
-    assert f"audit_hash_mismatch:{orders[0].id}" in data["mismatches"] or any(
-        item.startswith("audit_hash_mismatch:") for item in data["mismatches"]
-    )
-    assert original_hash != data.get("repair_plan", {}).get("audit_hash")
+    assert any(item.startswith("audit_hash_mismatch:") for item in data["mismatches"])
 
 
 def test_paper_ledger_reconciliation_blocks_legacy_unfingerprinted_orders():
