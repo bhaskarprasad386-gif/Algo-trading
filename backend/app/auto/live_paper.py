@@ -273,7 +273,17 @@ class LivePaperTradeService:
             ).all()
             reserved = sum(float(row[0] or 0.0) for row in reserved_rows)
             available = max(0.0, paper_amount - reserved)
-            lots = min(int(lots), int(available // capital_per_lot))
+            # Avoid binary-float floor under-allocation at exact capital
+            # boundaries; the service is also called directly outside alert dispatch.
+            from decimal import Decimal, ROUND_FLOOR
+            available_decimal = Decimal(str(available))
+            per_lot_decimal = Decimal(str(capital_per_lot))
+            allocatable_lots = int(
+                (available_decimal / per_lot_decimal).to_integral_value(
+                    rounding=ROUND_FLOOR
+                )
+            )
+            lots = min(int(lots), max(0, allocatable_lots))
             if lots <= 0:
                 return None, False
             capital_used = capital_per_lot * lots
