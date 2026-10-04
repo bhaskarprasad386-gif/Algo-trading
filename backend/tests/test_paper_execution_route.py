@@ -5207,3 +5207,118 @@ def test_paper_order_http_concurrent_duplicate_fill_id_is_idempotent(tmp_path):
     finally:
         final_db.close()
         engine.dispose()
+
+
+def test_paper_order_http_concurrent_same_fill_id_conflicting_details_fail_closed(tmp_path):
+    """A fill_id collision with different execution details must never execute twice."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-fill-id-conflict.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="fill-id-conflict-http@example.com",
+            hashed_password="",
+            full_name="Fill ID Conflict HTTP",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(
+            TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=1000.0,
+                initial_virtual_balance=1000.0,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            )
+        )
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    client = TestClient(app)
+
+    def override_db():
+        db = TestSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        def submit(_):
+            return client.post(
+                "/api/v1/execution/paper/order",
+                json={
+                    "symbol": "HTTP-FILL-CONFLICT",
+                    "transaction_type": "BUY",
+                    "price": 100.0 if _ == 0 else 101.0,
+                    "quantity": 2,
+                    "fill_id": "HTTP-FILL-CONFLICT-1",
+                },
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            responses = list(pool.map(submit, range(8)))
+
+        successful = [response for response in responses if response.status_code == 200]
+        conflicts = [response for response in responses if response.status_code == 409]
+
+        assert len(successful) == 1
+        assert len(conflicts) == 7
+        assert all(
+            response.json()["detail"]
+            == "fill_id already exists with different execution details"
+            for response in conflicts
+        )
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    verify = TestSession()
+    try:
+        account = verify.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        orders = verify.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+        ).all()
+        positions = verify.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+        ).all()
+
+        assert len(orders) == 1
+        assert len(positions) == 1
+        assert orders[0].fill_id == "HTTP-FILL-CONFLICT-1"
+        assert float(orders[0].price) in {100.0, 101.0}
+        assert positions[0].quantity == 2
+        assert float(account.virtual_balance) == 800.0
+        assert float(account.realized_pnl or 0.0) == 0.0
+
+        from app.execution.paper_routes import _reconcile_paper_ledger
+        reconciliation = _reconcile_paper_ledger(verify, user_id)
+        assert reconciliation["status"] == "OK"
+        assert reconciliation["mismatches"] == []
+        assert reconciliation["repairability"] == "NONE"
+    finally:
+        verify.close()
+        engine.dispose()
