@@ -295,3 +295,105 @@ def test_dispatch_expiry_does_not_commit_caller_pending_work(db_session):
     assert verify_trade.status == "COMPLETED"
     assert verify_trade.exit_reason == "EXPIRY_CLOSE"
     assert verify_setting.paper_amount == 30000
+
+
+def test_concurrent_expiry_cleanup_does_not_duplicate_close_or_entry(tmp_path):
+    """Two alert sessions at the expiry boundary must converge without duplicate paper rows."""
+    from datetime import datetime
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'expiry-dispatch-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    try:
+        setup.add(GlobalPaperSetting(
+            user_id=1, enabled=True, paper_amount=30000, emergency_stop=False,
+        ))
+        setup.add(AlertRule(
+            user_id=1, strategy_id="cash-future", min_gross_profit=0,
+            mobile_number="", whatsapp_enabled=False, enabled=True,
+            max_daily_capital=60000, max_simultaneous_positions=1, max_loss=100,
+        ))
+        setup.commit()
+        seed_service = LivePaperTradeService()
+        seed, created = seed_service.enter_or_mark(
+            setup, strategy_id="cash-future", symbol="EXPIRING-RACE",
+            event_id="EXPIRING-RACE-SEED", direction="LONG",
+            expiry="2026-10-04", earliest_expiry="2026-10-04",
+            lot_size=10, lots=1, edge=5, capital_used=30000, user_id=1,
+        )
+        assert created is True
+        setup.commit()
+    finally:
+        setup.close()
+
+    barrier = threading.Barrier(2)
+    errors = []
+    results = []
+
+    def worker(event_id):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            # Freeze expiry time at the exact NSE boundary so both independent
+            # expiry sessions attempt the same terminal transition.
+            original = LivePaperTradeService.close_expired
+            def close_at_boundary(self, session, **kwargs):
+                return original(
+                    self, session, now=datetime(2026, 10, 4, 15, 30),
+                    **{k: v for k, v in kwargs.items() if k != "now"},
+                )
+            # The service method is patched per instance to keep this test
+            # deterministic without changing production clock behavior.
+            service = AlertService()
+            from unittest.mock import patch
+            with patch.object(
+                LivePaperTradeService, "close_expired", close_at_boundary
+            ):
+                results.append(service.dispatch(
+                    db, _event(event_id)
+                ))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=worker, args=("EXPIRY-CONCURRENT-A",)),
+        threading.Thread(target=worker, args=("EXPIRY-CONCURRENT-B",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=15)
+
+    assert errors == []
+    assert len(results) == 2
+
+    verify = Session()
+    try:
+        completed = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.event_id == "EXPIRING-RACE-SEED",
+            LivePaperTrade.status == "COMPLETED",
+        ).all()
+        ongoing = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.status == "ONGOING",
+        ).all()
+        assert len(completed) == 1
+        assert len(ongoing) == 1
+        assert ongoing[0].capital_used == 30000
+        assert ongoing[0].event_id in {
+            "EXPIRY-CONCURRENT-A", "EXPIRY-CONCURRENT-B"
+        }
+    finally:
+        verify.close()
+        engine.dispose()
