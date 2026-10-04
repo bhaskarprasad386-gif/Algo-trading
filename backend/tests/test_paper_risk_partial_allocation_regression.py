@@ -234,3 +234,45 @@ def test_concurrent_different_events_respect_max_simultaneous_positions(tmp_path
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_failed_risk_locked_entry_rolls_back_before_next_alert(db_session, monkeypatch):
+    from app.models import AlertRule
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=100000, max_simultaneous_positions=5, max_loss=0,
+    ))
+    db_session.commit()
+
+    original = LivePaperTradeService.enter_or_mark
+    calls = {"count": 0}
+
+    def fail_once(self, *args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("forced insert failure")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(LivePaperTradeService, "enter_or_mark", fail_once)
+
+    first = _event("ROLLBACK-FIRST", capital=60000, lots=1)
+    assert AlertService().dispatch(db_session, first) == 0
+    assert db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+    ).count() == 0
+
+    # The failed entry happened after the per-user risk lock was acquired.
+    # The dispatcher must roll back that transaction so the next alert can
+    # acquire the same lock and reserve capital normally.
+    second = _event("ROLLBACK-SECOND", capital=60000, lots=1)
+    assert AlertService().dispatch(db_session, second) == 0
+
+    rows = LivePaperTradeService().ongoing(db_session, 1)
+    assert len(rows) == 1
+    assert rows[0].event_id == "ROLLBACK-SECOND"
+    assert rows[0].capital_used == 60000
