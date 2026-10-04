@@ -528,6 +528,95 @@ def test_manual_close_releases_reserved_capital_for_next_entry(db_session):
     assert svc.ongoing(db_session, 1) == [second]
 
 
+def test_alert_entry_resolves_expired_position_before_risk_gates(db_session):
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=100000, emergency_stop=False))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=100000.0, max_simultaneous_positions=1, max_loss=1000.0,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    expired, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="EXPIRED",
+        event_id="ALERT-EXPIRY-OLD", direction="LONG", expiry="2026-10-03",
+        earliest_expiry="2026-10-03", lot_size=10, lots=1, edge=10,
+        capital_used=60000, metadata={"exchange": "NFO"}, user_id=1,
+    )
+    assert created is True
+    svc.mark(db_session, expired, edge=12)
+    db_session.commit()
+
+    # The background monitor is periodic; dispatch must resolve a due expiry
+    # before simultaneous-position and capital gates evaluate the new alert.
+    event = AlertEvent(
+        strategy_id="cash-future", event_id="ALERT-EXPIRY-NEW", symbol="NEW",
+        timestamp_ns=1, message="new", metadata={
+            "gross_profit": 10,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-30",
+                "lot_size": 10, "lots": 1, "edge": 5, "capital_used": 60000,
+            },
+        },
+    )
+    assert AlertService().dispatch(db_session, event) == 0
+
+    db_session.expire_all()
+    rows = svc.ongoing(db_session, 1)
+    completed = svc.completed(db_session, 1)
+    assert len(rows) == 1
+    assert rows[0].event_id == "ALERT-EXPIRY-NEW"
+    assert len(completed) == 1
+    assert completed[0].event_id == "ALERT-EXPIRY-OLD"
+    assert completed[0].exit_reason == "EXPIRY_CLOSE"
+
+
+def test_alert_entry_keeps_expiry_realized_loss_in_max_loss_gate(db_session):
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=200000, emergency_stop=False))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0.0, max_simultaneous_positions=5, max_loss=100.0,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    expired, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="LOSS-EXPIRY",
+        event_id="ALERT-LOSS-OLD", direction="LONG", expiry="2026-10-03",
+        earliest_expiry="2026-10-03", lot_size=10, lots=1, edge=10,
+        capital_used=50000, metadata={"exchange": "NFO"}, user_id=1,
+    )
+    assert created is True
+    svc.mark(db_session, expired, edge=0.0)
+    db_session.commit()
+
+    event = AlertEvent(
+        strategy_id="cash-future", event_id="ALERT-LOSS-NEW", symbol="NEW",
+        timestamp_ns=2, message="blocked", metadata={
+            "gross_profit": 10,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-30",
+                "lot_size": 10, "lots": 1, "edge": 5, "capital_used": 50000,
+            },
+        },
+    )
+    assert AlertService().dispatch(db_session, event) == 0
+
+    db_session.expire_all()
+    assert svc.ongoing(db_session, 1) == []
+    completed = svc.completed(db_session, 1)
+    assert len(completed) == 1
+    assert completed[0].realized_pnl == -100.0
+
+
 def test_expiry_close_releases_reserved_capital_for_next_entry(db_session):
     svc = LivePaperTradeService()
     db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=100000, emergency_stop=False))
