@@ -1,3 +1,4 @@
+from app.notifications.common import AlertEvent, AlertService
 from app.core.database import Base
 from datetime import datetime, time
 from app.auto.live_paper import LivePaperTradeService
