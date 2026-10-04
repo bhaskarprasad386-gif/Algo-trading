@@ -260,3 +260,95 @@ def test_paper_identity_bootstrap_converges_under_two_first_request_race(tmp_pat
             verify.close()
     finally:
         engine.dispose()
+
+
+def test_same_user_concurrent_paper_orders_serialize_balance_and_position(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+    from fastapi import HTTPException
+    import threading
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'paper-order-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(
+            email="paper-race@example.com",
+            hashed_password="",
+            full_name="Paper Race",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(
+            TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=1_000.0,
+                realized_pnl=0.0,
+                is_active=True,
+            )
+        )
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    barrier = threading.Barrier(2)
+
+    def submit():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            try:
+                result = paper_order(
+                    PaperOrderRequest(
+                        symbol="RACE",
+                        transaction_type="BUY",
+                        price=100.0,
+                        quantity=5,
+                    ),
+                    user_id=user_id,
+                    db=db,
+                )
+                return ("ok", result)
+            except HTTPException as exc:
+                db.rollback()
+                return ("http", exc.status_code, exc.detail)
+        finally:
+            db.close()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: submit(), range(2)))
+
+        assert sum(1 for result in results if result[0] == "ok") == 1
+        rejected = [result for result in results if result[0] == "http"]
+        assert len(rejected) == 1
+        assert rejected[0][1] == 409
+
+        verify = Session()
+        try:
+            account = verify.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id
+            ).one()
+            positions = verify.query(Position).filter(
+                Position.user_id == user_id,
+                Position.symbol == "RACE",
+                Position.quantity != 0,
+            ).all()
+            orders = verify.query(Order).filter(
+                Order.user_id == user_id,
+                Order.symbol == "RACE",
+            ).all()
+            assert account.virtual_balance == 500.0
+            assert len(positions) == 1
+            assert positions[0].quantity == 5
+            assert len(orders) == 1
+        finally:
+            verify.close()
+    finally:
+        engine.dispose()
