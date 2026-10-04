@@ -7503,6 +7503,115 @@ def test_paper_http_concurrent_reads_during_successful_short_to_long_reversal_ex
 
 
 
+
+def test_paper_http_commit_failure_does_not_persist_partial_mutation():
+    """A database commit failure must not leave the paper ledger partially mutated."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="commit-failure@example.com",
+            hashed_password="",
+            full_name="Commit Failure",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id,
+            mode="PAPER",
+            virtual_balance=1000.0,
+            initial_virtual_balance=1000.0,
+            initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0,
+            is_active=True,
+        ))
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    class FailingCommitSession(Session):
+        def commit(self):
+            raise RuntimeError("injected commit failure")
+
+    failing_factory = sessionmaker(bind=engine, class_=FailingCommitSession)
+    failing_db = failing_factory()
+    client = TestClient(app)
+
+    def override_db():
+        try:
+            yield failing_db
+        finally:
+            failing_db.rollback()
+            failing_db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        response = client.post(
+            "/api/v1/execution/paper/order",
+            json={
+                "symbol": "COMMIT_FAILURE",
+                "transaction_type": "BUY",
+                "price": 250.0,
+                "quantity": 2,
+                "fill_id": "COMMIT-FAILURE-1",
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 500
+
+    verify = TestSession()
+    try:
+        account = verify.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        positions = verify.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.symbol == "COMMIT_FAILURE",
+        ).all()
+        orders = verify.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+            Order.symbol == "COMMIT_FAILURE",
+        ).all()
+
+        assert account.virtual_balance == 1000.0
+        assert account.realized_pnl == 0.0
+        assert positions == []
+        assert orders == []
+    finally:
+        verify.close()
+
+    reconcile = client.get(
+        "/api/v1/execution/paper/reconcile",
+        headers={"X-User-ID": str(user_id)},
+    )
+    # The request above uses the normal dependency after the injected session
+    # is removed; it must still see the untouched durable ledger.
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
+
+
 def test_concurrent_cross_user_same_symbol_orders_preserve_account_isolation():
     """Concurrent writes for different users may serialize on SQLite, but never share balance or positions."""
     from app.execution.paper_routes import PaperOrderRequest, paper_order
