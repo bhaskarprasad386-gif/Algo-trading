@@ -46,3 +46,60 @@ def test_numeric_expiry_closes_synthetic_trade(db_session):
     closed = svc.close_expired(db_session, now=datetime(2026,10,10,15,30))
     assert len(closed) == 1
     assert closed[0].exit_reason == "EXPIRY_CLOSE"
+
+
+def _paper_trade(legs, lot_size=10, lots=2):
+    import json
+    return LivePaperTrade(lot_size=lot_size, lots=lots, legs_json=json.dumps(legs))
+
+
+def test_executable_pnl_cash_future_uses_exit_bid_ask():
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+    trade = _paper_trade([
+        {"instrument": "CASH", "side": "BUY", "price": 100.0},
+        {"instrument": "FUTURE", "side": "SELL", "price": 105.0},
+    ])
+    row = {"cash_bid": 103.0, "cash_ask": 104.0, "future_bid": 102.0, "future_ask": 103.0}
+    assert _executable_paper_pnl(trade, row) == 100.0
+
+
+def test_executable_pnl_synthetic_uses_nested_quotes():
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+    trade = _paper_trade([
+        {"instrument": "FUTURE", "side": "BUY", "price": 100.0},
+        {"instrument": "CALL", "side": "BUY", "price": 10.0},
+        {"instrument": "PUT", "side": "SELL", "price": 8.0},
+    ])
+    option = SimpleNamespace(call_bid=12.0, call_ask=13.0, put_bid=7.0, put_ask=9.0)
+    future = SimpleNamespace(bid=102.0, ask=103.0)
+    row = SimpleNamespace(option=option, future=future)
+    assert _executable_paper_pnl(trade, row) == 20.0
+
+
+def test_executable_pnl_box_uses_nested_low_high_quotes():
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+    trade = _paper_trade([
+        {"instrument": "LOW_CALL", "side": "BUY", "price": 10.0},
+        {"instrument": "LOW_PUT", "side": "BUY", "price": 9.0},
+        {"instrument": "HIGH_CALL", "side": "SELL", "price": 5.0},
+        {"instrument": "HIGH_PUT", "side": "SELL", "price": 4.0},
+    ])
+    low = SimpleNamespace(call_bid=11.0, call_ask=12.0, put_bid=10.0, put_ask=11.0)
+    high = SimpleNamespace(call_bid=3.0, call_ask=4.0, put_bid=2.0, put_ask=3.0)
+    row = SimpleNamespace(low=low, high=high)
+    assert _executable_paper_pnl(trade, row) == 40.0
+
+
+def test_executable_pnl_calendar_uses_contract_specific_quotes():
+    from app.main import _executable_paper_pnl
+    trade = _paper_trade([
+        {"contract": "NEAR", "side": "BUY", "price": 100.0},
+        {"contract": "FAR", "side": "SELL", "price": 110.0},
+    ])
+    from types import SimpleNamespace
+    row = SimpleNamespace(near_contract_month="NEAR", far_contract_month="FAR",
+                          near_bid=104.0, near_ask=105.0, far_bid=106.0, far_ask=107.0)
+    assert _executable_paper_pnl(trade, row) == -20.0
