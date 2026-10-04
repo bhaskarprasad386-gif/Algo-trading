@@ -158,3 +158,41 @@ def test_paper_short_reversal_deducts_cost_of_remaining_long():
     assert data["position"]["symbol"] == "REVERSAL"
     assert data["position"]["quantity"] == 3.0
     assert data["position"]["entry_price"] == 90.0
+
+
+def test_paper_api_fails_closed_when_multiple_active_paper_accounts_exist():
+    from app.execution.paper_routes import current_user_id
+    from fastapi import HTTPException
+
+    db = SessionLocal()
+    try:
+        db.query(TradingAccount).delete()
+        db.commit()
+        db.add_all([
+            TradingAccount(
+                user_id=101,
+                mode="PAPER",
+                virtual_balance=10_000_000.0,
+                realized_pnl=0.0,
+                is_active=True,
+            ),
+            TradingAccount(
+                user_id=202,
+                mode="PAPER",
+                virtual_balance=10_000_000.0,
+                realized_pnl=0.0,
+                is_active=True,
+            ),
+        ])
+        db.commit()
+
+        try:
+            current_user_id(db)
+            assert False, "ambiguous paper identity must fail closed"
+        except HTTPException as exc:
+            assert exc.status_code == 409
+            assert exc.detail == "multiple active paper trading accounts require authenticated user context"
+    finally:
+        db.query(TradingAccount).delete()
+        db.commit()
+        db.close()
