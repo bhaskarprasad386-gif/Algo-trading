@@ -2311,6 +2311,12 @@ def test_paper_reconcile_safe_dry_run_plan_is_deterministic_and_read_only(tmp_pa
         assert plan1["repairability"] == "SAFE_DRY_RUN"
         assert plan1["repair_plan"]["apply"] is False
         assert plan1["repair_plan"]["reason"] == "read_only_dry_run"
+        precondition = plan1["repair_plan"]["precondition"]
+        assert precondition["algorithm"] == "SHA256"
+        assert precondition["order_count"] == 1
+        assert precondition["position_count"] == 1
+        assert len(precondition["state_hash"]) == 64
+        assert precondition["audit_head"]
         assert plan1["repair_plan"]["proposed_virtual_balance"] == 500.0
         assert plan1["repair_plan"]["proposed_realized_pnl"] == 0.0
         assert plan1["repair_plan"]["positions"]["SAFE"] == {
@@ -2327,6 +2333,15 @@ def test_paper_reconcile_safe_dry_run_plan_is_deterministic_and_read_only(tmp_pa
         after_orders = after.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).count()
         after_positions = after.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).count()
         assert (after_account.virtual_balance, after_account.realized_pnl, after_orders, after_positions) == before_values
+    changed = Session()
+    try:
+        changed_account = changed.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        changed_account.virtual_balance = 776.0
+        changed.commit()
+        changed_result = _reconcile_paper_ledger(changed, user_id)
+        assert changed_result["repair_plan"]["precondition"]["state_hash"] != precondition["state_hash"]
+    finally:
+        changed.close()
     finally:
         after.close()
         engine.dispose()
