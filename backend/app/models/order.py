@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import hashlib
 
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean
 
@@ -18,6 +19,8 @@ class Order(Base):
     broker_order_id = Column(String, nullable=True)
     # Broker-confirmed execution identity; nullable for legacy/manual paper orders.
     fill_id = Column(String, nullable=True, index=True)
+    audit_hash = Column(String(64), nullable=True, index=True)
+    previous_audit_hash = Column(String(64), nullable=True, index=True)
 
     symbol = Column(String, index=True, nullable=False)
     token = Column(String, nullable=True)
