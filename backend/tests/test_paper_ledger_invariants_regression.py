@@ -365,3 +365,30 @@ def test_malformed_persisted_identity_is_excluded_and_cannot_consume_risk_state(
     )
     assert valid is None
     assert created is False
+
+
+def test_expiry_cannot_precede_opening_trade_date(db_session):
+    _enable(db_session, amount=100_000)
+    malformed = LivePaperTrade(
+        user_id=1, strategy_id="cash-future", symbol="EXPIRY-BEFORE-OPEN",
+        event_id="EXPIRY-BEFORE-OPEN", direction="LONG",
+        expiry="2026-10-03", earliest_expiry="2026-10-03",
+        lot_size=1, lots=1, entry_edge=10, current_edge=10,
+        capital_used=10_000, unrealized_pnl=0, realized_pnl=0, pnl_pct=0,
+        status="ONGOING",
+        opened_at=datetime(2026, 10, 4, 10, 0),
+        last_mark_at=datetime(2026, 10, 4, 10, 0),
+    )
+    db_session.add(malformed)
+    db_session.commit()
+    svc = LivePaperTradeService()
+    assert svc.ongoing(db_session, 1) == []
+    assert svc.close_expired(
+        db_session, now=datetime(2026, 10, 4, 16, 0)
+    ) == []
+    assert svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="GOOD",
+        event_id="EXPIRY-GOOD", direction="LONG",
+        expiry="2026-10-10", earliest_expiry="2026-10-10",
+        lot_size=1, lots=1, edge=10, capital_used=10_000, user_id=1,
+    )[0] is None
