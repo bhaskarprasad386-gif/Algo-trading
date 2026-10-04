@@ -10984,3 +10984,97 @@ def test_paper_audit_chain_binds_identity_fields_without_order_id_hashing(tmp_pa
         assert tampered["mismatches"] == []
     finally:
         db.close(); engine.dispose()
+
+
+def test_paper_fill_id_null_is_allowed_but_blank_is_invalid_and_duplicate_nonnull_blocks(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, _validate_paper_state, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'fill-id-null-blank.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="fill-null-blank@example.com", hashed_password="", full_name="Fill Null Blank", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="N1", transaction_type="BUY", price=10.0, quantity=1), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="N2", transaction_type="BUY", price=11.0, quantity=1), user_id=user.id, db=db)
+        assert db.query(Order).filter(Order.user_id == user.id, Order.fill_id.is_(None)).count() == 2
+        second = db.query(Order).filter(Order.user_id == user.id, Order.symbol == "N2").one()
+        second.fill_id = ""
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert any(item.startswith("invalid_fill_id:") for item in payload["mismatches"])
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("blank fill_id must fail closed")
+        except RuntimeError as exc:
+            assert "fill_id invariant" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_duplicate_nonnull_fill_id_is_detected_even_when_audit_hashes_are_valid(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, _validate_paper_state, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'fill-id-duplicate.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="fill-duplicate@example.com", hashed_password="", full_name="Fill Duplicate", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="D1", transaction_type="BUY", price=10.0, quantity=1, fill_id="DUP-FILL"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="D2", transaction_type="BUY", price=11.0, quantity=1, fill_id="D2-FILL"), user_id=user.id, db=db)
+        orders = db.query(Order).filter(Order.user_id == user.id).order_by(Order.id.asc()).all()
+        orders[1].fill_id = orders[0].fill_id
+        db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["repairability"] == "BLOCKED"
+        assert "AUDIT_INTEGRITY" not in payload["mismatch_categories"]
+        assert any(item.startswith("duplicate_fill_id:") for item in payload["mismatches"])
+        try:
+            _validate_paper_state(db, user.id)
+            raise AssertionError("duplicate fill_id must fail closed")
+        except RuntimeError as exc:
+            assert "audit hash invariant" in str(exc) or "fill_id" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_fill_id_normalization_and_idempotency_keep_null_distinct_from_value(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'fill-id-idempotency.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="fill-id-idempotency@example.com", hashed_password="", full_name="Fill Idempotency", is_active=True)
+        db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        first = paper_order(PaperOrderRequest(symbol="I1", transaction_type="BUY", price=10.0, quantity=1), user_id=user.id, db=db)
+        second = paper_order(PaperOrderRequest(symbol="I2", transaction_type="BUY", price=11.0, quantity=1, fill_id="ID-1"), user_id=user.id, db=db)
+        replay = paper_order(PaperOrderRequest(symbol="I2", transaction_type="BUY", price=11.0, quantity=1, fill_id="ID-1"), user_id=user.id, db=db)
+        assert first["fill_id"] is None
+        assert second["fill_id"] == "ID-1"
+        assert replay["id"] == second["id"]
+        assert replay["fill_id"] == "ID-1"
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_fill_id_repair_fingerprint_distinguishes_null_blank_and_value(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'fill-id-fingerprint.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="fill-id-fingerprint@example.com", hashed_password="", full_name="Fill Fingerprint", is_active=True)
+        db.add(user); db.flush()
+        account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True); db.add(account); db.commit()
+        paper_order(PaperOrderRequest(symbol="F1", transaction_type="BUY", price=10.0, quantity=1), user_id=user.id, db=db)
+        order = db.query(Order).filter(Order.user_id == user.id).one()
+        positions = db.query(Position).filter(Position.user_id == user.id, Position.is_paper.is_(True)).all()
+        null_hash = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+        order.fill_id = ""; db.commit()
+        blank_hash = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+        order.fill_id = "VALUE"; db.commit()
+        value_hash = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+        assert null_hash != blank_hash
+        assert blank_hash != value_hash
+        assert null_hash != value_hash
+    finally:
+        db.close(); engine.dispose()
