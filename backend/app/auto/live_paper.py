@@ -445,7 +445,7 @@ class LivePaperTradeService:
             db.refresh(trade)
         return trade
 
-    def close_expired(self, db: Session, *, now=None):
+    def close_expired(self, db: Session, *, now=None, commit=True):
         if now is None:
             local_now = datetime.now(timezone.utc).astimezone(IST).replace(tzinfo=None)
         elif now.tzinfo is None:
@@ -485,10 +485,10 @@ class LivePaperTradeService:
                 # is actually the persisted terminal reason.
                 if closed_trade.status == "COMPLETED" and closed_trade.exit_reason == "EXPIRY_CLOSE":
                     closed.append(closed_trade)
-        if closed:
-            # Expiry processing is one explicit transaction boundary. The
-            # caller can opt into commit=False only when it owns the session
-            # transaction; all normal expiry callers get a durable commit.
+        if closed and commit:
+            # Expiry processing is one explicit transaction boundary. Callers
+            # that already own a larger transaction can pass commit=False and
+            # decide the durable boundary themselves.
             db.commit()
         return closed
 
