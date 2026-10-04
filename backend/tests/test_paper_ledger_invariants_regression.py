@@ -185,3 +185,64 @@ def test_mark_rejects_non_finite_or_negative_updates(db_session):
     svc.mark(db_session, trade, edge=20, capital_used=float("nan"))
     after = (trade.current_edge, trade.unrealized_pnl, trade.capital_used)
     assert after == before
+
+
+def test_malformed_persisted_trade_lifecycle_is_excluded(db_session):
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100_000, emergency_stop=False,
+    ))
+    db_session.commit()
+    malformed = LivePaperTrade(
+        user_id=1, strategy_id="cash-future", symbol="TIME-BAD",
+        event_id="TIME-BAD", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-31", lot_size=1, lots=1,
+        entry_edge=10, current_edge=10, capital_used=10_000,
+        unrealized_pnl=0, realized_pnl=0, pnl_pct=0,
+        status="ONGOING",
+        opened_at=datetime(2026, 10, 4, 10, 0),
+        last_mark_at=datetime(2026, 10, 4, 9, 59),
+        closed_at=None,
+    )
+    db_session.add(malformed)
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    assert svc.ongoing(db_session, 1) == []
+    assert svc.close_expired(
+        db_session, now=datetime(2026, 10, 30, 16, 0)
+    ) == []
+
+    valid, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="GOOD-TIME",
+        event_id="GOOD-TIME", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-30", lot_size=1, lots=1,
+        edge=10, capital_used=10_000, user_id=1,
+    )
+    assert valid is None
+    assert created is False
+
+
+def test_completed_trade_requires_consistent_terminal_timestamps(db_session):
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100_000, emergency_stop=False,
+    ))
+    db_session.commit()
+    malformed = LivePaperTrade(
+        user_id=1, strategy_id="cash-future", symbol="CLOSED-BAD",
+        event_id="CLOSED-BAD", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-30", lot_size=1, lots=1,
+        entry_edge=10, current_edge=10, capital_used=10_000,
+        unrealized_pnl=-5, realized_pnl=-5, pnl_pct=-0.05,
+        status="COMPLETED",
+        opened_at=datetime(2026, 10, 4, 10, 0),
+        last_mark_at=datetime(2026, 10, 4, 10, 30),
+        closed_at=datetime(2026, 10, 4, 10, 15),
+    )
+    db_session.add(malformed)
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    assert svc.completed(db_session, 1) == []
+    closed = svc.close(db_session, malformed, "MANUAL")
+    assert closed.status == "COMPLETED"
+    assert closed.closed_at == datetime(2026, 10, 4, 10, 15)
