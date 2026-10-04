@@ -460,12 +460,16 @@ def test_close_persists_realized_pnl_from_current_db_unrealized_pnl(db_session):
         LivePaperTrade.id == trade.id
     ).one()
 
-    # Simulate the monitor producing a newer mark in a separate transaction
-    # after another caller has already loaded a stale ORM object.
-    mark_session = db_session.__class__.bind if False else None
-    trade.unrealized_pnl = -25.0
-    trade.current_edge = 5.0
-    trade.pnl_pct = -0.25
+    # Simulate a newer monitor mark directly in the database after the
+    # caller loaded its stale ORM object. close() must copy that DB value.
+    db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.id == trade.id,
+        LivePaperTrade.status == "ONGOING",
+    ).update({
+        LivePaperTrade.unrealized_pnl: -25.0,
+        LivePaperTrade.current_edge: 5.0,
+        LivePaperTrade.pnl_pct: -0.25,
+    }, synchronize_session=False)
     db_session.commit()
 
     closed = svc.close(db_session, stale, "MANUAL")
