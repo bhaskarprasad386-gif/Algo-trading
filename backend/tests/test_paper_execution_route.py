@@ -2042,7 +2042,8 @@ def test_paper_reconcile_mixed_legacy_and_fingerprinted_orders_is_blocked(tmp_pa
             average_fill_price=100.0, status="FILLED", is_paper=True, pnl=0.0,
             fill_id=None, audit_hash=None, previous_audit_hash=None,
         ))
-        seed.commit()    finally:
+        seed.commit()
+    finally:
         seed.close()
 
     db = Session()
@@ -2057,7 +2058,8 @@ def test_paper_reconcile_mixed_legacy_and_fingerprinted_orders_is_blocked(tmp_pa
     try:
         data = _reconcile_paper_ledger(verify, user_id)
         assert data["status"] == "MISMATCH"
-        assert data["baseline_status"] == "LEGACY_UNFINGERPRINTED"        assert data["repairability"] == "BLOCKED"
+        assert data["baseline_status"] == "LEGACY_UNFINGERPRINTED"
+        assert data["repairability"] == "BLOCKED"
         assert any(item.startswith("audit_chain_mismatch:") for item in data["mismatches"])
     finally:
         verify.close()
@@ -2338,13 +2340,15 @@ def test_paper_audit_chain_tamper_matrix_is_blocked(tmp_path):
                 ),
                 user_id=user_id,
                 db=second_db,
-            )        finally:
+            )
+        finally:
             second_db.close()
 
         tamper_db = Session()
         try:
             orders = (
-                tamper_db.query(Order)                .filter(Order.user_id == user_id, Order.is_paper.is_(True))
+                tamper_db.query(Order)
+                .filter(Order.user_id == user_id, Order.is_paper.is_(True))
                 .order_by(Order.id.asc())
                 .all()
             )
@@ -2634,21 +2638,24 @@ def test_paper_reconcile_blocked_baseline_never_exposes_applicable_repair(tmp_pa
             ),
             user_id=user_id,
             db=db,
-        )    finally:
+        )
+    finally:
         db.close()
 
     corrupt = Session()
     try:
         account = corrupt.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
         account.virtual_balance = 999.0
-        corrupt.commit()    finally:
+        corrupt.commit()
+    finally:
         corrupt.close()
 
     verify = Session()
     try:
         result = _reconcile_paper_ledger(verify, user_id)
         assert result["status"] == "MISMATCH"
-        assert result["baseline_status"] == "MIGRATED_INFERRED"        assert result["repairability"] == "BLOCKED"
+        assert result["baseline_status"] == "MIGRATED_INFERRED"
+        assert result["repairability"] == "BLOCKED"
         assert result["repair_plan"]["apply"] is False
         assert result["repair_plan"]["reason"] == "read_only_dry_run"
         assert result["repair_plan"]["proposed_virtual_balance"] == 800.0
@@ -3025,7 +3032,8 @@ def test_paper_reconcile_flat_symbol_excluded_from_repair_positions(tmp_path):
     finally:
         seed.close()
 
-    db = Session()    try:
+    db = Session()
+    try:
         paper_order(PaperOrderRequest(symbol="FLAT", transaction_type="BUY", price=100.0, quantity=2, fill_id="F1"), user_id=user_id, db=db)
     finally:
         db.close()
@@ -10457,7 +10465,8 @@ def test_idempotent_fill_rejects_corrupted_existing_paper_order(tmp_path):
         paper_order(PaperOrderRequest(symbol="IDEM", transaction_type="BUY", price=100.0, quantity=1, fill_id="IDEM-1"), user_id=user.id, db=db)
         order=db.query(Order).filter(Order.user_id==user.id, Order.fill_id=="IDEM-1").one(); order.pnl=float("nan"); db.commit()
         try: paper_order(PaperOrderRequest(symbol="IDEM", transaction_type="BUY", price=100.0, quantity=1, fill_id="IDEM-1"), user_id=user.id, db=db); raise AssertionError("corrupt idempotent fill accepted")
-        except RuntimeError as exc: assert "pnl" in str(exc)
+        except RuntimeError as exc:
+            assert "pnl" in str(exc)
     finally: db.close(); engine.dispose()
 
 def test_paper_exit_idempotent_fill_fails_closed_on_corrupt_existing_order(tmp_path):
