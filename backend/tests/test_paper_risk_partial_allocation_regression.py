@@ -2,7 +2,7 @@
 from datetime import datetime
 
 from app.auto.live_paper import LivePaperTradeService
-from app.models import AlertRule
+from app.models import AlertRule, LivePaperTrade
 from app.models.global_paper_setting import GlobalPaperSetting
 from app.notifications.common import AlertEvent, AlertService
 
@@ -749,3 +749,86 @@ def test_duplicate_event_bypasses_new_risk_limits_but_only_marks_existing_trade(
     assert rows[0].entry_edge == 10
     assert rows[0].current_edge == 8
     assert rows[0].unrealized_pnl == -20
+
+
+
+def test_cross_user_duplicate_mark_survives_later_user_failure(db_session, monkeypatch):
+    db_session.add_all([
+        GlobalPaperSetting(user_id=1, enabled=True, paper_amount=60000, emergency_stop=False),
+        GlobalPaperSetting(user_id=2, enabled=True, paper_amount=60000, emergency_stop=False),
+        AlertRule(
+            user_id=1, strategy_id="cash-future", min_gross_profit=0,
+            mobile_number="", whatsapp_enabled=False, enabled=True,
+            max_daily_capital=0, max_simultaneous_positions=5, max_loss=0,
+        ),
+        AlertRule(
+            user_id=2, strategy_id="cash-future", min_gross_profit=0,
+            mobile_number="", whatsapp_enabled=False, enabled=True,
+            max_daily_capital=0, max_simultaneous_positions=5, max_loss=0,
+        ),
+    ])
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    seed, created = svc.enter_or_mark(
+        db_session,
+        strategy_id="cash-future",
+        symbol="USER1-DUP",
+        event_id="CROSS-USER-ROLLBACK",
+        direction="LONG",
+        expiry="2026-10-30",
+        earliest_expiry="2026-10-30",
+        lot_size=10,
+        lots=1,
+        edge=10,
+        capital_used=30000,
+        user_id=1,
+    )
+    assert created is True
+    db_session.commit()
+
+    original = LivePaperTradeService.enter_or_mark
+
+    def fail_user_two(self, db, **kwargs):
+        if int(kwargs["user_id"]) == 2:
+            raise RuntimeError("forced user-2 entry failure")
+        return original(self, db, **kwargs)
+
+    monkeypatch.setattr(LivePaperTradeService, "enter_or_mark", fail_user_two)
+
+    duplicate = AlertEvent(
+        strategy_id="cash-future",
+        event_id="CROSS-USER-ROLLBACK",
+        symbol="USER1-DUP",
+        timestamp_ns=2,
+        message="cross-user rollback",
+        metadata={
+            "gross_profit": 1000,
+            "paper_trade": {
+                "direction": "LONG",
+                "expiry": "2026-10-30",
+                "lot_size": 10,
+                "lots": 1,
+                "edge": 8,
+                "capital_used": 30000,
+            },
+        },
+    )
+
+    # User 1 already owns this event, so it must be marked and committed before
+    # user 2's independent entry failure is rolled back.
+    assert AlertService().dispatch(db_session, duplicate) == 0
+
+    db_session.expire_all()
+    row1 = db_session.query(__import__("app.models.live_paper_trade", fromlist=["LivePaperTrade"]).LivePaperTrade).filter(
+        __import__("app.models.live_paper_trade", fromlist=["LivePaperTrade"]).LivePaperTrade.user_id == 1,
+        __import__("app.models.live_paper_trade", fromlist=["LivePaperTrade"]).LivePaperTrade.event_id == "CROSS-USER-ROLLBACK",
+    ).one()
+    assert row1.current_edge == 8
+    assert row1.capital_used == 30000
+    assert row1.status == "ONGOING"
+
+    assert db_session.query(__import__("app.models.live_paper_trade", fromlist=["LivePaperTrade"]).LivePaperTrade).filter(
+        __import__("app.models.live_paper_trade", fromlist=["LivePaperTrade"]).LivePaperTrade.user_id == 2,
+        __import__("app.models.live_paper_trade", fromlist=["LivePaperTrade"]).LivePaperTrade.event_id == "CROSS-USER-ROLLBACK",
+    ).count() == 0
