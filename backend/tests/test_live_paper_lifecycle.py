@@ -687,6 +687,28 @@ def test_expired_completed_event_cannot_reopen_on_duplicate_alert(db_session):
     assert rows[0].current_edge == 8.0
 
 
+def test_expiry_close_realizes_last_valid_mark_when_new_quote_is_stale(db_session):
+    svc = LivePaperTradeService()
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="STALE-EXPIRY",
+        event_id="STALE-EXPIRY-1", direction="LONG", expiry="2026-10-03",
+        earliest_expiry="2026-10-03", lot_size=10, lots=1, edge=10,
+        capital_used=50000, metadata={"exchange": "NFO"}, user_id=1,
+    )
+    assert created is True
+
+    # Last valid executable mark is +50. No later fresh quote is available;
+    # expiry close must realize that preserved mark, not invent a new edge.
+    svc.mark(db_session, trade, edge=15, pnl_override=50.0)
+    db_session.commit()
+    closed = svc.close_expired(db_session, now=datetime(2026, 10, 3, 15, 30))
+
+    assert [x.id for x in closed] == [trade.id]
+    assert closed[0].status == "COMPLETED"
+    assert closed[0].realized_pnl == 50.0
+    assert closed[0].unrealized_pnl == 50.0
+
+
 def test_expiry_close_releases_reserved_capital_for_next_entry(db_session):
     svc = LivePaperTradeService()
     db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=100000, emergency_stop=False))
