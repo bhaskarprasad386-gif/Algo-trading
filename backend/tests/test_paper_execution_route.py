@@ -1186,3 +1186,114 @@ def test_paper_reversal_and_exit_race_converges_to_one_terminal_transition(tmp_p
             verify.close()
     finally:
         engine.dispose()
+
+
+def test_paper_order_persists_filled_execution_fields_for_partial_lifecycle():
+    client, headers = _client_and_headers()
+    starting_balance = 10_000_000.0
+
+    opened = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "LIFECYCLE", "transaction_type": "BUY", "price": 100.0, "quantity": 10},
+    )
+    assert opened.status_code == 200
+
+    partial = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "LIFECYCLE", "transaction_type": "SELL", "price": 120.0, "quantity": 4},
+    )
+    assert partial.status_code == 200
+
+    closed = client.post(
+        "/api/v1/execution/paper/exit",
+        headers=headers,
+        json={"symbol": "LIFECYCLE", "price": 110.0},
+    )
+    assert closed.status_code == 200
+    assert closed.json()["pnl"] == 60.0
+    assert closed.json()["realized_pnl"] == 140.0
+    assert closed.json()["virtual_balance"] == starting_balance + 140.0
+
+    db = SessionLocal()
+    try:
+        orders = (
+            db.query(Order)
+            .filter(Order.symbol == "LIFECYCLE")
+            .order_by(Order.id.asc())
+            .all()
+        )
+        assert [(o.transaction_type, o.quantity, o.filled_quantity, o.price, o.average_price, o.average_fill_price, o.status, o.is_paper) for o in orders] == [
+            ("BUY", 10, 10, 100.0, 100.0, 100.0, "FILLED", True),
+            ("SELL", 4, 4, 120.0, 120.0, 120.0, "FILLED", True),
+            ("SELL", 6, 6, 110.0, 110.0, 110.0, "FILLED", True),
+        ]
+    finally:
+        db.close()
+
+
+def test_paper_reversal_and_terminal_retry_keep_order_fill_fields_consistent():
+    client, headers = _client_and_headers()
+
+    opened = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "REV-FIELDS", "transaction_type": "BUY", "price": 100.0, "quantity": 10},
+    )
+    assert opened.status_code == 200
+
+    reversal = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={
+            "symbol": "REV-FIELDS",
+            "transaction_type": "SELL",
+            "price": 120.0,
+            "quantity": 12,
+            "fill_id": "REV-FIELDS-SELL-1",
+        },
+    )
+    assert reversal.status_code == 200
+    assert reversal.json()["realized_pnl"] == 200.0
+    assert reversal.json()["position"]["quantity"] == -2.0
+    assert reversal.json()["position"]["entry_price"] == 120.0
+
+    terminal = client.post(
+        "/api/v1/execution/paper/exit",
+        headers=headers,
+        json={"symbol": "REV-FIELDS", "price": 100.0, "fill_id": "REV-FIELDS-EXIT-1"},
+    )
+    assert terminal.status_code == 200
+    assert terminal.json()["pnl"] == 40.0
+    assert terminal.json()["realized_pnl"] == 240.0
+
+    retry = client.post(
+        "/api/v1/execution/paper/exit",
+        headers=headers,
+        json={"symbol": "REV-FIELDS", "price": 100.0, "fill_id": "REV-FIELDS-EXIT-1"},
+    )
+    assert retry.status_code == 200
+    assert retry.json()["idempotent"] is True
+    assert retry.json()["realized_pnl"] == 240.0
+
+    db = SessionLocal()
+    try:
+        orders = (
+            db.query(Order)
+            .filter(Order.symbol == "REV-FIELDS")
+            .order_by(Order.id.asc())
+            .all()
+        )
+        assert len(orders) == 3
+        assert all(order.status == "FILLED" for order in orders)
+        assert all(order.is_paper is True for order in orders)
+        assert [(o.quantity, o.filled_quantity, o.average_price, o.average_fill_price) for o in orders] == [
+            (10, 10, 100.0, 100.0),
+            (12, 12, 120.0, 120.0),
+            (2, 2, 100.0, 100.0),
+        ]
+        assert orders[1].pnl == 200.0
+        assert orders[2].pnl == 40.0
+    finally:
+        db.close()
