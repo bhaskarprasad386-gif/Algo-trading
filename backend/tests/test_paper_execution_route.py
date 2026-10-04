@@ -12122,3 +12122,242 @@ def test_http_mutation_matrix_20_final_writer_storm_has_deterministic_integrity(
     finally:
         _clear_http_overrides()
         engine.dispose()
+
+
+# HTTP request-lifecycle and retry-integrity matrix 21-30.
+
+def test_http_lifecycle_matrix_21_retry_without_fill_id_cannot_duplicate_open_position(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "retry-no-fill", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        payload = {"symbol": "RETRY", "transaction_type": "BUY", "price": 10.0, "quantity": 1}
+        first = client.post("/api/v1/execution/paper/order", json=payload)
+        second = client.post("/api/v1/execution/paper/order", json=payload)
+        assert first.status_code == 200
+        assert second.status_code == 409
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert len(orders) == 1
+        assert client.get("/api/v1/execution/paper/reconcile").json()["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_22_successful_fill_retry_replays_idempotently(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "retry-fill", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client_a = TestClient(app, raise_server_exceptions=False)
+        payload = {"symbol": "REPLAY", "transaction_type": "BUY", "price": 10.0, "quantity": 2, "fill_id": "REPLAY-1"}
+        first = client_a.post("/api/v1/execution/paper/order", json=payload)
+        client_b = TestClient(app, raise_server_exceptions=False)
+        second = client_b.post("/api/v1/execution/paper/order", json=payload)
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.json()["idempotent"] is True
+        assert len(client_b.get("/api/v1/execution/paper/orders").json()["orders"]) == 1
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_23_lock_contention_then_retry_is_clean(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "retry-lock", users=1)
+    lock_db = None
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        lock_db = sessionmaker(bind=engine)()
+        lock_db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        client = TestClient(app, raise_server_exceptions=False)
+        blocked = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "LOCKRETRY", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "LOCK-1"},
+        )
+        assert blocked.status_code == 409
+        lock_db.rollback()
+        retried = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "LOCKRETRY", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "LOCK-1"},
+        )
+        assert retried.status_code == 200
+        assert len(client.get("/api/v1/execution/paper/orders").json()["orders"]) == 1
+        assert client.get("/api/v1/execution/paper/reconcile").json()["mismatches"] == []
+    finally:
+        if lock_db is not None:
+            lock_db.close()
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_24_validation_failure_then_valid_retry_has_no_phantom_write(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "retry-validation", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        failed = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "VALIDRETRY", "transaction_type": "BUY", "price": 10.0, "quantity": 0, "fill_id": "VR-FAIL"},
+        )
+        assert failed.status_code == 422
+        valid = client.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "VALIDRETRY", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "VR-OK"},
+        )
+        assert valid.status_code == 200
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert [item["fill_id"] for item in orders] == ["VR-OK"]
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_25_duplicate_requests_from_separate_clients_have_one_economic_effect(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "separate-clients", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        payload = {"symbol": "CLIENTS", "transaction_type": "BUY", "price": 10.0, "quantity": 1, "fill_id": "CLIENT-1"}
+        barrier = threading.Barrier(2)
+        def invoke():
+            client = TestClient(app, raise_server_exceptions=False)
+            barrier.wait()
+            return client.post("/api/v1/execution/paper/order", json=payload)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda _: invoke(), range(2)))
+        assert all(response.status_code == 200 for response in responses)
+        assert sum(response.json().get("idempotent") is True for response in responses) == 1
+        client = TestClient(app, raise_server_exceptions=False)
+        assert len(client.get("/api/v1/execution/paper/orders").json()["orders"]) == 1
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_26_read_after_write_across_fresh_clients_is_visible(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "fresh-read", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        writer = TestClient(app, raise_server_exceptions=False)
+        created = writer.post(
+            "/api/v1/execution/paper/order",
+            json={"symbol": "FRESH", "transaction_type": "BUY", "price": 15.0, "quantity": 2, "fill_id": "FRESH-1"},
+        )
+        assert created.status_code == 200
+        reader = TestClient(app, raise_server_exceptions=False)
+        assert reader.get("/api/v1/execution/paper/account").status_code == 200
+        assert len(reader.get("/api/v1/execution/paper/orders").json()["orders"]) == 1
+        assert reader.get("/api/v1/execution/paper/position").json()["position"]["quantity"] == 2
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_27_connection_recycle_between_mutation_and_reconcile_is_consistent(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "recycle", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        for index in range(3):
+            with TestClient(app, raise_server_exceptions=False) as writer:
+                response = writer.post(
+                    "/api/v1/execution/paper/order",
+                    json={"symbol": f"RECYCLE-{index}", "transaction_type": "BUY", "price": 10.0 + index, "quantity": 1, "fill_id": f"REC-{index}"},
+                )
+                assert response.status_code == 200
+            with TestClient(app, raise_server_exceptions=False) as reader:
+                reconcile = reader.get("/api/v1/execution/paper/reconcile")
+                assert reconcile.status_code == 200
+                assert reconcile.json()["status"] == "OK"
+                assert reconcile.json()["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_28_malformed_content_type_body_fails_closed(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "bad-content", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post(
+            "/api/v1/execution/paper/order",
+            content=b'{"symbol":"BAD","transaction_type":"BUY","price":10.0,',
+            headers={"content-type": "application/json"},
+        )
+        assert response.status_code == 422
+        orders = client.get("/api/v1/execution/paper/orders").json()["orders"]
+        assert orders == []
+        assert client.get("/api/v1/execution/paper/reconcile").json()["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_29_unknown_json_fields_do_not_change_ledger_semantics(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "unknown-fields", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.post(
+            "/api/v1/execution/paper/order",
+            json={
+                "symbol": "EXTRA",
+                "transaction_type": "BUY",
+                "price": 10.0,
+                "quantity": 1,
+                "fill_id": "EXTRA-1",
+                "unexpected": "ignored",
+                "broker_order_id": "MUST-NOT-LEAK",
+            },
+        )
+        assert response.status_code == 200
+        order = client.get("/api/v1/execution/paper/orders").json()["orders"][0]
+        assert order["symbol"] == "EXTRA"
+        assert order["fill_id"] == "EXTRA-1"
+        assert order["broker_order_id"] in (None, "")
+        assert client.get("/api/v1/execution/paper/reconcile").json()["mismatches"] == []
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
+
+
+def test_http_lifecycle_matrix_30_final_retry_lifecycle_storm_is_deterministic(tmp_path):
+    engine, users, current_user_dependency = _http_integrity_env(tmp_path, "lifecycle-storm", users=1)
+    try:
+        app.dependency_overrides[current_user_dependency] = lambda: users[0]
+        client = TestClient(app, raise_server_exceptions=False)
+        seed_payload = {"symbol": "LIFE", "transaction_type": "BUY", "price": 20.0, "quantity": 2, "fill_id": "LIFE-1"}
+        assert client.post("/api/v1/execution/paper/order", json=seed_payload).status_code == 200
+
+        def lifecycle(index):
+            local = TestClient(app, raise_server_exceptions=False)
+            if index % 4 == 0:
+                response = local.post("/api/v1/execution/paper/order", json=seed_payload)
+            elif index % 4 == 1:
+                response = local.post(
+                    "/api/v1/execution/paper/order",
+                    json={"symbol": "LIFE", "transaction_type": "BUY", "price": 20.0, "quantity": 1, "fill_id": f"CONFLICT-{index}"},
+                )
+            elif index % 4 == 2:
+                response = local.post(
+                    "/api/v1/execution/paper/order",
+                    json={"symbol": "LIFE", "transaction_type": "BUY", "price": 20.0, "quantity": 0, "fill_id": f"BAD-{index}"},
+                )
+            else:
+                response = local.get("/api/v1/execution/paper/reconcile")
+            return response.status_code, response.json()
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(lifecycle, range(32)))
+
+        assert all(status in {200, 409, 422} for status, _ in results)
+        assert all("mismatches" not in payload or payload["mismatches"] == [] for _, payload in results)
+        final = client.get("/api/v1/execution/paper/reconcile")
+        assert final.status_code == 200
+        payload = final.json()
+        assert payload["status"] == "OK"
+        assert payload["repairability"] == "NONE"
+        assert payload["mismatches"] == []
+        assert payload["orders"] == 1
+    finally:
+        _clear_http_overrides()
+        engine.dispose()
