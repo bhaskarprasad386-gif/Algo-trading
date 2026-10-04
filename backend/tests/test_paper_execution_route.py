@@ -352,3 +352,144 @@ def test_same_user_concurrent_paper_orders_serialize_balance_and_position(tmp_pa
             verify.close()
     finally:
         engine.dispose()
+
+
+def test_paper_partial_short_cover_preserves_margin_pnl_and_remaining_short():
+    client, headers = _client_and_headers()
+    starting_balance = 10_000_000.0
+
+    opened = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "PARTIAL", "transaction_type": "SELL", "price": 100.0, "quantity": 5},
+    )
+    assert opened.status_code == 200
+
+    covered = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "PARTIAL", "transaction_type": "BUY", "price": 90.0, "quantity": 2},
+    )
+    assert covered.status_code == 200
+    data = covered.json()
+
+    # Release 2/5 of the original 500 margin and realize +20.
+    assert data["realized_pnl"] == 20.0
+    assert data["virtual_balance"] == starting_balance - 280.0
+    assert data["position"]["quantity"] == -3.0
+    assert data["position"]["entry_price"] == 100.0
+
+
+def test_paper_reversal_and_exit_race_converges_to_one_terminal_transition(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, PaperExitRequest, paper_order, paper_exit
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'paper-reversal-exit-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(
+            email="reversal-exit-race@example.com",
+            hashed_password="",
+            full_name="Reversal Exit Race",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(
+            TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=500.0,
+                realized_pnl=0.0,
+                is_active=True,
+            )
+        )
+        seed.add(
+            Position(
+                user_id=user.id,
+                symbol="RACE",
+                quantity=-5,
+                average_price=100.0,
+            )
+        )
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    barrier = threading.Barrier(2)
+
+    def reversal():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            try:
+                return ("order", paper_order(
+                    PaperOrderRequest(
+                        symbol="RACE",
+                        transaction_type="BUY",
+                        price=90.0,
+                        quantity=5,
+                    ),
+                    user_id=user_id,
+                    db=db,
+                ))
+            except HTTPException as exc:
+                db.rollback()
+                return ("http", exc.status_code, exc.detail)
+        finally:
+            db.close()
+
+    def exit_position():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            try:
+                return ("exit", paper_exit(
+                    PaperExitRequest(symbol="RACE", price=90.0),
+                    user_id=user_id,
+                    db=db,
+                ))
+            except HTTPException as exc:
+                db.rollback()
+                return ("http", exc.status_code, exc.detail)
+        finally:
+            db.close()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(reversal)
+            second = pool.submit(exit_position)
+            results = [first.result(), second.result()]
+
+        successful = [result for result in results if result[0] in {"order", "exit"}]
+        assert len(successful) == 1
+
+        verify = Session()
+        try:
+            account = verify.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id
+            ).one()
+            positions = verify.query(Position).filter(
+                Position.user_id == user_id,
+                Position.symbol == "RACE",
+                Position.quantity != 0,
+            ).all()
+            orders = verify.query(Order).filter(
+                Order.user_id == user_id,
+                Order.symbol == "RACE",
+            ).all()
+            assert len(orders) == 1
+            assert len(positions) == 0
+            # Both operations close the 5-short at 90: +50 realized, and
+            # release the original 500 short margin.
+            assert account.virtual_balance == 550.0
+            assert account.realized_pnl == 50.0
+        finally:
+            verify.close()
+    finally:
+        engine.dispose()
