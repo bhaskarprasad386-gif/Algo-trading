@@ -200,6 +200,34 @@ def test_paper_repair_precondition_changes_when_order_timestamp_changes(tmp_path
         db.close()
         engine.dispose()
 
+
+def test_paper_reconcile_detects_stale_closed_position_record(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order, _reconcile_paper_ledger
+    from app.models.position import Position
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'stale-closed-position.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    try:
+        user = User(email="closed-position@example.com", hashed_password="", full_name="Closed Position", is_active=True)
+        db.add(user)
+        db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        db.commit()
+        paper_order(PaperOrderRequest(symbol="CLOSE", transaction_type="BUY", price=10.0, quantity=1, fill_id="CLOSE-1"), user_id=user.id, db=db)
+        position = db.query(Position).filter(Position.user_id == user.id, Position.symbol == "CLOSE").one()
+        position.quantity = 0
+        position.is_open = False
+        db.commit()
+        result = _reconcile_paper_ledger(db, user.id)
+        assert result["status"] == "MISMATCH"
+        assert f"position_state_mismatch:{position.id}" in result["mismatches"]
+        assert "POSITION_STATE" in result["mismatch_categories"]
+    finally:
+        db.close()
+        engine.dispose()
+
 def test_paper_entry_route_registered():
     paths = app.openapi().get("paths", {})
     assert "/api/v1/execution/paper/entry" in paths
