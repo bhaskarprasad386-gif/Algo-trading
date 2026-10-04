@@ -11,6 +11,16 @@ IST_OFFSET = timezone.utc
 MARKET_CLOSE = time(15, 30)
 IST = ZoneInfo("Asia/Kolkata")
 
+def _valid_paper_setting(setting) -> bool:
+    """Persisted paper settings must be finite and non-negative before use."""
+    try:
+        import math
+        amount = float(setting.paper_amount)
+        return math.isfinite(amount) and amount >= 0
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def _now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -131,7 +141,13 @@ class LivePaperTradeService:
         setting = db.query(GlobalPaperSetting).filter(
             GlobalPaperSetting.user_id == int(user_id),
         ).first()
-        if setting is None or not setting.enabled or setting.emergency_stop or float(setting.paper_amount) <= 0:
+        if (
+            setting is None
+            or not _valid_paper_setting(setting)
+            or not setting.enabled
+            or setting.emergency_stop
+            or float(setting.paper_amount) <= 0
+        ):
             return None, False
         capital_per_lot = max(0.0, float(capital_used)) / max(1, int(lots))
         if capital_per_lot > 0:
