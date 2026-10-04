@@ -394,10 +394,13 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
                 remaining_short_qty = abs(int(accounting_state.quantity))
                 margin = _buy_cost(fill.price, remaining_short_qty)
                 account.virtual_balance = round(
-                    account.virtual_balance + proceeds + pnl - margin,
+                    account.virtual_balance + proceeds - margin,
                     8,
                 )
             else:
+                # Sale proceeds already include the economic value of the
+                # closing fill. Realized P&L is ledger state, not additional
+                # cash, so never add pnl on top of sale proceeds.
                 account.virtual_balance = round(
                     account.virtual_balance + proceeds,
                     8,
