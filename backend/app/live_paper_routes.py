@@ -100,8 +100,16 @@ def refresh(db: Session = Depends(get_db)):
     # expiry pass. Include both passes so the response does not under-report
     # trades closed during this refresh request.
     closed_after_mark = service.close_expired(db)
-    closed_ids = {trade.id for trade in closed}
-    closed_ids.update(trade.id for trade in closed_after_mark)
+    # Expiry processing is global, but the API response must expose only
+    # closures belonging to the current paper user.
+    closed_ids = {
+        trade.id for trade in closed
+        if int(trade.user_id) == int(user)
+    }
+    closed_ids.update(
+        trade.id for trade in closed_after_mark
+        if int(trade.user_id) == int(user)
+    )
     ongoing = service.ongoing(db, user)
     completed = service.completed(db, user)
     return {
