@@ -160,7 +160,6 @@ class LivePaperTradeService:
             LivePaperTrade.status == "ONGOING",
         ).update(values, synchronize_session=False)
         if updated:
-            db.commit()
             db.refresh(trade)
         else:
             db.expire(trade)
