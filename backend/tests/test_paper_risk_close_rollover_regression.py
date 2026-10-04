@@ -837,3 +837,228 @@ def test_expiry_realized_loss_and_concurrent_entries_hit_global_max_loss_boundar
     finally:
         verify.close()
         engine.dispose()
+
+
+
+def test_five_way_duplicate_close_expiry_new_strategy_race_converges_at_global_risk_boundary(tmp_path):
+    """Duplicate marks, manual/expiry close, and a cross-strategy entry share one terminal/risk boundary."""
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.core.database import Base
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'five-way-paper-risk-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    try:
+        setup.add(GlobalPaperSetting(
+            user_id=1, enabled=True, paper_amount=60000, emergency_stop=False,
+        ))
+        for strategy in (
+            "calendar-spread",
+            "synthetic-future-cash-carry",
+            "box-spread",
+        ):
+            setup.add(AlertRule(
+                user_id=1,
+                strategy_id=strategy,
+                min_gross_profit=0,
+                mobile_number="",
+                whatsapp_enabled=False,
+                enabled=True,
+                max_daily_capital=60000,
+                max_simultaneous_positions=2,
+                max_loss=100,
+            ))
+        seed, created = LivePaperTradeService().enter_or_mark(
+            setup,
+            strategy_id="calendar-spread",
+            symbol="FIVE-WAY-SEED",
+            event_id="FIVE-WAY-SEED",
+            direction="LONG",
+            expiry="2026-10-04",
+            earliest_expiry="2026-10-04",
+            lot_size=10,
+            lots=1,
+            edge=5,
+            capital_used=30000,
+            user_id=1,
+        )
+        assert created is True
+        LivePaperTradeService().mark(
+            setup, seed, edge=0.0, pnl_override=-100.0,
+        )
+        setup.commit()
+    finally:
+        setup.close()
+
+    barrier = threading.Barrier(5)
+    errors = []
+    outcomes = []
+
+    def duplicate_worker(worker_name):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            event = AlertEvent(
+                strategy_id="calendar-spread",
+                event_id="FIVE-WAY-SEED",
+                symbol="FIVE-WAY-SEED",
+                timestamp_ns=500,
+                message=worker_name,
+                observed_at=datetime(2026, 10, 4, 15, 30),
+                metadata={"gross_profit": 1000, "paper_trade": {
+                    "direction": "LONG",
+                    "expiry": "2026-10-30",
+                    "earliest_expiry": "2026-10-30",
+                    "lot_size": 10,
+                    "lots": 1,
+                    "edge": 8,
+                    "capital_used": 30000,
+                }},
+            )
+            outcomes.append((worker_name, AlertService().dispatch(db, event)))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    def manual_close_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            trade = db.query(LivePaperTrade).filter(
+                LivePaperTrade.user_id == 1,
+                LivePaperTrade.event_id == "FIVE-WAY-SEED",
+            ).one()
+            outcomes.append(("manual", LivePaperTradeService().close(
+                db, trade, "MANUAL",
+            )))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    def expiry_close_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            outcomes.append(("expiry", LivePaperTradeService().close_expired(
+                db,
+                now=datetime(2026, 10, 4, 15, 30),
+                commit=True,
+            )))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    def cross_strategy_entry_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            event = AlertEvent(
+                strategy_id="synthetic-future-cash-carry",
+                event_id="FIVE-WAY-NEW",
+                symbol="FIVE-WAY-NEW",
+                timestamp_ns=501,
+                message="cross-strategy entry",
+                observed_at=datetime(2026, 10, 4, 15, 30),
+                metadata={"gross_profit": 1000, "paper_trade": {
+                    "direction": "LONG",
+                    "expiry": "2026-10-30",
+                    "earliest_expiry": "2026-10-30",
+                    "lot_size": 10,
+                    "lots": 1,
+                    "edge": 8,
+                    "capital_used": 30000,
+                }},
+            )
+            outcomes.append(("new", AlertService().dispatch(db, event)))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=duplicate_worker, args=("duplicate-a",)),
+        threading.Thread(target=duplicate_worker, args=("duplicate-b",)),
+        threading.Thread(target=manual_close_worker),
+        threading.Thread(target=expiry_close_worker),
+        threading.Thread(target=cross_strategy_entry_worker),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert errors == []
+    assert len(outcomes) == 5
+
+    verify = Session()
+    try:
+        rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+        ).all()
+        seed_rows = [row for row in rows if row.event_id == "FIVE-WAY-SEED"]
+        new_rows = [row for row in rows if row.event_id == "FIVE-WAY-NEW"]
+
+        # Same-event uniqueness is absolute even when two duplicate dispatches
+        # race with both terminal-close paths.
+        assert len(seed_rows) == 1
+        assert len(new_rows) <= 1
+
+        seed = seed_rows[0]
+        assert seed.status in {"ONGOING", "COMPLETED"}
+        if seed.status == "COMPLETED":
+            assert seed.exit_reason in {"MANUAL", "EXPIRY_CLOSE"}
+            assert seed.realized_pnl == seed.unrealized_pnl
+            assert seed.realized_pnl == -100.0
+            assert seed.closed_at is not None
+        else:
+            # A duplicate mark can legitimately win before the terminal close.
+            # It must never create a second seed row or mutate entry capital.
+            assert seed.exit_reason is None
+            assert seed.closed_at is None
+            assert seed.realized_pnl == 0.0
+            assert seed.current_edge == 8.0
+
+        if new_rows:
+            new = new_rows[0]
+            assert new.status == "ONGOING"
+            assert new.lots == 1
+            assert new.capital_used == 30000
+
+        ongoing = [
+            row for row in rows
+            if row.status == "ONGOING"
+        ]
+        assert len(ongoing) <= 2
+        assert sum(float(row.capital_used) for row in ongoing) <= 60000
+
+        # No duplicate/close race may manufacture additional daily capital or
+        # an extra reservation: persisted capital is exactly one 30k seed plus,
+        # at most, one 30k cross-strategy entry.
+        assert sum(float(row.capital_used) for row in rows) <= 60000
+        assert sum(int(row.lots) for row in rows) <= 2
+
+        completed = [
+            row for row in rows
+            if row.status == "COMPLETED"
+        ]
+        assert all(
+            row.realized_pnl == row.unrealized_pnl
+            for row in completed
+        )
+    finally:
+        verify.close()
+        engine.dispose()
