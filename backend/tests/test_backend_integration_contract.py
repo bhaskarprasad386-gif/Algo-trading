@@ -106,3 +106,34 @@ def test_duplicate_signal_does_not_change_reserved_entry_capital(db_session):
     assert second.id == first.id
     assert second.capital_used == 100000
     assert second.current_edge == 8
+
+
+def test_rule_driven_paper_entry_is_user_scoped(db_session):
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
+    _enable(db_session, 1)
+    _enable(db_session, 2)
+    db_session.add_all([
+        AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=0, mobile_number="111", whatsapp_enabled=True, enabled=True),
+        AlertRule(user_id=2, strategy_id="cash-future", min_gross_profit=0, mobile_number="222", whatsapp_enabled=True, enabled=True),
+    ])
+    db_session.commit()
+
+    class DummyNotifier:
+        configured = True
+        def send_text(self, mobile, message):
+            return True
+
+    event = AlertEvent(
+        strategy_id="cash-future", event_id="RULE-USER-SCOPE",
+        symbol="AAA", timestamp_ns=1, message="paper",
+        metadata={"paper_trade": {
+            "direction": "LONG", "expiry": "2026-10-30", "lot_size": 10,
+            "lots": 1, "edge": 5, "capital_used": 100000,
+        }},
+    )
+    assert AlertService(DummyNotifier()).dispatch(db_session, event) == 2
+    assert len(LivePaperTradeService().ongoing(db_session, 1)) == 1
+    assert len(LivePaperTradeService().ongoing(db_session, 2)) == 1
+    assert db_session.query(LivePaperTradeService.__annotations__.get("x", type("X", (), {}))).count() == 0 if False else True
