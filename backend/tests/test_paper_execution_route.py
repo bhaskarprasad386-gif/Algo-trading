@@ -228,6 +228,62 @@ def test_paper_reconcile_detects_stale_closed_position_record(tmp_path):
         db.close()
         engine.dispose()
 
+
+def test_paper_reconcile_preserves_partial_close_position(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order, _reconcile_paper_ledger
+    engine = create_engine(f"sqlite:///{tmp_path / 'partial-close-reconcile.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="partial-close@example.com", hashed_password="", full_name="Partial Close", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="PART", transaction_type="BUY", price=100.0, quantity=10, fill_id="PART-1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="PART", transaction_type="SELL", price=110.0, quantity=4, fill_id="PART-2"), user_id=user.id, db=db)
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["status"] == "OK"
+        assert payload["reconstructed_positions"] == {"PART": {"quantity": 6, "average_price": 100.0}}
+        assert payload["reconstructed_realized_pnl"] == 40.0
+        assert payload["reconstructed_virtual_balance"] == 440.0
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_reconcile_detects_closed_position_representation(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order, _reconcile_paper_ledger
+    engine = create_engine(f"sqlite:///{tmp_path / 'closed-position-representation.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="closed-position@example.com", hashed_password="", full_name="Closed Position", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="CLOSE", transaction_type="BUY", price=10.0, quantity=1, fill_id="CLOSE-1"), user_id=user.id, db=db)
+        position = db.query(Position).filter(Position.user_id == user.id, Position.symbol == "CLOSE").one()
+        position.is_open = False; db.commit()
+        payload = _reconcile_paper_ledger(db, user.id)
+        assert payload["status"] == "MISMATCH"
+        assert f"position_state_mismatch:{position.id}" in payload["mismatches"]
+        assert "POSITION_STATE" in payload["mismatch_categories"]
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_paper_mutation_fails_closed_on_nonfinite_position_derived_fields(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'position-derived-fields.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine); db = Session()
+    try:
+        user = User(email="position-derived@example.com", hashed_password="", full_name="Position Derived", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="DERIVED", transaction_type="BUY", price=10.0, quantity=1, fill_id="DERIVED-1"), user_id=user.id, db=db)
+        position = db.query(Position).filter(Position.user_id == user.id, Position.symbol == "DERIVED").one()
+        position.last_price = float("nan"); db.commit()
+        try:
+            paper_order(PaperOrderRequest(symbol="DERIVED2", transaction_type="BUY", price=10.0, quantity=1, fill_id="DERIVED-2"), user_id=user.id, db=db)
+            raise AssertionError("non-finite position derived field must fail closed")
+        except RuntimeError as exc:
+            assert "paper position invariant" in str(exc)
+    finally:
+        db.close(); engine.dispose()
+
+
 def test_paper_entry_route_registered():
     paths = app.openapi().get("paths", {})
     assert "/api/v1/execution/paper/entry" in paths
