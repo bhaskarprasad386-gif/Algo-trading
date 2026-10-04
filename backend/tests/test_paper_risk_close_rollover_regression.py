@@ -518,3 +518,113 @@ def test_same_user_three_strategy_concurrent_two_lot_requests_allocate_only_glob
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_same_user_concurrent_multi_strategy_daily_boundary_and_realized_loss_stays_global(tmp_path):
+    """Concurrent cross-strategy entries cannot bypass daily capital or realized loss."""
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.core.database import Base
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'multi-strategy-daily-loss-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    try:
+        setup.add(GlobalPaperSetting(
+            user_id=1, enabled=True, paper_amount=90000, emergency_stop=False,
+        ))
+        for strategy in ("calendar-spread", "synthetic-future-cash-carry", "box-spread"):
+            setup.add(AlertRule(
+                user_id=1, strategy_id=strategy, min_gross_profit=0,
+                mobile_number="", whatsapp_enabled=False, enabled=True,
+                max_daily_capital=60000, max_simultaneous_positions=3,
+                max_loss=100,
+            ))
+        setup.commit()
+
+        seed, created = LivePaperTradeService().enter_or_mark(
+            setup,
+            strategy_id="calendar-spread", symbol="SEED",
+            event_id="DAILY-LOSS-SEED", direction="LONG",
+            expiry="2026-10-30", earliest_expiry="2026-10-30",
+            lot_size=10, lots=1, edge=5, capital_used=30000, user_id=1,
+        )
+        assert created is True
+        LivePaperTradeService().mark(setup, seed, edge=0.0, pnl_override=-100.0)
+        LivePaperTradeService().close(setup, seed, "MANUAL")
+        setup.commit()
+    finally:
+        setup.close()
+
+    events = [
+        ("synthetic-future-cash-carry", "DAILY-LOSS-SYN"),
+        ("box-spread", "DAILY-LOSS-BOX"),
+        ("calendar-spread", "DAILY-LOSS-CAL2"),
+    ]
+    barrier = threading.Barrier(3)
+    errors = []
+    results = []
+
+    def worker(strategy_id, event_id):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            event = AlertEvent(
+                strategy_id=strategy_id,
+                event_id=event_id,
+                symbol=event_id,
+                timestamp_ns=10,
+                message="daily/loss boundary",
+                observed_at=datetime.utcnow(),
+                metadata={"gross_profit": 1000, "paper_trade": {
+                    "direction": "LONG",
+                    "expiry": "2026-10-30",
+                    "earliest_expiry": "2026-10-30",
+                    "lot_size": 10,
+                    "lots": 1,
+                    "edge": 5,
+                    "capital_used": 30000,
+                }},
+            )
+            results.append((strategy_id, AlertService().dispatch(db, event)))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    threads = [threading.Thread(target=worker, args=item) for item in events]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert errors == []
+    assert len(results) == 3
+
+    verify = Session()
+    try:
+        completed = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.status == "COMPLETED",
+        ).all()
+        ongoing = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.status == "ONGOING",
+        ).all()
+
+        # The seed consumed 30k of today's 60k budget and exhausted the
+        # user's max-loss budget. No concurrent strategy may create another
+        # position, even though 60k of paper capital is still technically free.
+        assert len(completed) == 1
+        assert completed[0].realized_pnl == -100.0
+        assert ongoing == []
+    finally:
+        verify.close()
+        engine.dispose()
