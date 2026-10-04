@@ -96,6 +96,42 @@ def test_paper_entry_persists_position_and_order_and_updates_balance():
     assert orders_after_exit.json()["orders"][-1]["transaction_type"] == "SELL"
 
 
+def test_paper_fill_id_is_durable_across_client_retry_and_rejects_conflict():
+    client, headers = _client_and_headers()
+    starting_balance = 10_000_000.0
+
+    first = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol":"DURABLE","transaction_type":"BUY","price":100.0,"quantity":5,"fill_id":"BROKER-FILL-1"},
+    )
+    assert first.status_code == 200
+    assert first.json()["virtual_balance"] == starting_balance - 500.0
+    first_order_id = first.json()["order"]["id"]
+
+    # A fresh HTTP client/session simulates a process restart/replay boundary.
+    restarted_client = TestClient(app)
+    retry = restarted_client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol":"DURABLE","transaction_type":"BUY","price":100.0,"quantity":5,"fill_id":"BROKER-FILL-1"},
+    )
+    assert retry.status_code == 200
+    retry_data = retry.json()
+    assert retry_data["idempotent"] is True
+    assert retry_data["order"]["id"] == first_order_id
+    assert retry_data["virtual_balance"] == starting_balance - 500.0
+
+    orders = restarted_client.get("/api/v1/execution/paper/orders", headers=headers).json()["orders"]
+    assert [item["id"] for item in orders].count(first_order_id) == 1
+
+    conflict = restarted_client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol":"DURABLE","transaction_type":"BUY","price":101.0,"quantity":5,"fill_id":"BROKER-FILL-1"},
+    )
+    assert conflict.status_code == 409
+
 def test_paper_entry_rejects_non_positive_values_for_authenticated_user():
     client, headers = _client_and_headers()
     response = client.post(
