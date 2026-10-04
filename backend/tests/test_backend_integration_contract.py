@@ -240,3 +240,48 @@ def test_alert_rule_daily_capital_and_loss_limits_gate_paper_entry(db_session):
     LivePaperTradeService().mark(db_session, loss_trade, edge=0.0)
     service.dispatch(db_session, blocked_event)
     assert [x.symbol for x in LivePaperTradeService().ongoing(db_session, 2)] == ["CCC"]
+
+
+def test_duplicate_alert_marks_existing_trade_even_when_risk_limit_is_reached(db_session):
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
+    _enable(db_session, 1)
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="111", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=1.0, max_simultaneous_positions=1, max_loss=1.0,
+    ))
+    db_session.commit()
+
+    class DummyNotifier:
+        configured = False
+        def send_text(self, mobile, message):
+            return True
+
+    service = AlertService(DummyNotifier())
+    base = {
+        "direction": "LONG", "expiry": "2026-10-30", "lot_size": 10,
+        "lots": 1, "edge": 10, "capital_used": 1000,
+    }
+    first = AlertEvent(
+        strategy_id="cash-future", event_id="DUP-RISK-1", symbol="AAA",
+        timestamp_ns=1, message="first", metadata={"gross_profit": 1, "paper_trade": base},
+    )
+    assert service.dispatch(db_session, first) == 0
+    trade = LivePaperTradeService().ongoing(db_session, 1)[0]
+    first_edge = trade.current_edge
+
+    duplicate = AlertEvent(
+        strategy_id="cash-future", event_id="DUP-RISK-1", symbol="AAA",
+        timestamp_ns=2, message="duplicate", metadata={
+            "gross_profit": 1,
+            "paper_trade": {**base, "edge": 15, "capital_used": 999999},
+        },
+    )
+    assert service.dispatch(db_session, duplicate) == 0
+    trades = LivePaperTradeService().ongoing(db_session, 1)
+    assert len(trades) == 1
+    assert trades[0].current_edge == 15
+    assert trades[0].capital_used == trade.capital_used
+    assert trades[0].current_edge != first_edge
