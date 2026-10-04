@@ -38,10 +38,10 @@ def test_partial_pnl_pct_survives_expiry_and_daily_capital_uses_allocated_amount
     assert trade.lots == 1
     assert trade.capital_used == 30000
 
-    # +100 P&L on the allocated lot = +0.33333333% of actual capital.
-    svc.mark(db_session, trade, edge=20, pnl_override=100.0)
-    assert trade.unrealized_pnl == 100.0
-    assert trade.pnl_pct == round(100.0 / 30000.0 * 100.0, 8)
+    # -₹100 loss on the allocated lot = -0.33333333% of actual capital.
+    svc.mark(db_session, trade, edge=0, pnl_override=-100.0)
+    assert trade.unrealized_pnl == -100.0
+    assert trade.pnl_pct == round(-100.0 / 30000.0 * 100.0, 8)
 
     # Put the opening timestamp before IST midnight and close after it. The
     # trade's daily capital belongs to its opening IST day, while realized P&L
@@ -56,8 +56,8 @@ def test_partial_pnl_pct_survives_expiry_and_daily_capital_uses_allocated_amount
     assert len(closed) == 1
     assert closed[0].status == "COMPLETED"
     assert closed[0].exit_reason == "EXPIRY_CLOSE"
-    assert closed[0].realized_pnl == 100.0
-    assert closed[0].unrealized_pnl == 100.0
+    assert closed[0].realized_pnl == -100.0
+    assert closed[0].unrealized_pnl == -100.0
     assert closed[0].pnl_pct == round(100.0 / 30000.0 * 100.0, 8)
     assert closed[0].capital_used == 30000
 
@@ -84,4 +84,4 @@ def test_partial_pnl_pct_survives_expiry_and_daily_capital_uses_allocated_amount
             LivePaperTrade.closed_at >= day_start,
         ).all()
     )
-    assert today_loss == 0.0
+    assert today_loss == -100.0
