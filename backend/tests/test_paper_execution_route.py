@@ -8140,3 +8140,99 @@ def test_paper_http_concurrent_legacy_entry_and_exit_same_symbol_has_no_duplicat
     assert payload["status"] == "OK"
     assert payload["mismatches"] == []
     assert payload["repairability"] == "NONE"
+
+
+def test_paper_http_sqlite_writer_contention_fails_closed_without_mutation():
+    """HTTP paper mutation returns retryable conflict when SQLite writer lock is busy."""
+    from app.execution import paper_routes as routes
+    from app.core.database import get_db
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False, "timeout": 0},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="http-write-lock@example.com",
+            hashed_password="",
+            full_name="HTTP Write Lock",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id,
+            mode="PAPER",
+            virtual_balance=1000.0,
+            initial_virtual_balance=1000.0,
+            initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0,
+            is_active=True,
+        ))
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    holder = TestSession()
+    contender = TestSession()
+    client = TestClient(app)
+    try:
+        holder.connection().exec_driver_sql("BEGIN IMMEDIATE")
+
+        def override_db():
+            try:
+                yield contender
+            finally:
+                contender.rollback()
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[routes.current_user_id] = lambda: user_id
+        try:
+            response = client.post(
+                "/api/v1/execution/paper/order",
+                json={
+                    "symbol": "HTTP_LOCK_REJECTED",
+                    "transaction_type": "BUY",
+                    "price": 100.0,
+                    "quantity": 2,
+                    "fill_id": "HTTP-LOCK-REJECTED-1",
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(routes.current_user_id, None)
+            app.dependency_overrides.pop(get_db, None)
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "paper trading account is busy; retry"
+
+        contender.rollback()
+        verify = TestSession()
+        try:
+            account = verify.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id,
+                TradingAccount.mode == "PAPER",
+            ).one()
+            assert account.virtual_balance == 1000.0
+            assert account.realized_pnl == 0.0
+            assert verify.query(Position).filter(
+                Position.user_id == user_id,
+                Position.symbol == "HTTP_LOCK_REJECTED",
+            ).count() == 0
+            assert verify.query(Order).filter(
+                Order.user_id == user_id,
+                Order.symbol == "HTTP_LOCK_REJECTED",
+            ).count() == 0
+        finally:
+            verify.close()
+    finally:
+        contender.rollback()
+        holder.rollback()
+        contender.close()
+        holder.close()
+        engine.dispose()
