@@ -675,6 +675,121 @@ def test_paper_multi_symbol_concurrent_mutations_preserve_each_position(tmp_path
         engine.dispose()
 
 
+def test_paper_multi_symbol_concurrent_exit_and_reversal_preserve_accounting(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, PaperExitRequest, paper_order, paper_exit
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'paper-multi-symbol-close-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(
+            email="multi-symbol-close-race@example.com",
+            hashed_password="",
+            full_name="Multi Symbol Close Race",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(
+            TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=10_000.0,
+                realized_pnl=0.0,
+                is_active=True,
+            )
+        )
+        seed.add_all(
+            [
+                Position(user_id=user.id, symbol="ALPHA", quantity=10, average_price=100.0),
+                Position(user_id=user.id, symbol="BETA", quantity=-5, average_price=200.0),
+            ]
+        )
+        # Reserve the two open positions: 1,000 long cost + 1,000 short margin.
+        seed.query(TradingAccount).filter(TradingAccount.user_id == user.id).one().virtual_balance = 8_000.0
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    barrier = threading.Barrier(2)
+
+    def close_alpha():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            try:
+                return ("alpha", paper_exit(
+                    PaperExitRequest(symbol="ALPHA", price=120.0),
+                    user_id=user_id,
+                    db=db,
+                ))
+            except HTTPException as exc:
+                db.rollback()
+                return ("http", exc.status_code, exc.detail)
+        finally:
+            db.close()
+
+    def reverse_beta():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            try:
+                return ("beta", paper_order(
+                    PaperOrderRequest(
+                        symbol="BETA",
+                        transaction_type="BUY",
+                        price=180.0,
+                        quantity=8,
+                    ),
+                    user_id=user_id,
+                    db=db,
+                ))
+            except HTTPException as exc:
+                db.rollback()
+                return ("http", exc.status_code, exc.detail)
+        finally:
+            db.close()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(close_alpha)
+            second = pool.submit(reverse_beta)
+            results = [first.result(), second.result()]
+
+        successful = [result for result in results if result[0] in {"alpha", "beta"}]
+        assert len(successful) == 2
+
+        verify = Session()
+        try:
+            account = verify.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id
+            ).one()
+            positions = verify.query(Position).filter(
+                Position.user_id == user_id,
+                Position.quantity != 0,
+            ).order_by(Position.symbol.asc()).all()
+            orders = verify.query(Order).filter(Order.user_id == user_id).order_by(Order.id.asc()).all()
+
+            # ALPHA closes for +200. BETA covers 5-short for +100 and
+            # reverses the remaining 3 into a long at 180, costing 540.
+            # Final cash = 8,000 + 1,200 + 1,000 + 100 - 540 = 9,760.
+            assert account.virtual_balance == 9_760.0
+            assert account.realized_pnl == 300.0
+            assert [(p.symbol, p.quantity, p.average_price) for p in positions] == [
+                ("BETA", 3, 180.0),
+            ]
+            assert len(orders) == 2
+        finally:
+            verify.close()
+    finally:
+        engine.dispose()
+
+
 def test_paper_reversal_and_exit_race_converges_to_one_terminal_transition(tmp_path):
     from app.execution.paper_routes import PaperOrderRequest, PaperExitRequest, paper_order, paper_exit
 
