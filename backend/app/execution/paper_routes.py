@@ -524,7 +524,7 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             if audit_hash != expected_audit_hash:
                 raise RuntimeError("paper order audit hash invariant violated")
             expected_audit_previous = audit_hash
-        elif previous_audit_hash is not None:
+        elif previous_audit_hash is not None or expected_audit_previous is not None:
             raise RuntimeError("paper order audit chain invariant violated")
 
 
@@ -720,7 +720,10 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             elif fill_id in seen_fill_ids:
                 invalid_orders.append(f"duplicate_fill_id:{fill_id}")
             seen_fill_ids.add(fill_id)
-        if not order.audit_hash or order.previous_audit_hash != previous_hash:
+        if (
+            (not order.audit_hash and previous_hash is not None)
+            or (order.audit_hash and order.previous_audit_hash != previous_hash)
+        ):
             invalid_orders.append(f"audit_chain_mismatch:{order.id}")
         expected_hash = _paper_audit_payload(
             user_id=user_id,
