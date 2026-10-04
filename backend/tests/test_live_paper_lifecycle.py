@@ -1278,6 +1278,139 @@ def test_partial_allocation_and_expiry_close_race_preserve_capital(tmp_path):
 
 
 
+
+def test_duplicate_mark_manual_close_expiry_close_three_way_preserves_terminal_pnl(tmp_path):
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'duplicate-manual-expiry-mark-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    setup.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    setup.commit()
+    original, created = LivePaperTradeService().enter_or_mark(
+        setup,
+        strategy_id="cash-future",
+        symbol="RACE",
+        event_id="THREE-WAY-MARK-CLOSE",
+        direction="LONG",
+        expiry="2026-10-12",
+        earliest_expiry="2026-10-12",
+        lot_size=10,
+        lots=1,
+        edge=10,
+        capital_used=30000,
+        metadata={"exchange": "NFO"},
+        user_id=1,
+    )
+    assert created is True
+    original_id = original.id
+    setup.close()
+
+    barrier = threading.Barrier(3)
+    results, errors = [], []
+
+    def duplicate_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            trade, was_created = LivePaperTradeService().enter_or_mark(
+                db,
+                strategy_id="cash-future",
+                symbol="RACE",
+                event_id="THREE-WAY-MARK-CLOSE",
+                direction="LONG",
+                expiry="2026-10-12",
+                earliest_expiry="2026-10-12",
+                lot_size=99,
+                lots=9,
+                edge=20,
+                capital_used=900000,
+                metadata={"exchange": "NFO"},
+                user_id=1,
+            )
+            results.append(("mark", was_created, None if trade is None else trade.id))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    def manual_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            row = db.query(LivePaperTrade).filter(
+                LivePaperTrade.id == original_id,
+                LivePaperTrade.status == "ONGOING",
+            ).first()
+            if row is None:
+                results.append(("manual", None))
+            else:
+                closed = LivePaperTradeService().close(db, row, "MANUAL")
+                results.append(("manual", closed.exit_reason))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    def expiry_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            closed = LivePaperTradeService().close_expired(
+                db, now=datetime(2026, 10, 12, 15, 30),
+            )
+            results.append(("expiry", len(closed)))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=duplicate_worker),
+        threading.Thread(target=manual_worker),
+        threading.Thread(target=expiry_worker),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(results) == 3
+
+    verify = Session()
+    try:
+        row = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.id == original_id,
+        ).one()
+        assert row.status == "COMPLETED"
+        assert row.exit_reason in {"MANUAL", "EXPIRY_CLOSE"}
+        assert row.lots == 1
+        assert row.lot_size == 10
+        assert row.capital_used == 30000
+        assert row.entry_edge == 10
+        assert row.realized_pnl == row.unrealized_pnl
+        assert row.pnl_pct == round(row.realized_pnl / row.capital_used * 100.0, 8)
+        assert row.closed_at is not None
+        assert row.last_mark_at is not None
+        assert row.last_mark_at <= row.closed_at
+        assert verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.event_id == "THREE-WAY-MARK-CLOSE",
+        ).count() == 1
+    finally:
+        verify.close()
+        engine.dispose()
+
 def test_duplicate_event_cannot_mark_after_concurrent_expiry_close(tmp_path):
     import threading
     from sqlalchemy import create_engine
