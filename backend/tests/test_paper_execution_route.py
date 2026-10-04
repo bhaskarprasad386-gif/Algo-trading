@@ -3816,29 +3816,51 @@ def test_paper_reconcile_sqlite_read_snapshot_is_repeatable_during_concurrent_wr
 def test_paper_reconcile_http_concurrent_reader_mutation_stress_matrix(tmp_path):
     """Concurrent HTTP reconciliation never exposes a malformed or mutating response."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    from app.core.database import get_db
     from app.execution import paper_routes as routes
 
-    # Keep the stress isolated from the process-global test database.
-    # The route dependency still exercises the real HTTP boundary while the
-    # override pins every request to one explicit test identity.
-    db = SessionLocal()
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-reconcile-stress.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
     try:
-        accounts = (
-            db.query(TradingAccount)
-            .filter(
-                TradingAccount.is_active.is_(True),
-                TradingAccount.mode == "PAPER",
-            )
-            .order_by(TradingAccount.id.asc())
-            .all()
+        user = User(
+            email="http-reconcile-stress@example.com",
+            hashed_password="",
+            full_name="HTTP Reconcile Stress",
+            is_active=True,
         )
-        if not accounts:
-            pytest.skip("requires an active paper account")
-        user_id = int(accounts[0].user_id)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id,
+            mode="PAPER",
+            virtual_balance=10_000_000.0,
+            initial_virtual_balance=10_000_000.0,
+            initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0,
+            is_active=True,
+        ))
+        seed.commit()
+        user_id = int(user.id)
     finally:
-        db.close()
+        seed.close()
+
+    def override_db():
+        db = TestSession()
+        try:
+            yield db
+        finally:
+            db.close()
 
     client = TestClient(app)
+    app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[routes.current_user_id] = lambda: user_id
     symbols = [f"HTTP-STRESS-{index}" for index in range(4)]
 
@@ -3871,7 +3893,6 @@ def test_paper_reconcile_http_concurrent_reader_mutation_stress_matrix(tmp_path)
         return ("exit", response.status_code, response.json())
 
     try:
-        # Seed two positions so entry and exit mutations can overlap readers.
         for index in range(2):
             kind, status, payload = entry(index)
             assert kind == "entry"
@@ -3880,13 +3901,13 @@ def test_paper_reconcile_http_concurrent_reader_mutation_stress_matrix(tmp_path)
 
         operations = []
         with ThreadPoolExecutor(max_workers=12) as pool:
-            futures = []
-            for _ in range(8):
-                futures.append(pool.submit(reconcile))
-            futures.append(pool.submit(entry, 2))
-            futures.append(pool.submit(exit_, 0))
-            futures.append(pool.submit(exit_, 1))
-            futures.append(pool.submit(reconcile))
+            futures = [pool.submit(reconcile) for _ in range(8)]
+            futures.extend([
+                pool.submit(entry, 2),
+                pool.submit(exit_, 0),
+                pool.submit(exit_, 1),
+                pool.submit(reconcile),
+            ])
             for future in as_completed(futures):
                 operations.append(future.result())
 
@@ -3900,9 +3921,8 @@ def test_paper_reconcile_http_concurrent_reader_mutation_stress_matrix(tmp_path)
             assert isinstance(payload["mismatches"], list)
             assert payload["repair_plan"]["apply"] is False
             assert payload["repair_plan"]["reason"] == "read_only_dry_run"
+            assert payload["user_id"] == user_id
 
-        # Mutation responses must remain valid even when reconciliation is
-        # concurrently reading the same account.
         mutation_results = [item for item in operations if item[0] in {"entry", "exit"}]
         assert len(mutation_results) == 3
         for kind, status, payload in mutation_results:
@@ -3913,22 +3933,21 @@ def test_paper_reconcile_http_concurrent_reader_mutation_stress_matrix(tmp_path)
             if kind == "exit" and status == 200:
                 assert payload["status"] in {"closed", "flat"}
 
-        # A final serialized reconciliation must still be a valid contract,
-        # and must never request mutation.
         final = client.get("/api/v1/execution/paper/reconcile")
         assert final.status_code == 200
         final_payload = final.json()
         assert final_payload["user_id"] == user_id
         assert final_payload["repair_plan"]["apply"] is False
 
-        # The stress must not manufacture a cross-user or non-paper ledger row.
-        verify = SessionLocal()
+        verify = TestSession()
         try:
-            assert verify.query(Order).filter(
+            stress_orders = verify.query(Order).filter(
                 Order.user_id == user_id,
                 Order.is_paper.is_(True),
                 Order.symbol.in_(symbols),
-            ).count() >= 3
+            ).all()
+            assert len(stress_orders) >= 3
+            assert all(order.status == "FILLED" for order in stress_orders)
             assert verify.query(Order).filter(
                 Order.user_id == user_id,
                 Order.is_paper.is_(False),
@@ -3938,3 +3957,5 @@ def test_paper_reconcile_http_concurrent_reader_mutation_stress_matrix(tmp_path)
             verify.close()
     finally:
         app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
