@@ -73,37 +73,12 @@ class AlertService:
         return ("whatsapp",) if self._notifier.configured else ()
 
     def dispatch_user(self, user, event: AlertEvent) -> bool:
-        paper = event.metadata.get("paper_trade")
-        if isinstance(paper, Mapping):
-            paper_db = SessionLocal()
-            try:
-                from app.auto.live_paper import LivePaperTradeService
-                service = LivePaperTradeService()
-                service.close_expired(paper_db, commit=True)
-                service.enter_or_mark(
-                    paper_db, strategy_id=event.strategy_id, symbol=event.symbol, event_id=event.event_id,
-                    direction=paper.get("direction", "LONG"), expiry=paper.get("expiry"),
-                    earliest_expiry=paper.get("earliest_expiry") or paper.get("expiry"),
-                    lot_size=int(paper.get("lot_size", 1) or 1), lots=int(paper.get("lots", 1) or 1),
-                    edge=float(paper.get("edge", 0.0) or 0.0), capital_used=float(paper.get("capital_used", 0.0) or 0.0),
-                    legs=paper.get("legs") or [], metadata=dict(paper), user_id=int(user.id),
-                )
-            except Exception as exc:
-                from app.core.logger import app_logger
-                app_logger.error("Live paper auto-entry failed: %s", exc)
-            finally:
-                paper_db.close()
-        if not user.mobile_number:
-            return False
-        key = (int(user.id), event.event_id)
-        cooldown_ns = int(max(0.0, float(settings.LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS)) * 1_000_000_000)
-        previous = self._last_sent.get(key, 0)
-        if event.timestamp_ns - previous < cooldown_ns:
-            return False
-        sent = self._notifier.send_text(user.mobile_number, event.message)
-        if sent:
-            self._last_sent[key] = event.timestamp_ns
-        return sent
+        # Compatibility notification path. Paper auto-entry is intentionally
+        # owned by dispatch(), where enabled AlertRule risk gates, capital
+        # reservation, max-loss and user isolation are enforced. This path is
+        # also used by legacy scanner notifications and must never bypass those
+        # controls by creating a paper position directly.
+        return self._dispatch_notification_only(user, event)
 
     def _dispatch_notification_only(self, user, event: AlertEvent) -> bool:
         if not user.mobile_number:
