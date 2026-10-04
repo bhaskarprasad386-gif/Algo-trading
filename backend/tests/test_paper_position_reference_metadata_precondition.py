@@ -59,3 +59,35 @@ def test_repair_precondition_distinguishes_null_and_empty_string_metadata(tmp_pa
     finally:
         db.close()
         engine.dispose()
+
+
+def test_repair_precondition_raw_nullable_order_metadata_is_distinct(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'raw-nullable-order-meta.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        user = User(email="raw-nullable@example.com", hashed_password="", full_name="Raw Nullable", is_active=True)
+        db.add(user)
+        db.flush()
+        account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+                                 initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+                                 realized_pnl=0.0, is_active=True)
+        db.add(account)
+        db.commit()
+        paper_order(PaperOrderRequest(symbol="NULLMETA", transaction_type="BUY", price=10.0, quantity=1, fill_id="NULLMETA-1"), user_id=user.id, db=db)
+        order = db.query(Order).filter_by(user_id=user.id).one()
+        positions = db.query(Position).filter_by(user_id=user.id, is_paper=True).all()
+        baseline = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+        for field in ("broker_order_id", "token", "exchange", "order_type", "product_type", "time_in_force", "message"):
+            setattr(order, field, "")
+            empty_hash = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+            setattr(order, field, None)
+            null_hash = _paper_repair_precondition(db, user.id, account, [order], positions)["state_hash"]
+            assert empty_hash != null_hash
+            assert empty_hash != baseline
+            setattr(order, field, getattr(Order(), field, None))
+            if field in ("order_type", "product_type", "time_in_force"):
+                setattr(order, field, {"order_type": "MARKET", "product_type": "INTRADAY", "time_in_force": "DAY"}[field])
+    finally:
+        db.close()
+        engine.dispose()
