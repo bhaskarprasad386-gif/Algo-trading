@@ -285,6 +285,45 @@ def test_executable_pnl_box_mixed_legs_preserves_each_exit_side():
     assert _executable_paper_pnl(trade, row) == 0.0
 
 
+
+def test_expiry_close_does_not_report_trade_after_manual_close_wins(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    db_session.commit()
+
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="RACE-EXPIRY",
+        event_id="RACE-EXPIRY-REPORT", direction="LONG",
+        expiry="2026-10-12", earliest_expiry="2026-10-12",
+        lot_size=10, lots=1, edge=10, capital_used=50000,
+        metadata={"exchange": "NFO"}, user_id=1,
+    )
+    assert created is True
+    svc.mark(db_session, trade, edge=12, pnl_override=200.0)
+
+    # Simulate the manual-close transaction winning the close race.
+    manual = svc.close(db_session, trade, "MANUAL")
+    assert manual.status == "COMPLETED"
+    assert manual.exit_reason == "MANUAL"
+    assert manual.realized_pnl == 200.0
+
+    # The expiry pass must not falsely report this already-completed manual
+    # closure as an EXPIRY_CLOSE.
+    closed = svc.close_expired(
+        db_session, now=datetime(2026, 10, 12, 15, 30),
+    )
+    assert closed == []
+
+    db_session.expire_all()
+    current = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.id == trade.id,
+    ).one()
+    assert current.status == "COMPLETED"
+    assert current.exit_reason == "MANUAL"
+    assert current.realized_pnl == 200.0
+
 def test_expiry_close_realizes_last_executable_pnl(db_session):
     svc = LivePaperTradeService()
     db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=10_000_000, emergency_stop=False))
