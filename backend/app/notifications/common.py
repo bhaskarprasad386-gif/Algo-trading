@@ -59,7 +59,9 @@ class AlertService:
             paper_db = SessionLocal()
             try:
                 from app.auto.live_paper import LivePaperTradeService
-                LivePaperTradeService().enter_or_mark(
+                service = LivePaperTradeService()
+                service.close_expired(paper_db)
+                service.enter_or_mark(
                     paper_db, strategy_id=event.strategy_id, symbol=event.symbol, event_id=event.event_id,
                     direction=paper.get("direction", "LONG"), expiry=paper.get("expiry"),
                     earliest_expiry=paper.get("earliest_expiry") or paper.get("expiry"),
@@ -99,6 +101,10 @@ class AlertService:
             from app.auto.live_paper import LivePaperTradeService
             from app.models.live_paper_trade import LivePaperTrade
             service = LivePaperTradeService()
+            # Resolve due expiries before position/capital/loss gates. The
+            # background monitor is periodic, so an alert can arrive at the
+            # exact expiry boundary before that monitor gets a turn.
+            service.close_expired(db)
             eligible_rules = [
                 rule for rule in rules
                 if gross_value is None or gross_value >= float(rule.min_gross_profit)
