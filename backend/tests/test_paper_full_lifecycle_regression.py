@@ -32,6 +32,19 @@ def test_full_paper_lifecycle_does_not_reopen_or_reallocate_completed_event(db_s
     assert duplicate.id == trade.id
     assert duplicate.capital_used == 60_000
     assert duplicate.current_edge == 7
+    # Direction is immutable for the lifetime of the paper position. A
+    # duplicate signal with the opposite direction must remain mark-only and
+    # must not flip the persisted trade side.
+    assert duplicate.direction == "LONG"
+    opposite, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="LIFECYCLE-1", direction="SHORT", expiry="2026-10-04",
+        lot_size=10, lots=2, edge=6, capital_used=999_999, user_id=1,
+    )
+    assert created is False
+    assert opposite.id == trade.id
+    assert opposite.direction == "LONG"
+    assert opposite.current_edge == 6
 
     svc.mark(db_session, trade, edge=7)
     assert trade.unrealized_pnl == -60.0
