@@ -6726,3 +6726,96 @@ def test_paper_http_concurrent_scanner_and_legacy_entry_same_symbol_without_fill
     assert payload["status"] == "OK"
     assert payload["mismatches"] == []
     assert payload["repairability"] == "NONE"
+
+
+def test_paper_http_concurrent_scanner_reversal_and_exit_close_short_once():
+    """Scanner BUY delegation and terminal exit must serialize correctly on an active short."""
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 500.0
+        account.realized_pnl = 0.0
+        db.add(Position(
+            user_id=user_id,
+            symbol="SCANNER_SHORT_RACE",
+            quantity=-5,
+            average_price=100.0,
+            stop_loss=None,
+            target=None,
+            is_paper=True,
+            is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(2)
+
+    def submit(kind):
+        barrier.wait(timeout=5)
+        if kind == "scanner":
+            return client.post(
+                "/api/v1/execution/paper/from-scanner",
+                headers=headers,
+                json={
+                    "symbol": "SCANNER_SHORT_RACE",
+                    "cash_price": 90.0,
+                    "future_price": 100.0,
+                    "quantity": 10,
+                    "executable": True,
+                    "gap": 10.0,
+                    "net_profit": 10.0,
+                },
+            )
+        return client.post(
+            "/api/v1/execution/paper/exit",
+            headers=headers,
+            json={"symbol": "SCANNER_SHORT_RACE", "price": 90.0},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(submit, ["scanner", "exit"]))
+
+    assert all(response.status_code in {200, 400} for response in responses)
+
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        orders = db.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+            Order.symbol == "SCANNER_SHORT_RACE",
+        ).order_by(Order.id).all()
+        position = db.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.symbol == "SCANNER_SHORT_RACE",
+            Position.is_open.is_(True),
+        ).one_or_none()
+
+        assert account.realized_pnl == 50.0
+        assert len(orders) == 1
+        assert orders[0].transaction_type == "BUY"
+        assert orders[0].quantity == 5
+        assert orders[0].price == 90.0
+
+        if position is None:
+            assert account.virtual_balance == 600.0
+        else:
+            assert position.quantity == 5
+            assert position.average_price == 90.0
+            assert account.virtual_balance == 500.0
+    finally:
+        db.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
