@@ -3000,6 +3000,94 @@ def test_paper_reconcile_http_dependency_identity_can_be_changed_without_client_
     finally:
         app.dependency_overrides.pop(routes.current_user_id, None)
 
+
+def test_paper_reconcile_http_is_strictly_read_only_for_user_state():
+    from app.execution import paper_routes as routes
+
+    db = SessionLocal()
+    try:
+        accounts = (
+            db.query(TradingAccount)
+            .filter(TradingAccount.is_active.is_(True), TradingAccount.mode == "PAPER")
+            .order_by(TradingAccount.id.asc())
+            .all()
+        )
+        if not accounts:
+            pytest.skip("requires an active paper account")
+        user_id = int(accounts[0].user_id)
+
+        def snapshot():
+            account = db.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+            orders = (
+                db.query(Order)
+                .filter(Order.user_id == user_id, Order.is_paper.is_(True))
+                .order_by(Order.id.asc())
+                .all()
+            )
+            positions = (
+                db.query(Position)
+                .filter(Position.user_id == user_id, Position.is_paper.is_(True))
+                .order_by(Position.id.asc())
+                .all()
+            )
+            def row(obj):
+                return tuple((column.name, getattr(obj, column.name)) for column in obj.__table__.columns)
+            return {
+                "account": row(account),
+                "orders": [row(order) for order in orders],
+                "positions": [row(position) for position in positions],
+            }
+
+        before = snapshot()
+        client = TestClient(app)
+        app.dependency_overrides[routes.current_user_id] = lambda: user_id
+        try:
+            response = client.get("/api/v1/execution/paper/reconcile")
+        finally:
+            app.dependency_overrides.pop(routes.current_user_id, None)
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["user_id"] == user_id
+        assert payload["repair_plan"]["apply"] is False
+
+        db.expire_all()
+        after = snapshot()
+        assert before == after
+
+        # The read-only response itself must not manufacture a repair mutation.
+        assert payload["repair_plan"]["reason"] == "read_only_dry_run"
+    finally:
+        db.close()
+
+
+def test_paper_reconcile_direct_read_only_preserves_state_hash_and_audit_head():
+    from app.execution.paper_routes import _reconcile_paper_ledger
+
+    db = SessionLocal()
+    try:
+        accounts = (
+            db.query(TradingAccount)
+            .filter(TradingAccount.is_active.is_(True), TradingAccount.mode == "PAPER")
+            .order_by(TradingAccount.id.asc())
+            .all()
+        )
+        if not accounts:
+            pytest.skip("requires an active paper account")
+        user_id = int(accounts[0].user_id)
+
+        first = _reconcile_paper_ledger(db, user_id)
+        db.expire_all()
+        second = _reconcile_paper_ledger(db, user_id)
+
+        assert first["repair_plan"]["apply"] is False
+        assert second["repair_plan"]["apply"] is False
+        assert first["repair_plan"]["precondition"] == second["repair_plan"]["precondition"]
+        assert first["repair_plan"]["precondition"]["state_hash"] == second["repair_plan"]["precondition"]["state_hash"]
+        assert first["repair_plan"]["precondition"]["audit_head"] == second["repair_plan"]["precondition"]["audit_head"]
+        assert first == second
+    finally:
+        db.close()
+
 def test_paper_reconcile_authorization_fails_closed_when_multiple_active_users_exist(tmp_path):
     from app.execution.paper_routes import current_user_id, _reconcile_paper_ledger
 
