@@ -575,8 +575,8 @@ def _paper_repair_precondition(db: Session, user_id: int, account: TradingAccoun
                 "id": int(order.id),
                 "order_id": order.order_id,
                 "fill_id": order.fill_id,
-                "symbol": str(order.symbol or "").strip().upper(),
-                "side": str(order.transaction_type or "").strip().upper(),
+                "symbol": order.symbol,
+                "side": order.transaction_type,
                 "quantity": _repair_fingerprint_number(order.quantity),
                 "filled_quantity": _repair_fingerprint_number(order.filled_quantity),
                 "price": _repair_fingerprint_number(order.price),
@@ -603,7 +603,7 @@ def _paper_repair_precondition(db: Session, user_id: int, account: TradingAccoun
         "positions": [
             {
                 "id": int(position.id),
-                "symbol": str(position.symbol or "").strip().upper(),
+                "symbol": position.symbol,
                 "quantity": _repair_fingerprint_number(position.quantity),
                 "average_price": _repair_fingerprint_number(position.average_price),
                 "last_price": _repair_fingerprint_number(position.last_price),
