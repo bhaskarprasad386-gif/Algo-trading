@@ -136,3 +136,48 @@ def test_rule_driven_paper_entry_is_user_scoped(db_session):
     assert AlertService(DummyNotifier()).dispatch(db_session, event) == 2
     assert len(LivePaperTradeService().ongoing(db_session, 1)) == 1
     assert len(LivePaperTradeService().ongoing(db_session, 2)) == 1
+
+
+def test_alert_rule_threshold_and_limits_gate_paper_entry(db_session):
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
+    _enable(db_session, 1)
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=100.0,
+        mobile_number="111", whatsapp_enabled=True, enabled=True,
+        max_daily_capital=100000.0, max_simultaneous_positions=1, max_loss=100.0,
+    ))
+    db_session.commit()
+
+    class DummyNotifier:
+        configured = True
+        def send_text(self, mobile, message):
+            return True
+
+    service = AlertService(DummyNotifier())
+    base = {
+        "direction": "LONG", "expiry": "2026-10-30", "lot_size": 10,
+        "lots": 1, "edge": 10, "capital_used": 60000,
+    }
+
+    low = AlertEvent(
+        strategy_id="cash-future", event_id="RULE-GATE-LOW", symbol="AAA",
+        timestamp_ns=1, message="low", metadata={"gross_profit": 50, "paper_trade": base},
+    )
+    assert service.dispatch(db_session, low) == 0
+    assert len(LivePaperTradeService().ongoing(db_session, 1)) == 0
+
+    first = AlertEvent(
+        strategy_id="cash-future", event_id="RULE-GATE-1", symbol="AAA",
+        timestamp_ns=2, message="first", metadata={"gross_profit": 200, "paper_trade": base},
+    )
+    assert service.dispatch(db_session, first) == 1
+    assert len(LivePaperTradeService().ongoing(db_session, 1)) == 1
+
+    second = AlertEvent(
+        strategy_id="cash-future", event_id="RULE-GATE-2", symbol="BBB",
+        timestamp_ns=3, message="second", metadata={"gross_profit": 200, "paper_trade": base},
+    )
+    assert service.dispatch(db_session, second) == 1
+    assert len(LivePaperTradeService().ongoing(db_session, 1)) == 1
