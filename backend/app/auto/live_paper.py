@@ -43,7 +43,23 @@ class LivePaperTradeService:
                       expiry=None, earliest_expiry=None, lot_size=1, lots=1,
                       edge=0.0, capital_used=0.0, legs=None, metadata=None,
                       user_id=1):
-        event_id = str(event_id)
+        event_id = str(event_id).strip()
+        strategy_text = str(strategy_id).strip().lower()
+        symbol_text = str(symbol).strip().upper()
+        direction_text = str(direction).strip().upper()
+        expiry_text = str(expiry).strip() if expiry is not None else ""
+        earliest_expiry_text = str(earliest_expiry).strip() if earliest_expiry is not None else expiry_text
+        if (
+            not event_id
+            or not strategy_text
+            or not symbol_text
+            or direction_text not in {"LONG", "SHORT"}
+            or not expiry_text
+            or _parse_date(expiry_text) is None
+            or not earliest_expiry_text
+            or _parse_date(earliest_expiry_text) is None
+        ):
+            return None, False
         try:
             lot_size_value = float(lot_size)
             lots_value = float(lots)
@@ -112,12 +128,12 @@ class LivePaperTradeService:
             capital_used = capital_per_lot * lots
         trade = LivePaperTrade(
             user_id=int(user_id),
-            strategy_id=str(strategy_id).strip().lower(),
-            symbol=str(symbol).strip().upper(),
+            strategy_id=strategy_text,
+            symbol=symbol_text,
             event_id=event_id,
-            direction=str(direction),
-            expiry=str(expiry) if expiry else None,
-            earliest_expiry=str(earliest_expiry or expiry) if (earliest_expiry or expiry) else None,
+            direction=direction_text,
+            expiry=expiry_text,
+            earliest_expiry=earliest_expiry_text,
             lot_size=int(lot_size),
             lots=int(lots),
             entry_edge=float(edge),
