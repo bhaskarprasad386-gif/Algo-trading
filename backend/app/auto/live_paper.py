@@ -76,6 +76,8 @@ def _valid_persisted_trade(trade) -> bool:
         direction = str(getattr(trade, "direction", "") or "").strip().upper()
         if not strategy_id or not symbol or not event_id or direction not in {"LONG", "SHORT"}:
             return False
+        if not _valid_persisted_trade_json(trade):
+            return False
         if len(strategy_id) > 128 or len(symbol) > 128 or len(event_id) > 512:
             return False
         if str(getattr(trade, "status", "") or "").upper() not in {"ONGOING", "COMPLETED"}:
