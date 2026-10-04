@@ -583,6 +583,98 @@ def test_paper_multi_symbol_portfolio_accounting_isolated_across_reversal_and_ex
     assert data["virtual_balance"] == starting_balance + 280.0
     assert data["position"] is None
 
+def test_paper_multi_symbol_concurrent_mutations_preserve_each_position(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'paper-multi-symbol-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(
+            email="multi-symbol-race@example.com",
+            hashed_password="",
+            full_name="Multi Symbol Race",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(
+            TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=10_000.0,
+                realized_pnl=0.0,
+                is_active=True,
+            )
+        )
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    barrier = threading.Barrier(2)
+
+    def submit(symbol, price, quantity):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            try:
+                return paper_order(
+                    PaperOrderRequest(
+                        symbol=symbol,
+                        transaction_type="BUY",
+                        price=price,
+                        quantity=quantity,
+                    ),
+                    user_id=user_id,
+                    db=db,
+                )
+            except HTTPException as exc:
+                db.rollback()
+                return {"status": "http", "code": exc.status_code, "detail": exc.detail}
+        finally:
+            db.close()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            alpha_future = pool.submit(submit, "ALPHA", 100.0, 10)
+            beta_future = pool.submit(submit, "BETA", 200.0, 20)
+            alpha = alpha_future.result()
+            beta = beta_future.result()
+
+        assert alpha["status"] == "success"
+        assert beta["status"] == "success"
+
+        verify = Session()
+        try:
+            account = verify.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id
+            ).one()
+            positions = verify.query(Position).filter(
+                Position.user_id == user_id,
+                Position.quantity != 0,
+            ).order_by(Position.symbol.asc()).all()
+            orders = verify.query(Order).filter(
+                Order.user_id == user_id,
+            ).all()
+
+            assert account.virtual_balance == 5_000.0
+            assert account.realized_pnl == 0.0
+            assert [(p.symbol, p.quantity, p.average_price) for p in positions] == [
+                ("ALPHA", 10, 100.0),
+                ("BETA", 20, 200.0),
+            ]
+            assert len(orders) == 2
+        finally:
+            verify.close()
+    finally:
+        engine.dispose()
+
+
 def test_paper_reversal_and_exit_race_converges_to_one_terminal_transition(tmp_path):
     from app.execution.paper_routes import PaperOrderRequest, PaperExitRequest, paper_order, paper_exit
 
