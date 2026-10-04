@@ -104,3 +104,71 @@ def test_executable_pnl_calendar_uses_contract_specific_quotes():
                           near_bid=104.0, near_ask=105.0, far_bid=106.0, far_ask=107.0)
     assert _executable_paper_pnl(trade, row) == 140.0
 
+
+
+def test_expiry_close_is_strictly_at_session_boundary_for_nse(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=10_000_000, emergency_stop=False))
+    db_session.commit()
+    trade, _ = svc.enter_or_mark(
+        db_session, strategy_id="calendar-spread", symbol="NIFTY",
+        event_id="BOUND-NSE", direction="LONG", expiry="2026-10-12",
+        earliest_expiry="2026-10-12", lot_size=50, lots=1, edge=4,
+        capital_used=100000, metadata={"exchange": "NFO"},
+    )
+    assert svc.close_expired(db_session, now=datetime(2026, 10, 12, 15, 29, 59)) == []
+    assert trade.status == "ONGOING"
+    closed = svc.close_expired(db_session, now=datetime(2026, 10, 12, 15, 30, 0))
+    assert len(closed) == 1
+    assert closed[0].status == "COMPLETED"
+
+
+def test_expiry_close_uses_mcx_session_boundary(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=10_000_000, emergency_stop=False))
+    db_session.commit()
+    trade, _ = svc.enter_or_mark(
+        db_session, strategy_id="calendar-spread", symbol="GOLD",
+        event_id="BOUND-MCX", direction="LONG", expiry="2026-10-12",
+        earliest_expiry="2026-10-12", lot_size=1, lots=1, edge=4,
+        capital_used=100000, metadata={"exchange": "MCX"},
+    )
+    assert svc.close_expired(db_session, now=datetime(2026, 10, 12, 23, 29, 59)) == []
+    assert trade.status == "ONGOING"
+    closed = svc.close_expired(db_session, now=datetime(2026, 10, 12, 23, 30, 0))
+    assert len(closed) == 1
+    assert closed[0].status == "COMPLETED"
+
+
+def test_expiry_close_normalizes_aware_datetime_to_ist(db_session):
+    from datetime import timezone, timedelta
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=10_000_000, emergency_stop=False))
+    db_session.commit()
+    trade, _ = svc.enter_or_mark(
+        db_session, strategy_id="synthetic-future-cash-carry", symbol="NIFTY",
+        event_id="TZ-1", direction="LONG", expiry="2026-10-12",
+        earliest_expiry="2026-10-12", lot_size=50, lots=1, edge=4,
+        capital_used=100000, metadata={"exchange": "NFO"},
+    )
+    # 10:00 UTC is 15:30 IST and must close exactly at the NSE boundary.
+    closed = svc.close_expired(
+        db_session,
+        now=datetime(2026, 10, 12, 10, 0, tzinfo=timezone.utc),
+    )
+    assert len(closed) == 1
+    assert trade.status == "COMPLETED"
+
+
+def test_expiry_close_does_not_close_before_earliest_expiry(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=10_000_000, emergency_stop=False))
+    db_session.commit()
+    trade, _ = svc.enter_or_mark(
+        db_session, strategy_id="calendar-spread", symbol="NIFTY",
+        event_id="EARLY-GUARD", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-12", lot_size=50, lots=1, edge=4,
+        capital_used=100000, metadata={"exchange": "NFO"},
+    )
+    assert svc.close_expired(db_session, now=datetime(2026, 10, 11, 23, 59, 59)) == []
+    assert trade.status == "ONGOING"
