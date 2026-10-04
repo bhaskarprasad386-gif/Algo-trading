@@ -156,5 +156,32 @@ def test_malformed_persisted_trade_is_excluded_from_accounting_and_marking(db_se
         earliest_expiry="2026-10-30", lot_size=1, lots=1,
         edge=10, capital_used=50_000, user_id=1,
     )
+    assert created is False
+    assert valid is None
+
+    closed = svc.close(db_session, malformed, "MANUAL")
+    assert closed.status == "ONGOING"
+    assert db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.id == malformed.id
+    ).one().status == "ONGOING"
+
+def test_mark_rejects_non_finite_or_negative_updates(db_session):
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100_000, emergency_stop=False,
+    ))
+    db_session.commit()
+    svc = LivePaperTradeService()
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="GOOD",
+        event_id="MARK-VALIDATION", direction="LONG", expiry="2026-10-30",
+        lot_size=1, lots=1, edge=10, capital_used=20_000, user_id=1,
+    )
     assert created is True
-    assert valid.capital_used == 50_000
+
+    before = (trade.current_edge, trade.unrealized_pnl, trade.capital_used)
+    svc.mark(db_session, trade, edge=float("nan"), pnl_override=100)
+    svc.mark(db_session, trade, edge=-1, pnl_override=100)
+    svc.mark(db_session, trade, edge=20, pnl_override=float("inf"))
+    svc.mark(db_session, trade, edge=20, capital_used=float("nan"))
+    after = (trade.current_edge, trade.unrealized_pnl, trade.capital_used)
+    assert after == before
