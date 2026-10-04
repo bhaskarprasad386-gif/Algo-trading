@@ -3935,11 +3935,13 @@ def test_paper_reconcile_http_baseline_integrity_precedence_with_mixed_ledger_co
 
     expected = {
         "BASELINE_ONLY": {
+            "status": "OK",
             "categories": ["BASELINE_INTEGRITY"],
             "mismatches": [],
             "baseline_status": "LEGACY_IMPORT",
         },
         "BASELINE_ACCOUNTING_POSITION": {
+            "status": "MISMATCH",
             "categories": ["ACCOUNTING_STATE", "BASELINE_INTEGRITY", "POSITION_STATE"],
             "mismatches": [
                 "position_mismatch:BASELINE",
@@ -3948,6 +3950,7 @@ def test_paper_reconcile_http_baseline_integrity_precedence_with_mixed_ledger_co
             "baseline_status": "LEGACY_IMPORT",
         },
         "BASELINE_ALL": {
+            "status": "MISMATCH",
             "categories": [
                 "ACCOUNTING_STATE",
                 "AUDIT_INTEGRITY",
@@ -3973,7 +3976,7 @@ def test_paper_reconcile_http_baseline_integrity_precedence_with_mixed_ledger_co
         assert snapshots[0] == snapshots[1]
 
         snapshot = snapshots[0]
-        assert snapshot["status"] == "MISMATCH"
+        assert snapshot["status"] == contract["status"]
         # Baseline integrity alone must not become SAFE_DRY_RUN. Adding
         # account/position corruption must not downgrade or mask the baseline
         # failure, and adding audit corruption must still report every class.
