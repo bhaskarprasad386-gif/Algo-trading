@@ -1720,3 +1720,103 @@ def test_paper_end_to_end_multi_symbol_reversal_duplicate_and_audit_reconciliati
             reconcile.close()
     finally:
         engine.dispose()
+
+
+def test_paper_reconcile_migrated_inferred_baseline_never_becomes_bootstrap(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order, _reconcile_paper_ledger
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'migrated-baseline.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="migrated-baseline@example.com", hashed_password="", full_name="Migrated Baseline", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id, mode="PAPER", virtual_balance=900.0,
+            initial_virtual_balance=1000.0, initial_balance_source="MIGRATED_INFERRED",
+            realized_pnl=0.0, is_active=True,
+        ))
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    db = Session()
+    try:
+        paper_order(
+            PaperOrderRequest(symbol="MIGRATED", transaction_type="BUY", price=100.0, quantity=1, fill_id="MIGRATED-1"),
+            user_id=user_id, db=db,
+        )
+    finally:
+        db.close()
+
+    verify = Session()
+    try:
+        data = _reconcile_paper_ledger(verify, user_id)
+        assert data["status"] == "OK"
+        assert data["baseline_status"] == "MIGRATED_INFERRED"
+        assert data["repairability"] == "BLOCKED"
+        assert data["mismatches"] == []
+        assert data["repair_plan"]["apply"] is False
+    finally:
+        verify.close()
+        engine.dispose()
+
+
+def test_paper_reconcile_mixed_legacy_and_fingerprinted_orders_is_blocked(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order, _reconcile_paper_ledger
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'mixed-legacy.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="mixed-legacy@example.com", hashed_password="", full_name="Mixed Legacy", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+            initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0, is_active=True,
+        ))
+        seed.commit()
+        user_id = user.id
+        from app.models import Order
+        seed.add(Order(
+            user_id=user_id, symbol="LEGACY", transaction_type="BUY", quantity=1,
+            price=100.0, average_price=100.0, filled_quantity=1,
+            average_fill_price=100.0, status="FILLED", is_paper=True, pnl=0.0,
+            fill_id=None, audit_hash=None, previous_audit_hash=None,
+        ))
+        seed.commit()
+    finally:
+        seed.close()
+
+    db = Session()
+    try:
+        result = paper_order(
+            PaperOrderRequest(symbol="NEW", transaction_type="BUY", price=100.0, quantity=1, fill_id="NEW-1"),
+            user_id=user_id, db=db,
+        )
+        assert result["order"]["fill_id"] == "NEW-1"
+    finally:
+        db.close()
+
+    verify = Session()
+    try:
+        data = _reconcile_paper_ledger(verify, user_id)
+        assert data["status"] == "MISMATCH"
+        assert data["baseline_status"] == "LEGACY_UNFINGERPRINTED"
+        assert data["repairability"] == "BLOCKED"
+        assert any(item.startswith("audit_chain_mismatch:") for item in data["mismatches"])
+    finally:
+        verify.close()
+        engine.dispose()
