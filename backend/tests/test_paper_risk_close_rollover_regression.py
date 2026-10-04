@@ -316,3 +316,108 @@ def test_same_user_multi_strategy_limits_share_simultaneous_daily_and_loss_budge
     assert len(svc.ongoing(db_session, 1)) == 0
     assert len(svc.completed(db_session, 1)) == 1
     assert svc.completed(db_session, 1)[0].realized_pnl == -100.0
+
+
+def test_same_user_three_strategy_concurrent_entries_share_global_capital_and_position_limit(tmp_path):
+    """Concurrent Calendar/Synthetic/Box entries must serialize one shared budget."""
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.core.database import Base
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'three-strategy-paper-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    try:
+        setup.add(GlobalPaperSetting(
+            user_id=1, enabled=True, paper_amount=60000, emergency_stop=False,
+        ))
+        for strategy in ("calendar-spread", "synthetic-future-cash-carry", "box-spread"):
+            setup.add(AlertRule(
+                user_id=1, strategy_id=strategy, min_gross_profit=0,
+                mobile_number="", whatsapp_enabled=False, enabled=True,
+                max_daily_capital=60000, max_simultaneous_positions=1,
+                max_loss=1000,
+            ))
+        setup.commit()
+    finally:
+        setup.close()
+
+    events = [
+        ("calendar-spread", "CONCURRENT-CALENDAR"),
+        ("synthetic-future-cash-carry", "CONCURRENT-SYNTHETIC"),
+        ("box-spread", "CONCURRENT-BOX"),
+    ]
+    barrier = threading.Barrier(3)
+    errors = []
+    results = []
+
+    def worker(strategy_id, event_id):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            event = AlertEvent(
+                strategy_id=strategy_id,
+                event_id=event_id,
+                symbol=event_id,
+                timestamp_ns=1,
+                message="concurrent paper",
+                observed_at=datetime.utcnow(),
+                metadata={"gross_profit": 1000, "paper_trade": {
+                    "direction": "LONG",
+                    "expiry": "2026-10-30",
+                    "earliest_expiry": "2026-10-30",
+                    "lot_size": 10,
+                    "lots": 1,
+                    "edge": 5,
+                    "capital_used": 30000,
+                }},
+            )
+            results.append((strategy_id, AlertService().dispatch(db, event)))
+        except Exception as exc:
+            errors.append(exc)
+            db.rollback()
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=worker, args=item)
+        for item in events
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert errors == []
+    assert len(results) == 3
+
+    verify = Session()
+    try:
+        rows = verify.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].status == "ONGOING"
+        assert rows[0].strategy_id in {
+            "calendar-spread",
+            "synthetic-future-cash-carry",
+            "box-spread",
+        }
+        assert rows[0].capital_used == 30000
+        assert rows[0].lots == 1
+
+        # The other two concurrent attempts must not leave phantom reservations
+        # or duplicate positions under the shared user-global lock.
+        assert sum(float(row.capital_used) for row in rows) == 30000
+        assert sum(
+            1 for row in rows if row.status == "ONGOING"
+        ) == 1
+    finally:
+        verify.close()
+        engine.dispose()
