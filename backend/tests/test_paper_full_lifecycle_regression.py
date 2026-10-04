@@ -48,6 +48,9 @@ def test_full_paper_lifecycle_does_not_reopen_or_reallocate_completed_event(db_s
     assert completed[0].status == "COMPLETED"
     assert completed[0].exit_reason == "EXPIRY_CLOSE"
     assert completed[0].realized_pnl == -60.0
+    # Allocation identity is immutable through mark/close.
+    assert completed[0].lot_size == 10
+    assert completed[0].lots == 2
     assert completed[0].unrealized_pnl == -60.0
     assert completed[0].pnl_pct == -0.1
     assert completed[0].closed_at == completed[0].last_mark_at
