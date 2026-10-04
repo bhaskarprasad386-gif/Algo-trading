@@ -1203,6 +1203,48 @@ def test_risk_gate_rollback_does_not_poison_next_paper_entry(db_session):
     assert ongoing[0].capital_used == 60000
 
 
+
+def test_manual_close_persists_terminal_timestamp_and_pnl_snapshot(db_session):
+    svc = LivePaperTradeService()
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    db_session.commit()
+
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="TERMINAL",
+        event_id="TERMINAL-SNAPSHOT", direction="LONG",
+        expiry="2026-12-30", earliest_expiry="2026-12-30",
+        lot_size=10, lots=1, edge=10, capital_used=50000, user_id=1,
+    )
+    assert created is True
+
+    svc.mark(db_session, trade, edge=15, pnl_override=250.0)
+    expected_pct = round(250.0 / 50000.0 * 100.0, 8)
+    marked_at = trade.last_mark_at
+    assert trade.pnl_pct == expected_pct
+
+    closed = svc.close(db_session, trade, "MANUAL")
+
+    assert closed.status == "COMPLETED"
+    assert closed.exit_reason == "MANUAL"
+    assert closed.realized_pnl == 250.0
+    assert closed.unrealized_pnl == 250.0
+    assert closed.pnl_pct == expected_pct
+    assert closed.closed_at is not None
+    assert closed.last_mark_at is not None
+    assert closed.last_mark_at == closed.closed_at
+    assert closed.closed_at >= marked_at
+
+    db_session.expire_all()
+    persisted = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.id == trade.id,
+    ).one()
+    assert persisted.status == "COMPLETED"
+    assert persisted.realized_pnl == 250.0
+    assert persisted.pnl_pct == expected_pct
+    assert persisted.closed_at == persisted.last_mark_at
+
 def test_negative_pnl_pct_uses_actual_allocated_capital_and_persists_on_close(db_session):
     svc = LivePaperTradeService()
     db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=125000, emergency_stop=False))
