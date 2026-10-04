@@ -8413,3 +8413,89 @@ def test_paper_http_scanner_writer_contention_fails_closed_without_mutation():
         contender.close()
         holder.close()
         engine.dispose()
+
+
+def test_paper_http_concurrent_scanner_and_direct_order_preserve_single_account_epoch():
+    """Scanner delegation and direct order must serialize without losing either successful write."""
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(2)
+
+    def submit(kind):
+        barrier.wait(timeout=5)
+        if kind == "scanner":
+            return client.post(
+                "/api/v1/execution/paper/from-scanner",
+                headers=headers,
+                json={
+                    "symbol": "SCANNER_CONCURRENT",
+                    "cash_price": 100.0,
+                    "future_price": 101.0,
+                    "quantity": 2,
+                    "executable": True,
+                    "gap": 1.0,
+                    "net_profit": 2.0,
+                    "fill_id": "SCANNER-CONCURRENT-1",
+                },
+            )
+        return client.post(
+            "/api/v1/execution/paper/order",
+            headers=headers,
+            json={
+                "symbol": "DIRECT_CONCURRENT",
+                "transaction_type": "BUY",
+                "price": 200.0,
+                "quantity": 1,
+                "fill_id": "DIRECT-CONCURRENT-1",
+            },
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(submit, ["scanner", "direct"]))
+
+    assert all(response.status_code == 200 for response in responses)
+    assert {response.json()["order"]["fill_id"] for response in responses} == {
+        "SCANNER-CONCURRENT-1", "DIRECT-CONCURRENT-1"
+    }
+
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        positions = db.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+        ).order_by(Position.symbol).all()
+        orders = db.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+        ).order_by(Order.id).all()
+
+        assert account.virtual_balance == 600.0
+        assert account.realized_pnl == 0.0
+        assert [(p.symbol, int(p.quantity), float(p.average_price)) for p in positions] == [
+            ("DIRECT_CONCURRENT", 1, 200.0),
+            ("SCANNER_CONCURRENT", 2, 100.0),
+        ]
+        assert {o.fill_id for o in orders} == {"SCANNER-CONCURRENT-1", "DIRECT-CONCURRENT-1"}
+        assert len(orders) == 2
+    finally:
+        db.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
