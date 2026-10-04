@@ -7501,6 +7501,113 @@ def test_paper_http_concurrent_reads_during_successful_short_to_long_reversal_ex
     assert payload["repairability"] == "NONE"
 
 
+
+def test_paper_http_concurrent_successful_same_symbol_reversals_serialize_without_lost_update():
+    """Two successful same-symbol reversals must both serialize and preserve exact ledger accounting."""
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 9_999_000.0
+        account.realized_pnl = 0.0
+        db.add(Position(
+            user_id=user_id,
+            symbol="DOUBLE_REVERSAL_RACE",
+            quantity=10,
+            average_price=100.0,
+            stop_loss=None,
+            target=None,
+            is_paper=True,
+            is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(2)
+
+    def submit(payload):
+        barrier.wait(timeout=5)
+        return client.post(
+            "/api/v1/execution/paper/order",
+            headers=headers,
+            json=payload,
+        )
+
+    requests = [
+        {
+            "symbol": "DOUBLE_REVERSAL_RACE",
+            "transaction_type": "SELL",
+            "price": 120.0,
+            "quantity": 6,
+            "fill_id": "DOUBLE-REVERSAL-A",
+        },
+        {
+            "symbol": "DOUBLE_REVERSAL_RACE",
+            "transaction_type": "SELL",
+            "price": 110.0,
+            "quantity": 8,
+            "fill_id": "DOUBLE-REVERSAL-B",
+        },
+    ]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(submit, requests))
+
+    assert all(response.status_code == 200 for response in responses)
+    assert all(response.json()["status"] == "success" for response in responses)
+
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        orders = db.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+            Order.symbol == "DOUBLE_REVERSAL_RACE",
+        ).order_by(Order.id.asc()).all()
+        positions = db.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.symbol == "DOUBLE_REVERSAL_RACE",
+            Position.is_open.is_(True),
+        ).all()
+
+        assert len(orders) == 2
+        assert {order.fill_id for order in orders} == {
+            "DOUBLE-REVERSAL-A",
+            "DOUBLE-REVERSAL-B",
+        }
+        assert len(positions) == 1
+        assert positions[0].quantity == -4
+
+        # SQLite BEGIN IMMEDIATE serializes the two reversals. The final ledger
+        # is therefore exactly one of the two valid serialization orders.
+        outcomes = {
+            (9_999_720.0, 160.0, 110.0, ("DOUBLE-REVERSAL-A", "DOUBLE-REVERSAL-B")),
+            (10_000_120.0, 120.0, 120.0, ("DOUBLE-REVERSAL-B", "DOUBLE-REVERSAL-A")),
+        }
+        observed = (
+            float(account.virtual_balance),
+            float(account.realized_pnl),
+            float(positions[0].average_price),
+            tuple(order.fill_id for order in orders),
+        )
+        assert observed in outcomes
+    finally:
+        db.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
+
+
 def test_paper_http_concurrent_legacy_entry_and_exit_same_symbol_has_no_duplicate_position():
     """Legacy entry and terminal exit may serialize in either order, but never create duplicate exposure."""
     client, headers = _client_and_headers()
