@@ -81,9 +81,22 @@ export default function HomePage() {
             next[String(row.symbol).toUpperCase()] = { ltp, previousClose, changePercent };
           }
         }
-        if (!cancelled) setIndexLtps(next);
+        if (!cancelled) {
+          setIndexLtps((previous) => {
+            const merged = { ...previous };
+            for (const [symbol, value] of Object.entries(next)) {
+              const prior = previous[symbol];
+              merged[symbol] = {
+                ltp: value.ltp ?? prior?.ltp ?? null,
+                previousClose: value.previousClose ?? prior?.previousClose ?? null,
+                changePercent: value.changePercent ?? prior?.changePercent ?? null,
+              };
+            }
+            return merged;
+          });
+        }
       } catch {
-        if (!cancelled) setIndexLtps({});
+        // Keep the last successful overview snapshot during transient API/quote failures.
       }
     };
     loadMarketOverview();
