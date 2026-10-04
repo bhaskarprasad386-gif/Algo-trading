@@ -98,7 +98,7 @@ def test_malformed_persisted_trade_fails_closed_before_new_paper_entry(db_sessio
         mobile_number="", whatsapp_enabled=False, enabled=True,
         max_daily_capital=100_000, max_simultaneous_positions=5, max_loss=1_000,
     ))
-     from app.models import LivePaperTrade
+    from app.models import LivePaperTrade
     db_session.add(LivePaperTrade(
         user_id=1, strategy_id="cash-future", symbol="BAD",
         event_id="BAD-RISK-ROW", direction="LONG", expiry="2026-10-30",
