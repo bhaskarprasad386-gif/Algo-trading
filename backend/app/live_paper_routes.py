@@ -155,6 +155,8 @@ def detail(position_id: int, db: Session = Depends(get_db)):
     ).first()
     if not trade:
         raise HTTPException(404, "live paper trade not found")
+    if not _valid_persisted_trade(trade):
+        raise HTTPException(409, "live paper trade ledger row is malformed")
     if trade.status == "ONGOING":
         # Detail should expose the same latest executable P&L mark as the
         # collection endpoints, while preserving the last valid mark when
