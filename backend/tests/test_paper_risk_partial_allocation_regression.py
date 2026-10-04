@@ -941,3 +941,38 @@ def test_concurrent_different_users_get_independent_capital_reservations(tmp_pat
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_concurrent_same_user_different_events_respect_single_capital_budget(tmp_path):
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.core.database import Base
+    engine = create_engine(f"sqlite:///{tmp_path / 'same-user-race.db'}", connect_args={"check_same_thread": False, "timeout": 5})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    setup = Session()
+    setup.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=60000, emergency_stop=False))
+    setup.add(AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=0, mobile_number="", whatsapp_enabled=False, enabled=True, max_daily_capital=60000, max_simultaneous_positions=5, max_loss=0))
+    setup.commit(); setup.close()
+    barrier = threading.Barrier(2); results=[]; errors=[]
+    def worker(event_id):
+        db=Session()
+        try:
+            barrier.wait(timeout=5)
+            event=AlertEvent(strategy_id="cash-future", event_id=event_id, symbol=event_id, timestamp_ns=1, message="same-user-race", metadata={"gross_profit":1000,"paper_trade":{"direction":"LONG","expiry":"2026-10-30","lot_size":10,"lots":2,"edge":5,"capital_used":60000}})
+            results.append(AlertService().dispatch(db,event))
+        except Exception as exc: errors.append(exc)
+        finally: db.close()
+    threads=[threading.Thread(target=worker,args=("SAME-USER-RACE-A",)),threading.Thread(target=worker,args=("SAME-USER-RACE-B",))]
+    for t in threads: t.start()
+    for t in threads: t.join(timeout=10)
+    assert errors == [] and len(results) == 2
+    verify=Session()
+    try:
+        rows=verify.query(LivePaperTrade).filter(LivePaperTrade.user_id==1, LivePaperTrade.event_id.in_(["SAME-USER-RACE-A","SAME-USER-RACE-B"]), LivePaperTrade.status=="ONGOING").all()
+        assert len(rows) == 1
+        assert rows[0].capital_used == 60000
+        assert rows[0].lots == 2
+    finally:
+        verify.close(); engine.dispose()
