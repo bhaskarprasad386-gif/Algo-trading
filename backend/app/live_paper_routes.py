@@ -2,7 +2,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.auto.live_paper import LivePaperTradeService, is_fresh_market_timestamp
+from app.auto.live_paper import LivePaperTradeService, is_fresh_market_timestamp, _valid_persisted_trade
 from app.execution.paper_routes import current_user_id
 from app.models.live_paper_trade import LivePaperTrade
 from app.core.logger import app_logger
@@ -137,6 +137,8 @@ def close(position_id: int, db: Session = Depends(get_db)):
     ).first()
     if not trade:
         raise HTTPException(404, "live paper trade not found")
+    if not _valid_persisted_trade(trade):
+        raise HTTPException(409, "live paper trade ledger row is malformed")
     # Manual close must use the freshest executable mark available. If quotes
     # are stale/missing, _refresh_marks preserves the last valid executable P&L.
     _refresh_marks(db, [trade])
