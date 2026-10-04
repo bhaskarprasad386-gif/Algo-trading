@@ -159,3 +159,93 @@ def test_detail_returns_terminal_row_only_for_its_owner(db_session, monkeypatch)
     with pytest.raises(HTTPException) as exc:
         routes.detail(owner.id, db_session)
     assert exc.value.status_code == 404
+
+
+def test_malformed_ongoing_numeric_accounting_is_filtered_and_cannot_aggregate(db_session, monkeypatch):
+    _enable(db_session, 1)
+    good = _trade(db_session, user_id=1, event_id="GOOD-NUMERIC", pnl=-25.0)
+    bad = _trade(db_session, user_id=1, event_id="BAD-NUMERIC", pnl=-50.0)
+    bad.pnl_pct = 999.0
+    bad.realized_pnl = -1.0
+    db_session.commit()
+
+    monkeypatch.setattr(routes, "current_user_id", lambda db: 1)
+    monkeypatch.setattr(routes.service, "close_expired", lambda db: [])
+    monkeypatch.setattr(routes, "_refresh_marks", lambda db, trades: None)
+
+    result = routes.status(db_session)
+
+    assert [x["id"] for x in result["ongoing"]] == [good.id]
+    assert result["ongoing_pnl"] == -25.0
+
+
+def test_malformed_completed_numeric_accounting_is_filtered_from_aggregate(db_session, monkeypatch):
+    _enable(db_session, 1)
+    good = _trade(db_session, user_id=1, event_id="GOOD-CLOSED", pnl=40.0)
+    bad = _trade(db_session, user_id=1, event_id="BAD-CLOSED", pnl=-60.0)
+    LivePaperTradeService().close(db_session, good, "MANUAL")
+    LivePaperTradeService().close(db_session, bad, "MANUAL")
+    bad.pnl_pct = 123.456
+    db_session.commit()
+
+    monkeypatch.setattr(routes, "current_user_id", lambda db: 1)
+    monkeypatch.setattr(routes.service, "close_expired", lambda db: [])
+    monkeypatch.setattr(routes, "_refresh_marks", lambda db, trades: None)
+
+    result = routes.status(db_session)
+
+    assert [x["id"] for x in result["completed"]] == [good.id]
+    assert result["completed_pnl"] == 40.0
+
+
+@pytest.mark.parametrize("field,value", [
+    ("capital_used", float("nan")),
+    ("capital_used", float("inf")),
+    ("unrealized_pnl", float("nan")),
+    ("pnl_pct", float("inf")),
+    ("lot_size", 0),
+    ("lots", -1),
+])
+def test_non_finite_or_invalid_numeric_ledger_rows_are_fail_closed(db_session, field, value):
+    _enable(db_session, 1)
+    trade = _trade(db_session, user_id=1, event_id=f"BAD-{field}-{value}")
+    setattr(trade, field, value)
+    db_session.commit()
+
+    assert LivePaperTradeService().ongoing(db_session, 1) == []
+
+
+def test_valid_ongoing_accounting_requires_zero_realized_pnl(db_session):
+    _enable(db_session, 1)
+    trade = _trade(db_session, user_id=1, event_id="BAD-ONGOING-REALIZED", pnl=10.0)
+    trade.realized_pnl = 1.0
+    db_session.commit()
+
+    assert LivePaperTradeService().ongoing(db_session, 1) == []
+
+
+def test_mark_rejects_non_finite_or_negative_edge_without_mutating_trade(db_session):
+    _enable(db_session, 1)
+    trade = _trade(db_session, user_id=1, event_id="MARK-BOUNDARY")
+    before = (trade.current_edge, trade.unrealized_pnl, trade.pnl_pct, trade.last_mark_at)
+
+    service = LivePaperTradeService()
+    service.mark(db_session, trade, edge=float("nan"))
+    service.mark(db_session, trade, edge=-1.0)
+    service.mark(db_session, trade, edge=float("inf"), pnl_override=float("inf"))
+
+    db_session.refresh(trade)
+    assert (trade.current_edge, trade.unrealized_pnl, trade.pnl_pct, trade.last_mark_at) == before
+
+
+def test_close_rejects_terminal_row_with_corrupt_pnl_percent_without_mutation(db_session):
+    _enable(db_session, 1)
+    trade = _trade(db_session, user_id=1, event_id="CLOSE-CORRUPT-PCT", pnl=-30.0)
+    trade.pnl_pct = 999.0
+    db_session.commit()
+
+    closed = LivePaperTradeService().close(db_session, trade, "MANUAL")
+
+    assert closed.status == "ONGOING"
+    assert closed.exit_reason is None
+    assert closed.closed_at is None
