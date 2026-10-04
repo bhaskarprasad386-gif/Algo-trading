@@ -4040,3 +4040,155 @@ def test_paper_reconcile_http_concurrent_reader_mutation_stress_matrix(tmp_path)
         app.dependency_overrides.pop(routes.current_user_id, None)
         app.dependency_overrides.pop(get_db, None)
         engine.dispose()
+
+
+def test_paper_reconcile_http_edge_state_matrix_contract_and_dry_run(tmp_path):
+    """HTTP reconciliation keeps a stable contract across safe and blocked edge states."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-reconcile-edge-matrix.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="http-edge-matrix@example.com",
+            hashed_password="",
+            full_name="HTTP Edge Matrix",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id,
+            mode="PAPER",
+            virtual_balance=5000.0,
+            initial_virtual_balance=5000.0,
+            initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0,
+            is_active=True,
+        ))
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    def override_db():
+        db = TestSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    client = TestClient(app)
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+
+    expected_keys = {
+        "status", "user_id", "orders", "reconstructed_positions",
+        "mismatches", "mismatch_categories", "repairability",
+        "repairability_reason", "repair_plan",
+    }
+    try:
+        db = TestSession()
+        try:
+            paper_order(
+                PaperOrderRequest(
+                    symbol="EDGE",
+                    transaction_type="BUY",
+                    price=100.0,
+                    quantity=2,
+                    fill_id="EDGE-1",
+                ),
+                user_id=user_id,
+                db=db,
+            )
+        finally:
+            db.close()
+
+        cases = (
+            ("clean", None),
+            ("account", "ACCOUNTING_STATE"),
+            ("position", "POSITION_STATE"),
+            ("order", "ORDER_INTEGRITY"),
+            ("audit", "AUDIT_INTEGRITY"),
+        )
+
+        for name, category in cases:
+            db = TestSession()
+            try:
+                if category == "ACCOUNTING_STATE":
+                    db.query(TradingAccount).filter(
+                        TradingAccount.user_id == user_id
+                    ).one().virtual_balance += 1.0
+                elif category == "POSITION_STATE":
+                    db.query(Position).filter(
+                        Position.user_id == user_id, Position.is_paper.is_(True)
+                    ).one().quantity += 1
+                elif category == "ORDER_INTEGRITY":
+                    db.query(Order).filter(
+                        Order.user_id == user_id, Order.is_paper.is_(True)
+                    ).one().quantity = 3
+                elif category == "AUDIT_INTEGRITY":
+                    db.query(Order).filter(
+                        Order.user_id == user_id, Order.is_paper.is_(True)
+                    ).one().audit_hash = "f" * 64
+                db.commit()
+
+                response = client.get("/api/v1/execution/paper/reconcile")
+                assert response.status_code == 200, name
+                payload = response.json()
+                assert set(payload) >= expected_keys, name
+                assert payload["user_id"] == user_id
+                assert payload["repair_plan"]["apply"] is False
+                assert payload["repair_plan"]["reason"] == "read_only_dry_run"
+                assert isinstance(payload["orders"], int)
+                assert isinstance(payload["reconstructed_positions"], dict)
+                assert isinstance(payload["mismatches"], list)
+                assert isinstance(payload["mismatch_categories"], list)
+                assert payload["repairability"] in {"SAFE_DRY_RUN", "BLOCKED"}
+                if category is None:
+                    assert payload["status"] == "OK"
+                else:
+                    assert payload["status"] == "MISMATCH"
+                    assert category in payload["mismatch_categories"]
+            finally:
+                db.close()
+
+            # Restore the canonical ledger between cases so every case is
+            # independent rather than accumulating corruption.
+            reset = TestSession()
+            try:
+                account = reset.query(TradingAccount).filter(
+                    TradingAccount.user_id == user_id
+                ).one()
+                account.virtual_balance = 4800.0
+                account.realized_pnl = 0.0
+                position = reset.query(Position).filter(
+                    Position.user_id == user_id, Position.is_paper.is_(True)
+                ).one()
+                position.quantity = 2
+                position.average_price = 100.0
+                order = reset.query(Order).filter(
+                    Order.user_id == user_id, Order.is_paper.is_(True)
+                ).one()
+                order.quantity = 2
+                order.audit_hash = None
+                reset.commit()
+            finally:
+                reset.close()
+
+        final = client.get("/api/v1/execution/paper/reconcile")
+        assert final.status_code == 200
+        assert final.json()["status"] == "OK"
+        assert final.json()["repair_plan"]["apply"] is False
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
