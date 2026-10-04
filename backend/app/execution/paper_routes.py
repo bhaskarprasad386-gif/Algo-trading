@@ -7,6 +7,8 @@ Live broker execution remains disabled behind the broker safety layer.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import uuid
 
@@ -423,6 +425,54 @@ def _accounting_after_fill(*, side: str, price: float, quantity: float, current_
     return after, round(after.realized_pnl - before.realized_pnl, 8)
 
 
+def _paper_repair_precondition(db: Session, user_id: int, account: TradingAccount, orders: list[Order], positions: list[Position]) -> dict:
+    """Return an immutable DB-state fingerprint for any future repair/apply path."""
+    payload = {
+        "user_id": int(user_id),
+        "account": {
+            "initial_virtual_balance": round(float(account.initial_virtual_balance), 8),
+            "initial_balance_source": str(account.initial_balance_source or ""),
+            "virtual_balance": round(float(account.virtual_balance), 8),
+            "realized_pnl": round(float(account.realized_pnl or 0.0), 8),
+        },
+        "orders": [
+            {
+                "id": int(order.id),
+                "fill_id": order.fill_id,
+                "symbol": str(order.symbol or "").strip().upper(),
+                "side": str(order.transaction_type or "").strip().upper(),
+                "quantity": int(order.quantity or 0),
+                "filled_quantity": int(order.filled_quantity or 0),
+                "price": round(float(order.price or 0.0), 8),
+                "average_fill_price": round(float(order.average_fill_price or 0.0), 8),
+                "pnl": round(float(order.pnl or 0.0), 8),
+                "status": str(order.status or ""),
+                "audit_hash": order.audit_hash,
+                "previous_audit_hash": order.previous_audit_hash,
+            }
+            for order in orders
+        ],
+        "positions": [
+            {
+                "id": int(position.id),
+                "symbol": str(position.symbol or "").strip().upper(),
+                "quantity": int(position.quantity or 0),
+                "average_price": round(float(position.average_price or 0.0), 8),
+                "is_open": bool(position.is_open),
+            }
+            for position in sorted(positions, key=lambda item: int(item.id))
+        ],
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return {
+        "algorithm": "SHA256",
+        "order_count": len(orders),
+        "position_count": len(positions),
+        "audit_head": orders[-1].audit_hash if orders else None,
+        "state_hash": hashlib.sha256(canonical).hexdigest(),
+    }
+
+
 def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     """Rebuild paper positions, realized P&L and cash from durable fills."""
     account = _account(db, user_id)
@@ -522,16 +572,16 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             state.realized_pnl for key, state in rebuilt.items() if key != symbol
         )
 
+    all_paper_positions = (
+        db.query(Position)
+        .filter(Position.user_id == user_id, Position.is_paper.is_(True))
+        .order_by(Position.id.asc())
+        .all()
+    )
     actual_positions = {
         str(position.symbol).strip().upper(): position
-        for position in db.query(Position)
-        .filter(
-            Position.user_id == user_id,
-            Position.is_paper.is_(True),
-            Position.is_open.is_(True),
-            Position.quantity != 0,
-        )
-        .all()
+        for position in all_paper_positions
+        if position.is_open and position.quantity != 0
     }
     mismatches: list[str] = list(invalid_orders)
     for symbol, state in rebuilt.items():
@@ -569,6 +619,8 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     else:
         repairability = "NONE"
 
+    precondition = _paper_repair_precondition(db, user_id, account, orders, all_paper_positions)
+
     return {
         "status": "OK" if not mismatches else "MISMATCH",
         "repairability": repairability,
@@ -583,6 +635,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         "repair_plan": {
             "apply": False,
             "reason": "read_only_dry_run",
+            "precondition": precondition,
             "proposed_realized_pnl": reconstructed_realized,
             "proposed_virtual_balance": reconstructed_cash,
             "positions": {
