@@ -1414,6 +1414,7 @@ def test_paper_ledger_reconciliation_rebuilds_realized_pnl_position_and_balance(
     assert data["reconstructed_virtual_balance"] == 9_999_920.0
     assert data["stored_virtual_balance"] == 9_999_920.0
     assert data["repairability"] == "NONE"
+    assert data["baseline_status"] == "BOOTSTRAP"
     assert data["repair_plan"]["apply"] is False
     assert data["mismatches"] == []
 
