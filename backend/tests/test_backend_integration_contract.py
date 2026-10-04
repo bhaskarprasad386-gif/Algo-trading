@@ -181,3 +181,62 @@ def test_alert_rule_threshold_and_limits_gate_paper_entry(db_session):
     )
     assert service.dispatch(db_session, second) == 1
     assert len(LivePaperTradeService().ongoing(db_session, 1)) == 1
+
+
+def test_alert_rule_daily_capital_and_loss_limits_gate_paper_entry(db_session):
+    from app.models import AlertRule
+    from app.notifications.common import AlertEvent, AlertService
+
+    _enable(db_session, 1)
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="111", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=100000.0, max_simultaneous_positions=5, max_loss=0.0,
+    ))
+    db_session.commit()
+
+    class DummyNotifier:
+        configured = False
+        def send_text(self, mobile, message):
+            return True
+
+    service = AlertService(DummyNotifier())
+    base = {
+        "direction": "LONG", "expiry": "2026-10-30", "lot_size": 10,
+        "lots": 1, "edge": 10, "capital_used": 60000,
+    }
+
+    first = AlertEvent(
+        strategy_id="cash-future", event_id="DAILY-CAP-1", symbol="AAA",
+        timestamp_ns=1, message="first", metadata={"gross_profit": 1, "paper_trade": base},
+    )
+    second = AlertEvent(
+        strategy_id="cash-future", event_id="DAILY-CAP-2", symbol="BBB",
+        timestamp_ns=2, message="second", metadata={"gross_profit": 1, "paper_trade": base},
+    )
+    service.dispatch(db_session, first)
+    service.dispatch(db_session, second)
+    assert [x.symbol for x in LivePaperTradeService().ongoing(db_session, 1)] == ["AAA"]
+
+    _enable(db_session, 2)
+    db_session.add(AlertRule(
+        user_id=2, strategy_id="cash-future", min_gross_profit=0.0,
+        mobile_number="222", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0.0, max_simultaneous_positions=5, max_loss=100.0,
+    ))
+    db_session.commit()
+
+    loss_base = {**base, "capital_used": 1000, "lot_size": 10}
+    loss_event = AlertEvent(
+        strategy_id="cash-future", event_id="LOSS-1", symbol="CCC",
+        timestamp_ns=3, message="loss", metadata={"gross_profit": 1, "paper_trade": loss_base},
+    )
+    blocked_event = AlertEvent(
+        strategy_id="cash-future", event_id="LOSS-2", symbol="DDD",
+        timestamp_ns=4, message="blocked", metadata={"gross_profit": 1, "paper_trade": loss_base},
+    )
+    service.dispatch(db_session, loss_event)
+    loss_trade = LivePaperTradeService().ongoing(db_session, 2)[0]
+    LivePaperTradeService().mark(db_session, loss_trade, edge=0.0)
+    service.dispatch(db_session, blocked_event)
+    assert [x.symbol for x in LivePaperTradeService().ongoing(db_session, 2)] == ["CCC"]
