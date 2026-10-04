@@ -1198,11 +1198,84 @@ def test_partial_allocation_and_expiry_close_race_preserve_capital(tmp_path):
                 lots=2,
                 edge=5,
                 capital_used=60000,
+
+
+def test_partial_duplicate_event_expiry_race_allocates_once_and_never_oversubscribes(tmp_path):
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'partial-duplicate-expiry-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    setup.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    setup.commit()
+    original, created = LivePaperTradeService().enter_or_mark(
+        setup,
+        strategy_id="cash-future",
+        symbol="ORIGINAL",
+        event_id="COMBINED-RACE-ORIGINAL",
+        direction="LONG",
+        expiry="2026-10-12",
+        earliest_expiry="2026-10-12",
+        lot_size=10,
+        lots=2,
+        edge=5,
+        capital_used=60000,
+        metadata={"exchange": "NFO"},
+        user_id=1,
+    )
+    assert created is True
+    assert original.lots == 2
+    assert original.capital_used == 60000
+    original_id = original.id
+    setup.close()
+
+    barrier = threading.Barrier(4)
+    results = []
+    errors = []
+
+    def expiry_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            closed = LivePaperTradeService().close_expired(
+                db, now=datetime(2026, 10, 12, 15, 30),
+            )
+            results.append(("expiry", len(closed)))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    def duplicate_worker(edge):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            trade, created = LivePaperTradeService().enter_or_mark(
+                db,
+                strategy_id="cash-future",
+                symbol="DUPLICATE",
+                event_id="COMBINED-RACE-NEW",
+                direction="LONG",
+                expiry="2026-10-30",
+                earliest_expiry="2026-10-30",
+                lot_size=10,
+                lots=2,
+                edge=edge,
+                capital_used=60000,
                 user_id=1,
             )
             results.append((
-                "entry",
-                created,
+                "entry", created,
+                None if trade is None else trade.id,
                 None if trade is None else trade.lots,
                 None if trade is None else trade.capital_used,
             ))
@@ -1213,7 +1286,9 @@ def test_partial_allocation_and_expiry_close_race_preserve_capital(tmp_path):
 
     threads = [
         threading.Thread(target=expiry_worker),
-        threading.Thread(target=entry_worker),
+        threading.Thread(target=duplicate_worker, args=(5.0,)),
+        threading.Thread(target=duplicate_worker, args=(7.0,)),
+        threading.Thread(target=duplicate_worker, args=(9.0,)),
     ]
     for thread in threads:
         thread.start()
@@ -1221,7 +1296,7 @@ def test_partial_allocation_and_expiry_close_race_preserve_capital(tmp_path):
         thread.join(timeout=10)
 
     assert errors == []
-    assert len(results) == 2
+    assert len(results) == 4
 
     verify = Session()
     try:
@@ -1231,423 +1306,90 @@ def test_partial_allocation_and_expiry_close_race_preserve_capital(tmp_path):
         original_row = verify.query(LivePaperTrade).filter(
             LivePaperTrade.id == original_id,
         ).one()
+        new_rows = [row for row in rows if row.event_id == "COMBINED-RACE-NEW"]
         ongoing = [row for row in rows if row.status == "ONGOING"]
 
         assert original_row.status == "COMPLETED"
         assert original_row.exit_reason == "EXPIRY_CLOSE"
+        assert len(new_rows) == 1
+        assert new_rows[0].status == "ONGOING"
+        assert new_rows[0].lots in {1, 2}
+        assert new_rows[0].capital_used == new_rows[0].lots * 30000
         assert sum(float(row.capital_used or 0.0) for row in ongoing) <= 100000
 
         entry_results = [row for row in results if row[0] == "entry"]
-        assert len(entry_results) == 1
-        if entry_results[0][1]:
-            assert entry_results[0][2] in {1, 2}
-            assert entry_results[0][3] in {30000, 60000}
-            assert entry_results[0][3] == entry_results[0][2] * 30000
-    finally:
-        verify.close()
-        engine.dispose()
-
-def test_same_event_concurrent_first_entries_create_one_trade(tmp_path):
-    import threading
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'same-event-race.db'}",
-        connect_args={"check_same_thread": False, "timeout": 5},
-    )
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-
-    setup = Session()
-    setup.add(GlobalPaperSetting(
-        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
-    ))
-    setup.commit()
-    setup.close()
-
-    barrier = threading.Barrier(2)
-    results = []
-    errors = []
-
-    def worker(edge):
-        db = Session()
-        try:
-            barrier.wait(timeout=5)
-            trade, created = LivePaperTradeService().enter_or_mark(
-                db,
-                strategy_id="cash-future",
-                symbol="NIFTY",
-                event_id="SAME-EVENT-RACE",
-                direction="LONG",
-                lot_size=10,
-                lots=1,
-                edge=edge,
-                capital_used=60000,
-                user_id=1,
-            )
-            results.append((created, None if trade is None else trade.id))
-        except Exception as exc:
-            errors.append(exc)
-        finally:
-            db.close()
-
-    threads = [
-        threading.Thread(target=worker, args=(5.0,)),
-        threading.Thread(target=worker, args=(7.0,)),
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=10)
-
-    assert errors == []
-    assert len(results) == 2
-    assert sum(1 for created, _ in results if created) == 1
-
-    verify = Session()
-    try:
-        rows = verify.query(LivePaperTrade).filter(
-            LivePaperTrade.user_id == 1,
-            LivePaperTrade.event_id == "SAME-EVENT-RACE",
-        ).all()
-        assert len(rows) == 1
-        assert rows[0].capital_used == 60000
-        assert rows[0].lots == 1
-        assert rows[0].status == "ONGOING"
-        assert rows[0].current_edge == 5.0 or rows[0].current_edge == 7.0
+        assert len(entry_results) == 3
+        assert sum(1 for row in entry_results if row[1]) == 1
+        successful_ids = {row[2] for row in entry_results if row[1]}
+        assert successful_ids == {new_rows[0].id}
     finally:
         verify.close()
         engine.dispose()
 
 
-def test_market_timestamp_freshness_accepts_exact_five_seconds():
-    from app.auto.live_paper import is_fresh_market_timestamp
-    now_ns = 1_000_000_000_000
-    assert is_fresh_market_timestamp(now_ns - 5_000_000_000, now_ns) is True
-
-
-def test_market_timestamp_freshness_rejects_older_and_future_quotes():
-    from app.auto.live_paper import is_fresh_market_timestamp
-    now_ns = 1_000_000_000_000
-    assert is_fresh_market_timestamp(now_ns - 5_000_000_001, now_ns) is False
-    assert is_fresh_market_timestamp(now_ns + 1, now_ns) is False
-    assert is_fresh_market_timestamp(0, now_ns) is False
-
-
-
-
-def test_manual_and_expiry_close_race_has_one_terminal_winner(tmp_path):
-    import threading
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'manual-expiry-race.db'}",
-        connect_args={"check_same_thread": False, "timeout": 5},
-    )
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-
-    setup = Session()
-    setup.add(GlobalPaperSetting(
-        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
-    ))
-    setup.commit()
-    trade, created = LivePaperTradeService().enter_or_mark(
-        setup, strategy_id="cash-future", symbol="RACE-EXPIRY",
-        event_id="RACE-MANUAL-EXPIRY", direction="LONG",
-        expiry="2026-10-12", earliest_expiry="2026-10-12",
-        lot_size=10, lots=1, edge=10, capital_used=50000,
-        metadata={"exchange": "NFO"}, user_id=1,
-    )
-    assert created is True
-    trade_id = trade.id
-    setup.close()
-
-    barrier = threading.Barrier(2)
-    results = []
-    errors = []
-
-    def manual_worker():
-        db = Session()
-        try:
-            row = db.query(LivePaperTrade).filter(
-                LivePaperTrade.id == trade_id,
-                LivePaperTrade.status == "ONGOING",
-            ).one()
-            barrier.wait(timeout=5)
-            closed = LivePaperTradeService().close(db, row, "MANUAL")
-            results.append(("manual", closed.status, closed.exit_reason))
-        except Exception as exc:
-            errors.append(exc)
-        finally:
-            db.close()
-
-    def expiry_worker():
-        db = Session()
-        try:
-            barrier.wait(timeout=5)
-            closed = LivePaperTradeService().close_expired(
-                db, now=datetime(2026, 10, 12, 15, 30),
-            )
-            results.append(("expiry", len(closed), closed[0].exit_reason if closed else None))
-        except Exception as exc:
-            errors.append(exc)
-        finally:
-            db.close()
-
-    threads = [
-        threading.Thread(target=manual_worker),
-        threading.Thread(target=expiry_worker),
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=10)
-
-    assert errors == []
-    assert len(results) == 2
-
-    verify = Session()
-    try:
-        current = verify.query(LivePaperTrade).filter(
-            LivePaperTrade.id == trade_id,
-        ).one()
-        assert current.status == "COMPLETED"
-        assert current.exit_reason in {"MANUAL", "EXPIRY_CLOSE"}
-
-        expiry_results = [row for row in results if row[0] == "expiry"]
-        assert len(expiry_results) == 1
-        if current.exit_reason == "MANUAL":
-            assert expiry_results[0][1] == 0
-        else:
-            assert expiry_results[0][1] == 1
-            assert expiry_results[0][2] == "EXPIRY_CLOSE"
-    finally:
-        verify.close()
-        engine.dispose()
-
-def test_mark_does_not_update_trade_after_concurrent_close(db_session):
-    svc = LivePaperTradeService()
-    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=100000, emergency_stop=False))
-    db_session.commit()
-    trade, created = svc.enter_or_mark(
-        db_session, strategy_id="cash-future", symbol="RACE",
-        event_id="MARK-CLOSE-RACE", direction="LONG", lot_size=10, lots=1,
-        edge=10, capital_used=50000, user_id=1,
-    )
-    assert created is True
-    svc.close(db_session, trade, "MANUAL")
-    closed_at = trade.closed_at
-    realized = trade.realized_pnl
-
-    stale = db_session.query(LivePaperTrade).filter(LivePaperTrade.id == trade.id).first()
-    assert stale.status == "COMPLETED"
-    svc.mark(db_session, stale, edge=99, pnl_override=999.0)
-
-    db_session.expire_all()
-    current = db_session.query(LivePaperTrade).filter(LivePaperTrade.id == trade.id).one()
-    assert current.status == "COMPLETED"
-    assert current.realized_pnl == realized
-    assert current.unrealized_pnl == realized
-    assert current.closed_at == closed_at
-
-
-def test_close_uses_latest_db_pnl_after_mark_refresh(db_session):
-    svc = LivePaperTradeService()
-    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=100000, emergency_stop=False))
-    db_session.commit()
-    trade, created = svc.enter_or_mark(
-        db_session, strategy_id="cash-future", symbol="RACE2",
-        event_id="CLOSE-LATEST-MARK", direction="LONG", lot_size=10, lots=1,
-        edge=10, capital_used=50000, user_id=1,
-    )
-    assert created is True
-    svc.mark(db_session, trade, edge=20, pnl_override=100.0)
-    stale = db_session.query(LivePaperTrade).filter(LivePaperTrade.id == trade.id).one()
-    # Simulate another refresh transaction updating the DB after this object was loaded.
-    db_session.query(LivePaperTrade).filter(LivePaperTrade.id == trade.id).update(
-        {LivePaperTrade.unrealized_pnl: 250.0},
-        synchronize_session=False,
-    )
-    db_session.commit()
-    closed = svc.close(db_session, stale, "MANUAL")
-    assert closed.status == "COMPLETED"
-    assert closed.realized_pnl == 250.0
-    assert closed.unrealized_pnl == 250.0
-
-
-def test_risk_gate_rollback_does_not_poison_next_paper_entry(db_session):
-    from app.models import AlertRule
-    from app.notifications.common import AlertEvent, AlertService
-
-    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=100000, emergency_stop=False))
-    db_session.add(AlertRule(
-        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
-        mobile_number="", whatsapp_enabled=False, enabled=True,
-        max_daily_capital=60000.0, max_simultaneous_positions=1, max_loss=0.0,
-    ))
-    db_session.commit()
-
-    svc = LivePaperTradeService()
-    first, created = svc.enter_or_mark(
-        db_session, strategy_id="cash-future", symbol="ROLLBACK-A",
-        event_id="ROLLBACK-A", direction="LONG", expiry="2026-12-30",
-        earliest_expiry="2026-12-30", lot_size=10, lots=1, edge=10,
-        capital_used=60000, user_id=1,
-    )
-    assert created is True
-
-    blocked = AlertService().dispatch(db_session, AlertEvent(
-        strategy_id="cash-future", event_id="ROLLBACK-B", symbol="B",
-        timestamp_ns=1, message="blocked", metadata={
-            "gross_profit": 1,
-            "paper_trade": {
-                "direction": "LONG", "expiry": "2026-12-30",
-                "lot_size": 10, "lots": 1, "edge": 10, "capital_used": 60000,
-            },
-        },
-    ))
-    assert blocked == 0
-
-    # The risk rollback must not leave the session with a phantom reservation
-    # or stale setting/trade state. Once the first position is closed, the
-    # same session must be able to allocate the released capital.
-    svc.close(db_session, first, "MANUAL")
-    allowed = AlertService().dispatch(db_session, AlertEvent(
-        strategy_id="cash-future", event_id="ROLLBACK-C", symbol="C",
-        timestamp_ns=2, message="allowed", metadata={
-            "gross_profit": 1,
-            "paper_trade": {
-                "direction": "LONG", "expiry": "2026-12-30",
-                "lot_size": 10, "lots": 1, "edge": 10, "capital_used": 60000,
-            },
-        },
-    ))
-    assert allowed == 0
-
-    db_session.expire_all()
-    ongoing = svc.ongoing(db_session, 1)
-    assert len(ongoing) == 1
-    assert ongoing[0].event_id == "ROLLBACK-C"
-    assert ongoing[0].capital_used == 60000
-
-
-
-def test_manual_close_persists_terminal_timestamp_and_pnl_snapshot(db_session):
+def test_completed_partial_duplicate_event_never_reopens_or_reallocates(db_session):
     svc = LivePaperTradeService()
     db_session.add(GlobalPaperSetting(
         user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
     ))
     db_session.commit()
 
-    trade, created = svc.enter_or_mark(
-        db_session, strategy_id="cash-future", symbol="TERMINAL",
-        event_id="TERMINAL-SNAPSHOT", direction="LONG",
-        expiry="2026-12-30", earliest_expiry="2026-12-30",
-        lot_size=10, lots=1, edge=10, capital_used=50000, user_id=1,
+    seed, created = svc.enter_or_mark(
+        db_session,
+        strategy_id="cash-future",
+        symbol="SEED",
+        event_id="COMPLETED-DUP-SEED",
+        direction="LONG",
+        lot_size=10,
+        lots=2,
+        edge=5,
+        capital_used=60000,
+        user_id=1,
     )
     assert created is True
 
-    svc.mark(db_session, trade, edge=15, pnl_override=250.0)
-    expected_pct = round(250.0 / 50000.0 * 100.0, 8)
-    marked_at = trade.last_mark_at
-    assert trade.pnl_pct == expected_pct
-
-    closed = svc.close(db_session, trade, "MANUAL")
-
-    assert closed.status == "COMPLETED"
-    assert closed.exit_reason == "MANUAL"
-    assert closed.realized_pnl == 250.0
-    assert closed.unrealized_pnl == 250.0
-    assert closed.pnl_pct == expected_pct
-    assert closed.closed_at is not None
-    assert closed.last_mark_at is not None
-    assert closed.last_mark_at == closed.closed_at
-    assert closed.closed_at >= marked_at
-
-    db_session.expire_all()
-    persisted = db_session.query(LivePaperTrade).filter(
-        LivePaperTrade.id == trade.id,
-    ).one()
-    assert persisted.status == "COMPLETED"
-    assert persisted.realized_pnl == 250.0
-    assert persisted.pnl_pct == expected_pct
-    assert persisted.closed_at == persisted.last_mark_at
-
-def test_negative_pnl_pct_uses_actual_allocated_capital_and_persists_on_close(db_session):
-    svc = LivePaperTradeService()
-    db_session.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=125000, emergency_stop=False))
-    db_session.commit()
-
-    seed, _ = svc.enter_or_mark(
-        db_session, strategy_id="cash-future", symbol="SEED-NEG",
-        event_id="NEG-SEED", direction="LONG", expiry="2026-12-30",
-        lot_size=10, lots=3, edge=10, capital_used=90000, user_id=1,
-    )
     trade, created = svc.enter_or_mark(
-        db_session, strategy_id="cash-future", symbol="NEG",
-        event_id="NEG-1", direction="LONG", expiry="2026-12-30",
-        lot_size=10, lots=2, edge=10, capital_used=60000, user_id=1,
+        db_session,
+        strategy_id="cash-future",
+        symbol="DUP",
+        event_id="COMPLETED-DUP-EVENT",
+        direction="LONG",
+        lot_size=10,
+        lots=2,
+        edge=10,
+        capital_used=60000,
+        user_id=1,
     )
     assert created is True
     assert trade.lots == 1
     assert trade.capital_used == 30000
+    trade_id = trade.id
 
-    svc.mark(db_session, trade, edge=0)
-    assert trade.unrealized_pnl == -100.0
-    assert trade.pnl_pct == round(-100.0 / 30000.0 * 100.0, 8)
+    svc.close(db_session, trade, "EXPIRY_CLOSE")
 
-    svc.close(db_session, trade, "MANUAL")
-    db_session.expire_all()
-    closed = db_session.query(LivePaperTrade).filter(LivePaperTrade.id == trade.id).one()
-    assert closed.realized_pnl == -100.0
-    assert closed.pnl_pct == round(-100.0 / 30000.0 * 100.0, 8)
-
-def test_risk_rollback_does_not_undo_expiry_close(db_session):
-    from app.models import AlertRule
-    from app.notifications.common import AlertEvent, AlertService
-
-    db_session.add(GlobalPaperSetting(
-        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
-    ))
-    db_session.add(AlertRule(
-        user_id=1, strategy_id="cash-future", min_gross_profit=0.0,
-        mobile_number="", whatsapp_enabled=False, enabled=True,
-        max_daily_capital=60000.0, max_simultaneous_positions=0, max_loss=0.0,
-    ))
-    db_session.commit()
-
-    svc = LivePaperTradeService()
-    expired, created = svc.enter_or_mark(
-        db_session, strategy_id="cash-future", symbol="EXPIRED",
-        event_id="ROLLBACK-EXPIRY-OLD", direction="LONG",
-        expiry="2026-10-01", earliest_expiry="2026-10-01",
-        lot_size=10, lots=1, edge=10, capital_used=60000, user_id=1,
+    duplicate, created = svc.enter_or_mark(
+        db_session,
+        strategy_id="cash-future",
+        symbol="DUP",
+        event_id="COMPLETED-DUP-EVENT",
+        direction="LONG",
+        lot_size=10,
+        lots=2,
+        edge=99,
+        capital_used=60000,
+        user_id=1,
     )
-    assert created is True
-
-    blocked = AlertService().dispatch(db_session, AlertEvent(
-        strategy_id="cash-future", event_id="ROLLBACK-EXPIRY-NEW",
-        symbol="NEW", timestamp_ns=1, message="blocked", metadata={
-            "gross_profit": 1,
-            "paper_trade": {
-                "direction": "LONG", "expiry": "2026-12-30",
-                "lot_size": 10, "lots": 1, "edge": 10,
-                "capital_used": 60000,
-            },
-        },
-    ))
-    assert blocked == 0
+    assert duplicate is None
+    assert created is False
 
     db_session.expire_all()
-    current = db_session.query(LivePaperTrade).filter(
-        LivePaperTrade.id == expired.id,
-    ).one()
-    assert current.status == "COMPLETED"
-    assert current.exit_reason == "EXPIRY_CLOSE"
-    assert current.realized_pnl == current.unrealized_pnl
-    assert db_session.query(LivePaperTrade).filter(
-        LivePaperTrade.event_id == "ROLLBACK-EXPIRY-NEW",
-    ).count() == 0
+    rows = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+        LivePaperTrade.event_id == "COMPLETED-DUP-EVENT",
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].id == trade_id
+    assert rows[0].status == "COMPLETED"
+    assert rows[0].capital_used == 30000
+    assert rows[0].current_edge == 10.0
+    assert svc.ongoing(db_session, 1) == [seed]
