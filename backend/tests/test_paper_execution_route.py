@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 from concurrent.futures import ThreadPoolExecutor
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -1627,3 +1628,95 @@ def test_paper_restart_style_retry_keeps_audit_hash_stable(tmp_path):
         assert len(orders[0].audit_hash) == 64
         assert orders[0].previous_audit_hash is None
     finally: verify.close(); engine.dispose()
+
+
+def test_paper_end_to_end_multi_symbol_reversal_duplicate_and_audit_reconciliation(tmp_path):
+    from app.execution.paper_routes import (
+        PaperOrderRequest, PaperExitRequest, paper_order, paper_exit,
+        _reconcile_paper_ledger,
+    )
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'paper-e2e-audit.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="paper-e2e-audit@example.com", hashed_password="", full_name="Paper E2E Audit", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(
+            user_id=user.id, mode="PAPER", virtual_balance=10_000.0,
+            initial_virtual_balance=10_000.0, initial_balance_source="BOOTSTRAP",
+            realized_pnl=0.0, is_active=True,
+        ))
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    def order(symbol, side, price, quantity, fill_id):
+        db = Session()
+        try:
+            return paper_order(
+                PaperOrderRequest(symbol=symbol, transaction_type=side, price=price, quantity=quantity, fill_id=fill_id),
+                user_id=user_id, db=db,
+            )
+        finally:
+            db.close()
+
+    def exit_trade(symbol, price, fill_id):
+        db = Session()
+        try:
+            return paper_exit(
+                PaperExitRequest(symbol=symbol, price=price, fill_id=fill_id),
+                user_id=user_id, db=db,
+            )
+        finally:
+            db.close()
+
+    try:
+        order("ALPHA", "BUY", 100.0, 10, "E2E-A1")
+        order("BETA", "SELL", 200.0, 6, "E2E-B1")
+        order("ALPHA", "SELL", 120.0, 4, "E2E-A2")
+        order("BETA", "BUY", 180.0, 2, "E2E-B2")
+        order("ALPHA", "SELL", 110.0, 8, "E2E-A3")
+        exit_trade("BETA", 150.0, "E2E-B3")
+        exit_trade("ALPHA", 100.0, "E2E-A4")
+        retry = order("ALPHA", "SELL", 100.0, 2, "E2E-A4")
+        assert retry["idempotent"] is True
+
+        verify = Session()
+        try:
+            account = verify.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+            positions = verify.query(Position).filter(
+                Position.user_id == user_id, Position.is_paper.is_(True), Position.quantity != 0
+            ).all()
+            orders = verify.query(Order).filter(
+                Order.user_id == user_id, Order.is_paper.is_(True)
+            ).order_by(Order.id.asc()).all()
+            assert account.virtual_balance == 10_400.0
+            assert account.realized_pnl == 400.0
+            assert positions == []
+            assert len(orders) == 7
+            assert all(len(item.audit_hash) == 64 for item in orders)
+            for previous, current in zip(orders, orders[1:]):
+                assert current.previous_audit_hash == previous.audit_hash
+        finally:
+            verify.close()
+
+        reconcile = Session()
+        try:
+            data = _reconcile_paper_ledger(reconcile, user_id)
+            assert data["status"] == "OK"
+            assert data["repairability"] == "NONE"
+            assert data["reconstructed_realized_pnl"] == 400.0
+            assert data["stored_realized_pnl"] == 400.0
+            assert data["reconstructed_virtual_balance"] == 10_400.0
+            assert data["stored_virtual_balance"] == 10_400.0
+            assert data["mismatches"] == []
+        finally:
+            reconcile.close()
+    finally:
+        engine.dispose()
