@@ -599,3 +599,91 @@ def test_duplicate_event_can_mark_at_position_limit_without_opening_second_posit
     assert rows[0].lots == 1
     assert rows[0].capital_used == 30000
     assert rows[0].current_edge == 8.0
+
+
+
+def test_multiple_risk_gates_fail_together_without_phantom_trade_or_reservation(db_session):
+    from app.models import LivePaperTrade
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=60000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=30000, max_simultaneous_positions=1, max_loss=100,
+    ))
+    db_session.commit()
+
+    # Seed one ongoing position that simultaneously consumes:
+    # - the only position slot
+    # - the full daily-capital budget
+    # - the full loss budget after marking -₹100
+    svc = LivePaperTradeService()
+    seed, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="GATE-SEED",
+        event_id="GATE-SEED", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-30", lot_size=10, lots=1,
+        edge=10, capital_used=30000, user_id=1,
+    )
+    assert created is True
+    svc.mark(db_session, seed, edge=9, pnl_override=-100)
+    db_session.commit()
+
+    assert AlertService().dispatch(
+        db_session, _event("ALL-GATES-BLOCKED", capital=30000, lots=1)
+    ) == 0
+
+    rows = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].event_id == "GATE-SEED"
+    assert rows[0].capital_used == 30000
+    assert rows[0].unrealized_pnl == -100
+    assert rows[0].status == "ONGOING"
+
+    reserved = sum(float(row.capital_used) for row in rows if row.status == "ONGOING")
+    assert reserved == 30000
+
+
+def test_daily_and_loss_gates_fail_together_after_position_slot_is_available(db_session):
+    from app.models import LivePaperTrade
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=60000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=30000, max_simultaneous_positions=5, max_loss=100,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    seed, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="GATE-CLOSED",
+        event_id="GATE-CLOSED", direction="LONG", expiry="2026-10-04",
+        earliest_expiry="2026-10-04", lot_size=10, lots=1,
+        edge=10, capital_used=30000, user_id=1,
+    )
+    assert created is True
+    svc.mark(db_session, seed, edge=9, pnl_override=-100)
+    svc.close_expired(db_session, now=datetime(2026, 10, 4, 15, 30))
+    assert seed.status == "COMPLETED"
+
+    # The position slot is now free, but daily capital and max loss both remain
+    # exhausted. Rejection must create neither a new row nor a leaked reservation.
+    assert AlertService().dispatch(
+        db_session, _event("DAILY-LOSS-BOTH-BLOCKED", capital=30000, lots=1)
+    ) == 0
+
+    assert db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+        LivePaperTrade.event_id == "DAILY-LOSS-BOTH-BLOCKED",
+    ).count() == 0
+    assert LivePaperTradeService().ongoing(db_session, 1) == []
+    completed = LivePaperTradeService().completed(db_session, 1)
+    assert len(completed) == 1
+    assert completed[0].capital_used == 30000
+    assert completed[0].realized_pnl == -100
