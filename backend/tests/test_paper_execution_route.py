@@ -5831,3 +5831,65 @@ def test_paper_http_concurrent_multi_symbol_partial_reversals_preserve_accountin
     orders = client.get("/api/v1/execution/paper/orders", headers=headers)
     assert orders.status_code == 200
     assert len(orders.json()["orders"]) == 4
+
+
+def test_paper_http_concurrent_insufficient_balance_fails_closed_across_symbols():
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        account.virtual_balance = 1_000.0
+        account.realized_pnl = 0.0
+        db.commit()
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(2)
+
+    def submit(symbol):
+        barrier.wait(timeout=5)
+        return client.post(
+            "/api/v1/execution/paper/order",
+            headers=headers,
+            json={
+                "symbol": symbol,
+                "transaction_type": "BUY",
+                "price": 700.0,
+                "quantity": 1,
+            },
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        alpha_future = pool.submit(submit, "BALANCE_A")
+        beta_future = pool.submit(submit, "BALANCE_B")
+        alpha = alpha_future.result()
+        beta = beta_future.result()
+
+    responses = [alpha, beta]
+    assert sum(response.status_code == 200 for response in responses) == 1
+    rejected = [response for response in responses if response.status_code != 200]
+    assert len(rejected) == 1
+    assert rejected[0].status_code == 400
+    assert rejected[0].json()["detail"] == "Insufficient paper balance"
+
+    positions = client.get("/api/v1/execution/paper/positions", headers=headers)
+    assert positions.status_code == 200
+    open_positions = [
+        item for item in positions.json()["positions"] if item["quantity"] != 0
+    ]
+    assert len(open_positions) == 1
+    assert open_positions[0]["quantity"] == 1.0
+    assert open_positions[0]["entry_price"] == 700.0
+
+    orders = client.get("/api/v1/execution/paper/orders", headers=headers)
+    assert orders.status_code == 200
+    assert len(orders.json()["orders"]) == 1
+
+    account_response = client.get(
+        "/api/v1/execution/paper/account",
+        headers=headers,
+    )
+    assert account_response.status_code == 200
+    account_data = account_response.json()
+    assert account_data["virtual_balance"] == 300.0
+    assert account_data["realized_pnl"] == 0.0
