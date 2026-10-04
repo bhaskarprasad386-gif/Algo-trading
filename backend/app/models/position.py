@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Index, text
 
 from app.core.database import Base
 
@@ -11,6 +11,18 @@ def utc_now() -> datetime:
 
 class Position(Base):
     __tablename__ = "positions"
+    # Only one live paper position may exist per user/symbol. Closed and
+    # non-paper history remains repeatable; the database enforces the active
+    # paper-position invariant instead of relying on a check-then-insert race.
+    __table_args__ = (
+        Index(
+            "uq_positions_user_symbol_active_paper",
+            "user_id",
+            "symbol",
+            unique=True,
+            sqlite_where=text("is_paper = 1 AND is_open = 1"),
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, index=True, nullable=True)
