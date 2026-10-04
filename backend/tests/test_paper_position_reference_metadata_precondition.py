@@ -93,3 +93,29 @@ def test_repair_precondition_raw_nullable_order_metadata_is_distinct(tmp_path):
     finally:
         db.close()
         engine.dispose()
+
+
+def test_repair_precondition_order_input_order_is_deterministic(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'order-ordering.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        user = User(email="ordering@example.com", hashed_password="", full_name="Ordering", is_active=True)
+        db.add(user)
+        db.flush()
+        account = TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+                                 initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+                                 realized_pnl=0.0, is_active=True)
+        db.add(account)
+        db.commit()
+        paper_order(PaperOrderRequest(symbol="ORD-A", transaction_type="BUY", price=10.0, quantity=1, fill_id="ORD-A-1"), user_id=user.id, db=db)
+        paper_order(PaperOrderRequest(symbol="ORD-B", transaction_type="BUY", price=20.0, quantity=1, fill_id="ORD-B-1"), user_id=user.id, db=db)
+        orders = db.query(Order).filter_by(user_id=user.id).order_by(Order.id.asc()).all()
+        positions = db.query(Position).filter_by(user_id=user.id, is_paper=True).order_by(Position.id.asc()).all()
+        forward = _paper_repair_precondition(db, user.id, account, orders, positions)
+        reverse = _paper_repair_precondition(db, user.id, account, list(reversed(orders)), list(reversed(positions)))
+        assert reverse["state_hash"] == forward["state_hash"]
+        assert reverse["audit_head"] == forward["audit_head"]
+    finally:
+        db.close()
+        engine.dispose()
