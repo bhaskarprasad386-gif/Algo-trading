@@ -9573,3 +9573,129 @@ def test_paper_reconcile_rejects_fractional_filled_quantity_before_integer_coerc
     assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
     assert payload["repairability"] == "BLOCKED"
     assert payload["repair_plan"]["apply"] is False
+
+
+def _reset_paper_ledger_for_integrity_test(db):
+    account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+    user_id = int(account.user_id)
+    account.initial_virtual_balance = 1000.0
+    account.virtual_balance = 1000.0
+    account.realized_pnl = 0.0
+    account.initial_balance_source = "BOOTSTRAP"
+    db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+    db.query(Order).filter(Order.user_id == user_id).delete(synchronize_session=False)
+    db.commit()
+    return account, user_id
+
+
+def test_paper_reconcile_rejects_nonfinite_initial_virtual_balance():
+    db = SessionLocal()
+    try:
+        account, user_id = _reset_paper_ledger_for_integrity_test(db)
+        account.initial_virtual_balance = float("nan")
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert "invalid_initial_virtual_balance" in payload["mismatches"]
+    assert "ACCOUNTING_STATE" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+
+
+def test_paper_reconcile_rejects_nonfinite_virtual_balance():
+    db = SessionLocal()
+    try:
+        account, user_id = _reset_paper_ledger_for_integrity_test(db)
+        account.virtual_balance = float("inf")
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert "invalid_virtual_balance" in payload["mismatches"]
+    assert "ACCOUNTING_STATE" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+
+
+def test_paper_reconcile_rejects_nonfinite_realized_pnl():
+    db = SessionLocal()
+    try:
+        account, user_id = _reset_paper_ledger_for_integrity_test(db)
+        account.realized_pnl = float("nan")
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert "invalid_realized_pnl" in payload["mismatches"]
+    assert "ACCOUNTING_STATE" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+
+
+def test_paper_reconcile_rejects_fractional_position_quantity():
+    db = SessionLocal()
+    try:
+        account, user_id = _reset_paper_ledger_for_integrity_test(db)
+        db.add(Position(
+            user_id=user_id,
+            symbol="POS_FRACTIONAL",
+            quantity=2.5,
+            average_price=100.0,
+            stop_loss=None,
+            target=None,
+            is_paper=True,
+            is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("invalid_position:") for item in payload["mismatches"])
+    assert "POSITION_STATE" in payload["mismatch_categories"]
+    assert payload["repairability"] == "SAFE_DRY_RUN"
+
+
+def test_paper_reconcile_rejects_nonfinite_position_average_price():
+    db = SessionLocal()
+    try:
+        account, user_id = _reset_paper_ledger_for_integrity_test(db)
+        db.add(Position(
+            user_id=user_id,
+            symbol="POS_NONFINITE",
+            quantity=2,
+            average_price=float("nan"),
+            stop_loss=None,
+            target=None,
+            is_paper=True,
+            is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("invalid_position:") for item in payload["mismatches"])
+    assert "POSITION_STATE" in payload["mismatch_categories"]
+    assert payload["repairability"] == "SAFE_DRY_RUN"
