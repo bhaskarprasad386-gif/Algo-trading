@@ -507,3 +507,95 @@ def test_max_daily_capital_sums_multiple_same_day_allocations(db_session):
         db_session, _event("DAILY-MULTI-BLOCKED", capital=30000, lots=1)
     ) == 0
     assert len(LivePaperTradeService().ongoing(db_session, 1)) == 3
+
+
+
+def test_max_simultaneous_counts_only_ongoing_and_releases_slot_after_expiry(db_session):
+    from app.models import LivePaperTrade
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0, max_simultaneous_positions=1, max_loss=0,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    first, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="FIRST",
+        event_id="POSITION-LIFECYCLE-1", direction="LONG",
+        expiry="2026-10-04", earliest_expiry="2026-10-04",
+        lot_size=10, lots=2, edge=5, capital_used=60000, user_id=1,
+    )
+    assert created is True
+    assert first.lots == 1
+    assert first.status == "ONGOING"
+
+    # A partial allocation is still exactly one position and consumes the
+    # single simultaneous-position slot.
+    assert AlertService().dispatch(
+        db_session, _event("POSITION-LIFECYCLE-BLOCKED", capital=30000, lots=1)
+    ) == 0
+    assert len(svc.ongoing(db_session, 1)) == 1
+
+    # Completed rows do not count toward max_simultaneous_positions.
+    svc.mark(db_session, first, edge=5)
+    closed = svc.close_expired(db_session, now=datetime(2026, 10, 4, 15, 30))
+    assert [row.id for row in closed] == [first.id]
+    assert first.status == "COMPLETED"
+
+    assert AlertService().dispatch(
+        db_session, _event("POSITION-LIFECYCLE-AFTER-CLOSE", capital=30000, lots=1)
+    ) == 0
+    rows = svc.ongoing(db_session, 1)
+    assert len(rows) == 1
+    assert rows[0].event_id == "POSITION-LIFECYCLE-AFTER-CLOSE"
+    assert db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+        LivePaperTrade.status == "COMPLETED",
+    ).count() == 1
+
+
+def test_duplicate_event_can_mark_at_position_limit_without_opening_second_position(db_session):
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=100,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=0, max_simultaneous_positions=1, max_loss=0,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    first, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="DUP",
+        event_id="POSITION-DUP-1", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=10, capital_used=30000, user_id=1,
+    )
+    assert created is True
+    svc.mark(db_session, first, edge=9)
+    db_session.commit()
+
+    duplicate = AlertEvent(
+        strategy_id="cash-future", event_id="POSITION-DUP-1", symbol="DUP",
+        timestamp_ns=2, message="duplicate-mark", metadata={
+            "gross_profit": 100,
+            "paper_trade": {
+                "direction": "LONG", "expiry": "2026-10-30",
+                "lot_size": 10, "lots": 99, "edge": 8,
+                "capital_used": 999999,
+            },
+        },
+    )
+    assert AlertService().dispatch(db_session, duplicate) == 0
+
+    rows = svc.ongoing(db_session, 1)
+    assert len(rows) == 1
+    assert rows[0].event_id == "POSITION-DUP-1"
+    assert rows[0].lots == 1
+    assert rows[0].capital_used == 30000
+    assert rows[0].current_edge == 8.0
