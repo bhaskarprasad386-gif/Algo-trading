@@ -9482,3 +9482,94 @@ def test_paper_reconcile_detects_paper_order_removed_from_paper_scope():
     assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
     assert payload["repairability"] == "BLOCKED"
     assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_rejects_nonfinite_order_execution_fields():
+    """NaN/Inf-like numeric corruption must fail closed before integer coercion or comparisons."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 800.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(
+            order_id=f"PAPER-{user_id}-NONFINITE",
+            symbol="NONFINITE",
+            quantity=2,
+            transaction_type="BUY",
+            user_id=user_id,
+            price=float("inf"),
+            average_price=100.0,
+            filled_quantity=2,
+            average_fill_price=100.0,
+            pnl=0.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="NONFINITE-1",
+        )
+        db.add(order)
+        db.flush()
+        order.audit_hash = routes._paper_audit_payload(
+            user_id=user_id, symbol=order.symbol, side="BUY", quantity=2,
+            price=100.0, pnl=0.0, fill_id=order.fill_id, previous_hash=None,
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("invalid_order:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
+
+
+def test_paper_reconcile_rejects_fractional_filled_quantity_before_integer_coercion():
+    """SQLite must not allow a fractional filled quantity to be silently truncated."""
+    from app.execution import paper_routes as routes
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 800.0
+        account.realized_pnl = 0.0
+        db.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).delete(synchronize_session=False)
+        db.commit()
+        order = Order(
+            order_id=f"PAPER-{user_id}-FRACTIONAL",
+            symbol="FRACTIONAL",
+            quantity=2,
+            transaction_type="BUY",
+            user_id=user_id,
+            price=100.0,
+            average_price=100.0,
+            filled_quantity=2.5,
+            average_fill_price=100.0,
+            pnl=0.0,
+            status="FILLED",
+            is_paper=True,
+            fill_id="FRACTIONAL-1",
+        )
+        db.add(order)
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert any(item.startswith("invalid_order:") for item in payload["mismatches"])
+    assert "ORDER_INTEGRITY" in payload["mismatch_categories"]
+    assert payload["repairability"] == "BLOCKED"
+    assert payload["repair_plan"]["apply"] is False
