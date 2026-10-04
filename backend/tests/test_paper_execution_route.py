@@ -5958,3 +5958,78 @@ def test_paper_http_concurrent_exits_across_symbols_preserve_shared_accounting()
     orders = client.get("/api/v1/execution/paper/orders", headers=headers)
     assert orders.status_code == 200
     assert len(orders.json()["orders"]) == 4
+
+
+def test_paper_http_concurrent_multi_symbol_close_and_partial_reversal_preserve_accounting():
+    client, headers = _client_and_headers()
+
+    seed = SessionLocal()
+    try:
+        accounts = seed.query(TradingAccount).order_by(TradingAccount.id.asc()).all()
+        assert accounts
+        account = accounts[0]
+        for other in accounts:
+            other.is_active = other.id == account.id
+        account.virtual_balance = 8_000.0
+        account.realized_pnl = 0.0
+        seed.add_all([
+            Position(user_id=account.user_id, symbol="HTTP_ALPHA", quantity=10, average_price=100.0),
+            Position(user_id=account.user_id, symbol="HTTP_BETA", quantity=-5, average_price=200.0),
+        ])
+        seed.commit()
+    finally:
+        seed.close()
+
+    barrier = threading.Barrier(2)
+
+    def close_alpha():
+        barrier.wait(timeout=5)
+        return client.post(
+            "/api/v1/execution/paper/exit",
+            headers=headers,
+            json={"symbol": "HTTP_ALPHA", "price": 120.0},
+        )
+
+    def reverse_beta():
+        barrier.wait(timeout=5)
+        return client.post(
+            "/api/v1/execution/paper/order",
+            headers=headers,
+            json={
+                "symbol": "HTTP_BETA",
+                "transaction_type": "BUY",
+                "price": 180.0,
+                "quantity": 8,
+            },
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        alpha = pool.submit(close_alpha).result()
+        beta = pool.submit(reverse_beta).result()
+
+    assert alpha.status_code == 200
+    assert beta.status_code == 200
+    assert alpha.json()["status"] == "closed"
+    assert beta.json()["status"] == "success"
+
+    verify = SessionLocal()
+    try:
+        account = verify.query(TradingAccount).filter(
+            TradingAccount.id == account.id
+        ).one()
+        positions = verify.query(Position).filter(
+            Position.user_id == account.user_id,
+            Position.quantity != 0,
+        ).order_by(Position.symbol.asc()).all()
+        orders = verify.query(Order).filter(
+            Order.user_id == account.user_id
+        ).order_by(Order.id.asc()).all()
+
+        assert account.virtual_balance == 9_760.0
+        assert account.realized_pnl == 300.0
+        assert [(p.symbol, p.quantity, p.average_price) for p in positions] == [
+            ("HTTP_BETA", 3, 180.0),
+        ]
+        assert len(orders) == 2
+    finally:
+        verify.close()
