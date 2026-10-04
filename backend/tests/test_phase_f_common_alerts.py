@@ -38,3 +38,26 @@ def test_calendar_alert_persistence_is_90_day_date_safe(db_session, monkeypatch)
     rows = db_session.query(LiveCalendarSpreadAlertHistory).all()
     assert len(rows) == 1
     assert rows[0].underlying == "NIFTY"
+
+
+def test_calendar_paper_payload_preserves_exchange_for_expiry_boundary():
+    captured = []
+
+    class CaptureAlerts:
+        def dispatch(self, _db, event):
+            captured.append(event)
+            return 0
+
+    service = CalendarSpreadAlertService(CaptureAlerts())
+    signal = SimpleNamespace(
+        qualifies=True, underlying="CRUDEOIL", exchange="MCX",
+        near_contract_month="2026-10-04", far_contract_month="2026-11-04",
+        timestamp_ns=200, direction="LONG_NEAR_SHORT_FAR",
+        edge_long=5.0, edge_short=-5.0, gap_points=5.0,
+        gross_profit=250.0, lot_size=100,
+        capacity_lots=1, near_bid=100.0, near_ask=101.0,
+        far_bid=106.0, far_ask=107.0,
+    )
+
+    assert service.emit(object(), signal) == 0
+    assert captured[0].metadata["paper_trade"]["exchange"] == "MCX"
