@@ -328,7 +328,11 @@ def _accounting_after_fill(*, side: str, price: float, quantity: float, current_
 def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     quantity = _validate_quantity(request.quantity)
     symbol = request.symbol.strip().upper()
+    fill_id = _normalized_fill_id(request.fill_id)
     account = _begin_paper_mutation(db, user_id)
+    duplicate = _existing_fill_order(db, user_id=user_id, fill_id=fill_id, symbol=symbol, side="BUY", price=request.price, quantity=quantity)
+    if duplicate is not None:
+        return {"status":"success","mode":"paper","idempotent":True,"order":duplicate,"position":_position_payload(_position(db, user_id, symbol)),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
     if _position(db, user_id, symbol) is not None:
         raise HTTPException(status_code=409, detail="A paper position is already active for this symbol")
     cost = _buy_cost(request.price, quantity)
@@ -340,7 +344,7 @@ def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_
     position = Position(user_id=user_id, symbol=symbol, quantity=quantity, average_price=state.entry_price, stop_loss=state.stop_loss, target=state.target)
     account.virtual_balance = round(account.virtual_balance - cost, 8)
     db.add(position)
-    order = _create_order(db, user_id=user_id, symbol=symbol, side="BUY", price=fill.price, quantity=fill.quantity)
+    order = _create_order(db, user_id=user_id, symbol=symbol, side="BUY", price=fill.price, quantity=fill.quantity, fill_id=fill_id)
     db.commit()
     return {"status":"success","mode":state.mode.value,"fill":{"price":fill.price,"quantity":fill.quantity},"entry_price":state.entry_price,"stop_loss":state.stop_loss,"target":state.target,"position":_position_payload(position),"order":order,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
 
@@ -352,7 +356,11 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
         raise HTTPException(status_code=400, detail="transaction_type must be BUY or SELL")
     quantity = _validate_quantity(request.quantity)
     symbol = request.symbol.strip().upper()
+    fill_id = _normalized_fill_id(request.fill_id)
     account = _begin_paper_mutation(db, user_id)
+    duplicate = _existing_fill_order(db, user_id=user_id, fill_id=fill_id, symbol=symbol, side=side, price=request.price, quantity=quantity)
+    if duplicate is not None:
+        return {"status":"success","mode":"paper","idempotent":True,"order":duplicate,"position":_position_payload(_position(db, user_id, symbol)),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
     active = _position(db, user_id, symbol)
     remaining = active
 
@@ -380,7 +388,7 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
                 active.average_price = accounting_state.average_price
                 db.flush()
                 remaining = active
-            order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl)
+            order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl, fill_id=fill_id)
         else:
             cost = _buy_cost(request.price, quantity)
             if account.virtual_balance < cost:
@@ -458,7 +466,7 @@ def paper_from_scanner(request: ScannerPaperEntryRequest, user_id: int = Depends
     if request.net_profit is not None and request.net_profit <= 0:
         raise HTTPException(status_code=409, detail="Scanner opportunity has no positive net profit")
     _validate_quantity(request.quantity)
-    result = paper_order(PaperOrderRequest(symbol=request.symbol, transaction_type="BUY", price=request.cash_price, quantity=request.quantity, stop_loss_pct=request.stop_loss_pct, target_pct=request.target_pct), user_id=user_id, db=db)
+    result = paper_order(PaperOrderRequest(symbol=request.symbol, transaction_type="BUY", price=request.cash_price, quantity=request.quantity, stop_loss_pct=request.stop_loss_pct, target_pct=request.target_pct, fill_id=request.fill_id), user_id=user_id, db=db)
     result["source"] = "cash-future-scanner"
     result["scanner_entry_price"] = request.cash_price
     result["scanner_future_price"] = request.future_price
@@ -563,6 +571,12 @@ def paper_exit(request: PaperExitRequest, user_id: int = Depends(current_user_id
     position = _position(db, user_id, request.symbol)
     if position is None:
         return {"status":"flat","position":None,"pnl":0.0,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+    fill_id = _normalized_fill_id(request.fill_id)
+    exit_side = "BUY" if position.quantity < 0 else "SELL"
+    exit_quantity = abs(int(position.quantity))
+    duplicate = _existing_fill_order(db, user_id=user_id, fill_id=fill_id, symbol=position.symbol, side=exit_side, price=request.price, quantity=exit_quantity)
+    if duplicate is not None:
+        return {"status":"closed","idempotent":True,"entry_price":float(position.average_price),"exit_price":request.price,"quantity":exit_quantity,"pnl":float(duplicate["pnl"]),"order":duplicate,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
     entry_price = float(position.average_price)
     quantity = abs(int(position.quantity))
     if position.quantity < 0:
