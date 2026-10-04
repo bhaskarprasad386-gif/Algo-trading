@@ -414,8 +414,10 @@ class LivePaperTradeService:
             {GlobalPaperSetting.paper_amount: GlobalPaperSetting.paper_amount},
             synchronize_session=False,
         )
-        if lock_count == 0:
-            return trade
+        # Legacy/externally-created trades may exist without a global
+        # paper setting. Manual/expiry close must still be able to terminate
+        # those trades; they cannot participate in the risk-gated entry path,
+        # and mark() likewise requires this serialization row.
         # Close atomically against the current DB row. This prevents a stale
         # in-memory P&L from overwriting a newer mark during a close race.
         now = _now()
