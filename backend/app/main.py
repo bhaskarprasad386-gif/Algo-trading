@@ -660,58 +660,6 @@ async def _paper_box_spread_cycle_loop() -> None:
         await asyncio.sleep(interval)
 
 
-def _executable_paper_pnl(trade, row) -> float | None:
-    """Mark a paper position from executable exit quotes for its original legs."""
-    try:
-        legs = json.loads(trade.legs_json or "[]")
-    except Exception:
-        return None
-    if not isinstance(legs, list) or not legs:
-        return None
-
-    def quote(key):
-        value = row.get(key) if isinstance(row, dict) else getattr(row, key, None)
-        return None if value is None else float(value)
-
-    def exit_price(leg):
-        if not isinstance(leg, dict):
-            return None
-        side = str(leg.get("side") or "").upper()
-        if side not in {"BUY", "SELL"}:
-            return None
-        instrument = str(leg.get("instrument") or "").upper()
-        if instrument == "CASH":
-            bid, ask = quote("cash_bid"), quote("cash_ask")
-        elif instrument == "FUTURE":
-            bid, ask = quote("future_bid"), quote("future_ask")
-        elif instrument in {"CALL", "PUT"}:
-            bid = quote(f"{instrument.lower()}_bid")
-            ask = quote(f"{instrument.lower()}_ask")
-        elif instrument in {"LOW_CALL", "LOW_PUT", "HIGH_CALL", "HIGH_PUT"}:
-            source = "low" if instrument.startswith("LOW_") else "high"
-            option_type = "call" if instrument.endswith("CALL") else "put"
-            nested = getattr(row, source, None)
-            if nested is None:
-                return None
-            bid = getattr(nested, f"{option_type}_bid", None)
-            ask = getattr(nested, f"{option_type}_ask", None)
-        else:
-            return None
-        return (bid if side == "BUY" else ask)
-
-    pnl_per_unit = 0.0
-    for leg in legs:
-        entry = leg.get("price") if isinstance(leg, dict) else None
-        exit_ = exit_price(leg)
-        side = str(leg.get("side") or "").upper() if isinstance(leg, dict) else ""
-        if entry is None or exit_ is None or side not in {"BUY", "SELL"}:
-            return None
-        entry = float(entry)
-        exit_ = float(exit_)
-        pnl_per_unit += (exit_ - entry) if side == "BUY" else (entry - exit_)
-    return pnl_per_unit * int(trade.lot_size) * int(trade.lots)
-
-
 async def _live_paper_monitor_loop() -> None:
     """Continuously mark alert-driven paper trades and close them at expiry."""
     service = LivePaperTradeService()
@@ -742,11 +690,7 @@ async def _live_paper_monitor_loop() -> None:
                         elif trade.strategy_id == "box-spread":
                             row = box_map.get(trade.event_id); edge = None if row is None else row.executable_edge
                         if edge is not None:
-                            executable_pnl = _executable_paper_pnl(trade, row)
-                            service.mark(
-                                db, trade, edge=float(edge),
-                                pnl_override=executable_pnl,
-                            )
+                            service.mark(db, trade, edge=float(edge))
                     db.commit()
                 service.close_expired(db)
             finally:
