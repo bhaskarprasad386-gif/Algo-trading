@@ -2464,6 +2464,77 @@ def test_paper_reconcile_precondition_invalidates_every_core_mutation(tmp_path):
             mutate.close()
             engine.dispose()
 
+
+
+def test_paper_reconcile_precondition_covers_account_scope_and_order_position_metadata(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'precondition-metadata.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="pre-metadata@example.com", hashed_password="", full_name="Precondition Metadata", is_active=True)
+        seed.add(user)
+        seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        seed.commit()
+        user_id = user.id
+    finally:
+        seed.close()
+
+    db = Session()
+    try:
+        paper_order(PaperOrderRequest(symbol="META", transaction_type="BUY", price=100.0, quantity=2, fill_id="META-1"), user_id=user_id, db=db)
+    finally:
+        db.close()
+
+    def fingerprint():
+        s = Session()
+        try:
+            account = s.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+            orders = s.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).order_by(Order.id.asc()).all()
+            positions = s.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).order_by(Position.id.asc()).all()
+            return _paper_repair_precondition(s, user_id, account, orders, positions)["state_hash"]
+        finally:
+            s.close()
+
+    before = fingerprint()
+    mutations = (
+        ("account_mode", lambda a, o, p: setattr(a, "mode", "LIVE")),
+        ("account_active", lambda a, o, p: setattr(a, "is_active", False)),
+        ("order_average_price", lambda a, o, p: setattr(o, "average_price", 101.0)),
+        ("order_broker_id", lambda a, o, p: setattr(o, "broker_order_id", "BROKER-1")),
+        ("order_paper_scope", lambda a, o, p: setattr(o, "is_paper", False)),
+        ("position_paper_scope", lambda a, o, p: setattr(p, "is_paper", False)),
+    )
+    for name, mutate in mutations:
+        s = Session()
+        try:
+            account = s.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+            order = s.query(Order).filter(Order.user_id == user_id).one()
+            position = s.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).one()
+            mutate(account, order, position)
+            s.commit()
+            current = _paper_repair_precondition(
+                s, user_id, account,
+                s.query(Order).filter(Order.user_id == user_id).order_by(Order.id.asc()).all(),
+                s.query(Position).filter(Position.user_id == user_id).order_by(Position.id.asc()).all(),
+            )["state_hash"]
+            assert current != before, name
+            s.rollback()
+            # Restore the baseline for the next independent mutation.
+            account.mode = "PAPER"
+            account.is_active = True
+            order.average_price = 100.0
+            order.broker_order_id = None
+            order.is_paper = True
+            position.is_paper = True
+            s.commit()
+        finally:
+            s.close()
+    engine.dispose()
+
 def test_paper_reconcile_precondition_invalidates_order_set_and_sequence_mutations(tmp_path):
     from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, paper_order
 
