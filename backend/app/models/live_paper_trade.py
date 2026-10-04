@@ -30,3 +30,4 @@ class LivePaperTrade(Base):
     opened_at = Column(DateTime, nullable=False, default=utc_now)
     closed_at = Column(DateTime, nullable=True)
     last_mark_at = Column(DateTime, nullable=True)
+    __table_args__ = (UniqueConstraint("user_id", "event_id", name="uq_live_paper_user_event"),)
