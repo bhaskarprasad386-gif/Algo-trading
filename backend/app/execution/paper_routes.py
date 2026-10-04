@@ -447,15 +447,25 @@ def _accounting_after_fill(*, side: str, price: float, quantity: float, current_
     return after, round(after.realized_pnl - before.realized_pnl, 8)
 
 
+def _repair_fingerprint_number(value) -> object:
+    """Preserve malformed numeric state instead of silently truncating it in a repair fingerprint."""
+    if value is None:
+        return 0.0
+    raw = float(value)
+    if not math.isfinite(raw):
+        return str(raw)
+    return round(raw, 8)
+
+
 def _paper_repair_precondition(db: Session, user_id: int, account: TradingAccount, orders: list[Order], positions: list[Position]) -> dict:
     """Return an immutable DB-state fingerprint for any future repair/apply path."""
     payload = {
         "user_id": int(user_id),
         "account": {
-            "initial_virtual_balance": round(float(account.initial_virtual_balance), 8),
+            "initial_virtual_balance": _repair_fingerprint_number(account.initial_virtual_balance),
             "initial_balance_source": str(account.initial_balance_source or ""),
-            "virtual_balance": round(float(account.virtual_balance), 8),
-            "realized_pnl": round(float(account.realized_pnl or 0.0), 8),
+            "virtual_balance": _repair_fingerprint_number(account.virtual_balance),
+            "realized_pnl": _repair_fingerprint_number(account.realized_pnl),
         },
         "orders": [
             {
@@ -463,11 +473,11 @@ def _paper_repair_precondition(db: Session, user_id: int, account: TradingAccoun
                 "fill_id": order.fill_id,
                 "symbol": str(order.symbol or "").strip().upper(),
                 "side": str(order.transaction_type or "").strip().upper(),
-                "quantity": int(order.quantity or 0),
-                "filled_quantity": int(order.filled_quantity or 0),
-                "price": round(float(order.price or 0.0), 8),
-                "average_fill_price": round(float(order.average_fill_price or 0.0), 8),
-                "pnl": round(float(order.pnl or 0.0), 8),
+                "quantity": _repair_fingerprint_number(order.quantity),
+                "filled_quantity": _repair_fingerprint_number(order.filled_quantity),
+                "price": _repair_fingerprint_number(order.price),
+                "average_fill_price": _repair_fingerprint_number(order.average_fill_price),
+                "pnl": _repair_fingerprint_number(order.pnl),
                 "status": str(order.status or ""),
                 "audit_hash": order.audit_hash,
                 "previous_audit_hash": order.previous_audit_hash,
@@ -478,8 +488,8 @@ def _paper_repair_precondition(db: Session, user_id: int, account: TradingAccoun
             {
                 "id": int(position.id),
                 "symbol": str(position.symbol or "").strip().upper(),
-                "quantity": int(position.quantity or 0),
-                "average_price": round(float(position.average_price or 0.0), 8),
+                "quantity": _repair_fingerprint_number(position.quantity),
+                "average_price": _repair_fingerprint_number(position.average_price),
                 "is_open": bool(position.is_open),
             }
             for position in sorted(positions, key=lambda item: int(item.id))
