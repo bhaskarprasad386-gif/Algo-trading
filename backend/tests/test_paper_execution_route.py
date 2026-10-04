@@ -377,7 +377,7 @@ def test_paper_long_to_short_reversal_preserves_realized_pnl_and_short_margin():
     # previously paid 500 cost. Open the remaining 3-short by reserving
     # 360 at the reversal price, leaving 9,999,840 cash.
     assert data["realized_pnl"] == 100.0
-    assert data["virtual_balance"] == starting_balance - 160.0
+    assert data["virtual_balance"] == starting_balance - 260.0
     assert data["position"]["quantity"] == -3.0
     assert data["position"]["entry_price"] == 120.0
 
@@ -393,6 +393,85 @@ def test_paper_long_to_short_reversal_preserves_realized_pnl_and_short_margin():
     assert covered_data["realized_pnl"] == 130.0
     assert covered_data["virtual_balance"] == starting_balance + 130.0
     assert covered_data["position"] is None
+
+def test_paper_mixed_reversal_chain_preserves_cash_and_realized_pnl():
+    client, headers = _client_and_headers()
+    starting_balance = 10_000.0
+
+    # Build a 10-long at 100: cash 9,000.
+    opened = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "CHAIN", "transaction_type": "BUY", "price": 100.0, "quantity": 10},
+    )
+    assert opened.status_code == 200
+    assert opened.json()["virtual_balance"] == 9_000.0
+
+    # Partial long close: sell 4 at 120 -> +480 cash, +80 realized.
+    partial = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "CHAIN", "transaction_type": "SELL", "price": 120.0, "quantity": 4},
+    )
+    assert partial.status_code == 200
+    data = partial.json()
+    assert data["virtual_balance"] == 9_480.0
+    assert data["realized_pnl"] == 80.0
+    assert data["position"]["quantity"] == 6.0
+    assert data["position"]["entry_price"] == 100.0
+
+    # Sell 8 at 110: close the remaining 6-long (+60), open 2-short,
+    # and reserve 220 of short margin. Sale proceeds are never double-counted
+    # with realized P&L.
+    reverse_short = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "CHAIN", "transaction_type": "SELL", "price": 110.0, "quantity": 8},
+    )
+    assert reverse_short.status_code == 200
+    data = reverse_short.json()
+    assert data["virtual_balance"] == 9_920.0
+    assert data["realized_pnl"] == 140.0
+    assert data["position"]["quantity"] == -2.0
+    assert data["position"]["entry_price"] == 110.0
+
+    # Cover one short at 100: release 110 margin and realize +10.
+    partial_cover = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "CHAIN", "transaction_type": "BUY", "price": 100.0, "quantity": 1},
+    )
+    assert partial_cover.status_code == 200
+    data = partial_cover.json()
+    assert data["virtual_balance"] == 10_030.0
+    assert data["realized_pnl"] == 150.0
+    assert data["position"]["quantity"] == -1.0
+    assert data["position"]["entry_price"] == 110.0
+
+    # Buy 3 at 100: cover the last short (+10) and open 2-long at 100.
+    reverse_long = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "CHAIN", "transaction_type": "BUY", "price": 100.0, "quantity": 3},
+    )
+    assert reverse_long.status_code == 200
+    data = reverse_long.json()
+    assert data["virtual_balance"] == 9_830.0
+    assert data["realized_pnl"] == 160.0
+    assert data["position"]["quantity"] == 2.0
+    assert data["position"]["entry_price"] == 100.0
+
+    # Final long close at 90: receive 180 and realize -20.
+    closed = client.post(
+        "/api/v1/execution/paper/exit",
+        headers=headers,
+        json={"symbol": "CHAIN", "price": 90.0},
+    )
+    assert closed.status_code == 200
+    data = closed.json()
+    assert data["virtual_balance"] == starting_balance + 140.0
+    assert data["realized_pnl"] == 140.0
+    assert data["position"] is None
 
 def test_paper_partial_short_cover_preserves_margin_pnl_and_remaining_short():
     client, headers = _client_and_headers()
