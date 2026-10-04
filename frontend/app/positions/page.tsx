@@ -7,8 +7,9 @@ import { appConfig } from "@/lib/config";
 
 type Position = {
   id: number; strategy?: string; symbol?: string; direction?: string | null;
-  entry?: number; current?: number; quantity?: number; pnl?: number;
-  pnl_pct?: number; capital_allocated?: number; expiry?: string | null;
+  event_id?: string; expiry?: string | null; earliest_expiry?: string | null;
+  lot_size?: number; lots?: number; entry_edge?: number; current_edge?: number;
+  capital_used?: number; unrealized_pnl?: number; pnl_pct?: number; status?: string;
 };
 
 const money = (v: number | null | undefined) =>
@@ -26,10 +27,10 @@ export default function PositionsPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${base}/api/v1/auto/live-paper/ongoing`, { cache: "no-store" });
+      const r = await fetch(`${base}/api/v1/live-paper/status`, { cache: "no-store" });
       if (!r.ok) throw new Error(`Positions HTTP ${r.status}`);
       const data = await r.json();
-      const rows = Array.isArray(data) ? data : (data?.data ?? data?.positions ?? []);
+      const rows = Array.isArray(data) ? data : (data?.ongoing ?? []);
       setPositions(Array.isArray(rows) ? rows : []);
       setError(null);
     } catch (e) {
@@ -41,14 +42,14 @@ export default function PositionsPage() {
   useEffect(() => { void load(); }, []);
 
   const filtered = useMemo(() => filter === "all" ? positions : positions.filter(p => p.strategy === filter), [filter, positions]);
-  const totalPnl = positions.reduce((s, p) => s + (Number(p.pnl) || 0), 0);
-  const allocated = positions.reduce((s, p) => s + (Number(p.capital_allocated) || 0), 0);
+  const totalPnl = positions.reduce((s, p) => s + (Number(p.unrealized_pnl) || 0), 0);
+  const allocated = positions.reduce((s, p) => s + (Number(p.capital_used) || 0), 0);
   const strategies = Array.from(new Set(positions.map(p => p.strategy).filter(Boolean))) as string[];
 
   const closePosition = async (id: number) => {
     setClosingId(id); setError(null);
     try {
-      const r = await fetch(`${base}/api/v1/auto/live-paper/${id}/close`, { method: "POST" });
+      const r = await fetch(`${base}/api/v1/live-paper/positions/${id}/close`, { method: "POST" });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data?.detail || `Close HTTP ${r.status}`);
       await load();
@@ -94,15 +95,15 @@ export default function PositionsPage() {
        filtered.length === 0 ? <div className="p-8 text-sm theme-muted">No active paper positions.</div> :
        <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-sm">
         <thead className="border-b theme-border theme-surface-2 text-xs uppercase tracking-wider theme-muted">
-          <tr>{["Strategy","Symbol","Side","Qty","Entry","Current","P&L","Expiry","Action"].map(h => <th key={h} className="px-5 py-3">{h}</th>)}</tr>
+          <tr>{["Strategy","Symbol","Side","Lots","Capital","Entry Edge","Current Edge","Unrealized P&L","Expiry","Action"].map(h => <th key={h} className="px-5 py-3">{h}</th>)}</tr>
         </thead>
-        <tbody>{filtered.map(p => { const pnl = Number(p.pnl) || 0; return <tr key={p.id} className="border-b theme-border/70 last:border-0">
+        <tbody>{filtered.map(p => { const pnl = Number(p.unrealized_pnl) || 0; return <tr key={p.id} className="border-b theme-border/70 last:border-0">
           <td className="px-5 py-4 font-medium theme-text">{label(p.strategy)}</td>
           <td className="px-5 py-4 theme-text">{p.symbol || "—"}</td><td className="px-5 py-4 theme-muted">{p.direction || "—"}</td>
-          <td className="px-5 py-4 theme-text">{p.quantity ?? "—"}</td><td className="px-5 py-4 theme-text">{money(Number(p.entry))}</td>
+          <td className="px-5 py-4 theme-text">{p.lots ?? "—"}</td><td className="px-5 py-4 theme-text">{money(Number(p.capital_used))}</td>
           <td className="px-5 py-4 theme-text">{money(Number(p.current))}</td>
           <td className={`px-5 py-4 font-semibold ${pnl >= 0 ? "theme-success" : "theme-danger"}`}>{money(pnl)} {typeof p.pnl_pct === "number" ? `(${p.pnl_pct.toFixed(2)}%)` : ""}</td>
-          <td className="px-5 py-4 theme-muted">{p.expiry || "—"}</td>
+          <td className="px-5 py-4 theme-muted">{p.earliest_expiry || p.expiry || "—"}</td>
           <td className="px-5 py-4"><button type="button" onClick={() => void closePosition(p.id)} disabled={closingId !== null}
             className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border px-3 text-xs font-semibold theme-danger disabled:opacity-50">
             <XCircle className="h-4 w-4" />{closingId === p.id ? "Closing…" : "Close"}</button></td>
