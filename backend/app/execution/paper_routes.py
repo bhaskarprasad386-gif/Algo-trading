@@ -63,6 +63,7 @@ class ScannerPaperEntryRequest(BaseModel):
     executable: bool = True
     stop_loss_pct: float = Field(0.02, ge=0)
     target_pct: float = Field(0.04, ge=0)
+    fill_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class PaperPayoffLegRequest(BaseModel):
@@ -401,7 +402,7 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
             remaining = active
             db.add(active)
             account.virtual_balance = round(account.virtual_balance - cost, 8)
-            order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity)
+            order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, fill_id=fill_id)
             pnl = 0.0
     else:
         if active is None:
@@ -414,7 +415,7 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
             remaining = active
             db.add(active)
             account.virtual_balance = round(account.virtual_balance - margin, 8)
-            order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity)
+            order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, fill_id=fill_id)
         else:
             if active.quantity < 0:
                 raise HTTPException(status_code=409, detail="Use BUY to cover the active short position")
@@ -452,7 +453,7 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
             else:
                 active.quantity = remaining_qty
                 remaining = active
-            order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl)
+            order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl, fill_id=fill_id)
     db.commit()
     return {"status":"success","mode":"paper","order":order,"position":_position_payload(remaining),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
 
@@ -496,7 +497,7 @@ def paper_account(user_id: int = Depends(current_user_id), db: Session = Depends
 @router.get("/paper/orders")
 def paper_orders(user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     orders = db.query(Order).filter(Order.user_id == user_id, Order.order_id.like(f"PAPER-{user_id}-%")).order_by(Order.id.asc()).all()
-    return {"mode":"paper","orders":[{"id":item.order_id,"symbol":item.symbol,"transaction_type":item.transaction_type,"price":item.price,"quantity":float(item.quantity),"status":item.status,"pnl":float(item.pnl or 0.0)} for item in orders]}
+    return {"mode":"paper","orders":[{"id":item.order_id,"symbol":item.symbol,"transaction_type":item.transaction_type,"price":item.price,"quantity":float(item.quantity),"status":item.status,"pnl":float(item.pnl or 0.0),"fill_id":item.fill_id} for item in orders]}
 
 
 @router.get("/paper/position")
@@ -591,7 +592,7 @@ def paper_exit(request: PaperExitRequest, user_id: int = Depends(current_user_id
         account.virtual_balance = round(account.virtual_balance + _buy_cost(fill.price, quantity), 8)
         account.realized_pnl = accounting_state.realized_pnl
         side = "SELL"
-    order = _create_order(db, user_id=user_id, symbol=position.symbol, side=side, price=fill.price, quantity=quantity, pnl=pnl)
+    order = _create_order(db, user_id=user_id, symbol=position.symbol, side=side, price=fill.price, quantity=quantity, pnl=pnl, fill_id=fill_id)
     db.delete(position)
     db.commit()
     return {"status":"closed","entry_price":entry_price,"exit_price":request.price,"quantity":quantity,"pnl":pnl,"order":order,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
