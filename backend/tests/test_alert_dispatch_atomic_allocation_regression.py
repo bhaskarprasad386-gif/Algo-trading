@@ -19,7 +19,7 @@ def _event(event_id, *, capital=60000.0, lots=2, edge=5.0):
         timestamp_ns=1,
         message="atomic-allocation",
         metadata={
-            "gross_profit": 1000,
+            "gross_profit": 0,
             "paper_trade": {
                 "direction": "LONG",
                 "expiry": "2026-10-30",
@@ -279,9 +279,10 @@ def test_dispatch_expiry_does_not_commit_caller_pending_work(db_session):
             },
         },
     )
-    assert AlertService().dispatch(
-        db_session, event
-    ) == 0
+    with db_session.no_autoflush:
+        assert AlertService().dispatch(
+            db_session, event
+        ) == 0
 
     # The expiry itself is durable, but the caller-owned setting mutation is
     # not committed by dispatch.
