@@ -507,14 +507,14 @@ def test_same_user_three_strategy_concurrent_two_lot_requests_allocate_only_glob
         rows = verify.query(LivePaperTrade).filter(
             LivePaperTrade.user_id == 1,
         ).all()
-        assert len(rows) == 3
+        assert 1 <= len(rows) <= 2
         assert sum(int(row.lots) for row in rows) == 2
         assert sum(float(row.capital_used) for row in rows) == 60000
         assert all(int(row.lots) >= 1 for row in rows)
+        assert all(float(row.capital_used) == 30000 for row in rows)
 
         # Two 30k lots are globally allocatable; the third concurrent request
         # must fail without creating a zero-lot/zero-capital phantom row.
-        assert sorted(int(row.lots) for row in rows) == [0, 1, 1] or sorted(int(row.lots) for row in rows) == [1, 1, 0]
     finally:
         verify.close()
         engine.dispose()
