@@ -9699,3 +9699,33 @@ def test_paper_reconcile_rejects_nonfinite_position_average_price():
     assert any(item.startswith("invalid_position:") for item in payload["mismatches"])
     assert "POSITION_STATE" in payload["mismatch_categories"]
     assert payload["repairability"] == "SAFE_DRY_RUN"
+
+
+def test_paper_reconcile_detects_duplicate_active_positions_for_same_symbol():
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.initial_virtual_balance = 1000.0
+        account.virtual_balance = 1000.0
+        account.realized_pnl = 0.0
+        account.initial_balance_source = "BOOTSTRAP"
+        db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+        db.query(Order).filter(Order.user_id == user_id).delete(synchronize_session=False)
+        db.commit()
+        db.add_all([
+            Position(user_id=user_id, symbol="DUP_POS", quantity=1, average_price=100.0, is_paper=True, is_open=True),
+            Position(user_id=user_id, symbol="DUP_POS", quantity=1, average_price=100.0, is_paper=True, is_open=True),
+        ])
+        db.commit()
+    finally:
+        db.close()
+
+    client, headers = _client_and_headers()
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "MISMATCH"
+    assert "duplicate_position:DUP_POS" in payload["mismatches"]
+    assert "POSITION_STATE" in payload["mismatch_categories"]
+    assert payload["repairability"] == "SAFE_DRY_RUN"
