@@ -2349,3 +2349,86 @@ def test_persisted_trade_tampering_matrix_fails_closed():
     for label, overrides in invalid_cases:
         trade = make_valid(**overrides)
         assert _valid_persisted_trade(trade) is False, label
+
+
+def test_executable_pnl_and_monitor_boundary_reject_corrupt_persisted_trade(db_session):
+    """Runtime quote marking must fail closed before any corrupt row reaches P&L."""
+    import json
+    from app.main import _executable_paper_pnl
+    from app.auto.live_paper import _valid_persisted_trade
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=60000, emergency_stop=False,
+    ))
+    db_session.commit()
+
+    valid, created = LivePaperTradeService().enter_or_mark(
+        db_session,
+        strategy_id="calendar-spread",
+        symbol="VALID-RUNTIME",
+        event_id="VALID-RUNTIME",
+        direction="LONG",
+        expiry="2026-10-30",
+        earliest_expiry="2026-10-30",
+        lot_size=10,
+        lots=1,
+        edge=5,
+        capital_used=30000,
+        legs=[
+            {"contract": "NEAR", "side": "BUY", "price": 100.0},
+            {"contract": "FAR", "side": "SELL", "price": 110.0},
+        ],
+        metadata={"exchange": "NFO"},
+        user_id=1,
+    )
+    assert created is True
+
+    # Simulate a restart-loaded row whose persisted accounting invariant was
+    # tampered with after the original write.
+    corrupt = LivePaperTrade(
+        user_id=1,
+        strategy_id="calendar-spread",
+        symbol="CORRUPT-RUNTIME",
+        event_id="CORRUPT-RUNTIME",
+        direction="LONG",
+        expiry="2026-10-30",
+        earliest_expiry="2026-10-30",
+        lot_size=10,
+        lots=1,
+        entry_edge=5.0,
+        current_edge=5.0,
+        capital_used=30000.0,
+        unrealized_pnl=0.0,
+        realized_pnl=0.0,
+        pnl_pct=999.0,
+        legs_json=json.dumps([
+            {"contract": "NEAR", "side": "BUY", "price": 100.0},
+            {"contract": "FAR", "side": "SELL", "price": 110.0},
+        ]),
+        metadata_json=json.dumps({"exchange": "NFO"}),
+        status="ONGOING",
+        opened_at=valid.opened_at,
+        last_mark_at=valid.last_mark_at,
+    )
+    db_session.add(corrupt)
+    db_session.commit()
+    db_session.expire_all()
+
+    loaded = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.event_id == "CORRUPT-RUNTIME",
+    ).one()
+    assert _valid_persisted_trade(loaded) is False
+
+    row = type("CalendarRow", (), {
+        "near_contract_month": "NEAR",
+        "far_contract_month": "FAR",
+        "near_bid": 103.0,
+        "near_ask": 104.0,
+        "far_bid": 108.0,
+        "far_ask": 109.0,
+    })()
+    assert _executable_paper_pnl(loaded, row) is None
+
+    # The valid row remains markable, proving the fail-closed guard is
+    # selective rather than disabling executable P&L for healthy positions.
+    assert _executable_paper_pnl(valid, row) == 200.0
