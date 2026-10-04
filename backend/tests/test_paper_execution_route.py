@@ -849,7 +849,8 @@ def test_paper_mixed_reversal_chain_preserves_cash_and_realized_pnl():
     data = reverse_long.json()
     assert data["virtual_balance"] == 9_960.0
     assert data["realized_pnl"] == 160.0
-    assert data["position"]["quantity"] == 2.0    assert data["position"]["entry_price"] == 100.0
+    assert data["position"]["quantity"] == 2.0
+    assert data["position"]["entry_price"] == 100.0
     # Final long close at 90: receive 180 and realize -20.
     closed = client.post(        "/api/v1/execution/paper/exit",
         headers=headers,        json={"symbol": "CHAIN", "price": 90.0},
@@ -3469,7 +3470,8 @@ def test_paper_reconcile_repair_plan_integrity_partial_fills_flat_reversals_and_
     finally:
         app.dependency_overrides.pop(routes.current_user_id, None)
         app.dependency_overrides.pop(get_db, None)
-        engine.dispose()\n
+        engine.dispose()
+
 
 def test_paper_reconcile_http_failed_mutation_rollback_and_stale_precondition_boundary(tmp_path):
     """Concurrent readers never observe a failed mutation, and dry-run preconditions become stale after a commit."""
@@ -3682,7 +3684,8 @@ def test_paper_reconcile_http_failed_mutation_rollback_and_stale_precondition_bo
     finally:
         verify.close()
         engine.dispose()
-\n
+
+
 
 def test_paper_reconcile_http_concurrent_corruption_matrix_is_deterministic_and_read_only(tmp_path):
     """Concurrent HTTP reconciliation is deterministic across every corruption class."""
@@ -3908,7 +3911,8 @@ def test_paper_reconcile_http_concurrent_corruption_matrix_is_deterministic_and_
     finally:
         verify.close()
         engine.dispose()
-\n
+
+
 
 def test_paper_reconcile_http_mixed_corruption_precedence_is_complete_and_deterministic(tmp_path):
     """Mixed corruption must report every category and always block repair."""
@@ -9373,7 +9377,8 @@ def test_paper_http_reverse_short_commit_failure_preserves_existing_audit_head_a
     assert payload["status"] == "OK"
     assert payload["mismatches"] == []
     assert payload["repairability"] == "NONE"
-\n
+
+
 
 
 
