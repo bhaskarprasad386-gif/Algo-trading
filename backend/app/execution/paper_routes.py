@@ -793,7 +793,12 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             current_average_price=state.average_price,
             current_realized_pnl=state.realized_pnl,
         )
-        if abs(raw_pnl - pnl_delta) > 1e-8:
+        # If the audit hash itself is wrong, the stored P&L is not an
+        # independently trustworthy field for mismatch classification. Keep
+        # the primary audit-integrity finding deterministic instead of adding
+        # a derived P&L mismatch for the same tampered order.
+        audit_hash_matches = order.audit_hash == expected_hash
+        if audit_hash_matches and abs(raw_pnl - pnl_delta) > 1e-8:
             invalid_orders.append(f"order_pnl_mismatch:{order.id}")
         if abs(float(order.average_price or 0.0) - float(order.price or 0.0)) > 1e-8:
             invalid_orders.append(f"order_average_price_mismatch:{order.id}")
