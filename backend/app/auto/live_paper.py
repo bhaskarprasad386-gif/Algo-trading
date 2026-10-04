@@ -3,6 +3,7 @@ import json
 from datetime import datetime, timezone, time
 from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from app.models.live_paper_trade import LivePaperTrade
 from app.models.global_paper_setting import GlobalPaperSetting
 
@@ -80,7 +81,24 @@ class LivePaperTradeService:
             last_mark_at=_now(),
         )
         db.add(trade)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # Another concurrent request won the user/event insert race.
+            # Roll back the failed INSERT, then treat the winner as the
+            # duplicate mark-only position.
+            db.rollback()
+            existing = db.query(LivePaperTrade).filter(
+                LivePaperTrade.event_id == event_id,
+                LivePaperTrade.user_id == int(user_id),
+                LivePaperTrade.status == "ONGOING",
+            ).first()
+            if existing is not None:
+                self.mark(db, existing, edge=edge)
+                return existing, False
+            # A completed trade with the same event_id is intentionally not
+            # reopened; the event has already been consumed.
+            return None, False
         db.refresh(trade)
         return trade, True
 
