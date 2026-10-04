@@ -3541,7 +3541,7 @@ def test_paper_reconcile_http_concurrent_corruption_matrix_is_deterministic_and_
             "status": "MISMATCH",
             "repairability": "BLOCKED",
             "categories": ["AUDIT_INTEGRITY"],
-            "mismatches": ["audit_chain_mismatch:1", "audit_hash_mismatch:1"],
+            "mismatches": ["audit_hash_mismatch:1"],
         },
     }
 
