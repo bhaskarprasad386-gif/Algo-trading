@@ -670,9 +670,7 @@ def _executable_paper_pnl(trade, row) -> float | None:
         return None
 
     def quote(key):
-        if not isinstance(row, dict):
-            return None
-        value = row.get(key)
+        value = row.get(key) if isinstance(row, dict) else getattr(row, key, None)
         return None if value is None else float(value)
 
     def exit_price(leg):
@@ -692,8 +690,11 @@ def _executable_paper_pnl(trade, row) -> float | None:
         elif instrument in {"LOW_CALL", "LOW_PUT", "HIGH_CALL", "HIGH_PUT"}:
             source = "low" if instrument.startswith("LOW_") else "high"
             option_type = "call" if instrument.endswith("CALL") else "put"
-            bid = getattr(row[source], f"{option_type}_bid", None)
-            ask = getattr(row[source], f"{option_type}_ask", None)
+            nested = getattr(row, source, None)
+            if nested is None:
+                return None
+            bid = getattr(nested, f"{option_type}_bid", None)
+            ask = getattr(nested, f"{option_type}_ask", None)
         else:
             return None
         return (bid if side == "BUY" else ask)
