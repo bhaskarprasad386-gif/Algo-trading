@@ -299,3 +299,48 @@ def test_partial_allocation_exact_capital_boundary_does_not_lose_a_lot(db_sessio
     assert len(rows) == 1
     assert rows[0].lots == 2
     assert rows[0].capital_used == 60000
+
+
+def test_expiry_releases_global_reservation_but_daily_capital_and_loss_remain_enforced(db_session):
+    from datetime import timezone
+    from app.models import LivePaperTrade
+    from app.models.global_paper_setting import GlobalPaperSetting
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=50000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=30000, max_simultaneous_positions=5, max_loss=100,
+    ))
+    db_session.commit()
+
+    svc = LivePaperTradeService()
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="EXPIRY-REUSE",
+        event_id="EXPIRY-REUSE-SEED", direction="LONG",
+        expiry="2026-10-04", earliest_expiry="2026-10-04",
+        lot_size=10, lots=2, edge=10, capital_used=60000, user_id=1,
+    )
+    assert created is True
+    assert trade.lots == 1
+    assert trade.capital_used == 30000
+    svc.mark(db_session, trade, edge=9, pnl_override=-100)
+    closed = svc.close_expired(db_session, now=datetime(2026, 10, 4, 15, 30))
+    assert [row.id for row in closed] == [trade.id]
+    assert trade.realized_pnl == -100
+
+    # Expiry releases global reservation, but today's capital and realized
+    # loss remain part of their respective risk ledgers.
+    assert AlertService().dispatch(
+        db_session, _event("EXPIRY-REUSE-BLOCKED", capital=30000, lots=1)
+    ) == 0
+
+    rows = svc.ongoing(db_session, 1)
+    assert rows == []
+
+    completed = svc.completed(db_session, 1)
+    assert len(completed) == 1
+    assert completed[0].capital_used == 30000
+    assert completed[0].realized_pnl == -100
