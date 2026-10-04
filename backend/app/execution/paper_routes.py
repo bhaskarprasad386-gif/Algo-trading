@@ -136,12 +136,32 @@ def current_user_id(db: Session = Depends(get_db)) -> int:
     # Without this, concurrent first requests can all observe an empty account
     # set before the unique user/account constraints become visible.
     if db.bind is not None and db.bind.dialect.name == "sqlite":
-        db.rollback()
-        try:
-            db.connection().exec_driver_sql("BEGIN IMMEDIATE")
-        except OperationalError as exc:
+        # Cold-start requests are expected to converge, not randomly fail with
+        # 409 merely because another first request holds SQLite's write lock.
+        # Keep the lock acquisition bounded while allowing the winner to finish
+        # user/account bootstrap.
+        import time as _time
+        last_error = None
+        for _attempt in range(20):
             db.rollback()
-            raise HTTPException(status_code=409, detail="paper trading account bootstrap is busy; retry") from exc
+            try:
+                db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+                last_error = None
+                break
+            except OperationalError as exc:
+                last_error = exc
+                db.rollback()
+                if _attempt == 19:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="paper trading account bootstrap is busy; retry",
+                    ) from exc
+                _time.sleep(0.025)
+        if last_error is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="paper trading account bootstrap is busy; retry",
+            ) from last_error
         accounts = (
             db.query(TradingAccount)
             .filter(
