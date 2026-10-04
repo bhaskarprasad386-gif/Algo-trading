@@ -182,9 +182,13 @@ def test_mark_rejects_non_finite_or_negative_updates(db_session):
     svc.mark(db_session, trade, edge=float("nan"), pnl_override=100)
     svc.mark(db_session, trade, edge=-1, pnl_override=100)
     svc.mark(db_session, trade, edge=20, pnl_override=float("inf"))
-    svc.mark(db_session, trade, edge=20, capital_used=float("nan"))
     after = (trade.current_edge, trade.unrealized_pnl, trade.capital_used)
     assert after == before
+
+    # Marking is valuation-only: entry capital must never be rewritten.
+    svc.mark(db_session, trade, edge=20, pnl_override=50)
+    db_session.refresh(trade)
+    assert trade.capital_used == before[2]
 
 
 def test_malformed_persisted_trade_lifecycle_is_excluded(db_session):
