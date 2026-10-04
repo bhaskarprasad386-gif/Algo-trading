@@ -174,17 +174,18 @@ def test_expiry_close_moves_open_loss_into_same_day_realized_loss_before_gate(db
     db_session.commit()
     assert expired.unrealized_pnl == -50.0
 
-    # Pin the dispatcher at the exact NSE expiry boundary so the regression
+    # Pin expiry handling to the exact NSE boundary so the regression
     # is independent of the machine wall clock.
-    monkeypatch.setattr(
-        "app.auto.live_paper.datetime",
-        __import__("datetime").datetime,
-    )
+    original_close_expired = LivePaperTradeService.close_expired
+
+    def fixed_close_expired(self, db, *, now=None):
+        return original_close_expired(
+            self, db, now=datetime(2026, 10, 4, 15, 30)
+        )
+
     monkeypatch.setattr(
         "app.notifications.common.LivePaperTradeService.close_expired",
-        lambda self, db, now=None: LivePaperTradeService.close_expired(
-            self, db, now=datetime(2026, 10, 4, 15, 30)
-        ),
+        fixed_close_expired,
     )
     # A new alert after NSE close must first expire the old trade. Its -50
     # then becomes today's realized loss and still participates in max_loss.
@@ -232,11 +233,18 @@ def test_expiry_loss_plus_existing_realized_loss_blocks_new_entry(db_session, mo
     svc.mark(db_session, expired, edge=5.0)
     db_session.commit()
 
+    # Pin expiry handling to the exact NSE boundary so the regression
+    # is independent of the machine wall clock.
+    original_close_expired = LivePaperTradeService.close_expired
+
+    def fixed_close_expired(self, db, *, now=None):
+        return original_close_expired(
+            self, db, now=datetime(2026, 10, 4, 15, 30)
+        )
+
     monkeypatch.setattr(
         "app.notifications.common.LivePaperTradeService.close_expired",
-        lambda self, db, now=None: LivePaperTradeService.close_expired(
-            self, db, now=datetime(2026, 10, 4, 15, 30)
-        ),
+        fixed_close_expired,
     )
     # Expiry close realizes -50; existing same-day realized loss is -50.
     # The new event must see the combined exact -100 boundary and block.
