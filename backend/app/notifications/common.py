@@ -22,6 +22,16 @@ class AlertEvent:
     def dedup_key(self) -> tuple[str, str, str, int]:
         return (self.strategy_id, self.symbol.upper(), self.event_id, self.timestamp_ns)
 
+def _ist_day_start_utc_naive(now=None):
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    ist = current.astimezone(ZoneInfo("Asia/Kolkata"))
+    return ist.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+
+
 class AlertService:
     """Single outbound alert service; disabled channels are safe no-ops."""
     def __init__(self, notifier: WhatsAppNotifier | None = None) -> None:
@@ -120,10 +130,7 @@ class AlertService:
                 if max_simultaneous and ongoing_count >= max_simultaneous:
                     continue
                 requested_capital = max(0.0, float(paper.get("capital_used", 0.0) or 0.0))
-                from datetime import datetime, timezone
-                from zoneinfo import ZoneInfo
-                now_ist = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Kolkata"))
-                day_start = now_ist.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+                day_start = _ist_day_start_utc_naive()
                 max_daily_capital = min(max(0.0, float(rule.max_daily_capital)) for rule in user_rules)
                 if max_daily_capital > 0 and requested_capital > 0:
                     daily_capital = sum(
