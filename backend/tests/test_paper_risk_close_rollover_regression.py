@@ -628,3 +628,103 @@ def test_same_user_concurrent_multi_strategy_daily_boundary_and_realized_loss_st
     finally:
         verify.close()
         engine.dispose()
+
+
+def test_partial_allocation_uses_actual_capital_and_max_loss_rejection_leaves_no_reservation(tmp_path):
+    """Partial capital and max-loss gates must compose without phantom reservations."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.core.database import Base
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'partial-loss-composition.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    try:
+        setup.add(GlobalPaperSetting(
+            user_id=1, enabled=True, paper_amount=60000, emergency_stop=False,
+        ))
+        setup.add(AlertRule(
+            user_id=1, strategy_id="calendar-spread", min_gross_profit=0,
+            mobile_number="", whatsapp_enabled=False, enabled=True,
+            max_daily_capital=60000, max_simultaneous_positions=3,
+            max_loss=100,
+        ))
+        setup.commit()
+
+        seed, created = LivePaperTradeService().enter_or_mark(
+            setup,
+            strategy_id="calendar-spread", symbol="LOSS-SEED",
+            event_id="LOSS-SEED", direction="LONG",
+            expiry="2026-10-30", earliest_expiry="2026-10-30",
+            lot_size=10, lots=1, edge=5, capital_used=30000, user_id=1,
+        )
+        assert created is True
+        LivePaperTradeService().mark(setup, seed, edge=0.0, pnl_override=-50.0)
+        setup.commit()
+
+        # Only 30k remains. A 2-lot/60k request must be reduced to one
+        # 30k lot before the risk accounting is persisted.
+        event = AlertEvent(
+            strategy_id="calendar-spread",
+            event_id="PARTIAL-AFTER-LOSS",
+            symbol="PARTIAL-AFTER-LOSS",
+            timestamp_ns=1,
+            message="partial after open loss",
+            observed_at=datetime.utcnow(),
+            metadata={"gross_profit": 1000, "paper_trade": {
+                "direction": "LONG",
+                "expiry": "2026-10-30",
+                "earliest_expiry": "2026-10-30",
+                "lot_size": 10,
+                "lots": 2,
+                "edge": 5,
+                "capital_used": 60000,
+            }},
+        )
+        result = AlertService().dispatch(setup, event)
+        assert result == 1
+        setup.expire_all() if hasattr(setup, "expire_all") else None
+        rows = setup.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+            LivePaperTrade.status == "ONGOING",
+        ).all()
+        assert len(rows) == 2
+        assert sum(int(row.lots) for row in rows) == 2
+        assert sum(float(row.capital_used) for row in rows) == 60000
+        assert all(float(row.capital_used) == 30000 for row in rows)
+
+        # Now the open loss reaches the exact max-loss boundary. A fresh
+        # request must be rejected and must not reserve any additional capital.
+        LivePaperTradeService().mark(setup, seed, edge=0.0, pnl_override=-100.0)
+        setup.commit()
+        rejected = AlertEvent(
+            strategy_id="calendar-spread",
+            event_id="MAX-LOSS-BLOCK",
+            symbol="MAX-LOSS-BLOCK",
+            timestamp_ns=2,
+            message="max loss boundary",
+            observed_at=datetime.utcnow(),
+            metadata={"gross_profit": 1000, "paper_trade": {
+                "direction": "LONG",
+                "expiry": "2026-10-30",
+                "earliest_expiry": "2026-10-30",
+                "lot_size": 10,
+                "lots": 1,
+                "edge": 5,
+                "capital_used": 30000,
+            }},
+        )
+        assert AlertService().dispatch(setup, rejected) == 0
+        final_rows = setup.query(LivePaperTrade).filter(
+            LivePaperTrade.user_id == 1,
+        ).all()
+        assert len(final_rows) == 2
+        assert sum(float(row.capital_used) for row in final_rows) == 60000
+    finally:
+        setup.close()
+        engine.dispose()
