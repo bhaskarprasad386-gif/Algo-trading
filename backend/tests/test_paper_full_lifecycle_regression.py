@@ -166,3 +166,36 @@ def test_event_identity_isolated_by_user_and_completed_replay_is_user_scoped(db_
     assert marked.id == user2_trade.id
     assert marked.current_edge == 7
     assert marked.capital_used == 30_000
+
+
+def test_duplicate_event_cannot_cross_strategy_or_symbol_identity(db_session):
+    _enable(db_session)
+    svc = LivePaperTradeService()
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="AAA",
+        event_id="IDENTITY-MISMATCH", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=10, capital_used=20_000, user_id=1,
+    )
+    assert created is True
+
+    wrong_strategy, created = svc.enter_or_mark(
+        db_session, strategy_id="calendar-spread", symbol="AAA",
+        event_id="IDENTITY-MISMATCH", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=99, capital_used=90_000, user_id=1,
+    )
+    assert wrong_strategy is None
+    assert created is False
+
+    wrong_symbol, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="BBB",
+        event_id="IDENTITY-MISMATCH", direction="LONG", expiry="2026-10-30",
+        lot_size=10, lots=1, edge=99, capital_used=90_000, user_id=1,
+    )
+    assert wrong_symbol is None
+    assert created is False
+
+    db_session.refresh(trade)
+    assert trade.strategy_id == "cash-future"
+    assert trade.symbol == "AAA"
+    assert trade.current_edge == 10
+    assert trade.capital_used == 20_000
