@@ -11,6 +11,8 @@ import hashlib
 import json
 import math
 import uuid
+import threading
+from functools import wraps
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -28,6 +30,33 @@ from app.models import Order, Position, TradingAccount, User
 PAPER_STARTING_BALANCE = 10_000_000.0
 
 router = APIRouter(prefix="/api/v1/execution", tags=["Execution"])
+
+
+# In-process serialization complements SQLite BEGIN IMMEDIATE. SQLite provides
+# cross-process write serialization, while this lock keeps concurrent FastAPI
+# requests in one worker from racing through ORM identity-map state between
+# fill lookup, position transition, audit append, and commit.
+_paper_lock_guard = threading.Lock()
+_paper_user_locks: dict[int, threading.RLock] = {}
+_paper_bootstrap_lock = threading.RLock()
+
+
+def _paper_user_lock(user_id: int) -> threading.RLock:
+    with _paper_lock_guard:
+        return _paper_user_locks.setdefault(int(user_id), threading.RLock())
+
+
+def _serialized_paper_mutation(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        user_id = kwargs.get("user_id")
+        if user_id is None:
+            user_id = next((value for value in args if isinstance(value, int)), None)
+        if user_id is None:
+            return func(*args, **kwargs)
+        with _paper_user_lock(int(user_id)):
+            return func(*args, **kwargs)
+    return wrapper
 
 
 class PaperEntryRequest(BaseModel):
@@ -107,7 +136,7 @@ class CashFuturePayoffRequest(BaseModel):
     multiplier: float = Field(1.0, gt=0)
 
 
-def current_user_id(db: Session = Depends(get_db)) -> int:
+def _current_user_id_unlocked(db: Session = Depends(get_db)) -> int:
     """Return the single local trading identity, failing closed on ambiguity.
 
     Until real authentication is wired into these legacy paper endpoints,
@@ -257,6 +286,13 @@ def current_user_id(db: Session = Depends(get_db)) -> int:
     db.commit()
     db.refresh(account)
     return int(account.user_id)
+
+
+def current_user_id(db: Session = Depends(get_db)) -> int:
+    # Serialize cold-start identity/account bootstrap inside a worker. SQLite
+    # BEGIN IMMEDIATE remains the cross-process serialization boundary.
+    with _paper_bootstrap_lock:
+        return _current_user_id_unlocked(db)
 
 
 def _paper_fill(mode: ExecutionMode, price: float, quantity: float) -> Fill:
@@ -416,14 +452,15 @@ def _create_order(db: Session, *, user_id: int, symbol: str, side: str, price: f
         audit_hash=audit_hash,
         previous_audit_hash=previous_audit_hash,
     )
-    db.add(order)
     try:
-        db.flush()
+        # Keep an integrity failure inside a SAVEPOINT so the surrounding
+        # paper mutation transaction remains usable and can fail closed.
+        with db.begin_nested():
+            db.add(order)
+            db.flush()
     except IntegrityError as exc:
-        db.rollback()
         raise HTTPException(status_code=409, detail="paper trading mutation conflicts with existing ledger state") from exc
     except OperationalError as exc:
-        db.rollback()
         raise HTTPException(status_code=409, detail="paper trading account is busy; retry") from exc
     return {"id": order.order_id, "symbol": order.symbol, "transaction_type": order.transaction_type, "price": price, "quantity": normalized_quantity, "status": order.status, "pnl": pnl, "fill_id": fill_id}
 
@@ -1083,6 +1120,7 @@ def paper_reconcile(user_id: int = Depends(current_user_id), db: Session = Depen
 
 
 @router.post("/paper/entry")
+@_serialized_paper_mutation
 def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     quantity = _validate_quantity(request.quantity)
     symbol = request.symbol.strip().upper()
@@ -1109,6 +1147,7 @@ def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_
 
 
 @router.post("/paper/order")
+@_serialized_paper_mutation
 def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     side = request.transaction_type.strip().upper()
     if side not in {"BUY", "SELL"}:
@@ -1218,6 +1257,7 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
 
 
 @router.post("/paper/from-scanner")
+@_serialized_paper_mutation
 def paper_from_scanner(request: ScannerPaperEntryRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     if not request.executable:
         raise HTTPException(status_code=409, detail="Scanner opportunity is not executable")
@@ -1338,6 +1378,7 @@ def paper_payoff_from_cash_future(request: CashFuturePayoffRequest, user_id: int
 
 
 @router.post("/paper/exit")
+@_serialized_paper_mutation
 def paper_exit(request: PaperExitRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     account = _begin_paper_mutation(db, user_id)
     fill_id = _normalized_fill_id(request.fill_id)
