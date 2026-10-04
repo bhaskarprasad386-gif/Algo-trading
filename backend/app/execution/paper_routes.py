@@ -379,6 +379,81 @@ def _accounting_after_fill(*, side: str, price: float, quantity: float, current_
     return after, round(after.realized_pnl - before.realized_pnl, 8)
 
 
+def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
+    """Rebuild paper positions/P&L from durable fills and compare with state."""
+    account = _account(db, user_id)
+    orders = (
+        db.query(Order)
+        .filter(Order.user_id == user_id, Order.is_paper.is_(True))
+        .order_by(Order.id.asc())
+        .all()
+    )
+    rebuilt: dict[str, FillAccountingState] = {}
+    for order in orders:
+        symbol = str(order.symbol or "").strip().upper()
+        state = rebuilt.get(symbol, FillAccountingState())
+        rebuilt[symbol], _ = _accounting_after_fill(
+            side=order.transaction_type.upper(),
+            price=float(order.average_fill_price or order.price),
+            quantity=float(order.filled_quantity),
+            current_quantity=state.quantity,
+            current_average_price=state.average_price,
+            current_realized_pnl=state.realized_pnl,
+        )
+
+    actual_positions = {
+        str(position.symbol).strip().upper(): position
+        for position in db.query(Position)
+        .filter(Position.user_id == user_id, Position.is_paper.is_(True), Position.quantity != 0)
+        .all()
+    }
+    mismatches: list[str] = []
+    reconstructed_realized = 0.0
+    exposure = 0.0
+    for symbol, state in rebuilt.items():
+        reconstructed_realized += state.realized_pnl
+        if abs(state.quantity) > 0:
+            exposure += _buy_cost(abs(state.average_price), abs(state.quantity))
+            position = actual_positions.pop(symbol, None)
+            if position is None:
+                mismatches.append(f"missing_position:{symbol}")
+            elif int(position.quantity) != int(state.quantity) or abs(float(position.average_price) - state.average_price) > 1e-8:
+                mismatches.append(f"position_mismatch:{symbol}")
+        elif symbol in actual_positions:
+            actual_positions.pop(symbol)
+            mismatches.append(f"unexpected_position:{symbol}")
+    for symbol in actual_positions:
+        mismatches.append(f"orphan_position:{symbol}")
+
+    realized_delta = round(float(account.realized_pnl or 0.0) - reconstructed_realized, 8)
+    expected_balance = round(
+        float(account.initial_virtual_balance) + reconstructed_realized - exposure,
+        8,
+    )
+    balance_delta = round(float(account.virtual_balance) - expected_balance, 8)
+    if abs(realized_delta) > 1e-8:
+        mismatches.append("realized_pnl_mismatch")
+    if abs(balance_delta) > 1e-8:
+        mismatches.append("virtual_balance_mismatch")
+
+    return {
+        "status": "OK" if not mismatches else "MISMATCH",
+        "user_id": user_id,
+        "orders": len(orders),
+        "reconstructed_realized_pnl": round(reconstructed_realized, 8),
+        "stored_realized_pnl": round(float(account.realized_pnl or 0.0), 8),
+        "reconstructed_open_exposure": round(exposure, 8),
+        "expected_virtual_balance": expected_balance,
+        "stored_virtual_balance": round(float(account.virtual_balance), 8),
+        "mismatches": mismatches,
+    }
+
+
+@router.get("/paper/reconcile")
+def paper_reconcile(user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
+    return _reconcile_paper_ledger(db, user_id)
+
+
 @router.post("/paper/entry")
 def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     quantity = _validate_quantity(request.quantity)
