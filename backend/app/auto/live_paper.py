@@ -89,6 +89,9 @@ def _valid_persisted_trade(trade) -> bool:
         closed_at = getattr(trade, "closed_at", None)
         if not isinstance(opened_at, datetime) or not isinstance(last_mark_at, datetime):
             return False
+        opened_ist_date = opened_at.replace(tzinfo=timezone.utc).astimezone(IST).date()
+        if earliest_expiry < opened_ist_date:
+            return False
         if last_mark_at < opened_at:
             return False
         status = str(trade.status).upper()
