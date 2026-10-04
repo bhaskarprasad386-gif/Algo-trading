@@ -329,8 +329,18 @@ class AlertService:
                     # transaction boundary. Without this commit, a later
                     # user's risk rejection could rollback an earlier user's
                     # successful entry/mark in the shared dispatcher session.
+                    #
+                    # enter_or_mark() can also fail closed by returning
+                    # (None, False) after the dispatcher has acquired the
+                    # per-user risk lock (for example, disabled/emergency-stop
+                    # settings or downstream validation). That path must
+                    # explicitly rollback the lock transaction; otherwise the
+                    # caller can retain an open write transaction/SQLite lock
+                    # and the next alert can inherit a dirty transaction.
                     if created_trade is not None:
                         db.commit()
+                    else:
+                        db.rollback()
                 except Exception as exc:
                     # enter_or_mark() can fail after this per-user risk lock has
                     # started a transaction. Roll back the failed attempt so a
