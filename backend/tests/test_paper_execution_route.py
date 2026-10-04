@@ -10178,6 +10178,20 @@ def test_paper_mutation_fails_closed_on_corrupt_bootstrap_audit_chain(tmp_path):
     finally:
         db.close(); engine.dispose()
 
+def test_idempotent_fill_rejects_corrupted_existing_paper_order(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+    engine = create_engine(f"sqlite:///{tmp_path / 'paper-idempotent-corruption.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine); Session = sessionmaker(bind=engine)
+    db=Session()
+    try:
+        user=User(email="idem-corrupt@example.com", hashed_password="", full_name="Idempotent Corrupt", is_active=True); db.add(user); db.flush()
+        db.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True)); db.commit()
+        paper_order(PaperOrderRequest(symbol="IDEM", transaction_type="BUY", price=100.0, quantity=1, fill_id="IDEM-1"), user_id=user.id, db=db)
+        order=db.query(Order).filter(Order.user_id==user.id, Order.fill_id=="IDEM-1").one(); order.pnl=float("nan"); db.commit()
+        try: paper_order(PaperOrderRequest(symbol="IDEM", transaction_type="BUY", price=100.0, quantity=1, fill_id="IDEM-1"), user_id=user.id, db=db); raise AssertionError("corrupt idempotent fill accepted")
+        except RuntimeError as exc: assert "pnl" in str(exc)
+    finally: db.close(); engine.dispose()
+
 def test_paper_mutation_fails_closed_on_noncanonical_execution_metadata(tmp_path):
     from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
     from app.models.order import Order
