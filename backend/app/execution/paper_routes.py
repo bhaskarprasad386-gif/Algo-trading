@@ -439,6 +439,7 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
         .order_by(Order.id.asc())
         .all()
     )
+    seen_order_ids: set[str] = set()
     expected_audit_previous: str | None = None
     bootstrap_audit_required = str(account.initial_balance_source or "").strip().upper() == "BOOTSTRAP"
     for order in paper_orders:
@@ -451,6 +452,9 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
         raw_fill_id = str(order.fill_id) if order.fill_id is not None else None
         raw_order_id = str(order.order_id or "")
         expected_order_prefix = f"PAPER-{user_id}-"
+        if raw_order_id in seen_order_ids:
+            raise RuntimeError("duplicate paper order_id invariant violated")
+        seen_order_ids.add(raw_order_id)
         raw_broker_order_id = str(order.broker_order_id) if order.broker_order_id is not None else None
         raw_order_type = str(order.order_type or "")
         raw_product_type = str(order.product_type or "")
@@ -662,6 +666,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     reconstructed_cash = initial_virtual_balance
     reconstructed_realized = 0.0
     seen_fill_ids: set[str] = set()
+    seen_order_ids: set[str] = set()
     invalid_orders: list[str] = []
     previous_hash: str | None = None
 
@@ -673,6 +678,9 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         expected_order_prefix = f"PAPER-{user_id}-"
         if not raw_order_id or not raw_order_id.startswith(expected_order_prefix) or raw_order_id != raw_order_id.strip():
             invalid_orders.append(f"order_identity_mismatch:{order.id}")
+        if raw_order_id in seen_order_ids:
+            invalid_orders.append(f"duplicate_order_id:{raw_order_id}")
+        seen_order_ids.add(raw_order_id)
         symbol = str(order.symbol or "").strip().upper()
         side = str(order.transaction_type or "").strip().upper()
         raw_filled_quantity = float(order.filled_quantity or 0.0)
@@ -897,7 +905,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         baseline_status = "LEGACY_UNFINGERPRINTED"
     mismatch_categories: set[str] = set()
     for mismatch in mismatches:
-        if mismatch.startswith(("invalid_order:", "duplicate_fill_id:", "order_pnl_mismatch:", "order_average_price_mismatch:", "order_average_fill_price_mismatch:", "order_quantity_mismatch:", "order_symbol_canonicality_mismatch:", "order_side_canonicality_mismatch:", "order_fill_id_canonicality_mismatch:", "order_status_canonicality_mismatch:", "order_identity_mismatch:", "paper_scope_mismatch:")):
+        if mismatch.startswith(("invalid_order:", "duplicate_fill_id:", "order_pnl_mismatch:", "order_average_price_mismatch:", "order_average_fill_price_mismatch:", "order_quantity_mismatch:", "order_symbol_canonicality_mismatch:", "order_side_canonicality_mismatch:", "order_fill_id_canonicality_mismatch:", "order_status_canonicality_mismatch:", "order_identity_mismatch:", "duplicate_order_id:", "paper_scope_mismatch:")):
             mismatch_categories.add("ORDER_INTEGRITY")
         elif mismatch.startswith(("audit_chain_mismatch:", "audit_hash_mismatch:")):
             mismatch_categories.add("AUDIT_INTEGRITY")
