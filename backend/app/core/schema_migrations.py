@@ -46,6 +46,8 @@ def run_schema_migrations() -> None:
                               AND p.quantity != 0
                         ), 0.0)
                 """))
+            if "initial_balance_source" not in account_columns:
+                connection.execute(text("ALTER TABLE trading_accounts ADD COLUMN initial_balance_source VARCHAR(32) DEFAULT 'MIGRATED_INFERRED'"))
 
         if "live_box_spread_paper_positions" in account_tables:
             box_columns = {column["name"] for column in inspect(connection).get_columns("live_box_spread_paper_positions")}
