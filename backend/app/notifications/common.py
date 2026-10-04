@@ -79,7 +79,7 @@ class AlertService:
             try:
                 from app.auto.live_paper import LivePaperTradeService
                 service = LivePaperTradeService()
-                service.close_expired(paper_db)
+                service.close_expired(paper_db, commit=True)
                 service.enter_or_mark(
                     paper_db, strategy_id=event.strategy_id, symbol=event.symbol, event_id=event.event_id,
                     direction=paper.get("direction", "LONG"), expiry=paper.get("expiry"),
