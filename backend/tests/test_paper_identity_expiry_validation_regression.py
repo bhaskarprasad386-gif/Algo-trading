@@ -1,3 +1,7 @@
+import threading
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from app.core.database import Base
 from app.auto.live_paper import LivePaperTradeService
 from app.models import GlobalPaperSetting, LivePaperTrade
 
@@ -110,3 +114,85 @@ def test_duplicate_event_direction_and_expiry_are_immutable(db_session):
     assert row.lots == original_lots
     assert row.capital_used == original_capital
     assert row.entry_edge == original_entry_edge
+
+
+
+def test_concurrent_same_event_and_conflicting_identity_creates_only_one_correct_trade(tmp_path):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'identity-race.db'}",
+        connect_args={"check_same_thread": False, "timeout": 5},
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    setup = Session()
+    setup.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    setup.commit()
+    setup.close()
+
+    barrier = threading.Barrier(3)
+    results = []
+    errors = []
+
+    def worker(strategy_id, symbol, edge):
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            trade, created = LivePaperTradeService().enter_or_mark(
+                db,
+                strategy_id=strategy_id,
+                symbol=symbol,
+                event_id="IDENTITY-RACE",
+                direction="LONG",
+                expiry="2026-10-30",
+                earliest_expiry="2026-10-30",
+                lot_size=10,
+                lots=1,
+                edge=edge,
+                capital_used=30000,
+                user_id=1,
+            )
+            results.append((strategy_id, symbol, created, None if trade is None else trade.id))
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [
+        threading.Thread(target=worker, args=("cash-future", "AAA", 10)),
+        threading.Thread(target=worker, args=("cash-future", "AAA", 12)),
+        threading.Thread(target=worker, args=("calendar-spread", "BBB", 99)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(results) == 3
+
+    verify = Session()
+    rows = verify.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+        LivePaperTrade.event_id == "IDENTITY-RACE",
+    ).all()
+    assert len(rows) == 1
+    winner = rows[0]
+    assert winner.strategy_id in {"cash-future", "calendar-spread"}
+    assert winner.symbol in {"AAA", "BBB"}
+    assert winner.capital_used == 30000
+    assert winner.lots == 1
+
+    for strategy_id, symbol, created, trade_id in results:
+        if strategy_id == winner.strategy_id and symbol == winner.symbol:
+            assert trade_id == winner.id
+            # The matching duplicate may mark the winner; it must never create
+            # a second allocation.
+            assert created in {True, False}
+        else:
+            assert trade_id is None
+            assert created is False
+
+    verify.close()
