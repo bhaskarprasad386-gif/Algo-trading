@@ -91,6 +91,27 @@ class AlertService:
                 user_rules = [rule for rule in eligible_rules if int(rule.user_id) == rule_user_id]
                 if not user_rules:
                     continue
+                existing_trade = db.query(LivePaperTrade).filter(
+                    LivePaperTrade.user_id == rule_user_id,
+                    LivePaperTrade.event_id == str(event.event_id),
+                    LivePaperTrade.status == "ONGOING",
+                ).first()
+                # A duplicate signal is a mark update, not a new capital/position.
+                # Do not let risk limits block the existing position's refresh.
+                if existing_trade is not None:
+                    try:
+                        service.enter_or_mark(
+                            db, strategy_id=event.strategy_id, symbol=event.symbol, event_id=event.event_id,
+                            direction=paper.get("direction", "LONG"), expiry=paper.get("expiry"),
+                            earliest_expiry=paper.get("earliest_expiry") or paper.get("expiry"),
+                            lot_size=int(paper.get("lot_size", 1) or 1), lots=int(paper.get("lots", 1) or 1),
+                            edge=float(paper.get("edge", 0.0) or 0.0),
+                            capital_used=0.0, legs=paper.get("legs") or [], metadata=dict(paper), user_id=rule_user_id,
+                        )
+                    except Exception as exc:
+                        from app.core.logger import app_logger
+                        app_logger.error("Live paper duplicate mark failed for user %s: %s", rule_user_id, exc)
+                    continue
                 max_simultaneous = min(max(0, int(rule.max_simultaneous_positions)) for rule in user_rules)
                 ongoing_count = db.query(LivePaperTrade).filter(
                     LivePaperTrade.user_id == rule_user_id,
