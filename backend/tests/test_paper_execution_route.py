@@ -7132,3 +7132,116 @@ def test_paper_http_concurrent_reads_during_failed_mutation_never_expose_partial
     assert payload["status"] == "OK"
     assert payload["mismatches"] == []
     assert payload["repairability"] == "NONE"
+
+
+def test_paper_http_failed_short_reversal_is_atomic_under_concurrent_reads():
+    """An insufficient-balance short reversal must leave the position/account/order ledger untouched."""
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        user_id = int(account.user_id)
+        account.virtual_balance = 50.0
+        account.realized_pnl = 0.0
+        db.add(Position(
+            user_id=user_id,
+            symbol="FAILED_SHORT_REVERSAL",
+            quantity=-5,
+            average_price=100.0,
+            stop_loss=None,
+            target=None,
+            is_paper=True,
+            is_open=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(3)
+
+    def account_read():
+        barrier.wait(timeout=5)
+        return client.get("/api/v1/execution/paper/account", headers=headers)
+
+    def orders_read():
+        barrier.wait(timeout=5)
+        return client.get("/api/v1/execution/paper/orders", headers=headers)
+
+    def failed_reversal():
+        barrier.wait(timeout=5)
+        return client.post(
+            "/api/v1/execution/paper/order",
+            headers=headers,
+            json={
+                "symbol": "FAILED_SHORT_REVERSAL",
+                "transaction_type": "BUY",
+                "price": 120.0,
+                "quantity": 10,
+                "fill_id": "FAILED-SHORT-REVERSAL-1",
+            },
+        )
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        responses = list(pool.map(lambda fn: fn(), [account_read, orders_read, failed_reversal]))
+
+    account_response, orders_response, mutation_response = responses
+    assert account_response.status_code == 200
+    assert orders_response.status_code == 200
+    assert mutation_response.status_code == 400
+    assert mutation_response.json()["detail"] == "Insufficient paper balance for reversal long position"
+
+    account_payload = account_response.json()
+    orders_payload = orders_response.json()
+    assert account_payload["virtual_balance"] == 50.0
+    assert account_payload["realized_pnl"] == 0.0
+    assert account_payload["open_positions"] == 1
+    assert orders_payload["orders"] == []
+
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        position = db.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.symbol == "FAILED_SHORT_REVERSAL",
+            Position.is_open.is_(True),
+        ).one()
+        orders = db.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+            Order.symbol == "FAILED_SHORT_REVERSAL",
+        ).all()
+
+        assert account.virtual_balance == 50.0
+        assert account.realized_pnl == 0.0
+        assert position.quantity == -5
+        assert position.average_price == 100.0
+        assert orders == []
+    finally:
+        db.close()
+
+    final_account = client.get("/api/v1/execution/paper/account", headers=headers)
+    final_orders = client.get("/api/v1/execution/paper/orders", headers=headers)
+    final_position = client.get(
+        "/api/v1/execution/paper/position?symbol=FAILED_SHORT_REVERSAL",
+        headers=headers,
+    )
+    assert final_account.status_code == 200
+    assert final_orders.status_code == 200
+    assert final_position.status_code == 200
+    assert final_account.json()["virtual_balance"] == 50.0
+    assert final_account.json()["realized_pnl"] == 0.0
+    assert final_account.json()["open_positions"] == 1
+    assert final_orders.json()["orders"] == []
+    assert final_position.json()["status"] == "open"
+    assert final_position.json()["position"]["quantity"] == -5
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
