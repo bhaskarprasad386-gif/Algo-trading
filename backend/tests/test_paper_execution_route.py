@@ -2873,3 +2873,66 @@ def test_paper_reconcile_duplicate_fill_and_broken_previous_hash_are_blocked(tmp
             assert result["repair_plan"]["apply"] is False
         finally:
             corrupt.close(); engine.dispose()
+
+def test_paper_reconcile_full_corruption_contract_never_allows_safe_repair(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger, paper_order
+
+    mutations = ("price", "quantity", "pnl", "fill_id", "previous_hash", "audit_hash",
+                 "delete", "insert", "sequence")
+    for mutation in mutations:
+        engine = create_engine(
+            f"sqlite:///{tmp_path / f'full-{mutation}.db'}",
+            connect_args={"check_same_thread": False, "timeout": 10},
+        )
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        seed = Session()
+        try:
+            user = User(email=f"full-{mutation}@example.com", hashed_password="", full_name="Full Matrix", is_active=True)
+            seed.add(user); seed.flush()
+            seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=5000.0,
+                                    initial_virtual_balance=5000.0, initial_balance_source="BOOTSTRAP",
+                                    realized_pnl=0.0, is_active=True))
+            seed.commit(); user_id = user.id
+        finally:
+            seed.close()
+
+        db = Session()
+        try:
+            paper_order(PaperOrderRequest(symbol="A", transaction_type="BUY", price=100.0, quantity=2, fill_id="M1"), user_id=user_id, db=db)
+            paper_order(PaperOrderRequest(symbol="B", transaction_type="BUY", price=50.0, quantity=2, fill_id="M2"), user_id=user_id, db=db)
+        finally:
+            db.close()
+
+        corrupt = Session()
+        try:
+            orders = corrupt.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).order_by(Order.id.asc()).all()
+            if mutation == "price":
+                orders[0].price = 101.0
+            elif mutation == "quantity":
+                orders[0].quantity = 3
+            elif mutation == "pnl":
+                orders[0].pnl = 7.0
+            elif mutation == "fill_id":
+                orders[1].fill_id = orders[0].fill_id
+            elif mutation == "previous_hash":
+                orders[1].previous_audit_hash = "a" * 64
+            elif mutation == "audit_hash":
+                orders[0].audit_hash = "b" * 64
+            elif mutation == "delete":
+                corrupt.delete(orders[0])
+            elif mutation == "insert":
+                corrupt.add(Order(user_id=user_id, symbol="X", transaction_type="BUY", quantity=1,
+                                  filled_quantity=1, price=10.0, average_fill_price=10.0,
+                                  pnl=0.0, status="FILLED", is_paper=True, fill_id="NEW",
+                                  audit_hash="c" * 64, previous_audit_hash=orders[-1].audit_hash))
+            elif mutation == "sequence":
+                orders[1].id, orders[0].id = orders[0].id, orders[1].id
+            corrupt.commit()
+            result = _reconcile_paper_ledger(corrupt, user_id)
+            assert result["status"] == "MISMATCH", mutation
+            assert result["repairability"] == "BLOCKED", mutation
+            assert result["repair_plan"]["apply"] is False, mutation
+        finally:
+            corrupt.close()
+            engine.dispose()
