@@ -282,9 +282,39 @@ def _position_payload(position: Position | None) -> dict | None:
     }
 
 
+def _paper_audit_payload(*, user_id: int, symbol: str, side: str, quantity: int, price: float, pnl: float, fill_id: str | None, previous_hash: str | None) -> str:
+    import hashlib
+    import json
+    payload = {
+        "user_id": int(user_id),
+        "symbol": symbol.strip().upper(),
+        "side": side.upper(),
+        "quantity": int(quantity),
+        "price": round(float(price), 8),
+        "pnl": round(float(pnl), 8),
+        "fill_id": fill_id,
+        "previous_audit_hash": previous_hash,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    ).hexdigest()
+
+
+def _latest_paper_audit_hash(db: Session, user_id: int) -> str | None:
+    order = (
+        db.query(Order)
+        .filter(Order.user_id == user_id, Order.is_paper.is_(True))
+        .order_by(Order.id.desc())
+        .first()
+    )
+    return order.audit_hash if order is not None else None
+
+
 def _create_order(db: Session, *, user_id: int, symbol: str, side: str, price: float, quantity: float, pnl: float = 0.0, fill_id: str | None = None) -> dict:
     normalized_quantity = _validate_quantity(quantity)
     order_id = f"PAPER-{user_id}-{uuid.uuid4().hex[:16]}"
+    previous_audit_hash = _latest_paper_audit_hash(db, user_id)
+    audit_hash = _paper_audit_payload(user_id=user_id, symbol=symbol, side=side, quantity=normalized_quantity, price=price, pnl=pnl, fill_id=fill_id, previous_hash=previous_audit_hash)
     order = Order(
         order_id=order_id,
         symbol=symbol.strip().upper(),
@@ -300,6 +330,8 @@ def _create_order(db: Session, *, user_id: int, symbol: str, side: str, price: f
         status="FILLED",
         is_paper=True,
         fill_id=fill_id,
+        audit_hash=audit_hash,
+        previous_audit_hash=previous_audit_hash,
     )
     db.add(order)
     db.flush()
