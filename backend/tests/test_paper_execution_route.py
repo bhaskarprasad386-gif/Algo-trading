@@ -6819,3 +6819,79 @@ def test_paper_http_concurrent_scanner_reversal_and_exit_close_short_once():
     assert payload["status"] == "OK"
     assert payload["mismatches"] == []
     assert payload["repairability"] == "NONE"
+
+
+def test_paper_http_concurrent_account_and_orders_endpoint_snapshot_boundary():
+    """Account/order read endpoints must expose committed, self-consistent epochs during mutation."""
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
+        account.virtual_balance = 1_000.0
+        account.realized_pnl = 0.0
+        db.commit()
+    finally:
+        db.close()
+
+    barrier = threading.Barrier(3)
+
+    def account_read():
+        barrier.wait(timeout=5)
+        return client.get("/api/v1/execution/paper/account", headers=headers)
+
+    def orders_read():
+        barrier.wait(timeout=5)
+        return client.get("/api/v1/execution/paper/orders", headers=headers)
+
+    def mutate():
+        barrier.wait(timeout=5)
+        return client.post(
+            "/api/v1/execution/paper/order",
+            headers=headers,
+            json={
+                "symbol": "READ_EPOCH",
+                "transaction_type": "BUY",
+                "price": 100.0,
+                "quantity": 1,
+                "fill_id": "READ-EPOCH-1",
+            },
+        )
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        responses = list(pool.map(lambda fn: fn(), [account_read, orders_read, mutate]))
+
+    assert all(response.status_code == 200 for response in responses)
+
+    account_payload = responses[0].json()
+    orders_payload = responses[1].json()
+    mutation_payload = responses[2].json()
+
+    assert account_payload["mode"] == "paper"
+    assert orders_payload["mode"] == "paper"
+    assert mutation_payload["status"] == "success"
+
+    assert account_payload["virtual_balance"] in {900.0, 1000.0}
+    assert account_payload["open_positions"] in {0, 1}
+    assert len(orders_payload["orders"]) in {0, 1}
+
+    if len(orders_payload["orders"]) == 1:
+        order = orders_payload["orders"][0]
+        assert order["symbol"] == "READ_EPOCH"
+        assert order["transaction_type"] == "BUY"
+        assert order["price"] == 100.0
+        assert order["quantity"] == 1.0
+
+    final_account = client.get("/api/v1/execution/paper/account", headers=headers)
+    final_orders = client.get("/api/v1/execution/paper/orders", headers=headers)
+    assert final_account.status_code == 200
+    assert final_orders.status_code == 200
+    assert final_account.json()["virtual_balance"] == 900.0
+    assert final_account.json()["open_positions"] == 1
+    assert len(final_orders.json()["orders"]) == 1
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert reconcile.status_code == 200
+    payload = reconcile.json()
+    assert payload["status"] == "OK"
+    assert payload["mismatches"] == []
+    assert payload["repairability"] == "NONE"
