@@ -6219,6 +6219,8 @@ def test_paper_http_concurrent_insufficient_balance_fails_closed_across_symbols(
     try:
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
         account.virtual_balance = 1_000.0
+        account.initial_virtual_balance = 1_000.0
+        account.initial_balance_source = "BOOTSTRAP"
         account.realized_pnl = 0.0
         db.commit()
     finally:
@@ -6428,6 +6430,8 @@ def test_paper_http_concurrent_terminal_exits_without_fill_id_close_once():
         for other in accounts:
             other.is_active = other.id == account.id
         account.virtual_balance = 9_500.0
+        account.initial_virtual_balance = 10_000.0
+        account.initial_balance_source = "BOOTSTRAP"
         account.realized_pnl = 0.0
         seed.add(Position(
             user_id=account.user_id,
@@ -6766,6 +6770,8 @@ def test_paper_http_concurrent_entry_and_order_same_symbol_single_position_bound
     try:
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
         account.virtual_balance = 1_000.0
+        account.initial_virtual_balance = 1_000.0
+        account.initial_balance_source = "BOOTSTRAP"
         account.realized_pnl = 0.0
         db.commit()
         user_id = int(account.user_id)
@@ -6852,6 +6858,8 @@ def test_paper_http_concurrent_long_reversal_and_exit_close_once():
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
         user_id = int(account.user_id)
         account.virtual_balance = 500.0
+        account.initial_virtual_balance = 1_000.0
+        account.initial_balance_source = "BOOTSTRAP"
         account.realized_pnl = 0.0
         db.add(Position(
             user_id=user_id,
@@ -6944,6 +6952,8 @@ def test_paper_http_concurrent_scanner_and_order_same_fill_id_is_idempotent():
     try:
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
         account.virtual_balance = 1_000.0
+        account.initial_virtual_balance = 1_000.0
+        account.initial_balance_source = "BOOTSTRAP"
         account.realized_pnl = 0.0
         db.commit()
     finally:
@@ -7031,6 +7041,8 @@ def test_paper_http_concurrent_scanner_and_legacy_entry_same_symbol_without_fill
     try:
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
         account.virtual_balance = 1_000.0
+        account.initial_virtual_balance = 1_000.0
+        account.initial_balance_source = "BOOTSTRAP"
         account.realized_pnl = 0.0
         db.commit()
     finally:
@@ -7115,6 +7127,8 @@ def test_paper_http_concurrent_scanner_reversal_and_exit_close_short_once():
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
         user_id = int(account.user_id)
         account.virtual_balance = 500.0
+        account.initial_virtual_balance = 500.0
+        account.initial_balance_source = "BOOTSTRAP"
         account.realized_pnl = 0.0
         db.add(Position(
             user_id=user_id,
@@ -7207,6 +7221,8 @@ def test_paper_http_concurrent_account_and_orders_endpoint_snapshot_boundary():
     try:
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
         account.virtual_balance = 1_000.0
+        account.initial_virtual_balance = 1_000.0
+        account.initial_balance_source = "BOOTSTRAP"
         account.realized_pnl = 0.0
         db.commit()
     finally:
