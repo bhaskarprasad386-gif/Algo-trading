@@ -136,4 +136,3 @@ def test_rule_driven_paper_entry_is_user_scoped(db_session):
     assert AlertService(DummyNotifier()).dispatch(db_session, event) == 2
     assert len(LivePaperTradeService().ongoing(db_session, 1)) == 1
     assert len(LivePaperTradeService().ongoing(db_session, 2)) == 1
-    assert db_session.query(LivePaperTradeService.__annotations__.get("x", type("X", (), {}))).count() == 0 if False else True
