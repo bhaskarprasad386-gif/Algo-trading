@@ -308,7 +308,7 @@ class LivePaperTradeService:
         db.refresh(trade)
         return trade, True
 
-    def mark(self, db: Session, trade: LivePaperTrade, *, edge: float, capital_used=None, pnl_override=None):
+    def mark(self, db: Session, trade: LivePaperTrade, *, edge: float, pnl_override=None):
         if trade.status != "ONGOING" or not _valid_persisted_trade(trade):
             return trade
         try:
@@ -316,10 +316,6 @@ class LivePaperTradeService:
             edge_value = float(edge)
             if not math.isfinite(edge_value) or edge_value < 0:
                 return trade
-            if capital_used is not None:
-                capital_value = float(capital_used)
-                if not math.isfinite(capital_value) or capital_value <= 0:
-                    return trade
             if pnl_override is not None:
                 pnl_value = float(pnl_override)
                 if not math.isfinite(pnl_value):
@@ -343,11 +339,7 @@ class LivePaperTradeService:
             pnl_value if pnl_override is not None else (current_edge - trade.entry_edge) * trade.lot_size * trade.lots,
             8,
         )
-        effective_capital = (
-            capital_value
-            if capital_used is not None
-            else float(trade.capital_used)
-        )
+        effective_capital = float(trade.capital_used)
         pnl_pct = round(unrealized_pnl / effective_capital * 100.0, 8) if effective_capital > 0 else 0.0
         # Conditional UPDATE prevents a stale monitor/API object from marking a
         # trade after another transaction has already completed it.
@@ -357,8 +349,6 @@ class LivePaperTradeService:
             LivePaperTrade.pnl_pct: pnl_pct,
             LivePaperTrade.last_mark_at: _now(),
         }
-        if capital_used is not None and float(capital_used) > 0:
-            values[LivePaperTrade.capital_used] = effective_capital
         updated = db.query(LivePaperTrade).filter(
             LivePaperTrade.id == trade.id,
             LivePaperTrade.status == "ONGOING",
