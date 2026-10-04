@@ -197,6 +197,10 @@ class LivePaperTradeService:
                     return None, False
         if metadata is not None and not isinstance(metadata, Mapping):
             return None, False
+        if metadata is not None:
+            exchange = metadata.get("exchange")
+            if exchange is not None and str(exchange).strip().upper() not in {"NSE", "NFO", "BSE", "BFO", "MCX"}:
+                return None, False
         try:
             lot_size_value = float(lot_size)
             lots_value = float(lots)
