@@ -1392,3 +1392,67 @@ def test_paper_execution_rejects_and_rolls_back_corrupt_existing_order_invariant
         assert positions == []
     finally:
         verify.close()
+
+
+def test_paper_ledger_reconciliation_rebuilds_realized_pnl_position_and_balance():
+    client, headers = _client_and_headers()
+    for payload in [
+        {"symbol": "RECON", "transaction_type": "BUY", "price": 100.0, "quantity": 10},
+        {"symbol": "RECON", "transaction_type": "SELL", "price": 120.0, "quantity": 4},
+        {"symbol": "RECON", "transaction_type": "SELL", "price": 110.0, "quantity": 8},
+    ]:
+        response = client.post("/api/v1/execution/paper/order", headers=headers, json=payload)
+        assert response.status_code == 200
+
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "OK"
+    assert data["reconstructed_realized_pnl"] == 180.0
+    assert data["stored_realized_pnl"] == 180.0
+    assert data["reconstructed_open_exposure"] == 220.0
+    assert data["expected_virtual_balance"] == 9_999_960.0
+    assert data["stored_virtual_balance"] == 9_999_960.0
+    assert data["mismatches"] == []
+
+
+def test_paper_ledger_reconciliation_detects_state_mismatch_without_changing_it():
+    client, headers = _client_and_headers()
+    opened = client.post(
+        "/api/v1/execution/paper/order",
+        headers=headers,
+        json={"symbol": "RECON-CHECK", "transaction_type": "BUY", "price": 100.0, "quantity": 5},
+    )
+    assert opened.status_code == 200
+
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).order_by(TradingAccount.id.asc()).first()
+        position = db.query(Position).filter(
+            Position.user_id == account.user_id,
+            Position.symbol == "RECON-CHECK",
+        ).one()
+        account.virtual_balance += 123.0
+        position.average_price = 101.0
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "MISMATCH"
+    assert "position_mismatch:RECON-CHECK" in data["mismatches"]
+    assert "virtual_balance_mismatch" in data["mismatches"]
+
+    verify = SessionLocal()
+    try:
+        account = verify.query(TradingAccount).order_by(TradingAccount.id.asc()).first()
+        position = verify.query(Position).filter(
+            Position.user_id == account.user_id,
+            Position.symbol == "RECON-CHECK",
+        ).one()
+        assert account.virtual_balance == 9_999_623.0
+        assert position.average_price == 101.0
+    finally:
+        verify.close()
