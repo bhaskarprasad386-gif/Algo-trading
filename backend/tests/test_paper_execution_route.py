@@ -2333,6 +2333,9 @@ def test_paper_reconcile_safe_dry_run_plan_is_deterministic_and_read_only(tmp_pa
         after_orders = after.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).count()
         after_positions = after.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).count()
         assert (after_account.virtual_balance, after_account.realized_pnl, after_orders, after_positions) == before_values
+    finally:
+        after.close()
+
     changed = Session()
     try:
         changed_account = changed.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
@@ -2342,8 +2345,6 @@ def test_paper_reconcile_safe_dry_run_plan_is_deterministic_and_read_only(tmp_pa
         assert changed_result["repair_plan"]["precondition"]["state_hash"] != precondition["state_hash"]
     finally:
         changed.close()
-    finally:
-        after.close()
         engine.dispose()
 
 
@@ -2423,3 +2424,72 @@ def test_paper_reconcile_blocked_baseline_never_exposes_applicable_repair(tmp_pa
     finally:
         verify.close()
         engine.dispose()
+
+def test_paper_reconcile_precondition_invalidates_every_core_mutation(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _paper_repair_precondition, _reconcile_paper_ledger, paper_order
+
+    mutations = ("account", "order_price", "order_pnl", "order_hash", "position_qty", "position_open")
+    for mutation in mutations:
+        engine = create_engine(
+            f"sqlite:///{tmp_path / f'precondition-{mutation}.db'}",
+            connect_args={"check_same_thread": False, "timeout": 10},
+        )
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        seed = Session()
+        try:
+            user = User(email=f"pre-{mutation}@example.com", hashed_password="", full_name="Precondition", is_active=True)
+            seed.add(user)
+            seed.flush()
+            seed.add(TradingAccount(
+                user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+                initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0, is_active=True,
+            ))
+            seed.commit()
+            user_id = user.id
+        finally:
+            seed.close()
+
+        db = Session()
+        try:
+            paper_order(PaperOrderRequest(symbol="MATRIX", transaction_type="BUY", price=100.0, quantity=5, fill_id="MATRIX-1"), user_id=user_id, db=db)
+        finally:
+            db.close()
+
+        base = Session()
+        try:
+            account = base.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+            orders = base.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).order_by(Order.id.asc()).all()
+            positions = base.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).order_by(Position.id.asc()).all()
+            before_hash = _paper_repair_precondition(base, user_id, account, orders, positions)["state_hash"]
+        finally:
+            base.close()
+
+        mutate = Session()
+        try:
+            account = mutate.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+            order = mutate.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).one()
+            position = mutate.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).one()
+            if mutation == "account":
+                account.virtual_balance = 499.0
+            elif mutation == "order_price":
+                order.price = 101.0
+            elif mutation == "order_pnl":
+                order.pnl = 7.0
+            elif mutation == "order_hash":
+                order.audit_hash = "a" * 64
+            elif mutation == "position_qty":
+                position.quantity = 4
+            elif mutation == "position_open":
+                position.is_open = False
+            mutate.commit()
+            current = _paper_repair_precondition(
+                mutate, user_id, account,
+                mutate.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).order_by(Order.id.asc()).all(),
+                mutate.query(Position).filter(Position.user_id == user_id, Position.is_paper.is_(True)).order_by(Position.id.asc()).all(),
+            )
+            assert current["state_hash"] != before_hash, mutation
+        finally:
+            mutate.close()
+            engine.dispose()
