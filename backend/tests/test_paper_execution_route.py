@@ -10148,3 +10148,32 @@ def test_paper_mutation_fails_closed_on_noncanonical_stored_paper_fields(tmp_pat
             db.rollback()
     finally:
         db.close()
+
+def test_paper_mutation_fails_closed_on_corrupt_bootstrap_audit_chain(tmp_path):
+    from app.execution.paper_routes import PaperOrderRequest, _validate_paper_state, paper_order
+    from app.models.order import Order
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'audit-mutation-integrity.db'}", connect_args={"check_same_thread": False, "timeout": 10})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    seed = Session()
+    try:
+        user = User(email="audit-mutation@example.com", hashed_password="", full_name="Audit Mutation", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0, initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP", realized_pnl=0.0, is_active=True))
+        seed.commit(); user_id = user.id
+    finally:
+        seed.close()
+    db = Session()
+    try:
+        paper_order(PaperOrderRequest(symbol="AUDIT", transaction_type="BUY", price=100.0, quantity=2, fill_id="AUDIT-1"), user_id=user_id, db=db)
+        order = db.query(Order).filter(Order.user_id == user_id, Order.is_paper.is_(True)).one()
+        order.audit_hash = "0" * 64
+        db.commit()
+        try:
+            _validate_paper_state(db, user_id)
+            raise AssertionError("corrupt audit chain must fail closed")
+        except RuntimeError as exc:
+            assert "audit" in str(exc)
+    finally:
+        db.close(); engine.dispose()
