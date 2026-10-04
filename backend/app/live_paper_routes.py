@@ -29,14 +29,23 @@ def _refresh_marks(db: Session, trades):
         from app import main as runtime
         cash = runtime.live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=500)
         cash_map = {f"{x.get('symbol')}:{x.get('contract_month')}": x for x in cash}
-        calendar = runtime.live_calendar_spread_scanner.snapshot(limit=500)
+        now_ns = runtime.time_module.time_ns()
+        freshness_cutoff_ns = now_ns - 5_000_000_000
+        calendar = tuple(
+            x for x in runtime.live_calendar_spread_scanner.snapshot(limit=500)
+            if int(getattr(x, "timestamp_ns", 0) or 0) >= freshness_cutoff_ns
+        )
         cal_map = {f"{x.underlying}:{x.near_contract_month}:{x.far_contract_month}:{x.direction}": x for x in calendar}
-        syn_map = {}
-        for x in runtime.live_synthetic_latest_results:
-            syn_map[f"{x.option.underlying}:{x.option.expiry}:{x.option.strike:g}:{x.direction}"] = x
-        box_map = {}
-        for x in runtime.live_box_spread_latest_results:
-            box_map[f"{x.low.underlying}:{x.low.expiry}:{x.low.strike:g}:{x.high.strike:g}:{x.direction}"] = x
+        syn_map = {
+            f"{x.option.underlying}:{x.option.expiry}:{x.option.strike:g}:{x.direction}": x
+            for x in runtime.live_synthetic_latest_results
+            if int(getattr(x.option, "timestamp_ns", 0) or 0) >= freshness_cutoff_ns
+        }
+        box_map = {
+            f"{x.low.underlying}:{x.low.expiry}:{x.low.strike:g}:{x.high.strike:g}:{x.direction}": x
+            for x in runtime.live_box_spread_latest_results
+            if int(getattr(x.low, "timestamp_ns", 0) or 0) >= freshness_cutoff_ns
+        }
         for trade in trades:
             if trade.strategy_id == "cash-future":
                 row = cash_map.get(trade.event_id)
