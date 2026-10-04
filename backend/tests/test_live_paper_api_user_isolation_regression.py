@@ -106,7 +106,7 @@ def test_refresh_closed_count_is_user_scoped_even_when_expiry_processing_is_glob
     monkeypatch.setattr(
         routes.service,
         "close_expired",
-        lambda db, now=None: original(db, now=datetime(2026, 10, 4, 15, 30)),
+        lambda db, now=None: original(routes.service, db, now=datetime(2026, 10, 4, 15, 30)),
     )
 
     result = routes.refresh(db_session)
