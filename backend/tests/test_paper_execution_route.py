@@ -1411,8 +1411,10 @@ def test_paper_ledger_reconciliation_rebuilds_realized_pnl_position_and_balance(
     assert data["reconstructed_realized_pnl"] == 180.0
     assert data["stored_realized_pnl"] == 180.0
     assert data["reconstructed_open_exposure"] == 220.0
-    assert data["expected_virtual_balance"] == 9_999_380.0
-    assert data["stored_virtual_balance"] == 9_999_380.0
+    assert data["reconstructed_virtual_balance"] == 9_999_920.0
+    assert data["stored_virtual_balance"] == 9_999_920.0
+    assert data["repairability"] == "NONE"
+    assert data["repair_plan"]["apply"] is False
     assert data["mismatches"] == []
 
 
@@ -1444,6 +1446,8 @@ def test_paper_ledger_reconciliation_detects_state_mismatch_without_changing_it(
     assert data["status"] == "MISMATCH"
     assert "position_mismatch:RECON-CHECK" in data["mismatches"]
     assert "virtual_balance_mismatch" in data["mismatches"]
+    assert data["repairability"] == "SAFE_DRY_RUN"
+    assert data["repair_plan"]["apply"] is False
 
     verify = SessionLocal()
     try:
@@ -1456,3 +1460,37 @@ def test_paper_ledger_reconciliation_detects_state_mismatch_without_changing_it(
         assert position.average_price == 101.0
     finally:
         verify.close()
+
+
+def test_paper_ledger_reconciliation_blocks_repair_plan_for_corrupt_order():
+    client, headers = _client_and_headers()
+    db = SessionLocal()
+    try:
+        account = db.query(TradingAccount).order_by(TradingAccount.id.asc()).first()
+        db.add(
+            Order(
+                user_id=account.user_id,
+                order_id=f"BAD-RECON-{account.user_id}",
+                symbol="BAD-RECON",
+                transaction_type="BUY",
+                quantity=5,
+                price=100.0,
+                average_price=100.0,
+                filled_quantity=4,
+                average_fill_price=100.0,
+                status="FILLED",
+                is_paper=True,
+                pnl=0.0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "MISMATCH"
+    assert data["repairability"] == "BLOCKED"
+    assert data["repair_plan"]["apply"] is False
+    assert any(item.startswith("invalid_order:") for item in data["mismatches"])
