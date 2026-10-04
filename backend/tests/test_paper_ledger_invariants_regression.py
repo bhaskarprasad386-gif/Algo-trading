@@ -125,6 +125,55 @@ def test_paper_ledger_invariants_reconcile_reservation_pnl_and_percentage(db_ses
     assert first.closed_at.replace(tzinfo=timezone.utc).tzinfo == timezone.utc
 
 
+
+def test_entry_edge_is_immutable_while_current_edge_tracks_marks_and_close(db_session):
+    _enable(db_session, amount=100_000)
+    svc = LivePaperTradeService()
+    trade, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="EDGE-INVARIANT",
+        event_id="EDGE-INVARIANT", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-30", lot_size=10, lots=1,
+        edge=10, capital_used=20_000, user_id=1,
+    )
+    assert created is True
+    assert trade.entry_edge == 10
+    assert trade.current_edge == 10
+
+    # A later duplicate signal is mark-only: the original entry edge remains
+    # the P&L baseline while current_edge advances to the latest signal.
+    duplicate, created = svc.enter_or_mark(
+        db_session, strategy_id="cash-future", symbol="EDGE-INVARIANT",
+        event_id="EDGE-INVARIANT", direction="LONG", expiry="2026-10-30",
+        earliest_expiry="2026-10-30", lot_size=10, lots=1,
+        edge=14, capital_used=99_000, user_id=1,
+    )
+    assert created is False
+    assert duplicate.id == trade.id
+    assert duplicate.entry_edge == 10
+    assert duplicate.current_edge == 14
+    assert duplicate.unrealized_pnl == 40.0
+
+    # Explicit marking and terminal close must preserve the original entry
+    # edge; only current_edge and P&L are mutable valuation state.
+    svc.mark(db_session, trade, edge=12)
+    assert trade.entry_edge == 10
+    assert trade.current_edge == 12
+    assert trade.unrealized_pnl == 20.0
+
+    closed = svc.close(db_session, trade, "MANUAL")
+    assert closed.status == "COMPLETED"
+    assert closed.entry_edge == 10
+    assert closed.current_edge == 12
+    assert closed.unrealized_pnl == 20.0
+    assert closed.realized_pnl == 20.0
+
+    db_session.expire_all()
+    persisted = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.id == trade.id,
+    ).one()
+    assert persisted.entry_edge == 10
+    assert persisted.current_edge == 12
+
 def test_malformed_persisted_trade_is_excluded_from_accounting_and_marking(db_session):
     db_session.add(GlobalPaperSetting(
         user_id=1, enabled=True, paper_amount=100_000, emergency_stop=False,
