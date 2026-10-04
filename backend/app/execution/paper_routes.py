@@ -384,18 +384,36 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
             account.virtual_balance = round(account.virtual_balance - margin, 8)
             order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity)
         else:
-            if active.quantity <= 0:
+            if active.quantity < 0:
                 raise HTTPException(status_code=409, detail="Use BUY to cover the active short position")
-            if quantity > int(active.quantity):
-                raise HTTPException(status_code=400, detail="Sell quantity exceeds active paper position")
             fill = Fill(price=request.price, quantity=quantity)
             accounting_state, pnl = _accounting_after_fill(side="SELL", price=fill.price, quantity=quantity, current_quantity=float(active.quantity), current_average_price=float(active.average_price), current_realized_pnl=account.realized_pnl)
-            account.virtual_balance = round(account.virtual_balance + _buy_cost(fill.price, fill.quantity), 8)
+            closed_qty = min(int(active.quantity), quantity)
+            proceeds = _buy_cost(fill.price, closed_qty)
+            if accounting_state.quantity < 0:
+                remaining_short_qty = abs(int(accounting_state.quantity))
+                margin = _buy_cost(fill.price, remaining_short_qty)
+                account.virtual_balance = round(
+                    account.virtual_balance + proceeds + pnl - margin,
+                    8,
+                )
+            else:
+                account.virtual_balance = round(
+                    account.virtual_balance + proceeds,
+                    8,
+                )
             account.realized_pnl = accounting_state.realized_pnl
             remaining_qty = int(accounting_state.quantity)
             if remaining_qty == 0:
                 db.delete(active)
                 remaining = None
+            elif remaining_qty < 0:
+                active.quantity = remaining_qty
+                active.average_price = accounting_state.average_price
+                active.stop_loss = None
+                active.target = None
+                db.flush()
+                remaining = active
             else:
                 active.quantity = remaining_qty
                 remaining = active
