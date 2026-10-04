@@ -64,3 +64,36 @@ def test_calendar_paper_payload_preserves_exchange_for_expiry_boundary():
     assert captured[0].metadata["paper_trade"]["strategy_direction"] == "LONG_NEAR_SHORT_FAR"
     assert captured[0].metadata["paper_trade"]["direction"] == "LONG"
 
+
+
+def test_calendar_alert_dispatch_creates_normalized_paper_trade(db_session):
+    from app.models import AlertRule, GlobalPaperSetting, LivePaperTrade
+
+    db_session.add(GlobalPaperSetting(
+        user_id=1, enabled=True, paper_amount=100000, emergency_stop=False,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="calendar-spread", min_gross_profit=0,
+        mobile_number="", whatsapp_enabled=False, enabled=True,
+        max_daily_capital=100000, max_simultaneous_positions=2, max_loss=1000,
+    ))
+    db_session.commit()
+
+    service = CalendarSpreadAlertService()
+    signal = SimpleNamespace(
+        qualifies=True, underlying="CRUDEOIL", exchange="MCX",
+        near_contract_month="2026-10-04", far_contract_month="2026-11-04",
+        timestamp_ns=300, direction="LONG_NEAR_SHORT_FAR",
+        edge_long=5.0, edge_short=-5.0, gap_points=5.0,
+        gross_profit=250.0, lot_size=100, capacity_lots=1,
+        near_bid=100.0, near_ask=101.0, far_bid=106.0, far_ask=107.0,
+    )
+
+    assert service.emit(db_session, signal) == 0
+    trade = db_session.query(LivePaperTrade).filter(
+        LivePaperTrade.user_id == 1,
+        LivePaperTrade.event_id.like("CRUDEOIL:%"),
+    ).one()
+    assert trade.direction == "LONG"
+    assert trade.capital_used > 0
+    assert trade.lots == 1
