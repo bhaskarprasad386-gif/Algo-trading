@@ -3772,3 +3772,265 @@ def test_paper_reconcile_http_mixed_corruption_precedence_is_complete_and_determ
     assert repeated == snapshots[0]
 
     engine.dispose()
+
+
+def test_paper_reconcile_http_baseline_integrity_precedence_with_mixed_ledger_corruption(tmp_path):
+    """A non-bootstrap baseline must always block repair, including mixed ledger corruption."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-baseline-precedence.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="http-baseline-precedence@example.com",
+            hashed_password="",
+            full_name="HTTP Baseline Precedence",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(
+            TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=1_000.0,
+                initial_virtual_balance=1_000.0,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            )
+        )
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    db = TestSession()
+    try:
+        created = paper_order(
+            PaperOrderRequest(
+                symbol="BASELINE",
+                transaction_type="BUY",
+                price=100.0,
+                quantity=2,
+                fill_id="BASELINE-1",
+            ),
+            user_id=user_id,
+            db=db,
+        )
+        assert created["status"] == "success"
+    finally:
+        db.close()
+
+    def http_reconcile():
+        client = TestClient(app)
+
+        def override_db():
+            db = TestSession()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[routes.current_user_id] = lambda: user_id
+        try:
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                responses = list(
+                    pool.map(
+                        lambda _: client.get("/api/v1/execution/paper/reconcile"),
+                        range(20),
+                    )
+                )
+            assert all(response.status_code == 200 for response in responses)
+            payloads = [response.json() for response in responses]
+            assert all(payload == payloads[0] for payload in payloads)
+            return payloads[0]
+        finally:
+            app.dependency_overrides.pop(routes.current_user_id, None)
+            app.dependency_overrides.pop(get_db, None)
+
+    def apply_corruption(case):
+        db = TestSession()
+        try:
+            order = db.query(Order).filter(
+                Order.user_id == user_id,
+                Order.is_paper.is_(True),
+            ).one()
+            position = db.query(Position).filter(
+                Position.user_id == user_id,
+                Position.is_paper.is_(True),
+                Position.is_open.is_(True),
+            ).one()
+            account = db.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id,
+                TradingAccount.mode == "PAPER",
+            ).one()
+
+            # Baseline corruption is intentionally independent of ledger
+            # corruption: the order audit chain remains valid unless this case
+            # explicitly adds AUDIT_INTEGRITY.
+            account.initial_balance_source = "LEGACY_IMPORT"
+
+            if case in {"BASELINE_ACCOUNTING_POSITION", "BASELINE_ALL"}:
+                account.virtual_balance = 801.0
+                position.quantity = 1
+            if case == "BASELINE_ALL":
+                order.audit_hash = "e" * 64
+
+            db.commit()
+        finally:
+            db.close()
+
+    def restore():
+        db = TestSession()
+        try:
+            order = db.query(Order).filter(
+                Order.user_id == user_id,
+                Order.is_paper.is_(True),
+            ).one()
+            position = db.query(Position).filter(
+                Position.user_id == user_id,
+                Position.is_paper.is_(True),
+                Position.is_open.is_(True),
+            ).one()
+            account = db.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id,
+                TradingAccount.mode == "PAPER",
+            ).one()
+
+            position.quantity = 2
+            account.virtual_balance = 800.0
+            account.initial_balance_source = "BOOTSTRAP"
+            order.audit_hash = routes._paper_audit_payload(
+                user_id=user_id,
+                symbol=order.symbol,
+                side=str(order.transaction_type).upper(),
+                quantity=int(order.filled_quantity or 0),
+                price=float(order.average_fill_price or order.price),
+                pnl=float(order.pnl or 0.0),
+                fill_id=order.fill_id,
+                previous_hash=order.previous_audit_hash,
+            )
+            db.commit()
+        finally:
+            db.close()
+
+    clean = http_reconcile()
+    assert clean["status"] == "OK"
+    assert clean["baseline_status"] == "BOOTSTRAP"
+    assert clean["repairability"] == "NONE"
+    assert clean["mismatch_categories"] == []
+    assert clean["mismatches"] == []
+
+    expected = {
+        "BASELINE_ONLY": {
+            "categories": ["BASELINE_INTEGRITY"],
+            "mismatches": [],
+            "baseline_status": "LEGACY_IMPORT",
+        },
+        "BASELINE_ACCOUNTING_POSITION": {
+            "categories": ["ACCOUNTING_STATE", "BASELINE_INTEGRITY", "POSITION_STATE"],
+            "mismatches": [
+                "position_mismatch:BASELINE",
+                "virtual_balance_mismatch",
+            ],
+            "baseline_status": "LEGACY_IMPORT",
+        },
+        "BASELINE_ALL": {
+            "categories": [
+                "ACCOUNTING_STATE",
+                "AUDIT_INTEGRITY",
+                "BASELINE_INTEGRITY",
+                "POSITION_STATE",
+            ],
+            "mismatches": [
+                "audit_hash_mismatch:1",
+                "position_mismatch:BASELINE",
+                "virtual_balance_mismatch",
+            ],
+            "baseline_status": "LEGACY_IMPORT",
+        },
+    }
+
+    for case, contract in expected.items():
+        if case == "BASELINE_ONLY":
+            apply_corruption(case)
+        else:
+            apply_corruption(case)
+
+        snapshots = [http_reconcile() for _ in range(2)]
+        assert snapshots[0] == snapshots[1]
+
+        snapshot = snapshots[0]
+        assert snapshot["status"] == "MISMATCH"
+        # Baseline integrity alone must not become SAFE_DRY_RUN. Adding
+        # account/position corruption must not downgrade or mask the baseline
+        # failure, and adding audit corruption must still report every class.
+        assert snapshot["repairability"] == "BLOCKED"
+        assert snapshot["repairability_reason"] == "ledger_or_baseline_integrity_failure"
+        assert snapshot["baseline_status"] == contract["baseline_status"]
+        assert snapshot["mismatch_categories"] == contract["categories"]
+        assert snapshot["mismatches"] == contract["mismatches"]
+        assert snapshot["user_id"] == user_id
+        assert snapshot["orders"] == 1
+        assert snapshot["repair_plan"]["apply"] is False
+        assert snapshot["repair_plan"]["reason"] == "read_only_dry_run"
+        assert snapshot["repair_plan"]["proposed_virtual_balance"] == 800.0
+        assert snapshot["repair_plan"]["positions"] == {
+            "BASELINE": {"quantity": 2, "average_price": 100.0},
+        }
+
+        verify = TestSession()
+        try:
+            account = verify.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id,
+                TradingAccount.mode == "PAPER",
+            ).one()
+            position = verify.query(Position).filter(
+                Position.user_id == user_id,
+                Position.is_paper.is_(True),
+                Position.is_open.is_(True),
+            ).one()
+            order = verify.query(Order).filter(
+                Order.user_id == user_id,
+                Order.is_paper.is_(True),
+            ).one()
+            assert account.initial_balance_source == "LEGACY_IMPORT"
+            if case == "BASELINE_ONLY":
+                assert float(account.virtual_balance) == 800.0
+                assert int(position.quantity) == 2
+                assert order.audit_hash == routes._paper_audit_payload(
+                    user_id=user_id,
+                    symbol=order.symbol,
+                    side=str(order.transaction_type).upper(),
+                    quantity=int(order.filled_quantity or 0),
+                    price=float(order.average_fill_price or order.price),
+                    pnl=float(order.pnl or 0.0),
+                    fill_id=order.fill_id,
+                    previous_hash=order.previous_audit_hash,
+                )
+            elif case == "BASELINE_ACCOUNTING_POSITION":
+                assert float(account.virtual_balance) == 801.0
+                assert int(position.quantity) == 1
+            else:
+                assert float(account.virtual_balance) == 801.0
+                assert int(position.quantity) == 1
+                assert order.audit_hash == "e" * 64
+        finally:
+            verify.close()
+
+        restore()
+        assert http_reconcile() == clean
+
+    engine.dispose()
