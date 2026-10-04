@@ -166,7 +166,7 @@ class AlertService:
                 capital_value = capital_raw
             except (TypeError, ValueError):
                 return 0
-            from app.auto.live_paper import LivePaperTradeService
+            from app.auto.live_paper import LivePaperTradeService, _valid_persisted_trade
             from app.models.live_paper_trade import LivePaperTrade
             service = LivePaperTradeService()
             # Resolve due expiries before position/capital/loss gates. The
@@ -231,10 +231,12 @@ class AlertService:
                         ).first()
                         if setting is not None:
                             reserved_capital = sum(
-                                float(row[0] or 0.0) for row in db.query(LivePaperTrade.capital_used).filter(
+                                float(trade.capital_used)
+                                for trade in db.query(LivePaperTrade).filter(
                                     LivePaperTrade.user_id == rule_user_id,
                                     LivePaperTrade.status == "ONGOING",
                                 ).all()
+                                if _valid_persisted_trade(trade)
                             )
                             available_capital = max(0.0, float(setting.paper_amount) - reserved_capital)
                             allocatable_lots = min(
@@ -248,10 +250,13 @@ class AlertService:
                 )
                 if max_daily_capital > 0 and effective_capital > 0:
                     daily_capital = sum(
-                        float(row[0] or 0.0) for row in db.query(LivePaperTrade.capital_used).filter(
+                        float(trade.capital_used)
+                        for trade in db.query(LivePaperTrade).filter(
                             LivePaperTrade.user_id == rule_user_id,
+                            LivePaperTrade.status.in_(("ONGOING", "COMPLETED")),
                             LivePaperTrade.opened_at >= day_start,
                         ).all()
+                        if _valid_persisted_trade(trade)
                     )
                     if daily_capital + effective_capital > max_daily_capital:
                         db.rollback()
@@ -261,17 +266,21 @@ class AlertService:
                 )
                 if max_loss > 0:
                     open_loss = sum(
-                        min(0.0, float(row[0] or 0.0)) for row in db.query(LivePaperTrade.unrealized_pnl).filter(
+                        min(0.0, float(trade.unrealized_pnl))
+                        for trade in db.query(LivePaperTrade).filter(
                             LivePaperTrade.user_id == rule_user_id,
                             LivePaperTrade.status == "ONGOING",
                         ).all()
+                        if _valid_persisted_trade(trade)
                     )
                     today_loss = sum(
-                        min(0.0, float(row[0] or 0.0)) for row in db.query(LivePaperTrade.realized_pnl).filter(
+                        min(0.0, float(trade.realized_pnl))
+                        for trade in db.query(LivePaperTrade).filter(
                             LivePaperTrade.user_id == rule_user_id,
                             LivePaperTrade.status == "COMPLETED",
                             LivePaperTrade.closed_at >= day_start,
                         ).all()
+                        if _valid_persisted_trade(trade)
                     )
                     if open_loss + today_loss <= -max_loss:
                         db.rollback()
