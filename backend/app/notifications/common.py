@@ -29,7 +29,8 @@ def _ist_day_start_utc_naive(now=None):
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
     ist = current.astimezone(ZoneInfo("Asia/Kolkata"))
-    return ist.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    ist_midnight = ist.replace(hour=0, minute=0, second=0, microsecond=0)
+    return ist_midnight.astimezone(timezone.utc).replace(tzinfo=None)
 
 def _strictest_positive_limit(values):
     """Return the strictest configured positive limit; zero means unlimited."""
