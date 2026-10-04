@@ -387,8 +387,6 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             raise RuntimeError("paper position invariant violated")
         quantity = int(raw_quantity)
         average_price = raw_average_price
-        if (
-            raise RuntimeError("paper position invariant violated")
         if symbol in seen_symbols:
             raise RuntimeError("duplicate active paper position invariant violated")
         seen_symbols.add(symbol)
@@ -399,11 +397,18 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
         .all()
     )
     for order in paper_orders:
-        quantity = int(order.quantity or 0)
-        filled_quantity = int(order.filled_quantity or 0)
+        raw_quantity = float(order.quantity or 0.0)
+        raw_filled_quantity = float(order.filled_quantity or 0.0)
+        quantity = int(raw_quantity) if math.isfinite(raw_quantity) and raw_quantity.is_integer() else 0
+        filled_quantity = int(raw_filled_quantity) if math.isfinite(raw_filled_quantity) and raw_filled_quantity.is_integer() else 0
         price = float(order.price or 0.0)
         average_fill_price = float(order.average_fill_price or 0.0)
         if (
+            not math.isfinite(raw_quantity)
+            or not raw_quantity.is_integer()
+            or not math.isfinite(raw_filled_quantity)
+            or not raw_filled_quantity.is_integer()
+            or
             quantity <= 0
             or filled_quantity != quantity
             or not math.isfinite(price)
@@ -655,8 +660,6 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             or not math.isfinite(raw_average_price)
             or (raw_quantity != 0 and raw_average_price <= 0)
         ):
-            mismatches_placeholder = True
-            mismatches_placeholder = False
             # Defer categorization until the shared mismatch list is built below.
             # The position is intentionally excluded from canonical comparison so
             # malformed values cannot be silently truncated or NaN-compared.
