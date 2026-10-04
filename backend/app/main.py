@@ -53,7 +53,7 @@ from app.execution.live_paper_routes import router as live_paper_execution_route
 from app.auto.routes import router as global_auto_router
 from app.alert_routes import router as alert_router
 from app.live_paper_routes import router as live_paper_router
-from app.auto.live_paper import LivePaperTradeService
+from app.auto.live_paper import LivePaperTradeService, is_fresh_market_timestamp
 from app.models.live_paper_trade import LivePaperTrade
 from app.backtesting.replay_routes import create_replay_router
 from app.scanner.cash_future_collector import CashFutureHistoryCollector
@@ -730,10 +730,10 @@ async def _live_paper_monitor_loop() -> None:
                     cash = live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=500)
                     cash_map = {f"{x.get('symbol')}:{x.get('contract_month')}": x for x in cash}
                     now_ns = time_module.time_ns()
-                    freshness_cutoff_ns = now_ns - 5_000_000_000
-                    cal_rows = tuple(x for x in live_calendar_spread_scanner.snapshot(limit=500) if int(getattr(x, "timestamp_ns", 0) or 0) >= freshness_cutoff_ns)
-                    syn_rows = tuple(x for x in live_synthetic_latest_results if int(getattr(x.option, "timestamp_ns", 0) or 0) >= freshness_cutoff_ns)
-                    box_rows = tuple(x for x in live_box_spread_latest_results if int(getattr(x.low, "timestamp_ns", 0) or 0) >= freshness_cutoff_ns)
+                    # Freshness helper rejects both stale and future-dated source timestamps.
+                    cal_rows = tuple(x for x in live_calendar_spread_scanner.snapshot(limit=500) if is_fresh_market_timestamp(getattr(x, "timestamp_ns", 0), now_ns))
+                    syn_rows = tuple(x for x in live_synthetic_latest_results if is_fresh_market_timestamp(getattr(x.option, "timestamp_ns", 0), now_ns))
+                    box_rows = tuple(x for x in live_box_spread_latest_results if is_fresh_market_timestamp(getattr(x.low, "timestamp_ns", 0), now_ns))
                     cal_map = {f"{x.underlying}:{x.near_contract_month}:{x.far_contract_month}:{x.direction}": x for x in cal_rows}
                     syn_map = {f"{x.option.underlying}:{x.option.expiry}:{x.option.strike:g}:{x.direction}": x for x in syn_rows}
                     box_map = {f"{x.low.underlying}:{x.low.expiry}:{x.low.strike:g}:{x.high.strike:g}:{x.direction}": x for x in box_rows}
