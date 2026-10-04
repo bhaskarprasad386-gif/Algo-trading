@@ -8499,3 +8499,142 @@ def test_paper_http_concurrent_scanner_and_direct_order_preserve_single_account_
     assert payload["status"] == "OK"
     assert payload["mismatches"] == []
     assert payload["repairability"] == "NONE"
+
+
+def test_paper_http_entry_commit_failure_does_not_persist_partial_mutation():
+    """Legacy entry commit failure must roll back cash, position, and order together."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(email="entry-commit-failure@example.com", hashed_password="", full_name="Entry Commit Failure", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=1000.0,
+                                initial_virtual_balance=1000.0, initial_balance_source="BOOTSTRAP",
+                                realized_pnl=0.0, is_active=True))
+        seed.commit(); user_id = int(user.id)
+    finally:
+        seed.close()
+
+    class FailingCommitSession(Session):
+        def commit(self):
+            raise RuntimeError("injected entry commit failure")
+
+    failing_db = sessionmaker(bind=engine, class_=FailingCommitSession)()
+    client = TestClient(app)
+
+    def override_db():
+        try:
+            yield failing_db
+        finally:
+            failing_db.rollback()
+            failing_db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        response = client.post(
+            "/api/v1/execution/paper/entry",
+            json={"symbol": "ENTRY_COMMIT_FAILURE", "price": 250.0, "quantity": 2},
+        )
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 500
+
+    verify = TestSession()
+    try:
+        account = verify.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        assert account.virtual_balance == 1000.0
+        assert account.realized_pnl == 0.0
+        assert verify.query(Position).filter(
+            Position.user_id == user_id, Position.symbol == "ENTRY_COMMIT_FAILURE"
+        ).count() == 0
+        assert verify.query(Order).filter(
+            Order.user_id == user_id, Order.symbol == "ENTRY_COMMIT_FAILURE"
+        ).count() == 0
+    finally:
+        verify.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers={"X-User-ID": str(user_id)})
+    assert reconcile.status_code == 200
+    assert reconcile.json()["status"] == "OK"
+
+
+def test_paper_http_exit_commit_failure_does_not_persist_partial_mutation():
+    """Terminal exit commit failure must preserve the open position and untouched accounting."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(email="exit-commit-failure@example.com", hashed_password="", full_name="Exit Commit Failure", is_active=True)
+        seed.add(user); seed.flush()
+        seed.add(TradingAccount(user_id=user.id, mode="PAPER", virtual_balance=500.0,
+                                initial_virtual_balance=500.0, initial_balance_source="BOOTSTRAP",
+                                realized_pnl=0.0, is_active=True))
+        seed.add(Position(user_id=user.id, symbol="EXIT_COMMIT_FAILURE", quantity=2,
+                          average_price=100.0, stop_loss=None, target=None,
+                          is_paper=True, is_open=True))
+        seed.commit(); user_id = int(user.id)
+    finally:
+        seed.close()
+
+    class FailingCommitSession(Session):
+        def commit(self):
+            raise RuntimeError("injected exit commit failure")
+
+    failing_db = sessionmaker(bind=engine, class_=FailingCommitSession)()
+    client = TestClient(app)
+
+    def override_db():
+        try:
+            yield failing_db
+        finally:
+            failing_db.rollback()
+            failing_db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[routes.current_user_id] = lambda: user_id
+    try:
+        response = client.post(
+            "/api/v1/execution/paper/exit",
+            json={"symbol": "EXIT_COMMIT_FAILURE", "price": 120.0},
+        )
+    finally:
+        app.dependency_overrides.pop(routes.current_user_id, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 500
+
+    verify = TestSession()
+    try:
+        account = verify.query(TradingAccount).filter(TradingAccount.user_id == user_id).one()
+        position = verify.query(Position).filter(
+            Position.user_id == user_id,
+            Position.symbol == "EXIT_COMMIT_FAILURE",
+            Position.is_open.is_(True),
+        ).one()
+        assert account.virtual_balance == 500.0
+        assert account.realized_pnl == 0.0
+        assert position.quantity == 2
+        assert position.average_price == 100.0
+        assert verify.query(Order).filter(
+            Order.user_id == user_id, Order.symbol == "EXIT_COMMIT_FAILURE"
+        ).count() == 0
+    finally:
+        verify.close()
+
+    reconcile = client.get("/api/v1/execution/paper/reconcile", headers={"X-User-ID": str(user_id)})
+    assert reconcile.status_code == 200
+    assert reconcile.json()["status"] == "OK"
