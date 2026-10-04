@@ -122,12 +122,27 @@ class AlertService:
                         from app.core.logger import app_logger
                         app_logger.error("Live paper duplicate mark failed for user %s: %s", rule_user_id, exc)
                     continue
+                # Serialize this user's alert risk checks with paper-cap
+                # allocation. Without the same per-user lock, two concurrent
+                # alerts can both pass max-position/daily-cap/loss checks
+                # before either transaction inserts its trade.
+                from app.models.global_paper_setting import GlobalPaperSetting
+                risk_lock = db.query(GlobalPaperSetting).filter(
+                    GlobalPaperSetting.user_id == rule_user_id,
+                ).update(
+                    {GlobalPaperSetting.paper_amount: GlobalPaperSetting.paper_amount},
+                    synchronize_session=False,
+                )
+                if risk_lock == 0:
+                    continue
+
                 max_simultaneous = min(max(0, int(rule.max_simultaneous_positions)) for rule in user_rules)
                 ongoing_count = db.query(LivePaperTrade).filter(
                     LivePaperTrade.user_id == rule_user_id,
                     LivePaperTrade.status == "ONGOING",
                 ).count()
                 if max_simultaneous and ongoing_count >= max_simultaneous:
+                    db.rollback()
                     continue
                 requested_capital = max(0.0, float(paper.get("capital_used", 0.0) or 0.0))
                 day_start = _ist_day_start_utc_naive()
@@ -140,6 +155,7 @@ class AlertService:
                         ).all()
                     )
                     if daily_capital + requested_capital > max_daily_capital:
+                        db.rollback()
                         continue
                 max_loss = min(max(0.0, float(rule.max_loss)) for rule in user_rules)
                 if max_loss > 0:
@@ -157,6 +173,7 @@ class AlertService:
                         ).all()
                     )
                     if open_loss + today_loss <= -max_loss:
+                        db.rollback()
                         continue
                 try:
                     service.enter_or_mark(
