@@ -97,10 +97,8 @@ class AlertService:
                 rule for rule in rules
                 if gross_value is None or gross_value >= float(rule.min_gross_profit)
             ]
-            for rule_user_id in {int(rule.user_id) for rule in eligible_rules}:
+            for rule_user_id in {int(rule.user_id) for rule in rules}:
                 user_rules = [rule for rule in eligible_rules if int(rule.user_id) == rule_user_id]
-                if not user_rules:
-                    continue
                 existing_trade = db.query(LivePaperTrade).filter(
                     LivePaperTrade.user_id == rule_user_id,
                     LivePaperTrade.event_id == str(event.event_id),
@@ -109,6 +107,9 @@ class AlertService:
                 # A duplicate signal is a mark update, not a new capital/position.
                 # Do not let risk limits block the existing position's refresh.
                 if existing_trade is not None:
+                    # An already-open event is a mark update. Its refresh must
+                    # not depend on whether the newest alert still meets a
+                    # rule's gross-profit threshold.
                     try:
                         service.enter_or_mark(
                             db, strategy_id=event.strategy_id, symbol=event.symbol, event_id=event.event_id,
@@ -121,6 +122,8 @@ class AlertService:
                     except Exception as exc:
                         from app.core.logger import app_logger
                         app_logger.error("Live paper duplicate mark failed for user %s: %s", rule_user_id, exc)
+                    continue
+                if not user_rules:
                     continue
                 # Serialize this user's alert risk checks with paper-cap
                 # allocation. Without the same per-user lock, two concurrent
