@@ -824,6 +824,9 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             or not float(position.quantity or 0.0).is_integer()
             or not math.isfinite(float(position.average_price or 0.0))
             or (float(position.quantity or 0.0) != 0 and float(position.average_price or 0.0) <= 0)
+            or not math.isfinite(float(position.last_price or 0.0))
+            or float(position.last_price or 0.0) < 0
+            or not math.isfinite(float(position.pnl or 0.0))
         )
     ]
     mismatches.extend(f"invalid_position:{position_id}" for position_id in malformed_position_ids)
