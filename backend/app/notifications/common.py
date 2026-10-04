@@ -194,7 +194,13 @@ class AlertService:
                             edge=edge_value, capital_used=0.0,
                             legs=paper.get("legs") or [], metadata=dict(paper), user_id=rule_user_id,
                         )
+                        # mark() intentionally participates in the caller's
+                        # transaction. Commit the duplicate mark here so a
+                        # later user's risk rejection/rollback cannot undo this
+                        # user's already-accepted P&L update.
+                        db.commit()
                     except Exception as exc:
+                        db.rollback()
                         from app.core.logger import app_logger
                         app_logger.error("Live paper duplicate mark failed for user %s: %s", rule_user_id, exc)
                     continue
