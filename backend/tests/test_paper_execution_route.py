@@ -3355,3 +3355,229 @@ def test_paper_reconcile_http_failed_mutation_rollback_and_stale_precondition_bo
     finally:
         verify.close()
         engine.dispose()
+\n
+
+def test_paper_reconcile_http_concurrent_corruption_matrix_is_deterministic_and_read_only(tmp_path):
+    """Concurrent HTTP reconciliation is deterministic across every corruption class."""
+    from app.core.database import get_db
+    from app.execution import paper_routes as routes
+    from app.execution.paper_routes import PaperOrderRequest, paper_order
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'http-corruption-matrix.db'}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+    TestSession = sessionmaker(bind=engine)
+
+    seed = TestSession()
+    try:
+        user = User(
+            email="http-corruption-matrix@example.com",
+            hashed_password="",
+            full_name="HTTP Corruption Matrix",
+            is_active=True,
+        )
+        seed.add(user)
+        seed.flush()
+        seed.add(
+            TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=1_000.0,
+                initial_virtual_balance=1_000.0,
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            )
+        )
+        seed.commit()
+        user_id = int(user.id)
+    finally:
+        seed.close()
+
+    db = TestSession()
+    try:
+        created = paper_order(
+            PaperOrderRequest(
+                symbol="MATRIX",
+                transaction_type="BUY",
+                price=100.0,
+                quantity=2,
+                fill_id="MATRIX-1",
+            ),
+            user_id=user_id,
+            db=db,
+        )
+        assert created["status"] == "success"
+    finally:
+        db.close()
+
+    def http_snapshots():
+        client = TestClient(app)
+
+        def override_db():
+            db = TestSession()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[routes.current_user_id] = lambda: user_id
+        try:
+            with ThreadPoolExecutor(max_workers=16) as pool:
+                responses = list(
+                    pool.map(
+                        lambda _: client.get("/api/v1/execution/paper/reconcile"),
+                        range(16),
+                    )
+                )
+            assert all(response.status_code == 200 for response in responses)
+            payloads = [response.json() for response in responses]
+            assert all(payload == payloads[0] for payload in payloads)
+            return payloads[0]
+        finally:
+            app.dependency_overrides.pop(routes.current_user_id, None)
+            app.dependency_overrides.pop(get_db, None)
+
+    def mutate_and_read(name):
+        db = TestSession()
+        try:
+            order = db.query(Order).filter(
+                Order.user_id == user_id,
+                Order.is_paper.is_(True),
+            ).one()
+            position = db.query(Position).filter(
+                Position.user_id == user_id,
+                Position.is_paper.is_(True),
+                Position.is_open.is_(True),
+            ).one()
+            account = db.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id,
+                TradingAccount.mode == "PAPER",
+            ).one()
+
+            if name == "POSITION_STATE":
+                position.quantity = 1
+                db.commit()
+            elif name == "ACCOUNTING_STATE":
+                account.virtual_balance = 801.0
+                db.commit()
+            elif name == "ORDER_INTEGRITY":
+                order.price = 101.0
+                db.commit()
+            elif name == "AUDIT_INTEGRITY":
+                order.audit_hash = "0" * 64
+                db.commit()
+            else:
+                raise AssertionError(name)
+        finally:
+            db.close()
+
+        return http_snapshots()
+
+    def restore():
+        db = TestSession()
+        try:
+            order = db.query(Order).filter(
+                Order.user_id == user_id,
+                Order.is_paper.is_(True),
+            ).one()
+            position = db.query(Position).filter(
+                Position.user_id == user_id,
+                Position.is_paper.is_(True),
+                Position.is_open.is_(True),
+            ).one()
+            account = db.query(TradingAccount).filter(
+                TradingAccount.user_id == user_id,
+                TradingAccount.mode == "PAPER",
+            ).one()
+            position.quantity = 2
+            account.virtual_balance = 800.0
+            order.price = 100.0
+            order.audit_hash = routes._paper_audit_payload(
+                user_id=user_id,
+                symbol=order.symbol,
+                side=str(order.transaction_type).upper(),
+                quantity=int(order.filled_quantity or 0),
+                price=100.0,
+                pnl=float(order.pnl or 0.0),
+                fill_id=order.fill_id,
+                previous_hash=order.previous_audit_hash,
+            )
+            db.commit()
+        finally:
+            db.close()
+
+    clean = http_snapshots()
+    assert clean["status"] == "OK"
+    assert clean["repairability"] == "NONE"
+    assert clean["mismatch_categories"] == []
+    assert clean["repair_plan"]["apply"] is False
+
+    expected = {
+        "POSITION_STATE": {
+            "status": "MISMATCH",
+            "repairability": "SAFE_DRY_RUN",
+            "categories": ["POSITION_STATE"],
+            "mismatches": ["position_mismatch:MATRIX"],
+        },
+        "ACCOUNTING_STATE": {
+            "status": "MISMATCH",
+            "repairability": "SAFE_DRY_RUN",
+            "categories": ["ACCOUNTING_STATE"],
+            "mismatches": ["virtual_balance_mismatch"],
+        },
+        "ORDER_INTEGRITY": {
+            "status": "MISMATCH",
+            "repairability": "BLOCKED",
+            "categories": ["ORDER_INTEGRITY", "AUDIT_INTEGRITY"],
+            "mismatches": ["audit_hash_mismatch:1"],
+        },
+        "AUDIT_INTEGRITY": {
+            "status": "MISMATCH",
+            "repairability": "BLOCKED",
+            "categories": ["AUDIT_INTEGRITY"],
+            "mismatches": ["audit_chain_mismatch:1", "audit_hash_mismatch:1"],
+        },
+    }
+
+    for corruption, contract in expected.items():
+        snapshot = mutate_and_read(corruption)
+        assert snapshot["status"] == contract["status"]
+        assert snapshot["repairability"] == contract["repairability"]
+        assert snapshot["mismatch_categories"] == contract["categories"]
+        assert snapshot["mismatches"] == contract["mismatches"]
+        assert snapshot["repair_plan"]["apply"] is False
+        assert snapshot["repair_plan"]["reason"] == "read_only_dry_run"
+        assert snapshot["user_id"] == user_id
+        assert snapshot["orders"] == 1
+        assert snapshot["repair_plan"]["precondition"]["order_count"] == 1
+        restore()
+
+    final = http_snapshots()
+    assert final == clean
+
+    verify = TestSession()
+    try:
+        assert verify.query(Order).filter(
+            Order.user_id == user_id,
+            Order.is_paper.is_(True),
+        ).count() == 1
+        assert verify.query(Position).filter(
+            Position.user_id == user_id,
+            Position.is_paper.is_(True),
+            Position.is_open.is_(True),
+        ).count() == 1
+        account = verify.query(TradingAccount).filter(
+            TradingAccount.user_id == user_id,
+            TradingAccount.mode == "PAPER",
+        ).one()
+        assert float(account.virtual_balance) == 800.0
+        assert float(account.realized_pnl) == 0.0
+    finally:
+        verify.close()
+        engine.dispose()
