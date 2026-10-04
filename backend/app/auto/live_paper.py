@@ -21,6 +21,32 @@ def _valid_paper_setting(setting) -> bool:
         return False
 
 
+def _valid_persisted_trade(trade) -> bool:
+    """Return True only for persisted trade numerics safe for accounting."""
+    try:
+        import math
+        lot_size = float(trade.lot_size)
+        lots = float(trade.lots)
+        entry_edge = float(trade.entry_edge)
+        current_edge = float(trade.current_edge)
+        capital_used = float(trade.capital_used)
+        unrealized_pnl = float(trade.unrealized_pnl)
+        realized_pnl = float(trade.realized_pnl)
+        pnl_pct = float(trade.pnl_pct)
+        return (
+            math.isfinite(lot_size) and lot_size.is_integer() and lot_size > 0
+            and math.isfinite(lots) and lots.is_integer() and lots > 0
+            and math.isfinite(entry_edge) and entry_edge >= 0
+            and math.isfinite(current_edge) and current_edge >= 0
+            and math.isfinite(capital_used) and capital_used > 0
+            and math.isfinite(unrealized_pnl)
+            and math.isfinite(realized_pnl)
+            and math.isfinite(pnl_pct)
+        )
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def _now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -116,6 +142,8 @@ class LivePaperTradeService:
             LivePaperTrade.user_id == int(user_id),
             LivePaperTrade.status == "ONGOING",
         ).first()
+        if existing and not _valid_persisted_trade(existing):
+            return None, False
         if existing:
             # A duplicate signal updates the mark only. Entry capital is fixed
             # for the lifetime of the paper position so its reservation cannot
@@ -196,6 +224,8 @@ class LivePaperTradeService:
                 LivePaperTrade.status == "ONGOING",
             ).first()
             if existing is not None:
+                if not _valid_persisted_trade(existing):
+                    return None, False
                 self.mark(db, existing, edge=edge)
                 return existing, False
             # A completed trade with the same event_id is intentionally not
@@ -205,7 +235,7 @@ class LivePaperTradeService:
         return trade, True
 
     def mark(self, db: Session, trade: LivePaperTrade, *, edge: float, capital_used=None, pnl_override=None):
-        if trade.status != "ONGOING":
+        if trade.status != "ONGOING" or not _valid_persisted_trade(trade):
             return trade
         # Serialize P&L marks with alert risk gates on the same per-user
         # paper-setting row. Without this, a risk check could read an old
@@ -285,6 +315,8 @@ class LivePaperTradeService:
             local_now = now.astimezone(IST).replace(tzinfo=None)
         closed = []
         for trade in db.query(LivePaperTrade).filter(LivePaperTrade.status == "ONGOING").all():
+            if not _valid_persisted_trade(trade):
+                continue
             expiry = _parse_date(trade.earliest_expiry)
             if expiry is None:
                 continue
@@ -304,21 +336,27 @@ class LivePaperTradeService:
         return closed
 
     def ongoing(self, db: Session, user_id=1):
-        return db.query(LivePaperTrade).filter(
-            LivePaperTrade.user_id == int(user_id),
-            LivePaperTrade.status == "ONGOING",
-        ).order_by(
-            LivePaperTrade.unrealized_pnl.desc(),
-            LivePaperTrade.opened_at.asc(),
-            LivePaperTrade.id.asc(),
-        ).all()
+        return [
+            trade for trade in db.query(LivePaperTrade).filter(
+                LivePaperTrade.user_id == int(user_id),
+                LivePaperTrade.status == "ONGOING",
+            ).order_by(
+                LivePaperTrade.unrealized_pnl.desc(),
+                LivePaperTrade.opened_at.asc(),
+                LivePaperTrade.id.asc(),
+            ).all()
+            if _valid_persisted_trade(trade)
+        ]
 
     def completed(self, db: Session, user_id=1):
-        return db.query(LivePaperTrade).filter(
-            LivePaperTrade.user_id == int(user_id),
-            LivePaperTrade.status == "COMPLETED",
-        ).order_by(
-            LivePaperTrade.realized_pnl.desc(),
-            LivePaperTrade.closed_at.desc(),
-            LivePaperTrade.id.desc(),
-        ).all()
+        return [
+            trade for trade in db.query(LivePaperTrade).filter(
+                LivePaperTrade.user_id == int(user_id),
+                LivePaperTrade.status == "COMPLETED",
+            ).order_by(
+                LivePaperTrade.realized_pnl.desc(),
+                LivePaperTrade.closed_at.desc(),
+                LivePaperTrade.id.desc(),
+            ).all()
+            if _valid_persisted_trade(trade)
+        ]
