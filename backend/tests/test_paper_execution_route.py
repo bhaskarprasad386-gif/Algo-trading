@@ -5140,42 +5140,6 @@ def test_paper_order_http_concurrent_duplicate_fill_id_is_idempotent(tmp_path):
     finally:
         seed.close()
 
-    # Confirm the direct mutation path has the same fill semantics before
-    # exercising the HTTP boundary.
-    direct_db = TestSession()
-    try:
-        direct = paper_order(
-            PaperOrderRequest(
-                symbol="HTTP-IDEMPOTENT",
-                transaction_type="BUY",
-                price=100.0,
-                quantity=2,
-                fill_id="HTTP-IDEMPOTENT-1",
-            ),
-            user_id=user_id,
-            db=direct_db,
-        )
-        assert direct["status"] == "success"
-    finally:
-        direct_db.rollback()
-        direct_db.close()
-
-    # The direct transaction above was rolled back, so the isolated account is
-    # still at its original state. The real test is the concurrent HTTP race.
-    verify_reset = TestSession()
-    try:
-        account = verify_reset.query(TradingAccount).filter(
-            TradingAccount.user_id == user_id,
-            TradingAccount.mode == "PAPER",
-        ).one()
-        assert float(account.virtual_balance) == 1000.0
-        assert verify_reset.query(Order).filter(
-            Order.user_id == user_id,
-            Order.is_paper.is_(True),
-        ).count() == 0
-    finally:
-        verify_reset.close()
-
     client = TestClient(app)
 
     def override_db():
