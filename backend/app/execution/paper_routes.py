@@ -370,6 +370,7 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
         .filter(Position.user_id == user_id, Position.is_paper.is_(True))
         .all()
     )
+    open_position_cost = 0.0
     seen_symbols: set[str] = set()
     for position in paper_positions:
         symbol = str(position.symbol or "").strip().upper()
@@ -389,9 +390,15 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             raise RuntimeError("paper position invariant violated")
         quantity = int(raw_quantity)
         average_price = raw_average_price
+        open_position_cost = round(open_position_cost + abs(quantity) * average_price, 8)
         if symbol in seen_symbols:
             raise RuntimeError("duplicate active paper position invariant violated")
         seen_symbols.add(symbol)
+
+    accounting_lhs = round(virtual_balance + open_position_cost, 8)
+    accounting_rhs = round(initial_virtual_balance + realized_pnl, 8)
+    if abs(accounting_lhs - accounting_rhs) > 1e-8:
+        raise RuntimeError("paper account balance conservation invariant violated")
 
     paper_orders = (
         db.query(Order)
