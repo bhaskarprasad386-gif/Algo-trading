@@ -456,16 +456,13 @@ class LivePaperTradeService:
                 # Users without a paper setting cannot enter through the risk
                 # gated dispatcher, so there is no competing allocation to
                 # serialize in that case.
-                lock_count = db.query(GlobalPaperSetting).filter(
+                db.query(GlobalPaperSetting).filter(
                     GlobalPaperSetting.user_id == int(trade.user_id),
                 ).update(
                     {GlobalPaperSetting.paper_amount: GlobalPaperSetting.paper_amount},
                     synchronize_session=False,
                 )
-                if lock_count == 0:
-                    closed_trade = self.close(db, trade, "EXPIRY_CLOSE")
-                else:
-                    closed_trade = self.close(db, trade, "EXPIRY_CLOSE")
+                closed_trade = self.close(db, trade, "EXPIRY_CLOSE")
                 # A concurrent manual close may win the atomic status update.
                 # Only report this trade as an expiry closure when EXPIRY_CLOSE
                 # is actually the persisted terminal reason.
