@@ -1785,3 +1785,80 @@ def test_completed_partial_duplicate_event_never_reopens_or_reallocates(db_sessi
     assert rows[0].capital_used == 30000
     assert rows[0].current_edge == 10.0
     assert svc.ongoing(db_session, 1) == [seed]
+
+
+def test_executable_pnl_calendar_long_direction_uses_persisted_legs():
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+    trade = LivePaperTrade(
+        lot_size=1, lots=1,
+        legs_json='[{"contract":"NEAR","side":"BUY","price":101.0},{"contract":"FAR","side":"SELL","price":106.0}]',
+    )
+    row = SimpleNamespace(
+        near_contract_month="NEAR", far_contract_month="FAR",
+        near_bid=99.0, near_ask=100.0, far_bid=102.0, far_ask=103.0,
+    )
+    # LONG_NEAR_SHORT_FAR is normalized to ledger LONG, but P&L is derived
+    # from the actual BUY/SELL legs: (99-101) + (106-103) = +1.
+    assert _executable_paper_pnl(trade, row) == 1.0
+
+
+def test_executable_pnl_calendar_short_direction_uses_persisted_legs():
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+    trade = LivePaperTrade(
+        lot_size=1, lots=1,
+        legs_json='[{"contract":"NEAR","side":"SELL","price":100.0},{"contract":"FAR","side":"BUY","price":107.0}]',
+    )
+    row = SimpleNamespace(
+        near_contract_month="NEAR", far_contract_month="FAR",
+        near_bid=97.0, near_ask=98.0, far_bid=109.0, far_ask=110.0,
+    )
+    # SHORT_NEAR_LONG_FAR: (100-98) + (109-107) = +4.
+    assert _executable_paper_pnl(trade, row) == 4.0
+
+
+def test_executable_pnl_synthetic_both_directions_follow_leg_sides():
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+
+    option = SimpleNamespace(call_bid=9.0, call_ask=11.0, put_bid=4.0, put_ask=6.0)
+    future = SimpleNamespace(bid=108.0, ask=110.0)
+    row = SimpleNamespace(option=option, future=future)
+
+    long_trade = LivePaperTrade(
+        lot_size=1, lots=1,
+        legs_json='[{"instrument":"FUTURE","side":"BUY","price":105.0},{"instrument":"CALL","side":"BUY","price":10.0},{"instrument":"PUT","side":"SELL","price":5.0}]',
+    )
+    short_trade = LivePaperTrade(
+        lot_size=1, lots=1,
+        legs_json='[{"instrument":"FUTURE","side":"SELL","price":105.0},{"instrument":"CALL","side":"SELL","price":10.0},{"instrument":"PUT","side":"BUY","price":5.0}]',
+    )
+
+    # LONG: (108-105) + (9-10) + (5-6) = +1.
+    # SHORT: (105-110) + (10-11) + (4-5) = -7.
+    assert _executable_paper_pnl(long_trade, row) == 1.0
+    assert _executable_paper_pnl(short_trade, row) == -7.0
+
+
+def test_executable_pnl_box_both_directions_follow_leg_sides():
+    from app.main import _executable_paper_pnl
+    from types import SimpleNamespace
+
+    low = SimpleNamespace(call_bid=12.0, call_ask=13.0, put_bid=10.0, put_ask=11.0)
+    high = SimpleNamespace(call_bid=7.0, call_ask=8.0, put_bid=6.0, put_ask=7.0)
+    row = SimpleNamespace(low=low, high=high)
+
+    long_trade = LivePaperTrade(
+        lot_size=1, lots=1,
+        legs_json='[{"instrument":"LOW_CALL","side":"BUY","price":10.0},{"instrument":"LOW_PUT","side":"BUY","price":9.0},{"instrument":"HIGH_CALL","side":"SELL","price":5.0},{"instrument":"HIGH_PUT","side":"SELL","price":4.0}]',
+    )
+    short_trade = LivePaperTrade(
+        lot_size=1, lots=1,
+        legs_json='[{"instrument":"LOW_CALL","side":"SELL","price":10.0},{"instrument":"LOW_PUT","side":"SELL","price":9.0},{"instrument":"HIGH_CALL","side":"BUY","price":5.0},{"instrument":"HIGH_PUT","side":"BUY","price":4.0}]',
+    )
+
+    # LONG: +2 +1 -3 -3 = -3.
+    # SHORT: +2 +2 +2 +3 = +9.
+    assert _executable_paper_pnl(long_trade, row) == -3.0
+    assert _executable_paper_pnl(short_trade, row) == 9.0
