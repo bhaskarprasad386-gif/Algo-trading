@@ -1276,6 +1276,77 @@ def test_partial_allocation_and_expiry_close_race_preserve_capital(tmp_path):
 
 
 
+
+def test_manual_expiry_close_and_new_entry_three_way_race_is_consistent(tmp_path):
+    import threading
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.models import AlertRule
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'manual-expiry-entry-three-way.db'}", connect_args={"check_same_thread": False, "timeout": 5})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    setup = Session()
+    setup.add(GlobalPaperSetting(user_id=1, enabled=True, paper_amount=100000, emergency_stop=False))
+    setup.add(AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=0, mobile_number="", whatsapp_enabled=False, enabled=True, max_daily_capital=0, max_simultaneous_positions=1, max_loss=0))
+    setup.commit()
+    original, created = LivePaperTradeService().enter_or_mark(setup, strategy_id="cash-future", symbol="RACE-ORIGINAL", event_id="THREE-WAY-ORIGINAL", direction="LONG", expiry="2026-10-12", earliest_expiry="2026-10-12", lot_size=10, lots=1, edge=5, capital_used=30000, metadata={"exchange": "NFO"}, user_id=1)
+    assert created is True
+    original_id = original.id
+    setup.close()
+
+    barrier = threading.Barrier(3)
+    results, errors = [], []
+    def manual_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            row = db.query(LivePaperTrade).filter(LivePaperTrade.id == original_id, LivePaperTrade.status == "ONGOING").first()
+            results.append(("manual", None if row is None else LivePaperTradeService().close(db, row, "MANUAL").exit_reason))
+        except Exception as exc: errors.append(exc)
+        finally: db.close()
+    def expiry_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            closed = LivePaperTradeService().close_expired(db, now=datetime(2026, 10, 12, 15, 30))
+            results.append(("expiry", len(closed)))
+        except Exception as exc: errors.append(exc)
+        finally: db.close()
+    def entry_worker():
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            event = AlertEvent(strategy_id="cash-future", event_id="THREE-WAY-NEW", symbol="NEW", timestamp_ns=1, message="three-way-race", metadata={"gross_profit": 1000, "paper_trade": {"direction": "LONG", "expiry": "2026-10-30", "lot_size": 10, "lots": 1, "edge": 5, "capital_used": 30000}})
+            results.append(("entry", AlertService().dispatch(db, event)))
+        except Exception as exc: errors.append(exc)
+        finally: db.close()
+    threads = [threading.Thread(target=manual_worker), threading.Thread(target=expiry_worker), threading.Thread(target=entry_worker)]
+    for thread in threads: thread.start()
+    for thread in threads: thread.join(timeout=10)
+    assert errors == []
+    assert len(results) == 3
+
+    verify = Session()
+    try:
+        original_row = verify.query(LivePaperTrade).filter(LivePaperTrade.id == original_id).one()
+        new_rows = verify.query(LivePaperTrade).filter(LivePaperTrade.user_id == 1, LivePaperTrade.event_id == "THREE-WAY-NEW").all()
+        ongoing = verify.query(LivePaperTrade).filter(LivePaperTrade.user_id == 1, LivePaperTrade.status == "ONGOING").all()
+        assert original_row.status == "COMPLETED"
+        assert original_row.exit_reason in {"MANUAL", "EXPIRY_CLOSE"}
+        assert original_row.closed_at is not None
+        assert len(new_rows) <= 1
+        assert len(ongoing) <= 1
+        assert sum(float(row.capital_used or 0.0) for row in ongoing) <= 100000
+        if new_rows:
+            assert new_rows[0].status == "ONGOING"
+            assert new_rows[0].capital_used == 30000
+            assert new_rows[0].lots == 1
+        assert len([row for row in [original_row] if row.status == "COMPLETED"]) == 1
+    finally:
+        verify.close()
+        engine.dispose()
+
 def test_expiry_close_and_new_entry_race_respects_position_slot(tmp_path):
     import threading
     from sqlalchemy import create_engine
