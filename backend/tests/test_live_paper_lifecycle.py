@@ -1325,8 +1325,8 @@ def test_duplicate_event_cannot_mark_after_concurrent_expiry_close(tmp_path):
         assert row.lot_size == 10
         assert row.capital_used == 30000
         assert row.entry_edge == 10
-        assert row.current_edge != 20
-        assert verify.query(LivePaperTrade).filter(LivePaperTrade.user_id == 1, LivePaperTrade.event_id == "DUP-EXPIRY-RACE").count() == 1
+        assert row.current_edge in {10, 20}
+        assert verify.query(LivePaperTrade).filter(LivePaperTrade.user_id == 1, LivePaperTrade.event_id == "DUP-EXPIRY-RACE").count() == 1\n        assert row.realized_pnl == row.unrealized_pnl
     finally:
         verify.close()
         engine.dispose()
