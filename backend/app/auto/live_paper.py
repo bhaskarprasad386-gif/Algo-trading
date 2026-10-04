@@ -21,6 +21,32 @@ def _valid_paper_setting(setting) -> bool:
         return False
 
 
+def _valid_persisted_trade_json(trade) -> bool:
+    """Validate persisted JSON fields before they can affect P&L or expiry."""
+    try:
+        import math
+        from collections.abc import Mapping
+        legs = json.loads(getattr(trade, "legs_json", None) or "[]")
+        metadata = json.loads(getattr(trade, "metadata_json", None) or "{}")
+        if not isinstance(legs, list) or not isinstance(metadata, Mapping):
+            return False
+        for leg in legs:
+            if not isinstance(leg, Mapping):
+                return False
+            side = str(leg.get("side", "")).strip().upper()
+            if side not in {"BUY", "SELL"}:
+                return False
+            price = float(leg.get("price"))
+            if not math.isfinite(price) or price <= 0:
+                return False
+        exchange = metadata.get("exchange")
+        if exchange is not None and str(exchange).strip().upper() not in {"NSE", "NFO", "BSE", "BFO", "MCX"}:
+            return False
+        return True
+    except (TypeError, ValueError, OverflowError, json.JSONDecodeError):
+        return False
+
+
 def _valid_persisted_trade(trade) -> bool:
     """Return True only for persisted trade numerics safe for accounting."""
     try:
