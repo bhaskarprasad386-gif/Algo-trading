@@ -291,7 +291,12 @@ def _create_order(db: Session, *, user_id: int, symbol: str, side: str, price: f
         status="FILLED",
         user_id=user_id,
         price=price,
+        average_price=price,
+        filled_quantity=normalized_quantity,
+        average_fill_price=price,
         pnl=pnl,
+        status="FILLED",
+        is_paper=True,
         fill_id=fill_id,
     )
     db.add(order)
