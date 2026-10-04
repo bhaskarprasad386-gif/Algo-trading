@@ -154,15 +154,20 @@ class LivePaperTradeService:
         direction_text = str(direction).strip().upper()
         expiry_text = str(expiry).strip() if expiry is not None else ""
         earliest_expiry_text = str(earliest_expiry).strip() if earliest_expiry is not None else expiry_text
+        expiry_date = _parse_date(expiry_text)
+        earliest_expiry_date = _parse_date(earliest_expiry_text)
+        opening_ist_date = datetime.now(timezone.utc).astimezone(IST).date()
         if (
             not event_id
             or not strategy_text
             or not symbol_text
             or direction_text not in {"LONG", "SHORT"}
             or not expiry_text
-            or _parse_date(expiry_text) is None
+            or expiry_date is None
             or not earliest_expiry_text
-            or _parse_date(earliest_expiry_text) is None
+            or earliest_expiry_date is None
+            or earliest_expiry_date > expiry_date
+            or earliest_expiry_date < opening_ist_date
         ):
             return None, False
         from collections.abc import Mapping
