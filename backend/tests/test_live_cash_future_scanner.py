@@ -315,3 +315,22 @@ def test_live_scanner_snapshot_excludes_stale_signals():
     assert stale is not None
     rows = scanner.snapshot(max_age_seconds=5.0, limit=50)
     assert [row["symbol"] for row in rows] == ["FRESH"]
+
+
+def test_live_scanner_snapshot_uses_receive_time_not_exchange_timestamp():
+    scanner = LiveCashFutureScanner()
+    source_ts = int(time() * 1_000_000_000) - 10_000_000_000
+    received_ts = int(time() * 1_000_000_000)
+    scanner.observe({
+        "leg": "CASH", "underlying": "ABC", "ltp": 100, "bid": 99.9, "ask": 100,
+        "source_timestamp_ns": source_ts, "received_at_ns": received_ts,
+    })
+    signal = scanner.observe({
+        "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
+        "ltp": 101, "bid": 100.8, "ask": 101,
+        "source_timestamp_ns": source_ts, "received_at_ns": received_ts,
+    })
+    assert signal is not None
+    rows = scanner.snapshot(max_age_seconds=5, limit=10)
+    assert rows
+    assert rows[0]["received_at_ns"] == received_ts
