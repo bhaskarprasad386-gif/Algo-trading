@@ -585,7 +585,7 @@ async def _live_synthetic_loop() -> None:
             targets = tuple(targets)
             if missing_expiry:
                 app_logger.warning(
-                    "Synthetic live targets skipped because no current option expiry exists: %s",
+                    "Synthetic live targets skipped because no current option expiry exists: {}",
                     ", ".join(sorted(set(missing_expiry))),
                 )
             if not targets:
