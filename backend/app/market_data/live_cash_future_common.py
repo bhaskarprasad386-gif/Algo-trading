@@ -177,7 +177,9 @@ class LiveCashFutureCommonRunner:
             if removed_keys:
                 self.manager.unsubscribe(self.CONSUMER, removed_keys)
             self._metadata = new_metadata
-            self.scanner.reset()
+            reset_scanner = getattr(self.scanner, "reset", None)
+            if callable(reset_scanner):
+                reset_scanner()
             self._last_contract_refresh_date = today
             app_logger.info(
                 "Cash-Future contract rollover complete date=%s old=%s new=%s added=%s removed=%s",
