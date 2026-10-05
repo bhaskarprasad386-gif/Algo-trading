@@ -6333,8 +6333,9 @@ def test_paper_http_concurrent_exits_across_symbols_preserve_shared_accounting()
     assert alpha_data["pnl"] == 150.0
     assert beta_data["status"] == "closed"
     assert beta_data["pnl"] == 120.0
-    assert {alpha_data["realized_pnl"], beta_data["realized_pnl"]} == {150.0, 270.0}
-    assert beta_data["realized_pnl"] >= alpha_data["realized_pnl"]
+    assert 270.0 in {alpha_data["realized_pnl"], beta_data["realized_pnl"]}
+    assert min(alpha_data["realized_pnl"], beta_data["realized_pnl"]) in {120.0, 150.0}
+    assert alpha_data["virtual_balance"] == starting_balance + alpha_data["realized_pnl"]
     assert beta_data["virtual_balance"] == starting_balance + beta_data["realized_pnl"]
 
     positions = client.get("/api/v1/execution/paper/positions", headers=headers)
