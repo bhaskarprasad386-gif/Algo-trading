@@ -1011,7 +1011,8 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             invalid_orders.append(f"invalid_order:{order.id}")
             continue
         quantity = int(raw_filled_quantity)
-        price = raw_average_fill_price or raw_price
+        execution_price = raw_average_fill_price or raw_price
+        audit_price = raw_price
         if str(order.status) != "FILLED":
             invalid_orders.append(f"order_status_canonicality_mismatch:{order.id}")
         if order.fill_id is not None:
@@ -1022,7 +1023,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
                 invalid_orders.append(f"duplicate_fill_id:{fill_id}")
             seen_fill_ids.add(fill_id)
         if (
-            (not order.audit_hash and previous_hash is not None)
+            (not order.audit_hash and (previous_hash is not None or bootstrap_audit_required))
             or (order.audit_hash and order.previous_audit_hash != previous_hash)
         ):
             invalid_orders.append(f"audit_chain_mismatch:{order.id}")
@@ -1031,7 +1032,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             symbol=symbol,
             side=side,
             quantity=quantity,
-            price=price,
+            price=audit_price,
             pnl=raw_pnl,
             fill_id=order.fill_id,
             # Hash verification must independently bind to the persisted
@@ -1326,7 +1327,7 @@ def paper_entry(request: PaperEntryRequest, user_id: int = Depends(current_user_
     account = _begin_paper_mutation(db, user_id)
     duplicate = _existing_fill_order(db, user_id=user_id, fill_id=fill_id, symbol=symbol, side="BUY", price=request.price, quantity=quantity)
     if duplicate is not None:
-        return {"status":"success","mode":"paper","idempotent":True,"order":duplicate,"position":_position_payload(_position(db, user_id, symbol)),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+        return {"status":"success","mode":"paper","idempotent":True,"id":duplicate["id"],"order":duplicate,"position":_position_payload(_position(db, user_id, symbol)),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
     if _position(db, user_id, symbol) is not None:
         raise HTTPException(status_code=409, detail="A paper position is already active for this symbol")
     cost = _buy_cost(request.price, quantity)
@@ -1356,7 +1357,7 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
     account = _begin_paper_mutation(db, user_id)
     duplicate = _existing_fill_order(db, user_id=user_id, fill_id=fill_id, symbol=symbol, side=side, price=request.price, quantity=quantity)
     if duplicate is not None:
-        return {"status":"success","mode":"paper","idempotent":True,"order":duplicate,"position":_position_payload(_position(db, user_id, symbol)),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
+        return {"status":"success","mode":"paper","idempotent":True,"id":duplicate["id"],"order":duplicate,"position":_position_payload(_position(db, user_id, symbol)),"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
     active = _position(db, user_id, symbol)
     remaining = active
 
