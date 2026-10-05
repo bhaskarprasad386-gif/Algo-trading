@@ -131,6 +131,7 @@ def get_live_data_health():
     from zoneinfo import ZoneInfo
     from app.market_data.daily_shard_catalog import DailyMarketDataShardCatalog
     from app.core.config import settings
+    from app.market_data.common_strategy_feed import shared_common_manager_snapshot
 
     ist = ZoneInfo("Asia/Kolkata")
     now = datetime.now(ist)
@@ -153,13 +154,33 @@ def get_live_data_health():
                 "age_seconds": age_seconds, "status": status,
             })
         one_second = next(x for x in sources if x["source"] == "angelone-live-1s")
+        common = shared_common_manager_snapshot()
+        runtime_age = None
+        runtime_live = False
+        if common and common.get("last_tick") and common.get("ticks_received", 0) > 0:
+            timestamp_ns = common["last_tick"].get("timestamp_ns")
+            if timestamp_ns is not None:
+                runtime_age = max(0.0, (now.timestamp() * 1_000_000_000 - timestamp_ns) / 1_000_000_000)
+                runtime_live = market_open and runtime_age <= 5.0
+        feed_status = "LIVE" if runtime_live else one_second["status"]
         return {
             "status": "success", "market_session": "OPEN" if market_open else "CLOSED",
             "checked_at": now.isoformat(), "persisted": one_second["records"] > 0,
+            "raw_market_data_persistence": bool(settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED),
             "source": one_second["source"], "timeframe": one_second["timeframe"],
             "records": one_second["records"], "instruments": one_second["instruments"],
             "latest_timestamp_ns": one_second["latest_timestamp_ns"],
-            "age_seconds": one_second["age_seconds"], "feed_status": one_second["status"],
+            "age_seconds": one_second["age_seconds"], "feed_status": feed_status,
+            "runtime_feed": {
+                "initialized": common is not None,
+                "ticks_received": common.get("ticks_received", 0) if common else 0,
+                "active_instruments": common.get("active_instruments", 0) if common else 0,
+                "socket_groups": common.get("socket_groups", 0) if common else 0,
+                "connected_groups": common.get("connected_groups", []) if common else [],
+                "disconnected_groups": common.get("disconnected_groups", []) if common else [],
+                "delivery_errors": common.get("delivery_errors", 0) if common else 0,
+                "age_seconds": runtime_age,
+            },
             "sources": sources, "live_orders": "OFF",
         }
     finally:
