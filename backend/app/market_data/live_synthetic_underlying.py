@@ -115,7 +115,7 @@ class LiveSyntheticUnderlyingFeed:
                         result[symbol] = token
             except (LookupError, ValueError) as exc:
                 app_logger.warning(
-                    "Synthetic underlying skipped unresolved symbol %s: %s",
+                    "Synthetic underlying skipped unresolved symbol {}: {}",
                     symbol,
                     exc,
                 )
