@@ -662,11 +662,11 @@ async def _paper_box_spread_cycle_loop() -> None:
 
 def _executable_paper_pnl(trade: LivePaperTrade, row) -> float | None:
     """Mark an alert's original legs against current executable exit quotes."""
-    # Defense-in-depth: persisted corruption must never reach executable
-    # quote/P&L arithmetic, even if a caller bypasses the monitor boundary.
-    from app.auto.live_paper import _valid_persisted_trade
-    if not _valid_persisted_trade(trade):
-        return None
+    # Defense-in-depth: validate every field that participates in executable
+    # quote/P&L arithmetic. Do not require the full lifecycle persistence
+    # contract here: this helper is also used by monitor callers with a
+    # lightweight trade projection, while malformed numeric/leg data must
+    # still fail closed.
     try:
         import math
         from collections.abc import Mapping
