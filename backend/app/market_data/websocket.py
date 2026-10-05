@@ -6,6 +6,7 @@ from typing import Callable, Optional
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 
 from app.algo.auth import AngelOneAuth
+from app.core.config import settings
 from app.core.exceptions import TradingAppException
 from app.core.logger import app_logger
 
@@ -62,8 +63,9 @@ class MarketDataWebSocket:
         self.tokens = list(normalized[self.exchange_type])
 
     def _build_socket(self):
-        if not self.auth.smart_api or not self.auth.session_data:
-            self.auth.login()
+        # A VPS process can outlive the Angel session. Refresh before every
+        # socket creation so reconnects never reuse an expired JWT/feed token.
+        self.auth.ensure_session_fresh(settings.ANGEL_SESSION_REFRESH_INTERVAL_SECONDS)
         session_data = self.auth.session_data or {}
         auth_token = session_data.get("jwtToken")
         feed_token = session_data.get("feedToken")
