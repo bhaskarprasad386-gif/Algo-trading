@@ -15,7 +15,7 @@ from app.models import User
 from app.main import app
 from app.core.database import SessionLocal
 from app.models import Order, Position, TradingAccount
-from app.execution.paper_routes import _reconcile_paper_ledger
+from app.execution.paper_routes import PaperOrderRequest, _reconcile_paper_ledger
 
 
 def _client_and_headers(starting_balance: float = 10_000_000.0):
