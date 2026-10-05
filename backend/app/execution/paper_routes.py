@@ -497,10 +497,10 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
     for position in paper_positions:
         symbol = str(position.symbol or "").strip().upper()
         raw_symbol = str(position.symbol or "")
-        raw_quantity = float(position.quantity or 0.0)
-        raw_average_price = float(position.average_price or 0.0)
-        raw_last_price = float(position.last_price or 0.0)
-        raw_position_pnl = float(position.pnl or 0.0)
+        raw_quantity = float(position.quantity) if position.quantity is not None else float("nan")
+        raw_average_price = float(position.average_price) if position.average_price is not None else float("nan")
+        raw_last_price = float(position.last_price) if position.last_price is not None else float("nan")
+        raw_position_pnl = float(position.pnl) if position.pnl is not None else float("nan")
         raw_stop_loss = float(position.stop_loss) if position.stop_loss is not None else None
         raw_target = float(position.target) if position.target is not None else None
         raw_product_type = str(position.product_type or "")
