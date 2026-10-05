@@ -25,6 +25,7 @@ class InstrumentMaster:
         # the existing constructor/API used by tests and other callers.
         self.instruments: List[Dict[str, Any]] = []
         self._loaded = False
+        self._symbol_exchange_index = None
         cached = self._get_cached_snapshot()
         if cached is not None:
             self.instruments = cached
@@ -65,6 +66,7 @@ class InstrumentMaster:
                 self.__class__._cached_snapshot_date = today
                 self.instruments = data
                 self._loaded = True
+                self._symbol_exchange_index = None
                 app_logger.info(
                     f"Loaded {len(self.instruments)} instruments from Angel One instrument master"
                 )
@@ -120,6 +122,20 @@ class InstrumentMaster:
         results = self.search(tradingsymbol=tradingsymbol, exchange=exchange)
         return results[0] if results else None
 
+    def _ensure_symbol_exchange_index(self):
+        index = self._symbol_exchange_index
+        if index is not None:
+            return index
+        built = {}
+        for item in self.instruments:
+            symbol = str(item.get("symbol", "")).strip().upper()
+            exch = str(item.get("exch_seg", "")).strip().upper()
+            if not symbol or not exch:
+                continue
+            built.setdefault((symbol, exch), []).append(item)
+        self._symbol_exchange_index = built
+        return built
+
     def resolve_cash_instrument(self, tradingsymbol: str, exchange: str = "NSE") -> Dict[str, Any]:
         """Resolve exactly one NSE cash instrument and fail closed on ambiguity."""
         symbol = str(tradingsymbol).strip()
@@ -132,10 +148,11 @@ class InstrumentMaster:
         candidate_symbols = [symbol]
         if not symbol.endswith("-EQ"):
             candidate_symbols.append(f"{symbol}-EQ")
+        index = self._ensure_symbol_exchange_index()
         results = [
             item
             for candidate in candidate_symbols
-            for item in self.search(tradingsymbol=candidate, exchange=exch)
+            for item in index.get((candidate.upper(), exch), ())
             if str(item.get("instrumenttype", "")).upper() in {"CASH", "EQ", "EQUITY", ""}
             and str(item.get("exch_seg", "")).upper() == exch
         ]
