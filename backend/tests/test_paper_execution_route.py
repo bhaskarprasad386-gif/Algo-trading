@@ -5664,8 +5664,14 @@ def test_paper_order_http_concurrent_same_fill_id_conflicting_details_fail_close
         successful = [response for response in responses if response.status_code == 200]
         conflicts = [response for response in responses if response.status_code == 409]
 
-        assert len(successful) == 1
-        assert len(conflicts) == 7
+        # Exactly one execution detail wins. Requests carrying that winning
+        # detail are valid idempotent retries; every other detail must fail closed.
+        assert len(successful) in {1, 7}
+        winner_price = successful[0].json()["order"]["price"]
+        if winner_price == 100.0:
+            assert len(conflicts) == 7
+        else:
+            assert len(conflicts) == 1
         assert all(
             response.json()["detail"]
             == "fill_id already exists with different execution details"
@@ -5945,8 +5951,12 @@ def test_paper_exit_http_concurrent_same_fill_id_conflicting_details_fail_closed
             responses = list(pool.map(submit, range(8)))
         successful = [response for response in responses if response.status_code == 200]
         conflicts = [response for response in responses if response.status_code == 409]
-        assert len(successful) == 1
-        assert len(conflicts) == 7
+        assert len(successful) in {1, 7}
+        winner_price = successful[0].json()["order"]["price"]
+        if winner_price == 110.0:
+            assert len(conflicts) == 7
+        else:
+            assert len(conflicts) == 1
         assert all(response.json()["detail"] == "fill_id already exists with different execution details" for response in conflicts)
     finally:
         app.dependency_overrides.pop(routes.current_user_id, None)
