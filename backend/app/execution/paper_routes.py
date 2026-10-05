@@ -612,7 +612,10 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
                 price=price,
                 pnl=float(order.pnl or 0.0),
                 fill_id=raw_fill_id,
-                previous_hash=previous_audit_hash,
+                # Verify the hash against the canonical predecessor. The
+                # persisted predecessor pointer is checked separately above,
+                # so tampering with it must produce both findings.
+                previous_hash=expected_audit_previous,
             )
             if audit_hash != expected_audit_hash:
                 invalid_orders.append(f"audit_hash_mismatch:{order.id}")
@@ -1399,6 +1402,10 @@ def paper_from_scanner(request: ScannerPaperEntryRequest, user_id: int = Depends
     active_position = _position(db, user_id, request.symbol)
     if active_position is not None and active_position.quantity < 0:
         scanner_quantity = min(scanner_quantity, abs(int(active_position.quantity)))
+    # paper_order owns the mutation transaction. Clear the scanner's preceding
+    # read transaction so its BEGIN IMMEDIATE boundary cannot roll back the
+    # active-position decision made above.
+    db.rollback()
     result = paper_order(PaperOrderRequest(symbol=request.symbol, transaction_type="BUY", price=request.cash_price, quantity=scanner_quantity, stop_loss_pct=request.stop_loss_pct, target_pct=request.target_pct, fill_id=request.fill_id), user_id=user_id, db=db)
     result["source"] = "cash-future-scanner"
     result["scanner_entry_price"] = request.cash_price
