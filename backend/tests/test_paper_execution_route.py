@@ -6764,7 +6764,7 @@ def test_paper_http_cold_start_mixed_endpoint_race_converges_on_one_account():
                     assert payload["mismatches"] == []
                     assert payload["repairability"] == "NONE"
                     assert payload["orders"] in {0, 1, 2, 3, 4, 5}
-                    assert payload["orders"] == sorted(payload["orders"], key=lambda item: item["id"])
+                    assert isinstance(payload["orders"], int)
             finally:
                 db.close()
         finally:
