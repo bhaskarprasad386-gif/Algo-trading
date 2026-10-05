@@ -205,9 +205,9 @@ class CommonWebSocketManager:
                 self._close_socket_bounded(socket)
 
     def recover_disconnected(self, *, min_age_seconds: float = 10.0) -> int:
-        """Replace stale disconnected broker sockets while preserving subscriptions."""
+        """Replace stale disconnected broker sockets without leaving the feed empty on reconnect failure."""
         now = time.monotonic()
-        stale: list[tuple[SocketGroup, Any, set[tuple[int, str]]]] = []
+        stale: list[tuple[SocketGroup, Any, set[tuple[int, str]], float]] = []
         with self._lock:
             for group, socket in self._sockets.items():
                 if bool(getattr(socket, "connected", False)):
@@ -217,15 +217,29 @@ class CommonWebSocketManager:
                     continue
                 tokens = set(self._socket_tokens.get(group, set()))
                 if tokens:
-                    stale.append((group, socket, tokens))
-            for group, _, _ in stale:
+                    stale.append((group, socket, tokens, created_at))
+            for group, _, _, _ in stale:
                 self._sockets.pop(group, None)
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
-        for _, socket, _ in stale:
+        if not stale:
+            return 0
+
+        for _, socket, _, _ in stale:
             self._close_socket_bounded(socket)
-        if stale:
+        try:
             self._reconcile()
+        except Exception:
+            # Reconcile can fail transiently (broker auth/network/session limits).
+            # Keep the consumer registry intact and let the next recovery cycle
+            # retry socket creation instead of leaving socket_groups at zero.
+            with self._lock:
+                for group, _, tokens, created_at in stale:
+                    if group in self._sockets:
+                        continue
+                    self._socket_tokens[group] = set(tokens)
+                    self._socket_created_at[group] = created_at
+            raise
         return len(stale)
 
     @staticmethod
