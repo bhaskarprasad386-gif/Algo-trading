@@ -196,7 +196,7 @@ class LiveCashFutureCommonRunner:
             "leg": meta["leg"],
             "underlying": meta["underlying"],
             "contract_month": meta["contract_month"],
-            "received_at_ns": record.timestamp_ns,
+            "received_at_ns": __import__("time").time_ns(),
         })
         return payload
 
