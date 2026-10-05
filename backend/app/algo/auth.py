@@ -1,5 +1,6 @@
 from typing import Optional, Dict, Any
 from threading import RLock
+import time
 import pyotp
 from SmartApi import SmartConnect
 
@@ -33,6 +34,7 @@ class AngelOneAuth:
             self.session_data: Optional[Dict[str, Any]] = None
             self.is_logged_in: bool = False
             self._state_lock = RLock()
+            self._session_obtained_at = 0.0
             self._initialized = True
 
     def _validate_credentials(self) -> None:
@@ -56,6 +58,7 @@ class AngelOneAuth:
                     self.is_logged_in = False
                     raise TradingAppException("LoginError", "Angel One login response missing session token", 502)
                 self.is_logged_in = True
+                self._session_obtained_at = time.monotonic()
                 app_logger.info("Angel One login successful")
                 return {"status": "success", "message": "Login successful", "client_code": self.session_data.get("clientcode")}
             except TradingAppException:
@@ -83,6 +86,7 @@ class AngelOneAuth:
                     raise TradingAppException("RefreshError", "Angel One refresh response missing session token", 502)
                 self.session_data.update(refreshed)
                 self.is_logged_in = True
+                self._session_obtained_at = time.monotonic()
                 app_logger.info("Angel One session refreshed")
                 return {"status": "success", "message": "Session refreshed"}
             except TradingAppException:
@@ -90,6 +94,22 @@ class AngelOneAuth:
             except Exception as e:
                 app_logger.error(f"Session refresh failed: {str(e)}")
                 return self.login()
+
+    def ensure_session_fresh(self, max_age_seconds: float) -> Dict[str, Any]:
+        """Refresh the Angel session before using a potentially stale JWT/feed token."""
+        try:
+            max_age = float(max_age_seconds)
+        except (TypeError, ValueError):
+            raise ValueError("max_age_seconds must be numeric")
+        if max_age <= 0:
+            raise ValueError("max_age_seconds must be positive")
+        with self._state_lock:
+            if not self.is_logged_in or self.smart_api is None or not self.session_data:
+                return self.login()
+            age = time.monotonic() - self._session_obtained_at
+            if age >= max_age:
+                return self.refresh_session()
+            return {"status": "success", "message": "Session still fresh"}
 
     def get_client(self) -> SmartConnect:
         """Return authenticated SmartAPI client. Auto-login if needed."""
@@ -121,5 +141,6 @@ class AngelOneAuth:
             self.smart_api = None
             self.session_data = None
             self.is_logged_in = False
+            self._session_obtained_at = 0.0
             app_logger.info("Angel One session cleared")
             return {"status": "success", "message": "Logged out"}
