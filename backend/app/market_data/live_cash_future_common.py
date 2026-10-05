@@ -282,6 +282,10 @@ class LiveCashFutureCommonRunner:
         try:
             self.manager.subscribe(self.CONSUMER, keys, mode=3)
             while not self.stop_event.wait(1.0):
+                # Keep the scanner independent of a stale broker session. The
+                # common manager preserves the same subscriptions and rebuilds
+                # only sockets that have remained disconnected long enough.
+                self.manager.recover_disconnected(min_age_seconds=10.0)
                 if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
                     self._prune_old_live_shards()
         finally:
