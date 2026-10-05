@@ -186,8 +186,11 @@ class InstrumentMaster:
         preferred = [
             item
             for item in results
-            if str(item.get("instrumenttype", "")).strip().upper() == "AMXIDX"
-            and str(item.get("token", "")).strip().startswith("999")
+            if str(item.get("token", "")).strip().startswith("999")
+            and (
+                not str(item.get("instrumenttype", "")).strip()
+                or str(item.get("instrumenttype", "")).strip().upper() == "AMXIDX"
+            )
         ]
         if len(preferred) == 1:
             return preferred[0]
