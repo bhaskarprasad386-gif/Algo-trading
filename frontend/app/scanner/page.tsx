@@ -56,7 +56,7 @@ export default function ScannerPage() {
     }
   };
 
-  useEffect(() => {\n    void load();\n    const timer = window.setInterval(() => { void load(); }, 1500);\n    return () => window.clearInterval(timer);\n  }, []);
+  useEffect(() => {\n    void load(true);\n    const timer = window.setInterval(() => { void load(); }, 1500);\n    return () => window.clearInterval(timer);\n  }, []);
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toUpperCase();
