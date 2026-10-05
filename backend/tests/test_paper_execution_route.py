@@ -30,7 +30,26 @@ def _client_and_headers(starting_balance: float = 10_000_000.0):
             db.query(TradingAccount).filter(TradingAccount.id != keep.id).delete(synchronize_session=False)
             accounts = [keep]
         if not accounts:
-            raise AssertionError("paper test fixture requires a trading account")
+            user = User(
+                email="paper-test-helper@local",
+                hashed_password="",
+                full_name="Paper Test Helper",
+                is_active=True,
+            )
+            db.add(user)
+            db.flush()
+            account = TradingAccount(
+                user_id=user.id,
+                mode="PAPER",
+                virtual_balance=float(starting_balance),
+                initial_virtual_balance=float(starting_balance),
+                initial_balance_source="BOOTSTRAP",
+                realized_pnl=0.0,
+                is_active=True,
+            )
+            db.add(account)
+            db.flush()
+            accounts = [account]
         for account in accounts:
             account.virtual_balance = float(starting_balance)
             account.initial_virtual_balance = float(starting_balance)
