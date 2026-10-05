@@ -63,6 +63,7 @@ class LiveCashFutureCommonRunner:
         self._last_result: CashFutureScanResult | None = None
         self._latest_persisted: dict[InstrumentKey, MarketDataRecord] = {}
         self._last_retention_date: date | None = None
+        self._last_contract_refresh_date: date | None = None
 
     @property
     def last_result(self) -> CashFutureScanResult | None:
@@ -120,6 +121,7 @@ class LiveCashFutureCommonRunner:
             counts[underlying] = counts.get(underlying, 0) + 1
 
         descriptors: list[InstrumentDescriptor] = []
+        metadata: dict[InstrumentKey, dict[str, Any]] = {}
         registered_cash: set[InstrumentKey] = set()
         for row in selected:
             underlying = row["_underlying"]
@@ -139,13 +141,51 @@ class LiveCashFutureCommonRunner:
                 exchange="NFO", segment="NFO", expiry=row["_expiry"].isoformat(),
                 lot_size=lot,
             ))
-            self._metadata[cash_key] = {
+            metadata[cash_key] = {
                 "leg": "CASH", "underlying": underlying, "contract_month": "CASH",
             }
-            self._metadata[future_key] = {
+            metadata[future_key] = {
                 "leg": "FUTURE", "underlying": underlying, "contract_month": row["_month"],
             }
+        self._metadata = metadata
         return tuple(descriptors)
+
+    def _roll_contracts_if_needed(self) -> None:
+        """Refresh CURRENT/NEAR contracts once per IST date without dropping shared feed state."""
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        if self._last_contract_refresh_date == today:
+            return
+        previous_metadata = dict(self._metadata)
+        try:
+            descriptors = self._build_descriptors()
+            if not descriptors:
+                self._metadata = previous_metadata
+                app_logger.warning("Cash-Future contract rollover found no eligible contracts for %s", today.isoformat())
+                return
+            accepted = self._register_descriptors(descriptors)
+            new_metadata = {key: meta for key, meta in self._metadata.items() if key in accepted}
+            if not new_metadata:
+                self._metadata = previous_metadata
+                app_logger.warning("Cash-Future contract rollover found no usable descriptors for %s", today.isoformat())
+                return
+            old_keys = set(previous_metadata)
+            new_keys = set(new_metadata)
+            added_keys = sorted(new_keys - old_keys, key=lambda key: key.value)
+            removed_keys = sorted(old_keys - new_keys, key=lambda key: key.value)
+            if added_keys:
+                self.manager.subscribe(self.CONSUMER, added_keys, mode=3)
+            if removed_keys:
+                self.manager.unsubscribe(self.CONSUMER, removed_keys)
+            self._metadata = new_metadata
+            self.scanner.reset()
+            self._last_contract_refresh_date = today
+            app_logger.info(
+                "Cash-Future contract rollover complete date=%s old=%s new=%s added=%s removed=%s",
+                today.isoformat(), len(old_keys), len(new_keys), len(added_keys), len(removed_keys),
+            )
+        except Exception as exc:
+            self._metadata = previous_metadata
+            app_logger.warning("Cash-Future contract rollover deferred date=%s error=%s", today.isoformat(), exc)
 
     def _record_payload(self, record: MarketDataRecord, meta: dict[str, Any]) -> dict[str, Any]:
         payload = record.as_dict()
@@ -281,7 +321,9 @@ class LiveCashFutureCommonRunner:
         keys = list(self._metadata)
         try:
             self.manager.subscribe(self.CONSUMER, keys, mode=3)
+            self._last_contract_refresh_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
             while not self.stop_event.wait(1.0):
+                self._roll_contracts_if_needed()
                 # Keep the scanner independent of a stale broker session. The
                 # common manager preserves the same subscriptions and rebuilds
                 # only sockets that have remained disconnected long enough.
