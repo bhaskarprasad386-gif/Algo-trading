@@ -3215,7 +3215,7 @@ def test_paper_reconcile_response_contract_is_deterministic_for_clean_safe_and_b
             "status", "repairability", "repairability_reason", "mismatch_categories",
             "baseline_status", "user_id", "orders", "reconstructed_realized_pnl",
             "stored_realized_pnl", "reconstructed_virtual_balance", "stored_virtual_balance",
-            "reconstructed_positions", "mismatches", "repair_plan",
+            "reconstructed_open_exposure", "reconstructed_positions", "mismatches", "repair_plan",
         }
         assert result["status"] in {"OK", "MISMATCH"}
         assert result["repairability"] in {"NONE", "SAFE_DRY_RUN", "BLOCKED"}
