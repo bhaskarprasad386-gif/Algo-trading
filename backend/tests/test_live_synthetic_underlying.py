@@ -44,6 +44,21 @@ def test_index_token_resolution_uses_exact_master_entry():
     assert master.resolve_index_token("NIFTY") == "99926000"
 
 
+def test_index_token_resolution_matches_angel_display_symbol_by_name():
+    master = InstrumentMaster()
+    master.instruments = [
+        {
+            "exch_seg": "NSE",
+            "symbol": "Nifty 50",
+            "name": "NIFTY",
+            "token": "99926000",
+            "instrumenttype": "AMXIDX",
+        }
+    ]
+    master._loaded = True
+    assert master.resolve_index_token("NIFTY") == "99926000"
+
+
 def test_index_token_resolution_rejects_legacy_single_entry():
     master = InstrumentMaster()
     master.instruments = [
