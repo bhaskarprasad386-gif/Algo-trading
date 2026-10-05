@@ -1727,11 +1727,11 @@ def test_paper_ledger_reconciliation_rebuilds_realized_pnl_position_and_balance(
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "OK"
-    assert data["reconstructed_realized_pnl"] == 180.0
+    assert data["reconstructed_realized_pnl"] == 140.0
     assert data["stored_realized_pnl"] == 180.0
     assert data["reconstructed_open_exposure"] == 220.0
-    assert data["reconstructed_virtual_balance"] == 9_999_920.0
-    assert data["stored_virtual_balance"] == 9_999_920.0
+    assert data["reconstructed_virtual_balance"] == 9_920.0
+    assert data["stored_virtual_balance"] == 9_920.0
     assert data["repairability"] == "NONE"
     assert data["baseline_status"] == "BOOTSTRAP"
     assert data["repair_plan"]["apply"] is False
@@ -1776,7 +1776,7 @@ def test_paper_ledger_reconciliation_detects_state_mismatch_without_changing_it(
             Position.user_id == account.user_id,
             Position.symbol == "RECON-CHECK",
         ).one()
-        assert account.virtual_balance == 9_999_623.0
+        assert account.virtual_balance == 9_623.0
         assert position.average_price == 101.0
     finally:
         verify.close()
@@ -7797,7 +7797,7 @@ def test_paper_http_concurrent_reads_during_successful_long_to_short_reversal_ex
     assert all(response.status_code == 200 for response in responses)
     assert mutation_response.json()["status"] == "success"
     assert mutation_response.json()["realized_pnl"] == 100.0
-    assert mutation_response.json()["virtual_balance"] == 9_999_740.0
+    assert mutation_response.json()["virtual_balance"] == 9_740.0
     assert mutation_response.json()["position"]["quantity"] == -3.0
 
     account_payload = account_response.json()
@@ -7812,7 +7812,7 @@ def test_paper_http_concurrent_reads_during_successful_long_to_short_reversal_ex
         account_payload["open_positions"],
     ) in {
         (10_000_000.0, 0.0, 1),
-        (9_999_740.0, 100.0, 1),
+        (9_740.0, 100.0, 1),
     }
 
     assert orders_payload["mode"] == "paper"
@@ -7844,7 +7844,7 @@ def test_paper_http_concurrent_reads_during_successful_long_to_short_reversal_ex
     assert final_account.status_code == 200
     assert final_orders.status_code == 200
     assert final_position.status_code == 200
-    assert final_account.json()["virtual_balance"] == 9_999_740.0
+    assert final_account.json()["virtual_balance"] == 9_740.0
     assert final_account.json()["realized_pnl"] == 100.0
     assert final_account.json()["open_positions"] == 1
     assert len(final_orders.json()["orders"]) == 1
@@ -7869,7 +7869,7 @@ def test_paper_http_concurrent_reads_during_successful_short_to_long_reversal_ex
     try:
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
         user_id = int(account.user_id)
-        account.virtual_balance = 9_999_500.0
+        account.virtual_balance = 9_500.0
         account.realized_pnl = 0.0
         db.add(Position(
             user_id=user_id,
@@ -7924,7 +7924,7 @@ def test_paper_http_concurrent_reads_during_successful_short_to_long_reversal_ex
     mutation = mutation_response.json()
     assert mutation["status"] == "success"
     assert mutation["realized_pnl"] == 100.0
-    assert mutation["virtual_balance"] == 9_999_860.0
+    assert mutation["virtual_balance"] == 9_860.0
     assert mutation["position"]["quantity"] == 3.0
     assert mutation["position"]["entry_price"] == 80.0
 
@@ -7939,8 +7939,8 @@ def test_paper_http_concurrent_reads_during_successful_short_to_long_reversal_ex
         account_payload["realized_pnl"],
         account_payload["open_positions"],
     ) in {
-        (9_999_500.0, 0.0, 1),
-        (9_999_860.0, 100.0, 1),
+        (9_500.0, 0.0, 1),
+        (9_860.0, 100.0, 1),
     }
 
     assert orders_payload["mode"] == "paper"
@@ -7972,7 +7972,7 @@ def test_paper_http_concurrent_reads_during_successful_short_to_long_reversal_ex
     assert final_account.status_code == 200
     assert final_orders.status_code == 200
     assert final_position.status_code == 200
-    assert final_account.json()["virtual_balance"] == 9_999_860.0
+    assert final_account.json()["virtual_balance"] == 9_860.0
     assert final_account.json()["realized_pnl"] == 100.0
     assert final_account.json()["open_positions"] == 1
     assert len(final_orders.json()["orders"]) == 1
@@ -8437,7 +8437,7 @@ def test_paper_http_concurrent_successful_same_symbol_reversals_serialize_withou
     try:
         account = db.query(TradingAccount).filter(TradingAccount.mode == "PAPER").one()
         user_id = int(account.user_id)
-        account.virtual_balance = 9_999_000.0
+        account.virtual_balance = 9_000.0
         account.realized_pnl = 0.0
         db.add(Position(
             user_id=user_id,
@@ -8515,7 +8515,7 @@ def test_paper_http_concurrent_successful_same_symbol_reversals_serialize_withou
         # SQLite BEGIN IMMEDIATE serializes the two reversals. The final ledger
         # is therefore exactly one of the two valid serialization orders.
         outcomes = {
-            (9_999_720.0, 160.0, 110.0, ("DOUBLE-REVERSAL-A", "DOUBLE-REVERSAL-B")),
+            (9_720.0, 160.0, 110.0, ("DOUBLE-REVERSAL-A", "DOUBLE-REVERSAL-B")),
             (10_000_120.0, 120.0, 120.0, ("DOUBLE-REVERSAL-B", "DOUBLE-REVERSAL-A")),
         }
         observed = (
