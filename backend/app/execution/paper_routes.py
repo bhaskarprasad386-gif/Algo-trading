@@ -780,7 +780,82 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         .all()
     )
     orders = [order for order in all_user_orders if order.is_paper is True]
-    rebuilt: dict[str, FillAccountingState] = {}
+    all_paper_positions = (
+        db.query(Position)
+        .filter(Position.user_id == user_id, Position.is_paper.is_(True))
+        .order_by(Position.id.asc())
+        .all()
+    )
+    actual_position_by_symbol = {
+        str(position.symbol or "").strip().upper(): position
+        for position in all_paper_positions
+        if bool(position.is_open) and int(position.quantity or 0) != 0
+    }
+
+    # Some legacy paper databases contain a persisted position whose opening
+    # fill was never recorded as an Order. Reconciliation must remain
+    # deterministic for that state without weakening audit validation. Infer
+    # such a baseline only when the net durable fills plus the persisted final
+    # position prove a non-zero pre-existing quantity and the first fill is a
+    # closing-side fill. The baseline average is solved from the durable
+    # per-order realized P&L; tampered audit/P&L data still fails below.
+    orders_by_symbol: dict[str, list[Order]] = {}
+    for order in orders:
+        orders_by_symbol.setdefault(str(order.symbol or "").strip().upper(), []).append(order)
+
+    baseline_states: dict[str, FillAccountingState] = {}
+    baseline_cost = 0.0
+    for symbol, symbol_orders in orders_by_symbol.items():
+        final_position = actual_position_by_symbol.get(symbol)
+        final_quantity = int(final_position.quantity) if final_position is not None else 0
+        net_quantity = sum(
+            int(order.quantity or 0)
+            if str(order.transaction_type or "").strip().upper() == "BUY"
+            else -int(order.quantity or 0)
+            for order in symbol_orders
+        )
+        initial_quantity = final_quantity - net_quantity
+        first_side = str(symbol_orders[0].transaction_type or "").strip().upper()
+        first_signed = int(symbol_orders[0].quantity or 0) if first_side == "BUY" else -int(symbol_orders[0].quantity or 0)
+
+        if initial_quantity and initial_quantity * first_signed < 0:
+            target_realized = round(sum(float(order.pnl or 0.0) for order in symbol_orders), 8)
+
+            def _replay_from_baseline(average_price: float) -> FillAccountingState:
+                state = FillAccountingState(
+                    quantity=initial_quantity,
+                    average_price=average_price,
+                    realized_pnl=0.0,
+                )
+                for baseline_order in symbol_orders:
+                    state = apply_executed_fill(
+                        state,
+                        ExecutedFill(
+                            side=str(baseline_order.transaction_type or "").strip().upper(),
+                            price=float(baseline_order.average_fill_price or baseline_order.price),
+                            quantity=float(baseline_order.filled_quantity or baseline_order.quantity),
+                        ),
+                    )
+                return state
+
+            zero_state = _replay_from_baseline(0.0)
+            unit_state = _replay_from_baseline(1.0)
+            slope = round(unit_state.realized_pnl - zero_state.realized_pnl, 8)
+            if abs(slope) > 1e-8:
+                inferred_average = round((target_realized - zero_state.realized_pnl) / slope, 8)
+                inferred_state = _replay_from_baseline(inferred_average)
+                if (
+                    inferred_average > 0
+                    and int(inferred_state.quantity) == int(final_quantity)
+                    and abs(inferred_state.realized_pnl - target_realized) <= 1e-8
+                ):
+                    baseline_states[symbol] = inferred_state
+                    baseline_cost = round(
+                        baseline_cost + _buy_cost(inferred_average, abs(initial_quantity)),
+                        8,
+                    )
+
+    rebuilt: dict[str, FillAccountingState] = dict(baseline_states)
     initial_virtual_balance = float(account.initial_virtual_balance)
     stored_virtual_balance = float(account.virtual_balance)
     stored_realized_pnl = float(account.realized_pnl or 0.0)
@@ -791,7 +866,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         account_integrity.append("invalid_virtual_balance")
     if not math.isfinite(stored_realized_pnl):
         account_integrity.append("invalid_realized_pnl")
-    reconstructed_cash = initial_virtual_balance
+    reconstructed_cash = round(initial_virtual_balance - baseline_cost, 8)
     reconstructed_realized = 0.0
     seen_fill_ids: set[str] = set()
     seen_order_ids: set[str] = set()
@@ -938,12 +1013,6 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             state.realized_pnl for key, state in rebuilt.items() if key != symbol
         )
 
-    all_paper_positions = (
-        db.query(Position)
-        .filter(Position.user_id == user_id, Position.is_paper.is_(True))
-        .order_by(Position.id.asc())
-        .all()
-    )
     actual_positions: dict[str, Position] = {}
     duplicate_position_symbols: set[str] = set()
     position_symbol_canonicality_mismatches: list[int] = []
