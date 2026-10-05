@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from threading import Lock, RLock, Thread
+import time
 from typing import Any, Callable
 
 from .contracts import InstrumentKey
@@ -48,6 +49,7 @@ class CommonWebSocketManager:
         self._ticks_received = 0
         self._ticks_by_exchange: dict[str, int] = defaultdict(int)
         self._last_tick: dict[str, Any] | None = None
+        self._socket_created_at: dict[SocketGroup, float] = {}
         self._route_index: dict[
             SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
         ] = {}
@@ -182,6 +184,7 @@ class CommonWebSocketManager:
                     with self._lock:
                         self._sockets[group] = socket
                         self._socket_tokens[group] = set(pairs)
+                        self._socket_created_at[group] = time.monotonic()
                 else:
                     removed = previous_tokens.get(group, set()) - pairs
                     added = pairs - previous_tokens.get(group, set())
@@ -197,8 +200,33 @@ class CommonWebSocketManager:
                 stale_sockets = [self._sockets.pop(group) for group in stale_groups]
                 for group in stale_groups:
                     self._socket_tokens.pop(group, None)
+                    self._socket_created_at.pop(group, None)
             for socket in stale_sockets:
                 self._close_socket_bounded(socket)
+
+    def recover_disconnected(self, *, min_age_seconds: float = 10.0) -> int:
+        """Replace stale disconnected broker sockets while preserving subscriptions."""
+        now = time.monotonic()
+        stale: list[tuple[SocketGroup, Any, set[tuple[int, str]]]] = []
+        with self._lock:
+            for group, socket in self._sockets.items():
+                if bool(getattr(socket, "connected", False)):
+                    continue
+                created_at = self._socket_created_at.get(group, now)
+                if now - created_at < max(1.0, float(min_age_seconds)):
+                    continue
+                tokens = set(self._socket_tokens.get(group, set()))
+                if tokens:
+                    stale.append((group, socket, tokens))
+            for group, _, _ in stale:
+                self._sockets.pop(group, None)
+                self._socket_tokens.pop(group, None)
+                self._socket_created_at.pop(group, None)
+        for _, socket, _ in stale:
+            self._close_socket_bounded(socket)
+        if stale:
+            self._reconcile()
+        return len(stale)
 
     @staticmethod
     def _group_subscriptions(pairs: set[tuple[int, str]]) -> dict[int, list[str]]:
@@ -320,5 +348,6 @@ class CommonWebSocketManager:
             sockets = list(self._sockets.values())
             self._sockets.clear()
             self._socket_tokens.clear()
+            self._socket_created_at.clear()
         for socket in sockets:
             self._close_socket_bounded(socket)
