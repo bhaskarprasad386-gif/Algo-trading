@@ -23,7 +23,6 @@ from app.models import User, Instrument, Order, Session, Position, SystemLog, Tr
 from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
 from app.models.live_calendar_spread_paper_position import LiveCalendarSpreadPaperPosition
 from app.algo.auth import AngelOneAuth
-from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.live_cash_future_stream import live_cash_future_health
 from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 from app.market_data.common_strategy_feed import shared_common_manager
@@ -73,7 +72,7 @@ from app.backtesting.universal_result_service import UniversalResultService
 run_schema_migrations()
 Base.metadata.create_all(bind=engine)
 
-# Reuse one process-local instrument-master manager for all dashboard/API WebSockets.
+# Reuse one process-local instrument-master manager for live feed/API resolution.
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
 live_cash_future_scanner = LiveCashFutureScanner()
