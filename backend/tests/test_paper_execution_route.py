@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from fastapi import HTTPException
 from concurrent.futures import ThreadPoolExecutor
 import threading
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -8039,7 +8039,7 @@ def test_concurrent_cross_user_orders_keep_audit_chains_independent(tmp_path):
             [(users[0], "A"), (users[1], "B")],
         ))
 
-    assert {result["fill_id"] for result in results} == {
+    assert {result["order"]["fill_id"] for result in results} == {
         "AUDIT-CONCURRENT-A",
         "AUDIT-CONCURRENT-B",
     }
