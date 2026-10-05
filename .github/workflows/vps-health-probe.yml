@@ -66,6 +66,7 @@ jobs:
 
           echo "=== LIVE SCANNER SNAPSHOTS ==="
           for endpoint in \
+            "/api/v1/scanner/cash-future/live/fast?max_age_seconds=5&limit=5" \
             "/api/v1/scanner/calendar-spread/live?limit=5" \
             "/api/v1/scanner/synthetic-cash-carry/live?limit=5" \
             "/api/v1/scanner/box-spread/live?limit=5"; do
