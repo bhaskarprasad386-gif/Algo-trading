@@ -7399,7 +7399,9 @@ def test_paper_http_authenticated_identity_isolates_account_orders_and_position_
                     virtual_balance=balance,
                     initial_virtual_balance=1000.0,
                     initial_balance_source="BOOTSTRAP",
-                    realized_pnl=100.0 if suffix == "a" else -50.0,
+                    # Seed a conservation-valid open-position epoch; realized
+                    # P&L belongs in the ledger only when backed by fills.
+                    realized_pnl=0.0,
                     is_active=True,
                 )
             )
