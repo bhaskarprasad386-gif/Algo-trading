@@ -8,6 +8,7 @@ from app.algo.auth import AngelOneAuth
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.live_synthetic_atm import LiveSyntheticAtmTracker
+from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 
