@@ -849,7 +849,14 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
                     and int(inferred_state.quantity) == int(final_quantity)
                     and abs(inferred_state.realized_pnl - target_realized) <= 1e-8
                 ):
-                    baseline_states[symbol] = inferred_state
+                    # Store the inferred *pre-order* baseline. The normal
+                    # reconciliation loop below replays every durable order exactly
+                    # once; storing inferred_state here would double-apply the fills.
+                    baseline_states[symbol] = FillAccountingState(
+                        quantity=initial_quantity,
+                        average_price=inferred_average,
+                        realized_pnl=0.0,
+                    )
                     baseline_cost = round(
                         baseline_cost + _buy_cost(inferred_average, abs(initial_quantity)),
                         8,
