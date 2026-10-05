@@ -95,7 +95,7 @@ def _filtered(data: list[dict]) -> list[dict]:
 @router.get("/cash-future/live/fast")
 def cash_future_live_fast_scanner(
     max_age_seconds: float = Query(5.0, gt=0, le=30),
-    limit: int = Query(50, ge=1, le=50),
+    limit: int = Query(500, ge=1, le=500),
 ):
     """Return signals produced directly by the one-second WebSocket scanner."""
     # The process-level scanner is installed by app.main; importing the singleton
