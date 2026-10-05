@@ -16,6 +16,7 @@ from .contracts import InstrumentKey
 from .registry import InstrumentRegistry, Subscription
 from .normalizer import AngelOneTickNormalizer
 from .websocket import MarketDataWebSocket
+from app.core.logger import app_logger
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,8 @@ class CommonWebSocketManager:
         self._lock = RLock()
         self._reconcile_lock = Lock()
         self._delivery_errors = 0
+        self._normalizer_errors = 0
+        self._last_normalizer_error: str | None = None
         self._ticks_received = 0
         self._ticks_by_exchange: dict[str, int] = defaultdict(int)
         self._last_tick: dict[str, Any] | None = None
@@ -310,7 +313,15 @@ class CommonWebSocketManager:
                         "ask": record.ask,
                     }
                 callback(record)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as exc:
+                with self._lock:
+                    self._normalizer_errors += 1
+                    self._last_normalizer_error = f"{type(exc).__name__}: {exc}"
+                if self._normalizer_errors <= 5 or self._normalizer_errors % 1000 == 0:
+                    app_logger.warning(
+                        "Common feed normalizer rejected tick group=%s token=%s error=%s count=%s",
+                        group, token, exc, self._normalizer_errors,
+                    )
                 continue
             except Exception:
                 with self._lock:
@@ -337,6 +348,8 @@ class CommonWebSocketManager:
                 "max_socket_sessions": self._max_sockets,
                 "consumers": sorted(set(self._callbacks) | set(self._record_callbacks)),
                 "delivery_errors": self._delivery_errors,
+                "normalizer_errors": self._normalizer_errors,
+                "last_normalizer_error": self._last_normalizer_error,
                 "ticks_received": self._ticks_received,
                 "ticks_by_exchange_type": dict(self._ticks_by_exchange),
                 "last_tick": dict(self._last_tick) if self._last_tick else None,
