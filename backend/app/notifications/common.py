@@ -38,6 +38,23 @@ def _strictest_positive_limit(values):
     return min(positive) if positive else 0
 
 
+def _finish_dispatch_transaction(dispatch_method):
+    """Close dispatcher-owned read transactions without touching caller work."""
+    def wrapped(self, db, event):
+        caller_owned_transaction = db.in_transaction()
+        try:
+            return dispatch_method(self, db, event)
+        finally:
+            # dispatch() commits accepted paper mutations itself. Queries made
+            # afterward (or an early fail-closed return) can otherwise leave a
+            # fresh SQLAlchemy session in an implicit read transaction. Close
+            # only transactions created by this dispatcher; never rollback a
+            # transaction that was already active when the caller entered.
+            if not caller_owned_transaction and db.in_transaction():
+                db.rollback()
+    return wrapped
+
+
 def _valid_alert_rule(rule) -> bool:
     """Fail closed if persisted risk configuration is malformed."""
     try:
@@ -93,6 +110,7 @@ class AlertService:
             self._last_sent[key] = event.timestamp_ns
         return sent
 
+    @_finish_dispatch_transaction
     def dispatch(self, db, event: AlertEvent) -> int:
         paper = event.metadata.get("paper_trade")
         gross = event.metadata.get("gross_profit", event.metadata.get("gross_pnl", event.metadata.get("gross_profit_rupees")))
