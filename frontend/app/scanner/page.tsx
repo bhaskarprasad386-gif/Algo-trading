@@ -6,7 +6,7 @@ import { Activity, Bell, Filter, RefreshCw, Search, ShieldCheck, SlidersHorizont
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 
-const markets = ["ALL F&O", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
+const markets = ["ALL F&O STOCKS"];
 const columns = ["Symbol", "Expiry", "Cash Bid/Ask", "Future Bid/Ask", "Executable Gap", "Volume / OI", "Signal"];
 
 type Row = Record<string, unknown>;
@@ -43,7 +43,7 @@ export default function ScannerPage() {
     setError(null);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(`${base}/api/v1/scanner/cash-future/live/fast?limit=50`, { cache: "no-store" });
+      const response = await fetch(`${base}/api/v1/scanner/cash-future/live/fast?limit=500`, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail || `Scanner HTTP ${response.status}`);
       const data = Array.isArray(body?.data) ? body.data : [];
@@ -85,7 +85,7 @@ export default function ScannerPage() {
 
   return (
     <div className="min-h-screen space-y-5 theme-bg p-4 theme-text">
-      <PageTitle eyebrow="Phase 3 • Live Scanner" title="Live Scanner" description="All F&O instruments with live 1-second scanner output, executable bid/ask gap, volume/OI and strategy signals." />
+      <PageTitle eyebrow="Phase 3 • Live Scanner" title="Cash-Future Live Scanner" description="Live Cash-Future opportunities across the subscribed F&O stock-futures universe, with executable bid/ask gap, volume/OI and strategy signals." />
 
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-wrap items-center gap-2">
@@ -116,7 +116,7 @@ export default function ScannerPage() {
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          ["Eligible Instruments", loading ? "…" : filteredRows.length.toLocaleString("en-IN")],
+          ["Live F&O Rows", loading ? "…" : filteredRows.length.toLocaleString("en-IN")],
           ["Signals Detected", loading ? "…" : signals.toLocaleString("en-IN")],
           ["Executable Gaps", loading ? "…" : gaps.toLocaleString("en-IN")],
           ["Last Scan", loading ? "…" : rows.length ? "LIVE" : "—"],
