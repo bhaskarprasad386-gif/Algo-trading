@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     LIVE_BOX_SPREAD_RESULT_RETENTION_DAYS: int = 90
     # Box-Spread paper automation is opt-in and only touches active PAPER accounts.
     PAPER_BOX_SPREAD_AUTO_CYCLE_ENABLED: bool = False
+    # Keep alert-driven paper monitoring isolated from the live scanner by default.
+    LIVE_PAPER_MONITOR_ENABLED: bool = False
     PAPER_BOX_SPREAD_AUTO_CYCLE_INTERVAL_SECONDS: int = 5
     PAPER_BOX_SPREAD_AUTO_CYCLE_MIN_PNL: float = 0.0
     LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT: float = 0.0
