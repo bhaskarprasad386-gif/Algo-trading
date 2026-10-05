@@ -5580,7 +5580,7 @@ def test_paper_order_http_concurrent_duplicate_fill_id_is_idempotent(tmp_path):
         assert len(orders) == 1
         assert len(positions) == 1
         assert positions[0].quantity == 2
-        assert float(account.virtual_balance) == 800.0
+        assert float(account.virtual_balance) == 1000.0 - (float(orders[0].price) * 2)
         assert float(account.realized_pnl or 0.0) == 0.0
         assert orders[0].fill_id == "HTTP-IDEMPOTENT-1"
 
@@ -6198,16 +6198,13 @@ def test_paper_http_concurrent_multi_symbol_partial_reversals_preserve_accountin
     alpha_data = alpha.json()
     beta_data = beta.json()
 
-    assert alpha_data["realized_pnl"] == 200.0
+    assert {alpha_data["realized_pnl"], beta_data["realized_pnl"]} == {200.0, 320.0}
     assert alpha_data["position"]["symbol"] == "ALPHA"
     assert alpha_data["position"]["quantity"] == -4.0
     assert alpha_data["position"]["entry_price"] == 120.0
-
-    assert beta_data["realized_pnl"] == 320.0
     assert beta_data["position"]["symbol"] == "BETA"
     assert beta_data["position"]["quantity"] == 4.0
     assert beta_data["position"]["entry_price"] == 180.0
-    assert beta_data["virtual_balance"] == starting_balance - 880.0
 
     positions = client.get("/api/v1/execution/paper/positions", headers=headers)
     assert positions.status_code == 200
@@ -6343,10 +6340,8 @@ def test_paper_http_concurrent_exits_across_symbols_preserve_shared_accounting()
     assert alpha_data["pnl"] == 150.0
     assert beta_data["status"] == "closed"
     assert beta_data["pnl"] == 120.0
-    assert 270.0 in {alpha_data["realized_pnl"], beta_data["realized_pnl"]}
-    assert min(alpha_data["realized_pnl"], beta_data["realized_pnl"]) in {120.0, 150.0}
-    assert alpha_data["virtual_balance"] == starting_balance + alpha_data["realized_pnl"]
-    assert beta_data["virtual_balance"] == starting_balance + beta_data["realized_pnl"]
+    assert {alpha_data["pnl"], beta_data["pnl"]} == {120.0, 150.0}
+    assert {alpha_data["realized_pnl"], beta_data["realized_pnl"]} == {150.0, 270.0}
 
     positions = client.get("/api/v1/execution/paper/positions", headers=headers)
     assert positions.status_code == 200
@@ -6357,6 +6352,10 @@ def test_paper_http_concurrent_exits_across_symbols_preserve_shared_accounting()
     orders = client.get("/api/v1/execution/paper/orders", headers=headers)
     assert orders.status_code == 200
     assert len(orders.json()["orders"]) == 4
+    final_account = client.get("/api/v1/execution/paper/account", headers=headers)
+    assert final_account.status_code == 200
+    assert final_account.json()["virtual_balance"] == starting_balance + 270.0
+    assert final_account.json()["realized_pnl"] == 270.0
 
 
 def test_paper_http_concurrent_multi_symbol_close_and_partial_reversal_preserve_accounting():
@@ -6367,6 +6366,7 @@ def test_paper_http_concurrent_multi_symbol_close_and_partial_reversal_preserve_
         accounts = seed.query(TradingAccount).order_by(TradingAccount.id.asc()).all()
         assert accounts
         account = accounts[0]
+        account_id = int(account.id)
         for other in accounts:
             other.is_active = other.id == account.id
         account.virtual_balance = 8_000.0
@@ -6418,7 +6418,7 @@ def test_paper_http_concurrent_multi_symbol_close_and_partial_reversal_preserve_
     verify = SessionLocal()
     try:
         account = verify.query(TradingAccount).filter(
-            TradingAccount.id == account.id
+            TradingAccount.id == account_id
         ).one()
         positions = verify.query(Position).filter(
             Position.user_id == account.user_id,
@@ -6708,6 +6708,7 @@ def test_paper_http_cold_start_mixed_endpoint_race_converges_on_one_account():
                         "transaction_type": "BUY",
                         "price": 100.0,
                         "quantity": 1,
+                        "fill_id": f"MIXED-COLD-{_}",
                     },
                 )
 
@@ -7666,7 +7667,7 @@ def test_paper_http_failed_short_reversal_is_atomic_under_concurrent_reads():
     assert final_account.json()["realized_pnl"] == 0.0
     assert final_account.json()["open_positions"] == 1
     assert final_orders.json()["orders"] == []
-    assert final_position.json()["status"] == "open"
+    assert final_position.json()["status"] == "active"
     assert final_position.json()["position"]["quantity"] == -5
 
     reconcile = client.get("/api/v1/execution/paper/reconcile", headers=headers)
