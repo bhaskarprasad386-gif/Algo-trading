@@ -145,6 +145,12 @@ class CashFutureOpportunityScanner:
             self._results[(symbol, month)] = result
             return result
 
+    def reset(self) -> None:
+        """Drop cached pair state when the subscribed futures contract set rolls."""
+        with self._lock:
+            self._latest.clear()
+            self._results.clear()
+
     def scan(self, records: Iterable[tuple[MarketDataRecord, str]]) -> tuple[CashFutureScanResult, ...]:
         results = []
         for record, month in records:
