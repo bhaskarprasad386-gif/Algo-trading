@@ -1015,7 +1015,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             invalid_orders.append(f"invalid_order:{order.id}")
             continue
         quantity = int(raw_filled_quantity)
-        execution_price = raw_price  # request price is the canonical replay price; corrupted average-fill metadata is reported separately
+        execution_price = raw_average_fill_price or raw_price
         audit_price = raw_price
         if str(order.status) != "FILLED":
             invalid_orders.append(f"order_status_canonicality_mismatch:{order.id}")
@@ -1280,7 +1280,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         "status": "OK" if not mismatches else "MISMATCH",
         "repairability": repairability,
         "repairability_reason": repairability_reason,
-        "mismatch_categories": sorted(mismatch_categories),
+        "mismatch_categories": [category for category in [\n            "ORDER_INTEGRITY",\n            "AUDIT_INTEGRITY",\n            "POSITION_STATE",\n            "ACCOUNTING_STATE",\n            "BASELINE_INTEGRITY",\n            "RECONCILIATION",\n        ] if category in mismatch_categories],
         "baseline_status": baseline_status,
         "user_id": user_id,
         "orders": len(orders),
