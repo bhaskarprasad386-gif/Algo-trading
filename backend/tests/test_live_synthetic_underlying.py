@@ -44,6 +44,20 @@ def test_index_token_resolution_uses_exact_master_entry():
     assert master.resolve_index_token("NIFTY") == "99926000"
 
 
+def test_index_token_resolution_rejects_legacy_single_entry():
+    master = InstrumentMaster()
+    master.instruments = [
+        {"exch_seg": "NSE", "symbol": "NIFTY", "token": "25", "instrumenttype": "AMXIDX"},
+    ]
+    master._loaded = True
+    try:
+        master.resolve_index_token("NIFTY")
+    except LookupError as exc:
+        assert "expected exactly one index instrument" in str(exc)
+    else:
+        raise AssertionError("expected legacy index token to be rejected")
+
+
 def test_index_token_resolution_prefers_migrated_angel_index_entry():
     master = InstrumentMaster()
     master.instruments = [
