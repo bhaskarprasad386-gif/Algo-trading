@@ -234,9 +234,10 @@ class CommonWebSocketManager:
             # Keep the consumer registry intact and let the next recovery cycle
             # retry socket creation instead of leaving socket_groups at zero.
             with self._lock:
-                for group, _, tokens, created_at in stale:
+                for group, stale_socket, tokens, created_at in stale:
                     if group in self._sockets:
                         continue
+                    self._sockets[group] = stale_socket
                     self._socket_tokens[group] = set(tokens)
                     self._socket_created_at[group] = created_at
             raise
