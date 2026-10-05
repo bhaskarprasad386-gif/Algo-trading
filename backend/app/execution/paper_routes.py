@@ -1053,7 +1053,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         before_avg = float(state.average_price)
         after, pnl_delta = _accounting_after_fill(
             side=side,
-            price=price,
+            price=execution_price,
             quantity=quantity,
             current_quantity=state.quantity,
             current_average_price=state.average_price,
@@ -1083,7 +1083,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             if before_qty < 0:
                 released_margin = _buy_cost(before_avg, closed_qty)
                 if after.quantity > 0:
-                    remaining_position_cost = _buy_cost(price, int(after.quantity))
+                    remaining_position_cost = _buy_cost(execution_price, int(after.quantity))
                 else:
                     # Remaining short margin was already reserved in the
                     # opening short transaction. Do not subtract it again;
@@ -1095,13 +1095,13 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
                     8,
                 )
             else:
-                reconstructed_cash = round(reconstructed_cash - _buy_cost(price, quantity), 8)
+                reconstructed_cash = round(reconstructed_cash - _buy_cost(execution_price, quantity), 8)
         else:
             if before_qty > 0:
-                proceeds = _buy_cost(price, closed_qty)
+                proceeds = _buy_cost(execution_price, closed_qty)
                 if after.quantity < 0:
                     reconstructed_cash = round(
-                        reconstructed_cash + proceeds - _buy_cost(price, abs(int(after.quantity))),
+                        reconstructed_cash + proceeds - _buy_cost(execution_price, abs(int(after.quantity))),
                         8,
                     )
                 else:
