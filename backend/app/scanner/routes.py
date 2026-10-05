@@ -42,6 +42,14 @@ class FullFnoJobRequest(BaseModel):
     max_holding_days: int = Field(30, ge=1, le=3650)
     future_selection: str = "BOTH"
 IST = ZoneInfo("Asia/Kolkata")
+_live_cash_future_snapshot_provider = None
+
+
+def configure_live_cash_future_snapshot(provider) -> None:
+    """Configure the process-local live scanner snapshot provider."""
+    global _live_cash_future_snapshot_provider
+    _live_cash_future_snapshot_provider = provider
+
 
 
 def _history_now() -> datetime:
@@ -76,9 +84,16 @@ def cash_future_live_scanner(symbols: str = Query(...), db: Session = Depends(ge
         raise HTTPException(status_code=400, detail="at least one symbol is required")
     if len(requested) > 50:
         raise HTTPException(status_code=400, detail="maximum 50 symbols per live scan")
-    result = CashFutureHistoryCollector(requested).collect(db)
+    if _live_cash_future_snapshot_provider is None:
+        raise HTTPException(status_code=503, detail="live Cash-Future scanner is not initialized")
+    try:
+        data = _live_cash_future_snapshot_provider(max_age_seconds=5.0, limit=50)
+        data = [row for row in data if str(row.get("symbol", "")).upper() in requested]
+    except Exception as exc:
+        app_logger.error("Live Cash-Future scanner snapshot failed: %s", exc)
+        raise HTTPException(status_code=503, detail="live Cash-Future scanner unavailable") from exc
     return {"status": "success", "scanner": "cash-future", "mode": "live",
-            "count": len(result["collected"]), "data": result["collected"], "errors": result["errors"]}
+            "count": len(data), "data": data, "errors": []}
 
 
 @router.post("/cash-future/history")
