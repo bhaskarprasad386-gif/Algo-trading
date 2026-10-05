@@ -790,7 +790,7 @@ async function loadLiveDataHealth(){
   const r=await fetch(base()+'/api/v1/market-data/live-health',{cache:'no-store'});if(!r.ok)throw new Error('Health API '+r.status);
   const p=await r.json();const cf=(p.sources||[]).find(x=>x.source==='angelone-live-1s')||{};
   document.getElementById('livePersisted').textContent=p.persisted?'YES':'NO';document.getElementById('liveFeedStatus').textContent=p.feed_status||'—';document.getElementById('liveRecordCount').textContent=fmt(p.records);document.getElementById('liveInstrumentCount').textContent=fmt(p.instruments);
-  const ok=p.feed_status==='LIVE'&&p.persisted;document.getElementById('liveDataHealthBadge').textContent=ok?'LIVE':'CHECK';document.getElementById('liveDataHealthBadge').className=ok?'up':'neutral';
+  const ok=p.feed_status==='LIVE';document.getElementById('liveDataHealthBadge').textContent=ok?'LIVE':'CHECK';document.getElementById('liveDataHealthBadge').className=ok?'up':'neutral';
   document.getElementById('liveDataHealthStatus').textContent='Session '+p.market_session+' • age '+(p.age_seconds==null?'—':Number(p.age_seconds).toFixed(1)+'s')+' • source '+p.source+' • '+p.timeframe+' • orders '+p.live_orders;
   document.getElementById('homeData').textContent=p.persisted?'READY':'NO DATA';document.getElementById('homeData').className='health-state '+(p.persisted?'up':'neutral');
   document.getElementById('sideSystem').textContent=ok?'ONLINE':'CHECK';document.getElementById('sideApi').textContent=ok?'Connected':'CHECK';document.getElementById('sideDb').textContent=p.persisted?'Connected':'CHECK';document.getElementById('sideMarket').textContent=ok?'Live':'CHECK';document.getElementById('sideLast').textContent='Data age '+(p.age_seconds==null?'—':Number(p.age_seconds).toFixed(1)+'s');
