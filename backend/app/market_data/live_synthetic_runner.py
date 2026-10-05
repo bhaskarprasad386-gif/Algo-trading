@@ -340,7 +340,7 @@ class LiveSyntheticRunner:
             try:
                 self._wait_for_live_atm(atm_provider)
             except TimeoutError as exc:
-                app_logger.warning("Synthetic live underlying feed timeout; retrying: %s", exc)
+                app_logger.warning("Synthetic live underlying feed timeout; retrying: {}", exc)
                 sleep(5.0)
                 return
             while not self._stop_requested.is_set() and (self._recorder is None or not self._recorder.stop_event.is_set()):
@@ -348,7 +348,7 @@ class LiveSyntheticRunner:
                 try:
                     subscriptions = self.build_subscriptions()
                 except LookupError as exc:
-                    app_logger.warning("Synthetic live subscription skipped: %s", exc)
+                    app_logger.warning("Synthetic live subscription skipped: {}", exc)
                     sleep(5.0)
                     continue
                 if not subscriptions:
