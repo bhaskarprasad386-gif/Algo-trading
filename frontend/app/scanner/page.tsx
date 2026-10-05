@@ -64,7 +64,7 @@ export default function ScannerPage() {
   }, [requestedMarket]);
 
   useEffect(() => {
-    void load(true);
+    void load();
     const timer = window.setInterval(() => { void load(); }, 1500);
     return () => window.clearInterval(timer);
   }, []);
