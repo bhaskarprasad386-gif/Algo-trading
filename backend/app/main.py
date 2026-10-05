@@ -112,7 +112,7 @@ async def lifespan(app: FastAPI):
         _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
     if settings.PAPER_BOX_SPREAD_AUTO_CYCLE_ENABLED and _paper_box_spread_cycle_task is None:
         _paper_box_spread_cycle_task = asyncio.create_task(_paper_box_spread_cycle_loop())
-    if _live_paper_monitor_task is None:
+    if settings.LIVE_PAPER_MONITOR_ENABLED and _live_paper_monitor_task is None:
         _live_paper_monitor_task = asyncio.create_task(_live_paper_monitor_loop())
     try:
         yield
@@ -505,22 +505,35 @@ async def _run_live_runner_in_daemon_thread(runner, *, name: str) -> None:
 
 
 async def _live_cash_future_loop() -> None:
+    """Supervise the live scanner feed and retry transient broker/startup failures."""
     global live_cash_future_runner
-    runner = LiveCashFutureCommonRunner(
-        settings.BACKTEST_DATA_DB,
-        instrument_master=instrument_master,
-        on_payload=lambda payload: live_cash_future_scanner.observe(
-            payload, session_factory=SessionLocal
-        ),
-    )
-    live_cash_future_runner = runner
-    try:
-        await _run_live_runner_in_daemon_thread(
-            runner, name="live-cash-future-runner"
+    while True:
+        runner = LiveCashFutureCommonRunner(
+            settings.BACKTEST_DATA_DB,
+            instrument_master=instrument_master,
+            on_payload=lambda payload: live_cash_future_scanner.observe(
+                payload, session_factory=SessionLocal
+            ),
         )
-    finally:
-        _stop_live_runner_nonblocking(runner, name="live-cash-future-final-stop")
-        live_cash_future_runner = None
+        live_cash_future_runner = runner
+        try:
+            await _run_live_runner_in_daemon_thread(
+                runner, name="live-cash-future-runner"
+            )
+            if not runner.stop_event.is_set():
+                app_logger.warning("Live Cash-Future runner exited unexpectedly; retrying in 5s")
+                await asyncio.sleep(5.0)
+            else:
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            app_logger.error("Live Cash-Future runner failed; retrying in 5s: %s", exc)
+            await asyncio.sleep(5.0)
+        finally:
+            _stop_live_runner_nonblocking(runner, name="live-cash-future-final-stop")
+            if live_cash_future_runner is runner:
+                live_cash_future_runner = None
 
 async def _live_synthetic_loop() -> None:
     """Subscribe only to the requested live option/future universe."""
