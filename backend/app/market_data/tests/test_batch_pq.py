@@ -82,3 +82,34 @@ def test_strategy_feed_reuses_same_manager_for_multiple_consumers():
     first.stop()
     assert manager.snapshot()["subscriptions"] == 1
     second.stop()
+
+
+def test_strategy_feed_reuses_existing_canonical_descriptor_for_shared_token():
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    canonical = InstrumentDescriptor(
+        InstrumentKey("NSE", "NSE", "25"),
+        "NIFTY",
+        "index",
+        "NSE",
+        "NSE",
+    )
+    manager.registry.register(canonical)
+
+    feed = CommonStrategyMarketFeed("synthetic-underlyings", manager=manager)
+    duplicate = feed.descriptor(
+        exchange="NSE",
+        token="25",
+        symbol="NIFTY",
+        instrument_type="index",
+        segment="NSE",
+        expiry="2026-10-29",
+        strike=25000.0,
+    )
+    received = []
+    feed.start([duplicate], received.append)
+
+    assert manager.registry.get(duplicate.key) == canonical
+    assert manager.snapshot()["subscriptions"] == 1
+    assert manager.snapshot()["consumers"] == ["synthetic-underlyings"]
+
+    feed.stop()
