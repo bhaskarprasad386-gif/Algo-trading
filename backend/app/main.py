@@ -544,7 +544,11 @@ async def _live_synthetic_loop() -> None:
                     continue
                 if typ == "FUTSTK" and segment == "NFO" and name in NIFTY50_STOCK_SYMBOLS:
                     nifty50_stocks.add(name)
-                elif typ == "FUTIDX" and segment in {"NFO", "BFO"}:
+                elif (
+                    typ == "FUTIDX"
+                    and segment in {"NFO", "BFO"}
+                    and name in NIFTY50_INDEX_SYMBOLS
+                ):
                     index_symbols.add(name)
                 elif typ == "FUTCOM" and segment == "MCX":
                     commodity_symbols.add(name)
@@ -556,7 +560,7 @@ async def _live_synthetic_loop() -> None:
             commodity_symbols = sorted(commodity_symbols)
             if missing_index_underlyings:
                 app_logger.warning(
-                    "Synthetic live index underlyings skipped because no concrete Angel token exists: %s",
+                    "Synthetic live index underlyings skipped because no concrete Angel token exists: {}",
                     ", ".join(missing_index_underlyings),
                 )
 
