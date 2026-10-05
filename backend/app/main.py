@@ -505,8 +505,10 @@ async def _run_live_runner_in_daemon_thread(runner, *, name: str) -> None:
 
 
 async def _live_cash_future_loop() -> None:
-    """Supervise the live scanner feed and retry transient broker/startup failures."""
+    """Supervise the live scanner feed with bounded exponential retry backoff."""
     global live_cash_future_runner
+    retry_delay = 5.0
+    max_retry_delay = 60.0
     while True:
         runner = LiveCashFutureCommonRunner(
             settings.BACKTEST_DATA_DB,
@@ -521,15 +523,23 @@ async def _live_cash_future_loop() -> None:
                 runner, name="live-cash-future-runner"
             )
             if not runner.stop_event.is_set():
-                app_logger.warning("Live Cash-Future runner exited unexpectedly; retrying in 5s")
-                await asyncio.sleep(5.0)
+                app_logger.warning(
+                    "Live Cash-Future runner exited unexpectedly; retrying in %.1fs",
+                    retry_delay,
+                )
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(max_retry_delay, retry_delay * 2.0)
             else:
                 return
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            app_logger.error("Live Cash-Future runner failed; retrying in 5s: %s", exc)
-            await asyncio.sleep(5.0)
+            app_logger.error(
+                "Live Cash-Future runner failed; retrying in %.1fs: %s",
+                retry_delay, exc,
+            )
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(max_retry_delay, retry_delay * 2.0)
         finally:
             _stop_live_runner_nonblocking(runner, name="live-cash-future-final-stop")
             if live_cash_future_runner is runner:
