@@ -288,3 +288,30 @@ def test_live_scanner_exposes_absolute_quality_score():
     row = scanner.snapshot(max_age_seconds=10, limit=1)[0]
     assert row["quality_score"] == signal.quality_score
     assert row["comparison"] == "single contract"
+
+
+def test_live_scanner_snapshot_excludes_stale_signals():
+    scanner = LiveCashFutureScanner()
+    now_ns = int(time() * 1_000_000_000)
+    scanner.observe({
+        "leg": "CASH", "underlying": "FRESH", "ltp": 100, "bid": 99.9, "ask": 100,
+        "source_timestamp_ns": now_ns,
+    })
+    fresh = scanner.observe({
+        "leg": "FUTURE", "underlying": "FRESH", "contract_month": "CURRENT",
+        "ltp": 101, "bid": 100.8, "ask": 101, "lot_size": 1,
+        "source_timestamp_ns": now_ns,
+    })
+    assert fresh is not None
+    scanner.observe({
+        "leg": "CASH", "underlying": "STALE", "ltp": 100, "bid": 99.9, "ask": 100,
+        "source_timestamp_ns": now_ns - 10_000_000_000,
+    })
+    stale = scanner.observe({
+        "leg": "FUTURE", "underlying": "STALE", "contract_month": "CURRENT",
+        "ltp": 101, "bid": 100.8, "ask": 101, "lot_size": 1,
+        "source_timestamp_ns": now_ns - 10_000_000_000,
+    })
+    assert stale is not None
+    rows = scanner.snapshot(max_age_seconds=5.0, limit=50)
+    assert [row["symbol"] for row in rows] == ["FRESH"]
