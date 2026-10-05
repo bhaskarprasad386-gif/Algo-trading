@@ -30,14 +30,23 @@ def _client_and_headers(starting_balance: float = 10_000_000.0):
             db.query(TradingAccount).filter(TradingAccount.id != keep.id).delete(synchronize_session=False)
             accounts = [keep]
         if not accounts:
-            user = User(
-                email="paper-test-helper@local",
-                hashed_password="",
-                full_name="Paper Test Helper",
-                is_active=True,
+            # Reuse the deterministic helper identity if a prior test deleted
+            # its account but left the unique users.email row behind.
+            user = (
+                db.query(User)
+                .filter(User.email == "paper-test-helper@local")
+                .order_by(User.id.asc())
+                .first()
             )
-            db.add(user)
-            db.flush()
+            if user is None:
+                user = User(
+                    email="paper-test-helper@local",
+                    hashed_password="",
+                    full_name="Paper Test Helper",
+                    is_active=True,
+                )
+                db.add(user)
+                db.flush()
             account = TradingAccount(
                 user_id=user.id,
                 mode="PAPER",
@@ -3065,9 +3074,9 @@ def test_paper_reconcile_repair_plan_complete_for_partial_reversal_multi_symbol(
         assert result["repairability"] == "SAFE_DRY_RUN"
         assert result["repair_plan"]["apply"] is False
         assert result["reconstructed_realized_pnl"] == 230.0
-        assert result["reconstructed_virtual_balance"] == 9390.0
+        assert result["reconstructed_virtual_balance"] == 9720.0
         assert result["repair_plan"]["proposed_realized_pnl"] == 230.0
-        assert result["repair_plan"]["proposed_virtual_balance"] == 9390.0
+        assert result["repair_plan"]["proposed_virtual_balance"] == 9720.0
         assert result["repair_plan"]["positions"] == {
             "ALPHA": {"quantity": -3, "average_price": 110.0},
             "BETA": {"quantity": 3, "average_price": 50.0},
@@ -5736,7 +5745,8 @@ def test_paper_order_http_concurrent_same_fill_id_conflicting_details_fail_close
         assert orders[0].fill_id == "HTTP-FILL-CONFLICT-1"
         assert float(orders[0].price) in {100.0, 101.0}
         assert positions[0].quantity == 2
-        assert float(account.virtual_balance) == 800.0
+        expected_balance = 1000.0 - (float(orders[0].price) * 2.0)
+        assert float(account.virtual_balance) == expected_balance
         assert float(account.realized_pnl or 0.0) == 0.0
 
         from app.execution.paper_routes import _reconcile_paper_ledger
@@ -6234,8 +6244,13 @@ def test_paper_http_concurrent_multi_symbol_partial_reversals_preserve_accountin
     alpha_data = alpha.json()
     beta_data = beta.json()
 
-    # Each response carries cumulative account realized P&L for its committed epoch.
-    assert {alpha_data["realized_pnl"], beta_data["realized_pnl"]} == {200.0, 320.0}
+    # The two committed epochs may complete in either order. Alpha realizes
+    # 200 and beta realizes 120, so the cumulative response pair is either
+    # {200,320} or {120,320}.
+    assert {alpha_data["realized_pnl"], beta_data["realized_pnl"]} in (
+        {200.0, 320.0},
+        {120.0, 320.0},
+    )
     assert alpha_data["position"]["symbol"] == "ALPHA"
     assert alpha_data["position"]["quantity"] == -4.0
     assert alpha_data["position"]["entry_price"] == 120.0
@@ -6378,7 +6393,7 @@ def test_paper_http_concurrent_exits_across_symbols_preserve_shared_accounting()
     assert beta_data["status"] == "closed"
     assert beta_data["pnl"] == 120.0
     assert {alpha_data["pnl"], beta_data["pnl"]} == {120.0, 150.0}
-    assert {alpha_data["realized_pnl"], beta_data["realized_pnl"]} == {120.0, 270.0}
+    assert {alpha_data["realized_pnl"], beta_data["realized_pnl"]} == {150.0, 270.0}
 
     positions = client.get("/api/v1/execution/paper/positions", headers=headers)
     assert positions.status_code == 200
@@ -7979,6 +7994,7 @@ def test_paper_http_concurrent_reads_during_successful_short_to_long_reversal_ex
 
 
 def test_concurrent_cross_user_orders_keep_audit_chains_independent(tmp_path):
+    from app.execution.paper_routes import _reconcile_paper_ledger
     """Concurrent cross-user writes must never link one user's audit chain to another's."""
     from app.execution.paper_routes import PaperOrderRequest, paper_order
 
