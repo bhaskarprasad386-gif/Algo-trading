@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     angel_client_id: str = ""
     angel_password: str = ""
     angel_totp_secret: str = ""
+    # Refresh Angel authentication before a long-running WebSocket can reuse an expired session.
+    ANGEL_SESSION_REFRESH_INTERVAL_SECONDS: float = 21600.0
 
     # Cash-Future history collector
     CASH_FUTURE_HISTORY_ENABLED: bool = False
