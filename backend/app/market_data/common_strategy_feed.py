@@ -107,7 +107,18 @@ class CommonStrategyMarketFeed:
             raise ValueError("at least one descriptor is required")
         if not callable(callback):
             raise TypeError("callback must be callable")
-        self.manager.registry.register_many(descriptors)
+        # InstrumentKey is the broker-level identity. Multiple strategy
+        # consumers may describe the same broker instrument with different
+        # strategy metadata (for example an option subscription carrying its
+        # own strike/expiry). Reuse the already-registered canonical
+        # descriptor instead of treating that shared identity as a conflict.
+        fresh = []
+        for descriptor in descriptors:
+            existing = self.manager.registry.get(descriptor.key)
+            if existing is None:
+                fresh.append(descriptor)
+        if fresh:
+            self.manager.registry.register_many(tuple(fresh))
         self.manager.register_normalized_callback(self.consumer, callback)
         keys = tuple(d.key for d in descriptors)
         self.manager.subscribe(self.consumer, list(keys), mode=self.mode)
