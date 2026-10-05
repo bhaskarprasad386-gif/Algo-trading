@@ -1256,6 +1256,18 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
 
     if side == "BUY":
         if active is not None and active.quantity > 0:
+            # A concurrent duplicate of the exact same legacy BUY entry is not
+            # a legitimate scale-in. Reject it at the symbol boundary. Explicit
+            # fill_id retries are handled above as idempotent executions.
+            latest = _latest_symbol_order(db, user_id, symbol)
+            if (
+                fill_id is None
+                and latest is not None
+                and latest.transaction_type.upper() == "BUY"
+                and float(latest.price) == float(request.price)
+                and int(latest.quantity) == int(quantity)
+            ):
+                raise HTTPException(status_code=409, detail="A paper position is already active for this symbol")
             fill = Fill(price=request.price, quantity=quantity)
             accounting_state, pnl = _accounting_after_fill(side="BUY", price=fill.price, quantity=fill.quantity, current_quantity=float(active.quantity), current_average_price=float(active.average_price), current_realized_pnl=account.realized_pnl)
             _apply_accounting_to_account(account, before_quantity=float(active.quantity), before_average_price=float(active.average_price), after=accounting_state)
