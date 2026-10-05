@@ -34,7 +34,12 @@ export function StrategyWorkspace({slug}:{slug:keyof typeof configs}){
   const c=configs[slug]; const isCustom=slug==="custom-strategy"; const [search,setSearch]=useState(""); const [control,setControl]=useState(c.controls[0]); const [refreshing,setRefreshing]=useState(false); const [rows,setRows]=useState<Record<string,unknown>[]>([]); const [loading,setLoading]=useState(true); const [error,setError]=useState<string|null>(null);
   const endpoint=slug==="cash-future"?"/api/v1/scanner/cash-future/live/fast?limit=500":slug==="calendar-spread"?"/api/v1/scanner/calendar-spread/live?limit=50":slug==="synthetic-arbitrage"?"/api/v1/scanner/synthetic-cash-carry/live?limit=50":slug==="box-spread"?"/api/v1/scanner/box-spread/live?limit=50":null;
   const load=async(showLoading=false)=>{if(!endpoint){setRows([]);setLoading(false);return;}if(showLoading)setLoading(true);setError(null);try{const base=appConfig.apiBaseUrl.replace(/\/$/,"");const response=await fetch(`${base}${endpoint}`,{cache:"no-store"});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body?.detail||`${c.title} HTTP ${response.status}`);const data=Array.isArray(body?.data)?body.data:[];setRows(data.filter((item:unknown):item is Record<string,unknown>=>!!item&&typeof item==="object"));}catch(e){setRows([]);setError(e instanceof Error?e.message:"Backend unavailable");}finally{setLoading(false);}};
-  useEffect(()=>{\n    void load(true);\n    if(!endpoint) return;\n    const timer=window.setInterval(()=>{void load();},1500);\n    return ()=>window.clearInterval(timer);\n  },[endpoint]);
+  useEffect(()=>{
+    void load(true);
+    if(!endpoint) return;
+    const timer=window.setInterval(()=>{void load();},1500);
+    return ()=>window.clearInterval(timer);
+  },[endpoint]);
   const filteredRows=useMemo(()=>{const q=search.trim().toUpperCase();if(!q)return rows;return rows.filter(row=>Object.values(row).some(value=>String(value??"").toUpperCase().includes(q)));},[rows,search]);
   const signalCount=rows.filter(row=>row.qualifies===true||Number(row.executable_edge??row.executable_gap??0)>0||Number(row.gap_points??0)>0).length;
   const lastScan=rows.reduce<string|null>((latest,row)=>{const raw=row.timestamp_ns??row.timestamp??null;if(raw==null)return latest;return latest==null||String(raw)>latest?String(raw):latest;},null);
@@ -43,12 +48,12 @@ export function StrategyWorkspace({slug}:{slug:keyof typeof configs}){
   return <div className="min-h-screen space-y-5 theme-bg p-4 theme-text">
     <div className="flex items-center justify-between gap-3">
       <Link href="/scanner" className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted hover:theme-border"><ArrowLeft className="h-4 w-4"/> Overall Scanner</Link>
-      <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold ${loading?"theme-border theme-warning-bg theme-warning":error?"theme-border theme-danger-bg theme-danger":"theme-border theme-success-bg theme-success"}`}>{loading?"CONNECTING":error?"BACKEND ERROR":isCustom?"CONFIGURATION ONLY":"LIVE DATA CONNECTED"}</span>
+      <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold ${loading?"theme-border theme-warning-bg theme-warning":error?"theme-border theme-danger-bg theme-danger":"theme-border theme-success-bg theme-success"}`}>{loading?"CONNECTING":error?"BACKEND ERROR":isCustom?"CONFIGURATION ONLY":rows.length?"LIVE TICKS":"API CONNECTED • NO LIVE DATA"}</span>
     </div>
     <PageTitle eyebrow="Phase 11 • Strategy Workspace" title={c.title+" Dedicated Scanner"} description={c.description}/>
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Universe</p><p className="mt-2 text-sm font-semibold theme-text">{c.universe}</p></Card>
-      <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Scanner</p><p className="mt-2 flex items-center gap-2 text-sm font-semibold theme-accent"><Zap className="h-4 w-4"/> {isCustom?"Custom Logic":"1-second"}</p></Card>
+      <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Scanner</p><p className="mt-2 flex items-center gap-2 text-sm font-semibold theme-accent"><Zap className="h-4 w-4"/> {isCustom?"Custom Logic":"1.5s polling"}</p></Card>
       <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Paper Trading</p><p className="mt-2 text-sm font-semibold theme-muted">ENDPOINT PENDING</p></Card>
       <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Broker Orders</p><p className="mt-2 text-sm font-semibold theme-warning">OFF</p></Card>
     </div>
