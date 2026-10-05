@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
 from typing import Any, Callable
@@ -196,7 +197,7 @@ class LiveCashFutureCommonRunner:
             "leg": meta["leg"],
             "underlying": meta["underlying"],
             "contract_month": meta["contract_month"],
-            "received_at_ns": __import__("time").time_ns(),
+            "received_at_ns": time.time_ns(),
         })
         return payload
 
