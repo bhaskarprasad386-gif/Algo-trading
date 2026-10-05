@@ -388,6 +388,12 @@ def _commit_paper_mutation(db: Session) -> None:
     except OperationalError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="paper trading account is busy; retry") from exc
+    except Exception:
+        # A commit hook/test failure (or an unexpected DB-layer exception) must
+        # never leave the in-memory Session carrying the uncommitted paper
+        # mutation. Roll back before propagating the original failure.
+        db.rollback()
+        raise
 
 
 def _account(db: Session, user_id: int) -> TradingAccount:
@@ -1210,6 +1216,14 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         mismatches.append(f"orphan_position:{symbol}")
 
     reconstructed_realized = round(sum(state.realized_pnl for state in rebuilt.values()), 8)
+    reconstructed_open_exposure = round(
+        sum(
+            abs(int(state.quantity)) * float(state.average_price)
+            for state in rebuilt.values()
+            if int(state.quantity) != 0
+        ),
+        8,
+    )
     realized_delta = round(stored_realized_pnl - reconstructed_realized, 8) if math.isfinite(stored_realized_pnl) else 0.0
     balance_delta = round(stored_virtual_balance - reconstructed_cash, 8) if math.isfinite(stored_virtual_balance) and math.isfinite(reconstructed_cash) else 0.0
     if abs(realized_delta) > 1e-8:
@@ -1266,6 +1280,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         "user_id": user_id,
         "orders": len(orders),
         "reconstructed_realized_pnl": reconstructed_realized,
+        "reconstructed_open_exposure": reconstructed_open_exposure,
         "stored_realized_pnl": round(float(account.realized_pnl or 0.0), 8),
         "reconstructed_virtual_balance": reconstructed_cash,
         "stored_virtual_balance": round(float(account.virtual_balance), 8),
