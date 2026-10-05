@@ -40,15 +40,10 @@ jobs:
           git fetch origin main
           git merge --ff-only origin/main
           test -f "$ENV_FILE"
+
           config_changed=false
           if grep -q '^LIVE_CALENDAR_SPREAD_DATA_ENABLED=' "$ENV_FILE"; then
-            if ! grep -q '^LIVE_CALENDAR_SPREAD_DATA_ENABLED=true
-          sleep 3
-          systemctl is-active --quiet algo-trading.service
-          echo "LIVE_CALENDAR_SPREAD_DATA_ENABLED=true"
-          echo "LIVE_TRADING=OFF"
-          REMOTE
- "$ENV_FILE"; then
+            if ! grep -q '^LIVE_CALENDAR_SPREAD_DATA_ENABLED=true$' "$ENV_FILE"; then
               sed -i 's/^LIVE_CALENDAR_SPREAD_DATA_ENABLED=.*/LIVE_CALENDAR_SPREAD_DATA_ENABLED=true/' "$ENV_FILE"
               config_changed=true
             fi
@@ -56,11 +51,13 @@ jobs:
             printf '\nLIVE_CALENDAR_SPREAD_DATA_ENABLED=true\n' >> "$ENV_FILE"
             config_changed=true
           fi
+
           if [ "$config_changed" = true ]; then
             systemctl restart algo-trading.service
           else
             echo "CONFIG_UNCHANGED_NO_RESTART=true"
           fi
+
           sleep 3
           systemctl is-active --quiet algo-trading.service
           echo "LIVE_CALENDAR_SPREAD_DATA_ENABLED=true"
