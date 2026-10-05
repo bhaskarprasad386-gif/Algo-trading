@@ -40,6 +40,31 @@ _paper_mutation_lock = threading.RLock()
 _paper_bootstrap_lock = threading.RLock()
 
 
+def _uses_shared_sqlite_connection(db: Session) -> bool:
+    """Detect the test-only SQLite StaticPool that shares one connection."""
+    bind = getattr(db, "bind", None)
+    return bool(
+        bind is not None
+        and bind.dialect.name == "sqlite"
+        and bind.pool.__class__.__name__ == "StaticPool"
+    )
+
+
+def _serialized_paper_read(func):
+    """Serialize reads only when the DB pool shares one SQLite connection."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        db = kwargs.get("db")
+        if db is None:
+            db = next((arg for arg in args if isinstance(arg, Session)), None)
+        if db is not None and _uses_shared_sqlite_connection(db):
+            with _paper_mutation_lock:
+                db.rollback()
+                return func(*args, **kwargs)
+        return func(*args, **kwargs)
+    return wrapper
+
+
 def _serialized_paper_mutation(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -290,8 +315,14 @@ def _current_user_id_unlocked(db: Session = Depends(get_db)) -> int:
 
 
 def current_user_id(db: Session = Depends(get_db)) -> int:
-    # Serialize cold-start identity/account bootstrap inside a worker. SQLite
-    # BEGIN IMMEDIATE remains the cross-process serialization boundary.
+    # A StaticPool shares one SQLite connection across TestClient threads.
+    # Serialize identity resolution there so one request cannot replace the
+    # connection's transaction while another request is still resolving user id.
+    if _uses_shared_sqlite_connection(db):
+        with _paper_mutation_lock:
+            db.rollback()
+            with _paper_bootstrap_lock:
+                return _current_user_id_unlocked(db)
     with _paper_bootstrap_lock:
         return _current_user_id_unlocked(db)
 
@@ -539,6 +570,8 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
     )
     seen_order_ids: set[str] = set()
     expected_audit_previous: str | None = None
+    audit_chain_invalid = False
+    audit_hash_invalid = False
     bootstrap_audit_required = str(account.initial_balance_source or "").strip().upper() == "BOOTSTRAP"
     for order in paper_orders:
         raw_quantity = float(order.quantity or 0.0)
@@ -608,7 +641,7 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             if len(audit_hash) != 64 or any(ch not in "0123456789abcdef" for ch in audit_hash.lower()):
                 raise RuntimeError("paper order audit hash invariant violated")
             if previous_audit_hash != expected_audit_previous:
-                raise RuntimeError("paper order audit chain invariant violated")
+                audit_chain_invalid = True
             expected_audit_hash = _paper_audit_payload(
                 user_id=user_id,
                 symbol=raw_symbol,
@@ -623,10 +656,15 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
                 previous_hash=expected_audit_previous,
             )
             if audit_hash != expected_audit_hash:
-                invalid_orders.append(f"audit_hash_mismatch:{order.id}")
+                audit_hash_invalid = True
             expected_audit_previous = audit_hash
         elif previous_audit_hash is not None or expected_audit_previous is not None:
-            raise RuntimeError("paper order audit chain invariant violated")
+            audit_chain_invalid = True
+
+    if audit_chain_invalid:
+        raise RuntimeError("paper order audit chain invariant violated")
+    if audit_hash_invalid:
+        raise RuntimeError("paper order audit hash invariant violated")
 
     accounting_lhs = round(virtual_balance + open_position_cost, 8)
     accounting_rhs = round(initial_virtual_balance + realized_pnl, 8)
@@ -836,6 +874,24 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             )
         ) <= 1e-8
     )
+    # A legacy paper position may legitimately predate durable Order rows.
+    # If the persisted account is conservation-valid, preserve that position as
+    # the deterministic pre-ledger baseline instead of reporting a false orphan.
+    for symbol, final_position in actual_position_by_symbol.items():
+        if symbol in orders_by_symbol:
+            continue
+        if baseline_inference_allowed:
+            baseline_states[symbol] = FillAccountingState(
+                quantity=int(final_position.quantity),
+                average_price=float(final_position.average_price),
+                realized_pnl=0.0,
+            )
+            baseline_cost = round(
+                baseline_cost
+                + _buy_cost(float(final_position.average_price), abs(int(final_position.quantity))),
+                8,
+            )
+
     for symbol, symbol_orders in orders_by_symbol.items():
         final_position = actual_position_by_symbol.get(symbol)
         final_quantity = int(final_position.quantity) if final_position is not None else 0
@@ -1241,6 +1297,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
 
 
 @router.get("/paper/reconcile")
+@_serialized_paper_read
 def paper_reconcile(user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     return _reconcile_paper_ledger(db, user_id)
 
@@ -1424,6 +1481,7 @@ def paper_from_scanner(request: ScannerPaperEntryRequest, user_id: int = Depends
 
 
 @router.get("/paper/account")
+@_serialized_paper_read
 def paper_account(user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     """Return the lightweight paper-account summary used by the Home command center."""
     _validate_paper_state(db, user_id)
@@ -1448,6 +1506,7 @@ def paper_account(user_id: int = Depends(current_user_id), db: Session = Depends
 
 
 @router.get("/paper/orders")
+@_serialized_paper_read
 def paper_orders(user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     _validate_paper_state(db, user_id)
     orders = db.query(Order).filter(
@@ -1459,6 +1518,7 @@ def paper_orders(user_id: int = Depends(current_user_id), db: Session = Depends(
 
 
 @router.get("/paper/positions")
+@_serialized_paper_read
 def paper_positions(user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     _validate_paper_state(db, user_id)
     positions = (
@@ -1490,6 +1550,7 @@ def paper_positions(user_id: int = Depends(current_user_id), db: Session = Depen
 
 
 @router.get("/paper/position")
+@_serialized_paper_read
 def paper_position(symbol: str | None = None, user_id: int = Depends(current_user_id), db: Session = Depends(get_db)):
     _validate_paper_state(db, user_id)
     position = _position(db, user_id, symbol)
