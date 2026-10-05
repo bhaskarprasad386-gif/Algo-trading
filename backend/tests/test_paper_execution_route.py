@@ -10092,7 +10092,7 @@ def test_paper_reconcile_rejects_nonfinite_initial_virtual_balance():
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -10111,7 +10111,7 @@ def test_paper_reconcile_rejects_nonfinite_virtual_balance():
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -10130,7 +10130,7 @@ def test_paper_reconcile_rejects_nonfinite_realized_pnl():
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -10158,7 +10158,7 @@ def test_paper_reconcile_rejects_fractional_position_quantity():
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -10186,7 +10186,7 @@ def test_paper_reconcile_rejects_nonfinite_position_average_price():
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -10216,7 +10216,7 @@ def test_paper_reconcile_detects_duplicate_active_positions_for_same_symbol():
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -10284,7 +10284,7 @@ def test_paper_reconcile_detects_noncanonical_position_symbol():
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -10311,7 +10311,7 @@ def test_paper_reconcile_detects_open_zero_quantity_position_state():
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -10338,7 +10338,7 @@ def test_paper_reconcile_detects_closed_nonzero_position_state():
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -10390,7 +10390,7 @@ def test_paper_reconcile_detects_tampered_order_identity():
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -10439,7 +10439,7 @@ def test_paper_reconcile_detects_missing_order_identity():
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -10465,7 +10465,7 @@ def test_paper_reconcile_detects_noncanonical_account_mode():
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -10491,7 +10491,7 @@ def test_paper_reconcile_detects_noncanonical_initial_balance_source():
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
