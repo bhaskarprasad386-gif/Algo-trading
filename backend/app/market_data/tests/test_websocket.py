@@ -37,7 +37,19 @@ def make_auth():
         session_data={"jwtToken": "jwt", "feedToken": "feed"},
         api_key="api-key",
         client_id="client",
+        ensure_session_fresh=lambda max_age: None,
     )
+
+
+def test_websocket_refreshes_auth_before_building_socket(monkeypatch):
+    monkeypatch.setattr(websocket_module.SmartWebSocketV2, "__name__", "Fake", raising=False)
+    calls = []
+    auth = make_auth()
+    auth.ensure_session_fresh = lambda max_age: calls.append(max_age)
+    client = MarketDataWebSocket(auth=auth)
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client._build_socket()
+    assert calls == [websocket_module.settings.ANGEL_SESSION_REFRESH_INTERVAL_SECONDS]
 
 
 def test_websocket_connect_subscribe_and_unsubscribe(monkeypatch):
