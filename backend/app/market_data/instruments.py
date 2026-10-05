@@ -175,8 +175,14 @@ class InstrumentMaster:
         if not symbol:
             raise ValueError("index trading symbol cannot be empty")
         results = [
-            item for item in self.search(tradingsymbol=symbol, exchange=exch)
-            if str(item.get("token", "")).strip()
+            item
+            for item in self.instruments
+            if str(item.get("exch_seg", "")).strip().upper() == exch
+            and str(item.get("token", "")).strip()
+            and (
+                str(item.get("symbol", "")).strip().upper() == symbol
+                or str(item.get("name", "")).strip().upper() == symbol
+            )
         ]
         # Angel One migrated index tokens to the 999xxxxx series. A
         # legacy single-row entry (for example token 25/26000) must not be
