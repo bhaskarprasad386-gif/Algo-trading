@@ -60,6 +60,10 @@ def test_common_manager_deduplicates_shared_instrument_and_fans_out():
     assert len(socket.connect_calls) == 1
     assert socket.connect_calls[0]["subscriptions"] == {1: ["101"]}
     assert registry.subscriptions()[0].ref_count == 2
+    snapshot = manager.snapshot()
+    assert snapshot["socket_groups"] == 1
+    assert snapshot["disconnected_groups"] == ["1:0"]
+    assert snapshot["connected_groups"] == []
 
     manager._on_data(SocketGroup(1, 0), {"token": "101", "ltp": 100})
     assert set(seen) == {("box", "101"), ("cash", "101")}
