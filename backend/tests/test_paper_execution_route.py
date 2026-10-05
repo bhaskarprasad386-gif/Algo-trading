@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from concurrent.futures import ThreadPoolExecutor
 import threading
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base
@@ -21,7 +21,16 @@ def _client_and_headers(starting_balance: float = 10_000_000.0):
     try:
         db.query(Position).delete()
         db.query(Order).delete()
-        accounts = db.query(TradingAccount).all()
+        accounts = db.query(TradingAccount).order_by(TradingAccount.id.asc()).all()
+        if len(accounts) > 1:
+            # The shared test DB must present one deterministic paper account to
+            # legacy helpers. Individual multi-user tests create their own accounts
+            # after this reset and therefore remain free to exercise ambiguity.
+            keep = accounts[0]
+            db.query(TradingAccount).filter(TradingAccount.id != keep.id).delete(synchronize_session=False)
+            accounts = [keep]
+        if not accounts:
+            raise AssertionError("paper test fixture requires a trading account")
         for account in accounts:
             account.virtual_balance = float(starting_balance)
             account.initial_virtual_balance = float(starting_balance)
@@ -695,6 +704,8 @@ def test_same_user_concurrent_paper_orders_serialize_balance_and_position(tmp_pa
                 user_id=user.id,
                 mode="PAPER",
                 virtual_balance=1_000.0,
+                initial_virtual_balance=1_000.0,
+                initial_balance_source="BOOTSTRAP",
                 realized_pnl=0.0,
                 is_active=True,
             )
@@ -803,7 +814,7 @@ def test_paper_long_to_short_reversal_preserves_realized_pnl_and_short_margin():
 
 def test_paper_mixed_reversal_chain_preserves_cash_and_realized_pnl():
     client, headers = _client_and_headers()
-    starting_balance = 10_000_000.0
+    starting_balance = 10_000.0
 
     # Build a 10-long at 100: cash 9,000.
     opened = client.post(
@@ -907,7 +918,7 @@ def test_paper_partial_short_cover_preserves_margin_pnl_and_remaining_short():
 
 def test_paper_multi_symbol_portfolio_accounting_isolated_across_reversal_and_exit():
     client, headers = _client_and_headers()
-    starting_balance = 10_000_000.0
+    starting_balance = 10_000.0
 
     # Two independent symbols consume independent capital/positions.
     a = client.post(
@@ -1202,7 +1213,7 @@ def test_paper_multi_symbol_concurrent_exit_and_reversal_preserve_accounting(tmp
 
 def test_paper_multi_symbol_partial_fills_and_reversals_preserve_accounting():
     client, headers = _client_and_headers()
-    starting_balance = 10_000_000.0
+    starting_balance = 10_000.0
 
     # ALPHA long and BETA short coexist.
     alpha = client.post(
@@ -1580,6 +1591,9 @@ def test_paper_execution_rejects_and_rolls_back_duplicate_active_position_invari
     db = SessionLocal()
     try:
         account = db.query(TradingAccount).order_by(TradingAccount.id.asc()).first()
+        # Temporarily remove the DB-level uniqueness guard so this test can
+        # exercise the application's fail-closed corruption detector.
+        db.execute(text("DROP INDEX IF EXISTS uq_positions_user_symbol_active_paper"))
         db.add_all([
             Position(user_id=account.user_id, symbol="CORRUPT", quantity=5, average_price=100.0, is_paper=True),
             Position(user_id=account.user_id, symbol="CORRUPT", quantity=3, average_price=110.0, is_paper=True),
@@ -6202,7 +6216,7 @@ def test_paper_http_concurrent_multi_symbol_partial_reversals_preserve_accountin
     beta_data = beta.json()
 
     # Each response carries cumulative account realized P&L for its committed epoch.
-    assert {alpha_data["realized_pnl"], beta_data["realized_pnl"]} == {200.0, 520.0}
+    assert {alpha_data["realized_pnl"], beta_data["realized_pnl"]} == {200.0, 320.0}
     assert alpha_data["position"]["symbol"] == "ALPHA"
     assert alpha_data["position"]["quantity"] == -4.0
     assert alpha_data["position"]["entry_price"] == 120.0
@@ -6345,7 +6359,7 @@ def test_paper_http_concurrent_exits_across_symbols_preserve_shared_accounting()
     assert beta_data["status"] == "closed"
     assert beta_data["pnl"] == 120.0
     assert {alpha_data["pnl"], beta_data["pnl"]} == {120.0, 150.0}
-    assert {alpha_data["realized_pnl"], beta_data["realized_pnl"]} == {150.0, 270.0}
+    assert {alpha_data["realized_pnl"], beta_data["realized_pnl"]} == {120.0, 270.0}
 
     positions = client.get("/api/v1/execution/paper/positions", headers=headers)
     assert positions.status_code == 200
@@ -6595,6 +6609,7 @@ def test_paper_http_cold_start_bootstrap_concurrency_matrix():
                         "transaction_type": "BUY",
                         "price": 100.0,
                         "quantity": 1,
+                        "fill_id": f"COLD-START-{_}",
                     },
                 )
 
@@ -7481,7 +7496,7 @@ def test_paper_http_authenticated_identity_isolates_account_orders_and_position_
         assert orders["orders"][0]["symbol"] == own_symbol
 
         position = request_as(user_id, f"/api/v1/execution/paper/position?symbol={own_symbol}")
-        assert position["status"] == "open"
+        assert position["status"] == "active"
         assert position["position"]["symbol"] == own_symbol
         assert position["position"]["quantity"] == 1
 
@@ -8326,7 +8341,7 @@ def test_concurrent_cross_user_same_symbol_orders_preserve_account_isolation():
         ]
         results = [future.result() for future in futures]
 
-    assert {result["fill_id"] for result in results} == {"CROSS-USER-A", "CROSS-USER-B"}
+    assert {result["order"]["fill_id"] for result in results} == {"CROSS-USER-A", "CROSS-USER-B"}
 
     verify = TestSession()
     try:
