@@ -35,6 +35,7 @@ class LiveCashFutureSignal:
     gap: float
     gap_pct: float
     timestamp_ns: int
+    received_at_ns: int
     cash_day_high: float
     cash_day_low: float
     future_day_high: float
@@ -501,6 +502,7 @@ class LiveCashFutureScanner:
             gap=gap,
             gap_pct=gap_pct,
             timestamp_ns=timestamp_ns,
+            received_at_ns=received_at_ns,
             cash_day_high=ext["cash_high"],
             cash_day_low=ext["cash_low"],
             future_day_high=ext["future_high"],
@@ -544,7 +546,7 @@ class LiveCashFutureScanner:
         now_ns = int(datetime.now(IST).timestamp() * 1_000_000_000)
         cutoff = int(now_ns - max_age_seconds * 1_000_000_000)
         with self._lock:
-            signals = [signal for signal in self._signals.values() if signal.timestamp_ns >= cutoff]
+            signals = [signal for signal in self._signals.values() if signal.received_at_ns >= cutoff]
         signals.sort(key=lambda item: (-item.gap_pct, item.symbol, item.contract_month))
         rank_scores = self._rank(signals)
         by_symbol: dict[str, list[LiveCashFutureSignal]] = {}
@@ -571,7 +573,7 @@ class LiveCashFutureScanner:
             item["peer_gap_pct"] = peer.gap_pct if peer else None
             item["gap_pct_delta_vs_peer"] = signal.gap_pct - peer.gap_pct if peer else None
             item["is_best_contract_month"] = bool(peer and signal.gap_pct >= peer.gap_pct)
-            item["lifecycle"] = signal.lifecycle if signal.timestamp_ns >= cutoff else "EXPIRED"
+            item["lifecycle"] = signal.lifecycle if signal.received_at_ns >= cutoff else "EXPIRED"
             data.append(item)
 
         data.sort(key=lambda item: (-float(item["rank_score"]), -float(item["gap_pct"]), item["symbol"], item["contract_month"]))
