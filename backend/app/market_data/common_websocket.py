@@ -231,15 +231,9 @@ class CommonWebSocketManager:
             self._reconcile()
         except Exception:
             # Reconcile can fail transiently (broker auth/network/session limits).
-            # Keep the consumer registry intact and let the next recovery cycle
-            # retry socket creation instead of leaving socket_groups at zero.
-            with self._lock:
-                for group, stale_socket, tokens, created_at in stale:
-                    if group in self._sockets:
-                        continue
-                    self._sockets[group] = stale_socket
-                    self._socket_tokens[group] = set(tokens)
-                    self._socket_created_at[group] = created_at
+            # Do not restore the closed stale socket: _reconcile() must see the
+            # group as absent so the next recovery cycle can create a fresh
+            # broker session. Preserve only the subscription intent.
             raise
         return len(stale)
 
