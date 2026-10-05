@@ -603,7 +603,7 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             if len(audit_hash) != 64 or any(ch not in "0123456789abcdef" for ch in audit_hash.lower()):
                 raise RuntimeError("paper order audit hash invariant violated")
             if previous_audit_hash != expected_audit_previous:
-                raise RuntimeError("paper order audit chain invariant violated")
+                invalid_orders.append(f"audit_chain_mismatch:{order.id}")
             expected_audit_hash = _paper_audit_payload(
                 user_id=user_id,
                 symbol=raw_symbol,
@@ -612,10 +612,10 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
                 price=price,
                 pnl=float(order.pnl or 0.0),
                 fill_id=raw_fill_id,
-                previous_hash=expected_audit_previous,
+                previous_hash=previous_audit_hash,
             )
             if audit_hash != expected_audit_hash:
-                raise RuntimeError("paper order audit hash invariant violated")
+                invalid_orders.append(f"audit_hash_mismatch:{order.id}")
             expected_audit_previous = audit_hash
         elif previous_audit_hash is not None or expected_audit_previous is not None:
             raise RuntimeError("paper order audit chain invariant violated")
@@ -805,6 +805,29 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
 
     baseline_states: dict[str, FillAccountingState] = {}
     baseline_cost = 0.0
+    stored_virtual_balance_for_baseline = float(account.virtual_balance)
+    stored_realized_pnl_for_baseline = float(account.realized_pnl or 0.0)
+    persisted_position_cost = round(
+        sum(
+            _buy_cost(float(position.average_price), abs(int(position.quantity)))
+            for position in actual_position_by_symbol.values()
+            if position.is_open and int(position.quantity) != 0
+        ),
+        8,
+    )
+    baseline_inference_allowed = (
+        math.isfinite(stored_virtual_balance_for_baseline)
+        and math.isfinite(stored_realized_pnl_for_baseline)
+        and abs(
+            round(
+                stored_virtual_balance_for_baseline
+                + persisted_position_cost
+                - float(account.initial_virtual_balance)
+                - stored_realized_pnl_for_baseline,
+                8,
+            )
+        ) <= 1e-8
+    )
     for symbol, symbol_orders in orders_by_symbol.items():
         final_position = actual_position_by_symbol.get(symbol)
         final_quantity = int(final_position.quantity) if final_position is not None else 0
@@ -818,7 +841,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         first_side = str(symbol_orders[0].transaction_type or "").strip().upper()
         first_signed = int(symbol_orders[0].quantity or 0) if first_side == "BUY" else -int(symbol_orders[0].quantity or 0)
 
-        if initial_quantity and initial_quantity * first_signed < 0:
+        if baseline_inference_allowed and initial_quantity and initial_quantity * first_signed < 0:
             target_realized = round(sum(float(order.pnl or 0.0) for order in symbol_orders), 8)
 
             def _replay_from_baseline(average_price: float) -> FillAccountingState:
@@ -1296,7 +1319,13 @@ def paper_order(request: PaperOrderRequest, user_id: int = Depends(current_user_
             order = _create_order(db, user_id=user_id, symbol=symbol, side=side, price=fill.price, quantity=fill.quantity, pnl=pnl, fill_id=fill_id)
         else:
             latest = _latest_symbol_order(db, user_id, symbol)
-            if fill_id is None and latest is not None and latest.transaction_type.upper() == "BUY" and float(latest.pnl or 0.0) != 0.0 and float(latest.price) == float(request.price):
+            if (
+                fill_id is None
+                and latest is not None
+                and latest.transaction_type.upper() in {"BUY", "SELL"}
+                and float(latest.pnl or 0.0) != 0.0
+                and float(latest.price) == float(request.price)
+            ):
                 return {"status":"flat","position":None,"pnl":0.0,"virtual_balance":account.virtual_balance,"realized_pnl":account.realized_pnl}
             cost = _buy_cost(request.price, quantity)
             if account.virtual_balance < cost:
@@ -1366,8 +1395,11 @@ def paper_from_scanner(request: ScannerPaperEntryRequest, user_id: int = Depends
         raise HTTPException(status_code=409, detail="Scanner future price does not exceed cash price")
     if request.net_profit is not None and request.net_profit <= 0:
         raise HTTPException(status_code=409, detail="Scanner opportunity has no positive net profit")
-    _validate_quantity(request.quantity)
-    result = paper_order(PaperOrderRequest(symbol=request.symbol, transaction_type="BUY", price=request.cash_price, quantity=request.quantity, stop_loss_pct=request.stop_loss_pct, target_pct=request.target_pct, fill_id=request.fill_id), user_id=user_id, db=db)
+    scanner_quantity = _validate_quantity(request.quantity)
+    active_position = _position(db, user_id, request.symbol)
+    if active_position is not None and active_position.quantity < 0:
+        scanner_quantity = min(scanner_quantity, abs(int(active_position.quantity)))
+    result = paper_order(PaperOrderRequest(symbol=request.symbol, transaction_type="BUY", price=request.cash_price, quantity=scanner_quantity, stop_loss_pct=request.stop_loss_pct, target_pct=request.target_pct, fill_id=request.fill_id), user_id=user_id, db=db)
     result["source"] = "cash-future-scanner"
     result["scanner_entry_price"] = request.cash_price
     result["scanner_future_price"] = request.future_price
