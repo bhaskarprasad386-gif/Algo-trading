@@ -160,6 +160,9 @@ jobs:
             certbot certonly --non-interactive --agree-tos --register-unsafely-without-email               --preferred-profile shortlived --webroot --webroot-path "$ACME_ROOT"               --ip-address "$IP"
           else
             echo "EXISTING_CERT_FOUND"
+            echo "RENEWING_EXISTING_CERTIFICATE"
+            certbot renew --non-interactive --webroot --webroot-path "$ACME_ROOT" --deploy-hook "systemctl reload nginx"
+            echo "CERTBOT_RENEW_COMPLETED"
           fi
 
           test -s "/etc/letsencrypt/live/$IP/fullchain.pem"
