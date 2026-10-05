@@ -170,6 +170,11 @@ def _current_user_id_unlocked(db: Session = Depends(get_db)) -> int:
             db.rollback()
             try:
                 db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+                # The Session may still retain ORM instances loaded by an earlier
+                # dependency/read phase. Expire them after acquiring the writer
+                # lock so the mutation always starts from the committed database
+                # epoch, not a stale identity-map snapshot.
+                db.expire_all()
                 last_error = None
                 break
             except OperationalError as exc:
@@ -603,7 +608,7 @@ def _validate_paper_state(db: Session, user_id: int) -> None:
             if len(audit_hash) != 64 or any(ch not in "0123456789abcdef" for ch in audit_hash.lower()):
                 raise RuntimeError("paper order audit hash invariant violated")
             if previous_audit_hash != expected_audit_previous:
-                invalid_orders.append(f"audit_chain_mismatch:{order.id}")
+                raise RuntimeError("paper order audit chain invariant violated")
             expected_audit_hash = _paper_audit_payload(
                 user_id=user_id,
                 symbol=raw_symbol,
@@ -967,7 +972,10 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
             price=price,
             pnl=raw_pnl,
             fill_id=order.fill_id,
-            previous_hash=previous_hash,
+            # Hash verification must independently bind to the persisted
+            # predecessor pointer. A tampered pointer therefore produces both
+            # the chain-integrity and hash-integrity findings.
+            previous_hash=order.previous_audit_hash,
         )
         if order.audit_hash != expected_hash:
             invalid_orders.append(f"audit_hash_mismatch:{order.id}")
