@@ -178,14 +178,11 @@ class InstrumentMaster:
             item for item in self.search(tradingsymbol=symbol, exchange=exch)
             if str(item.get("token", "")).strip()
         ]
-        if len(results) == 1:
-            return results[0]
-
-        # Angel One migrated index tokens to the 999xxxxx series and exposes
-        # those rows as AMXIDX. Some masters can temporarily contain both the
-        # legacy and migrated row for the same trading symbol. Prefer the
-        # unique migrated index row; retain fail-closed behavior if ambiguity
-        # remains after that documented preference.
+        # Angel One migrated index tokens to the 999xxxxx series. A
+        # legacy single-row entry (for example token 25/26000) must not be
+        # accepted as an index: those legacy tokens can collide with NSE
+        # cash-instrument tokens and break the shared WebSocket descriptor
+        # registry. Prefer exactly one current AMXIDX/999xxxxx entry.
         preferred = [
             item
             for item in results
