@@ -3,6 +3,7 @@ import pytest
 from fastapi.testclient import TestClient
 from fastapi import HTTPException
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import field
 import threading
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -17,7 +18,7 @@ from app.models import Order, Position, TradingAccount
 from app.execution.paper_routes import _reconcile_paper_ledger
 
 
-def _client_and_headers(starting_balance: float = 10_000_000.0):
+def _client_and_headers(starting_balance: float = 10_000.0):
     db = SessionLocal()
     try:
         db.query(Position).delete()
@@ -9570,7 +9571,7 @@ def test_paper_reconcile_detects_noncanonical_order_symbol_even_when_audit_hash_
         db.commit()
     finally:
         db.close()
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -9607,7 +9608,7 @@ def test_paper_reconcile_detects_noncanonical_order_side_even_when_audit_hash_is
         db.commit()
     finally:
         db.close()
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -9644,7 +9645,7 @@ def test_paper_reconcile_detects_noncanonical_order_fill_id_even_when_audit_hash
         db.commit()
     finally:
         db.close()
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -9693,7 +9694,7 @@ def test_paper_reconcile_detects_tampered_order_quantity_even_when_audit_hash_is
         db.commit()
     finally:
         db.close()
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -9742,7 +9743,7 @@ def test_paper_reconcile_detects_tampered_order_average_price_even_when_audit_ha
         db.commit()
     finally:
         db.close()
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -9791,7 +9792,7 @@ def test_paper_reconcile_detects_tampered_order_average_fill_price_even_when_aud
         db.commit()
     finally:
         db.close()
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -9859,7 +9860,7 @@ def test_paper_reconcile_detects_tampered_order_pnl_even_when_audit_hash_is_rebu
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -9913,7 +9914,7 @@ def test_paper_reconcile_detects_noncanonical_filled_status_even_when_ledger_is_
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -9966,7 +9967,7 @@ def test_paper_reconcile_detects_paper_order_removed_from_paper_scope():
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -10014,7 +10015,7 @@ def test_paper_reconcile_rejects_nonfinite_order_execution_fields():
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
@@ -10057,7 +10058,7 @@ def test_paper_reconcile_rejects_fractional_filled_quantity_before_integer_coerc
     finally:
         db.close()
 
-    client, headers = _client_and_headers()
+    client, headers = TestClient(app), {}
     response = client.get("/api/v1/execution/paper/reconcile", headers=headers)
     assert response.status_code == 200
     payload = response.json()
