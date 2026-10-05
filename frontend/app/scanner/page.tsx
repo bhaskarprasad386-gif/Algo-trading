@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Activity, Bell, Filter, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Zap } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 
-const markets = ["ALL F&O STOCKS"];
+const markets = ["ALL F&O STOCKS", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
 const columns = ["Symbol", "Expiry", "Cash Bid/Ask", "Future Bid/Ask", "Executable Gap", "Volume / OI", "Signal"];
 
 type Row = Record<string, unknown>;
@@ -31,7 +32,9 @@ const cell = (row: Row, ...keys: string[]) => {
 };
 
 export default function ScannerPage() {
-  const [market, setMarket] = useState("ALL F&O");
+  const searchParams = useSearchParams();
+  const requestedMarket = searchParams.get("market")?.toUpperCase() ?? "ALL F&O STOCKS";
+  const [market, setMarket] = useState(requestedMarket);
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,7 +59,15 @@ export default function ScannerPage() {
     }
   };
 
-  useEffect(() => {\n    void load(true);\n    const timer = window.setInterval(() => { void load(); }, 1500);\n    return () => window.clearInterval(timer);\n  }, []);
+  useEffect(() => {
+    setMarket(markets.includes(requestedMarket) ? requestedMarket : "ALL F&O STOCKS");
+  }, [requestedMarket]);
+
+  useEffect(() => {
+    void load(true);
+    const timer = window.setInterval(() => { void load(); }, 1500);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toUpperCase();
@@ -64,7 +75,7 @@ export default function ScannerPage() {
       const symbol = String(row.symbol ?? row.underlying ?? "").toUpperCase();
       const normalizedSymbol = symbol.replace(/\s+/g, "");
       const normalizedMarket = market.replace(/\s+/g, "");
-      const marketMatch = market === "ALL F&O" || normalizedSymbol === normalizedMarket || (market === "NIFTY" && normalizedSymbol === "NIFTY50");
+      const marketMatch = market === "ALL F&O STOCKS" || normalizedSymbol === normalizedMarket || (market === "NIFTY" && normalizedSymbol === "NIFTY50");
       const searchMatch = !q || Object.values(row).some((value) => String(value ?? "").toUpperCase().includes(q));
       return marketMatch && searchMatch;
     });
@@ -91,9 +102,9 @@ export default function ScannerPage() {
         <div className="flex flex-wrap items-center gap-2">
           <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold ${loading ? "theme-border theme-warning-bg theme-warning" : error ? "theme-border theme-danger-bg theme-danger" : "theme-border theme-success-bg theme-success"}`}>
             <span className="h-2 w-2 rounded-full bg-current" />
-            {loading ? "CONNECTING" : error ? "BACKEND ERROR" : "LIVE FEED CONNECTED"}
+            {loading ? "CONNECTING" : error ? "BACKEND ERROR" : rows.length ? "LIVE TICKS" : "API CONNECTED • NO LIVE DATA"}
           </span>
-          <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Zap className="h-4 w-4" /> 1s scanner</span>
+          <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Zap className="h-4 w-4" /> 1.5s polling</span>
           <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Bell className="h-4 w-4" /> Alerts: —</span>
         </div>
         <div className="flex gap-2">
