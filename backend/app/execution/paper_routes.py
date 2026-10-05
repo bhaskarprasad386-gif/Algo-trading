@@ -166,7 +166,7 @@ def _current_user_id_unlocked(db: Session = Depends(get_db)) -> int:
         # user/account bootstrap.
         import time as _time
         last_error = None
-        for _attempt in range(20):
+        for _attempt in range(200):
             db.rollback()
             try:
                 db.connection().exec_driver_sql("BEGIN IMMEDIATE")
@@ -175,7 +175,7 @@ def _current_user_id_unlocked(db: Session = Depends(get_db)) -> int:
             except OperationalError as exc:
                 last_error = exc
                 db.rollback()
-                if _attempt == 19:
+                if _attempt == 199:
                     raise HTTPException(
                         status_code=409,
                         detail="paper trading account bootstrap is busy; retry",
@@ -314,7 +314,7 @@ def _begin_paper_mutation(db: Session, user_id: int) -> TradingAccount:
         # transient "busy" conflicts.
         import time as _time
         last_error = None
-        for _attempt in range(40):
+        for _attempt in range(200):
             db.rollback()
             try:
                 db.connection().exec_driver_sql("BEGIN IMMEDIATE")
@@ -323,7 +323,7 @@ def _begin_paper_mutation(db: Session, user_id: int) -> TradingAccount:
             except OperationalError as exc:
                 last_error = exc
                 db.rollback()
-                if _attempt == 39:
+                if _attempt == 199:
                     raise HTTPException(status_code=409, detail="paper trading account is busy; retry") from exc
                 _time.sleep(0.025)
         if last_error is not None:
