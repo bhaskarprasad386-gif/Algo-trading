@@ -513,95 +513,125 @@ async def _live_cash_future_loop() -> None:
                 live_cash_future_runner = None
 
 async def _live_synthetic_loop() -> None:
-    """Subscribe only to the requested live option/future universe."""
+    """Supervise the synthetic live runner with bounded retry backoff."""
     global live_synthetic_runner, live_synthetic_latest_results
-    master = InstrumentMaster()
-    try:
-        master.download()
-        today = datetime.now(IST).date()
-        nifty50_stocks: set[str] = set()
-        index_symbols: set[str] = set()
-        commodity_symbols: set[str] = set()
-        for item in master.instruments:
-            segment = str(item.get("exch_seg", "")).strip().upper()
-            typ = str(item.get("instrumenttype", "")).strip().upper()
-            expiry_text = str(item.get("expiry", "")).strip()
-            name = str(item.get("name", "")).strip().upper()
-            if not expiry_text or not name:
-                continue
-            try:
-                expiry = datetime.strptime(expiry_text.upper(), "%d%b%Y").date()
-            except ValueError:
-                try:
-                    expiry = datetime.strptime(expiry_text.upper(), "%d%b%y").date()
-                except ValueError:
+    retry_delay = 5.0
+    max_retry_delay = 60.0
+    while True:
+        master = InstrumentMaster()
+        runner = None
+        try:
+            master.download()
+            today = datetime.now(IST).date()
+            nifty50_stocks: set[str] = set()
+            index_symbols: set[str] = set()
+            commodity_symbols: set[str] = set()
+            for item in master.instruments:
+                segment = str(item.get("exch_seg", "")).strip().upper()
+                typ = str(item.get("instrumenttype", "")).strip().upper()
+                expiry_text = str(item.get("expiry", "")).strip()
+                name = str(item.get("name", "")).strip().upper()
+                if not expiry_text or not name:
                     continue
-            if expiry < today:
+                try:
+                    expiry = datetime.strptime(expiry_text.upper(), "%d%b%Y").date()
+                except ValueError:
+                    try:
+                        expiry = datetime.strptime(expiry_text.upper(), "%d%b%y").date()
+                    except ValueError:
+                        continue
+                if expiry < today:
+                    continue
+                if typ == "FUTSTK" and segment == "NFO" and name in NIFTY50_STOCK_SYMBOLS:
+                    nifty50_stocks.add(name)
+                elif typ == "FUTIDX" and segment in {"NFO", "BFO"}:
+                    index_symbols.add(name)
+                elif typ == "FUTCOM" and segment == "MCX":
+                    commodity_symbols.add(name)
+
+            stock_symbols = sorted(nifty50_stocks)
+            raw_index_symbols = sorted(index_symbols)
+            index_symbols = list(filter_resolvable_index_symbols(master, raw_index_symbols))
+            missing_index_underlyings = sorted(set(raw_index_symbols) - set(index_symbols))
+            commodity_symbols = sorted(commodity_symbols)
+            if missing_index_underlyings:
+                app_logger.warning(
+                    "Synthetic live index underlyings skipped because no concrete Angel token exists: %s",
+                    ", ".join(missing_index_underlyings),
+                )
+
+            target_specs = (
+                [(symbol, "STOCK") for symbol in stock_symbols]
+                + [(symbol, "INDEX") for symbol in index_symbols]
+                + [(symbol, "COMMODITY") for symbol in commodity_symbols]
+            )
+            targets = []
+            missing_expiry = []
+            for symbol, instrument_class in target_specs:
+                expiry = select_nearest_option_expiry(
+                    master.instruments,
+                    underlying=symbol,
+                    instrument_class=instrument_class,
+                    today=today,
+                )
+                if expiry is None:
+                    missing_expiry.append(symbol)
+                    continue
+                targets.append(SyntheticLiveTarget(symbol, instrument_class, expiry=expiry))
+            targets = tuple(targets)
+            if missing_expiry:
+                app_logger.warning(
+                    "Synthetic live targets skipped because no current option expiry exists: %s",
+                    ", ".join(sorted(set(missing_expiry))),
+                )
+            if not targets:
+                app_logger.warning(
+                    "Synthetic live runner found no eligible NIFTY50/index/MCX option targets; retrying in %.1fs",
+                    retry_delay,
+                )
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(max_retry_delay, retry_delay * 2.0)
                 continue
-            if typ == "FUTSTK" and segment == "NFO" and name in NIFTY50_STOCK_SYMBOLS:
-                nifty50_stocks.add(name)
-            elif typ == "FUTIDX" and segment in {"NFO", "BFO"}:
-                index_symbols.add(name)
-            elif typ == "FUTCOM" and segment == "MCX":
-                commodity_symbols.add(name)
 
-        stock_symbols = sorted(nifty50_stocks)
-        raw_index_symbols = sorted(index_symbols)
-        index_symbols = list(filter_resolvable_index_symbols(master, raw_index_symbols))
-        missing_index_underlyings = sorted(set(raw_index_symbols) - set(index_symbols))
-        commodity_symbols = sorted(commodity_symbols)
-        if missing_index_underlyings:
-            app_logger.warning(
-                "Synthetic live index underlyings skipped because no concrete Angel token exists: %s",
-                ", ".join(missing_index_underlyings),
+            runner = LiveSyntheticRunner(
+                settings.BACKTEST_DATA_DB,
+                targets,
+                allowed_stock_symbols=frozenset(stock_symbols),
+                instrument_master=master,
+                auth=AngelOneAuth(),
+                stock_universe_provider=lambda: tuple(stock_symbols),
+                on_results=lambda results: _update_live_synthetic_results(results),
             )
+            live_synthetic_runner = runner
+            await _run_live_runner_in_daemon_thread(
+                runner, name="live-synthetic-runner"
+            )
+            if not runner.stop_event.is_set():
+                app_logger.warning(
+                    "Live Synthetic runner exited unexpectedly; retrying in %.1fs",
+                    retry_delay,
+                )
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(max_retry_delay, retry_delay * 2.0)
+            else:
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            app_logger.error(
+                "Live Synthetic runner failed; retrying in %.1fs: %s",
+                retry_delay, exc,
+            )
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(max_retry_delay, retry_delay * 2.0)
+        finally:
+            if runner is not None:
+                _stop_live_runner_nonblocking(
+                    runner, name="live-synthetic-final-stop"
+                )
+            if live_synthetic_runner is runner:
+                live_synthetic_runner = None
 
-        target_specs = (
-            [(symbol, "STOCK") for symbol in stock_symbols]
-            + [(symbol, "INDEX") for symbol in index_symbols]
-            + [(symbol, "COMMODITY") for symbol in commodity_symbols]
-        )
-        targets = []
-        missing_expiry = []
-        for symbol, instrument_class in target_specs:
-            expiry = select_nearest_option_expiry(
-                master.instruments,
-                underlying=symbol,
-                instrument_class=instrument_class,
-                today=today,
-            )
-            if expiry is None:
-                missing_expiry.append(symbol)
-                continue
-            targets.append(SyntheticLiveTarget(symbol, instrument_class, expiry=expiry))
-        targets = tuple(targets)
-        if missing_expiry:
-            app_logger.warning(
-                "Synthetic live targets skipped because no current option expiry exists: %s",
-                ", ".join(sorted(set(missing_expiry))),
-            )
-        if not targets:
-            app_logger.warning("Synthetic live runner found no eligible NIFTY50/index/MCX option targets")
-            return
-
-        runner = LiveSyntheticRunner(
-            settings.BACKTEST_DATA_DB,
-            targets,
-            allowed_stock_symbols=frozenset(stock_symbols),
-            instrument_master=master,
-            auth=AngelOneAuth(),
-            stock_universe_provider=lambda: tuple(stock_symbols),
-            on_results=lambda results: _update_live_synthetic_results(results),
-        )
-        live_synthetic_runner = runner
-        await _run_live_runner_in_daemon_thread(
-            runner, name="live-synthetic-runner"
-        )
-    finally:
-        runner = live_synthetic_runner
-        if runner is not None:
-            _stop_live_runner_nonblocking(runner, name="live-synthetic-final-stop")
-        live_synthetic_runner = None
 
 def _update_live_synthetic_results(results: tuple) -> None:
     global live_synthetic_latest_results
