@@ -825,6 +825,10 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
     account = _account(db, user_id)
     account_mode_canonicality_mismatch = str(account.mode or "") != "PAPER"
     account_source_canonicality_mismatch = str(account.initial_balance_source or "") != str(account.initial_balance_source or "").strip().upper()
+    # A BOOTSTRAP account is expected to have a fully fingerprinted audit chain.
+    # Legacy/unfingerprinted ledgers must therefore be reported as blocked rather
+    # than silently accepted as a clean bootstrap ledger.
+    bootstrap_audit_required = str(account.initial_balance_source or "").strip().upper() == "BOOTSTRAP"
     all_user_orders = (
         db.query(Order)
         .filter(Order.user_id == user_id)
@@ -1108,7 +1112,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
                     reconstructed_cash = round(reconstructed_cash + proceeds, 8)
             else:
                 reconstructed_cash = round(
-                    reconstructed_cash - _buy_cost(price, quantity),
+                    reconstructed_cash - _buy_cost(execution_price, quantity),
                     8,
                 )
 
