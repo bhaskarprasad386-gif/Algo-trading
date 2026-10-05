@@ -1280,7 +1280,7 @@ def _reconcile_paper_ledger(db: Session, user_id: int) -> dict:
         "status": "OK" if not mismatches else "MISMATCH",
         "repairability": repairability,
         "repairability_reason": repairability_reason,
-        "mismatch_categories": sorted(mismatch_categories),
+        "mismatch_categories": [category for category in ("ORDER_INTEGRITY", "AUDIT_INTEGRITY", "POSITION_STATE", "ACCOUNTING_STATE", "BASELINE_INTEGRITY", "RECONCILIATION") if category in mismatch_categories],
         "baseline_status": baseline_status,
         "user_id": user_id,
         "orders": len(orders),
