@@ -151,6 +151,9 @@ def _current_user_id_unlocked(db: Session = Depends(get_db)) -> int:
             detail="multiple active paper trading accounts require authenticated user context",
         )
     if accounts:
+        # Existing accounts are read-only identity resolution. Do not leave a
+        # write transaction open on every HTTP read/dependency session; the
+        # bootstrap writer lock is needed only for the empty-account path.
         return int(accounts[0].user_id)
 
     # Cold-start bootstrap must have one database-level serialization point.
@@ -198,6 +201,7 @@ def _current_user_id_unlocked(db: Session = Depends(get_db)) -> int:
                 detail="multiple active paper trading accounts require authenticated user context",
             )
         if accounts:
+            db.commit()
             return int(accounts[0].user_id)
 
     user = db.query(User).filter(User.is_active.is_(True)).order_by(User.id.asc()).first()
