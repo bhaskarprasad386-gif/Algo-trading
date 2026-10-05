@@ -377,7 +377,17 @@ class AlertService:
                 previous = self._last_sent.get(key)
                 if previous is not None and event.timestamp_ns - previous < cooldown_ns:
                     continue
-                if self._notifier.send_text(rule.mobile_number, event.message):
+                try:
+                    delivered = self._notifier.send_text(rule.mobile_number, event.message)
+                except Exception as exc:
+                    # Notification-provider failure must not roll back a paper
+                    # trade that was already committed in the per-user risk
+                    # transaction above. Treat the channel as unavailable for
+                    # this dispatch and continue with the remaining rules.
+                    from app.core.logger import app_logger
+                    app_logger.warning("Alert notification failed for rule %s: %s", rule.id, exc)
+                    delivered = False
+                if delivered:
                     self._last_sent[key] = event.timestamp_ns
                     sent += 1
             return sent
