@@ -57,9 +57,10 @@ class CashFutureScanResult:
 
 
 class CashFutureOpportunityScanner:
-    """Pair same-timestamp cash/current/near futures from normalized common data."""
+    """Pair fresh cash/current/near futures from normalized common data."""
 
     strategy_id = "cash-future"
+    MAX_PAIR_AGE_NS = 1_000_000_000
 
     def __init__(self, *, minimum_gap_points: float = 0.0, minimum_gross_profit: float = 0.0) -> None:
         if minimum_gap_points < 0 or minimum_gross_profit < 0:
@@ -93,32 +94,40 @@ class CashFutureOpportunityScanner:
             bucket = self._latest.setdefault(symbol, {})
             bucket[leg] = record
             cash = bucket.get("CASH")
-            selected_month = month if leg != "CASH" else ("CURRENT" if bucket.get("CURRENT") is not None else "NEAR")
-            future = bucket.get(selected_month)
-            if cash is None or future is None:
+            if cash is None:
                 return None
-            if cash.timestamp_ns != future.timestamp_ns:
+            candidate_months = ("CURRENT", "NEAR") if leg == "CASH" else (leg,)
+            best = None
+            for candidate_month in candidate_months:
+                future = bucket.get(candidate_month)
+                if future is None or future.lot_size is None or future.lot_size <= 0:
+                    continue
+                if abs(cash.timestamp_ns - future.timestamp_ns) > self.MAX_PAIR_AGE_NS:
+                    continue
+                forward_gap = float(future.bid) - float(cash.ask)
+                reverse_gap = float(cash.bid) - float(future.ask)
+                if forward_gap < 0 and reverse_gap < 0:
+                    continue
+                if forward_gap >= reverse_gap:
+                    gap = forward_gap
+                    direction = "CASH_BUY_FUTURE_SELL"
+                    legs = (
+                        OpportunityLeg(cash, OrderSide.BUY, "cash-entry"),
+                        OpportunityLeg(future, OrderSide.SELL, f"future-{candidate_month.lower()}-entry"),
+                    )
+                else:
+                    gap = reverse_gap
+                    direction = "CASH_SELL_FUTURE_BUY"
+                    legs = (
+                        OpportunityLeg(cash, OrderSide.SELL, "cash-entry"),
+                        OpportunityLeg(future, OrderSide.BUY, f"future-{candidate_month.lower()}-entry"),
+                    )
+                if best is None or gap > best[0]:
+                    best = (gap, candidate_month, future, legs)
+            if best is None:
                 return None
-            if future.lot_size is None or future.lot_size <= 0:
-                return None
-            forward_gap = float(future.bid) - float(cash.ask)
-            reverse_gap = float(cash.bid) - float(future.ask)
-            if forward_gap < 0 and reverse_gap < 0:
-                return None
-            if forward_gap >= reverse_gap:
-                gap = forward_gap
-                direction = "CASH_BUY_FUTURE_SELL"
-                legs = (
-                    OpportunityLeg(cash, OrderSide.BUY, "cash-entry"),
-                    OpportunityLeg(future, OrderSide.SELL, f"future-{selected_month.lower()}-entry"),
-                )
-            else:
-                gap = reverse_gap
-                direction = "CASH_SELL_FUTURE_BUY"
-                legs = (
-                    OpportunityLeg(cash, OrderSide.SELL, "cash-entry"),
-                    OpportunityLeg(future, OrderSide.BUY, f"future-{selected_month.lower()}-entry"),
-                )
+            gap, selected_month, future, legs = best
+            direction = "CASH_BUY_FUTURE_SELL" if legs[0].side is OrderSide.BUY else "CASH_SELL_FUTURE_BUY"
             gross = gross_profit_from_points(gap, int(future.lot_size))
             qualifies = qualifies_opportunity(
                 gap_points=gap,
