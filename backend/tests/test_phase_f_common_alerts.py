@@ -198,3 +198,62 @@ def test_synthetic_paper_capital_uses_executable_future_side_for_both_directions
     assert short_paper["capital_used"] == 100.0 * 50
     assert long_paper["legs"][0]["side"] == "BUY"
     assert short_paper["legs"][0]["side"] == "SELL"
+
+
+def test_strategy_alert_events_expose_metric_metadata_for_rule_matching():
+    from app.notifications.synthetic_alerts import SyntheticAlertService
+    from app.notifications.box_spread_alerts import BoxSpreadAlertService
+
+    captured = []
+    class CaptureAlerts:
+        def dispatch(self, _db, event):
+            captured.append(event)
+            return 0
+
+    synthetic = SyntheticAlertService()
+    synthetic._alerts = CaptureAlerts()
+    synthetic.notify_users(object(), [SimpleNamespace(
+        option=SimpleNamespace(underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29", strike=25000.0, timestamp_ns=1, call_bid=10.0, call_ask=11.0, put_bid=9.0, put_ask=10.0),
+        future=SimpleNamespace(bid=100.0, ask=101.0, lot_size=50), direction="LONG",
+        executable_edge=5.0, edge_per_lot=250.0, gross_pnl=250.0,
+    )])
+
+    box = BoxSpreadAlertService()
+    box._alerts = CaptureAlerts()
+    leg = SimpleNamespace(
+        underlying="NIFTY", instrument_class="INDEX", expiry="2026-10-29", strike=25000.0,
+        timestamp_ns=2, call_bid=10.0, call_ask=11.0, put_bid=9.0, put_ask=10.0, lot_size=50,
+    )
+    high = SimpleNamespace(**{**leg.__dict__, "strike": 25100.0, "call_bid": 5.0, "call_ask": 6.0, "put_bid": 4.0, "put_ask": 5.0})
+    box.notify_users(object(), [SimpleNamespace(
+        low=leg, high=high, direction="LONG", executable_edge=7.0, edge_per_lot=350.0,
+        gross_pnl=350.0, strike_distance=100,
+    )])
+
+    synthetic_event, box_event = captured
+    assert synthetic_event.strategy_id == "synthetic-future-cash-carry"
+    assert synthetic_event.metadata["gap"] == 5.0
+    assert synthetic_event.metadata["gross_profit"] == 250.0
+    assert box_event.strategy_id == "box-spread"
+    assert box_event.metadata["gap"] == 7.0
+    assert box_event.metadata["gross_profit"] == 350.0
+
+
+def test_alert_status_counts_active_user_rules(db_session, monkeypatch):
+    from app.alert_routes import get_alert_status
+    from app.models import AlertRule
+    monkeypatch.setattr("app.alert_routes.current_user_id", lambda _db: 1)
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="cash-future", name="Active", metric="gap", operator=">=", threshold=1,
+        min_gross_profit=0, mobile_number="919999999999", enabled=True,
+    ))
+    db_session.add(AlertRule(
+        user_id=1, strategy_id="box-spread", name="Disabled", metric="gap", operator=">=", threshold=1,
+        min_gross_profit=0, mobile_number="919999999999", enabled=False,
+    ))
+    db_session.commit()
+    result = get_alert_status(db_session)
+    assert result["active_rules"] == 1
+    assert result["triggered_30d"] == 0
+    assert result["history_30d"] == 0
+    assert result["window_days"] == 30
