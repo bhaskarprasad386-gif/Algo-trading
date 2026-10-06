@@ -139,9 +139,9 @@ def test_live_synthetic_scanner_does_not_cross_second_boundaries():
     scanner.observe(_base(ts, 100.0, "CE", 4.0, 5.0))
     scanner.observe(_base(ts, 100.0, "PE", 4.0, 5.0))
     scanner.observe(_base(ts, 105.0, "CE", 4.0, 5.0))
-    scanner.observe(_base(ts + 2, 105.0, "PE", 4.0, 5.0))
+    scanner.observe(_base(ts + 2_000_000_000, 105.0, "PE", 4.0, 5.0))
     result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"",
-        "expiry":"30SEP2026","bid":115,"ask":116,"lot_size":1,"source_timestamp_ns":ts+2,"symbol":"NIFTYFUT"})
+        "expiry":"30SEP2026","bid":115,"ask":116,"lot_size":1,"source_timestamp_ns":ts+2_000_000_000,"symbol":"NIFTYFUT"})
     assert result == ()
 
 
