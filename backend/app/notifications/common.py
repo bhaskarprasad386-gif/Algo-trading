@@ -6,7 +6,7 @@ from typing import Any, Mapping
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.notifications.whatsapp import WhatsAppConfig, WhatsAppNotifier
-from app.models import AlertRule
+from app.models import AlertRule, AlertContact
 
 @dataclass(frozen=True)
 class AlertEvent:
@@ -431,30 +431,35 @@ class AlertService:
                 user = users_by_id.get(int(rule.user_id))
                 if user is None or not bool(getattr(user, "alerts_enabled", True)):
                     continue
-                if not rule.whatsapp_enabled or not rule.mobile_number.strip():
-                    continue
                 if gross_value is not None and gross_value < float(rule.min_gross_profit):
                     continue
                 if not _rule_matches_event(rule, event):
                     continue
-                key = (int(rule.id), event.event_id)
-                cooldown_ns = int(max(0.0, float(rule.cooldown_seconds)) * 1_000_000_000)
-                previous = self._last_sent.get(key)
-                if previous is not None and event.timestamp_ns - previous < cooldown_ns:
-                    continue
-                try:
-                    delivered = self._notifier.send_text(rule.mobile_number, event.message)
-                except Exception as exc:
-                    # Notification-provider failure must not roll back a paper
-                    # trade that was already committed in the per-user risk
-                    # transaction above. Treat the channel as unavailable for
-                    # this dispatch and continue with the remaining rules.
-                    from app.core.logger import app_logger
-                    app_logger.warning("Alert notification failed for rule %s: %s", rule.id, exc)
-                    delivered = False
-                if delivered:
-                    self._last_sent[key] = event.timestamp_ns
-                    sent += 1
+                contacts = db.query(AlertContact).filter(
+                    AlertContact.user_id == int(rule.user_id),
+                    AlertContact.enabled.is_(True),
+                    AlertContact.whatsapp_enabled.is_(True),
+                ).all()
+                if not contacts and rule.whatsapp_enabled and rule.mobile_number.strip():
+                    contacts = [rule]
+                for contact in contacts:
+                    number = str(contact.mobile_number).strip()
+                    if not number:
+                        continue
+                    key = (int(rule.id), event.event_id, number)
+                    cooldown_ns = int(max(0.0, float(rule.cooldown_seconds)) * 1_000_000_000)
+                    previous = self._last_sent.get(key)
+                    if previous is not None and event.timestamp_ns - previous < cooldown_ns:
+                        continue
+                    try:
+                        delivered = self._notifier.send_text(number, event.message)
+                    except Exception as exc:
+                        from app.core.logger import app_logger
+                        app_logger.warning("Alert notification failed for rule %s: %s", rule.id, exc)
+                        delivered = False
+                    if delivered:
+                        self._last_sent[key] = event.timestamp_ns
+                        sent += 1
             return sent
         from app.models import User
         users = db.query(User).filter(User.is_active.is_(True), User.alerts_enabled.is_(True), User.mobile_number.isnot(None)).all()
