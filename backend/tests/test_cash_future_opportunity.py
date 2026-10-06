@@ -64,6 +64,20 @@ def test_near_contract_is_evaluated_even_when_current_exists():
     assert result.contract_month == "NEAR"
     assert result.signal.gap_points == 8
 
+def test_snapshot_clears_opportunity_when_quote_no_longer_qualifies():
+    scanner = CashFutureOpportunityScanner(minimum_gap_points=5)
+    cash = rec("C1", "ABC-EQ", InstrumentType.EQUITY, 1_000_000_000, 99, 100, underlying="ABC")
+    future_good = rec("F1", "ABC-FUT", InstrumentType.FUTURE, 1_000_000_100, 106, 107, lot=60, underlying="ABC")
+    scanner.update(cash, contract_month="CASH")
+    result = scanner.update(future_good, contract_month="CURRENT")
+    assert result is not None
+    assert scanner.snapshot() == (result,)
+
+    future_bad = rec("F1", "ABC-FUT", InstrumentType.FUTURE, 1_500_000_000, 100, 101, lot=60, underlying="ABC")
+    assert scanner.update(future_bad, contract_month="CURRENT") is None
+    assert scanner.snapshot() == ()
+
+
 def test_crossed_quote_rejected():
     scanner = CashFutureOpportunityScanner()
     try:
