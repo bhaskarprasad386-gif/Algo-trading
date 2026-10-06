@@ -9,7 +9,7 @@ def test_global_paper_setting_is_not_strategy_specific(db_session):
     assert row.enabled is True
 
 def test_alert_rule_filters_by_strategy_and_gross_profit(db_session, monkeypatch):
-    rule = AlertRule(user_id=1, strategy_id="cash-future", min_gross_profit=1000.0,
+    rule = AlertRule(user_id=1001, strategy_id="cash-future", min_gross_profit=1000.0,
                      mobile_number="919999999999", whatsapp_enabled=True, enabled=True)
     db_session.add(rule); db_session.commit()
     service = AlertService(WhatsAppNotifier(WhatsAppConfig(
@@ -37,9 +37,9 @@ def test_alert_rule_does_not_cross_strategy(db_session, monkeypatch):
 
 def test_alert_master_off_stops_notification_but_event_dispatch_remains_safe(db_session, monkeypatch):
     from app.models import User
-    user = db_session.query(User).filter(User.id == 1).first()
+    user = db_session.query(User).filter(User.id == 1001).first()
     if user is None:
-        user = User(id=1, email="alert-master@example.com", hashed_password="x", alerts_enabled=False)
+        user = User(id=1001, email="alert-master@example.com", hashed_password="x", alerts_enabled=False)
         db_session.add(user)
     else:
         user.alerts_enabled = False
@@ -57,9 +57,9 @@ def test_alert_master_off_stops_notification_but_event_dispatch_remains_safe(db_
 
 def test_alert_metric_operator_threshold_contract(db_session, monkeypatch):
     from app.models import User
-    user = User(id=2, email="alert-metric@example.com", hashed_password="x", alerts_enabled=True)
+    user = User(id=1002, email="alert-metric@example.com", hashed_password="x", alerts_enabled=True)
     db_session.add(user)
-    rule = AlertRule(user_id=2, strategy_id="cash-future", min_gross_profit=0,
+    rule = AlertRule(user_id=1002, strategy_id="cash-future", min_gross_profit=0,
                      metric="gap", operator=">=", threshold=1.5,
                      mobile_number="919999999998", whatsapp_enabled=True, enabled=True)
     db_session.add(rule); db_session.commit()
