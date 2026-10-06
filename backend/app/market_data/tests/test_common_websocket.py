@@ -208,3 +208,46 @@ def test_recovery_supervisor_rebuilds_missing_socket_without_strategy_runner():
         assert manager.snapshot()["socket_groups"] == 2
     finally:
         manager.close()
+
+
+class AlwaysFailThenRecoverSocket(FakeSocket):
+    attempts = 0
+
+    def connect(self, **kwargs):
+        type(self).attempts += 1
+        if type(self).attempts == 1:
+            raise ConnectionError("simulated broker connect failure")
+        return super().connect(**kwargs)
+
+
+def test_connect_failure_telemetry_and_recovery_restores_socket():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=AlwaysFailThenRecoverSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        try:
+            manager.subscribe("cash", [d.key])
+        except ConnectionError:
+            pass
+        else:
+            raise AssertionError("expected simulated broker connect failure")
+
+        failed = manager.snapshot()
+        assert failed["socket_groups"] == 0
+        assert failed["connect_failures"] == 1
+        assert failed["last_connect_failure"]["group"] == "1:0"
+        assert failed["last_connect_failure"]["error_type"] == "ConnectionError"
+        assert "simulated broker connect failure" in failed["last_connect_failure"]["error"]
+
+        manager.recover_disconnected(min_age_seconds=0.0)
+
+        recovered = manager.snapshot()
+        assert recovered["socket_groups"] == 1
+        assert recovered["connected_groups"] == ["1:0"]
+        assert recovered["recovery_attempts"] == 1
+        assert recovered["last_recovery_at"] is not None
+    finally:
+        manager.close()
+        AlwaysFailThenRecoverSocket.attempts = 0
