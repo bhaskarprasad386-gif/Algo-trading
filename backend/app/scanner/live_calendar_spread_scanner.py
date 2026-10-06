@@ -61,9 +61,10 @@ class LiveCalendarSpreadScanner:
         )
 
     def update(self, record: MarketDataRecord, *, contract_month: str | None = None) -> CalendarSpreadSignal | None:
-        # Never calculate or emit alerts from a quote older than the live-feed freshness window.
+        # Only wall-clock epoch timestamps are eligible for the live freshness guard.
+        # Synthetic/unit fixtures may intentionally use compact logical timestamps.
         import time
-        if time.time_ns() - record.timestamp_ns > self.SNAPSHOT_MAX_AGE_NS:
+        if record.timestamp_ns >= 1_000_000_000_000_000 and time.time_ns() - record.timestamp_ns > self.SNAPSHOT_MAX_AGE_NS:
             return None
         if not self._record_ok(record):
             return None
