@@ -39,7 +39,8 @@ class LiveCalendarSpreadScanner:
     # Angel One exchange timestamps can differ by a few hundred milliseconds
     # between near/far contracts even when both belong to the same 1-second
     # market snapshot. Do not require nanosecond identity for pairing.
-    TIMESTAMP_TOLERANCE_NS = 500_000_000
+    TIMESTAMP_TOLERANCE_NS = 1_000_000_000
+    SNAPSHOT_MAX_AGE_NS = 5_000_000_000
 
     def __init__(self, *, minimum_gap_points: float = 0.0, minimum_gross_profit: float = 0.0, alerts: CalendarSpreadAlertService | None = None):
         if minimum_gap_points < 0 or minimum_gross_profit < 0:
@@ -154,6 +155,8 @@ class LiveCalendarSpreadScanner:
         min_gap=self.minimum_gap_points if minimum_gap_points is None else float(minimum_gap_points)
         min_gross=self.minimum_gross_profit if minimum_gross_profit is None else float(minimum_gross_profit)
         if min_gap<0 or min_gross<0:raise ValueError("thresholds cannot be negative")
+        import time
+        now_ns = time.time_ns()
         with self._lock:values=tuple(self._signals.values())
-        values=tuple(x for x in values if qualifies_opportunity(gap_points=x.gap_points,gross_profit=x.gross_profit,minimum_gap_points=min_gap,minimum_gross_profit=min_gross))
+        values=tuple(x for x in values if now_ns - x.timestamp_ns <= self.SNAPSHOT_MAX_AGE_NS and qualifies_opportunity(gap_points=x.gap_points,gross_profit=x.gross_profit,minimum_gap_points=min_gap,minimum_gross_profit=min_gross))
         return tuple(sorted(values,key=lambda x:(x.gross_profit,x.gap_points),reverse=True)[:limit])
