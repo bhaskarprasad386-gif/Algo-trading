@@ -65,6 +65,8 @@ class LiveSyntheticScanner:
         ask = self._price(payload.get("ask"))
         if bid is None or ask is None or ask < bid:
             return ()
+        if not payload.get("source_timestamp_ns"):
+            return ()
 
         def positive_number(value: object) -> float:
             try:
