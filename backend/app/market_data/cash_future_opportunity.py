@@ -5,7 +5,7 @@ CommonWebSocketManager and never opens a broker connection.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from threading import RLock
@@ -138,18 +138,25 @@ class CashFutureOpportunityScanner:
                     minimum_gap_points=self.minimum_gap_points,
                     minimum_gross_profit=self.minimum_gross_profit,
                 )
+                anchor_timestamp_ns = max(cash.timestamp_ns, future.timestamp_ns)
+                signal_cash = replace(cash, timestamp_ns=anchor_timestamp_ns)
+                signal_future = replace(future, timestamp_ns=anchor_timestamp_ns)
+                signal_legs = (
+                    OpportunityLeg(signal_cash, legs[0].side, legs[0].label),
+                    OpportunityLeg(signal_future, legs[1].side, legs[1].label),
+                )
                 signal = OpportunitySignal(
                     strategy_id=self.strategy_id,
                     opportunity_type="cash-future",
                     symbol=symbol,
-                    timestamp_ns=record.timestamp_ns,
+                    timestamp_ns=anchor_timestamp_ns,
                     gap_points=gap,
                     gross_profit=gross,
                     lot_size=int(future.lot_size),
                     qualifies=qualifies,
                     minimum_gap_points=self.minimum_gap_points,
                     minimum_gross_profit=self.minimum_gross_profit,
-                    legs=legs,
+                    legs=signal_legs,
                     expiry=future.expiry,
                     metadata={"contract_month": selected_month, "direction": direction, "source": "common-market-data", "live_orders": False},
                 )
