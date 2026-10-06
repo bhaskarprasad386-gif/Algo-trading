@@ -269,3 +269,16 @@ def test_runner_filters_targets_to_resolvable_underlying_tokens(monkeypatch):
     feed = runner._ensure_underlying_feed()
     assert feed is not None
     assert [x.underlying for x in runner.targets] == ["NIFTY"]
+
+
+def test_runner_exposes_supervisor_stop_event_alias():
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "29OCT2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=_master(),
+        atm_provider=lambda _s, _t: 100.0,
+    )
+    assert runner.stop_event is runner._stop_requested
+    runner.stop()
+    assert runner.stop_event.is_set()
