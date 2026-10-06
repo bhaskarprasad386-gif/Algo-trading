@@ -15,8 +15,10 @@ def test_calendar_paper_pnl_formula():
 
 def test_calendar_live_scanner_snapshot_keeps_underlying_and_exchange():
  from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
+ import time
  s=LiveCalendarSpreadScanner()
- a={"underlying":"BANKNIFTY","exchange":"NFO","instrument_type":"INDEX_FUTURE","contract_month":"2026-09","expiry":"2026-09-30","timestamp_ns":2,"bid":100,"ask":101,"bid_qty":100,"ask_qty":100,"lot_size":35}
+ ts=time.time_ns()
+ a={"underlying":"BANKNIFTY","exchange":"NFO","instrument_type":"INDEX_FUTURE","contract_month":"2026-09","expiry":"2026-09-30","timestamp_ns":ts,"bid":100,"ask":101,"bid_qty":100,"ask_qty":100,"lot_size":35}
  b={**a,"contract_month":"2026-10","expiry":"2026-10-29","bid":105,"ask":106}
  s.observe(a); s.observe(b)
  rows=s.snapshot()
