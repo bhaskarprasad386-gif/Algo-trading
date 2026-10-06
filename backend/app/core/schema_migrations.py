@@ -39,12 +39,21 @@ def run_schema_migrations() -> None:
                     sms_enabled BOOLEAN NOT NULL DEFAULT 0,
                     app_enabled BOOLEAN NOT NULL DEFAULT 1,
                     whatsapp_enabled BOOLEAN NOT NULL DEFAULT 0,
+                    telegram_enabled BOOLEAN NOT NULL DEFAULT 0,
+                    telegram_chat_id VARCHAR(128) NOT NULL DEFAULT '',
                     email_enabled BOOLEAN NOT NULL DEFAULT 0,
                     created_at DATETIME NOT NULL,
                     updated_at DATETIME NOT NULL
                 )
             """))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_alert_contacts_user ON alert_contacts (user_id, id)"))
+        alert_contact_columns = {column["name"] for column in inspect(connection).get_columns("alert_contacts")}
+        for name, definition in {
+            "telegram_enabled": "BOOLEAN DEFAULT 0",
+            "telegram_chat_id": "VARCHAR(128) DEFAULT ''",
+        }.items():
+            if name not in alert_contact_columns:
+                connection.execute(text(f"ALTER TABLE alert_contacts ADD COLUMN {name} {definition}"))
 
         if "alert_rules" in alert_tables:
             alert_columns = {column["name"] for column in inspect(connection).get_columns("alert_rules")}
