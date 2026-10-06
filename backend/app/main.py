@@ -491,7 +491,7 @@ async def _live_cash_future_loop() -> None:
             )
             if not runner.stop_event.is_set():
                 app_logger.warning(
-                    "Live Cash-Future runner exited unexpectedly; retrying in %.1fs",
+                    "Live Cash-Future runner exited unexpectedly; retrying in {:.1f}s",
                     retry_delay,
                 )
                 await asyncio.sleep(retry_delay)
@@ -502,7 +502,7 @@ async def _live_cash_future_loop() -> None:
             raise
         except Exception as exc:
             app_logger.error(
-                "Live Cash-Future runner failed; retrying in %.1fs: %s",
+                "Live Cash-Future runner failed; retrying in {:.1f}s: {}",
                 retry_delay, exc,
             )
             await asyncio.sleep(retry_delay)
@@ -590,7 +590,7 @@ async def _live_synthetic_loop() -> None:
                 )
             if not targets:
                 app_logger.warning(
-                    "Synthetic live runner found no eligible NIFTY50/index/MCX option targets; retrying in %.1fs",
+                    "Synthetic live runner found no eligible NIFTY50/index/MCX option targets; retrying in {:.1f}s",
                     retry_delay,
                 )
                 await asyncio.sleep(retry_delay)
@@ -612,7 +612,7 @@ async def _live_synthetic_loop() -> None:
             )
             if not runner.stop_event.is_set():
                 app_logger.warning(
-                    "Live Synthetic runner exited unexpectedly; retrying in %.1fs",
+                    "Live Synthetic runner exited unexpectedly; retrying in {:.1f}s",
                     retry_delay,
                 )
                 await asyncio.sleep(retry_delay)
@@ -623,7 +623,7 @@ async def _live_synthetic_loop() -> None:
             raise
         except Exception as exc:
             app_logger.error(
-                "Live Synthetic runner failed; retrying in %.1fs: %s",
+                "Live Synthetic runner failed; retrying in {:.1f}s: {}",
                 retry_delay, exc,
             )
             await asyncio.sleep(retry_delay)
