@@ -221,11 +221,27 @@ class CommonWebSocketManager:
                 tokens = set(self._socket_tokens.get(group, set()))
                 if tokens:
                     stale.append((group, socket, tokens, created_at))
+
+            # A partial reconcile can successfully create/store one shard and
+            # fail while creating a later shard. The registry still contains
+            # the full subscription intent, so detect missing shards explicitly
+            # and let the next recovery cycle retry them.
+            desired_pairs_by_mode: dict[int, set[tuple[int, str]]] = defaultdict(set)
+            for sub in self.registry.subscriptions():
+                desired_pairs_by_mode[sub.mode].add(
+                    (self._resolve_exchange_type(sub.key), sub.key.token.strip())
+                )
+            expected_groups = sum(
+                (len(pairs) + self._max_tokens_per_socket - 1) // self._max_tokens_per_socket
+                for pairs in desired_pairs_by_mode.values()
+            )
+            missing_groups = bool(desired_pairs_by_mode) and len(self._sockets) < expected_groups
+
             for group, _, _, _ in stale:
                 self._sockets.pop(group, None)
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
-        if not stale:
+        if not stale and not missing_groups:
             return 0
 
         for _, socket, _, _ in stale:
