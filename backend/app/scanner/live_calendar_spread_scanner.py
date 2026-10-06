@@ -61,6 +61,10 @@ class LiveCalendarSpreadScanner:
         )
 
     def update(self, record: MarketDataRecord, *, contract_month: str | None = None) -> CalendarSpreadSignal | None:
+        # Never calculate or emit alerts from a quote older than the live-feed freshness window.
+        import time
+        if time.time_ns() - record.timestamp_ns > self.SNAPSHOT_MAX_AGE_NS:
+            return None
         if not self._record_ok(record):
             return None
         key=(str(record.underlying or record.symbol).strip().upper(), record.instrument.exchange.strip().upper())
