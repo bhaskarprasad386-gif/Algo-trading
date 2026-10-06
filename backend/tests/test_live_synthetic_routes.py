@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import time
 
 from app.scanner import live_synthetic_routes
 
@@ -9,7 +10,7 @@ def _result():
         instrument_class="INDEX",
         expiry=20260930,
         strike=25000.0,
-        timestamp_ns=1_000_000_000,
+        timestamp_ns=time.time_ns(),
         call_bid=100.0,
         call_ask=101.0,
         put_bid=90.0,
