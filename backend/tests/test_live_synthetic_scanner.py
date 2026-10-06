@@ -139,3 +139,21 @@ def test_live_synthetic_scanner_does_not_cross_second_boundaries():
     result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"",
         "expiry":"30SEP2026","bid":115,"ask":116,"lot_size":1,"source_timestamp_ns":ts+2,"symbol":"NIFTYFUT"})
     assert result == ()
+
+
+def test_live_synthetic_scanner_allows_synchronized_ticks_across_second_boundary():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    ts = 5_999_999_999
+    scanner.observe(_base(ts, 105.0, "CE", 4.0, 5.0))
+    scanner.observe(_base(ts + 2, 105.0, "PE", 4.0, 5.0))
+    result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"", "expiry":"30SEP2026", "bid":115,"ask":116,"lot_size":1,"source_timestamp_ns":ts+2,"symbol":"NIFTYFUT","volume":100,"oi":1000})
+    assert result
+    assert result[0].option.timestamp_ns == ts + 2
+    assert result[0].future.timestamp_ns == ts + 2
+
+
+def test_live_synthetic_scanner_rejects_commodity_scope():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    payload = _base(6_000_000_000, 105.0, "CE", 4.0, 5.0)
+    payload["instrument_class"] = "COMMODITY"
+    assert scanner.observe(payload) == ()
