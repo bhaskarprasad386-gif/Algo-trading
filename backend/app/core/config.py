@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     WHATSAPP_ACCESS_TOKEN: str = ""
     WHATSAPP_PHONE_NUMBER_ID: str = ""
     WHATSAPP_GRAPH_API_VERSION: str = "v23.0"
+    # Telegram Bot API alerts; disabled until deployment credentials are supplied.
+    TELEGRAM_ENABLED: bool = False
+    TELEGRAM_BOT_TOKEN: str = ""
 
     # Durable historical-download progress database
     BACKTEST_STATUS_DB: str = "./backtest_download_status.sqlite3"
