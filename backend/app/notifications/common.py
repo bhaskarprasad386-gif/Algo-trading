@@ -125,7 +125,7 @@ class AlertService:
             bot_token=settings.TELEGRAM_BOT_TOKEN,
             enabled=settings.TELEGRAM_ENABLED,
         ))
-        self._last_sent: dict[tuple, int] = {}
+        self._last_sent: dict[tuple, int] = {}\n        self._delivered_events: set[tuple] = set()
 
     @property
     def configured_channels(self) -> tuple[str, ...]:
