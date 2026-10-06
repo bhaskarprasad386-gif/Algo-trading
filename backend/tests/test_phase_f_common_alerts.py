@@ -256,4 +256,5 @@ def test_alert_status_counts_active_user_rules(db_session, monkeypatch):
     assert result["active_rules"] == 1
     assert result["triggered_30d"] == 0
     assert result["history_30d"] == 0
+    assert result["history_scope"] == "scanner_global"
     assert result["window_days"] == 30
