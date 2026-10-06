@@ -12,10 +12,12 @@ class FakeSocket:
         self.subscribe_calls = []
         self.closed = False
         self.connected = False
+        self.connecting = False
         FakeSocket.instances.append(self)
 
     def connect(self, **kwargs):
         self.connect_calls.append(kwargs)
+        self.connecting = False
         self.connected = True
 
     def subscribe(self, tokens, mode=None):
@@ -251,3 +253,25 @@ def test_connect_failure_telemetry_and_recovery_restores_socket():
     finally:
         manager.close()
         AlwaysFailThenRecoverSocket.attempts = 0
+
+
+class ConnectingSocket(FakeSocket):
+    def connect(self, **kwargs):
+        self.connect_calls.append(kwargs)
+        self.connecting = True
+        self.connected = False
+
+
+def test_recovery_does_not_reap_async_connecting_socket():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=ConnectingSocket)
+    manager.subscribe("cash", [d.key])
+
+    recovered = manager.recover_disconnected(min_age_seconds=0.0)
+
+    assert recovered == 0
+    assert len(ConnectingSocket.instances) == 1
+    assert manager.snapshot()["socket_groups"] == 1
+    manager.close()
