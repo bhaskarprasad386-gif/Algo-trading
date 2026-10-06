@@ -1,6 +1,4 @@
-import threading
-
-from app.market_data.live_box_spread_runner import BoxSpreadLiveRunner
+from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner
 
 
 def test_box_runner_retries_transient_session_failure(monkeypatch):
