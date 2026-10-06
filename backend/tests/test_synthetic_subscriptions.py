@@ -49,4 +49,4 @@ def test_selection_keeps_only_matching_expiry_and_real_tokens():
         expiry="29OCT2026", allowed_stock_symbols=frozenset({"ABC"})
     )
     assert selected.expiry=="29OCT2026"
-    assert {x.token for x in selected.subscriptions}=={"10","11","20","21"}
+    assert {x.token for x in selected.subscriptions}=={"10","11","20","21","30"}
