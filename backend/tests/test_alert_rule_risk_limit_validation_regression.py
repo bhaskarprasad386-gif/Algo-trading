@@ -29,8 +29,8 @@ def test_malformed_persisted_risk_limits_fail_closed(db_session):
     ]
     for i, values in enumerate(bad):
         rule = AlertRule(user_id=1, strategy_id="cash-future", mobile_number="", whatsapp_enabled=False, enabled=True,
-                         min_gross_profit=0, max_loss=10000, max_daily_capital=100000, max_simultaneous_positions=5,
-                         cooldown_seconds=60, **values)
+                         min_gross_profit=values.pop("min_gross_profit", 0), max_loss=values.pop("max_loss", 10000), max_daily_capital=values.pop("max_daily_capital", 100000), max_simultaneous_positions=values.pop("max_simultaneous_positions", 5),
+                         cooldown_seconds=values.pop("cooldown_seconds", 60), **values)
         db_session.add(rule)
         try:
             db_session.commit()

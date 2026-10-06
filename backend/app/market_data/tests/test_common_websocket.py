@@ -1,6 +1,7 @@
 from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
 from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
+import time
 
 
 class FakeSocket:
@@ -10,10 +11,12 @@ class FakeSocket:
         self.connect_calls = []
         self.subscribe_calls = []
         self.closed = False
+        self.connected = False
         FakeSocket.instances.append(self)
 
     def connect(self, **kwargs):
         self.connect_calls.append(kwargs)
+        self.connected = True
 
     def subscribe(self, tokens, mode=None):
         self.subscribe_calls.append((list(tokens), mode))
@@ -26,6 +29,7 @@ class FakeSocket:
 
     def close(self):
         self.closed = True
+        self.connected = False
 
 
 def descriptor(token, exchange="NSE", segment="EQ"):
@@ -62,8 +66,8 @@ def test_common_manager_deduplicates_shared_instrument_and_fans_out():
     assert registry.subscriptions()[0].ref_count == 2
     snapshot = manager.snapshot()
     assert snapshot["socket_groups"] == 1
-    assert snapshot["disconnected_groups"] == ["1:0"]
-    assert snapshot["connected_groups"] == []
+    assert snapshot["disconnected_groups"] == []
+    assert snapshot["connected_groups"] == ["1:0"]
 
     manager._on_data(SocketGroup(1, 0), {"token": "101", "ltp": 100})
     assert set(seen) == {("box", "101"), ("cash", "101")}
@@ -118,3 +122,132 @@ def test_same_token_on_different_exchange_group_does_not_cross_fan_out():
 
     manager._on_data(SocketGroup(1, 0), {"token": "101", "exchange_type": 1})
     assert seen == ["nse"]
+
+
+def test_recovery_rebuilds_missing_socket_shard():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor(str(i)) for i in range(1001)]
+    registry.register_many(descriptors)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager.subscribe("cash", [d.key for d in descriptors])
+
+    assert len(FakeSocket.instances) == 2
+    missing = SocketGroup(1, 1)
+    with manager._lock:
+        manager._sockets.pop(missing)
+        manager._socket_tokens.pop(missing, None)
+        manager._socket_created_at.pop(missing, None)
+
+    recovered = manager.recover_disconnected(min_age_seconds=10.0)
+
+    assert recovered == 0
+    assert len(FakeSocket.instances) == 3
+    assert manager.snapshot()["socket_groups"] == 2
+    assert manager.snapshot()["connected_groups"] == ["1:0", "1:1"]
+
+
+class PartialFailureSocket(FakeSocket):
+    created = 0
+
+    def __init__(self):
+        super().__init__()
+        type(self).created += 1
+
+    def connect(self, **kwargs):
+        if type(self).created == 2:
+            raise RuntimeError("simulated second-shard connect failure")
+        return super().connect(**kwargs)
+
+
+def test_partial_reconcile_failure_is_recovered_on_next_cycle():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor(str(i)) for i in range(1001)]
+    registry.register_many(descriptors)
+    manager = CommonWebSocketManager(registry, socket_factory=PartialFailureSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        try:
+            manager.subscribe("cash", [d.key for d in descriptors])
+        except RuntimeError as exc:
+            assert "second-shard" in str(exc)
+        else:
+            raise AssertionError("expected partial shard connection failure")
+
+        assert manager.snapshot()["socket_groups"] == 1
+        assert len(registry.subscriptions()) == 1001
+
+        PartialFailureSocket.created = 2
+        recovered = manager.recover_disconnected(min_age_seconds=0.0)
+
+        assert recovered == 0
+        snapshot = manager.snapshot()
+        assert snapshot["socket_groups"] == 2
+        assert snapshot["connected_groups"] == ["1:0", "1:1"]
+    finally:
+        manager.close()
+        PartialFailureSocket.created = 0
+
+
+def test_recovery_supervisor_rebuilds_missing_socket_without_strategy_runner():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor(str(i)) for i in range(1001)]
+    registry.register_many(descriptors)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 0.01
+    try:
+        manager.subscribe("cash", [d.key for d in descriptors])
+        assert manager.snapshot()["socket_groups"] == 2
+        missing = SocketGroup(1, 1)
+        with manager._lock:
+            manager._sockets.pop(missing)
+            manager._socket_tokens.pop(missing, None)
+            manager._socket_created_at.pop(missing, None)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and manager.snapshot()["socket_groups"] < 2:
+            time.sleep(0.02)
+        assert manager.snapshot()["socket_groups"] == 2
+    finally:
+        manager.close()
+
+
+class AlwaysFailThenRecoverSocket(FakeSocket):
+    attempts = 0
+
+    def connect(self, **kwargs):
+        type(self).attempts += 1
+        if type(self).attempts == 1:
+            raise ConnectionError("simulated broker connect failure")
+        return super().connect(**kwargs)
+
+
+def test_connect_failure_telemetry_and_recovery_restores_socket():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=AlwaysFailThenRecoverSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        try:
+            manager.subscribe("cash", [d.key])
+        except ConnectionError:
+            pass
+        else:
+            raise AssertionError("expected simulated broker connect failure")
+
+        failed = manager.snapshot()
+        assert failed["socket_groups"] == 0
+        assert failed["connect_failures"] == 1
+        assert failed["last_connect_failure"]["group"] == "1:0"
+        assert failed["last_connect_failure"]["error_type"] == "ConnectionError"
+        assert "simulated broker connect failure" in failed["last_connect_failure"]["error"]
+
+        manager.recover_disconnected(min_age_seconds=0.0)
+
+        recovered = manager.snapshot()
+        assert recovered["socket_groups"] == 1
+        assert recovered["connected_groups"] == ["1:0"]
+        assert recovered["recovery_attempts"] == 1
+        assert recovered["last_recovery_at"] is not None
+    finally:
+        manager.close()
+        AlwaysFailThenRecoverSocket.attempts = 0

@@ -15,6 +15,60 @@ def test_alert_contact_model_supports_multiple_channel_preferences(db_session):
     assert rows[1].app_enabled is False
 
 
+
+def test_alert_master_off_blocks_enabled_whatsapp_and_telegram_contacts(db_session, monkeypatch):
+    from app.models import AlertContact, AlertRule, User
+    from app.notifications.common import AlertEvent, AlertService
+    from app.notifications.whatsapp import WhatsAppConfig, WhatsAppNotifier
+    user = User(id=9103, email="master-contact@example.com", hashed_password="x", alerts_enabled=False)
+    db_session.add(user)
+    db_session.add(AlertRule(user_id=9103, strategy_id="cash-future", metric="gap", operator=">=", threshold=1, min_gross_profit=0, enabled=True))
+    db_session.add(AlertContact(user_id=9103, label="WA", mobile_number="919333333333", whatsapp_enabled=True, telegram_enabled=True, telegram_chat_id="123456", enabled=True))
+    db_session.commit()
+    service = AlertService(WhatsAppNotifier(WhatsAppConfig(enabled=True, access_token="token", phone_number_id="id")))
+    wa, tg = [], []
+    monkeypatch.setattr(service._notifier, "send_text", lambda recipient, msg: wa.append(recipient) or True)
+    monkeypatch.setattr(service._telegram, "send_text", lambda recipient, msg: tg.append(recipient) or True)
+    event = AlertEvent("cash-future", "master-contact-off", "ABC", 1000, "blocked", metadata={"gap": 2, "gross_profit": 500})
+    assert service.dispatch(db_session, event) == 0
+    assert wa == [] and tg == []
+
+
+def test_disabled_contact_does_not_block_other_enabled_contact(db_session, monkeypatch):
+    from app.models import AlertContact, AlertRule, User
+    from app.notifications.common import AlertEvent, AlertService
+    from app.notifications.whatsapp import WhatsAppConfig, WhatsAppNotifier
+    user = User(id=9104, email="contact-isolation@example.com", hashed_password="x", alerts_enabled=True)
+    db_session.add(user)
+    db_session.add(AlertRule(user_id=9104, strategy_id="cash-future", metric="gap", operator=">=", threshold=1, min_gross_profit=0, enabled=True))
+    db_session.add_all([
+        AlertContact(user_id=9104, label="OFF", mobile_number="919444444444", whatsapp_enabled=True, enabled=False),
+        AlertContact(user_id=9104, label="ON", mobile_number="919555555555", whatsapp_enabled=True, enabled=True),
+    ])
+    db_session.commit()
+    service = AlertService(WhatsAppNotifier(WhatsAppConfig(enabled=True, access_token="token", phone_number_id="id")))
+    sent = []
+    monkeypatch.setattr(service._notifier, "send_text", lambda recipient, msg: sent.append(recipient) or True)
+    assert service.dispatch(db_session, AlertEvent("cash-future", "contact-isolation", "ABC", 2000, "alert", metadata={"gap": 2, "gross_profit": 500})) == 1
+    assert sent == ["919555555555"]
+
+
+def test_whatsapp_and_telegram_are_independent_per_contact(db_session, monkeypatch):
+    from app.models import AlertContact, AlertRule, User
+    from app.notifications.common import AlertEvent, AlertService
+    from app.notifications.whatsapp import WhatsAppConfig, WhatsAppNotifier
+    user = User(id=9105, email="channel-isolation@example.com", hashed_password="x", alerts_enabled=True)
+    db_session.add(user)
+    db_session.add(AlertRule(user_id=9105, strategy_id="cash-future", metric="gap", operator=">=", threshold=1, min_gross_profit=0, enabled=True))
+    db_session.add(AlertContact(user_id=9105, label="TelegramOnly", mobile_number="", whatsapp_enabled=False, telegram_enabled=True, telegram_chat_id="987654", enabled=True))
+    db_session.commit()
+    service = AlertService(WhatsAppNotifier(WhatsAppConfig(enabled=True, access_token="token", phone_number_id="id")))
+    wa, tg = [], []
+    monkeypatch.setattr(service._notifier, "send_text", lambda recipient, msg: wa.append(recipient) or True)
+    monkeypatch.setattr(service._telegram, "send_text", lambda recipient, msg: tg.append(recipient) or True)
+    assert service.dispatch(db_session, AlertEvent("cash-future", "telegram-only", "ABC", 3000, "telegram", metadata={"gap": 2, "gross_profit": 500})) == 1
+    assert wa == [] and tg == ["987654"]
+
 def test_alert_dispatch_uses_enabled_whatsapp_contacts(db_session, monkeypatch):
     from app.models import AlertContact, AlertRule, User
     from app.notifications.common import AlertEvent, AlertService

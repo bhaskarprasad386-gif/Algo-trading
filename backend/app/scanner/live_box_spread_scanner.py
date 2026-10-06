@@ -32,6 +32,11 @@ class LiveBoxSpreadScanner:
         symbol=str(payload.get("underlying") or "").strip().upper()
         cls=str(payload.get("instrument_class") or "").strip().upper()
         ts=int(payload.get("source_timestamp_ns") or 0)
+        # Only wall-clock epoch timestamps are eligible for the live freshness guard.
+        # Compact logical timestamps remain valid for deterministic scanner tests.
+        import time
+        if ts >= 1_000_000_000_000_000 and time.time_ns() - ts > 5_000_000_000:
+            return ()
         typ=str(payload.get("option_type") or "").strip().upper()
         strike=self._price(payload.get("strike"))
         bid=self._price(payload.get("bid")); ask=self._price(payload.get("ask"))

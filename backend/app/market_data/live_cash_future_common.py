@@ -322,15 +322,31 @@ class LiveCashFutureCommonRunner:
         else:
             app_logger.info("Cash-Future live market-data persistence disabled; WebSocket/scanner remain live in memory")
         keys = list(self._metadata)
+        subscribed = False
         try:
-            self.manager.subscribe(self.CONSUMER, keys, mode=3)
-            self._last_contract_refresh_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
             while not self.stop_event.wait(1.0):
-                self._roll_contracts_if_needed()
-                # Keep the scanner independent of a stale broker session. The
-                # common manager preserves the same subscriptions and rebuilds
-                # only sockets that have remained disconnected long enough.
-                self.manager.recover_disconnected(min_age_seconds=10.0)
+                try:
+                    if not subscribed:
+                        self.manager.subscribe(self.CONSUMER, keys, mode=3)
+                        subscribed = True
+                        self._last_contract_refresh_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+                except Exception as exc:
+                    # A transient broker/auth/socket failure must not terminate
+                    # the shared live runner. Keep the consumer registered and
+                    # retry on the next supervision cycle.
+                    subscribed = False
+                    app_logger.warning("Cash-Future common feed subscribe/retry failed: %s", exc)
+                    continue
+                try:
+                    self._roll_contracts_if_needed()
+                    # Keep the scanner independent of a stale broker session. The
+                    # common manager preserves the same subscriptions and rebuilds
+                    # only sockets that have remained disconnected long enough.
+                    self.manager.recover_disconnected(min_age_seconds=10.0)
+                except Exception as exc:
+                    # Recovery is best-effort; preserve the runner so another
+                    # cycle can recreate missing/disconnected common-feed sockets.
+                    app_logger.warning("Cash-Future common feed recovery failed: %s", exc)
                 if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
                     self._prune_old_live_shards()
         finally:

@@ -13,6 +13,7 @@ from app.market_data.box_spread_subscriptions import select_box_contracts
 from app.scanner.live_box_spread_scanner import LiveBoxSpreadScanner
 from app.scanner.live_box_spread_pipeline import LiveBoxSpreadPipeline
 from app.scanner.box_spread import BoxSpreadScanConfig
+from app.core.logger import app_logger
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 
@@ -27,6 +28,25 @@ class LiveBoxSpreadRunner:
         self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None
 
     def run_forever(self):
+        retry_delay = 5.0
+        max_retry_delay = 60.0
+        while not self.stop_event.is_set():
+            try:
+                self._run_session()
+                retry_delay = 5.0
+            except Exception as exc:
+                if self.stop_event.is_set():
+                    break
+                app_logger.warning(
+                    "Box Spread live runner failed; retrying in {:.1f}s: {}",
+                    retry_delay,
+                    exc,
+                )
+                self.stop_event.wait(retry_delay)
+                retry_delay = min(max_retry_delay, retry_delay * 2.0)
+        self.stop()
+
+    def _run_session(self):
         self.master.download()
         symbols=tuple(dict.fromkeys(t.underlying for t in self.targets))
         from datetime import datetime

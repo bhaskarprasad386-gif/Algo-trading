@@ -178,6 +178,10 @@ def get_live_data_health():
                 "socket_groups": common.get("socket_groups", 0) if common else 0,
                 "connected_groups": common.get("connected_groups", []) if common else [],
                 "disconnected_groups": common.get("disconnected_groups", []) if common else [],
+                "connect_failures": common.get("connect_failures", 0) if common else 0,
+                "last_connect_failure": common.get("last_connect_failure") if common else None,
+                "recovery_attempts": common.get("recovery_attempts", 0) if common else 0,
+                "last_recovery_at": common.get("last_recovery_at") if common else None,
                 "delivery_errors": common.get("delivery_errors", 0) if common else 0,
                 "age_seconds": runtime_age,
             },
@@ -211,6 +215,10 @@ def get_common_feed_health():
             "last_tick": None,
             "connected_groups": [],
             "disconnected_groups": [],
+            "connect_failures": 0,
+            "last_connect_failure": None,
+            "recovery_attempts": 0,
+            "last_recovery_at": None,
         },
     }
 

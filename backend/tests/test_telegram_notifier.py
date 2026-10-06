@@ -49,3 +49,32 @@ def test_alert_dispatch_routes_to_enabled_telegram_contact_and_respects_master(d
         "cash-future", "telegram-blocked", "ABC", 2_000_000_000, "blocked", metadata={"gross_profit": 500}
     )) == 0
     assert sent == []
+
+
+def test_alert_dispatch_cooldown_applies_across_distinct_event_timestamps(db_session, monkeypatch):
+    user = User(id=9302, email="telegram-cooldown@example.com", hashed_password="x", alerts_enabled=True)
+    db_session.add(user)
+    db_session.add(AlertRule(
+        user_id=9302, strategy_id="cash-future", metric="gross_profit",
+        operator=">=", threshold=100, min_gross_profit=0, cooldown_seconds=60,
+        mobile_number="919333333333", whatsapp_enabled=False, enabled=True,
+    ))
+    db_session.add(AlertContact(
+        user_id=9302, label="Telegram", mobile_number="919333333333",
+        telegram_enabled=True, telegram_chat_id="111222333", enabled=True,
+    ))
+    db_session.commit()
+
+    service = AlertService(WhatsAppNotifier(WhatsAppConfig(enabled=False)))
+    sent = []
+    monkeypatch.setattr(service._telegram, "send_text", lambda chat_id, msg: sent.append((chat_id, msg)) or True)
+
+    assert service.dispatch(
+        db_session,
+        AlertEvent("cash-future", "same-logical-event", "ABC", 100_000_000_000, "first", metadata={"gross_profit": 500}),
+    ) == 1
+    assert service.dispatch(
+        db_session,
+        AlertEvent("cash-future", "same-logical-event", "ABC", 101_000_000_000, "within cooldown", metadata={"gross_profit": 500}),
+    ) == 0
+    assert sent == [("111222333", "first")]
