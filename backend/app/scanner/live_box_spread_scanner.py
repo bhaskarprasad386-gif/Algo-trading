@@ -37,7 +37,8 @@ class LiveBoxSpreadScanner:
         bid=self._price(payload.get("bid")); ask=self._price(payload.get("ask"))
         if not symbol or cls not in {"STOCK","INDEX"} or ts<=0 or typ not in {"CE","PE"} or strike is None or bid is None or ask is None or ask<bid:return ()
         with self._lock:
-            key=self._matching_bucket_key(symbol,ts)
+            expiry=self._expiry(payload.get("expiry"))
+            key=self._matching_bucket_key(symbol,ts,expiry)
             bucket=self._buckets.setdefault(key,{})
             bucket[(strike,typ)]=payload
             grouped=[]
@@ -75,9 +76,14 @@ class LiveBoxSpreadScanner:
 
     TIMESTAMP_TOLERANCE_NS=1_000_000_000
 
-    def _matching_bucket_key(self,symbol,ts):
-        candidates=[key for key in self._buckets if key[0]==symbol and abs(key[1]-ts)<=self.TIMESTAMP_TOLERANCE_NS]
-        return min(candidates,key=lambda key:abs(key[1]-ts)) if candidates else (symbol,ts)
+    def _matching_bucket_key(self,symbol,ts,expiry):
+        candidates=[
+            key for key in self._buckets
+            if key[0]==symbol
+            and key[2]==expiry
+            and abs(key[1]-ts)<=self.TIMESTAMP_TOLERANCE_NS
+        ]
+        return min(candidates,key=lambda key:abs(key[1]-ts)) if candidates else (symbol,ts,expiry)
 
     def _prune(self,ts):
         cutoff=ts-3_000_000_000
