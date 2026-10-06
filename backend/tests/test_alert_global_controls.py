@@ -171,3 +171,40 @@ def test_zero_cooldown_does_not_duplicate_exact_event(db_session, monkeypatch):
     assert service.dispatch(db_session, event) == 1
     assert service.dispatch(db_session, event) == 0
     assert sent == [("919999999997", "same")]
+
+
+def test_zero_cooldown_dedup_survives_strategy_event_contract(db_session, monkeypatch):
+    _ensure_user(db_session, 1004, "alert-contract@example.com", True)
+    rule = AlertRule(
+        user_id=1004, strategy_id="calendar-spread", min_gross_profit=0,
+        metric="gap", operator=">=", threshold=5, cooldown_seconds=0,
+        mobile_number="919999999996", whatsapp_enabled=True, enabled=True,
+    )
+    db_session.add(rule); db_session.commit()
+    service = AlertService(WhatsAppNotifier(WhatsAppConfig(
+        enabled=True, access_token="token", phone_number_id="id"
+    )))
+    sent = []
+    monkeypatch.setattr(service._notifier, "send_text", lambda mobile, msg: sent.append(msg) or True)
+    event = AlertEvent("calendar-spread", "calendar-event", "NIFTY", 123, "calendar", metadata={"gap": 5, "gross_profit": 100})
+    assert service.dispatch(db_session, event) == 1
+    assert service.dispatch(db_session, event) == 0
+    assert len(sent) == 1
+
+
+def test_persisted_invalid_strategy_metric_rule_is_fail_closed(db_session, monkeypatch):
+    _ensure_user(db_session, 1005, "legacy-invalid@example.com", True)
+    rule = AlertRule(
+        user_id=1005, strategy_id="box-spread", min_gross_profit=0,
+        metric="volume", operator=">=", threshold=1,
+        mobile_number="919999999995", whatsapp_enabled=True, enabled=True,
+    )
+    db_session.add(rule); db_session.commit()
+    service = AlertService(WhatsAppNotifier(WhatsAppConfig(
+        enabled=True, access_token="token", phone_number_id="id"
+    )))
+    sent = []
+    monkeypatch.setattr(service._notifier, "send_text", lambda mobile, msg: sent.append(msg) or True)
+    event = AlertEvent("box-spread", "legacy-invalid", "NIFTY", 456, "blocked", metadata={"volume": 999, "gap": 10, "gross_profit": 100})
+    assert service.dispatch(db_session, event) == 0
+    assert sent == []
