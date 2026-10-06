@@ -22,8 +22,6 @@ class AlertRuleRequest(BaseModel):
     min_gross_profit: float = Field(default=0.0, ge=0)
     mobile_number: str = Field(min_length=7, max_length=32)
     whatsapp_enabled: bool = False
-    telegram_enabled: bool = False
-    telegram_chat_id: str = Field(default="", max_length=128)
     enabled: bool = True
     max_loss: float = Field(default=10000.0, ge=0)
     max_daily_capital: float = Field(default=10000000.0, ge=0)
