@@ -120,8 +120,6 @@ def set_alert_master(request: AlertMasterRequest, db: Session = Depends(get_db))
     user = db.query(User).filter(User.id == uid).first()
     if user is None:
         raise HTTPException(status_code=404, detail="user not found")
-    if "enabled" not in request or not isinstance(request["enabled"], bool):
-        raise HTTPException(status_code=422, detail="enabled must be boolean")
     user.alerts_enabled = request["enabled"]
     user.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
