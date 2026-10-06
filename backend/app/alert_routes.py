@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.execution.paper_routes import current_user_id
-from app.models import AlertRule, GlobalPaperSetting, User
+from app.models import AlertRule, AlertContact, GlobalPaperSetting, User
 
 router = APIRouter(prefix="/api/v1/alerts", tags=["Alerts"])
 
@@ -110,6 +110,62 @@ def delete_rule(rule_id: int, db: Session = Depends(get_db)):
     if r is None: raise HTTPException(status_code=404, detail="alert rule not found")
     db.delete(r); db.commit()
     return {"status":"success","deleted":rule_id}
+
+class AlertContactRequest(BaseModel):
+    label: str = Field(default="Primary", min_length=1, max_length=64)
+    mobile_number: str = Field(min_length=7, max_length=32)
+    enabled: bool = True
+    sms_enabled: bool = False
+    app_enabled: bool = True
+    whatsapp_enabled: bool = False
+    email_enabled: bool = False
+
+def _contact_payload(c: AlertContact) -> dict:
+    return {"id": c.id, "label": c.label, "mobile_number": c.mobile_number,
+            "enabled": bool(c.enabled), "channels": {
+                "sms": bool(c.sms_enabled), "app": bool(c.app_enabled),
+                "whatsapp": bool(c.whatsapp_enabled), "email": bool(c.email_enabled)},
+            "created_at": c.created_at, "updated_at": c.updated_at}
+
+@router.get("/contacts")
+def list_alert_contacts(db: Session = Depends(get_db)):
+    uid = current_user_id(db)
+    rows = db.query(AlertContact).filter(AlertContact.user_id == uid).order_by(AlertContact.id.asc()).all()
+    return {"status": "success", "contacts": [_contact_payload(row) for row in rows]}
+
+@router.post("/contacts")
+def add_alert_contact(request: AlertContactRequest, db: Session = Depends(get_db)):
+    uid = current_user_id(db)
+    number = request.mobile_number.strip()
+    if not number.isdigit() or len(number) < 7:
+        raise HTTPException(status_code=422, detail="invalid mobile number")
+    row = AlertContact(user_id=uid, mobile_number=number, **request.model_dump(exclude={"mobile_number"}))
+    db.add(row); db.commit(); db.refresh(row)
+    return {"status": "success", "contact": _contact_payload(row)}
+
+@router.put("/contacts/{contact_id}")
+def update_alert_contact(contact_id: int, request: AlertContactRequest, db: Session = Depends(get_db)):
+    uid = current_user_id(db)
+    row = db.query(AlertContact).filter(AlertContact.id == contact_id, AlertContact.user_id == uid).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="alert contact not found")
+    number = request.mobile_number.strip()
+    if not number.isdigit() or len(number) < 7:
+        raise HTTPException(status_code=422, detail="invalid mobile number")
+    for key, value in request.model_dump().items():
+        setattr(row, key, value)
+    row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.commit(); db.refresh(row)
+    return {"status": "success", "contact": _contact_payload(row)}
+
+@router.delete("/contacts/{contact_id}")
+def delete_alert_contact(contact_id: int, db: Session = Depends(get_db)):
+    uid = current_user_id(db)
+    row = db.query(AlertContact).filter(AlertContact.id == contact_id, AlertContact.user_id == uid).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="alert contact not found")
+    db.delete(row); db.commit()
+    return {"status": "success", "deleted": contact_id}
 
 class AlertMasterRequest(BaseModel):
     enabled: bool
