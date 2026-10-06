@@ -226,15 +226,18 @@ class CommonWebSocketManager:
             # fail while creating a later shard. The registry still contains
             # the full subscription intent, so detect missing shards explicitly
             # and let the next recovery cycle retry them.
-            desired_pairs_by_mode: dict[int, set[tuple[int, str]]] = defaultdict(set)
+            # Mirror _reconcile() exactly: sockets are sharded per mode
+            # after exchange/token pairs are globally sorted for that mode.
+            pairs_by_mode: dict[int, set[tuple[int, str]]] = defaultdict(set)
             for sub in self.registry.subscriptions():
-                desired_pairs_by_mode[sub.mode].add(
+                pairs_by_mode[sub.mode].add(
                     (self._resolve_exchange_type(sub.key), sub.key.token.strip())
                 )
-            expected_groups = sum(
-                (len(pairs) + self._max_tokens_per_socket - 1) // self._max_tokens_per_socket
-                for pairs in desired_pairs_by_mode.values()
-            )
+            expected_groups = 0
+            for pairs in pairs_by_mode.values():
+                expected_groups += (
+                    len(pairs) + self._max_tokens_per_socket - 1
+                ) // self._max_tokens_per_socket
             missing_groups = bool(desired_pairs_by_mode) and len(self._sockets) < expected_groups
 
             for group, _, _, _ in stale:
