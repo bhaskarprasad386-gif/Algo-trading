@@ -134,6 +134,10 @@ def test_live_synthetic_scanner_keeps_current_and_near_expiries_isolated():
 def test_live_synthetic_scanner_does_not_cross_second_boundaries():
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     ts = 5_999_999_999
+    # Keep a complete ATM pair in the same timestamp bucket so the assertion
+    # reaches the pairing guard; only the 105-strike CE/PE are split by >1ns.
+    scanner.observe(_base(ts, 100.0, "CE", 4.0, 5.0))
+    scanner.observe(_base(ts, 100.0, "PE", 4.0, 5.0))
     scanner.observe(_base(ts, 105.0, "CE", 4.0, 5.0))
     scanner.observe(_base(ts + 2, 105.0, "PE", 4.0, 5.0))
     result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"",
@@ -144,6 +148,8 @@ def test_live_synthetic_scanner_does_not_cross_second_boundaries():
 def test_live_synthetic_scanner_allows_synchronized_ticks_across_second_boundary():
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
     ts = 5_999_999_999
+    scanner.observe(_base(ts, 100.0, "CE", 4.0, 5.0))
+    scanner.observe(_base(ts, 100.0, "PE", 4.0, 5.0))
     scanner.observe(_base(ts, 105.0, "CE", 4.0, 5.0))
     scanner.observe(_base(ts + 2, 105.0, "PE", 4.0, 5.0))
     result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"", "expiry":"30SEP2026", "bid":115,"ask":116,"lot_size":1,"source_timestamp_ns":ts+2,"symbol":"NIFTYFUT","volume":100,"oi":1000})
