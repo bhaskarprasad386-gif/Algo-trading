@@ -128,32 +128,40 @@ class CashFutureOpportunityScanner:
                 candidates.append((gap, candidate_month, future, legs, direction))
             if not candidates:
                 return None
-            gap, selected_month, future, legs, direction = max(candidates, key=lambda item: item[0])
-            gross = gross_profit_from_points(gap, int(future.lot_size))
-            qualifies = qualifies_opportunity(
-                gap_points=gap,
-                gross_profit=gross,
-                minimum_gap_points=self.minimum_gap_points,
-                minimum_gross_profit=self.minimum_gross_profit,
-            )
-            signal = OpportunitySignal(
-                strategy_id=self.strategy_id,
-                opportunity_type="cash-future",
-                symbol=symbol,
-                timestamp_ns=record.timestamp_ns,
-                gap_points=gap,
-                gross_profit=gross,
-                lot_size=int(future.lot_size),
-                qualifies=qualifies,
-                minimum_gap_points=self.minimum_gap_points,
-                minimum_gross_profit=self.minimum_gross_profit,
-                legs=legs,
-                expiry=future.expiry,
-                metadata={"contract_month": selected_month, "direction": direction, "source": "common-market-data", "live_orders": False},
-            )
-            result = CashFutureScanResult(signal, cash, future, selected_month, direction)
-            self._results[(symbol, month)] = result
-            return result
+
+            evaluated: list[CashFutureScanResult] = []
+            for gap, selected_month, future, legs, direction in candidates:
+                gross = gross_profit_from_points(gap, int(future.lot_size))
+                qualifies = qualifies_opportunity(
+                    gap_points=gap,
+                    gross_profit=gross,
+                    minimum_gap_points=self.minimum_gap_points,
+                    minimum_gross_profit=self.minimum_gross_profit,
+                )
+                signal = OpportunitySignal(
+                    strategy_id=self.strategy_id,
+                    opportunity_type="cash-future",
+                    symbol=symbol,
+                    timestamp_ns=record.timestamp_ns,
+                    gap_points=gap,
+                    gross_profit=gross,
+                    lot_size=int(future.lot_size),
+                    qualifies=qualifies,
+                    minimum_gap_points=self.minimum_gap_points,
+                    minimum_gross_profit=self.minimum_gross_profit,
+                    legs=legs,
+                    expiry=future.expiry,
+                    metadata={"contract_month": selected_month, "direction": direction, "source": "common-market-data", "live_orders": False},
+                )
+                result = CashFutureScanResult(signal, cash, future, selected_month, direction)
+                key = (symbol, selected_month)
+                if qualifies:
+                    self._results[key] = result
+                else:
+                    self._results.pop(key, None)
+                evaluated.append(result)
+
+            return max(evaluated, key=lambda item: item.signal.gross_profit)
 
     def reset(self) -> None:
         """Drop cached pair state when the subscribed futures contract set rolls."""
