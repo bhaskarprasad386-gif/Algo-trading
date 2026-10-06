@@ -81,6 +81,41 @@ def get_config(db: Session = Depends(get_db)):
             "paper":{"enabled":bool(setting.enabled),"paper_amount":float(setting.paper_amount),"emergency_stop":bool(setting.emergency_stop)},
             "rules":[_rule_payload(r) for r in rules]}
 
+@router.get("/status")
+def get_alert_status(db: Session = Depends(get_db)):
+    """Return durable alert health/status without suppressing scanner results."""
+    uid = current_user_id(db)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    cutoff = now - __import__("datetime").timedelta(days=30)
+    active_rules = db.query(AlertRule).filter(
+        AlertRule.user_id == uid, AlertRule.enabled.is_(True)
+    ).count()
+    from app.models import (
+        LiveCashFutureAlertHistory,
+        LiveCalendarSpreadAlertHistory,
+        LiveSyntheticAlertHistory,
+        LiveBoxSpreadAlertHistory,
+    )
+    history_models = {
+        "cash-future": LiveCashFutureAlertHistory,
+        "calendar-spread": LiveCalendarSpreadAlertHistory,
+        "synthetic-future-cash-carry": LiveSyntheticAlertHistory,
+        "box-spread": LiveBoxSpreadAlertHistory,
+    }
+    by_strategy = {}
+    for strategy, model in history_models.items():
+        by_strategy[strategy] = db.query(model).filter(model.observed_at >= cutoff).count()
+    triggered_30d = sum(by_strategy.values())
+    return {
+        "status": "success",
+        "alerts": {"enabled": bool(db.query(User).filter(User.id == uid).scalar().alerts_enabled)},
+        "active_rules": active_rules,
+        "triggered_30d": triggered_30d,
+        "history_30d": triggered_30d,
+        "by_strategy": by_strategy,
+        "window_days": 30,
+    }
+
 @router.post("/rules")
 def save_rule(request: AlertRuleRequest, db: Session = Depends(get_db)):
     uid = current_user_id(db)
