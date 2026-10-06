@@ -342,11 +342,14 @@ class LiveSyntheticRunner:
             )
             feed_thread.start()
         try:
-            try:
-                self._wait_for_live_atm(atm_provider)
-            except TimeoutError as exc:
-                app_logger.warning("Synthetic live underlying feed timeout; retrying: {}", exc)
-                sleep(5.0)
+            while not self._stop_requested.is_set():
+                try:
+                    self._wait_for_live_atm(atm_provider)
+                    break
+                except TimeoutError as exc:
+                    app_logger.warning("Synthetic live underlying feed timeout; retrying: {}", exc)
+                    sleep(5.0)
+            if self._stop_requested.is_set():
                 return
             while not self._stop_requested.is_set() and (self._recorder is None or not self._recorder.stop_event.is_set()):
                 self._refresh_requested.clear()
