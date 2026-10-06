@@ -70,3 +70,29 @@ def test_live_data_health_reports_persisted_coverage(monkeypatch, tmp_path):
     assert result["instruments"] == 1
     assert result["persisted"] is True
     assert result["live_orders"] == "OFF"
+
+
+def test_live_data_health_exposes_common_feed_recovery_telemetry(monkeypatch):
+    class FakeCommonManager:
+        def snapshot(self):
+            return {
+                "socket_groups": 0,
+                "connected_groups": [],
+                "disconnected_groups": ["1:0"],
+                "connect_failures": 2,
+                "last_connect_failure": {
+                    "group": "1:0",
+                    "error_type": "ConnectionError",
+                    "error": "broker unavailable",
+                    "failed_at_ns": 123,
+                    "subscriptions": 1183,
+                },
+                "recovery_attempts": 4,
+                "last_recovery_at": 456.0,
+            }
+
+    monkeypatch.setattr(routes, "_get_common_strategy_feed_snapshot", lambda: FakeCommonManager().snapshot())
+    result = routes.get_live_data_health()
+    assert result["common_feed"]["connect_failures"] == 2
+    assert result["common_feed"]["last_connect_failure"]["error_type"] == "ConnectionError"
+    assert result["common_feed"]["recovery_attempts"] == 4
