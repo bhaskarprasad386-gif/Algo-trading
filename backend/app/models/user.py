@@ -20,6 +20,7 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     full_name = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
+    alerts_enabled = Column(Boolean, nullable=False, default=True)
     is_superuser = Column(Boolean, default=False)
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
