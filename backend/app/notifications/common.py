@@ -135,6 +135,8 @@ class AlertService:
         return self._dispatch_notification_only(user, event)
 
     def _dispatch_notification_only(self, user, event: AlertEvent) -> bool:
+        if not bool(getattr(user, "alerts_enabled", True)):
+            return False
         if not user.mobile_number:
             return False
         key = (int(user.id), event.event_id)
