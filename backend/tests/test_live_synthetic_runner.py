@@ -282,3 +282,32 @@ def test_runner_exposes_supervisor_stop_event_alias():
     assert runner.stop_event is runner._stop_requested
     runner.stop()
     assert runner.stop_event.is_set()
+
+
+def test_runner_retries_live_atm_timeout_without_terminating(monkeypatch):
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "29OCT2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=_master(),
+        atm_provider=lambda _s, _t: 100.0,
+    )
+    calls = {"wait": 0}
+
+    def fake_wait(_provider):
+        calls["wait"] += 1
+        if calls["wait"] == 1:
+            raise TimeoutError("temporary live-feed timeout")
+        runner.stop()
+
+    monkeypatch.setattr(runner, "_wait_for_live_atm", fake_wait)
+    monkeypatch.setattr(
+        "app.market_data.live_synthetic_runner.sleep",
+        lambda seconds: None,
+    )
+    monkeypatch.setattr(runner, "_ensure_underlying_feed", lambda: None)
+    runner._active_underlying_feed = None
+
+    # The timeout must be retried; it must not terminate the runner on the first failure.
+    runner.run_forever()
+    assert calls["wait"] == 2
