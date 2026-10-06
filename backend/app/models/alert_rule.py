@@ -7,6 +7,7 @@ class AlertRule(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, nullable=False, index=True)
     strategy_id = Column(String(128), nullable=False, index=True)
+    name = Column(String(128), nullable=False, default="Unnamed Alert")
     min_gross_profit = Column(Float, nullable=False, default=0.0)
     metric = Column(String(32), nullable=False, default="gross_profit")
     operator = Column(String(2), nullable=False, default=">=")
