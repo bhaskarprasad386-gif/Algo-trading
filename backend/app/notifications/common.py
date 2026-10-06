@@ -6,6 +6,7 @@ from typing import Any, Mapping
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.notifications.whatsapp import WhatsAppConfig, WhatsAppNotifier
+from app.notifications.telegram import TelegramConfig, TelegramNotifier
 from app.models import AlertRule, AlertContact
 
 @dataclass(frozen=True)
@@ -120,11 +121,20 @@ class AlertService:
             graph_api_version=settings.WHATSAPP_GRAPH_API_VERSION,
             enabled=settings.WHATSAPP_ENABLED,
         ))
-        self._last_sent: dict[tuple[int, str], int] = {}
+        self._telegram = TelegramNotifier(TelegramConfig(
+            bot_token=settings.TELEGRAM_BOT_TOKEN,
+            enabled=settings.TELEGRAM_ENABLED,
+        ))
+        self._last_sent: dict[tuple, int] = {}
 
     @property
     def configured_channels(self) -> tuple[str, ...]:
-        return ("whatsapp",) if self._notifier.configured else ()
+        channels = []
+        if self._notifier.configured:
+            channels.append("whatsapp")
+        if self._telegram.configured:
+            channels.append("telegram")
+        return tuple(channels)
 
     def dispatch_user(self, user, event: AlertEvent) -> bool:
         # Compatibility notification path. Paper auto-entry is intentionally
@@ -438,28 +448,48 @@ class AlertService:
                 contacts = db.query(AlertContact).filter(
                     AlertContact.user_id == int(rule.user_id),
                     AlertContact.enabled.is_(True),
-                    AlertContact.whatsapp_enabled.is_(True),
+                ).filter(
+                    (AlertContact.whatsapp_enabled.is_(True)) |
+                    (AlertContact.telegram_enabled.is_(True))
                 ).all()
                 if not contacts and rule.whatsapp_enabled and rule.mobile_number.strip():
                     contacts = [rule]
                 for contact in contacts:
-                    number = str(contact.mobile_number).strip()
-                    if not number:
-                        continue
-                    key = (int(rule.id), event.event_id, number)
                     cooldown_ns = int(max(0.0, float(rule.cooldown_seconds)) * 1_000_000_000)
-                    previous = self._last_sent.get(key)
-                    if previous is not None and event.timestamp_ns - previous < cooldown_ns:
-                        continue
-                    try:
-                        delivered = self._notifier.send_text(number, event.message)
-                    except Exception as exc:
-                        from app.core.logger import app_logger
-                        app_logger.warning("Alert notification failed for rule %s: %s", rule.id, exc)
-                        delivered = False
-                    if delivered:
-                        self._last_sent[key] = event.timestamp_ns
-                        sent += 1
+                    channels = []
+                    if bool(getattr(contact, "whatsapp_enabled", False)):
+                        number = str(getattr(contact, "mobile_number", "")).strip()
+                        if number:
+                            channels.append(("whatsapp", number))
+                    if bool(getattr(contact, "telegram_enabled", False)):
+                        chat_id = str(getattr(contact, "telegram_chat_id", "")).strip()
+                        if chat_id:
+                            channels.append(("telegram", chat_id))
+                    # Legacy AlertRule fallback remains WhatsApp-only because it
+                    # predates persistent Telegram chat IDs.
+                    if isinstance(contact, AlertRule) and rule.whatsapp_enabled and rule.mobile_number.strip():
+                        channels = [("whatsapp", str(rule.mobile_number).strip())]
+                    for channel, recipient in channels:
+                        key = (int(rule.id), event.event_id, channel, recipient)
+                        previous = self._last_sent.get(key)
+                        if previous is not None and event.timestamp_ns - previous < cooldown_ns:
+                            continue
+                        try:
+                            delivered = (
+                                self._notifier.send_text(recipient, event.message)
+                                if channel == "whatsapp"
+                                else self._telegram.send_text(recipient, event.message)
+                            )
+                        except Exception as exc:
+                            from app.core.logger import app_logger
+                            app_logger.warning(
+                                "Alert %s notification failed for rule %s: %s",
+                                channel, rule.id, exc,
+                            )
+                            delivered = False
+                        if delivered:
+                            self._last_sent[key] = event.timestamp_ns
+                            sent += 1
             return sent
         from app.models import User
         users = db.query(User).filter(User.is_active.is_(True), User.alerts_enabled.is_(True), User.mobile_number.isnot(None)).all()
