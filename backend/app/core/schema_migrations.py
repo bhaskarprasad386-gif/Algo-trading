@@ -28,6 +28,24 @@ def run_schema_migrations() -> None:
             connection.execute(text("ALTER TABLE users ADD COLUMN alerts_enabled BOOLEAN DEFAULT 1"))
 
         alert_tables = set(inspect(connection).get_table_names())
+        if "alert_contacts" not in alert_tables:
+            connection.execute(text("""
+                CREATE TABLE alert_contacts (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    label VARCHAR(64) NOT NULL DEFAULT 'Primary',
+                    mobile_number VARCHAR(32) NOT NULL,
+                    enabled BOOLEAN NOT NULL DEFAULT 1,
+                    sms_enabled BOOLEAN NOT NULL DEFAULT 0,
+                    app_enabled BOOLEAN NOT NULL DEFAULT 1,
+                    whatsapp_enabled BOOLEAN NOT NULL DEFAULT 0,
+                    email_enabled BOOLEAN NOT NULL DEFAULT 0,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL
+                )
+            """))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_alert_contacts_user ON alert_contacts (user_id, id)"))
+
         if "alert_rules" in alert_tables:
             alert_columns = {column["name"] for column in inspect(connection).get_columns("alert_rules")}
             for name, definition in {
