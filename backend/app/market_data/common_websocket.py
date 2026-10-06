@@ -238,7 +238,7 @@ class CommonWebSocketManager:
                 expected_groups += (
                     len(pairs) + self._max_tokens_per_socket - 1
                 ) // self._max_tokens_per_socket
-            missing_groups = bool(desired_pairs_by_mode) and len(self._sockets) < expected_groups
+            missing_groups = bool(pairs_by_mode) and len(self._sockets) < expected_groups
 
             for group, _, _, _ in stale:
                 self._sockets.pop(group, None)
