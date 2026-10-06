@@ -144,3 +144,30 @@ def test_alert_metric_operator_threshold_contract(db_session, monkeypatch):
         ),
     ) == 1
     assert sent == [("919999999998", "high")]
+
+
+def test_zero_cooldown_does_not_duplicate_exact_event(db_session, monkeypatch):
+    _ensure_user(db_session, 1003, "alert-dedup@example.com", True)
+    rule = AlertRule(
+        user_id=1003,
+        strategy_id="cash-future",
+        min_gross_profit=0,
+        metric="gap",
+        operator=">=",
+        threshold=1,
+        cooldown_seconds=0,
+        mobile_number="919999999997",
+        whatsapp_enabled=True,
+        enabled=True,
+    )
+    db_session.add(rule)
+    db_session.commit()
+    service = AlertService(WhatsAppNotifier(WhatsAppConfig(
+        enabled=True, access_token="token", phone_number_id="id"
+    )))
+    sent = []
+    monkeypatch.setattr(service._notifier, "send_text", lambda mobile, msg: sent.append((mobile, msg)) or True)
+    event = AlertEvent("cash-future", "same-event", "ABC", 100, "same", metadata={"gap": 2, "gross_profit": 100})
+    assert service.dispatch(db_session, event) == 1
+    assert service.dispatch(db_session, event) == 0
+    assert sent == [("919999999997", "same")]
