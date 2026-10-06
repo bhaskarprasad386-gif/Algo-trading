@@ -1,6 +1,7 @@
 from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
 from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
+import time
 
 
 class FakeSocket:
@@ -143,3 +144,25 @@ def test_recovery_rebuilds_missing_socket_shard():
     assert len(FakeSocket.instances) == 3
     assert manager.snapshot()["socket_groups"] == 2
     assert manager.snapshot()["connected_groups"] == ["1:0", "1:1"]
+
+
+def test_recovery_supervisor_rebuilds_missing_socket_without_strategy_runner():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor(str(i)) for i in range(1001)]
+    registry.register_many(descriptors)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 0.01
+    try:
+        manager.subscribe("cash", [d.key for d in descriptors])
+        assert manager.snapshot()["socket_groups"] == 2
+        missing = SocketGroup(1, 1)
+        with manager._lock:
+            manager._sockets.pop(missing)
+            manager._socket_tokens.pop(missing, None)
+            manager._socket_created_at.pop(missing, None)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and manager.snapshot()["socket_groups"] < 2:
+            time.sleep(0.02)
+        assert manager.snapshot()["socket_groups"] == 2
+    finally:
+        manager.close()
