@@ -22,6 +22,8 @@ class AlertRuleRequest(BaseModel):
     min_gross_profit: float = Field(default=0.0, ge=0)
     mobile_number: str = Field(min_length=7, max_length=32)
     whatsapp_enabled: bool = False
+    telegram_enabled: bool = False
+    telegram_chat_id: str = Field(default="", max_length=128)
     enabled: bool = True
     max_loss: float = Field(default=10000.0, ge=0)
     max_daily_capital: float = Field(default=10000000.0, ge=0)
@@ -78,6 +80,7 @@ def get_config(db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="user not found")
     return {"status":"success","alerts":{"enabled":bool(user.alerts_enabled)}, "strategies":sorted(STRATEGIES),
             "metrics":sorted(ALERT_METRICS), "operators":sorted(ALERT_OPERATORS),
+            "notification_channels":{"whatsapp": bool(__import__("app.core.config", fromlist=["settings"]).settings.WHATSAPP_ENABLED), "telegram": bool(__import__("app.core.config", fromlist=["settings"]).settings.TELEGRAM_ENABLED)},
             "paper":{"enabled":bool(setting.enabled),"paper_amount":float(setting.paper_amount),"emergency_stop":bool(setting.emergency_stop)},
             "rules":[_rule_payload(r) for r in rules]}
 
@@ -160,7 +163,8 @@ def _contact_payload(c: AlertContact) -> dict:
     return {"id": c.id, "label": c.label, "mobile_number": c.mobile_number,
             "enabled": bool(c.enabled), "channels": {
                 "sms": bool(c.sms_enabled), "app": bool(c.app_enabled),
-                "whatsapp": bool(c.whatsapp_enabled), "email": bool(c.email_enabled)},
+                "whatsapp": bool(c.whatsapp_enabled), "telegram": bool(c.telegram_enabled), "email": bool(c.email_enabled)},
+            "telegram_chat_id": c.telegram_chat_id,
             "created_at": c.created_at, "updated_at": c.updated_at}
 
 @router.get("/contacts")
@@ -173,6 +177,9 @@ def list_alert_contacts(db: Session = Depends(get_db)):
 def add_alert_contact(request: AlertContactRequest, db: Session = Depends(get_db)):
     uid = current_user_id(db)
     number = request.mobile_number.strip()
+    chat_id = request.telegram_chat_id.strip()
+    if request.telegram_enabled and not chat_id:
+        raise HTTPException(status_code=422, detail="telegram chat id required when Telegram is enabled")
     if not number.isdigit() or len(number) < 7:
         raise HTTPException(status_code=422, detail="invalid mobile number")
     row = AlertContact(user_id=uid, mobile_number=number, **request.model_dump(exclude={"mobile_number"}))
@@ -186,6 +193,9 @@ def update_alert_contact(contact_id: int, request: AlertContactRequest, db: Sess
     if row is None:
         raise HTTPException(status_code=404, detail="alert contact not found")
     number = request.mobile_number.strip()
+    chat_id = request.telegram_chat_id.strip()
+    if request.telegram_enabled and not chat_id:
+        raise HTTPException(status_code=422, detail="telegram chat id required when Telegram is enabled")
     if not number.isdigit() or len(number) < 7:
         raise HTTPException(status_code=422, detail="invalid mobile number")
     for key, value in request.model_dump().items():
