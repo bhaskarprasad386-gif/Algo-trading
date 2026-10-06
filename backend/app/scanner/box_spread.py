@@ -4,11 +4,11 @@ from dataclasses import dataclass
 from itertools import combinations
 from typing import Iterable
 from app.backtesting.arbitrage_backtester import BoxSpreadBacktester, OptionQuote
-from app.backtesting.arbitrage_scan_policy import ScanPolicy, ordered_strikes_around_atm, strike_distance_from_atm
+from app.backtesting.arbitrage_scan_policy import ScanPolicy, ordered_strikes_around_atm, enumerate_box_pairs
 
 BOX_SCAN_POLICY = ScanPolicy(
-    stock_box_distances=tuple(range(1, 6)),
-    index_box_distances=tuple(range(1, 11)),
+    stock_box_distances=(3, 4, 5),
+    index_box_distances=tuple(range(3, 16)),
 )
 
 @dataclass(frozen=True)
@@ -80,12 +80,16 @@ def scan_box_snapshot(option_quotes: Iterable[OptionQuote], *, atm_strike: float
         raise ValueError("duplicate box strike")
 
     ordered = ordered_strikes_around_atm(by_strike, atm_strike=float(atm_strike))
-    allowed_max = max(policy.box_distances(cls))
-    liquid_strikes = [s for s in ordered if _liquid_quote(by_strike[s], config)]
+    pairs = enumerate_box_pairs(
+        by_strike.keys(), atm_strike=float(atm_strike), instrument_class=cls, policy=policy
+    )
+    liquid = {
+        strike for strike, quote in by_strike.items()
+        if _liquid_quote(quote, config)
+    }
     results = []
-    for low_strike, high_strike in combinations(liquid_strikes, 2):
-        distance = abs(ordered.index(high_strike) - ordered.index(low_strike))
-        if distance < 1 or distance > allowed_max:
+    for low_strike, high_strike, distance in pairs:
+        if low_strike not in liquid or high_strike not in liquid:
             continue
         low, high = by_strike[low_strike], by_strike[high_strike]
         for direction in ("LONG", "SHORT"):
