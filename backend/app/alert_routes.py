@@ -157,6 +157,8 @@ class AlertContactRequest(BaseModel):
     sms_enabled: bool = False
     app_enabled: bool = True
     whatsapp_enabled: bool = False
+    telegram_enabled: bool = False
+    telegram_chat_id: str = Field(default="", max_length=128)
     email_enabled: bool = False
 
 def _contact_payload(c: AlertContact) -> dict:
