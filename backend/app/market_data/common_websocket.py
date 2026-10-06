@@ -59,6 +59,10 @@ class CommonWebSocketManager:
         self._recovery_stop = Event()
         self._recovery_thread: Thread | None = None
         self._recovery_interval_seconds = 5.0
+        self._connect_failures = 0
+        self._last_connect_failure = None
+        self._recovery_attempts = 0
+        self._last_recovery_at = None
 
     @staticmethod
     def _default_exchange_type(key: InstrumentKey) -> int:
@@ -180,14 +184,30 @@ class CommonWebSocketManager:
             for group, pairs in desired_tokens.items():
                 socket = existing.get(group)
                 if socket is None:
-                    socket = self._socket_factory()
-                    subscriptions = self._group_subscriptions(pairs)
-                    socket.connect(
-                        mode=group.mode,
-                        subscriptions=subscriptions,
-                        correlation_id=f"common-{group.mode}-{group.shard}",
-                        on_data=lambda message, group=group: self._on_data(group, message),
-                    )
+                    try:
+                        socket = self._socket_factory()
+                        subscriptions = self._group_subscriptions(pairs)
+                        socket.connect(
+                            mode=group.mode,
+                            subscriptions=subscriptions,
+                            correlation_id=f"common-{group.mode}-{group.shard}",
+                            on_data=lambda message, group=group: self._on_data(group, message),
+                        )
+                    except Exception as exc:
+                        with self._lock:
+                            self._connect_failures += 1
+                            self._last_connect_failure = {
+                                "group": f"{group.mode}:{group.shard}",
+                                "error_type": type(exc).__name__,
+                                "error": str(exc),
+                                "failed_at_ns": time.time_ns(),
+                                "subscriptions": len(pairs),
+                            }
+                        app_logger.warning(
+                            "Common feed socket connect failed group=%s error=%s: %s",
+                            group, type(exc).__name__, exc,
+                        )
+                        raise
                     with self._lock:
                         self._sockets[group] = socket
                         self._socket_tokens[group] = set(pairs)
@@ -276,6 +296,10 @@ class CommonWebSocketManager:
                 self._socket_created_at.pop(group, None)
         if not stale and not missing_groups:
             return 0
+
+        with self._lock:
+            self._recovery_attempts += 1
+            self._last_recovery_at = time.time()
 
         for _, socket, _, _ in stale:
             self._close_socket_bounded(socket)
@@ -412,6 +436,10 @@ class CommonWebSocketManager:
                     for group, socket in sockets.items()
                     if not bool(getattr(socket, "connected", False))
                 ],
+                "connect_failures": self._connect_failures,
+                "last_connect_failure": dict(self._last_connect_failure) if self._last_connect_failure else None,
+                "recovery_attempts": self._recovery_attempts,
+                "last_recovery_at": self._last_recovery_at,
             }
 
     def close(self) -> None:
