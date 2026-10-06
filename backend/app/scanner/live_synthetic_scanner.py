@@ -54,7 +54,7 @@ class LiveSyntheticScanner:
         cls = str(payload.get("instrument_class") or "").strip().upper()
         option_type = str(payload.get("option_type") or "").strip().upper()
         timestamp_ns = int(payload.get("source_timestamp_ns") or 0)
-        if not symbol or cls not in {"STOCK", "INDEX", "COMMODITY"} or timestamp_ns <= 0:
+        if not symbol or cls not in {"STOCK", "INDEX"} or timestamp_ns <= 0:
             return ()
         bid = self._price(payload.get("bid"))
         ask = self._price(payload.get("ask"))
@@ -188,8 +188,19 @@ class LiveSyntheticScanner:
     TIMESTAMP_TOLERANCE_NS = 1_000_000_000
 
     def _matching_bucket_key(self, symbol: str, timestamp_ns: int, expiry: int) -> tuple[str, int, int]:
-        # Keep each expiry isolated and only pair ticks inside the same 1-second bucket.
-        return (symbol, (timestamp_ns // 1_000_000_000) * 1_000_000_000, expiry)
+        # Keep expiry isolated, but allow synchronized ticks to straddle a
+        # wall-clock second boundary. The later timestamp validation remains
+        # the final guard against pairing genuinely stale legs.
+        candidates = [
+            key
+            for key in self._buckets
+            if key[0] == symbol
+            and key[2] == expiry
+            and abs(key[1] - timestamp_ns) <= self.TIMESTAMP_TOLERANCE_NS
+        ]
+        if candidates:
+            return min(candidates, key=lambda key: abs(key[1] - timestamp_ns))
+        return (symbol, timestamp_ns, expiry)
 
     def _prune(self, timestamp_ns: int) -> None:
         cutoff = timestamp_ns - 3_000_000_000
