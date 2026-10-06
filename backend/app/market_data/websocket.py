@@ -14,7 +14,7 @@ from app.core.logger import app_logger
 class MarketDataWebSocket:
     """Resilient Angel One SmartAPI WebSocket V2 client."""
 
-    def __init__(self, auth: Optional[AngelOneAuth] = None):
+    def __init__(self, auth: Optional[AngelOneAuth] = None, auto_reconnect: bool = True):
         self.auth = auth or AngelOneAuth()
         self.websocket = None
         self.exchange_type: Optional[int] = None
@@ -34,11 +34,18 @@ class MarketDataWebSocket:
         self._reconnect_count = 0
         self._last_error = None
         self._reconnect_lock = Lock()
+        self._auto_reconnect = bool(auto_reconnect)
+        self._connecting = False
 
     @property
     def health(self) -> dict:
         with self._lock:
             return {"connected": self._connected, "stopping": self._stopping, "error_count": self._error_count, "reconnect_count": self._reconnect_count, "consecutive_failures": self._consecutive_failures, "last_error": self._last_error}
+
+    @property
+    def connecting(self) -> bool:
+        with self._lock:
+            return self._connecting
 
     @property
     def connected(self) -> bool:
@@ -76,6 +83,7 @@ class MarketDataWebSocket:
         def handle_open(wsapp):
             with self._lock:
                 self._connected = True
+                self._connecting = False
             with self._lock:
                 self._consecutive_failures = 0
                 self._last_error = None
@@ -90,6 +98,7 @@ class MarketDataWebSocket:
         def handle_error(wsapp, error):
             with self._lock:
                 self._connected = False
+                self._connecting = False
                 self._error_count += 1
                 self._consecutive_failures += 1
                 self._last_error = str(error)
@@ -98,9 +107,10 @@ class MarketDataWebSocket:
         def handle_close(wsapp):
             with self._lock:
                 self._connected = False
+                self._connecting = False
                 stopping = self._stopping
             app_logger.warning("Angel One WebSocket connection closed")
-            if not stopping:
+            if not stopping and self._auto_reconnect:
                 self._schedule_reconnect()
 
         socket.on_open = handle_open
@@ -183,6 +193,7 @@ class MarketDataWebSocket:
             self.correlation_id = correlation_id.strip()
             self.on_data = on_data
             self._stopping = False
+            self._connecting = True
             self._reconnect_attempts = reconnect_attempts
             self._reconnect_delay_seconds = reconnect_delay_seconds
         last_error = None
@@ -201,6 +212,7 @@ class MarketDataWebSocket:
                 last_error = exc
                 with self._lock:
                     self._connected = False
+                    self._connecting = False
                     self._error_count += 1
                     self._consecutive_failures += 1
                     self._last_error = str(exc)
@@ -318,6 +330,7 @@ class MarketDataWebSocket:
         with self._lock:
             self._stopping = True
             self._connected = False
+            self._connecting = False
             socket = self.websocket
             self.websocket = None
         if socket:
