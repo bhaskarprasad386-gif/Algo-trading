@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Activity, Bell, Filter, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Zap } from "lucide-react";
@@ -31,7 +31,7 @@ const cell = (row: Row, ...keys: string[]) => {
   return "—";
 };
 
-export default function ScannerPage() {
+function ScannerContent() {
   const searchParams = useSearchParams();
   const requestedMarket = searchParams.get("market")?.toUpperCase() ?? "ALL F&O STOCKS";
   const [market, setMarket] = useState(requestedMarket);
@@ -165,5 +165,13 @@ export default function ScannerPage() {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="flex items-center gap-2 text-sm font-semibold theme-text"><ShieldCheck className="h-4 w-4 theme-success" /> Scanner safety boundary</p><p className="mt-1 text-xs leading-5 theme-muted">Scanner output is paper-safe. Broker orders remain OFF.</p></div><span className="shrink-0 rounded-lg border theme-border theme-danger-bg px-3 py-2 text-xs font-semibold theme-danger">BROKER ORDERS OFF</span></div>
       </Card>
     </div>
+  );
+}
+
+export default function ScannerPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen theme-bg p-4 theme-text">Loading scanner…</div>}>
+      <ScannerContent />
+    </Suspense>
   );
 }
