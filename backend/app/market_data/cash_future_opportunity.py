@@ -97,16 +97,19 @@ class CashFutureOpportunityScanner:
             if cash is None:
                 return None
             candidate_months = ("CURRENT", "NEAR") if leg == "CASH" else (leg,)
-            best = None
+            candidates: list[tuple[float, str, MarketDataRecord, tuple[OpportunityLeg, ...], str]] = []
             for candidate_month in candidate_months:
                 future = bucket.get(candidate_month)
                 if future is None or future.lot_size is None or future.lot_size <= 0:
+                    self._results.pop((symbol, candidate_month), None)
                     continue
                 if abs(cash.timestamp_ns - future.timestamp_ns) > self.MAX_PAIR_AGE_NS:
+                    self._results.pop((symbol, candidate_month), None)
                     continue
                 forward_gap = float(future.bid) - float(cash.ask)
                 reverse_gap = float(cash.bid) - float(future.ask)
                 if forward_gap < 0 and reverse_gap < 0:
+                    self._results.pop((symbol, candidate_month), None)
                     continue
                 if forward_gap >= reverse_gap:
                     gap = forward_gap
@@ -122,12 +125,10 @@ class CashFutureOpportunityScanner:
                         OpportunityLeg(cash, OrderSide.SELL, "cash-entry"),
                         OpportunityLeg(future, OrderSide.BUY, f"future-{candidate_month.lower()}-entry"),
                     )
-                if best is None or gap > best[0]:
-                    best = (gap, candidate_month, future, legs)
-            if best is None:
+                candidates.append((gap, candidate_month, future, legs, direction))
+            if not candidates:
                 return None
-            gap, selected_month, future, legs = best
-            direction = "CASH_BUY_FUTURE_SELL" if legs[0].side is OrderSide.BUY else "CASH_SELL_FUTURE_BUY"
+            gap, selected_month, future, legs, direction = max(candidates, key=lambda item: item[0])
             gross = gross_profit_from_points(gap, int(future.lot_size))
             qualifies = qualifies_opportunity(
                 gap_points=gap,
