@@ -10,10 +10,12 @@ class FakeSocket:
         self.connect_calls = []
         self.subscribe_calls = []
         self.closed = False
+        self.connected = False
         FakeSocket.instances.append(self)
 
     def connect(self, **kwargs):
         self.connect_calls.append(kwargs)
+        self.connected = True
 
     def subscribe(self, tokens, mode=None):
         self.subscribe_calls.append((list(tokens), mode))
@@ -26,6 +28,7 @@ class FakeSocket:
 
     def close(self):
         self.closed = True
+        self.connected = False
 
 
 def descriptor(token, exchange="NSE", segment="EQ"):
@@ -62,8 +65,8 @@ def test_common_manager_deduplicates_shared_instrument_and_fans_out():
     assert registry.subscriptions()[0].ref_count == 2
     snapshot = manager.snapshot()
     assert snapshot["socket_groups"] == 1
-    assert snapshot["disconnected_groups"] == ["1:0"]
-    assert snapshot["connected_groups"] == []
+    assert snapshot["disconnected_groups"] == []
+    assert snapshot["connected_groups"] == ["1:0"]
 
     manager._on_data(SocketGroup(1, 0), {"token": "101", "ltp": 100})
     assert set(seen) == {("box", "101"), ("cash", "101")}
@@ -118,3 +121,25 @@ def test_same_token_on_different_exchange_group_does_not_cross_fan_out():
 
     manager._on_data(SocketGroup(1, 0), {"token": "101", "exchange_type": 1})
     assert seen == ["nse"]
+
+
+def test_recovery_rebuilds_missing_socket_shard():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor(str(i)) for i in range(1001)]
+    registry.register_many(descriptors)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager.subscribe("cash", [d.key for d in descriptors])
+
+    assert len(FakeSocket.instances) == 2
+    missing = SocketGroup(1, 1)
+    with manager._lock:
+        manager._sockets.pop(missing)
+        manager._socket_tokens.pop(missing, None)
+        manager._socket_created_at.pop(missing, None)
+
+    recovered = manager.recover_disconnected(min_age_seconds=10.0)
+
+    assert recovered == 0
+    assert len(FakeSocket.instances) == 3
+    assert manager.snapshot()["socket_groups"] == 2
+    assert manager.snapshot()["connected_groups"] == ["1:0", "1:1"]
