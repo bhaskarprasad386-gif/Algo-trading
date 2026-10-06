@@ -146,6 +146,48 @@ def test_recovery_rebuilds_missing_socket_shard():
     assert manager.snapshot()["connected_groups"] == ["1:0", "1:1"]
 
 
+class PartialFailureSocket(FakeSocket):
+    created = 0
+
+    def __init__(self):
+        super().__init__()
+        type(self).created += 1
+
+    def connect(self, **kwargs):
+        if type(self).created == 2:
+            raise RuntimeError("simulated second-shard connect failure")
+        return super().connect(**kwargs)
+
+
+def test_partial_reconcile_failure_is_recovered_on_next_cycle():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor(str(i)) for i in range(1001)]
+    registry.register_many(descriptors)
+    manager = CommonWebSocketManager(registry, socket_factory=PartialFailureSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        try:
+            manager.subscribe("cash", [d.key for d in descriptors])
+        except RuntimeError as exc:
+            assert "second-shard" in str(exc)
+        else:
+            raise AssertionError("expected partial shard connection failure")
+
+        assert manager.snapshot()["socket_groups"] == 1
+        assert len(registry.subscriptions()) == 1001
+
+        PartialFailureSocket.created = 2
+        recovered = manager.recover_disconnected(min_age_seconds=0.0)
+
+        assert recovered == 0
+        snapshot = manager.snapshot()
+        assert snapshot["socket_groups"] == 2
+        assert snapshot["connected_groups"] == ["1:0", "1:1"]
+    finally:
+        manager.close()
+        PartialFailureSocket.created = 0
+
+
 def test_recovery_supervisor_rebuilds_missing_socket_without_strategy_runner():
     registry = InstrumentRegistry()
     descriptors = [descriptor(str(i)) for i in range(1001)]
