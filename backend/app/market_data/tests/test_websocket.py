@@ -163,3 +163,26 @@ def test_websocket_supports_multiple_exchange_groups(monkeypatch):
     assert socket.subscriptions[-1][2][-1] == {"exchangeType": 4, "tokens": ["404"]}
     client.unsubscribe_groups({4: ["404"]})
     assert 4 not in client.subscriptions
+
+
+
+def test_websocket_can_disable_background_reconnect_for_shared_manager(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    scheduled = []
+    monkeypatch.setattr(client, "_schedule_reconnect", lambda: scheduled.append(True))
+    socket = client._build_socket()
+    socket.on_close(socket)
+    assert scheduled == []
+
+
+def test_websocket_marks_async_handshake_as_connecting(monkeypatch):
+    class AsyncSocket(FakeSocket):
+        def connect(self):
+            return None
+
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", AsyncSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"], reconnect_attempts=0)
+    assert client.connected is False
+    assert client.connecting is True
