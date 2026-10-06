@@ -292,6 +292,7 @@ def test_runner_retries_live_atm_timeout_without_terminating(monkeypatch):
         instrument_master=_master(),
         atm_provider=lambda _s, _t: 100.0,
     )
+    runner._atm_tracker = object()
     calls = {"wait": 0}
 
     def fake_wait(_provider):
