@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.execution.paper_routes import current_user_id
-from app.models import AlertRule, GlobalPaperSetting
+from app.models import AlertRule, GlobalPaperSetting, User
 
 router = APIRouter(prefix="/api/v1/alerts", tags=["Alerts"])
 
@@ -15,6 +15,7 @@ ALERT_OPERATORS = {">=", ">", "<=", "<", "="}
 
 class AlertRuleRequest(BaseModel):
     strategy_id: str = Field(min_length=1, max_length=128)
+    name: str = Field(default="Unnamed Alert", min_length=1, max_length=128)
     metric: str = Field(default="gross_profit", min_length=1, max_length=32)
     operator: str = Field(default=">=", min_length=1, max_length=2)
     threshold: float = Field(default=0.0)
@@ -57,7 +58,7 @@ class PaperGlobalRequest(BaseModel):
     emergency_stop: bool = False
 
 def _rule_payload(r: AlertRule) -> dict:
-    return {"id":r.id,"strategy_id":r.strategy_id,"metric":r.metric,"operator":r.operator,"threshold":r.threshold,"min_gross_profit":r.min_gross_profit,
+    return {"id":r.id,"name":r.name,"strategy_id":r.strategy_id,"metric":r.metric,"operator":r.operator,"threshold":r.threshold,"min_gross_profit":r.min_gross_profit,
             "mobile_number":r.mobile_number,"whatsapp_enabled":r.whatsapp_enabled,"enabled":r.enabled,
             "max_loss":r.max_loss,"max_daily_capital":r.max_daily_capital,
             "max_simultaneous_positions":r.max_simultaneous_positions,
@@ -72,7 +73,10 @@ def get_config(db: Session = Depends(get_db)):
         setting = GlobalPaperSetting(user_id=uid)
         db.add(setting); db.commit(); db.refresh(setting)
     rules = db.query(AlertRule).filter(AlertRule.user_id == uid).order_by(AlertRule.priority.desc(), AlertRule.id.asc()).all()
-    return {"status":"success","alerts":{"enabled":bool(db.query(__import__("app.models", fromlist=["User"]).User).filter(__import__("app.models", fromlist=["User"]).User.id == uid).scalar().alerts_enabled)}, "strategies":sorted(STRATEGIES),
+    user = db.query(User).filter(User.id == uid).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    return {"status":"success","alerts":{"enabled":bool(user.alerts_enabled)}, "strategies":sorted(STRATEGIES),
             "metrics":sorted(ALERT_METRICS), "operators":sorted(ALERT_OPERATORS),
             "paper":{"enabled":bool(setting.enabled),"paper_amount":float(setting.paper_amount),"emergency_stop":bool(setting.emergency_stop)},
             "rules":[_rule_payload(r) for r in rules]}
@@ -107,12 +111,13 @@ def delete_rule(rule_id: int, db: Session = Depends(get_db)):
     db.delete(r); db.commit()
     return {"status":"success","deleted":rule_id}
 
+class AlertMasterRequest(BaseModel):
+    enabled: bool
+
 @router.put("/master")
-def set_alert_master(request: dict, db: Session = Depends(get_db)):
+def set_alert_master(request: AlertMasterRequest, db: Session = Depends(get_db)):
     uid = current_user_id(db)
-    user = db.query(__import__("app.models", fromlist=["User"]).User).filter(
-        __import__("app.models", fromlist=["User"]).User.id == uid
-    ).first()
+    user = db.query(User).filter(User.id == uid).first()
     if user is None:
         raise HTTPException(status_code=404, detail="user not found")
     if "enabled" not in request or not isinstance(request["enabled"], bool):
