@@ -83,8 +83,8 @@ class LiveSyntheticScanner:
 
         expiry = self._expiry(payload.get("expiry"))
         strike = self._price(payload.get("strike"))
-        key = (symbol, timestamp_ns)
         with self._lock:
+            key = self._matching_bucket_key(symbol, timestamp_ns)
             bucket = self._buckets.setdefault(key, {"future": None, "options": {}})
             if option_type in {"CE", "PE"} and strike is not None:
                 bucket["options"].setdefault(strike, {})[option_type] = payload
@@ -101,6 +101,14 @@ class LiveSyntheticScanner:
                 return ()
             future_payload = bucket["future"]
             future_expiry = self._expiry(future_payload.get("expiry"))
+            timestamps = [int(future_payload.get("source_timestamp_ns") or 0)]
+            for legs in bucket["options"].values():
+                timestamps.extend(int(leg.get("source_timestamp_ns") or 0) for leg in legs.values())
+            timestamps = [value for value in timestamps if value > 0]
+            if not timestamps or max(timestamps) - min(timestamps) > self.TIMESTAMP_TOLERANCE_NS:
+                self._prune(timestamp_ns)
+                return ()
+            anchor_timestamp_ns = max(timestamps)
             strikes = bucket["options"]
             option_quotes: list[OptionQuote] = []
             for option_strike, legs in strikes.items():
@@ -124,7 +132,7 @@ class LiveSyntheticScanner:
                     continue
                 option_quotes.append(
                     OptionQuote(
-                        timestamp_ns=timestamp_ns,
+                        timestamp_ns=anchor_timestamp_ns,
                         underlying=symbol,
                         expiry=future_expiry,
                         strike=option_strike,
@@ -148,7 +156,7 @@ class LiveSyntheticScanner:
                 self._prune(timestamp_ns)
                 return ()
             future = FutureQuote(
-                timestamp_ns=timestamp_ns,
+                timestamp_ns=anchor_timestamp_ns,
                 underlying=symbol,
                 expiry=future_expiry,
                 bid=future_bid,
@@ -176,6 +184,15 @@ class LiveSyntheticScanner:
         if results and self.on_result is not None:
             self.on_result(results)
         return results
+
+    TIMESTAMP_TOLERANCE_NS = 1_000_000_000
+
+    def _matching_bucket_key(self, symbol: str, timestamp_ns: int) -> tuple[str, int]:
+        candidates = [
+            key for key in self._buckets
+            if key[0] == symbol and abs(key[1] - timestamp_ns) <= self.TIMESTAMP_TOLERANCE_NS
+        ]
+        return min(candidates, key=lambda key: abs(key[1] - timestamp_ns)) if candidates else (symbol, timestamp_ns)
 
     def _prune(self, timestamp_ns: int) -> None:
         cutoff = timestamp_ns - 3_000_000_000
