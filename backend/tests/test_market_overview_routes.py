@@ -91,7 +91,7 @@ def test_live_data_health_exposes_common_feed_recovery_telemetry(monkeypatch):
                 "last_recovery_at": 456.0,
             }
 
-    monkeypatch.setattr(routes, "_get_common_strategy_feed_snapshot", lambda: FakeCommonManager().snapshot())
+    monkeypatch.setattr(routes, "shared_common_manager_snapshot", lambda: FakeCommonManager().snapshot())
     result = routes.get_live_data_health()
     assert result["common_feed"]["connect_failures"] == 2
     assert result["common_feed"]["last_connect_failure"]["error_type"] == "ConnectionError"
