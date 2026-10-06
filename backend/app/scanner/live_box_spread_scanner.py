@@ -32,6 +32,10 @@ class LiveBoxSpreadScanner:
         symbol=str(payload.get("underlying") or "").strip().upper()
         cls=str(payload.get("instrument_class") or "").strip().upper()
         ts=int(payload.get("source_timestamp_ns") or 0)
+        # Cross-leg synchronization is not enough: reject replayed/stale market data.
+        import time
+        if ts <= 0 or time.time_ns() - ts > 5_000_000_000:
+            return ()
         typ=str(payload.get("option_type") or "").strip().upper()
         strike=self._price(payload.get("strike"))
         bid=self._price(payload.get("bid")); ask=self._price(payload.get("ask"))
