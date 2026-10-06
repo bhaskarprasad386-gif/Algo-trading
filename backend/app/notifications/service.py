@@ -47,7 +47,7 @@ class NotificationService:
             timestamp_ns=alert.timestamp_ns,
             message=self._message(alert),
             metadata={
-                "gross_profit": alert.gross_profit,
+                "gap": alert.gap, "gross_profit": alert.gross_profit, "net_profit": alert.net_profit,
                 "paper_trade": {
                     "direction": "LONG", "expiry": alert.expiry or alert.contract_month,
                     "earliest_expiry": alert.expiry or alert.contract_month, "lot_size": int(alert.lot_size or 1),
