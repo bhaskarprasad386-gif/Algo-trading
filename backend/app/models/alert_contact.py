@@ -12,6 +12,8 @@ class AlertContact(Base):
     sms_enabled = Column(Boolean, nullable=False, default=False)
     app_enabled = Column(Boolean, nullable=False, default=True)
     whatsapp_enabled = Column(Boolean, nullable=False, default=False)
+    telegram_enabled = Column(Boolean, nullable=False, default=False)
+    telegram_chat_id = Column(String(128), nullable=False, default="")
     email_enabled = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
