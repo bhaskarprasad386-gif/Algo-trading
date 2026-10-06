@@ -37,6 +37,7 @@ export default function CustomAlertPage() {
   const [telegramChatId, setTelegramChatId] = useState("");
   const [savedRules, setSavedRules] = useState<any[]>([]);
   const [alertStatus, setAlertStatus] = useState({active_rules:0, triggered_30d:0, history_30d:0});
+  const [botChannels, setBotChannels] = useState({whatsapp:false,telegram:false});
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +56,7 @@ export default function CustomAlertPage() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     setAlertEnabled(Boolean(data?.alerts?.enabled));
+    setBotChannels({whatsapp:Boolean(data?.notification_channels?.whatsapp), telegram:Boolean(data?.notification_channels?.telegram)});
     setSavedRules(Array.isArray(data?.rules) ? data.rules : []);
     const statusResponse = await fetch(`${base}/api/v1/alerts/status`, { cache: "no-store" });
     if (statusResponse.ok) { const statusData = await statusResponse.json(); setAlertStatus({active_rules:Number(statusData?.active_rules)||0, triggered_30d:Number(statusData?.triggered_30d)||0, history_30d:Number(statusData?.history_30d)||0}); }
@@ -96,7 +98,9 @@ export default function CustomAlertPage() {
   const saveRule = async () => {
     const numeric = Number(threshold);
     if (!alertName.trim()) return setError("Enter an alert name.");
-    if (!mobile.trim() || mobile.trim().length < 7) return setError("Enter a valid mobile number.");
+    const normalizedMobile = mobile.trim().replace(/\D/g, "");
+    if (normalizedMobile.length < 7) return setError("Enter a valid mobile number.");
+    const ruleMobile = normalizedMobile.startsWith("91") ? normalizedMobile : `91${normalizedMobile}`;
     if (!Number.isFinite(numeric)) return setError("Enter a valid threshold.");
     setSaving(true); setError(null); setStatus(null);
     try {
@@ -105,7 +109,7 @@ export default function CustomAlertPage() {
         body: JSON.stringify({
           name: alertName.trim(), strategy_id: scanner, metric, operator, threshold: numeric,
           min_gross_profit: metric === "gross_profit" ? Math.max(0, numeric) : 0,
-          mobile_number: `91${mobile.trim()}`, whatsapp_enabled: false, enabled: true,
+          mobile_number: ruleMobile, whatsapp_enabled: false, enabled: true,
           max_loss: 10000, max_daily_capital: 10000000, max_simultaneous_positions: 20,
           cooldown_seconds: 60, priority: 0,
         }),
@@ -152,6 +156,10 @@ export default function CustomAlertPage() {
           <div className="flex-1"><h2 className="text-base font-semibold theme-text">Alert Master</h2><p className="text-sm theme-muted">{alertEnabled ? "ON — qualifying notifications can be delivered." : "OFF — notifications stop, but scanner results and alert data remain visible."}</p></div>
           <button type="button" onClick={toggleMaster} disabled={masterSaving} className={`min-w-20 rounded-xl border px-4 py-2 text-xs font-bold uppercase tracking-wider ${alertEnabled ? "theme-success-bg theme-success" : "theme-surface theme-muted"}`}>{masterSaving ? "Saving…" : alertEnabled ? "ON" : "OFF"}</button>
         </div>
+      </Card>
+
+      <Card className="p-5">
+        <div className="flex items-center gap-3"><Bot className="h-5 w-5 theme-accent"/><div className="flex-1"><h2 className="text-base font-semibold theme-text">Notification Bots</h2><p className="text-sm theme-muted">Server-side bot credentials stay private; both channels are disabled until deployment configuration enables them.</p></div></div><div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl border theme-border theme-surface p-3"><p className="text-xs theme-muted">WHATSAPP BOT</p><p className="mt-1 text-sm font-bold theme-text">{botChannels.whatsapp ? "ENABLED" : "OFF"}</p></div><div className="rounded-xl border theme-border theme-surface p-3"><p className="text-xs theme-muted">TELEGRAM BOT</p><p className="mt-1 text-sm font-bold theme-text">{botChannels.telegram ? "ENABLED" : "OFF"}</p></div></div>
       </Card>
 
       <Card className="p-5">
