@@ -11,6 +11,7 @@ def run_schema_migrations() -> None:
         return
 
     columns = {column["name"] for column in inspector.get_columns("users")}
+    user_columns = columns
     additions = {
         "email": "VARCHAR(320)",
         "mobile_number": "VARCHAR(20)",
@@ -23,6 +24,19 @@ def run_schema_migrations() -> None:
         for name, definition in additions.items():
             if name not in columns:
                 connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
+        if "alerts_enabled" not in user_columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN alerts_enabled BOOLEAN DEFAULT 1"))
+
+        alert_tables = set(inspect(connection).get_table_names())
+        if "alert_rules" in alert_tables:
+            alert_columns = {column["name"] for column in inspect(connection).get_columns("alert_rules")}
+            for name, definition in {
+                "metric": "VARCHAR(32) DEFAULT 'gross_profit'",
+                "operator": "VARCHAR(2) DEFAULT '>='",
+                "threshold": "FLOAT DEFAULT 0.0",
+            }.items():
+                if name not in alert_columns:
+                    connection.execute(text(f"ALTER TABLE alert_rules ADD COLUMN {name} {definition}"))
 
         account_tables = set(inspect(connection).get_table_names())
         if "trading_accounts" in account_tables:
