@@ -55,6 +55,43 @@ def _finish_dispatch_transaction(dispatch_method):
     return wrapped
 
 
+
+_ALERT_OPERATORS = {
+    ">=": lambda actual, target: actual >= target,
+    ">": lambda actual, target: actual > target,
+    "<=": lambda actual, target: actual <= target,
+    "<": lambda actual, target: actual < target,
+    "=": lambda actual, target: actual == target,
+}
+_ALERT_METADATA_KEYS = {
+    "gap": ("gap",), "gross_profit": ("gross_profit", "gross_pnl", "gross_profit_rupees"),
+    "net_profit": ("net_profit", "net_pnl"), "volume": ("volume",), "oi": ("oi", "open_interest"),
+    "iv": ("iv", "implied_volatility"), "premium": ("premium", "option_premium"),
+    "spread_value": ("spread_value", "spread"),
+}
+
+def _rule_matches_event(rule, event: AlertEvent) -> bool:
+    """Evaluate the persisted metric/operator/threshold contract fail-closed."""
+    try:
+        import math
+        operator = str(rule.operator)
+        threshold = float(rule.threshold)
+        if not math.isfinite(threshold) or operator not in _ALERT_OPERATORS:
+            return False
+        keys = _ALERT_METADATA_KEYS.get(str(rule.metric).lower())
+        if not keys:
+            return False
+        actual = None
+        for key in keys:
+            if key in event.metadata and event.metadata[key] is not None:
+                actual = float(event.metadata[key])
+                break
+        if actual is None or not math.isfinite(actual):
+            return False
+        return bool(_ALERT_OPERATORS[operator](actual, threshold))
+    except (TypeError, ValueError, OverflowError):
+        return False
+
 def _valid_alert_rule(rule) -> bool:
     """Fail closed if persisted risk configuration is malformed."""
     try:
@@ -188,7 +225,8 @@ class AlertService:
                 expiry_db.close()
             eligible_rules = [
                 rule for rule in rules
-                if gross_value is None or gross_value >= float(rule.min_gross_profit)
+                if (gross_value is None or gross_value >= float(rule.min_gross_profit))
+                and _rule_matches_event(rule, event)
             ]
             for rule_user_id in {int(rule.user_id) for rule in rules}:
                 user_rules = [rule for rule in eligible_rules if int(rule.user_id) == rule_user_id]
@@ -385,10 +423,17 @@ class AlertService:
                     app_logger.error("Live paper auto-entry failed for user %s: %s", rule_user_id, exc)
         if rules:
             sent = 0
+            from app.models import User
+            users_by_id = {int(user.id): user for user in db.query(User).filter(User.id.in_({int(rule.user_id) for rule in rules})).all()}
             for rule in rules:
+                user = users_by_id.get(int(rule.user_id))
+                if user is None or not bool(getattr(user, "alerts_enabled", True)):
+                    continue
                 if not rule.whatsapp_enabled or not rule.mobile_number.strip():
                     continue
                 if gross_value is not None and gross_value < float(rule.min_gross_profit):
+                    continue
+                if not _rule_matches_event(rule, event):
                     continue
                 key = (int(rule.id), event.event_id)
                 cooldown_ns = int(max(0.0, float(rule.cooldown_seconds)) * 1_000_000_000)
@@ -410,7 +455,7 @@ class AlertService:
                     sent += 1
             return sent
         from app.models import User
-        users = db.query(User).filter(User.is_active.is_(True), User.mobile_number.isnot(None)).all()
+        users = db.query(User).filter(User.is_active.is_(True), User.alerts_enabled.is_(True), User.mobile_number.isnot(None)).all()
         # A paper-trade payload is executed only through an enabled AlertRule,
         # where per-user risk gates are enforced. If no rule is configured,
         # keep the legacy fallback notification-only so a missing/disabled
