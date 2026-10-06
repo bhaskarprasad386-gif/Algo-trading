@@ -33,6 +33,7 @@ def test_market_overview_returns_index_and_commodity_groups(monkeypatch):
 
     monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
     monkeypatch.setattr("app.market_data.client.MarketDataClient", FakeClient)
+    monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: True)
 
     result = routes.get_market_overview()
 
