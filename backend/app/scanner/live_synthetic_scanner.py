@@ -54,7 +54,11 @@ class LiveSyntheticScanner:
         cls = str(payload.get("instrument_class") or "").strip().upper()
         option_type = str(payload.get("option_type") or "").strip().upper()
         timestamp_ns = int(payload.get("source_timestamp_ns") or 0)
-        if not symbol or cls not in {"STOCK", "INDEX"} or timestamp_ns <= 0:
+        # Cross-leg synchronization is not enough: reject replayed/stale market data.
+        import time
+        if timestamp_ns <= 0 or time.time_ns() - timestamp_ns > 5_000_000_000:
+            return ()
+        if not symbol or cls not in {"STOCK", "INDEX"}:
             return ()
         bid = self._price(payload.get("bid"))
         ask = self._price(payload.get("ask"))
