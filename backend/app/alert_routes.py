@@ -112,6 +112,7 @@ def get_alert_status(db: Session = Depends(get_db)):
         "active_rules": active_rules,
         "triggered_30d": triggered_30d,
         "history_30d": triggered_30d,
+        "history_scope": "scanner_global",
         "by_strategy": by_strategy,
         "window_days": 30,
     }
