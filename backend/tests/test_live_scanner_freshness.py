@@ -7,7 +7,7 @@ from app.scanner.live_box_spread_scanner import LiveBoxSpreadScanner
 
 
 def test_calendar_rejects_stale_quote_before_alert_or_signal(monkeypatch):
-    now = 10_000_000_000
+    now = 1_800_000_000_000_000_000
     monkeypatch.setattr(time, "time_ns", lambda: now)
     record = MarketDataRecord(
         instrument=InstrumentKey("NFO", "NFO", "1"),
@@ -27,7 +27,7 @@ def test_calendar_rejects_stale_quote_before_alert_or_signal(monkeypatch):
 
 
 def test_synthetic_rejects_stale_quote_at_ingress(monkeypatch):
-    now = 10_000_000_000
+    now = 1_800_000_000_000_000_000
     monkeypatch.setattr(time, "time_ns", lambda: now)
     scanner = LiveSyntheticScanner(atm_provider=lambda _symbol, _ts: 100.0)
     payload = {
@@ -43,7 +43,7 @@ def test_synthetic_rejects_stale_quote_at_ingress(monkeypatch):
 
 
 def test_box_rejects_stale_quote_at_ingress(monkeypatch):
-    now = 10_000_000_000
+    now = 1_800_000_000_000_000_000
     monkeypatch.setattr(time, "time_ns", lambda: now)
     scanner = LiveBoxSpreadScanner(atm_provider=lambda _symbol, _ts: 100.0)
     payload = {
