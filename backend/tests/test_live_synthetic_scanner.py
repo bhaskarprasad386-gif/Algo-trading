@@ -123,6 +123,7 @@ def test_live_synthetic_scanner_keeps_current_and_near_expiries_isolated():
     for exp, fut in (("30SEP2026", 115.0), ("07OCT2026", 116.0)):
         scanner.observe({**_base(ts, 100.0, "CE", 4.0, 5.0), "expiry": exp})
         scanner.observe({**_base(ts, 100.0, "PE", 4.0, 5.0), "expiry": exp})
+        scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": exp})
         scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": exp})
         result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"",
             "expiry":exp,"bid":fut,"ask":fut+1,"lot_size":1,"source_timestamp_ns":ts,
