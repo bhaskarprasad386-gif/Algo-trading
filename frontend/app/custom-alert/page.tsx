@@ -13,10 +13,10 @@ const scanners = [
 ];
 
 const metricsByScanner: Record<string, Array<{ id: string; label: string }>> = {
-  "cash-future": [{id:"gap",label:"Gap"},{id:"gross_profit",label:"Gross Profit"},{id:"net_profit",label:"Net Profit"},{id:"volume",label:"Volume"},{id:"oi",label:"Open Interest"}],
-  "calendar-spread": [{id:"gap",label:"Gap"},{id:"gross_profit",label:"Gross Profit"},{id:"net_profit",label:"Net Profit"},{id:"volume",label:"Volume"},{id:"oi",label:"Open Interest"}],
-  "synthetic-future-cash-carry": [{id:"gap",label:"Gap"},{id:"gross_profit",label:"Gross Profit"},{id:"net_profit",label:"Net Profit"},{id:"iv",label:"IV"},{id:"premium",label:"Premium"}],
-  "box-spread": [{id:"gross_profit",label:"Gross Profit"},{id:"net_profit",label:"Net Profit"},{id:"spread_value",label:"Spread Value"}],
+  "cash-future": [{id:"gap",label:"Gap"},{id:"gross_profit",label:"Gross Profit"},{id:"net_profit",label:"Net Profit"}],
+  "calendar-spread": [{id:"gap",label:"Gap"},{id:"gross_profit",label:"Gross Profit"}],
+  "synthetic-future-cash-carry": [{id:"gap",label:"Executable Edge"},{id:"gross_profit",label:"Gross Profit"}],
+  "box-spread": [{id:"gap",label:"Executable Edge"},{id:"gross_profit",label:"Gross Profit"}],
 };
 const operators = [">=", ">", "<=", "<", "="];
 
