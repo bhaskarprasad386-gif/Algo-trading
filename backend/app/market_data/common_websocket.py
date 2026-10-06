@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from threading import Lock, RLock, Thread
+from threading import Event, Lock, RLock, Thread
 import time
 from typing import Any, Callable
 
@@ -56,7 +56,7 @@ class CommonWebSocketManager:
         self._route_index: dict[
             SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
         ] = {}
-        self._recovery_stop = __import__("threading").Event()
+        self._recovery_stop = Event()
         self._recovery_thread: Thread | None = None
         self._recovery_interval_seconds = 5.0
 
