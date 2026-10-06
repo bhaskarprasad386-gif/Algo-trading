@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
@@ -86,7 +86,7 @@ def get_alert_status(db: Session = Depends(get_db)):
     """Return durable alert health/status without suppressing scanner results."""
     uid = current_user_id(db)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    cutoff = now - __import__("datetime").timedelta(days=30)
+    cutoff = now - timedelta(days=30)
     active_rules = db.query(AlertRule).filter(
         AlertRule.user_id == uid, AlertRule.enabled.is_(True)
     ).count()
@@ -108,7 +108,7 @@ def get_alert_status(db: Session = Depends(get_db)):
     triggered_30d = sum(by_strategy.values())
     return {
         "status": "success",
-        "alerts": {"enabled": bool(db.query(User).filter(User.id == uid).scalar().alerts_enabled)},
+        "alerts": {"enabled": bool(db.query(User).filter(User.id == uid).first().alerts_enabled)},
         "active_rules": active_rules,
         "triggered_30d": triggered_30d,
         "history_30d": triggered_30d,
