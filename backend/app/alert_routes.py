@@ -12,6 +12,16 @@ router = APIRouter(prefix="/api/v1/alerts", tags=["Alerts"])
 STRATEGIES = {"cash-future","calendar-spread","synthetic-future-cash-carry","box-spread"}
 ALERT_METRICS = {"gap","gross_profit","net_profit","volume","oi","iv","premium","spread_value"}
 ALERT_OPERATORS = {">=", ">", "<=", "<", "="}
+ALERT_STRATEGY_METRICS = {
+    "cash-future": {"gap", "gross_profit", "net_profit"},
+    "calendar-spread": {"gap", "gross_profit"},
+    "synthetic-future-cash-carry": {"gap", "gross_profit"},
+    "box-spread": {"gap", "gross_profit"},
+}
+
+def _validate_strategy_metric(strategy: str, metric: str) -> None:
+    if metric not in ALERT_STRATEGY_METRICS.get(strategy, set()):
+        raise HTTPException(status_code=422, detail=f"metric '{metric}' is not supported for strategy '{strategy}'")
 
 class AlertRuleRequest(BaseModel):
     strategy_id: str = Field(min_length=1, max_length=128)
@@ -124,6 +134,7 @@ def save_rule(request: AlertRuleRequest, db: Session = Depends(get_db)):
     strategy = request.strategy_id.strip().lower()
     if strategy not in STRATEGIES:
         raise HTTPException(status_code=422, detail="unsupported strategy")
+    _validate_strategy_metric(strategy, request.metric)
     r = AlertRule(user_id=uid, strategy_id=strategy, **request.model_dump(exclude={"strategy_id"}))
     db.add(r); db.commit(); db.refresh(r)
     return {"status":"success","rule":_rule_payload(r)}
@@ -135,6 +146,7 @@ def update_rule(rule_id: int, request: AlertRuleRequest, db: Session = Depends(g
     if r is None: raise HTTPException(status_code=404, detail="alert rule not found")
     strategy = request.strategy_id.strip().lower()
     if strategy not in STRATEGIES: raise HTTPException(status_code=422, detail="unsupported strategy")
+    _validate_strategy_metric(strategy, request.metric)
     for k,v in request.model_dump().items(): setattr(r, k, strategy if k=="strategy_id" else v)
     r.updated_at=datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit(); db.refresh(r)
