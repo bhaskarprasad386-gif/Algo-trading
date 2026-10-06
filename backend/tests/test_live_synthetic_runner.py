@@ -306,8 +306,14 @@ def test_runner_retries_live_atm_timeout_without_terminating(monkeypatch):
         "app.market_data.live_synthetic_runner.sleep",
         lambda seconds: None,
     )
-    monkeypatch.setattr(runner, "_ensure_underlying_feed", lambda: None)
-    runner._active_underlying_feed = None
+    class FakeFeed:
+        def run_forever(self):
+            return
+
+        def stop(self):
+            return
+
+    monkeypatch.setattr(runner, "_ensure_underlying_feed", lambda: FakeFeed())
 
     # The timeout must be retried; it must not terminate the runner on the first failure.
     runner.run_forever()
