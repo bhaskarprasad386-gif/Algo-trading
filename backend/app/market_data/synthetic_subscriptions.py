@@ -30,8 +30,8 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
                                exchange: str | None = None) -> SyntheticContractSelection:
     cls = instrument_class.strip().upper()
     symbol = underlying.strip().upper()
-    if cls not in {"STOCK", "INDEX", "COMMODITY"}:
-        raise ValueError("instrument_class must be STOCK, INDEX or COMMODITY")
+    if cls not in {"STOCK", "INDEX"}:
+        raise ValueError("synthetic scanner supports only STOCK and INDEX")
     if cls == "STOCK" and symbol not in {s.strip().upper() for s in allowed_stock_symbols}:
         raise ValueError("stock is outside the configured NIFTY-50 universe")
 
