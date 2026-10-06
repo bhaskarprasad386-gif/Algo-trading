@@ -36,8 +36,8 @@ class LiveBoxSpreadScanner:
         strike=self._price(payload.get("strike"))
         bid=self._price(payload.get("bid")); ask=self._price(payload.get("ask"))
         if not symbol or cls not in {"STOCK","INDEX"} or ts<=0 or typ not in {"CE","PE"} or strike is None or bid is None or ask is None or ask<bid:return ()
-        key=(symbol,ts)
         with self._lock:
+            key=self._matching_bucket_key(symbol,ts)
             bucket=self._buckets.setdefault(key,{})
             bucket[(strike,typ)]=payload
             grouped=[]
@@ -59,7 +59,12 @@ class LiveBoxSpreadScanner:
                         int(float(ce.get("volume") or 0)),int(float(ce.get("oi") or 0))
                     ))
                 except (ValueError,TypeError): continue
-            atm=self.atm_provider(symbol,ts)
+            timestamps=[int(value.get("source_timestamp_ns") or 0) for value in bucket.values() if isinstance(value,dict)]
+            if not timestamps or max(timestamps)-min(timestamps)>self.TIMESTAMP_TOLERANCE_NS:
+                self._prune(ts); return ()
+            anchor_ts=max(timestamps)
+            grouped=[OptionQuote(anchor_ts,symbol,q.expiry,q.strike,q.call_bid,q.call_ask,q.put_bid,q.put_ask,q.lot_size,q.instrument_class,q.volume,q.oi) for q in grouped]
+            atm=self.atm_provider(symbol,anchor_ts)
             if atm is None or not grouped:
                 self._prune(ts); return ()
             results=scan_box_snapshot(grouped,atm_strike=float(atm),instrument_class=cls,
@@ -67,6 +72,12 @@ class LiveBoxSpreadScanner:
             self._prune(ts)
         if results and self.on_result is not None:self.on_result(results)
         return results
+
+    TIMESTAMP_TOLERANCE_NS=1_000_000_000
+
+    def _matching_bucket_key(self,symbol,ts):
+        candidates=[key for key in self._buckets if key[0]==symbol and abs(key[1]-ts)<=self.TIMESTAMP_TOLERANCE_NS]
+        return min(candidates,key=lambda key:abs(key[1]-ts)) if candidates else (symbol,ts)
 
     def _prune(self,ts):
         cutoff=ts-3_000_000_000
