@@ -35,6 +35,7 @@ export default function CustomAlertPage() {
   const [contactSaving, setContactSaving] = useState(false);
   const [contactChannels, setContactChannels] = useState({sms:false,app:true,whatsapp:false,email:false});
   const [savedRules, setSavedRules] = useState<any[]>([]);
+  const [alertStatus, setAlertStatus] = useState({active_rules:0, triggered_30d:0, history_30d:0});
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +55,8 @@ export default function CustomAlertPage() {
     const data = await response.json();
     setAlertEnabled(Boolean(data?.alerts?.enabled));
     setSavedRules(Array.isArray(data?.rules) ? data.rules : []);
+    const statusResponse = await fetch(`${base}/api/v1/alerts/status`, { cache: "no-store" });
+    if (statusResponse.ok) { const statusData = await statusResponse.json(); setAlertStatus({active_rules:Number(statusData?.active_rules)||0, triggered_30d:Number(statusData?.triggered_30d)||0, history_30d:Number(statusData?.history_30d)||0}); }
     const contactsResponse = await fetch(`${base}/api/v1/alerts/contacts`, { cache: "no-store" });
     if (contactsResponse.ok) { const contactsData = await contactsResponse.json(); setContacts(Array.isArray(contactsData?.contacts) ? contactsData.contacts : []); }
     setPaperAutoExecute(Boolean(data?.paper?.enabled));
@@ -147,6 +150,15 @@ export default function CustomAlertPage() {
           <Bell className="h-5 w-5 theme-accent" />
           <div className="flex-1"><h2 className="text-base font-semibold theme-text">Alert Master</h2><p className="text-sm theme-muted">{alertEnabled ? "ON — qualifying notifications can be delivered." : "OFF — notifications stop, but scanner results and alert data remain visible."}</p></div>
           <button type="button" onClick={toggleMaster} disabled={masterSaving} className={`min-w-20 rounded-xl border px-4 py-2 text-xs font-bold uppercase tracking-wider ${alertEnabled ? "theme-success-bg theme-success" : "theme-surface theme-muted"}`}>{masterSaving ? "Saving…" : alertEnabled ? "ON" : "OFF"}</button>
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <div className="flex items-center gap-3"><Bell className="h-5 w-5 theme-accent"/><div className="flex-1"><h2 className="text-base font-semibold theme-text">Alert Status</h2><p className="text-sm theme-muted">Durable scanner alert activity; turning notifications OFF does not hide results.</p></div></div>
+        <div className="mt-4 grid grid-cols-3 gap-3">
+          <div className="rounded-xl border theme-border theme-surface p-3"><p className="text-xs theme-muted">ACTIVE ALERTS</p><p className="mt-1 text-2xl font-bold theme-text">{alertStatus.active_rules}</p></div>
+          <div className="rounded-xl border theme-border theme-surface p-3"><p className="text-xs theme-muted">TRIGGERED</p><p className="mt-1 text-2xl font-bold theme-text">{alertStatus.triggered_30d}</p></div>
+          <div className="rounded-xl border theme-border theme-surface p-3"><p className="text-xs theme-muted">30-DAY HISTORY</p><p className="mt-1 text-2xl font-bold theme-text">{alertStatus.history_30d}</p></div>
         </div>
       </Card>
 
