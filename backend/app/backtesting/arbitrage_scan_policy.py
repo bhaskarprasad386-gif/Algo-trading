@@ -44,15 +44,20 @@ def strike_distance_from_atm(strikes: Iterable[float], *, atm_strike: float, str
 
 def enumerate_box_pairs(strikes: Iterable[float], *, atm_strike: float, instrument_class: InstrumentClass,
                         policy: ScanPolicy | None = None) -> tuple[tuple[float, float, int], ...]:
+    """Enumerate all valid K1/K2 pairs within the configured chain distance.
+
+    Distance is the position-count separation in the actual chain. This does not
+    force either leg to be ATM, allowing liquid non-contiguous K1/K2 boxes.
+    """
     policy = policy or ScanPolicy()
     ordered = ordered_strikes_around_atm(strikes, atm_strike=atm_strike)
-    atm_index = ordered.index(float(atm_strike))
     allowed = set(policy.box_distances(instrument_class))
     pairs = []
-    for distance in sorted(allowed):
-        lower, upper = atm_index - distance, atm_index + distance
-        if lower >= 0: pairs.append((ordered[lower], ordered[atm_index], distance))
-        if upper < len(ordered): pairs.append((ordered[atm_index], ordered[upper], distance))
+    for low_index, low in enumerate(ordered):
+        for high_index in range(low_index + 1, len(ordered)):
+            distance = high_index - low_index
+            if distance in allowed:
+                pairs.append((low, ordered[high_index], distance))
     return tuple(pairs)
 
 def enumerate_synthetic_strikes(strikes: Iterable[float], *, atm_strike: float,
