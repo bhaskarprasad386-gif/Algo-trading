@@ -485,6 +485,10 @@ class AlertService:
                         channels = [("whatsapp", str(rule.mobile_number).strip())]
                     for channel, recipient in channels:
                         key = (int(rule.id), event.event_id, channel, recipient)
+                        # Exact event delivery is always idempotent, including
+                        # cooldown=0. Cooldown governs later distinct events.
+                        if key in self._delivered_events:
+                            continue
                         previous = self._last_sent.get(key)
                         if previous is not None and event.timestamp_ns - previous < cooldown_ns:
                             continue
@@ -503,6 +507,7 @@ class AlertService:
                             delivered = False
                         if delivered:
                             self._last_sent[key] = event.timestamp_ns
+                            self._delivered_events.add(key)
                             sent += 1
             return sent
         from app.models import User
