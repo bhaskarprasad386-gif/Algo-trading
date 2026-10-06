@@ -258,3 +258,67 @@ def test_alert_status_counts_active_user_rules(db_session, monkeypatch):
     assert result["history_30d"] == 0
     assert result["history_scope"] == "scanner_global"
     assert result["window_days"] == 30
+
+
+def test_strategy_alert_events_expose_calendar_gap_metadata():
+    captured = []
+
+    class CaptureAlerts:
+        def dispatch(self, _db, event):
+            captured.append(event)
+            return 0
+
+    service = CalendarSpreadAlertService(CaptureAlerts())
+    signal = SimpleNamespace(
+        qualifies=True, underlying="NIFTY", exchange="NFO",
+        near_contract_month="2026-10-29", far_contract_month="2026-11-26",
+        timestamp_ns=600, direction="LONG_NEAR_SHORT_FAR",
+        edge_long=6.0, edge_short=-6.0, gap_points=6.0,
+        gross_profit=300.0, lot_size=50, capacity_lots=1,
+        near_bid=100.0, near_ask=101.0, far_bid=107.0, far_ask=108.0,
+    )
+    assert service.emit(object(), signal) == 0
+    event = captured[0]
+    assert event.strategy_id == "calendar-spread"
+    assert event.metadata["gap"] == 6.0
+    assert event.metadata["gap_points"] == 6.0
+    assert event.metadata["gross_profit"] == 300.0
+
+
+def test_strategy_metric_rules_match_synthetic_and_box_events(db_session, monkeypatch):
+    from app.models import AlertRule, User
+    from app.notifications.synthetic_alerts import SyntheticAlertService
+    from app.notifications.box_spread_alerts import BoxSpreadAlertService
+
+    user = User(id=1101, email="strategy-metrics@example.com", hashed_password="x", alerts_enabled=True)
+    db_session.add(user)
+    db_session.add_all([
+        AlertRule(user_id=1101, strategy_id="synthetic-future-cash-carry",
+                  metric="gap", operator=">=", threshold=5.0,
+                  min_gross_profit=0, mobile_number="919111111111",
+                  whatsapp_enabled=True, enabled=True),
+        AlertRule(user_id=1101, strategy_id="box-spread",
+                  metric="gross_profit", operator=">=", threshold=300.0,
+                  min_gross_profit=0, mobile_number="919222222222",
+                  whatsapp_enabled=True, enabled=True),
+    ])
+    db_session.commit()
+
+    service = AlertService(WhatsAppNotifier(WhatsAppConfig(
+        enabled=True, access_token="token", phone_number_id="id"
+    )))
+    sent = []
+    monkeypatch.setattr(service._notifier, "send_text",
+                          lambda mobile, msg: sent.append(mobile) or True)
+
+    synthetic_event = AlertEvent(
+        "synthetic-future-cash-carry", "SYN-METRIC", "NIFTY", 700, "synthetic",
+        metadata={"gap": 5.0, "gross_profit": 250.0},
+    )
+    box_event = AlertEvent(
+        "box-spread", "BOX-METRIC", "NIFTY", 701, "box",
+        metadata={"gap": 7.0, "gross_profit": 300.0},
+    )
+    assert service.dispatch(db_session, synthetic_event) == 1
+    assert service.dispatch(db_session, box_event) == 1
+    assert sent == ["919111111111", "919222222222"]
