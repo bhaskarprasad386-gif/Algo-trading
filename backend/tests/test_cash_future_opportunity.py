@@ -36,12 +36,33 @@ def test_threshold_filters_before_qualified_snapshot():
     assert result.signal.qualifies is False
     assert scanner.snapshot() == ()
 
-def test_timestamp_mismatch_is_not_paired():
+def test_stale_timestamp_is_not_paired():
     scanner = CashFutureOpportunityScanner()
     cash = rec("C1", "ABC-EQ", InstrumentType.EQUITY, 100, 99, 100, underlying="ABC")
-    future = rec("F1", "ABC-FUT", InstrumentType.FUTURE, 101, 106, 107, lot=60, underlying="ABC")
+    future = rec("F1", "ABC-FUT", InstrumentType.FUTURE, 2_000_000_000, 106, 107, lot=60, underlying="ABC")
     scanner.update(cash, contract_month="CASH")
     assert scanner.update(future, contract_month="CURRENT") is None
+
+def test_fresh_timestamp_skew_is_paired():
+    scanner = CashFutureOpportunityScanner(minimum_gap_points=5, minimum_gross_profit=300)
+    cash = rec("C1", "ABC-EQ", InstrumentType.EQUITY, 1_000_000_000, 99, 100, underlying="ABC")
+    future = rec("F1", "ABC-FUT", InstrumentType.FUTURE, 1_500_000_000, 106, 107, lot=60, underlying="ABC")
+    scanner.update(cash, contract_month="CASH")
+    result = scanner.update(future, contract_month="CURRENT")
+    assert result is not None
+    assert result.signal.gap_points == 6
+
+def test_near_contract_is_evaluated_even_when_current_exists():
+    scanner = CashFutureOpportunityScanner()
+    cash = rec("C1", "ABC-EQ", InstrumentType.EQUITY, 1_000_000_000, 99, 100, underlying="ABC")
+    current = rec("F1", "ABC-CURRENT", InstrumentType.FUTURE, 1_000_000_100, 101, 102, lot=60, underlying="ABC")
+    near = rec("F2", "ABC-NEAR", InstrumentType.FUTURE, 1_000_000_200, 108, 109, lot=60, underlying="ABC")
+    scanner.update(cash, contract_month="CASH")
+    scanner.update(current, contract_month="CURRENT")
+    result = scanner.update(near, contract_month="NEAR")
+    assert result is not None
+    assert result.contract_month == "NEAR"
+    assert result.signal.gap_points == 8
 
 def test_crossed_quote_rejected():
     scanner = CashFutureOpportunityScanner()
