@@ -29,6 +29,11 @@ export default function CustomAlertPage() {
   const [operator, setOperator] = useState(">=");
   const [threshold, setThreshold] = useState("");
   const [mobile, setMobile] = useState("");
+  const [contacts, setContacts] = useState<any[]>([]);
+  const [contactOpen, setContactOpen] = useState(false);
+  const [contactLabel, setContactLabel] = useState("Primary");
+  const [contactSaving, setContactSaving] = useState(false);
+  const [contactChannels, setContactChannels] = useState({sms:false,app:true,whatsapp:false,email:false});
   const [savedRules, setSavedRules] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -49,6 +54,8 @@ export default function CustomAlertPage() {
     const data = await response.json();
     setAlertEnabled(Boolean(data?.alerts?.enabled));
     setSavedRules(Array.isArray(data?.rules) ? data.rules : []);
+    const contactsResponse = await fetch(`${base}/api/v1/alerts/contacts`, { cache: "no-store" });
+    if (contactsResponse.ok) { const contactsData = await contactsResponse.json(); setContacts(Array.isArray(contactsData?.contacts) ? contactsData.contacts : []); }
     setPaperAutoExecute(Boolean(data?.paper?.enabled));
     const amount = Number(data?.paper?.paper_amount);
     if (Number.isFinite(amount) && amount >= 0) setPaperAutoAmount(amount);
@@ -156,13 +163,17 @@ export default function CustomAlertPage() {
           </div>
         </div>
         <div className="mt-4 flex flex-wrap items-end gap-3">
-          <label className="min-w-[240px] flex-1 space-y-2 text-sm"><span className="font-medium theme-text">Mobile Number</span><div className="flex gap-2"><span className="inline-flex min-h-11 items-center rounded-xl border theme-border theme-surface-2 px-3 theme-muted">+91</span><input className="min-h-11 min-w-0 flex-1 px-3" inputMode="numeric" maxLength={10} value={mobile} onChange={(e)=>setMobile(e.target.value.replace(/\D/g,"").slice(0,10))} placeholder="9876543210" /></div></label>
+          <div className="min-w-[240px] flex-1"><span className="block mb-2 text-sm font-medium theme-text">Alert Contact</span><button type="button" onClick={()=>setContactOpen(true)} className="min-h-11 w-full rounded-xl border theme-border theme-surface px-3 text-left text-sm theme-text"><Plus className="mr-2 inline h-4 w-4"/>{contacts.length ? `${contacts.length} saved contact${contacts.length===1?"":"s"}` : "Add mobile number"}</button></div>
           <button type="button" onClick={saveRule} disabled={saving} className="inline-flex min-h-11 items-center gap-2 rounded-xl border theme-border theme-accent-bg px-4 text-sm font-semibold">{saving ? "Saving…" : <><Plus className="h-4 w-4"/>Save Alert</>}</button>
         </div>
         {status && <p className="mt-3 text-sm theme-success">{status}</p>}
         {error && <p className="mt-3 text-sm theme-danger">{error}</p>}
       </Card>
 
+      <Card className="p-5">
+        <div className="flex items-center gap-3"><Bell className="h-5 w-5 theme-accent"/><div className="flex-1"><h2 className="text-base font-semibold theme-text">Notification Contacts</h2><p className="text-sm theme-muted">Multiple numbers are supported. Disable or delete a contact independently.</p></div><button type="button" onClick={()=>setContactOpen(true)} className="inline-flex min-h-10 items-center gap-1 rounded-xl border theme-border theme-accent-bg px-3 text-sm font-semibold"><Plus className="h-4 w-4"/> Add</button></div>
+        <div className="mt-4 space-y-2">{contacts.length===0 && <p className="text-sm theme-muted">No contacts saved.</p>}{contacts.map((c)=><div key={c.id} className="flex items-center gap-3 rounded-xl border theme-border theme-surface p-3"><div className="min-w-0 flex-1"><p className="font-semibold theme-text">{c.label} • +{c.mobile_number}</p><p className="text-xs theme-muted">SMS {c.channels.sms?"ON":"OFF"} · App {c.channels.app?"ON":"OFF"} · WhatsApp {c.channels.whatsapp?"ON":"OFF"} · Email {c.channels.email?"ON":"OFF"}</p></div><button type="button" onClick={async()=>{const response=await fetch(base+"/api/v1/alerts/contacts/"+c.id,{method:"DELETE"});if(response.ok)setContacts((x)=>x.filter((v)=>v.id!==c.id));}} className="rounded-lg border theme-border p-2 theme-danger" aria-label="Delete contact"><Trash2 className="h-4 w-4"/></button></div>)}</div>
+      </Card>
       <Card className="p-5">
         <h2 className="text-base font-semibold theme-text">Saved Alerts</h2>
         <div className="mt-4 space-y-3">
@@ -183,5 +194,6 @@ export default function CustomAlertPage() {
         {paperAutoError && <p className="mt-2 text-xs theme-danger">{paperAutoError}</p>}
       </Card>
     </div>
+      {contactOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"><Card className="w-full max-w-lg p-5"><div className="flex items-center justify-between"><h2 className="text-lg font-semibold theme-text">Add Notification Contact</h2><button type="button" onClick={()=>setContactOpen(false)} className="theme-muted">✕</button></div><div className="mt-4 grid gap-3"><label className="text-sm"><span className="block mb-1 theme-text">Label</span><input className="min-h-11 w-full px-3" value={contactLabel} onChange={(e)=>setContactLabel(e.target.value)} /></label><label className="text-sm"><span className="block mb-1 theme-text">Mobile Number</span><input className="min-h-11 w-full px-3" inputMode="numeric" value={mobile} onChange={(e)=>setMobile(e.target.value.replace(/\D/g,"").slice(0,15))} placeholder="919876543210" /></label><div className="grid grid-cols-2 gap-2 text-sm">{(["sms","app","whatsapp","email"] as const).map((key)=><label key={key} className="flex items-center gap-2 rounded-xl border theme-border p-3"><input type="checkbox" checked={contactChannels[key]} onChange={(e)=>setContactChannels((x)=>({...x,[key]:e.target.checked}))}/>{key.toUpperCase()}</label>)}</div></div><button type="button" disabled={contactSaving} onClick={async()=>{setContactSaving(true);try{const response=await fetch(base+"/api/v1/alerts/contacts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({label:contactLabel,mobile_number:mobile,enabled:true,sms_enabled:contactChannels.sms,app_enabled:contactChannels.app,whatsapp_enabled:contactChannels.whatsapp,email_enabled:contactChannels.email})});const data=await response.json();if(!response.ok)throw new Error(data?.detail||"Unable to save contact");setContacts((x)=>[...x,data.contact]);setMobile("");setContactLabel("Primary");setContactOpen(false)}catch(e){setError(e instanceof Error?e.message:"Unable to save contact")}finally{setContactSaving(false)}}} className="mt-4 min-h-11 w-full rounded-xl border theme-border theme-accent-bg font-semibold">{contactSaving?"Saving…":"Save Contact"}</button></Card></div>}
   );
 }
