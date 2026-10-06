@@ -43,8 +43,8 @@ def select_box_contracts(master: InstrumentMaster, *, underlying: str, instrumen
     if not options: raise LookupError(f"no options for {symbol} {target}")
     strikes = sorted({_strike(x.get("strike")) for x in options})
     effective_policy = policy or ScanPolicy(
-        stock_box_distances=tuple(range(1, 6)),
-        index_box_distances=tuple(range(1, 11)),
+        stock_box_distances=(3, 4, 5),
+        index_box_distances=tuple(range(3, 16)),
     )
     pairs = enumerate_box_pairs(
         strikes,
