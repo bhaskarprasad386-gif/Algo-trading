@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 import time
-from typing import Callable
+from typing import Annotated, Callable
 
 from fastapi import APIRouter, Query
 
@@ -41,7 +41,10 @@ def _serialize(result) -> dict:
 
 
 @router.get("/live")
-def live(limit: int = Query(50, ge=1, le=200), max_age_seconds: float = Query(5.0, gt=0, le=60)):
+def live(
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    max_age_seconds: Annotated[float, Query(gt=0, le=60)] = 5.0,
+):
     results = _latest_provider() if _latest_provider is not None else ()
     cutoff = time.time_ns() - int(max_age_seconds * 1_000_000_000)
     results = tuple(r for r in results if int(getattr(r.option, "timestamp_ns", 0)) >= cutoff)
@@ -83,3 +86,4 @@ def alerts(days: int = Query(30, ge=1, le=30), limit: int = Query(500, ge=1, le=
         }
     finally:
         db.close()
+
