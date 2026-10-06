@@ -564,10 +564,12 @@ async def _live_synthetic_loop() -> None:
                     ", ".join(missing_index_underlyings),
                 )
 
+            # Synthetic Arbitrage is intentionally limited to STOCK + INDEX.
+            # MCX/commodity contracts remain available to the common feed and
+            # Calendar Spread, but are not valid synthetic cash-carry targets.
             target_specs = (
                 [(symbol, "STOCK") for symbol in stock_symbols]
                 + [(symbol, "INDEX") for symbol in index_symbols]
-                + [(symbol, "COMMODITY") for symbol in commodity_symbols]
             )
             targets = []
             missing_expiry = []
