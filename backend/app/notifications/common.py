@@ -484,9 +484,13 @@ class AlertService:
                     if isinstance(contact, AlertRule) and rule.whatsapp_enabled and rule.mobile_number.strip():
                         channels = [("whatsapp", str(rule.mobile_number).strip())]
                     for channel, recipient in channels:
-                        key = (int(rule.id), event.event_id, channel, recipient)
+                        # event_id identifies the logical opportunity; timestamp_ns
+                        # identifies the concrete market event. Dedup must include both:
+                        # a new qualifying snapshot may reuse the same logical event_id
+                        # after cooldown, while an identical snapshot must never resend.
+                        key = (int(rule.id), event.event_id, int(event.timestamp_ns), channel, recipient)
                         # Exact event delivery is always idempotent, including
-                        # cooldown=0. Cooldown governs later distinct events.
+                        # cooldown=0. Cooldown governs later distinct timestamps.
                         if key in self._delivered_events:
                             continue
                         previous = self._last_sent.get(key)
