@@ -26,8 +26,10 @@ def test_calendar_uses_executable_bid_ask_and_gross_profit():
 
 def test_calendar_reverse_direction_and_threshold_filter():
     scanner=LiveCalendarSpreadScanner(minimum_gap_points=5, minimum_gross_profit=1)
-    near=rec("1","NIFTY-CUR",2,105,106)
-    far=rec("2","NIFTY-NEAR",2,99,100,expiry="2026-11-26")
+    import time
+    ts = time.time_ns()
+    near=rec("1","NIFTY-CUR",ts,105,106)
+    far=rec("2","NIFTY-NEAR",ts,99,100,expiry="2026-11-26")
     scanner.update(near)
     result=scanner.update(far)
     assert result is not None
@@ -48,7 +50,7 @@ def test_calendar_subsecond_timestamp_skew_is_paired():
 def test_calendar_timestamp_skew_beyond_tolerance_is_not_paired():
     scanner=LiveCalendarSpreadScanner()
     scanner.update(rec("1","NIFTY-CUR",3_000_000_000,99,100))
-    assert scanner.update(rec("2","NIFTY-NEAR",3_500_000_001,104,105,expiry="2026-11-26")) is None
+    assert scanner.update(rec("2","NIFTY-NEAR",4_000_000_001,104,105,expiry="2026-11-26")) is None
 
 def test_calendar_crossed_quote_is_rejected_by_canonical_contract():
     scanner=LiveCalendarSpreadScanner()
