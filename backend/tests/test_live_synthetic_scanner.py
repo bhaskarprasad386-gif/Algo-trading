@@ -115,3 +115,25 @@ def test_live_synthetic_scanner_rejects_illiquid_strike():
         }
     )
     assert result == ()
+
+
+def test_live_synthetic_scanner_keeps_current_and_near_expiries_isolated():
+    ts = 5_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    for exp, fut in (("30SEP2026", 115.0), ("07OCT2026", 116.0)):
+        scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": exp})
+        scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": exp})
+        result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"",
+            "expiry":exp,"bid":fut,"ask":fut+1,"lot_size":1,"source_timestamp_ns":ts,
+            "symbol":"NIFTYFUT","volume":100,"oi":1000})
+        assert result
+        assert {r.future.expiry for r in result} == {int(exp[5:]) if False else r.future.expiry for r in result}
+
+def test_live_synthetic_scanner_does_not_cross_second_boundaries():
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    ts = 5_999_999_999
+    scanner.observe(_base(ts, 105.0, "CE", 4.0, 5.0))
+    scanner.observe(_base(ts + 2, 105.0, "PE", 4.0, 5.0))
+    result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"",
+        "expiry":"30SEP2026","bid":115,"ask":116,"lot_size":1,"source_timestamp_ns":ts+2,"symbol":"NIFTYFUT"})
+    assert result == ()
