@@ -162,11 +162,16 @@ class CashFutureOpportunityScanner:
                 )
                 result = CashFutureScanResult(signal, cash, future, selected_month, direction)
                 key = (symbol, selected_month)
+                was_qualified = key in self._results
                 if qualifies:
                     self._results[key] = result
                 else:
                     self._results.pop(key, None)
-                evaluated.append(result)
+                evaluated.append(result if qualifies or not was_qualified else None)
+
+            evaluated = [item for item in evaluated if item is not None]
+            if not evaluated:
+                return None
 
             return max(evaluated, key=lambda item: item.signal.gross_profit)
 
