@@ -8,6 +8,7 @@ class FakeSocket:
     def __init__(self):
         self.connected = []
         self.subscribed = []
+        self.group_subscriptions = []
         self.closed = False
 
     def connect(self, **kwargs):
@@ -15,6 +16,9 @@ class FakeSocket:
 
     def subscribe(self, tokens, mode=1):
         self.subscribed.append((tuple(tokens), mode))
+
+    def subscribe_groups(self, groups, mode=1):
+        self.group_subscriptions.append((groups, mode))
 
     def close(self):
         self.closed = True
@@ -43,8 +47,8 @@ def test_strategy_feed_registers_canonical_descriptors_on_common_manager():
 
     assert manager.snapshot()["subscriptions"] == 1
     assert manager.snapshot()["consumers"] == ["calendar-test"]
-    assert sockets[0].connected[0]["exchange_type"] == 2
     assert sockets[0].connected[0]["mode"] == 3
+    assert sockets[0].connected[0]["subscriptions"] == {2: ["123"]}
 
     sockets[0].connected[0]["on_data"]({
         "token": "123",
