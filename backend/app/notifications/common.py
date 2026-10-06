@@ -94,11 +94,24 @@ def _rule_matches_event(rule, event: AlertEvent) -> bool:
         return False
 
 def _valid_alert_rule(rule) -> bool:
-    """Fail closed if persisted risk configuration is malformed."""
+    """Fail closed if persisted alert/risk configuration is malformed."""
     try:
         import math
+        strategy_metrics = {
+            "cash-future": {"gap", "gross_profit", "net_profit"},
+            "calendar-spread": {"gap", "gross_profit"},
+            "synthetic-future-cash-carry": {"gap", "gross_profit"},
+            "box-spread": {"gap", "gross_profit"},
+        }
+        metric = str(getattr(rule, "metric", "gross_profit")).strip().lower()
+        operator = str(getattr(rule, "operator", ">=")).strip()
+        threshold = float(getattr(rule, "threshold", 0.0))
+        strategy = str(getattr(rule, "strategy_id", "")).strip().lower()
         return (
-            math.isfinite(float(rule.min_gross_profit))
+            metric in strategy_metrics.get(strategy, set())
+            and operator in {">=", ">", "<=", "<", "="}
+            and math.isfinite(threshold)
+            and math.isfinite(float(rule.min_gross_profit))
             and float(rule.min_gross_profit) >= 0
             and math.isfinite(float(rule.max_loss))
             and float(rule.max_loss) >= 0
