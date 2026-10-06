@@ -56,6 +56,9 @@ class CommonWebSocketManager:
         self._route_index: dict[
             SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
         ] = {}
+        self._recovery_stop = __import__("threading").Event()
+        self._recovery_thread: Thread | None = None
+        self._recovery_interval_seconds = 5.0
 
     @staticmethod
     def _default_exchange_type(key: InstrumentKey) -> int:
@@ -107,6 +110,7 @@ class CommonWebSocketManager:
                     raise KeyError(f"instrument is not registered: {key.value}")
             for key in keys:
                 self.registry.subscribe(consumer, key, mode=mode)
+        self._ensure_recovery_supervisor()
         self._reconcile()
         with self._lock:
             return tuple(sub for sub in self.registry.subscriptions() if consumer in sub.consumers)
@@ -206,6 +210,32 @@ class CommonWebSocketManager:
                     self._socket_created_at.pop(group, None)
             for socket in stale_sockets:
                 self._close_socket_bounded(socket)
+
+    def _ensure_recovery_supervisor(self) -> None:
+        """Start one process-local self-healing loop for the shared broker feed."""
+        with self._lock:
+            if self._recovery_thread is not None and self._recovery_thread.is_alive():
+                return
+            self._recovery_stop.clear()
+            self._recovery_thread = Thread(
+                target=self._recovery_loop,
+                name="common-ws-recovery",
+                daemon=True,
+            )
+            self._recovery_thread.start()
+
+    def _recovery_loop(self) -> None:
+        while not self._recovery_stop.wait(self._recovery_interval_seconds):
+            with self._lock:
+                has_intent = bool(self.registry.subscriptions())
+            if not has_intent:
+                continue
+            try:
+                self.recover_disconnected(min_age_seconds=0.0)
+            except Exception as exc:
+                app_logger.warning(
+                    "Common feed automatic recovery failed; will retry: %s", exc
+                )
 
     def recover_disconnected(self, *, min_age_seconds: float = 10.0) -> int:
         """Replace stale disconnected broker sockets without leaving the feed empty on reconnect failure."""
@@ -385,10 +415,15 @@ class CommonWebSocketManager:
             }
 
     def close(self) -> None:
+        self._recovery_stop.set()
         with self._lock:
+            recovery_thread = self._recovery_thread
+            self._recovery_thread = None
             sockets = list(self._sockets.values())
             self._sockets.clear()
             self._socket_tokens.clear()
             self._socket_created_at.clear()
         for socket in sockets:
             self._close_socket_bounded(socket)
+        if recovery_thread is not None and recovery_thread is not __import__("threading").current_thread():
+            recovery_thread.join(timeout=1.0)
