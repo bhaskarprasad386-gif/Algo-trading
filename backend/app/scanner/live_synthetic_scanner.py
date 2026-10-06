@@ -29,7 +29,7 @@ class LiveSyntheticScanner:
         self.config_provider = config_provider or (lambda _symbol: SyntheticScanConfig())
         self.on_result = on_result
         self._lock = Lock()
-        self._buckets: dict[tuple[str, int], dict] = {}
+        self._buckets: dict[tuple[str, int, int], dict] = {}
 
     @staticmethod
     def _expiry(value: object) -> int:
@@ -84,7 +84,7 @@ class LiveSyntheticScanner:
         expiry = self._expiry(payload.get("expiry"))
         strike = self._price(payload.get("strike"))
         with self._lock:
-            key = self._matching_bucket_key(symbol, timestamp_ns)
+            key = self._matching_bucket_key(symbol, timestamp_ns, expiry)
             bucket = self._buckets.setdefault(key, {"future": None, "options": {}})
             if option_type in {"CE", "PE"} and strike is not None:
                 bucket["options"].setdefault(strike, {})[option_type] = payload
@@ -187,12 +187,9 @@ class LiveSyntheticScanner:
 
     TIMESTAMP_TOLERANCE_NS = 1_000_000_000
 
-    def _matching_bucket_key(self, symbol: str, timestamp_ns: int) -> tuple[str, int]:
-        candidates = [
-            key for key in self._buckets
-            if key[0] == symbol and abs(key[1] - timestamp_ns) <= self.TIMESTAMP_TOLERANCE_NS
-        ]
-        return min(candidates, key=lambda key: abs(key[1] - timestamp_ns)) if candidates else (symbol, timestamp_ns)
+    def _matching_bucket_key(self, symbol: str, timestamp_ns: int, expiry: int) -> tuple[str, int, int]:
+        # Keep each expiry isolated and only pair ticks inside the same 1-second bucket.
+        return (symbol, (timestamp_ns // 1_000_000_000) * 1_000_000_000, expiry)
 
     def _prune(self, timestamp_ns: int) -> None:
         cutoff = timestamp_ns - 3_000_000_000
