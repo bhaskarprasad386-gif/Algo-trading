@@ -58,10 +58,8 @@ def test_strategy_feed_registers_canonical_descriptors_on_common_manager():
         "token": "123",
         "exchange_timestamp": 1727000000000,
         "last_traded_price": 2500000,
-        "bid": 2499900,
-        "ask": 2500100,
-        "bid_quantity": 10,
-        "ask_quantity": 12,
+        "best_buy_data": [{"price": 2499900, "quantity": 10}],
+        "best_sell_data": [{"price": 2500100, "quantity": 12}],
     })
     assert len(received) == 1
     assert received[0].instrument == InstrumentKey("NFO", "NFO", "123")
