@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from threading import Event, Lock, RLock, Thread
+from threading import Event, Lock, RLock, Thread, current_thread
 import time
 from typing import Any, Callable
 
@@ -425,5 +425,5 @@ class CommonWebSocketManager:
             self._socket_created_at.clear()
         for socket in sockets:
             self._close_socket_bounded(socket)
-        if recovery_thread is not None and recovery_thread is not __import__("threading").current_thread():
+        if recovery_thread is not None and recovery_thread is not current_thread():
             recovery_thread.join(timeout=1.0)
