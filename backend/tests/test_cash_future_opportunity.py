@@ -98,3 +98,22 @@ def test_reverse_direction_uses_cash_bid_and_future_ask():
     assert result.signal.gap_points == 4
     assert result.signal.gross_profit == 200
     assert result.signal.qualifies is True
+
+def test_snapshot_preserves_independent_current_and_near_opportunities():
+    scanner = CashFutureOpportunityScanner(minimum_gap_points=1)
+    cash = rec("C1", "ABC-EQ", InstrumentType.EQUITY, 1_000_000_000, 99, 100, underlying="ABC")
+    current = rec("F1", "ABC-CURRENT", InstrumentType.FUTURE, 1_000_000_100, 106, 107, lot=60, underlying="ABC")
+    near = rec("F2", "ABC-NEAR", InstrumentType.FUTURE, 1_000_000_200, 104, 105, lot=60, underlying="ABC")
+    scanner.update(cash, contract_month="CASH")
+    scanner.update(current, contract_month="CURRENT")
+    scanner.update(near, contract_month="NEAR")
+
+    rows = scanner.snapshot()
+    assert {row.contract_month for row in rows} == {"CURRENT", "NEAR"}
+    assert {row.signal.gap_points for row in rows} == {6, 4}
+
+    near_bad = rec("F2", "ABC-NEAR", InstrumentType.FUTURE, 1_500_000_000, 100, 101, lot=60, underlying="ABC")
+    assert scanner.update(near_bad, contract_month="NEAR") is None
+    rows = scanner.snapshot()
+    assert {row.contract_month for row in rows} == {"CURRENT"}
+
