@@ -488,12 +488,13 @@ class AlertService:
                         # identifies the concrete market event. Dedup must include both:
                         # a new qualifying snapshot may reuse the same logical event_id
                         # after cooldown, while an identical snapshot must never resend.
-                        key = (int(rule.id), event.event_id, int(event.timestamp_ns), channel, recipient)
+                        dedup_key = (int(rule.id), event.event_id, int(event.timestamp_ns), channel, recipient)
+                        cooldown_key = (int(rule.id), event.event_id, channel, recipient)
                         # Exact event delivery is always idempotent, including
-                        # cooldown=0. Cooldown governs later distinct timestamps.
-                        if key in self._delivered_events:
+                        # cooldown=0. Cooldown applies across later timestamps.
+                        if dedup_key in self._delivered_events:
                             continue
-                        previous = self._last_sent.get(key)
+                        previous = self._last_sent.get(cooldown_key)
                         if previous is not None and event.timestamp_ns - previous < cooldown_ns:
                             continue
                         try:
@@ -510,8 +511,8 @@ class AlertService:
                             )
                             delivered = False
                         if delivered:
-                            self._last_sent[key] = event.timestamp_ns
-                            self._delivered_events.add(key)
+                            self._last_sent[cooldown_key] = event.timestamp_ns
+                            self._delivered_events.add(dedup_key)
                             sent += 1
             return sent
         from app.models import User
