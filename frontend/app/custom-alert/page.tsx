@@ -119,6 +119,31 @@ export default function CustomAlertPage() {
     } finally { setSaving(false); }
   };
 
+  const toggleRule = async (rule: any) => {
+    const nextEnabled = !Boolean(rule.enabled);
+    setError(null); setStatus(null);
+    try {
+      const response = await fetch(`${base}/api/v1/alerts/rules/${rule.id}`, {
+        method: "PUT",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({
+          name: rule.name, strategy_id: rule.strategy_id, metric: rule.metric, operator: rule.operator,
+          threshold: Number(rule.threshold), min_gross_profit: Number(rule.min_gross_profit) || 0,
+          mobile_number: rule.mobile_number, whatsapp_enabled: Boolean(rule.whatsapp_enabled), enabled: nextEnabled,
+          max_loss: Number(rule.max_loss) || 0, max_daily_capital: Number(rule.max_daily_capital) || 0,
+          max_simultaneous_positions: Number(rule.max_simultaneous_positions) || 1,
+          cooldown_seconds: Number(rule.cooldown_seconds) || 0, priority: Number(rule.priority) || 0,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`);
+      setSavedRules((old) => old.map((item) => item.id === rule.id ? data.rule : item));
+      setStatus(nextEnabled ? "Alert rule activated." : "Alert rule paused.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to update alert rule.");
+    }
+  };
+
   const deleteRule = async (id: number) => {
     const response = await fetch(`${base}/api/v1/alerts/rules/${id}`, {method:"DELETE"});
     if (!response.ok) { setError("Unable to delete alert."); return; }
@@ -182,6 +207,7 @@ export default function CustomAlertPage() {
             const scannerLabel = scanners.find(x=>x.id===rule.strategy_id)?.label || rule.strategy_id;
             return <div key={rule.id} className="flex items-center gap-3 rounded-xl border theme-border theme-surface p-4">
               <div className="min-w-0 flex-1"><p className="font-semibold theme-text">{rule.name}</p><p className="text-xs theme-muted">{scannerLabel} • {rule.metric} {rule.operator} {rule.threshold} • {rule.enabled ? "Rule ON" : "Rule OFF"}</p></div>
+              <button type="button" onClick={()=>toggleRule(rule)} className={`rounded-lg border theme-border px-3 py-2 text-xs font-bold uppercase ${rule.enabled ? "theme-warning" : "theme-success"}`} aria-label={rule.enabled ? "Pause alert" : "Activate alert"}>{rule.enabled ? "PAUSE" : "ACTIVATE"}</button>
               <button type="button" onClick={()=>deleteRule(rule.id)} className="rounded-lg border theme-border p-2 theme-danger" aria-label="Delete alert"><Trash2 className="h-4 w-4"/></button>
             </div>;
           })}
