@@ -168,6 +168,8 @@ class AlertService:
         previous = self._last_sent.get(key, 0)
         if event.timestamp_ns - previous < cooldown_ns:
             return False
+        if not bool(getattr(user, "whatsapp_alerts_enabled", True)):
+            return False
         sent = self._notifier.send_text(user.mobile_number, event.message)
         if sent:
             self._last_sent[key] = event.timestamp_ns
@@ -459,6 +461,8 @@ class AlertService:
                     continue
                 if not _rule_matches_event(rule, event):
                     continue
+                whatsapp_enabled = bool(getattr(user, "whatsapp_alerts_enabled", True))
+                telegram_enabled = bool(getattr(user, "telegram_alerts_enabled", True))
                 contacts = db.query(AlertContact).filter(
                     AlertContact.user_id == int(rule.user_id),
                     AlertContact.enabled.is_(True),
@@ -471,11 +475,11 @@ class AlertService:
                 for contact in contacts:
                     cooldown_ns = int(max(0.0, float(rule.cooldown_seconds)) * 1_000_000_000)
                     channels = []
-                    if bool(getattr(contact, "whatsapp_enabled", False)):
+                    if whatsapp_enabled and bool(getattr(contact, "whatsapp_enabled", False)):
                         number = str(getattr(contact, "mobile_number", "")).strip()
                         if number:
                             channels.append(("whatsapp", number))
-                    if bool(getattr(contact, "telegram_enabled", False)):
+                    if telegram_enabled and bool(getattr(contact, "telegram_enabled", False)):
                         chat_id = str(getattr(contact, "telegram_chat_id", "")).strip()
                         if chat_id:
                             channels.append(("telegram", chat_id))
