@@ -189,12 +189,23 @@ class CommonWebSocketManager:
             for group, pairs in desired_tokens.items():
                 socket = existing.get(group)
                 if socket is None:
+                    socket = self._socket_factory()
+                    subscriptions = self._group_subscriptions(pairs)
+                    with self._lock:
+                        generation = self._socket_generation.get(group, 0) + 1
+                        self._socket_generation[group] = generation
+                        # Register the socket before broker I/O. Angel's
+                        # SmartWebSocketV2.connect() is asynchronous and may
+                        # invoke on_open/on_data before connect() returns.
+                        # Keeping the registry authoritative during that
+                        # window prevents the recovery supervisor and callbacks
+                        # from observing a false zero-socket state.
+                        self._sockets[group] = socket
+                        self._socket_tokens[group] = set(pairs)
+                        now = time.monotonic()
+                        self._socket_created_at[group] = now
+                        self._last_data_at[group] = now
                     try:
-                        socket = self._socket_factory()
-                        subscriptions = self._group_subscriptions(pairs)
-                        with self._lock:
-                            generation = self._socket_generation.get(group, 0) + 1
-                            self._socket_generation[group] = generation
                         socket.connect(
                             mode=group.mode,
                             subscriptions=subscriptions,
@@ -203,6 +214,11 @@ class CommonWebSocketManager:
                         )
                     except Exception as exc:
                         with self._lock:
+                            self._sockets.pop(group, None)
+                            self._socket_tokens.pop(group, None)
+                            self._socket_created_at.pop(group, None)
+                            self._last_data_at.pop(group, None)
+                            self._socket_generation.pop(group, None)
                             self._connect_failures += 1
                             self._last_connect_failure = {
                                 "group": f"{group.mode}:{group.shard}",
@@ -215,13 +231,8 @@ class CommonWebSocketManager:
                             "Common feed socket connect failed group=%s error=%s: %s",
                             group, type(exc).__name__, exc,
                         )
+                        self._close_socket_bounded(socket)
                         raise
-                    with self._lock:
-                        self._sockets[group] = socket
-                        self._socket_tokens[group] = set(pairs)
-                        now = time.monotonic()
-                        self._socket_created_at[group] = now
-                        self._last_data_at[group] = now
                 else:
                     removed = previous_tokens.get(group, set()) - pairs
                     added = pairs - previous_tokens.get(group, set())
