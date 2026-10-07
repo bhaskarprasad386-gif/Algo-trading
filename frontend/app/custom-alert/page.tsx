@@ -37,6 +37,7 @@ export default function CustomAlertPage() {
   const [contactChannels, setContactChannels] = useState({sms:false,app:true,whatsapp:false,telegram:false,email:false});
   const [telegramChatId, setTelegramChatId] = useState("");
   const [savedRules, setSavedRules] = useState<any[]>([]);
+  const [editingRuleId, setEditingRuleId] = useState<number | null>(null);
   const [alertStatus, setAlertStatus] = useState({active_rules:0, triggered_30d:0, history_30d:0});
   const [botChannels, setBotChannels] = useState({whatsapp:false,telegram:false});
   const [saving, setSaving] = useState(false);
@@ -144,6 +145,42 @@ export default function CustomAlertPage() {
     }
   };
 
+  const editRule = (rule: any) => {
+    setEditingRuleId(Number(rule.id));
+    setAlertName(String(rule.name || ""));
+    setScanner(String(rule.strategy_id || "cash-future"));
+    setMetric(String(rule.metric || "gap"));
+    setOperator(String(rule.operator || ">="));
+    setThreshold(String(rule.threshold ?? ""));
+    const contact = contacts.find((c) => String(c.mobile_number || "") === String(rule.mobile_number || "").replace(/^91/, ""));
+    if (contact) setSelectedContactId(Number(contact.id));
+    setStatus(null); setError(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const updateRule = async () => {
+    if (editingRuleId == null) return;
+    const numeric = Number(threshold);
+    if (!alertName.trim()) return setError("Enter an alert name.");
+    if (!Number.isFinite(numeric)) return setError("Enter a valid threshold.");
+    const selectedContact = selectedContactId == null ? null : contacts.find((contact) => Number(contact.id) === selectedContactId);
+    const contactMobile = String(selectedContact?.mobile_number || mobile).trim().replace(/\D/g, "");
+    if (contactMobile.length < 7) return setError("Add/select a valid alert contact first.");
+    const rule = savedRules.find((item) => Number(item.id) === editingRuleId);
+    if (!rule) return setError("Alert rule no longer exists.");
+    setSaving(true); setError(null); setStatus(null);
+    try {
+      const response = await fetch(base + "/api/v1/alerts/rules/" + editingRuleId, {
+        method: "PUT", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({name: alertName.trim(), strategy_id: scanner, metric, operator, threshold: numeric, min_gross_profit: metric === "gross_profit" ? Math.max(0, numeric) : 0, mobile_number: contactMobile.startsWith("91") ? contactMobile : "91" + contactMobile, whatsapp_enabled: Boolean(selectedContact?.channels?.whatsapp), enabled: Boolean(rule.enabled), max_loss: Number(rule.max_loss) || 0, max_daily_capital: Number(rule.max_daily_capital) || 0, max_simultaneous_positions: Number(rule.max_simultaneous_positions) || 1, cooldown_seconds: Number(rule.cooldown_seconds) || 0, priority: Number(rule.priority) || 0}),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.detail || "HTTP " + response.status);
+      setSavedRules((old) => old.map((item) => item.id === editingRuleId ? data.rule : item));
+      setEditingRuleId(null); setAlertName(""); setThreshold(""); setStatus("Alert updated successfully.");
+    } catch (e) { setError(e instanceof Error ? e.message : "Unable to update alert."); } finally { setSaving(false); }
+  };
+
   const deleteRule = async (id: number) => {
     const response = await fetch(`${base}/api/v1/alerts/rules/${id}`, {method:"DELETE"});
     if (!response.ok) { setError("Unable to delete alert."); return; }
@@ -189,7 +226,7 @@ export default function CustomAlertPage() {
         </div>
         <div className="mt-4 flex flex-wrap items-end gap-3">
           <div className="min-w-[240px] flex-1"><span className="block mb-2 text-sm font-medium theme-text">Alert Contact</span>{contacts.length ? <select aria-label="Alert contact" className="min-h-11 w-full px-3" value={selectedContactId ?? ""} onChange={(e)=>setSelectedContactId(e.target.value ? Number(e.target.value) : null)}>{contacts.map((contact)=><option key={contact.id} value={contact.id} disabled={!contact.enabled}>{contact.label} • +{contact.mobile_number}{contact.enabled ? "" : " • OFF"}</option>)}</select> : <button type="button" onClick={()=>setContactOpen(true)} className="min-h-11 w-full rounded-xl border theme-border theme-surface px-3 text-left text-sm theme-text"><Plus className="mr-2 inline h-4 w-4"/>Add mobile number</button>}</div>
-          <button type="button" onClick={saveRule} disabled={saving} className="inline-flex min-h-11 items-center gap-2 rounded-xl border theme-border theme-accent-bg px-4 text-sm font-semibold">{saving ? "Saving…" : <><Plus className="h-4 w-4"/>Save Alert</>}</button>
+          <button type="button" onClick={editingRuleId == null ? saveRule : updateRule} disabled={saving} className="inline-flex min-h-11 items-center gap-2 rounded-xl border theme-border theme-accent-bg px-4 text-sm font-semibold">{saving ? "Saving…" : editingRuleId == null ? <><Plus className="h-4 w-4"/>Save Alert</> : "Update Alert"}</button>
         </div>
         {status && <p className="mt-3 text-sm theme-success">{status}</p>}
         {error && <p className="mt-3 text-sm theme-danger">{error}</p>}
@@ -207,7 +244,7 @@ export default function CustomAlertPage() {
             const scannerLabel = scanners.find(x=>x.id===rule.strategy_id)?.label || rule.strategy_id;
             return <div key={rule.id} className="flex items-center gap-3 rounded-xl border theme-border theme-surface p-4">
               <div className="min-w-0 flex-1"><p className="font-semibold theme-text">{rule.name}</p><p className="text-xs theme-muted">{scannerLabel} • {rule.metric} {rule.operator} {rule.threshold} • {rule.enabled ? "Rule ON" : "Rule OFF"}</p></div>
-              <button type="button" onClick={()=>toggleRule(rule)} className={`rounded-lg border theme-border px-3 py-2 text-xs font-bold uppercase ${rule.enabled ? "theme-warning" : "theme-success"}`} aria-label={rule.enabled ? "Pause alert" : "Activate alert"}>{rule.enabled ? "PAUSE" : "ACTIVATE"}</button>
+              <button type="button" onClick={()=>toggleRule(rule)} className={`rounded-lg border theme-border px-3 py-2 text-xs font-bold uppercase ${rule.enabled ? "theme-warning" : "theme-success"}`} aria-label={rule.enabled ? "Pause alert" : "Activate alert"}>{rule.enabled ? "PAUSE" : "ACTIVATE"}</button><button type="button" onClick={()=>editRule(rule)} className="rounded-lg border theme-border px-3 py-2 text-xs font-bold uppercase theme-accent" aria-label="Edit alert">EDIT</button>
               <button type="button" onClick={()=>deleteRule(rule.id)} className="rounded-lg border theme-border p-2 theme-danger" aria-label="Delete alert"><Trash2 className="h-4 w-4"/></button>
             </div>;
           })}
