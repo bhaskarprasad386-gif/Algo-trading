@@ -54,6 +54,9 @@ class CommonWebSocketManager:
         self._last_tick: dict[str, Any] | None = None
         self._socket_created_at: dict[SocketGroup, float] = {}
         self._last_data_at: dict[SocketGroup, float] = {}
+        # Identify socket generations so late Angel callbacks from a replaced
+        # socket cannot be counted as live data for the new/absent group.
+        self._socket_generation: dict[SocketGroup, int] = {}
         self._silent_feed_timeout_seconds = 30.0
         self._route_index: dict[
             SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
@@ -189,11 +192,14 @@ class CommonWebSocketManager:
                     try:
                         socket = self._socket_factory()
                         subscriptions = self._group_subscriptions(pairs)
+                        with self._lock:
+                            generation = self._socket_generation.get(group, 0) + 1
+                            self._socket_generation[group] = generation
                         socket.connect(
                             mode=group.mode,
                             subscriptions=subscriptions,
                             correlation_id=f"common-{group.mode}-{group.shard}",
-                            on_data=lambda message, group=group: self._on_data(group, message),
+                            on_data=lambda message, group=group, generation=generation: self._on_data(group, message, generation),
                         )
                     except Exception as exc:
                         with self._lock:
@@ -233,6 +239,7 @@ class CommonWebSocketManager:
                     self._socket_tokens.pop(group, None)
                     self._socket_created_at.pop(group, None)
                     self._last_data_at.pop(group, None)
+                    self._socket_generation.pop(group, None)
             for socket in stale_sockets:
                 self._close_socket_bounded(socket)
 
@@ -358,7 +365,7 @@ class CommonWebSocketManager:
     def _unsubscribe_pairs(cls, socket: Any, mode: int, pairs: set[tuple[int, str]]) -> None:
         socket.unsubscribe_groups(cls._by_exchange(pairs))
 
-    def _on_data(self, group: SocketGroup, message: Any) -> None:
+    def _on_data(self, group: SocketGroup, message: Any, generation: int | None = None) -> None:
         if not isinstance(message, dict):
             return
         token = str(message.get("token") or message.get("symboltoken") or "").strip()
@@ -370,6 +377,13 @@ class CommonWebSocketManager:
         except (TypeError, ValueError):
             exchange_type = None
         with self._lock:
+            # Reject callbacks from an older socket after recovery has replaced
+            # or removed that group. This prevents orphan ticks from masking a
+            # zero-socket manager state.
+            if generation is not None and self._socket_generation.get(group) != generation:
+                return
+            if group not in self._sockets:
+                return
             if exchange_type is not None:
                 matching = tuple(self._route_index.get(group, {}).get((exchange_type, token), ()))
             else:
@@ -476,6 +490,7 @@ class CommonWebSocketManager:
             self._socket_tokens.clear()
             self._socket_created_at.clear()
             self._last_data_at.clear()
+            self._socket_generation.clear()
         for socket in sockets:
             self._close_socket_bounded(socket)
         if recovery_thread is not None and recovery_thread is not current_thread():
