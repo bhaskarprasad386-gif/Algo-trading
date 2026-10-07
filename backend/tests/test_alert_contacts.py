@@ -4,7 +4,7 @@ def test_alert_contact_model_supports_multiple_channel_preferences(db_session):
     db_session.add(user)
     db_session.add_all([
         AlertContact(user_id=9101, label="Primary", mobile_number="919999999999", whatsapp_enabled=True, app_enabled=True),
-        AlertContact(user_id=9101, label="Backup", mobile_number="918888888888", sms_enabled=True, email_enabled=True, app_enabled=False),
+        AlertContact(user_id=9101, label="Backup", mobile_number="918888888888", email_address="backup@example.com", sms_enabled=True, email_enabled=True, app_enabled=False),
     ])
     db_session.commit()
     rows = db_session.query(AlertContact).filter(AlertContact.user_id == 9101).order_by(AlertContact.id).all()
@@ -12,6 +12,7 @@ def test_alert_contact_model_supports_multiple_channel_preferences(db_session):
     assert rows[0].whatsapp_enabled is True
     assert rows[1].sms_enabled is True
     assert rows[1].email_enabled is True
+    assert rows[1].email_address == "backup@example.com"
     assert rows[1].app_enabled is False
 
 
@@ -85,3 +86,20 @@ def test_alert_dispatch_uses_enabled_whatsapp_contacts(db_session, monkeypatch):
     count = service.dispatch(db_session, AlertEvent("cash-future", "contact-event", "ABC", 1000000000, "alert", metadata={"gross_profit": 500}))
     assert count == 1
     assert sent == ["919111111111"]
+
+
+def test_alert_channel_preferences_are_user_scoped(db_session, monkeypatch):
+    from app.models import User
+    from app import alert_routes
+
+    user = User(id=9110, email="channels@example.com", hashed_password="x", alert_email="channels@example.com")
+    db_session.add(user)
+    db_session.commit()
+    monkeypatch.setattr(alert_routes, "current_user_id", lambda db: 9110)
+
+    response = alert_routes.set_alert_channel(
+        alert_routes.AlertChannelRequest(channel="whatsapp", enabled=False),
+        db_session,
+    )
+    assert response["enabled"] is False
+    assert user.whatsapp_alerts_enabled is False
