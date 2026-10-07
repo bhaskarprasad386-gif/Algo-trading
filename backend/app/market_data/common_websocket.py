@@ -53,6 +53,8 @@ class CommonWebSocketManager:
         self._ticks_by_exchange: dict[str, int] = defaultdict(int)
         self._last_tick: dict[str, Any] | None = None
         self._socket_created_at: dict[SocketGroup, float] = {}
+        self._last_data_at: dict[SocketGroup, float] = {}
+        self._silent_feed_timeout_seconds = 30.0
         self._route_index: dict[
             SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
         ] = {}
@@ -211,7 +213,9 @@ class CommonWebSocketManager:
                     with self._lock:
                         self._sockets[group] = socket
                         self._socket_tokens[group] = set(pairs)
-                        self._socket_created_at[group] = time.monotonic()
+                        now = time.monotonic()
+                        self._socket_created_at[group] = now
+                        self._last_data_at[group] = now
                 else:
                     removed = previous_tokens.get(group, set()) - pairs
                     added = pairs - previous_tokens.get(group, set())
@@ -228,6 +232,7 @@ class CommonWebSocketManager:
                 for group in stale_groups:
                     self._socket_tokens.pop(group, None)
                     self._socket_created_at.pop(group, None)
+                    self._last_data_at.pop(group, None)
             for socket in stale_sockets:
                 self._close_socket_bounded(socket)
 
@@ -251,20 +256,27 @@ class CommonWebSocketManager:
             if not has_intent:
                 continue
             try:
-                self.recover_disconnected(min_age_seconds=0.0)
+                self.recover_disconnected(
+                    min_age_seconds=0.0,
+                    silent_age_seconds=self._silent_feed_timeout_seconds,
+                )
             except Exception as exc:
                 app_logger.warning(
                     "Common feed automatic recovery failed; will retry: %s", exc
                 )
 
-    def recover_disconnected(self, *, min_age_seconds: float = 10.0) -> int:
-        """Replace stale disconnected broker sockets without leaving the feed empty on reconnect failure."""
+    def recover_disconnected(
+        self,
+        *,
+        min_age_seconds: float = 10.0,
+        silent_age_seconds: float | None = None,
+    ) -> int:
+        """Replace stale/disconnected or connected-but-silent broker sockets."""
         now = time.monotonic()
         stale: list[tuple[SocketGroup, Any, set[tuple[int, str]], float]] = []
         with self._lock:
             for group, socket in self._sockets.items():
-                if bool(getattr(socket, "connected", False)):
-                    continue
+                connected = bool(getattr(socket, "connected", False))
                 # SmartWebSocketV2.connect() returns before on_open for the
                 # asynchronous broker handshake. Do not reap a socket while
                 # that handshake is still in progress.
@@ -274,8 +286,14 @@ class CommonWebSocketManager:
                 if now - created_at < max(1.0, float(min_age_seconds)):
                     continue
                 tokens = set(self._socket_tokens.get(group, set()))
-                if tokens:
-                    stale.append((group, socket, tokens, created_at))
+                if not tokens:
+                    continue
+                if connected:
+                    timeout = self._silent_feed_timeout_seconds if silent_age_seconds is None else silent_age_seconds
+                    last_data_at = self._last_data_at.get(group, created_at)
+                    if timeout < 0 or now - last_data_at < float(timeout):
+                        continue
+                stale.append((group, socket, tokens, created_at))
 
             # A partial reconcile can successfully create/store one shard and
             # fail while creating a later shard. The registry still contains
@@ -364,6 +382,7 @@ class CommonWebSocketManager:
             if matching:
                 self._ticks_received += 1
                 self._ticks_by_exchange[str(exchange_type or "unknown")] += 1
+                self._last_data_at[group] = time.monotonic()
         for callback in {id(cb): cb for cb in raw_callbacks if cb is not None}.values():
             try:
                 callback(message)
@@ -456,6 +475,7 @@ class CommonWebSocketManager:
             self._sockets.clear()
             self._socket_tokens.clear()
             self._socket_created_at.clear()
+            self._last_data_at.clear()
         for socket in sockets:
             self._close_socket_bounded(socket)
         if recovery_thread is not None and recovery_thread is not current_thread():
