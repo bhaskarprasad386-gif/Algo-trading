@@ -255,6 +255,30 @@ def test_connect_failure_telemetry_and_recovery_restores_socket():
         AlwaysFailThenRecoverSocket.attempts = 0
 
 
+
+def test_recovery_replaces_connected_silent_socket():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._silent_feed_timeout_seconds = 0.0
+    try:
+        manager.subscribe("cash", [d.key])
+        original = FakeSocket.instances[0]
+
+        recovered = manager.recover_disconnected(
+            min_age_seconds=0.0,
+            silent_age_seconds=0.0,
+        )
+
+        assert recovered == 1
+        assert original.closed is True
+        assert len(FakeSocket.instances) == 2
+        assert manager.snapshot()["socket_groups"] == 1
+        assert manager.snapshot()["connected_groups"] == ["1:0"]
+    finally:
+        manager.close()
+
 class ConnectingSocket(FakeSocket):
     def connect(self, **kwargs):
         self.connect_calls.append(kwargs)
