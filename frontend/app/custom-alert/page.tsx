@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, Bot, ShieldCheck, Plus, Trash2 } from "lucide-react";
+import { Bell, Bot, Plus, Trash2 } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 
@@ -43,11 +43,6 @@ export default function CustomAlertPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const [paperAutoExecute, setPaperAutoExecute] = useState(false);
-  const [paperAutoAmount, setPaperAutoAmount] = useState(10000000);
-  const [paperAutoLoading, setPaperAutoLoading] = useState(true);
-  const [paperAutoSaving, setPaperAutoSaving] = useState(false);
-  const [paperAutoError, setPaperAutoError] = useState<string | null>(null);
 
   const base = appConfig.apiBaseUrl.replace(/\/$/, "");
   const metrics = metricsByScanner[scanner];
@@ -63,9 +58,6 @@ export default function CustomAlertPage() {
     if (statusResponse.ok) { const statusData = await statusResponse.json(); setAlertStatus({active_rules:Number(statusData?.active_rules)||0, triggered_30d:Number(statusData?.triggered_30d)||0, history_30d:Number(statusData?.history_30d)||0}); }
     const contactsResponse = await fetch(`${base}/api/v1/alerts/contacts`, { cache: "no-store" });
     if (contactsResponse.ok) { const contactsData = await contactsResponse.json(); const loadedContacts = Array.isArray(contactsData?.contacts) ? contactsData.contacts : []; setContacts(loadedContacts); if (loadedContacts.length) setSelectedContactId(Number(loadedContacts[0].id)); }
-    setPaperAutoExecute(Boolean(data?.paper?.enabled));
-    const amount = Number(data?.paper?.paper_amount);
-    if (Number.isFinite(amount) && amount >= 0) setPaperAutoAmount(amount);
   };
 
   useEffect(() => {
@@ -133,22 +125,6 @@ export default function CustomAlertPage() {
     setSavedRules((old) => old.filter((rule) => rule.id !== id));
   };
 
-  const togglePaperAutoExecute = async () => {
-    if (paperAutoSaving) return;
-    const next = !paperAutoExecute; setPaperAutoSaving(true); setPaperAutoError(null);
-    try {
-      const response = await fetch(`${base}/api/v1/alerts/paper`, {
-        method:"PUT", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({enabled:next,paper_amount:paperAutoAmount,emergency_stop:false}),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`);
-      setPaperAutoExecute(Boolean(data?.paper?.enabled));
-    } catch (e) {
-      setPaperAutoError(e instanceof Error ? e.message : "Unable to update paper auto-execute");
-    } finally { setPaperAutoSaving(false); }
-  };
-
   return (
     <div className="space-y-5 theme-text">
       <PageTitle eyebrow="Phase 4 • Custom Alert" title="Custom Alert" description="Scanner-wide alert rules with a separate master notification switch." />
@@ -187,7 +163,7 @@ export default function CustomAlertPage() {
           </div>
         </div>
         <div className="mt-4 flex flex-wrap items-end gap-3">
-          <div className="min-w-[240px] flex-1"><span className="block mb-2 text-sm font-medium theme-text">Alert Contact</span>{contacts.length ? <select aria-label="Alert contact" className="min-h-11 w-full px-3" value={selectedContactId ?? ""} onChange={(e)=>setSelectedContactId(e.target.value ? Number(e.target.value) : null)}>{contacts.map((contact)=><option key={contact.id} value={contact.id}>{contact.label} • +{contact.mobile_number}{contact.enabled ? "" : " • OFF"}</option>)}</select> : <button type="button" onClick={()=>setContactOpen(true)} className="min-h-11 w-full rounded-xl border theme-border theme-surface px-3 text-left text-sm theme-text"><Plus className="mr-2 inline h-4 w-4"/>Add mobile number</button>}</div>
+          <div className="min-w-[240px] flex-1"><span className="block mb-2 text-sm font-medium theme-text">Alert Contact</span>{contacts.length ? <select aria-label="Alert contact" className="min-h-11 w-full px-3" value={selectedContactId ?? ""} onChange={(e)=>setSelectedContactId(e.target.value ? Number(e.target.value) : null)}>{contacts.map((contact)=><option key={contact.id} value={contact.id} disabled={!contact.enabled}>{contact.label} • +{contact.mobile_number}{contact.enabled ? "" : " • OFF"}</option>)}</select> : <button type="button" onClick={()=>setContactOpen(true)} className="min-h-11 w-full rounded-xl border theme-border theme-surface px-3 text-left text-sm theme-text"><Plus className="mr-2 inline h-4 w-4"/>Add mobile number</button>}</div>
           <button type="button" onClick={saveRule} disabled={saving} className="inline-flex min-h-11 items-center gap-2 rounded-xl border theme-border theme-accent-bg px-4 text-sm font-semibold">{saving ? "Saving…" : <><Plus className="h-4 w-4"/>Save Alert</>}</button>
         </div>
         {status && <p className="mt-3 text-sm theme-success">{status}</p>}
@@ -212,11 +188,6 @@ export default function CustomAlertPage() {
         </div>
       </Card>
 
-      <Card className="theme-border theme-warning-bg p-5">
-        <div className="flex items-start gap-3"><Bot className="mt-0.5 h-5 w-5 shrink-0 theme-warning" /><div><h2 className="text-base font-semibold theme-text">Alert Action</h2><p className="mt-1 text-sm theme-muted">Paper execution remains a separate safety control. Live broker orders stay OFF.</p></div></div>
-        <button type="button" onClick={togglePaperAutoExecute} disabled={paperAutoLoading || paperAutoSaving} className="mt-4 flex min-h-16 w-full items-center gap-3 rounded-xl border theme-border theme-surface px-4 text-left disabled:opacity-70"><ShieldCheck className="h-5 w-5 theme-accent" /><span className="flex-1"><span className="block text-sm font-semibold theme-text">Paper Auto-Execute</span><span className="block text-xs theme-muted">{paperAutoLoading ? "Checking backend setting…" : paperAutoSaving ? "Saving…" : paperAutoExecute ? "ON" : "OFF"}</span></span><span className="rounded-lg border theme-border px-2 py-1 text-[10px] font-bold uppercase">{paperAutoExecute ? "ON" : "OFF"}</span></button>
-        {paperAutoError && <p className="mt-2 text-xs theme-danger">{paperAutoError}</p>}
-      </Card>
       {contactOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"><Card className="w-full max-w-lg p-5"><div className="flex items-center justify-between"><h2 className="text-lg font-semibold theme-text">Add Notification Contact</h2><button type="button" onClick={()=>setContactOpen(false)} className="theme-muted">✕</button></div><div className="mt-4 grid gap-3"><label className="text-sm"><span className="block mb-1 theme-text">Label</span><input className="min-h-11 w-full px-3" value={contactLabel} onChange={(e)=>setContactLabel(e.target.value)} /></label><label className="text-sm"><span className="block mb-1 theme-text">Mobile Number</span><input className="min-h-11 w-full px-3" inputMode="numeric" value={mobile} onChange={(e)=>setMobile(e.target.value.replace(/\D/g,"").slice(0,15))} placeholder="919876543210" /></label><label className="text-sm"><span className="block mb-1 theme-text">Telegram Chat ID</span><input className="min-h-11 w-full px-3" inputMode="text" value={telegramChatId} onChange={(e)=>setTelegramChatId(e.target.value.slice(0,128))} placeholder="Required only for Telegram" /></label><div className="grid grid-cols-2 gap-2 text-sm">{(["sms","app","whatsapp","telegram","email"] as const).map((key)=><label key={key} className="flex items-center gap-2 rounded-xl border theme-border p-3"><input type="checkbox" checked={contactChannels[key]} onChange={(e)=>setContactChannels((x)=>({...x,[key]:e.target.checked}))}/>{key.toUpperCase()}</label>)}</div></div><button type="button" disabled={contactSaving} onClick={async()=>{setContactSaving(true);try{const response=await fetch(base+"/api/v1/alerts/contacts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({label:contactLabel,mobile_number:mobile,enabled:true,sms_enabled:contactChannels.sms,app_enabled:contactChannels.app,whatsapp_enabled:contactChannels.whatsapp,telegram_enabled:contactChannels.telegram,telegram_chat_id:telegramChatId.trim(),email_enabled:contactChannels.email})});const data=await response.json();if(!response.ok)throw new Error(data?.detail||"Unable to save contact");setContacts((x)=>[...x,data.contact]);setSelectedContactId(Number(data.contact.id));setMobile(data.contact.mobile_number);setContactLabel("Primary");setTelegramChatId("");setContactChannels({sms:false,app:true,whatsapp:false,telegram:false,email:false});setContactOpen(false)}catch(e){setError(e instanceof Error?e.message:"Unable to save contact")}finally{setContactSaving(false)}}} className="mt-4 min-h-11 w-full rounded-xl border theme-border theme-accent-bg font-semibold">{contactSaving?"Saving…":"Save Contact"}</button></Card></div>}
     </div>
   );
