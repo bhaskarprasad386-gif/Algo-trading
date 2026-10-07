@@ -202,7 +202,11 @@ def add_alert_contact(request: AlertContactRequest, db: Session = Depends(get_db
     if number and (not number.isdigit() or len(number) < 7):
         raise HTTPException(status_code=422, detail="invalid mobile number")
     row = AlertContact(user_id=uid, mobile_number=number, **request.model_dump(exclude={"mobile_number"}))
-    db.add(row); db.commit(); db.refresh(row)
+    db.add(row)
+    user = db.query(User).filter(User.id == uid).first()
+    if email:
+        user.alert_email = email
+    db.commit(); db.refresh(row)
     return {"status": "success", "contact": _contact_payload(row)}
 
 @router.put("/contacts/{contact_id}")
@@ -224,6 +228,9 @@ def update_alert_contact(contact_id: int, request: AlertContactRequest, db: Sess
         raise HTTPException(status_code=422, detail="invalid mobile number")
     for key, value in request.model_dump().items():
         setattr(row, key, value)
+    user = db.query(User).filter(User.id == uid).first()
+    if email:
+        user.alert_email = email
     row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit(); db.refresh(row)
     return {"status": "success", "contact": _contact_payload(row)}
