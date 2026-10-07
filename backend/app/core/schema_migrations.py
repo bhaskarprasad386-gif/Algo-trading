@@ -26,6 +26,14 @@ def run_schema_migrations() -> None:
                 connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
         if "alerts_enabled" not in user_columns:
             connection.execute(text("ALTER TABLE users ADD COLUMN alerts_enabled BOOLEAN DEFAULT 1"))
+        for name, definition in {
+            "whatsapp_alerts_enabled": "BOOLEAN DEFAULT 1",
+            "telegram_alerts_enabled": "BOOLEAN DEFAULT 1",
+            "email_alerts_enabled": "BOOLEAN DEFAULT 1",
+            "alert_email": "VARCHAR(320)",
+        }.items():
+            if name not in columns:
+                connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
 
         alert_tables = set(inspect(connection).get_table_names())
         if "alert_contacts" not in alert_tables:
@@ -34,7 +42,8 @@ def run_schema_migrations() -> None:
                     id INTEGER PRIMARY KEY,
                     user_id INTEGER NOT NULL,
                     label VARCHAR(64) NOT NULL DEFAULT 'Primary',
-                    mobile_number VARCHAR(32) NOT NULL,
+                    mobile_number VARCHAR(32) NOT NULL DEFAULT '',
+                    email_address VARCHAR(320),
                     enabled BOOLEAN NOT NULL DEFAULT 1,
                     sms_enabled BOOLEAN NOT NULL DEFAULT 0,
                     app_enabled BOOLEAN NOT NULL DEFAULT 1,
@@ -49,8 +58,9 @@ def run_schema_migrations() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_alert_contacts_user ON alert_contacts (user_id, id)"))
         alert_contact_columns = {column["name"] for column in inspect(connection).get_columns("alert_contacts")}
         for name, definition in {
+            "email_address": "VARCHAR(320)",
             "telegram_enabled": "BOOLEAN DEFAULT 0",
-            "telegram_chat_id": "VARCHAR(128) DEFAULT ''",
+            "telegram_chat_id": "VARCHAR(128) DEFAULT '',
         }.items():
             if name not in alert_contact_columns:
                 connection.execute(text(f"ALTER TABLE alert_contacts ADD COLUMN {name} {definition}"))
