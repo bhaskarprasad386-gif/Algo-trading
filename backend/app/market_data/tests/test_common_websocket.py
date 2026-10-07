@@ -265,6 +265,10 @@ def test_recovery_replaces_connected_silent_socket():
     try:
         manager.subscribe("cash", [d.key])
         original = FakeSocket.instances[0]
+        # Recovery keeps a one-second minimum socket age even when callers pass
+        # min_age_seconds=0.0; age the fake socket so the test targets silence.
+        with manager._lock:
+            manager._socket_created_at[SocketGroup(1, 0)] -= 2.0
 
         recovered = manager.recover_disconnected(
             min_age_seconds=0.0,
