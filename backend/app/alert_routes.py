@@ -128,6 +128,78 @@ def get_alert_status(db: Session = Depends(get_db)):
         "window_days": 30,
     }
 
+
+@router.get("/history")
+def get_alert_history(days: int = 30, limit: int = 500, db: Session = Depends(get_db)):
+    """Return bounded scanner-global alert history from all four live scanners."""
+    if not 1 <= days <= 30:
+        raise HTTPException(status_code=422, detail="days must be between 1 and 30")
+    if not 1 <= limit <= 500:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 500")
+
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+    from app.models import (
+        LiveCashFutureAlertHistory, LiveCalendarSpreadAlertHistory,
+        LiveSyntheticAlertHistory, LiveBoxSpreadAlertHistory,
+    )
+    rows = []
+    for strategy, model in (
+        ("cash-future", LiveCashFutureAlertHistory),
+        ("calendar-spread", LiveCalendarSpreadAlertHistory),
+        ("synthetic-future-cash-carry", LiveSyntheticAlertHistory),
+        ("box-spread", LiveBoxSpreadAlertHistory),
+    ):
+        for row in db.query(model).filter(model.observed_at >= cutoff).order_by(model.observed_at.desc()).limit(limit).all():
+            if strategy == "cash-future":
+                payload = {
+                    "strategy_id": strategy, "observed_at": row.observed_at, "symbol": row.symbol,
+                    "direction": None, "event": row.event, "gross_profit": row.gross_profit,
+                    "net_profit": row.net_profit, "edge": row.gap,
+                    "details": {"timestamp_ns": row.timestamp_ns, "contract_month": row.contract_month,
+                        "cash_ask": row.cash_ask, "future_bid": row.future_bid, "gap": row.gap,
+                        "gap_pct": row.gap_pct, "lot_size": row.lot_size, "alert_lots": row.alert_lots,
+                        "estimated_cost": row.estimated_cost, "net_gap_pct": row.net_gap_pct,
+                        "annualized_gap_pct": row.annualized_gap_pct, "liquidity_qty": row.liquidity_qty,
+                        "stable_observations": row.stable_observations},
+                }
+            elif strategy == "calendar-spread":
+                payload = {
+                    "strategy_id": strategy, "observed_at": row.observed_at, "symbol": row.underlying,
+                    "direction": row.direction, "event": None, "gross_profit": row.gross_profit,
+                    "net_profit": None, "edge": row.gap_points,
+                    "details": {"timestamp_ns": row.timestamp_ns, "exchange": row.exchange,
+                        "near_contract_month": row.near_contract_month, "far_contract_month": row.far_contract_month,
+                        "edge_long": row.edge_long, "edge_short": row.edge_short,
+                        "gap_points": row.gap_points, "lot_size": row.lot_size},
+                }
+            elif strategy == "synthetic-future-cash-carry":
+                payload = {
+                    "strategy_id": strategy, "observed_at": row.observed_at, "symbol": row.symbol,
+                    "direction": row.direction, "event": None, "gross_profit": row.gross_pnl,
+                    "net_profit": None, "edge": row.executable_edge,
+                    "details": {"timestamp_ns": row.timestamp_ns, "instrument_class": row.instrument_class,
+                        "expiry": row.expiry, "strike": row.strike, "executable_edge": row.executable_edge,
+                        "edge_per_lot": row.edge_per_lot, "gross_pnl": row.gross_pnl, "lot_size": row.lot_size},
+                }
+            else:
+                payload = {
+                    "strategy_id": strategy, "observed_at": row.observed_at, "symbol": row.symbol,
+                    "direction": row.direction, "event": None, "gross_profit": row.gross_pnl,
+                    "net_profit": None, "edge": row.executable_edge,
+                    "details": {"timestamp_ns": row.timestamp_ns, "instrument_class": row.instrument_class,
+                        "expiry": row.expiry, "low_strike": row.low_strike, "high_strike": row.high_strike,
+                        "low_call_bid": row.low_call_bid, "low_call_ask": row.low_call_ask,
+                        "low_put_bid": row.low_put_bid, "low_put_ask": row.low_put_ask,
+                        "high_call_bid": row.high_call_bid, "high_call_ask": row.high_call_ask,
+                        "high_put_bid": row.high_put_bid, "high_put_ask": row.high_put_ask,
+                        "executable_edge": row.executable_edge, "edge_per_lot": row.edge_per_lot,
+                        "gross_pnl": row.gross_pnl, "lot_size": row.lot_size},
+                }
+            rows.append(payload)
+    rows.sort(key=lambda item: item["observed_at"] or datetime.min, reverse=True)
+    return {"status": "success", "history_scope": "scanner_global", "days": days,
+            "count": min(len(rows), limit), "data": rows[:limit]}
+
 @router.post("/rules")
 def save_rule(request: AlertRuleRequest, db: Session = Depends(get_db)):
     uid = current_user_id(db)
