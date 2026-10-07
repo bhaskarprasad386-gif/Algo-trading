@@ -60,7 +60,7 @@ def run_schema_migrations() -> None:
         for name, definition in {
             "email_address": "VARCHAR(320)",
             "telegram_enabled": "BOOLEAN DEFAULT 0",
-            "telegram_chat_id": "VARCHAR(128) DEFAULT '',
+            "telegram_chat_id": "VARCHAR(128) DEFAULT ''",
         }.items():
             if name not in alert_contact_columns:
                 connection.execute(text(f"ALTER TABLE alert_contacts ADD COLUMN {name} {definition}"))
