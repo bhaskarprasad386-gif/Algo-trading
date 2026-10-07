@@ -99,9 +99,8 @@ export default function CustomAlertPage() {
   const saveRule = async () => {
     const numeric = Number(threshold);
     if (!alertName.trim()) return setError("Enter an alert name.");
-    const normalizedMobile = mobile.trim().replace(/\D/g, "");
     const selectedContact = selectedContactId == null ? null : contacts.find((contact) => Number(contact.id) === selectedContactId);
-    const contactMobile = String(selectedContact?.mobile_number || mobile).trim().replace(/\\D/g, "");
+    const contactMobile = String(selectedContact?.mobile_number || mobile).trim().replace(/\D/g, "");
     if (contactMobile.length < 7) return setError("Add/select a valid alert contact first.");
     const ruleMobile = contactMobile.startsWith("91") ? contactMobile : `91${contactMobile}`;
     const ruleWhatsapp = Boolean(selectedContact?.channels?.whatsapp);
