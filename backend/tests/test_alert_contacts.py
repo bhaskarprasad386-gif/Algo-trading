@@ -103,3 +103,51 @@ def test_alert_channel_preferences_are_user_scoped(db_session, monkeypatch):
     )
     assert response["enabled"] is False
     assert user.whatsapp_alerts_enabled is False
+
+def test_user_notification_channel_preferences_gate_dispatch(db_session, monkeypatch):
+    from app.models import AlertContact, AlertRule, User
+    from app.notifications.common import AlertEvent, AlertService
+    from app.notifications.whatsapp import WhatsAppConfig, WhatsAppNotifier
+
+    user = User(
+        id=9111,
+        email="channel-gate@example.com",
+        hashed_password="x",
+        alerts_enabled=True,
+        whatsapp_alerts_enabled=False,
+        telegram_alerts_enabled=False,
+    )
+    db_session.add(user)
+    db_session.add(AlertRule(
+        user_id=9111,
+        strategy_id="cash-future",
+        metric="gap",
+        operator=">=",
+        threshold=1,
+        min_gross_profit=0,
+        enabled=True,
+    ))
+    db_session.add(AlertContact(
+        user_id=9111,
+        label="Both",
+        mobile_number="919666666666",
+        whatsapp_enabled=True,
+        telegram_enabled=True,
+        telegram_chat_id="123456",
+        enabled=True,
+    ))
+    db_session.commit()
+
+    service = AlertService(
+        WhatsAppNotifier(WhatsAppConfig(enabled=True, access_token="token", phone_number_id="id"))
+    )
+    wa, tg = [], []
+    monkeypatch.setattr(service._notifier, "send_text", lambda recipient, msg: wa.append(recipient) or True)
+    monkeypatch.setattr(service._telegram, "send_text", lambda recipient, msg: tg.append(recipient) or True)
+
+    count = service.dispatch(
+        db_session,
+        AlertEvent("cash-future", "user-channel-gate", "ABC", 4000, "blocked", metadata={"gap": 2, "gross_profit": 500}),
+    )
+    assert count == 0
+    assert wa == [] and tg == []
