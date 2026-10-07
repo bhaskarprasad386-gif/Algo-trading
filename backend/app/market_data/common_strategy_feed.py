@@ -40,7 +40,7 @@ def shared_common_manager(
     with _SHARED_LOCK:
         if _SHARED_MANAGER is None:
             _SHARED_AUTH = auth or AngelOneAuth()
-            factory = socket_factory or (lambda: MarketDataWebSocket(auth=_SHARED_AUTH))
+            factory = socket_factory or (lambda: MarketDataWebSocket(auth=_SHARED_AUTH, auto_reconnect=False))
             _SHARED_MANAGER = CommonWebSocketManager(socket_factory=factory)
         return _SHARED_MANAGER
 

@@ -265,6 +265,11 @@ class CommonWebSocketManager:
             for group, socket in self._sockets.items():
                 if bool(getattr(socket, "connected", False)):
                     continue
+                # SmartWebSocketV2.connect() returns before on_open for the
+                # asynchronous broker handshake. Do not reap a socket while
+                # that handshake is still in progress.
+                if bool(getattr(socket, "connecting", False)):
+                    continue
                 created_at = self._socket_created_at.get(group, now)
                 if now - created_at < max(1.0, float(min_age_seconds)):
                     continue

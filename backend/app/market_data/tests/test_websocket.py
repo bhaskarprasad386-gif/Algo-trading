@@ -42,7 +42,6 @@ def make_auth():
 
 
 def test_websocket_refreshes_auth_before_building_socket(monkeypatch):
-    monkeypatch.setattr(websocket_module.SmartWebSocketV2, "__name__", "Fake", raising=False)
     calls = []
     auth = make_auth()
     auth.ensure_session_fresh = lambda max_age: calls.append(max_age)
@@ -160,6 +159,29 @@ def test_websocket_supports_multiple_exchange_groups(monkeypatch):
     ]
     client.subscribe_groups({4: ["404"]})
     assert client.subscriptions[4] == ["404"]
-    assert socket.subscriptions[-1][2][-1] == {"exchangeType": 4, "tokens": ["404"]}
+    assert {"exchangeType": 4, "tokens": ["404"]} in socket.subscriptions[-1][2]
     client.unsubscribe_groups({4: ["404"]})
     assert 4 not in client.subscriptions
+
+
+
+def test_websocket_can_disable_background_reconnect_for_shared_manager(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    scheduled = []
+    monkeypatch.setattr(client, "_schedule_reconnect", lambda: scheduled.append(True))
+    socket = client._build_socket()
+    socket.on_close(socket)
+    assert scheduled == []
+
+
+def test_websocket_marks_async_handshake_as_connecting(monkeypatch):
+    class AsyncSocket(FakeSocket):
+        def connect(self):
+            return None
+
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", AsyncSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"], reconnect_attempts=0)
+    assert client.connected is False
+    assert client.connecting is True
