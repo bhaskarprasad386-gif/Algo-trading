@@ -4,7 +4,7 @@ def test_alert_contact_model_supports_multiple_channel_preferences(db_session):
     db_session.add(user)
     db_session.add_all([
         AlertContact(user_id=9101, label="Primary", mobile_number="919999999999", whatsapp_enabled=True, app_enabled=True),
-        AlertContact(user_id=9101, label="Backup", mobile_number="918888888888", sms_enabled=True, email_enabled=True, app_enabled=False),
+        AlertContact(user_id=9101, label="Backup", mobile_number="918888888888", email_address="backup@example.com", sms_enabled=True, email_enabled=True, app_enabled=False),
     ])
     db_session.commit()
     rows = db_session.query(AlertContact).filter(AlertContact.user_id == 9101).order_by(AlertContact.id).all()
@@ -12,6 +12,7 @@ def test_alert_contact_model_supports_multiple_channel_preferences(db_session):
     assert rows[0].whatsapp_enabled is True
     assert rows[1].sms_enabled is True
     assert rows[1].email_enabled is True
+    assert rows[1].email_address == "backup@example.com"
     assert rows[1].app_enabled is False
 
 
@@ -85,3 +86,179 @@ def test_alert_dispatch_uses_enabled_whatsapp_contacts(db_session, monkeypatch):
     count = service.dispatch(db_session, AlertEvent("cash-future", "contact-event", "ABC", 1000000000, "alert", metadata={"gross_profit": 500}))
     assert count == 1
     assert sent == ["919111111111"]
+
+
+def test_alert_channel_preferences_are_user_scoped(db_session, monkeypatch):
+    from app.models import User
+    from app import alert_routes
+
+    user = User(id=9110, email="channels@example.com", hashed_password="x", alert_email="channels@example.com")
+    db_session.add(user)
+    db_session.commit()
+    monkeypatch.setattr(alert_routes, "current_user_id", lambda db: 9110)
+
+    response = alert_routes.set_alert_channel(
+        alert_routes.AlertChannelRequest(channel="whatsapp", enabled=False),
+        db_session,
+    )
+    assert response["enabled"] is False
+    assert user.whatsapp_alerts_enabled is False
+
+def test_user_notification_channel_preferences_gate_dispatch(db_session, monkeypatch):
+    from app.models import AlertContact, AlertRule, User
+    from app.notifications.common import AlertEvent, AlertService
+    from app.notifications.whatsapp import WhatsAppConfig, WhatsAppNotifier
+
+    user = User(
+        id=9111,
+        email="channel-gate@example.com",
+        hashed_password="x",
+        alerts_enabled=True,
+        whatsapp_alerts_enabled=False,
+        telegram_alerts_enabled=False,
+    )
+    db_session.add(user)
+    db_session.add(AlertRule(
+        user_id=9111,
+        strategy_id="cash-future",
+        metric="gap",
+        operator=">=",
+        threshold=1,
+        min_gross_profit=0,
+        enabled=True,
+    ))
+    db_session.add(AlertContact(
+        user_id=9111,
+        label="Both",
+        mobile_number="919666666666",
+        whatsapp_enabled=True,
+        telegram_enabled=True,
+        telegram_chat_id="123456",
+        enabled=True,
+    ))
+    db_session.commit()
+
+    service = AlertService(
+        WhatsAppNotifier(WhatsAppConfig(enabled=True, access_token="token", phone_number_id="id"))
+    )
+    wa, tg = [], []
+    monkeypatch.setattr(service._notifier, "send_text", lambda recipient, msg: wa.append(recipient) or True)
+    monkeypatch.setattr(service._telegram, "send_text", lambda recipient, msg: tg.append(recipient) or True)
+
+    count = service.dispatch(
+        db_session,
+        AlertEvent("cash-future", "user-channel-gate", "ABC", 4000, "blocked", metadata={"gap": 2, "gross_profit": 500}),
+    )
+    assert count == 0
+    assert wa == [] and tg == []
+
+
+def test_email_alert_dispatch_uses_enabled_email_contact(db_session, monkeypatch):
+    from app.models import AlertContact, AlertRule, User
+    from app.notifications.common import AlertEvent, AlertService
+    from app.notifications.email import EmailConfig, EmailNotifier
+    user = User(
+        id=9112,
+        email="email-channel@example.com",
+        hashed_password="x",
+        alerts_enabled=True,
+        email_alerts_enabled=True,
+    )
+    db_session.add(user)
+    db_session.add(AlertRule(
+        user_id=9112,
+        strategy_id="cash-future",
+        metric="gross_profit",
+        operator=">=",
+        threshold=100,
+        min_gross_profit=0,
+        enabled=True,
+    ))
+    db_session.add(AlertContact(
+        user_id=9112,
+        label="Email",
+        mobile_number="",
+        email_address="alerts@example.com",
+        email_enabled=True,
+        enabled=True,
+    ))
+    db_session.commit()
+
+    email_notifier = EmailNotifier(EmailConfig(
+        host="smtp.example.com",
+        port=587,
+        from_address="bot@example.com",
+        enabled=True,
+        use_starttls=True,
+    ))
+    service = AlertService(email_notifier=email_notifier)
+    sent = []
+    monkeypatch.setattr(
+        service._email,
+        "send_text",
+        lambda recipient, subject, msg: sent.append((recipient, subject, msg)) or True,
+    )
+
+    count = service.dispatch(
+        db_session,
+        AlertEvent(
+            "cash-future",
+            "email-contact",
+            "ABC",
+            5000,
+            "email alert",
+            metadata={"gross_profit": 500},
+        ),
+    )
+    assert count == 1
+    assert sent and sent[0][0] == "alerts@example.com"
+    assert "cash-future" in sent[0][1]
+    assert sent[0][2] == "email alert"
+
+
+def test_email_alert_preference_blocks_email_dispatch(db_session, monkeypatch):
+    from app.models import AlertContact, AlertRule, User
+    from app.notifications.common import AlertEvent, AlertService
+    from app.notifications.email import EmailConfig, EmailNotifier
+    user = User(
+        id=9113,
+        email="email-off@example.com",
+        hashed_password="x",
+        alerts_enabled=True,
+        email_alerts_enabled=False,
+    )
+    db_session.add(user)
+    db_session.add(AlertRule(
+        user_id=9113,
+        strategy_id="cash-future",
+        metric="gap",
+        operator=">=",
+        threshold=1,
+        min_gross_profit=0,
+        enabled=True,
+    ))
+    db_session.add(AlertContact(
+        user_id=9113,
+        label="Email",
+        mobile_number="",
+        email_address="alerts@example.com",
+        email_enabled=True,
+        enabled=True,
+    ))
+    db_session.commit()
+
+    service = AlertService(email_notifier=EmailNotifier(EmailConfig(
+        host="smtp.example.com",
+        port=587,
+        from_address="bot@example.com",
+        enabled=True,
+    )))
+    sent = []
+    monkeypatch.setattr(service._email, "send_text", lambda *args: sent.append(args) or True)
+
+    count = service.dispatch(
+        db_session,
+        AlertEvent("cash-future", "email-off", "ABC", 6000, "blocked", metadata={"gap": 2}),
+    )
+    assert count == 0
+    assert sent == []

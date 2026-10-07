@@ -98,6 +98,16 @@ class Settings(BaseSettings):
     # Telegram Bot API alerts; disabled until deployment credentials are supplied.
     TELEGRAM_ENABLED: bool = False
     TELEGRAM_BOT_TOKEN: str = ""
+    # SMTP email alerts; disabled until deployment SMTP credentials are supplied.
+    EMAIL_ENABLED: bool = False
+    EMAIL_SMTP_HOST: str = ""
+    EMAIL_SMTP_PORT: int = 587
+    EMAIL_SMTP_USERNAME: str = ""
+    EMAIL_SMTP_PASSWORD: str = ""
+    EMAIL_FROM_ADDRESS: str = ""
+    EMAIL_SMTP_STARTTLS: bool = True
+    EMAIL_SMTP_SSL: bool = False
+    EMAIL_SMTP_TIMEOUT_SECONDS: float = 10.0
 
     # Durable historical-download progress database
     BACKTEST_STATUS_DB: str = "./backtest_download_status.sqlite3"
