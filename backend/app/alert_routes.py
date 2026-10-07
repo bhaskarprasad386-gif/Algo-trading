@@ -89,7 +89,7 @@ def get_config(db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="user not found")
     return {"status":"success","alerts":{"enabled":bool(user.alerts_enabled)}, "strategies":sorted(STRATEGIES),
             "metrics":sorted(ALERT_METRICS), "operators":sorted(ALERT_OPERATORS),
-            "notification_channels":{"whatsapp": bool(__import__("app.core.config", fromlist=["settings"]).settings.WHATSAPP_ENABLED), "telegram": bool(__import__("app.core.config", fromlist=["settings"]).settings.TELEGRAM_ENABLED), "email": bool(user.email_alerts_enabled)},
+            "notification_channels":{"whatsapp": bool(__import__("app.core.config", fromlist=["settings"]).settings.WHATSAPP_ENABLED), "telegram": bool(__import__("app.core.config", fromlist=["settings"]).settings.TELEGRAM_ENABLED), "email": bool(__import__("app.core.config", fromlist=["settings"]).settings.EMAIL_ENABLED)},
             "notification_preferences":{"whatsapp": bool(user.whatsapp_alerts_enabled), "telegram": bool(user.telegram_alerts_enabled), "email": bool(user.email_alerts_enabled), "email_address": user.alert_email or ""},
             "paper":{"enabled":bool(setting.enabled),"paper_amount":float(setting.paper_amount),"emergency_stop":bool(setting.emergency_stop)},
             "rules":[_rule_payload(r) for r in rules]}
@@ -164,7 +164,8 @@ def delete_rule(rule_id: int, db: Session = Depends(get_db)):
 
 class AlertContactRequest(BaseModel):
     label: str = Field(default="Primary", min_length=1, max_length=64)
-    mobile_number: str = Field(min_length=7, max_length=32)
+    mobile_number: str = Field(default="", max_length=32)
+    email_address: str | None = Field(default=None, max_length=320)
     enabled: bool = True
     sms_enabled: bool = False
     app_enabled: bool = True
