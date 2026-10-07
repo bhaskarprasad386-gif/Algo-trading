@@ -303,3 +303,33 @@ def test_recovery_does_not_reap_async_connecting_socket():
     assert len(ConnectingSocket.instances) == 1
     assert manager.snapshot()["socket_groups"] == 1
     manager.close()
+
+
+def test_stale_socket_callback_is_ignored_after_recovery_replaces_socket():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_callback("cash", lambda m: seen.append(m["token"]))
+    manager._silent_feed_timeout_seconds = 0.0
+    try:
+        manager.subscribe("cash", [d.key])
+        original = FakeSocket.instances[0]
+        old_callback = original.connect_calls[0]["on_data"]
+        with manager._lock:
+            manager._socket_created_at[SocketGroup(1, 0)] -= 2.0
+
+        manager.recover_disconnected(min_age_seconds=0.0, silent_age_seconds=0.0)
+        replacement = FakeSocket.instances[1]
+        new_callback = replacement.connect_calls[0]["on_data"]
+
+        old_callback({"token": "101"})
+        assert seen == []
+        assert manager.snapshot()["ticks_received"] == 0
+
+        new_callback({"token": "101"})
+        assert seen == ["101"]
+        assert manager.snapshot()["ticks_received"] == 1
+    finally:
+        manager.close()
