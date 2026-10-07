@@ -65,7 +65,7 @@ export default function CustomAlertPage() {
     loadConfig().catch(() => {
       if (active) setError("Backend alert configuration unavailable");
     }).finally(() => {
-      if (active) setPaperAutoLoading(false);
+      if (active) setError((current) => current);
     });
     return () => { active = false; };
   }, []);
