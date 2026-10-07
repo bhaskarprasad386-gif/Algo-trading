@@ -58,6 +58,14 @@ systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
 systemctl restart "$SERVICE_NAME"
 
+# Optional Telegram control bot: install/start only when credentials are already configured.
+TELEGRAM_INSTALLER="$APP_DIR/deploy/install-telegram-control-bot.sh"
+if [[ -x "$TELEGRAM_INSTALLER" && -f "$BACKEND_DIR/.env" ]] && grep -q '^TELEGRAM_BOT_TOKEN=.' "$BACKEND_DIR/.env" && grep -q '^TELEGRAM_ADMIN_CHAT_IDS=.' "$BACKEND_DIR/.env"; then
+  bash "$TELEGRAM_INSTALLER"
+else
+  log "Telegram control bot not configured; leaving it disabled"
+fi
+
 log "Waiting for local API health"
 healthy=0
 for attempt in {1..180}; do
