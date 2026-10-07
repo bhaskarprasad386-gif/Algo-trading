@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.notifications.whatsapp import WhatsAppConfig, WhatsAppNotifier
 from app.notifications.telegram import TelegramConfig, TelegramNotifier
+from app.notifications.email import EmailConfig, EmailNotifier
 from app.models import AlertRule, AlertContact
 
 @dataclass(frozen=True)
@@ -127,7 +128,7 @@ def _valid_alert_rule(rule) -> bool:
 
 class AlertService:
     """Single outbound alert service; disabled channels are safe no-ops."""
-    def __init__(self, notifier: WhatsAppNotifier | None = None) -> None:
+    def __init__(self, notifier: WhatsAppNotifier | None = None, email_notifier: EmailNotifier | None = None) -> None:
         self._notifier = notifier or WhatsAppNotifier(WhatsAppConfig(
             access_token=settings.WHATSAPP_ACCESS_TOKEN,
             phone_number_id=settings.WHATSAPP_PHONE_NUMBER_ID,
@@ -138,6 +139,16 @@ class AlertService:
             bot_token=settings.TELEGRAM_BOT_TOKEN,
             enabled=settings.TELEGRAM_ENABLED,
         ))
+        self._email = email_notifier or EmailNotifier(EmailConfig(
+            host=settings.EMAIL_SMTP_HOST,
+            port=settings.EMAIL_SMTP_PORT,
+            username=settings.EMAIL_SMTP_USERNAME,
+            password=settings.EMAIL_SMTP_PASSWORD,
+            from_address=settings.EMAIL_FROM_ADDRESS,
+            enabled=settings.EMAIL_ENABLED,
+            use_starttls=settings.EMAIL_SMTP_STARTTLS,
+            use_ssl=settings.EMAIL_SMTP_SSL,
+        ), timeout_seconds=settings.EMAIL_SMTP_TIMEOUT_SECONDS)
         self._last_sent: dict[tuple, int] = {}
         self._delivered_events: set[tuple] = set()
 
@@ -148,6 +159,8 @@ class AlertService:
             channels.append("whatsapp")
         if self._telegram.configured:
             channels.append("telegram")
+        if self._email.configured:
+            channels.append("email")
         return tuple(channels)
 
     def dispatch_user(self, user, event: AlertEvent) -> bool:
@@ -161,16 +174,17 @@ class AlertService:
     def _dispatch_notification_only(self, user, event: AlertEvent) -> bool:
         if not bool(getattr(user, "alerts_enabled", True)):
             return False
-        if not user.mobile_number:
-            return False
         key = (int(user.id), event.event_id)
         cooldown_ns = int(max(0.0, float(settings.LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS)) * 1_000_000_000)
         previous = self._last_sent.get(key, 0)
         if event.timestamp_ns - previous < cooldown_ns:
             return False
-        if not bool(getattr(user, "whatsapp_alerts_enabled", True)):
-            return False
-        sent = self._notifier.send_text(user.mobile_number, event.message)
+        subject = f"Algo Trading Alert: {event.strategy_id} / {event.symbol}"
+        sent = False
+        if bool(getattr(user, "whatsapp_alerts_enabled", True)) and getattr(user, "mobile_number", None):
+            sent = self._notifier.send_text(user.mobile_number, event.message) or sent
+        if bool(getattr(user, "email_alerts_enabled", True)) and getattr(user, "alert_email", None):
+            sent = self._email.send_text(user.alert_email, subject, event.message) or sent
         if sent:
             self._last_sent[key] = event.timestamp_ns
         return sent
@@ -468,7 +482,8 @@ class AlertService:
                     AlertContact.enabled.is_(True),
                 ).filter(
                     (AlertContact.whatsapp_enabled.is_(True)) |
-                    (AlertContact.telegram_enabled.is_(True))
+                    (AlertContact.telegram_enabled.is_(True)) |
+                    (AlertContact.email_enabled.is_(True))
                 ).all()
                 if not contacts and rule.whatsapp_enabled and rule.mobile_number.strip():
                     contacts = [rule]
@@ -483,6 +498,10 @@ class AlertService:
                         chat_id = str(getattr(contact, "telegram_chat_id", "")).strip()
                         if chat_id:
                             channels.append(("telegram", chat_id))
+                    if bool(getattr(user, "email_alerts_enabled", True)) and bool(getattr(contact, "email_enabled", False)):
+                        email = str(getattr(contact, "email_address", "")).strip()
+                        if email:
+                            channels.append(("email", email))
                     # Legacy AlertRule fallback remains WhatsApp-only because it
                     # predates persistent Telegram chat IDs.
                     if isinstance(contact, AlertRule) and rule.whatsapp_enabled and rule.mobile_number.strip():
@@ -506,6 +525,12 @@ class AlertService:
                                 self._notifier.send_text(recipient, event.message)
                                 if channel == "whatsapp"
                                 else self._telegram.send_text(recipient, event.message)
+                                if channel == "telegram"
+                                else self._email.send_text(
+                                    recipient,
+                                    f"Algo Trading Alert: {event.strategy_id} / {event.symbol}",
+                                    event.message,
+                                )
                             )
                         except Exception as exc:
                             from app.core.logger import app_logger
