@@ -330,8 +330,8 @@ export default function HomePage() {
               <input inputMode="numeric" value={capitalDraft} onChange={(event) => { setCapitalDraft(event.target.value.replace(/[^0-9]/g, "")); setCapitalSaved(false); }} aria-label="Manual paper capital amount" className="mt-3 min-h-10 w-full px-3 text-xs" />
               <button type="button" onClick={saveCapital} disabled={!capitalDraft || Number(capitalDraft) <= 0} className="mt-2 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-[var(--app-accent)] px-3 text-xs font-bold theme-text transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"><Save size={14} /> {capitalSaved ? "Saved" : "Save"}</button>
             </Card>
-            <Card className="rounded-2xl p-4"><div className="flex gap-6"><div><div className="text-[11px] font-semibold theme-subtle">Available Balance</div><div className="mt-1 text-sm font-semibold">Not connected</div></div><div><div className="text-[11px] font-semibold theme-subtle">Today&apos;s P&amp;L</div><div className="mt-1 text-sm font-semibold">Not connected</div></div></Card>
-            <Card className="rounded-2xl p-4"><div className="text-[11px] font-semibold theme-subtle">Open Positions</div><div className="mt-1 text-sm font-semibold">—</div></Card>
+            <Card className="rounded-2xl p-4"><div className="flex gap-6"><div><div className="text-[11px] font-semibold theme-subtle">Available Balance</div><div className="mt-1 text-sm font-semibold">Not connected</div></div><div><div className="text-[11px] font-semibold theme-subtle">Today&apos;s P&amp;L</div><div className="mt-1 text-sm font-semibold">Not connected</div></div></div></Card>
+            <Card className="rounded-2xl p-4"><div className="text-[11px] font-semibold theme-subtle">Open Positions</div><div className="mt-1 text-sm font-semibold">Not connected</div></Card>
           </div>
         </section>
 
