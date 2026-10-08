@@ -23,10 +23,10 @@ const health = (api: string, ws: string, feed: string, ticks: number | null, run
   ["Dashboard WS", ws, ws === "CONNECTED" ? "ok" : ws === "ERROR" ? "error" : "warn"],
   ["Common Market Data Feed", feed, feed === "LIVE" ? "ok" : feed === "ERROR" ? "error" : "warn"],
   ["Live Ticks", ticks == null ? "—" : ticks.toLocaleString("en-IN"), ticks && ticks > 0 ? "ok" : "warn"],
-  ["Cash Future Runner", runners.cash_future?.detail ?? "—", runners.cash_future?.running ? "ok" : "warn"],
-  ["Synthetic Future Runner", runners.synthetic_arbitrage?.detail ?? "—", runners.synthetic_arbitrage?.running ? "ok" : "warn"],
-  ["Box Spread Runner", runners.box_spread?.detail ?? "—", runners.box_spread?.running ? "ok" : "warn"],
-  ["Calendar Spread Runner", runners.calendar_spread?.detail ?? "—", runners.calendar_spread?.running ? "ok" : "warn"],
+  ["Cash Future Runner", runners.cash_future?.detail ?? "UNAVAILABLE", runners.cash_future?.running ? "ok" : "warn"],
+  ["Synthetic Future Runner", runners.synthetic_arbitrage?.detail ?? "UNAVAILABLE", runners.synthetic_arbitrage?.running ? "ok" : "warn"],
+  ["Box Spread Runner", runners.box_spread?.detail ?? "UNAVAILABLE", runners.box_spread?.running ? "ok" : "warn"],
+  ["Calendar Spread Runner", runners.calendar_spread?.detail ?? "UNAVAILABLE", runners.calendar_spread?.running ? "ok" : "warn"],
   ["Broker Orders", "OFF", "warn"],
 ] as const;
 
@@ -181,11 +181,14 @@ export default function HomePage() {
         const runnerDetail = (value: any) => {
           if (!value) return { running: false, detail: "UNAVAILABLE" };
           const running = Boolean(value.running);
-          const instruments = Number(value.registered_instruments ?? value.active_instruments ?? 0);
-          const updates = Number(value.scanner_updates ?? value.records_received ?? value.callbacks ?? 0);
+          const nestedFeed = value.underlying_feed ?? value.feed ?? null;
+          const instruments = Number(value.registered_instruments ?? value.active_instruments ?? nestedFeed?.active_instruments ?? nestedFeed?.subscriptions ?? 0);
+          const updates = Number(value.scanner_updates ?? value.records_received ?? value.callbacks ?? nestedFeed?.ticks_received ?? 0);
+          const connected = nestedFeed?.connected_groups?.length ?? 0;
           const parts = [running ? "RUNNING" : "STOPPED"];
           if (Number.isFinite(instruments) && instruments > 0) parts.push(instruments.toLocaleString("en-IN") + " instruments");
           if (Number.isFinite(updates) && updates > 0) parts.push(updates.toLocaleString("en-IN") + " updates");
+          if (connected > 0) parts.push(connected + " feed socket" + (connected === 1 ? "" : "s"));
           return { running, detail: parts.join(" • ") };
         };
         setRuntime({
@@ -249,10 +252,9 @@ export default function HomePage() {
   return (
     <div className="min-h-screen theme-bg theme-text p-1">
       <PageTitle eyebrow="Phase 2 • Home / Command Center" title="Command Center" description="" />
-      <div className="mb-5 flex flex-wrap justify-end gap-2">
+      <div className="mb-5 grid gap-3 lg:grid-cols-[1fr_auto]"><Card className="rounded-2xl border theme-border theme-surface-2 p-3"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] theme-subtle">Exchange Sessions</div><div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-semibold"><span className={marketSession === "OPEN" ? "theme-success" : "theme-warning"}>NSE {marketSession}</span><span className="theme-subtle">•</span><span className="theme-accent">MCX 09:00–23:30</span><span className="theme-subtle">•</span><span className="theme-muted">23:55 seasonal DST</span></div></div><div className="text-right text-[10px] theme-subtle">MCX agri till 17:00 • International agri till 21:00</div></div></Card><div className="flex flex-wrap justify-end gap-2">
         <div className="inline-flex items-center gap-2 rounded-full border theme-border theme-accent-bg px-3 py-1.5 text-[11px] font-semibold theme-accent"><Radio size={13} /> {feedLabel === "LIVE" ? "Live market feed LIVE" : feedLabel === "CLOSED" ? "Market closed" : `Market feed ${feedLabel.toLowerCase()}`}</div>
-        <div className="inline-flex items-center gap-2 rounded-full border theme-border theme-success-bg px-3 py-1.5 text-[11px] font-semibold theme-success"><ShieldCheck size={13} /> Paper-safe broker orders OFF</div>
-      </div>
+        <div className="inline-flex items-center gap-2 rounded-full border theme-border theme-success-bg px-3 py-1.5 text-[11px] font-semibold theme-success"><ShieldCheck size={13} /> Paper-safe broker orders OFF</div></div></div>
 
       <section aria-label="Market overview">
         <div className="mb-3 flex items-center gap-2"><Activity size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Market Overview</h2></div>
@@ -301,7 +303,7 @@ export default function HomePage() {
 
         <section aria-label="System health">
           <div className="mb-3 flex items-center gap-2"><Gauge size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">System Health</h2></div>
-          <Card className="rounded-2xl p-2">
+          <Card className="rounded-2xl border theme-border theme-surface-2 p-2 shadow-sm">
             {health(apiLabel, wsLabel, feedLabel, runtime.ticks, runtime.runners).map(([name, value, state]) => (
               <div key={name} className="flex items-center justify-between rounded-xl px-2 py-2">
                 <div className="flex items-center gap-2 text-[12px] font-medium theme-muted">{state === "error" ? <TriangleAlert size={14} className="theme-danger" /> : state === "warn" ? <TriangleAlert size={14} className="theme-warning" /> : <span className="h-2 w-2 rounded-full bg-[var(--app-success)]" />}{name}</div>
@@ -309,7 +311,8 @@ export default function HomePage() {
               </div>
             ))}
           </Card>
-          <div className="mt-2 text-[10px] theme-subtle">Ticks: {runtime.ticks.toLocaleString("en-IN")} • Instruments: {runtime.activeInstruments.toLocaleString("en-IN")} • Sockets: {runtime.socketGroups}/{runtime.maxSocketSessions} • Feed age: {feedAge == null ? "—" : `${feedAge.toFixed(1)}s`} • Errors: {runtime.deliveryErrors + runtime.normalizerErrors}</div>
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
+            {[["Ticks", runtime.ticks.toLocaleString("en-IN")],["Instruments", runtime.activeInstruments.toLocaleString("en-IN")],["Sockets", runtime.socketGroups + "/" + runtime.maxSocketSessions],["Feed age", feedAge == null ? "—" : feedAge.toFixed(1) + "s"],["Errors", (runtime.deliveryErrors + runtime.normalizerErrors).toLocaleString("en-IN")]].map(([label, value]) => <div key={label} className="rounded-xl border theme-border theme-surface-2 px-2.5 py-2"><div className="text-[9px] uppercase tracking-wide theme-subtle">{label}</div><div className="mt-0.5 text-[11px] font-bold">{value}</div></div>)}</div>
         </section>
       </div>
 
@@ -336,7 +339,7 @@ export default function HomePage() {
       </Card>
       {connectionsOpen ? (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="connections-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setConnectionsOpen(false); }}>
-          <Card className="w-full max-w-md rounded-2xl p-5 shadow-2xl">
+          <Card className="w-full max-w-xl rounded-2xl border theme-border theme-surface-2 p-5 shadow-2xl">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div id="connections-title" className="text-[14px] font-bold">Connections</div>
@@ -344,7 +347,7 @@ export default function HomePage() {
               </div>
               <button type="button" onClick={() => setConnectionsOpen(false)} className="rounded-lg px-2 py-1 text-xs theme-muted" aria-label="Close connections">✕</button>
             </div>
-            <div className="mt-4 space-y-2">
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
               {[
                 ["FastAPI", apiLabel],
                 ["Dashboard WebSocket", wsLabel],
@@ -356,13 +359,13 @@ export default function HomePage() {
                 ["Calendar Spread Runner", runtime.runners.calendar_spread?.detail ?? "UNAVAILABLE"],
                 ["Broker Orders", "OFF"],
               ].map(([name, value]) => (
-                <div key={name} className="flex items-center justify-between rounded-xl border theme-border px-3 py-2.5">
+                <div key={name} className="flex items-center justify-between rounded-xl border theme-border theme-surface-2 px-3 py-2.5">
                   <span className="text-[11px] theme-muted">{name}</span>
                   <span className="text-[10px] font-bold theme-accent">{value}</span>
                 </div>
               ))}
             </div>
-            <div className="mt-4 flex justify-end">
+            <div className="mt-4 rounded-xl border theme-border theme-accent-bg p-3"><div className="text-[10px] font-bold uppercase tracking-wide theme-accent">Common Feed Diagnostics</div><div className="mt-2 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4"><span>Consumers: <b>{runtime.consumers.length}</b></span><span>Delivery errors: <b>{runtime.deliveryErrors}</b></span><span>Normalizer errors: <b>{runtime.normalizerErrors}</b></span><span>Market: <b>{marketSession}</b></span></div></div><div className="mt-4 flex justify-end">
               <Link href="/scanner" onClick={() => setConnectionsOpen(false)} className="rounded-xl theme-accent-bg px-3 py-2 text-[11px] font-bold theme-accent">Open Scanner</Link>
             </div>
           </Card>
