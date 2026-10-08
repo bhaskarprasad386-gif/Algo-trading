@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.core.logger import app_logger
+from app.core.diagnostics import runtime_diagnostics
 from app.core.exceptions import TradingAppException, trading_exception_handler, global_exception_handler
 from app.core.database import engine, Base, SessionLocal, check_database
 from app.core.schema_migrations import run_schema_migrations
@@ -1064,6 +1065,12 @@ def market_data_runtime_health():
         },
         "scanner": live_cash_future_scanner.health(),
     }
+
+
+@app.get("/api/v1/diagnostics/errors")
+def runtime_diagnostic_errors(limit: int = 50):
+    """Return real backend/feed/runtime errors captured since process start."""
+    return {"status": "ok", "errors": runtime_diagnostics.snapshot(limit=limit), "count": len(runtime_diagnostics.snapshot(limit=1000))}
 
 
 @app.get("/api/v1/market-data/live-cash-future/health")
