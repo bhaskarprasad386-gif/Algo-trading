@@ -21,7 +21,6 @@ const health = (api: string, ws: string, feed: string) => [
   ["FastAPI", api, api === "CONNECTED" ? "ok" : api === "ERROR" ? "error" : "warn"],
   ["Dashboard WS", ws, ws === "CONNECTED" ? "ok" : ws === "ERROR" ? "error" : "warn"],
   ["Market Feed", feed, feed === "LIVE" ? "ok" : feed === "ERROR" ? "error" : "warn"],
-  ["Cash-Future", "SEE SCANNER", "warn"],
   ["Broker Orders", "OFF", "warn"],
 ] as const;
 
@@ -31,7 +30,7 @@ export default function HomePage() {
   const [capitalSaved, setCapitalSaved] = useState(false);
   const [apiStatus, setApiStatus] = useState<"checking" | "connected" | "error">("checking");
   const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "error">("connecting");
-  const [snapshot, setSnapshot] = useState({ cashFuture: 0, calendar: 0, synthetic: 0, box: 0, opportunities: 0, timestamp: null as string | null });
+  const [snapshot, setSnapshot] = useState({ calendar: 0, synthetic: 0, box: 0, opportunities: 0, timestamp: null as string | null });
   const [indexLtps, setIndexLtps] = useState<Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null }>>({});
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [marketCheckedAt, setMarketCheckedAt] = useState<string | null>(null);
@@ -66,7 +65,6 @@ export default function HomePage() {
           const message = JSON.parse(event.data);
           if (message?.type !== "dashboard_snapshot") return;
           setSnapshot({
-            cashFuture: Number(message?.integration?.cash_future?.count ?? 0),
             calendar: Number(message?.integration?.calendar_spread?.count ?? 0),
             synthetic: Number(message?.integration?.synthetic_arbitrage?.count ?? 0),
             box: Number(message?.integration?.box_spread?.count ?? 0),
@@ -188,7 +186,6 @@ export default function HomePage() {
   const marketDataAge = marketCheckedAt ? Math.max(0, (Date.now() - new Date(marketCheckedAt).getTime()) / 1000) : null;
   const scannerStatus = [
     { label: "Signals Detected", value: snapshot.opportunities.toLocaleString("en-IN") },
-    { label: "Cash-Future Rows", value: snapshot.cashFuture.toLocaleString("en-IN") },
     { label: "Calendar Rows", value: snapshot.calendar.toLocaleString("en-IN") },
     { label: "Synthetic Rows", value: snapshot.synthetic.toLocaleString("en-IN") },
     { label: "Orders", value: "Not reported" },
