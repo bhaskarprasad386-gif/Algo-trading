@@ -23,10 +23,10 @@ const health = (api: string, ws: string, feed: string, ticks: number | null, run
   ["Dashboard WS", ws, ws === "CONNECTED" ? "ok" : ws === "ERROR" ? "error" : "warn"],
   ["Common Market Data Feed", feed, feed === "LIVE" ? "ok" : feed === "ERROR" ? "error" : "warn"],
   ["Ticks Received (session)", ticks == null ? "—" : ticks.toLocaleString("en-IN"), ticks && ticks > 0 ? "ok" : "warn"],
-  ["Cash Future Runner", runnerState(runners.cash_future?.detail, runners.cash_future?.running), runners.cash_future?.running ? "ok" : "warn"],
-  ["Synthetic Future Runner", runnerState(runners.synthetic_arbitrage?.detail, runners.synthetic_arbitrage?.running), runners.synthetic_arbitrage?.running ? "ok" : "warn"],
-  ["Box Spread Runner", runnerState(runners.box_spread?.detail, runners.box_spread?.running), runners.box_spread?.running ? "ok" : "warn"],
-  ["Calendar Spread Runner", runnerState(runners.calendar_spread?.detail, runners.calendar_spread?.running), runners.calendar_spread?.running ? "ok" : "warn"],
+  ["Cash Future Runner", runners.cash_future?.detail ?? "UNAVAILABLE", runners.cash_future?.running ? "ok" : "warn"],
+  ["Synthetic Future Runner", runners.synthetic_arbitrage?.detail ?? "UNAVAILABLE", runners.synthetic_arbitrage?.running ? "ok" : "warn"],
+  ["Box Spread Runner", runners.box_spread?.detail ?? "UNAVAILABLE", runners.box_spread?.running ? "ok" : "warn"],
+  ["Calendar Spread Runner", runners.calendar_spread?.detail ?? "UNAVAILABLE", runners.calendar_spread?.running ? "ok" : "warn"],
   ["Broker Orders", "OFF", "warn"],
 ] as const;
 
