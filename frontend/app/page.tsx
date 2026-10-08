@@ -358,6 +358,12 @@ export default function HomePage() {
                 ["Box Spread Runner", runtime.runners.box_spread?.detail ?? "UNAVAILABLE"],
                 ["Calendar Spread Runner", runtime.runners.calendar_spread?.detail ?? "UNAVAILABLE"],
                 ["Broker Orders", "OFF"],
+                ["Active Instruments", runtime.activeInstruments.toLocaleString("en-IN")],
+                ["Socket Groups", runtime.socketGroups + "/" + runtime.maxSocketSessions],
+                ["Feed Age", feedAge == null ? "—" : feedAge.toFixed(1) + "s"],
+                ["Delivery / Normalizer Errors", runtime.deliveryErrors + " / " + runtime.normalizerErrors],
+                ["NSE Session", marketSession],
+                ["MCX Session Window", "09:00–23:30 / 23:55 seasonal"],
               ].map(([name, value]) => (
                 <div key={name} className="flex items-center justify-between rounded-xl border theme-border theme-surface-2 px-3 py-2.5">
                   <span className="text-[11px] theme-muted">{name}</span>
