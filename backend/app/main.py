@@ -458,18 +458,30 @@ def _stop_live_runner_nonblocking(runner, *, name: str) -> None:
     threading.Thread(target=runner.stop, name=name, daemon=True).start()
 
 
-async def _run_live_runner_in_daemon_thread(runner, *, name: str) -> None:
-    """Run a long-lived blocking market runner outside asyncio's default executor.
+async def _run_live_runner_in_daemon_thread(
+    runner, *, name: str, error_holder: list[BaseException] | None = None
+) -> None:
+    """Run a blocking market runner in a daemon thread.
 
-    Live runners are owned by daemon threads. Their explicit stop events remain
-    authoritative, while cleanup is deliberately non-blocking for asyncio
-    shutdown.
+    When requested, capture worker-thread exceptions so the async supervisor can
+    retry instead of treating a dead worker as a normal stop.
     """
-    worker = threading.Thread(target=runner.run_forever, name=name, daemon=True)
+    def _target() -> None:
+        try:
+            runner.run_forever()
+        except BaseException as exc:
+            if error_holder is not None:
+                error_holder.append(exc)
+            else:
+                raise
+
+    worker = threading.Thread(target=_target, name=name, daemon=True)
     worker.start()
     try:
         while worker.is_alive():
             await asyncio.sleep(0.25)
+        if error_holder:
+            raise error_holder[0]
     finally:
         _stop_live_runner_nonblocking(runner, name=f"{name}-stop")
 
@@ -489,8 +501,11 @@ async def _live_cash_future_loop() -> None:
         )
         live_cash_future_runner = runner
         try:
+            worker_errors: list[BaseException] = []
             await _run_live_runner_in_daemon_thread(
-                runner, name="live-cash-future-runner"
+                runner,
+                name="live-cash-future-runner",
+                error_holder=worker_errors,
             )
             if not runner.stop_event.is_set():
                 app_logger.warning(
@@ -1074,7 +1089,6 @@ def health_check():
         app_logger.error(f"Health check database failure: {exc}")
         return {"status": "degraded", "app": settings.app_name, "version": "0.1.0", "database": "Disconnected"}
     return {"status": "ok", "app": settings.app_name, "version": "0.1.0", "database": "Connected"}
-
 
 
 
