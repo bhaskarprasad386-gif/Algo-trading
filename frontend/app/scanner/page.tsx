@@ -90,16 +90,39 @@ function ScannerContent() {
   };
 
   useEffect(() => {
+    let cancelled = false;
+    const loadMarketSession = async () => {
+      try {
+        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+        const response = await fetch(base + "/api/v1/market-data/overview", { cache: "no-store" });
+        if (!response.ok) throw new Error("market overview");
+        const body = await response.json();
+        const session = body?.market_session === "OPEN" ? "OPEN" : body?.market_session === "CLOSED" ? "CLOSED" : "UNKNOWN";
+        if (!cancelled) setMarketSession(session);
+      } catch {
+        if (!cancelled) setMarketSession("UNKNOWN");
+      }
+    };
+    void loadMarketSession();
+    const sessionTimer = window.setInterval(loadMarketSession, 5000);
+    return () => { cancelled = true; window.clearInterval(sessionTimer); };
+  }, []);
+
+  useEffect(() => {
     void load();
     void loadPairLive();
     void loadPairHistory();
-    const liveTimer = window.setInterval(() => { void load(); void loadPairLive(); }, 1500);
+    const liveTimer = window.setInterval(() => {
+      if (marketSession === "CLOSED") return;
+      void load();
+      void loadPairLive();
+    }, 1500);
     const historyTimer = window.setInterval(() => { void loadPairHistory(); }, 10000);
     return () => {
       window.clearInterval(liveTimer);
       window.clearInterval(historyTimer);
     };
-  }, []);
+  }, [marketSession]);
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toUpperCase();
