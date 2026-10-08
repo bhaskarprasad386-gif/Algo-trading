@@ -1,6 +1,7 @@
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
 from app.core.logger import app_logger
+from app.core.diagnostics import runtime_diagnostics
 
 
 class TradingAppException(Exception):
@@ -11,6 +12,7 @@ class TradingAppException(Exception):
 
 
 async def trading_exception_handler(request: Request, exc: TradingAppException):
+    runtime_diagnostics.record(component="Backend/API", error_type=type(exc).__name__, message=exc.message, endpoint=request.url.path, status_code=exc.status_code)
     app_logger.error(
         f"Trading Exception [{exc.name}]: {exc.message} at path: {request.url.path}"
     )
@@ -25,6 +27,7 @@ async def trading_exception_handler(request: Request, exc: TradingAppException):
 
 
 async def global_exception_handler(request: Request, exc: Exception):
+    runtime_diagnostics.record(component="Backend/API", severity="CRITICAL", error_type=type(exc).__name__, message=str(exc), endpoint=request.url.path, status_code=500)
     app_logger.critical(
         f"Unhandled Server Error: {str(exc)} at path: {request.url.path}"
     )
