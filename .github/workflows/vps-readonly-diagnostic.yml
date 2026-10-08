@@ -48,6 +48,9 @@ jobs:
           echo "=== SCANNER_LIVE_FAST ==="
           curl --fail --silent --show-error --connect-timeout 2 --max-time 12 "http://127.0.0.1:8000/api/v1/scanner/cash-future/live/fast?limit=20" || true
           echo
+          echo "=== LIVE_CASH_FUTURE_HEALTH ==="
+          curl --fail --silent --show-error --connect-timeout 2 --max-time 12 http://127.0.0.1:8000/api/v1/market-data/live-cash-future/health || true
+          echo
           echo "=== RECENT_ANGEL_WS_LOGS ==="
           journalctl -u algo-trading.service --since "30 minutes ago" --no-pager 2>/dev/null | grep -Ei "angel|websocket|dns|name resolution|login failed|connect_fail|temporary failure" | tail -120 || true
           echo "=== TIME ==="
