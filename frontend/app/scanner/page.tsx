@@ -9,6 +9,7 @@ import { appConfig } from "@/lib/config";
 
 const markets = ["ALL F&O STOCKS", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
 const columns = ["Symbol", "Expiry", "Cash Bid/Ask", "Future Bid/Ask", "Executable Gap", "Volume / OI", "Signal"];
+const pairColumns = ["Time", "Symbol", "Contract", "Pair State", "Cash Ask", "Future Bid", "Gap %", "Why / Diagnostics"];
 
 type Row = Record<string, unknown>;
 
@@ -40,6 +41,8 @@ function ScannerContent() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pairRows, setPairRows] = useState<Row[]>([]);
+  const [pairHistory, setPairHistory] = useState<Row[]>([]);
 
   const load = async () => {
     setLoading(true);
@@ -63,9 +66,26 @@ function ScannerContent() {
     setMarket(markets.includes(requestedMarket) ? requestedMarket : "ALL F&O STOCKS");
   }, [requestedMarket]);
 
+  const loadPairDiagnostics = async () => {
+    try {
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+      const [liveResponse, historyResponse] = await Promise.all([
+        fetch(`${base}/api/v1/scanner/cash-future/live/pairs?max_age_seconds=30&limit=150`, { cache: "no-store" }),
+        fetch(`${base}/api/v1/scanner/cash-future/live/history?days=1&limit=250`, { cache: "no-store" }),
+      ]);
+      const liveBody = await liveResponse.json().catch(() => ({}));
+      const historyBody = await historyResponse.json().catch(() => ({}));
+      setPairRows(Array.isArray(liveBody?.data) ? liveBody.data : []);
+      setPairHistory(Array.isArray(historyBody?.data) ? historyBody.data : []);
+    } catch {
+      setPairRows([]);
+    }
+  };
+
   useEffect(() => {
     void load();
-    const timer = window.setInterval(() => { void load(); }, 1500);
+    void loadPairDiagnostics();
+    const timer = window.setInterval(() => { void load(); void loadPairDiagnostics(); }, 1500);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -87,10 +107,39 @@ function ScannerContent() {
   ).length;
 
   const gaps = filteredRows.filter((row) => numberValue(row, "executable_gap", "gap", "net_gap") > 0).length;
+  const filteredPairs = useMemo(() => {
+    const q = search.trim().toUpperCase();
+    return pairRows.filter((row) => {
+      const symbol = String(row.symbol ?? "").toUpperCase();
+      const normalizedSymbol = symbol.replace(/\s+/g, "");
+      const normalizedMarket = market.replace(/\s+/g, "");
+      const marketMatch = market === "ALL F&O STOCKS" || normalizedSymbol === normalizedMarket || (market === "NIFTY" && normalizedSymbol === "NIFTY50");
+      const searchMatch = !q || Object.values(row).some((value) => String(value ?? "").toUpperCase().includes(q));
+      return marketMatch && searchMatch;
+    });
+  }, [pairRows, market, search]);
+
+  const pairStats = useMemo(() => ({
+    pairs: filteredPairs.length,
+    missing: filteredPairs.filter((row) => row.status === "MISSING_EXECUTION_QUOTE").length,
+    noSignal: filteredPairs.filter((row) => row.status === "NO_SIGNAL").length,
+    signals: filteredPairs.filter((row) => row.status === "SIGNAL").length,
+  }), [filteredPairs]);
+
+  const formatTime = (value: unknown) => {
+    if (!value) return "—";
+    const date = new Date(String(value));
+    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleTimeString("en-IN", { hour12: false });
+  };
+
+  const reasonText = (row: Row) => {
+    const reasons = Array.isArray(row.reason_codes) ? row.reason_codes : String(row.reason_codes ?? "").split(",").filter(Boolean);
+    return reasons.join(" • ") || "PAIR_CREATED";
+  };
 
   const refresh = async () => {
     setRefreshing(true);
-    await load();
+    await Promise.all([load(), loadPairDiagnostics()]);
     setRefreshing(false);
   };
 
@@ -161,6 +210,32 @@ function ScannerContent() {
         </div>
       </Card>
 
+      <Card className="theme-border theme-surface p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live Pair Monitor & Diagnostics</h2><p className="mt-1 text-xs theme-muted">Every matched cash + futures pair is shown here even when it cannot become a signal. Diagnostics are persisted for post-market review.</p></div>
+          <span className="text-xs font-semibold theme-muted">{pairStats.pairs} recent pairs • 1.5s refresh</span>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-4">{[[
+            "Pairs matched", pairStats.pairs], ["Missing quote", pairStats.missing], ["No signal", pairStats.noSignal], ["Signals", pairStats.signals]
+          ].map(([label, value]) => <div key={String(label)} className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">{label}</p><p className="mt-1 text-lg font-semibold theme-text">{value}</p></div>)}</div>
+        <div className="mt-4 overflow-x-auto"><table className="min-w-[1100px] w-full text-left text-sm">
+          <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
+          <tbody>{filteredPairs.length === 0 ? <tr><td colSpan={pairColumns.length} className="px-4 py-10 text-center text-sm theme-muted">No pair diagnostics in the last 30 seconds.</td></tr> : filteredPairs.map((row, index) => {
+            const status = String(row.status ?? "PAIR_CREATED");
+            const statusLabel = status === "SIGNAL" ? "SIGNAL" : status === "NO_SIGNAL" ? "NO SIGNAL" : status === "MISSING_EXECUTION_QUOTE" ? "BLOCKED • QUOTE" : status;
+            return <tr key={String(row.observation_ref ?? "pair-" + index)} className="border-b theme-border last:border-0">
+              <td className="px-4 py-3 theme-muted">{formatTime(row.observed_at)}</td><td className="px-4 py-3 font-semibold theme-text">{cell(row, "symbol")}</td>
+              <td className="px-4 py-3 theme-muted">{cell(row, "contract_month")}</td><td className="px-4 py-3 font-semibold theme-text">{statusLabel}</td>
+              <td className="px-4 py-3 theme-muted">{cell(row, "cash_ask")}</td><td className="px-4 py-3 theme-muted">{cell(row, "future_bid")}</td>
+              <td className="px-4 py-3 theme-muted">{numberValue(row, "gap_pct").toFixed(4)}%</td><td className="max-w-[430px] px-4 py-3 text-xs leading-5 theme-muted">{reasonText(row)}</td>
+            </tr>;
+          })}</tbody>
+        </table></div>
+      </Card>
+      <Card className="theme-border theme-surface p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-semibold theme-text">Post-Market Pair History</h2><p className="mt-1 text-xs theme-muted">Persisted pair diagnostics from the last trading day. This remains available after the live feed stops.</p></div><span className="text-xs theme-muted">{pairHistory.length.toLocaleString("en-IN")} saved observations</span></div>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs theme-muted"><span className="rounded-lg border theme-border px-3 py-2">Saved automatically</span><span className="rounded-lg border theme-border px-3 py-2">Retention: scanner result setting</span><span className="rounded-lg border theme-border px-3 py-2">Includes failed pair → signal transitions</span></div>
+      </Card>
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="flex items-center gap-2 text-sm font-semibold theme-text"><ShieldCheck className="h-4 w-4 theme-success" /> Scanner safety boundary</p><p className="mt-1 text-xs leading-5 theme-muted">Scanner output is paper-safe. Broker orders remain OFF.</p></div><span className="shrink-0 rounded-lg border theme-border theme-danger-bg px-3 py-2 text-xs font-semibold theme-danger">BROKER ORDERS OFF</span></div>
       </Card>
