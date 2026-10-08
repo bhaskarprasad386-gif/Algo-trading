@@ -130,6 +130,18 @@ function ScannerContent() {
     });
   }, [pairRows, market, search]);
 
+  const filteredPairHistory = useMemo(() => {
+    const q = search.trim().toUpperCase();
+    return pairHistory.filter((row) => {
+      const symbol = String(row.symbol ?? "").toUpperCase();
+      const normalizedSymbol = symbol.replace(/\s+/g, "");
+      const normalizedMarket = market.replace(/\s+/g, "");
+      const marketMatch = market === "ALL F&O STOCKS" || normalizedSymbol === normalizedMarket || (market === "NIFTY" && normalizedSymbol === "NIFTY50");
+      const searchMatch = !q || Object.values(row).some((value) => String(value ?? "").toUpperCase().includes(q));
+      return marketMatch && searchMatch;
+    });
+  }, [pairHistory, market, search]);
+
   const pairStats = useMemo(() => ({
     pairs: filteredPairs.length,
     missing: filteredPairs.filter((row) => row.status === "MISSING_EXECUTION_QUOTE").length,
@@ -242,8 +254,21 @@ function ScannerContent() {
         </table></div>
       </Card>
       <Card className="theme-border theme-surface p-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-semibold theme-text">Post-Market Pair History</h2><p className="mt-1 text-xs theme-muted">Persisted pair diagnostics from the last trading day. This remains available after the live feed stops.</p></div><span className="text-xs theme-muted">{pairHistory.length.toLocaleString("en-IN")} saved observations</span></div>
-        <div className="mt-3 flex flex-wrap gap-2 text-xs theme-muted"><span className="rounded-lg border theme-border px-3 py-2">Saved automatically</span><span className="rounded-lg border theme-border px-3 py-2">Retention: scanner result setting</span><span className="rounded-lg border theme-border px-3 py-2">Includes failed pair → signal transitions</span></div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-semibold theme-text">Post-Market Pair History</h2><p className="mt-1 text-xs theme-muted">Persisted pair diagnostics from the last trading day. This remains available after the live feed stops.</p></div><span className="text-xs theme-muted">{filteredPairHistory.length.toLocaleString("en-IN")} shown • {pairHistory.length.toLocaleString("en-IN")} saved</span></div>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs theme-muted"><span className="rounded-lg border theme-border px-3 py-2">Saved automatically</span><span className="rounded-lg border theme-border px-3 py-2">Retention: scanner result setting</span><span className="rounded-lg border theme-border px-3 py-2">Includes quote failures + no-signal reasons</span></div>
+        <div className="mt-4 overflow-x-auto"><table className="min-w-[1100px] w-full text-left text-sm">
+          <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
+          <tbody>{filteredPairHistory.length === 0 ? <tr><td colSpan={pairColumns.length} className="px-4 py-10 text-center text-sm theme-muted">No saved pair diagnostics for this selection.</td></tr> : filteredPairHistory.slice(0, 100).map((row, index) => {
+            const status = String(row.lifecycle ?? "PAIR_CREATED");
+            const statusLabel = status === "SIGNAL" ? "SIGNAL" : status === "NO_SIGNAL" ? "NO SIGNAL" : status === "MISSING_EXECUTION_QUOTE" ? "BLOCKED • QUOTE" : status === "LIQUIDITY_BLOCKED" ? "BLOCKED • LIQUIDITY" : status;
+            return <tr key={String(row.observation_ref ?? "history-" + index)} className="border-b theme-border last:border-0">
+              <td className="px-4 py-3 theme-muted">{formatTime(row.observed_at)}</td><td className="px-4 py-3 font-semibold theme-text">{cell(row, "symbol")}</td>
+              <td className="px-4 py-3 theme-muted">{cell(row, "contract_month")}</td><td className="px-4 py-3 font-semibold theme-text">{statusLabel}</td>
+              <td className="px-4 py-3 theme-muted">{cell(row, "cash_ask")}</td><td className="px-4 py-3 theme-muted">{cell(row, "future_bid")}</td>
+              <td className="px-4 py-3 theme-muted">{numberValue(row, "gap_pct").toFixed(4)}%</td><td className="max-w-[430px] px-4 py-3 text-xs leading-5 theme-muted">{reasonText(row)}</td>
+            </tr>;
+          })}</tbody>
+        </table></div>
       </Card>
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="flex items-center gap-2 text-sm font-semibold theme-text"><ShieldCheck className="h-4 w-4 theme-success" /> Scanner safety boundary</p><p className="mt-1 text-xs leading-5 theme-muted">Scanner output is paper-safe. Broker orders remain OFF.</p></div><span className="shrink-0 rounded-lg border theme-border theme-danger-bg px-3 py-2 text-xs font-semibold theme-danger">BROKER ORDERS OFF</span></div>
