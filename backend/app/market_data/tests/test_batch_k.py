@@ -47,6 +47,23 @@ def test_angel_one_payload_normalizes_price_units_and_metadata():
     assert record.payload["token"] == "101"
 
 
+def test_angel_one_best5_depth_normalizes_quotes_and_quantities():
+    record = AngelOneTickNormalizer().normalize(
+        descriptor(),
+        {
+            "token": "101",
+            "last_traded_price": 2500000,
+            "best_5_buy_data": [{"price": 2499900, "quantity": 10}],
+            "best_5_sell_data": [{"price": 2500100, "quantity": 12}],
+        },
+    )
+    assert record.ltp == 25000.0
+    assert record.bid == 24999.0
+    assert record.ask == 25001.0
+    assert record.bid_qty == 10.0
+    assert record.ask_qty == 12.0
+
+
 def test_normalized_callback_uses_exact_exchange_group():
     from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
 
