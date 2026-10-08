@@ -286,6 +286,12 @@ class CommonWebSocketManager:
                     silent_age_seconds=self._silent_feed_timeout_seconds,
                 )
             except Exception as exc:
+                runtime_diagnostics.record(
+                    component="Common Market Feed",
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                    context={"event": "automatic_recovery"},
+                )
                 app_logger.warning(
                     "Common feed automatic recovery failed; will retry: %s", exc
                 )
@@ -464,9 +470,15 @@ class CommonWebSocketManager:
                         group, token, exc, self._normalizer_errors,
                     )
                 continue
-            except Exception:
+            except Exception as exc:
                 with self._lock:
                     self._delivery_errors += 1
+                runtime_diagnostics.record(
+                    component="Common Market Feed",
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                    context={"event": "normalized_delivery", "group": f"{group.mode}:{group.shard}", "token": token},
+                )
 
     @staticmethod
     def _close_socket_bounded(socket: Any, timeout: float = 2.0) -> None:
