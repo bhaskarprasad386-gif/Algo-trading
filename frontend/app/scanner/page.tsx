@@ -346,7 +346,7 @@ function ScannerContent() {
           <span className="text-xs font-semibold theme-muted">{pairStats.pairs} current live pairs • {marketSession === "CLOSED" ? "refresh paused" : marketSession === "OPEN" ? "1.5s refresh" : "waiting for market state"}</span>
         </div>
         {marketSession === "CLOSED" && <div className="mt-4 rounded-xl border theme-border theme-warning-bg p-3 text-xs theme-warning">Live scanning is paused because the market is closed. Current live counters are intentionally 0; saved diagnostics below remain available for the completed session.</div>}
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">{[
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-9">{[
           ["Pair observations", pairStats.pairs],
           ["Quotes present", pairStats.quoted],
           ["Missing quote", pairStats.missing],
