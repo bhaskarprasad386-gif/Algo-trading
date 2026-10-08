@@ -8,7 +8,7 @@ import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 
 const markets = ["ALL F&O STOCKS", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
-const columns = ["Symbol", "Expiry", "Cash Bid/Ask", "Future Bid/Ask", "Executable Gap", "Volume / OI", "Signal"];
+const columns = ["Symbol", "Expiry", "Cash Bid/Ask", "Future Bid/Ask", "Gap", "Gap %", "Future Vol / OI", "Stability", "Status"];
 const pairColumns = ["Time", "Symbol", "Contract", "Pair State", "Cash Ask", "Future Bid", "Gap %", "Stability", "Feed Age", "Eligibility / Diagnostics"];
 
 type Row = Record<string, unknown>;
@@ -118,10 +118,13 @@ function ScannerContent() {
     if (marketSession === "OPEN") {
       void load();
       void loadPairLive();
+    } else if (marketSession === "CLOSED") {
+      setRows([]);
+      setPairRows([]);
     }
     void loadPairHistory();
     const liveTimer = window.setInterval(() => {
-      if (marketSession === "CLOSED") return;
+      if (marketSession !== "OPEN") return;
       void load();
       void loadPairLive();
     }, 1500);
@@ -144,12 +147,8 @@ function ScannerContent() {
     });
   }, [rows, market, search]);
 
-  const signals = filteredRows.filter((row) =>
-    row.executable === true ||
-    numberValue(row, "executable_gap", "gap", "net_gap") > 0
-  ).length;
-
-  const gaps = filteredRows.filter((row) => numberValue(row, "executable_gap", "gap", "net_gap") > 0).length;
+  const signals = filteredRows.filter((row) => row.alert_eligible === true).length;
+  const gaps = filteredRows.filter((row) => row.eligible === true).length;
   const filteredPairs = useMemo(() => {
     const q = search.trim().toUpperCase();
     return pairRows.filter((row) => {
@@ -293,9 +292,9 @@ function ScannerContent() {
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          ["Live F&O Rows", loading ? "…" : filteredRows.length.toLocaleString("en-IN")],
-          ["Signals Detected", loading ? "…" : signals.toLocaleString("en-IN")],
-          ["Executable Gaps", loading ? "…" : gaps.toLocaleString("en-IN")],
+          ["Qualified Live Rows", loading ? "…" : filteredRows.length.toLocaleString("en-IN")],
+          ["Alert Signals", loading ? "…" : signals.toLocaleString("en-IN")],
+          ["Execution-Qualified", loading ? "…" : gaps.toLocaleString("en-IN")],
           ["Last Live Scan", loading ? "…" : lastScanText],
         ].map(([label, value]) => <Card key={label} className="theme-border theme-surface p-4"><p className="text-xs theme-muted">{label}</p><p className="mt-2 text-xl font-semibold theme-text">{value}</p></Card>)}
       </div>
@@ -308,7 +307,7 @@ function ScannerContent() {
           <span className="text-xs theme-muted">Market: {market}{search ? " • Search: " + search : ""} • {marketSession === "CLOSED" ? "Live scan paused" : "Live scan active"}</span>
         </div>
         <div className="overflow-x-auto">
-          <table className="min-w-[1000px] w-full text-left text-sm">
+          <table className="min-w-[1250px] w-full text-left text-sm">
             <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{columns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
             <tbody>
               {loading ? <tr><td colSpan={columns.length} className="px-4 py-14 text-center text-sm theme-muted">Loading live data…</td></tr>
@@ -316,11 +315,13 @@ function ScannerContent() {
                 : filteredRows.map((row, index) => <tr key={String(row.id ?? row.event_id ?? `scanner-${index}`)} className="border-b theme-border last:border-0">
                   <td className="px-4 py-3 font-semibold theme-text">{cell(row, "symbol", "underlying")}</td>
                   <td className="px-4 py-3 theme-muted">{cell(row, "contract_month", "expiry")}</td>
-                  <td className="px-4 py-3 theme-muted">{cell(row, "cash_execution_price", "cash_bid", "cash_ask")}</td>
-                  <td className="px-4 py-3 theme-muted">{cell(row, "future_execution_price", "future_bid", "future_ask")}</td>
-                  <td className="px-4 py-3 theme-muted">{cell(row, "executable_gap", "net_gap", "gap")}</td>
-                  <td className="px-4 py-3 theme-muted">{cell(row, "volume", "open_interest", "oi")}</td>
-                  <td className="px-4 py-3 font-semibold theme-text">{row.executable === true ? "SIGNAL" : numberValue(row, "executable_gap", "gap", "net_gap") > 0 ? "OPPORTUNITY" : "—"}</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "cash_bid")} / {cell(row, "cash_ask")}</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "future_bid")} / {cell(row, "future_ask")}</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "gap")}</td>
+                  <td className="px-4 py-3 theme-muted">{numberValue(row, "gap_pct").toFixed(4)}%</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "future_volume")} / {cell(row, "future_oi")}</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "stable_observations")}</td>
+                  <td className="px-4 py-3 font-semibold theme-text">{row.alert_eligible === true ? "ALERT SIGNAL" : row.eligible === true ? "QUALIFIED" : "—"}</td>
                 </tr>)}
             </tbody>
           </table>
