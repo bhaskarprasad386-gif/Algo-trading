@@ -250,7 +250,7 @@ function ScannerContent() {
 
   return (
     <div className="min-h-screen space-y-5 theme-bg p-4 theme-text">
-      <PageTitle eyebrow="Phase 3 • Live Scanner" title="Cash-Future Live Scanner" description="Live Cash-Future opportunities across the subscribed F&O stock-futures universe, with executable bid/ask gap, volume/OI and strategy signals." />
+      <PageTitle eyebrow="Phase 3 • Live Scanner" title="Cash Future" description="Live Cash-Future opportunities across the subscribed F&O stock-futures universe, with executable bid/ask gap, volume/OI and strategy signals." />
 
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-wrap items-center gap-2">
