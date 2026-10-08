@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import math
@@ -72,7 +73,9 @@ class LiveCashFutureScanner:
         self._stability: dict[tuple[str, str], tuple[int, int]] = {}
         self._alert_state: dict[tuple[str, str], str] = {}
         self._alert_last_at: dict[tuple[str, str], float] = {}
-        self._stats = {"observations": 0, "pairs": 0, "pairs_with_quotes": 0, "pairs_missing_quotes": 0, "pairs_dropped_liquidity": 0, "dropped": 0, "persisted": 0}
+        self._stats = {"observations": 0, "pairs": 0, "pairs_with_quotes": 0, "pairs_missing_quotes": 0, "pairs_dropped_liquidity": 0, "dropped": 0, "persisted": 0, "pair_events": 0, "pair_events_persisted": 0}
+        self._pair_events: deque[dict] = deque(maxlen=2000)
+        self._last_pair_persist_at: dict[tuple[str, str], float] = {}
         self._alert_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cf-alert")
         self._result_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cf-result")
         self._last_result_cleanup = 0.0
@@ -280,6 +283,129 @@ class LiveCashFutureScanner:
             for s in signals
         }
 
+    def _record_pair_event(
+        self,
+        *,
+        symbol: str,
+        month: str,
+        timestamp_ns: int,
+        received_at_ns: int,
+        cash: dict,
+        future: dict,
+        status: str,
+        reasons: tuple[str, ...],
+        gap: float = 0.0,
+        gap_pct: float = 0.0,
+        liquidity_qty: float | None = None,
+        lot_size: int | None = None,
+        session_factory=None,
+    ) -> None:
+        observed_at = datetime.now(IST)
+        event = {
+            "symbol": symbol,
+            "contract_month": month,
+            "timestamp_ns": timestamp_ns,
+            "observed_at": observed_at.isoformat(),
+            "cash_ltp": cash.get("ltp"),
+            "future_ltp": future.get("ltp"),
+            "cash_bid": cash.get("bid"),
+            "cash_ask": cash.get("ask"),
+            "future_bid": future.get("bid"),
+            "future_ask": future.get("ask"),
+            "cash_bid_qty": cash.get("bid_qty"),
+            "cash_ask_qty": cash.get("ask_qty"),
+            "future_bid_qty": future.get("bid_qty"),
+            "future_ask_qty": future.get("ask_qty"),
+            "liquidity_qty": liquidity_qty,
+            "gap": gap,
+            "gap_pct": gap_pct,
+            "status": status,
+            "lifecycle": status,
+            "reason_codes": list(reasons),
+            "observation_ref": f"{symbol}:{month}:{timestamp_ns}",
+            "age_ms": max(0.0, (time.time_ns() - received_at_ns) / 1_000_000.0),
+        }
+        with self._lock:
+            self._pair_events.appendleft(event)
+            self._stats["pair_events"] += 1
+            persist_ok = time.monotonic() - self._last_pair_persist_at.get((symbol, month), 0.0) >= 5.0
+            if persist_ok:
+                self._last_pair_persist_at[(symbol, month)] = time.monotonic()
+        if persist_ok and session_factory is not None:
+            self._result_executor.submit(
+                self._persist_pair_event,
+                session_factory,
+                event,
+                cash,
+                future,
+                lot_size,
+            )
+
+    def _persist_pair_event(self, session_factory, event: dict, cash: dict, future: dict, lot_size: int | None) -> None:
+        try:
+            now = datetime.now(IST).replace(tzinfo=None)
+            retention_days = max(1, int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
+            with session_factory() as db:
+                cutoff = now - timedelta(days=retention_days)
+                db.query(LiveCashFutureScannerResult).filter(
+                    LiveCashFutureScannerResult.observed_at < cutoff
+                ).delete(synchronize_session=False)
+                existing = db.query(LiveCashFutureScannerResult.id).filter(
+                    LiveCashFutureScannerResult.symbol == event["symbol"],
+                    LiveCashFutureScannerResult.contract_month == event["contract_month"],
+                    LiveCashFutureScannerResult.timestamp_ns == event["timestamp_ns"],
+                ).first()
+                if existing:
+                    return
+                cash_ltp = float(cash.get("ltp") or 0.0)
+                future_ltp = float(future.get("ltp") or 0.0)
+                db.add(LiveCashFutureScannerResult(
+                    symbol=event["symbol"],
+                    contract_month=event["contract_month"],
+                    timestamp_ns=event["timestamp_ns"],
+                    observed_at=now,
+                    cash_ltp=cash_ltp,
+                    future_ltp=future_ltp,
+                    cash_bid=cash.get("bid"),
+                    cash_ask=cash.get("ask"),
+                    future_bid=future.get("bid"),
+                    future_ask=future.get("ask"),
+                    cash_bid_qty=cash.get("bid_qty"),
+                    cash_ask_qty=cash.get("ask_qty"),
+                    future_bid_qty=future.get("bid_qty"),
+                    future_ask_qty=future.get("ask_qty"),
+                    liquidity_qty=event.get("liquidity_qty"),
+                    gap=float(event.get("gap") or 0.0),
+                    gap_pct=float(event.get("gap_pct") or 0.0),
+                    cash_day_high=cash_ltp,
+                    cash_day_low=cash_ltp,
+                    future_day_high=future_ltp,
+                    future_day_low=future_ltp,
+                    lot_size=lot_size,
+                    gross_lot_value=None,
+                    estimated_cost=0.0,
+                    net_gap=float(event.get("gap") or 0.0),
+                    net_gap_pct=float(event.get("gap_pct") or 0.0),
+                    annualized_gap_pct=None,
+                    stable_observations=1,
+                    capacity_lots=None,
+                    capacity_notional=None,
+                    lifecycle=event["status"],
+                    reason_codes=",".join(event["reason_codes"]),
+                    observation_ref=event["observation_ref"],
+                    alert_event=None,
+                ))
+                db.commit()
+                self._stats["pair_events_persisted"] += 1
+        except Exception as exc:
+            from app.core.logger import app_logger
+            app_logger.error("Cash-Future pair diagnostic persistence failed: %s", exc)
+
+    def pair_snapshot(self, *, max_age_seconds: float = 15.0, limit: int = 100) -> list[dict]:
+        cutoff_ns = time.time_ns() - int(max(1.0, max_age_seconds) * 1_000_000_000)
+        with self._lock:
+            return [dict(item) for item in list(self._pair_events) if int(item["timestamp_ns"]) >= cutoff_ns][:limit]
+
     def observe(self, payload: dict, *, session_factory=None) -> LiveCashFutureSignal | None:
         leg = str(payload.get("leg") or "").upper()
         symbol = str(payload.get("underlying") or "").strip().upper()
@@ -352,8 +478,18 @@ class LiveCashFutureScanner:
 
         cash_ask, future_bid = cash["ask"], future["bid"]
         if cash_ask is None or future_bid is None:
+            missing = []
+            if cash_ask is None:
+                missing.append("CASH_ASK_MISSING")
+            if future_bid is None:
+                missing.append("FUTURE_BID_MISSING")
             with self._lock:
                 self._stats["pairs_missing_quotes"] += 1
+            self._record_pair_event(
+                symbol=symbol, month=month, timestamp_ns=timestamp_ns, received_at_ns=received_at_ns,
+                cash=cash, future=future, status="MISSING_EXECUTION_QUOTE",
+                reasons=tuple(["PAIR_CREATED", *missing]), lot_size=lot, session_factory=session_factory,
+            )
             return None
         with self._lock:
             self._stats["pairs_with_quotes"] += 1
@@ -367,6 +503,13 @@ class LiveCashFutureScanner:
         if min_liquidity > 0 and (liquidity_qty is None or liquidity_qty < min_liquidity):
             with self._lock:
                 self._stats["pairs_dropped_liquidity"] += 1
+            self._record_pair_event(
+                symbol=symbol, month=month, timestamp_ns=timestamp_ns, received_at_ns=received_at_ns,
+                cash=cash, future=future, status="LIQUIDITY_BLOCKED",
+                reasons=("PAIR_CREATED", "EXECUTION_QUOTES_PRESENT", "LIQUIDITY_BELOW_THRESHOLD"),
+                gap=future_bid - cash_ask, gap_pct=(future_bid - cash_ask) / cash_ask * 100.0,
+                liquidity_qty=liquidity_qty, lot_size=lot, session_factory=session_factory,
+            )
             return None
 
         if future["bid"] is not None and future["ask"] is not None and future["bid"] > future["ask"]:
@@ -462,6 +605,12 @@ class LiveCashFutureScanner:
             reasons.append("LIQUIDITY_MEASURED")
         if capacity_lots is not None:
             reasons.append("CAPACITY_ESTIMATED")
+        if gap <= 0:
+            reasons.append("NON_POSITIVE_GAP")
+        if net_gap <= 0:
+            reasons.append("NON_POSITIVE_NET_GAP")
+        if stable < min_stable:
+            reasons.append("NOT_STABLE_YET")
 
         quote_quality = 1.0 if cash["bid"] is not None and cash["ask"] is not None and future["bid"] is not None and future["ask"] is not None else 0.0
         liquidity_quality = min(1.0, (liquidity_qty or 0.0) / max(1.0, float(lot or 1) * 10.0))
@@ -530,6 +679,13 @@ class LiveCashFutureScanner:
             observation_ref=f"{symbol}:{month}:{timestamp_ns}",
             alert_event=alert_event,
             quality_score=quality_score,
+        )
+        diagnostic_status = "SIGNAL" if eligible else "NO_SIGNAL"
+        self._record_pair_event(
+            symbol=symbol, month=month, timestamp_ns=timestamp_ns, received_at_ns=received_at_ns,
+            cash=cash, future=future, status=diagnostic_status,
+            reasons=tuple(["PAIR_CREATED", *reasons] if eligible else ["PAIR_CREATED", *reasons]),
+            gap=gap, gap_pct=gap_pct, liquidity_qty=liquidity_qty, lot_size=lot, session_factory=session_factory,
         )
         with self._lock:
             self._signals[(signal.symbol, signal.contract_month)] = signal
