@@ -234,3 +234,58 @@ def test_live_scanner_history_and_alert_routes_are_registered():
     paths = app.openapi().get("paths", {})
     assert "/api/v1/scanner/cash-future/live/history" in paths
     assert "/api/v1/scanner/cash-future/live/alerts" in paths
+
+
+def test_live_scanner_pair_diagnostic_exposes_invalid_future_book():
+    import time
+
+    scanner = LiveCashFutureScanner()
+    timestamp_ns = time.time_ns()
+    scanner.observe({
+        "leg": "CASH", "underlying": "ABC", "ltp": 100.0,
+        "bid": 99.9, "ask": 100.0, "source_timestamp_ns": timestamp_ns,
+    })
+    result = scanner.observe({
+        "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
+        "ltp": 101.0, "bid": 102.0, "ask": 101.0,
+        "source_timestamp_ns": timestamp_ns,
+    })
+
+    assert result is None
+    diagnostics = scanner.pair_snapshot(max_age_seconds=120, limit=10)
+    assert diagnostics[0]["status"] == "INVALID_FUTURE_BOOK"
+    assert "INVALID_FUTURE_BOOK" in diagnostics[0]["reason_codes"]
+
+
+def test_live_scanner_history_keeps_100_unique_pairs_when_one_pair_is_very_active(tmp_path):
+    from datetime import datetime
+
+    from app.scanner.auto_routes import cash_future_live_scanner_history
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'scanner-history-adversarial.sqlite3'}")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    now = datetime.now()
+    with Session() as db:
+        for index in range(1000):
+            db.add(LiveCashFutureScannerResult(
+                symbol="HOT", contract_month="CURRENT", timestamp_ns=index + 1,
+                observed_at=now, cash_ltp=100, future_ltp=101, gap=1, gap_pct=1,
+                cash_day_high=100, cash_day_low=100, future_day_high=101, future_day_low=101,
+                estimated_cost=0, net_gap=1, net_gap_pct=1, stable_observations=1,
+                lifecycle="NO_SIGNAL", reason_codes="PAIR_CREATED", observation_ref=f"HOT:CURRENT:{index + 1}",
+            ))
+        for index in range(100):
+            db.add(LiveCashFutureScannerResult(
+                symbol=f"OTHER{index:03d}", contract_month="CURRENT", timestamp_ns=2000 + index,
+                observed_at=now, cash_ltp=100, future_ltp=101, gap=1, gap_pct=1,
+                cash_day_high=100, cash_day_low=100, future_day_high=101, future_day_low=101,
+                estimated_cost=0, net_gap=1, net_gap_pct=1, stable_observations=1,
+                lifecycle="NO_SIGNAL", reason_codes="PAIR_CREATED", observation_ref=f"OTHER{index:03d}:CURRENT:{index}",
+            ))
+        db.commit()
+        response = cash_future_live_scanner_history(days=1, limit=100, db=db)
+
+    assert response["count"] == 100
+    assert len({row["symbol"] for row in response["data"]}) == 100
+    assert "HOT" in {row["symbol"] for row in response["data"]}
