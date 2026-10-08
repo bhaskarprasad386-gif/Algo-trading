@@ -8,7 +8,6 @@ import { appConfig } from "@/lib/config";
 
 const markets = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
 const strategies = [
-  { name: "Cash-Future", detail: "Pairs • Cash vs Futures •", href: "/strategies/cash-future", icon: TrendingUp },
   { name: "Calendar Spread", detail: "Time spread • NIFTY •", href: "/strategies/calendar-spread", icon: Activity },
   { name: "Synthetic Arbitrage", detail: "Cash-Synth • Arbitrage •", href: "/strategies/synthetic-arbitrage", icon: Zap },
   { name: "Box Spread", detail: "Options • Box •", href: "/strategies/box-spread", icon: Gauge },
@@ -301,7 +300,6 @@ export default function HomePage() {
                 ["FastAPI", apiLabel],
                 ["Dashboard WebSocket", wsLabel],
                 ["Market Feed", feedLabel],
-                ["Cash-Future", "Open Live Scanner"],
                 ["Broker Orders", "OFF"],
               ].map(([name, value]) => (
                 <div key={name} className="flex items-center justify-between rounded-xl border theme-border px-3 py-2.5">
