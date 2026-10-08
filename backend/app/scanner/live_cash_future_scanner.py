@@ -305,6 +305,7 @@ class LiveCashFutureScanner:
             "symbol": symbol,
             "contract_month": month,
             "timestamp_ns": timestamp_ns,
+            "received_at_ns": received_at_ns,
             "observed_at": observed_at.isoformat(),
             "cash_ltp": cash.get("ltp"),
             "future_ltp": future.get("ltp"),
@@ -404,7 +405,7 @@ class LiveCashFutureScanner:
     def pair_snapshot(self, *, max_age_seconds: float = 15.0, limit: int = 100) -> list[dict]:
         cutoff_ns = time.time_ns() - int(max(1.0, max_age_seconds) * 1_000_000_000)
         with self._lock:
-            return [dict(item) for item in list(self._pair_events) if int(item["timestamp_ns"]) >= cutoff_ns][:limit]
+            return [dict(item) for item in list(self._pair_events) if int(item.get("received_at_ns", item["timestamp_ns"])) >= cutoff_ns][:limit]
 
     def observe(self, payload: dict, *, session_factory=None) -> LiveCashFutureSignal | None:
         leg = str(payload.get("leg") or "").upper()
