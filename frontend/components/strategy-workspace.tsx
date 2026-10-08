@@ -46,7 +46,7 @@ export function StrategyWorkspace({slug}:{slug:keyof typeof configs}){
     <PageTitle eyebrow="Phase 11 • Strategy Workspace" title={c.title+" Dedicated Scanner"} description={c.description}/>
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Universe</p><p className="mt-2 text-sm font-semibold theme-text">{c.universe}</p></Card>
-      <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Scanner</p><p className="mt-2 flex items-center gap-2 text-sm font-semibold theme-accent"><Zap className="h-4 w-4"/> {isCustom?"Custom Logic":marketSession==="CLOSED"?"Polling paused • Market closed":"1.5s polling"}</p></Card>
+      <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Scanner</p><p className="mt-2 flex items-center gap-2 text-sm font-semibold theme-accent"><Zap className="h-4 w-4"/> isCustom?"Custom Logic":"1.5s polling"</p></Card>
       <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Paper Trading</p><p className="mt-2 text-sm font-semibold theme-muted">ENDPOINT PENDING</p></Card>
       <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Broker Orders</p><p className="mt-2 text-sm font-semibold theme-warning">OFF</p></Card>
     </div>
