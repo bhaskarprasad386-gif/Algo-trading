@@ -154,7 +154,8 @@ class LiveCashFutureScanner:
         if session_factory is None or signal.lifecycle in {"", "EXPIRED"}:
             return
         try:
-            observed_at = datetime.fromtimestamp(int(event["timestamp_ns"]) / 1_000_000_000, IST).replace(tzinfo=None)
+            observed_at = datetime.fromtimestamp(signal.timestamp_ns / 1_000_000_000, IST).replace(tzinfo=None)
+            observed_at = datetime.fromtimestamp(signal.timestamp_ns / 1_000_000_000, IST).replace(tzinfo=None)
             now = datetime.now(IST).replace(tzinfo=None)
             retention_days = max(1, int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
             with session_factory() as db:
@@ -178,7 +179,7 @@ class LiveCashFutureScanner:
                     symbol=signal.symbol,
                     contract_month=signal.contract_month,
                     timestamp_ns=signal.timestamp_ns,
-                    observed_at=now,
+                    observed_at=observed_at,
                     cash_ltp=signal.cash_ltp,
                     future_ltp=signal.future_ltp,
                     cash_bid=signal.cash_bid,
@@ -237,7 +238,7 @@ class LiveCashFutureScanner:
                 if exists:
                     return
                 db.add(LiveCashFutureAlertHistory(
-                    observed_at=now,
+                    observed_at=observed_at,
                     timestamp_ns=signal.timestamp_ns,
                     symbol=signal.symbol,
                     contract_month=signal.contract_month,
@@ -358,6 +359,7 @@ class LiveCashFutureScanner:
 
     def _persist_pair_event(self, session_factory, event: dict, cash: dict, future: dict, lot_size: int | None) -> None:
         try:
+            observed_at = datetime.fromtimestamp(int(event["timestamp_ns"]) / 1_000_000_000, IST).replace(tzinfo=None)
             now = datetime.now(IST).replace(tzinfo=None)
             retention_days = max(1, int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
             with session_factory() as db:
