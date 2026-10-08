@@ -74,6 +74,7 @@ class LiveCashFutureScanner:
         self._alert_state: dict[tuple[str, str], str] = {}
         self._alert_last_at: dict[tuple[str, str], float] = {}
         self._stats = {"observations": 0, "pairs": 0, "pairs_with_quotes": 0, "pairs_missing_quotes": 0, "pairs_dropped_liquidity": 0, "dropped": 0, "persisted": 0, "pair_events": 0, "pair_events_persisted": 0}
+        self._last_observation_ns: int | None = None
         self._pair_events: deque[dict] = deque(maxlen=2000)
         self._last_pair_persist_at: dict[tuple[str, str], float] = {}
         self._alert_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cf-alert")
@@ -424,7 +425,9 @@ class LiveCashFutureScanner:
         timestamp_ns = int(payload.get("source_timestamp_ns") or payload.get("exchange_timestamp") or 0)
         if timestamp_ns <= 0 or not symbol:
             return None
-        self._stats["observations"] += 1
+        with self._lock:
+            self._stats["observations"] += 1
+            self._last_observation_ns = timestamp_ns
         received_at_ns = payload.get("received_at_ns")
         try:
             received_at_ns = int(received_at_ns) if received_at_ns is not None else time.time_ns()
@@ -725,7 +728,14 @@ class LiveCashFutureScanner:
 
     def health(self) -> dict:
         with self._lock:
-            return dict(self._stats)
+            stats = dict(self._stats)
+            last_observation_ns = self._last_observation_ns
+        stats["last_observation_at"] = (
+            datetime.fromtimestamp(last_observation_ns / 1_000_000_000, IST).isoformat()
+            if last_observation_ns
+            else None
+        )
+        return stats
 
     def snapshot(self, *, max_age_seconds: float = 5.0, limit: int = 50) -> list[dict]:
         now_ns = int(datetime.now(IST).timestamp() * 1_000_000_000)

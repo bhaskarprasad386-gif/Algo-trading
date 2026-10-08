@@ -120,8 +120,7 @@ def cash_future_live_pairs(
         max_age_seconds=float(max_age_seconds),
         limit=int(limit),
     )
-    with live_cash_future_scanner._lock:
-        stats = dict(live_cash_future_scanner._stats)
+    stats = live_cash_future_scanner.health()
     return {
         "status": "success",
         "scanner": "cash-future",
