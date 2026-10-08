@@ -51,6 +51,7 @@ class CommonWebSocketManager:
         self._normalizer_errors = 0
         self._last_normalizer_error: str | None = None
         self._ticks_received = 0
+        self._runtime_started_at = time.time()
         self._ticks_by_exchange: dict[str, int] = defaultdict(int)
         self._last_tick: dict[str, Any] | None = None
         self._socket_created_at: dict[SocketGroup, float] = {}
@@ -504,6 +505,7 @@ class CommonWebSocketManager:
                 "normalizer_errors": self._normalizer_errors,
                 "last_normalizer_error": self._last_normalizer_error,
                 "ticks_received": self._ticks_received,
+                "runtime_started_at": self._runtime_started_at,
                 "ticks_by_exchange_type": dict(self._ticks_by_exchange),
                 "last_tick": dict(self._last_tick) if self._last_tick else None,
                 "connected_groups": [
