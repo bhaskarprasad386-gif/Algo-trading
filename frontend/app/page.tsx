@@ -234,7 +234,8 @@ export default function HomePage() {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
 
-\n  useEffect(() => {
+
+  useEffect(() => {
     const saved = window.localStorage.getItem("algo-paper-capital");
     if (saved && Number(saved) > 0) {
       setCapital(saved);
@@ -336,33 +337,25 @@ export default function HomePage() {
       </div>
 
       <section aria-label="Error Diagnostics" className="mt-4">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2"><TriangleAlert size={16} className={diagnosticErrors.length ? "theme-danger" : "theme-success"} /><h2 className="text-[15px] font-semibold">Error Diagnostics</h2></div>
-          <span className={diagnosticErrors.length ? "theme-danger" : "theme-success"}>{diagnosticErrors.length ? diagnosticErrors.length + " active" : "No active errors"}</span>
-        </div>
         <Card className="rounded-2xl border theme-border theme-surface-2 p-3">
-          {diagnosticErrors.length === 0 ? <div className="py-4 text-center text-[11px] theme-success">No active errors</div> : (
-            <div className="space-y-2">
-              {diagnosticErrors.map((error) => (
-                <div key={error.id} className="rounded-xl border theme-border p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2"><TriangleAlert size={14} className="theme-danger" /><span className="text-[11px] font-bold">{error.component}</span><span className="text-[9px] font-bold theme-danger">{error.severity}</span></div>
-                    <span className="text-[9px] theme-subtle">{new Date(error.time).toLocaleString("en-IN")}</span>
-                  </div>
-                  <div className="mt-2 text-[11px] font-semibold">{error.message}</div>
-                  <div className="mt-1 flex flex-wrap gap-3 text-[9px] theme-subtle">
-                    {error.error_type ? <span>Type: {error.error_type}</span> : null}
-                    {error.endpoint ? <span>Endpoint: {error.endpoint}</span> : null}
-                    {error.status_code ? <span>HTTP: {error.status_code}</span> : null}
-                    {error.context && Object.keys(error.context).length ? <span>Context: {JSON.stringify(error.context)}</span> : null}
-                  </div>
+          <div className="grid grid-cols-[1fr_auto] items-center gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className={diagnosticErrors.length ? "grid h-10 w-10 shrink-0 place-items-center rounded-xl theme-danger-bg theme-danger" : "grid h-10 w-10 shrink-0 place-items-center rounded-xl theme-success-bg theme-success"}>
+                <TriangleAlert size={18} />
+              </span>
+              <div className="min-w-0">
+                <div className="text-[13px] font-bold">Error Diagnostics</div>
+                <div className="mt-0.5 text-[10px] theme-subtle">
+                  {diagnosticErrors.length ? diagnosticErrors.length + " actual runtime error" + (diagnosticErrors.length === 1 ? "" : "s") + " recorded" : "No active runtime errors"}
                 </div>
-              ))}
+              </div>
             </div>
-          )}
+            <Link href="/errors" className="inline-flex min-h-10 items-center justify-center rounded-xl theme-accent-bg px-4 text-[11px] font-bold theme-accent">
+              View Errors
+            </Link>
+          </div>
         </Card>
       </section>
-
       <div className="mt-6 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
         <section aria-label="Strategy workspaces">
           <div className="mb-3 flex items-center gap-2"><Zap size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Strategy Workspaces</h2></div>
