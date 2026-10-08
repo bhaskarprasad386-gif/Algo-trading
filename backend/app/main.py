@@ -471,6 +471,13 @@ async def _run_live_runner_in_daemon_thread(
         try:
             runner.run_forever()
         except BaseException as exc:
+            runtime_diagnostics.record(
+                component="Scanner Runner" if "runner" in name.lower() else "Runtime",
+                severity="CRITICAL" if isinstance(exc, (SystemExit, KeyboardInterrupt)) else "ERROR",
+                error_type=type(exc).__name__,
+                message=str(exc) or repr(exc),
+                context={"worker": name},
+            )
             if error_holder is not None:
                 error_holder.append(exc)
             else:
