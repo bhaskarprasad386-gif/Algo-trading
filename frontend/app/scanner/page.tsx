@@ -15,7 +15,9 @@ type Row = Record<string, unknown>;
 
 const numberValue = (row: Row, ...keys: string[]) => {
   for (const key of keys) {
-    const value = Number(row[key]);
+    const raw = row[key];
+    if (raw === null || raw === undefined || (typeof raw === "string" && raw.trim() === "")) continue;
+    const value = Number(raw);
     if (Number.isFinite(value)) return value;
   }
   return null;
