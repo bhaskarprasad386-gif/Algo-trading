@@ -14,6 +14,9 @@ export type WorkspaceConfig = {
   columns: string[];
   metrics: string[];
   controls: string[];
+  pairTitle: string;
+  pairColumns: string[];
+  historyEndpoint: string;
 };
 
 const configs: Record<string, WorkspaceConfig> = {
@@ -25,6 +28,9 @@ const configs: Record<string, WorkspaceConfig> = {
     columns: ["Underlying", "Exchange", "Near", "Far", "Spread", "Gap / Edge", "Volume / OI", "Signal"],
     metrics: ["Eligible Contracts", "Spread Opportunities", "Signals", "Last Scan"],
     controls: ["All Eligible", "INDEX PRIORITY", "Near/Far", "Edge Threshold"],
+    pairTitle: "Near / Far Pair Monitor",
+    pairColumns: ["Time", "Underlying", "Exchange", "Near", "Far", "Spread", "Edge", "Liquidity", "State"],
+    historyEndpoint: "/api/v1/scanner/calendar-spread/history?days=1&limit=100",
   },
   "synthetic-arbitrage": {
     slug: "synthetic-arbitrage",
@@ -34,6 +40,9 @@ const configs: Record<string, WorkspaceConfig> = {
     columns: ["Underlying", "Expiry", "Strike", "Option", "Future", "Executable Edge", "Liquidity", "Signal"],
     metrics: ["Eligible Combos", "Executable Edges", "Signals", "Last Scan"],
     controls: ["All Eligible", "ATM Range", "Expiry", "Edge Threshold"],
+    pairTitle: "Option / Future Pair Monitor",
+    pairColumns: ["Time", "Underlying", "Expiry", "Strike", "Option", "Future", "Edge", "Direction", "State"],
+    historyEndpoint: "/api/v1/scanner/synthetic-cash-carry/alerts?days=1&limit=100",
   },
   "box-spread": {
     slug: "box-spread",
@@ -43,6 +52,9 @@ const configs: Record<string, WorkspaceConfig> = {
     columns: ["Underlying", "Expiry", "Low Strike", "High Strike", "Box Edge", "Liquidity", "Direction", "Signal"],
     metrics: ["Eligible Boxes", "Executable Edges", "Signals", "Last Scan"],
     controls: ["All Eligible", "Expiry", "Strike Range", "Edge Threshold"],
+    pairTitle: "Low / High Strike Pair Monitor",
+    pairColumns: ["Time", "Underlying", "Expiry", "Low Strike", "High Strike", "Box Edge", "Liquidity", "Direction", "State"],
+    historyEndpoint: "/api/v1/scanner/box-spread/alerts?days=1&limit=100",
   },
   "custom-strategy": {
     slug: "custom-strategy",
@@ -98,6 +110,40 @@ function formatCell(slug: string, column: string, row: Row) {
   return formatValue(value(row, ...(keys[slug]?.[column] ?? [])));
 }
 
+function pairCell(slug: string, column: string, row: Row) {
+  const maps: Record<string, Record<string, string[]>> = {
+    "calendar-spread": {
+      Time: ["timestamp_ns", "observed_at"], Underlying: ["underlying"], Exchange: ["exchange"],
+      Near: ["near_contract_month"], Far: ["far_contract_month"], Spread: ["gap_points"],
+      Edge: ["long_edge", "short_edge"], Liquidity: ["liquidity_qty"], State: ["direction", "qualifies"],
+    },
+    "synthetic-arbitrage": {
+      Time: ["timestamp_ns", "observed_at"], Underlying: ["underlying"], Expiry: ["expiry"], Strike: ["strike"],
+      Option: ["direction", "call_bid", "put_bid"], Future: ["future_bid", "future_ask"],
+      Edge: ["executable_edge"], Direction: ["direction"], State: ["executable_edge"],
+    },
+    "box-spread": {
+      Time: ["timestamp_ns", "observed_at"], Underlying: ["symbol", "underlying"], Expiry: ["expiry"],
+      "Low Strike": ["low_strike"], "High Strike": ["high_strike"], "Box Edge": ["executable_edge"],
+      Liquidity: ["liquidity_qty"], Direction: ["direction"], State: ["executable_edge"],
+    },
+  };
+  const raw = value(row, ...(maps[slug]?.[column] ?? []));
+  if (column === "Time") {
+    if (raw === undefined || raw === null || raw === "") return "—";
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 1_000_000_000_000) return new Date(n / 1_000_000).toLocaleTimeString("en-IN", { hour12: false });
+    const d = new Date(String(raw));
+    return Number.isNaN(d.getTime()) ? String(raw) : d.toLocaleTimeString("en-IN", { hour12: false });
+  }
+  if (column === "State") {
+    const edge = numberValue(row, "executable_edge", "long_edge", "short_edge");
+    if (slug === "calendar-spread") return row.qualifies === true || edge > 0 ? "OPPORTUNITY" : "NO SIGNAL";
+    return edge > 0 ? "EDGE" : "NO EDGE";
+  }
+  return formatValue(raw);
+}
+
 function isSignal(slug: string, row: Row) {
   if (slug === "calendar-spread") return row.qualifies === true || numberValue(row, "long_edge", "short_edge") > 0;
   return numberValue(row, "executable_edge") > 0;
@@ -122,6 +168,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [control, setControl] = useState(c.controls[0]);
   const [refreshing, setRefreshing] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
+  const [historyRows, setHistoryRows] = useState<Row[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [feedTicks, setFeedTicks] = useState<number | null>(null);
@@ -153,6 +201,30 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setLoading(false);
     }
   };
+
+  const loadHistory = async () => {
+    if (isCustom || !c.historyEndpoint) return;
+    setHistoryLoading(true);
+    try {
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+      const response = await fetch(base + c.historyEndpoint, { cache: "no-store" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(c.title + " history HTTP " + response.status);
+      const data = Array.isArray(body?.data) ? body.data : [];
+      setHistoryRows(data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
+    } catch {
+      // Keep last good history snapshot during transient backend failures.
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isCustom) return;
+    void loadHistory();
+    const timer = window.setInterval(() => void loadHistory(), 10000);
+    return () => window.clearInterval(timer);
+  }, [isCustom, c.historyEndpoint]);
 
   useEffect(() => {
     if (isCustom) return;
@@ -213,7 +285,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const refresh = async () => {
     setRefreshing(true);
-    await load();
+    await Promise.all([load(), loadHistory()]);
     setRefreshing(false);
   };
 
@@ -309,19 +381,52 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live {c.title} Monitor & Diagnostics</h2><p className="mt-1 text-xs theme-muted">Strategy output is synchronized with the common market-data feed and runner health.</p></div>
-          <span className="text-xs font-semibold theme-muted">{filteredRows.length.toLocaleString("en-IN")} rows shown • live refresh</span>
+          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live {c.pairTitle}</h2><p className="mt-1 text-xs theme-muted">Every current pair/combo from the real backend snapshot is shown, including rows without a signal.</p></div>
+          <span className="text-xs font-semibold theme-muted">{filteredRows.length.toLocaleString("en-IN")} live pairs • 1.5s refresh</span>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Rows received</p><p className="mt-1 text-lg font-semibold theme-text">{rows.length.toLocaleString("en-IN")}</p></div>
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Live pairs</p><p className="mt-1 text-lg font-semibold theme-text">{filteredRows.length.toLocaleString("en-IN")}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Signals / edges</p><p className="mt-1 text-lg font-semibold theme-text">{signals.toLocaleString("en-IN")}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Feed status</p><p className="mt-1 text-lg font-semibold theme-text">{feedStatus}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Feed age</p><p className="mt-1 text-lg font-semibold theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Last scan</p><p className="mt-1 text-lg font-semibold theme-text">{lastScan ? "LIVE" : "—"}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Broker execution</p><p className="mt-1 text-lg font-semibold theme-warning">OFF</p></div>
         </div>
-        <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs theme-muted">
-          <span className="font-semibold theme-text">Pipeline:</span> Common Market Data Feed → Strategy Runner → Live opportunity snapshot → Signal / no-signal classification. Feed counters are separate from opportunity-row counts.
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-[1100px] w-full text-left text-sm">
+            <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{c.pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
+            <tbody>
+              {loading ? <tr><td colSpan={c.pairColumns.length} className="px-4 py-10 text-center theme-muted">Loading live pair monitor…</td></tr> :
+              filteredRows.length === 0 ? <tr><td colSpan={c.pairColumns.length} className="px-4 py-10 text-center theme-muted">No live pair/combo observations</td></tr> :
+              filteredRows.map((row, index) => <tr key={String(row.id ?? row.timestamp_ns ?? slug + "-pair-" + index)} className="border-b theme-border last:border-0">
+                {c.pairColumns.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 1 ? "font-semibold theme-text" : "theme-muted")}>{pairCell(slug, column, row)}</td>)}
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs theme-muted"><span className="font-semibold theme-text">Common feed:</span> {feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN") + " ticks"} • {feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN") + " instruments"} • runner {runner?.running ? "RUNNING" : "STOPPED"}.</div>
+      </Card>
+
+      <Card className="theme-border theme-surface p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Post-Market {c.title} Pair History</h2><p className="mt-1 text-xs theme-muted">Real backend history/alert records for today's session. No synthetic rows are created in the UI.</p></div>
+          <span className="text-xs font-semibold theme-muted">{historyLoading ? "Loading…" : historyRows.length.toLocaleString("en-IN") + " saved"}</span>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Saved observations</p><p className="mt-1 text-lg font-semibold theme-text">{historyRows.length.toLocaleString("en-IN")}</p></div>
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Live monitor</p><p className="mt-1 text-lg font-semibold theme-success">CONNECTED</p></div>
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">History source</p><p className="mt-1 text-sm font-semibold theme-text">{slug === "calendar-spread" ? "Scanner history" : "Alert history"}</p></div>
+        </div>
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-[1100px] w-full text-left text-sm">
+            <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{c.pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
+            <tbody>
+              {historyRows.length === 0 ? <tr><td colSpan={c.pairColumns.length} className="px-4 py-10 text-center theme-muted">No saved pair history for this session.</td></tr> :
+              historyRows.map((row, index) => <tr key={String(row.id ?? row.timestamp_ns ?? slug + "-history-" + index)} className="border-b theme-border last:border-0">
+                {c.pairColumns.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 1 ? "font-semibold theme-text" : "theme-muted")}>{pairCell(slug, column, row)}</td>)}
+              </tr>)}
+            </tbody>
+          </table>
         </div>
       </Card>
 
