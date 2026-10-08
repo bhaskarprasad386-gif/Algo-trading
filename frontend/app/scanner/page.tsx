@@ -43,6 +43,7 @@ function ScannerContent() {
   const [error, setError] = useState<string | null>(null);
   const [pairRows, setPairRows] = useState<Row[]>([]);
   const [pairHistory, setPairHistory] = useState<Row[]>([]);
+  const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
 
   const load = async () => {
     setLoading(true);
@@ -176,7 +177,7 @@ function ScannerContent() {
             <span className="h-2 w-2 rounded-full bg-current" />
             {loading ? "CONNECTING" : error ? "BACKEND ERROR" : rows.length ? "LIVE TICKS" : "API CONNECTED • NO LIVE DATA"}
           </span>
-          <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Zap className="h-4 w-4" /> 1.5s polling</span>
+          <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Zap className="h-4 w-4" /> {marketSession === "CLOSED" ? "Polling paused • Market closed" : "1.5s polling"}</span>
           <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Bell className="h-4 w-4" /> Alerts: —</span>
         </div>
         <div className="flex gap-2">
@@ -236,7 +237,7 @@ function ScannerContent() {
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live Pair Monitor & Diagnostics</h2><p className="mt-1 text-xs theme-muted">Every matched cash + futures pair is shown here even when it cannot become a signal. Diagnostics are persisted for post-market review.</p></div>
-          <span className="text-xs font-semibold theme-muted">{pairStats.pairs} recent pairs • 1.5s refresh</span>
+          <span className="text-xs font-semibold theme-muted">{pairStats.pairs} recent pairs • {marketSession === "CLOSED" ? "refresh paused" : "1.5s refresh"}</span>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-4">{[["Pairs matched", pairStats.pairs], ["Missing quote", pairStats.missing], ["No signal", pairStats.noSignal], ["Signals", pairStats.signals]].map(([label, value]) => <div key={String(label)} className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">{label}</p><p className="mt-1 text-lg font-semibold theme-text">{value}</p></div>)}</div>
         <div className="mt-4 overflow-x-auto"><table className="min-w-[1100px] w-full text-left text-sm">
