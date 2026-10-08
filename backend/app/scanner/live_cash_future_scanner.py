@@ -344,6 +344,10 @@ class LiveCashFutureScanner:
         with self._lock:
             self._pair_events.appendleft(event)
             self._stats["pair_events"] += 1
+            # `last_observation_at` is the last accepted scanner pair observation,
+            # not merely the last incoming leg that may later be rejected.
+            if self._last_observation_ns is None or timestamp_ns >= self._last_observation_ns:
+                self._last_observation_ns = timestamp_ns
             persist_ok = time.monotonic() - self._last_pair_persist_at.get((symbol, month), 0.0) >= 5.0
             if persist_ok:
                 self._last_pair_persist_at[(symbol, month)] = time.monotonic()
@@ -442,7 +446,6 @@ class LiveCashFutureScanner:
             return None
         with self._lock:
             self._stats["observations"] += 1
-            self._last_observation_ns = timestamp_ns
         received_at_ns = payload.get("received_at_ns")
         try:
             received_at_ns = int(received_at_ns) if received_at_ns is not None else time.time_ns()
