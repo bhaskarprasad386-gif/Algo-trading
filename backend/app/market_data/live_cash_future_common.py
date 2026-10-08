@@ -65,6 +65,13 @@ class LiveCashFutureCommonRunner:
         self._latest_persisted: dict[InstrumentKey, MarketDataRecord] = {}
         self._last_retention_date: date | None = None
         self._last_contract_refresh_date: date | None = None
+        # Runtime path telemetry: proves whether normalized records reach this
+        # strategy callback before changing scanner logic.
+        self._records_received = 0
+        self._records_missing_metadata = 0
+        self._payload_callbacks = 0
+        self._scanner_updates = 0
+        self._scanner_results = 0
 
     @property
     def last_result(self) -> CashFutureScanResult | None:
@@ -77,6 +84,11 @@ class LiveCashFutureCommonRunner:
             "running": not self.stop_event.is_set() and not self._stopped,
             "registered_instruments": len(self._metadata),
             "ingestor": None if ingestor is None else ingestor.snapshot(),
+            "records_received": self._records_received,
+            "records_missing_metadata": self._records_missing_metadata,
+            "payload_callbacks": self._payload_callbacks,
+            "scanner_updates": self._scanner_updates,
+            "scanner_results": self._scanner_results,
         }
 
     def _build_descriptors(self) -> tuple[InstrumentDescriptor, ...]:
@@ -220,8 +232,10 @@ class LiveCashFutureCommonRunner:
             app_logger.error("Cash-Future common persistence submit failed: %s", exc)
 
     def _on_record(self, record: MarketDataRecord) -> None:
+        self._records_received += 1
         meta = self._metadata.get(record.instrument)
         if meta is None:
+            self._records_missing_metadata += 1
             return
         if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED and self._ingestor is not None:
             # Persist one latest broker tick per second. The canonical WebSocket
@@ -240,9 +254,11 @@ class LiveCashFutureCommonRunner:
         if self.on_payload is not None:
             try:
                 self.on_payload(self._record_payload(record, meta))
+                self._payload_callbacks += 1
             except Exception as exc:
                 app_logger.error("Cash-Future payload callback failed: %s", exc)
         try:
+            self._scanner_updates += 1
             result = self.scanner.update(
                 record,
                 contract_month=meta["contract_month"],
@@ -250,6 +266,7 @@ class LiveCashFutureCommonRunner:
         except ValueError:
             return
         if result is not None and result.signal.qualifies:
+            self._scanner_results += 1
             self._last_result = result
             if self.on_result is not None:
                 try:
