@@ -216,7 +216,7 @@ function ScannerContent() {
   const reasonText = (row: Row) => reasonCodes(row).join(" • ") || "PAIR_CREATED";
 
   const stabilityText = (row: Row) => {
-    const stable = numberValue(row, "stable_observations");
+    const stable = numberValue(row, "stable_observations") ?? 0;
     const reasons = reasonCodes(row);
     if (stable > 0) return String(stable);
     if (reasons.includes("NOT_STABLE_YET")) return "0";
@@ -371,7 +371,7 @@ function ScannerContent() {
               <td className="px-4 py-3 theme-muted">{formatTime(row.observed_at)}</td><td className="px-4 py-3 font-semibold theme-text">{cell(row, "symbol")}</td>
               <td className="px-4 py-3 theme-muted">{cell(row, "contract_month")}</td><td className="px-4 py-3 font-semibold theme-text">{statusLabel}</td>
               <td className="px-4 py-3 theme-muted">{cell(row, "cash_ask")}</td><td className="px-4 py-3 theme-muted">{cell(row, "future_bid")}</td>
-              <td className="px-4 py-3 theme-muted">{numberValue(row, "gap_pct").toFixed(4)}%</td>
+              <td className="px-4 py-3 theme-muted">{percentText(row)}</td>
               <td className="px-4 py-3 theme-muted">{stabilityText(row)}</td>
               <td className="px-4 py-3 theme-muted">{feedAgeText(row)}</td>
               <td className="max-w-[430px] px-4 py-3 text-xs leading-5 theme-muted"><div className="font-semibold theme-text">{eligibilityText(row)}</div><div className="mt-1">{reasonText(row)}</div></td>
