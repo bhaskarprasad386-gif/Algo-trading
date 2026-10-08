@@ -109,13 +109,32 @@ def cash_future_live_fast_scanner(
     }
 
 
+@router.get("/cash-future/live/pairs")
+def cash_future_live_pairs(
+    max_age_seconds: float = Query(15.0, gt=0, le=300),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Return recent Cash-Future pair diagnostics, including pairs that cannot form a signal."""
+    from app.main import live_cash_future_scanner
+    return {
+        "status": "success",
+        "scanner": "cash-future",
+        "mode": "live-pair-diagnostics",
+        "max_age_seconds": float(max_age_seconds),
+        "data": live_cash_future_scanner.pair_snapshot(
+            max_age_seconds=float(max_age_seconds),
+            limit=int(limit),
+        ),
+    }
+
+
 @router.get("/cash-future/live/history")
 def cash_future_live_scanner_history(
     days: int = Query(90, ge=1, le=90),
     limit: int = Query(1000, ge=1, le=5000),
     db: Session = Depends(get_db),
 ):
-    """Return persisted eligible live scanner results for up to the last 90 days."""
+    """Return persisted live pair diagnostics and scanner results for up to the last 90 days."""
     cutoff = datetime.now(IST).replace(tzinfo=None) - timedelta(days=int(days))
     rows = db.scalars(
         select(LiveCashFutureScannerResult)
@@ -126,7 +145,7 @@ def cash_future_live_scanner_history(
     return {
         "status": "success",
         "scanner": "cash-future",
-        "mode": "live-result-history",
+        "mode": "live-pair-history",
         "days": int(days),
         "count": len(rows),
         "data": [
