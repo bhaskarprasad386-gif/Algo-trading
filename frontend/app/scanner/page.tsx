@@ -347,7 +347,7 @@ function ScannerContent() {
         </div>
         {marketSession === "CLOSED" && <div className="mt-4 rounded-xl border theme-border theme-warning-bg p-3 text-xs theme-warning">Live scanning is paused because the market is closed. Current live counters are intentionally 0; saved diagnostics below remain available for the completed session.</div>}
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">{[
-          ["Pairs matched", pairStats.pairs],
+          ["Pair observations", pairStats.pairs],
           ["Quotes present", pairStats.quoted],
           ["Missing quote", pairStats.missing],
           ["Positive gap", pairStats.positiveGap],
@@ -357,10 +357,10 @@ function ScannerContent() {
           ["No signal", pairStats.noSignal],
           ["Signals", pairStats.signals],
         ].map(([label, value]) => <div key={String(label)} className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">{label}</p><p className="mt-1 text-lg font-semibold theme-text">{value}</p></div>)}</div>
-        <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs theme-muted"><span className="font-semibold theme-text">Pipeline:</span> Pair Created → Quotes → Liquidity → Positive Gap → Stability → Signal. Counts are read-only diagnostics derived from the current pair observations.</div>
+        <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs theme-muted"><span className="font-semibold theme-text">Pipeline:</span> Pair Created → Quotes → Liquidity → Positive Gap → Stability → Signal. Counts are read-only diagnostic observations, not unique-pair counts.</div>
         <div className="mt-3 flex flex-wrap gap-2 text-xs theme-muted">
           <span className="rounded-lg border theme-border px-3 py-2">Session feed observations: {cell(pairBackendStats, "observations")}</span>
-          <span className="rounded-lg border theme-border px-3 py-2">Pairs formed: {cell(pairBackendStats, "pairs")}</span>
+          <span className="rounded-lg border theme-border px-3 py-2">Pair observations: {cell(pairBackendStats, "pairs")}</span>
           <span className="rounded-lg border theme-border px-3 py-2">Quote failures: {cell(pairBackendStats, "pairs_missing_quotes")}</span>
           <span className="rounded-lg border theme-border px-3 py-2">Diagnostics persisted: {cell(pairBackendStats, "pair_events_persisted")}</span>
         </div>
