@@ -171,7 +171,7 @@ export default function HomePage() {
     let cancelled = false;
     const loadRuntimeHealth = async () => {
       try {
-        const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
         const response = await fetch(base + "/api/v1/market-data/runtime/health", { cache: "no-store" });
         if (!response.ok) throw new Error("runtime health");
         const body = await response.json();
