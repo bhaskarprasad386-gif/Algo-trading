@@ -23,10 +23,10 @@ const health = (api: string, ws: string, feed: string, ticks: number | null, run
   ["Dashboard WS", ws, ws === "CONNECTED" ? "ok" : ws === "ERROR" ? "error" : "warn"],
   ["Common Market Data Feed", feed, feed === "LIVE" ? "ok" : feed === "ERROR" ? "error" : "warn"],
   ["Ticks Received (session)", ticks == null ? "—" : ticks.toLocaleString("en-IN"), ticks && ticks > 0 ? "ok" : "warn"],
-  ["Cash Future Runner", runners.cash_future?.detail ?? "UNAVAILABLE", runners.cash_future?.running ? "ok" : "warn"],
-  ["Synthetic Future Runner", runners.synthetic_arbitrage?.detail ?? "UNAVAILABLE", runners.synthetic_arbitrage?.running ? "ok" : "warn"],
-  ["Box Spread Runner", runners.box_spread?.detail ?? "UNAVAILABLE", runners.box_spread?.running ? "ok" : "warn"],
-  ["Calendar Spread Runner", runners.calendar_spread?.detail ?? "UNAVAILABLE", runners.calendar_spread?.running ? "ok" : "warn"],
+  ["Cash Future Runner", runnerState(runners.cash_future?.detail, runners.cash_future?.running), runners.cash_future?.running ? "ok" : "warn"],
+  ["Synthetic Future Runner", runnerState(runners.synthetic_arbitrage?.detail, runners.synthetic_arbitrage?.running), runners.synthetic_arbitrage?.running ? "ok" : "warn"],
+  ["Box Spread Runner", runnerState(runners.box_spread?.detail, runners.box_spread?.running), runners.box_spread?.running ? "ok" : "warn"],
+  ["Calendar Spread Runner", runnerState(runners.calendar_spread?.detail, runners.calendar_spread?.running), runners.calendar_spread?.running ? "ok" : "warn"],
   ["Broker Orders", "OFF", "warn"],
 ] as const;
 
@@ -346,7 +346,7 @@ export default function HomePage() {
             ))}
           </Card>
           <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
-            {[["Ticks Received (session)", runtime.ticks.toLocaleString("en-IN")],["Common Feed Instruments", runtime.activeInstruments.toLocaleString("en-IN")],["Socket Groups", runtime.socketGroups + "/" + runtime.maxSocketSessions],["Last Feed Tick Age", feedAgeLabel]].map(([label, value]) => <div key={label} className="rounded-xl border theme-border theme-surface-2 px-2.5 py-2"><div className="text-[9px] uppercase tracking-wide theme-subtle">{label}</div><div className="mt-0.5 text-[11px] font-bold">{value}</div>{label === "Ticks" && runtime.runtimeStartedAt ? <div className="mt-0.5 text-[8px] theme-subtle">session {tickRuntimeLabel}</div> : null}</div>)}</div>
+            {[["Ticks Received (session)", runtime.ticks.toLocaleString("en-IN")],["Common Feed Instruments", runtime.activeInstruments.toLocaleString("en-IN")],["Socket Groups", runtime.socketGroups + "/" + runtime.maxSocketSessions],["Last Feed Tick Age", feedAgeLabel]].map(([label, value]) => <div key={label} className="rounded-xl border theme-border theme-surface-2 px-2.5 py-2"><div className="text-[9px] uppercase tracking-wide theme-subtle">{label}</div><div className="mt-0.5 text-[11px] font-bold">{value}</div>{label === "Ticks Received (session)" && runtime.runtimeStartedAt ? <div className="mt-0.5 text-[8px] theme-subtle">session started {tickRuntimeLabel}</div> : null}</div>)}</div>
         </section>
       </div>
 
