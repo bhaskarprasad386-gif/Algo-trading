@@ -22,7 +22,7 @@ const health = (api: string, ws: string, feed: string, ticks: number | null, run
   ["FastAPI", api, api === "CONNECTED" ? "ok" : api === "ERROR" ? "error" : "warn"],
   ["Dashboard WS", ws, ws === "CONNECTED" ? "ok" : ws === "ERROR" ? "error" : "warn"],
   ["Common Market Data Feed", feed, feed === "LIVE" ? "ok" : feed === "ERROR" ? "error" : "warn"],
-  ["Live Ticks", ticks == null ? "—" : ticks.toLocaleString("en-IN"), ticks && ticks > 0 ? "ok" : "warn"],
+  ["Ticks Received (session)", ticks == null ? "—" : ticks.toLocaleString("en-IN"), ticks && ticks > 0 ? "ok" : "warn"],
   ["Cash Future Runner", runners.cash_future?.detail ?? "UNAVAILABLE", runners.cash_future?.running ? "ok" : "warn"],
   ["Synthetic Future Runner", runners.synthetic_arbitrage?.detail ?? "UNAVAILABLE", runners.synthetic_arbitrage?.running ? "ok" : "warn"],
   ["Box Spread Runner", runners.box_spread?.detail ?? "UNAVAILABLE", runners.box_spread?.running ? "ok" : "warn"],
@@ -45,6 +45,7 @@ export default function HomePage() {
   const [runtime, setRuntime] = useState<{ticks: number; runtimeStartedAt: number | null; activeInstruments: number; socketGroups: number; maxSocketSessions: number; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string}>}>({ticks: 0, runtimeStartedAt: null, activeInstruments: 0, socketGroups: 0, maxSocketSessions: 3, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [diagnosticErrors, setDiagnosticErrors] = useState<any[]>([]);
+  const [diagnosticCount, setDiagnosticCount] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -225,7 +226,10 @@ export default function HomePage() {
         const response = await fetch(base + "/api/v1/diagnostics/errors?limit=50", { cache: "no-store" });
         if (!response.ok) throw new Error("diagnostics");
         const body = await response.json();
-        if (!cancelled) setDiagnosticErrors(Array.isArray(body?.errors) ? body.errors : []);
+        if (!cancelled) {
+          setDiagnosticErrors(Array.isArray(body?.errors) ? body.errors : []);
+          setDiagnosticCount(Number.isFinite(Number(body?.count)) ? Number(body.count) : (Array.isArray(body?.errors) ? body.errors.length : 0));
+        }
       } catch {
         // Do not manufacture a fake runtime error when the diagnostic endpoint is unavailable.
       }
@@ -259,6 +263,14 @@ export default function HomePage() {
   const wsLabel = wsStatus === "connected" ? "CONNECTED" : wsStatus === "error" ? "ERROR" : "CONNECTING";
   const tickRuntimeLabel = runtime.runtimeStartedAt ? new Date(runtime.runtimeStartedAt * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—";
   const feedLabel = feedStatus === "live" ? "LIVE" : feedStatus === "stale" ? "STALE" : feedStatus === "no-data" ? "NO DATA" : feedStatus === "closed" ? "CLOSED" : feedStatus === "error" ? "ERROR" : "CHECKING";
+  const feedAgeLabel = feedAge == null ? "Not available" : feedAge >= 3600 ? `${Math.floor(feedAge / 3600)}h ${Math.floor((feedAge % 3600) / 60)}m` : feedAge >= 60 ? `${Math.floor(feedAge / 60)}m ${Math.floor(feedAge % 60)}s` : `${feedAge.toFixed(1)}s`;
+  const runnerState = (detail: string | undefined, running: boolean | undefined) => {
+    if (!detail || detail === "UNAVAILABLE") return "UNAVAILABLE";
+    const suffix = detail.replace(/^RUNNING|^STOPPED/, "").trim();
+    if (marketSession === "CLOSED") return `${running ? "RUNNING • IDLE" : "STOPPED"} • Market closed${suffix ? " • " + suffix.replace(/^•\s*/, "") : ""}`;
+    if (marketSession === "UNKNOWN") return `${running ? "RUNNING" : "STOPPED"} • Market state unknown${suffix ? " • " + suffix.replace(/^•\s*/, "") : ""}`;
+    return detail;
+  };
   const snapshotAge = snapshot.timestamp ? Math.max(0, (Date.now() - new Date(snapshot.timestamp).getTime()) / 1000) : null;
   const marketDataAge = marketCheckedAt ? Math.max(0, (Date.now() - new Date(marketCheckedAt).getTime()) / 1000) : null;
   const scannerStatus = [
@@ -313,12 +325,12 @@ export default function HomePage() {
           <div className="mb-3 flex items-center gap-2"><WalletCards size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Paper Ledger</h2></div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Card className="rounded-2xl p-4">
-              <div className="flex items-center justify-between"><div className="text-[11px] font-semibold uppercase tracking-wide theme-subtle">Paper Capital</div><WalletCards size={15} className="theme-accent" /></div>
+              <div className="flex items-center justify-between"><div className="text-[11px] font-semibold uppercase tracking-wide theme-subtle">Paper Capital • This Browser</div><WalletCards size={15} className="theme-accent" /></div>
               <div className="mt-1 text-[16px] font-bold">{formattedCapital}</div>
               <input inputMode="numeric" value={capitalDraft} onChange={(event) => { setCapitalDraft(event.target.value.replace(/[^0-9]/g, "")); setCapitalSaved(false); }} aria-label="Manual paper capital amount" className="mt-3 min-h-10 w-full px-3 text-xs" />
               <button type="button" onClick={saveCapital} disabled={!capitalDraft || Number(capitalDraft) <= 0} className="mt-2 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-[var(--app-accent)] px-3 text-xs font-bold theme-text transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"><Save size={14} /> {capitalSaved ? "Saved" : "Save"}</button>
             </Card>
-            <Card className="rounded-2xl p-4"><div className="flex gap-6"><div><div className="text-[11px] font-semibold theme-subtle">Available Balance</div><div className="mt-1 text-sm font-semibold">—</div></div><div><div className="text-[11px] font-semibold theme-subtle">Today&apos;s P&amp;L</div><div className="mt-1 text-sm font-semibold">—</div></div></div></Card>
+            <Card className="rounded-2xl p-4"><div className="flex gap-6"><div><div className="text-[11px] font-semibold theme-subtle">Available Balance</div><div className="mt-1 text-sm font-semibold">Not connected</div></div><div><div className="text-[11px] font-semibold theme-subtle">Today&apos;s P&amp;L</div><div className="mt-1 text-sm font-semibold">Not connected</div></div></Card>
             <Card className="rounded-2xl p-4"><div className="text-[11px] font-semibold theme-subtle">Open Positions</div><div className="mt-1 text-sm font-semibold">—</div></Card>
           </div>
         </section>
@@ -334,7 +346,7 @@ export default function HomePage() {
             ))}
           </Card>
           <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
-            {[["Ticks", runtime.ticks.toLocaleString("en-IN")],["Instruments", runtime.activeInstruments.toLocaleString("en-IN")],["Sockets", runtime.socketGroups + "/" + runtime.maxSocketSessions],["Feed age", feedAge == null ? "—" : feedAge.toFixed(1) + "s"]].map(([label, value]) => <div key={label} className="rounded-xl border theme-border theme-surface-2 px-2.5 py-2"><div className="text-[9px] uppercase tracking-wide theme-subtle">{label}</div><div className="mt-0.5 text-[11px] font-bold">{value}</div>{label === "Ticks" && runtime.runtimeStartedAt ? <div className="mt-0.5 text-[8px] theme-subtle">session {tickRuntimeLabel}</div> : null}</div>)}</div>
+            {[["Ticks Received (session)", runtime.ticks.toLocaleString("en-IN")],["Common Feed Instruments", runtime.activeInstruments.toLocaleString("en-IN")],["Socket Groups", runtime.socketGroups + "/" + runtime.maxSocketSessions],["Last Feed Tick Age", feedAgeLabel]].map(([label, value]) => <div key={label} className="rounded-xl border theme-border theme-surface-2 px-2.5 py-2"><div className="text-[9px] uppercase tracking-wide theme-subtle">{label}</div><div className="mt-0.5 text-[11px] font-bold">{value}</div>{label === "Ticks" && runtime.runtimeStartedAt ? <div className="mt-0.5 text-[8px] theme-subtle">session {tickRuntimeLabel}</div> : null}</div>)}</div>
         </section>
       </div>
 
@@ -348,7 +360,7 @@ export default function HomePage() {
               <div className="min-w-0">
                 <div className="text-[13px] font-bold">Error Diagnostics</div>
                 <div className="mt-0.5 text-[10px] theme-subtle">
-                  {diagnosticErrors.length ? diagnosticErrors.length + " actual runtime error" + (diagnosticErrors.length === 1 ? "" : "s") + " recorded" : "No active runtime errors"}
+                  {diagnosticCount ? `${diagnosticCount.toLocaleString("en-IN")} runtime errors recorded since API process start (not an active-error count)` : "No errors recorded by this endpoint since API process start"}
                 </div>
               </div>
             </div>
@@ -394,16 +406,16 @@ export default function HomePage() {
                 ["FastAPI", apiLabel],
                 ["Dashboard WebSocket", wsLabel],
                 ["Common Market Data Feed", feedLabel],
-                ["Live Ticks", runtime.ticks.toLocaleString("en-IN")],
+                ["Ticks Received (session)", runtime.ticks.toLocaleString("en-IN")],
                 ["Tick Counter", runtime.runtimeStartedAt ? `Session • ${tickRuntimeLabel}` : "—"],
                 ["Cash Future Runner", runtime.runners.cash_future?.detail ?? "UNAVAILABLE"],
                 ["Synthetic Future Runner", runtime.runners.synthetic_arbitrage?.detail ?? "UNAVAILABLE"],
                 ["Box Spread Runner", runtime.runners.box_spread?.detail ?? "UNAVAILABLE"],
                 ["Calendar Spread Runner", runtime.runners.calendar_spread?.detail ?? "UNAVAILABLE"],
                 ["Broker Orders", "OFF"],
-                ["Active Instruments", runtime.activeInstruments.toLocaleString("en-IN")],
+                ["Common Feed Instruments", runtime.activeInstruments.toLocaleString("en-IN")],
                 ["Socket Groups", runtime.socketGroups + "/" + runtime.maxSocketSessions],
-                ["Feed Age", feedAge == null ? "—" : feedAge.toFixed(1) + "s"],
+                ["Last Feed Tick Age", feedAgeLabel],
                 ["Delivery / Normalizer Errors", runtime.deliveryErrors + " / " + runtime.normalizerErrors],
                 ["NSE Session", marketSession],
                 ["MCX Session Window", "09:00–23:30 / 23:55 seasonal"],
@@ -415,8 +427,8 @@ export default function HomePage() {
               ))}
             </div>
             <div className="mt-4 rounded-xl border theme-border theme-surface-2 p-3">
-              <div className="text-[10px] font-bold uppercase tracking-wide">Error Diagnostics</div>
-              {diagnosticErrors.length === 0 ? <div className="mt-2 text-[10px] theme-success">No active errors</div> : (
+              <div className="text-[10px] font-bold uppercase tracking-wide">Runtime Errors Recorded Since API Process Start</div>
+              {diagnosticErrors.length === 0 ? <div className="mt-2 text-[10px] theme-muted">No error records returned in the latest sample. This does not independently prove zero active faults.</div> : (
                 <div className="mt-2 max-h-48 space-y-2 overflow-auto">
                   {diagnosticErrors.map((error) => (
                     <div key={error.id} className="rounded-lg border theme-border px-2.5 py-2">
@@ -431,7 +443,7 @@ export default function HomePage() {
                 </div>
               )}
             </div>
-            <div className="mt-4 rounded-xl border theme-border theme-accent-bg p-3"><div className="text-[10px] font-bold uppercase tracking-wide theme-accent">Common Feed Diagnostics</div><div className="mt-2 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4"><span>Consumers: <b>{runtime.consumers.length}</b></span><span>Delivery errors: <b>{runtime.deliveryErrors}</b></span><span>Normalizer errors: <b>{runtime.normalizerErrors}</b></span><span>Market: <b>{marketSession}</b></span></div></div><div className="mt-4 flex justify-end">
+            <div className="mt-4 rounded-xl border theme-border theme-accent-bg p-3"><div className="text-[10px] font-bold uppercase tracking-wide theme-accent">Common Feed Diagnostics • Session Counters</div><div className="mt-2 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4"><span>Consumers: <b>{runtime.consumers.length}</b></span><span>Delivery errors: <b>{runtime.deliveryErrors}</b></span><span>Normalizer errors: <b>{runtime.normalizerErrors}</b></span><span>Market: <b>{marketSession}</b></span></div></div><div className="mt-4 flex justify-end">
               <Link href="/scanner" onClick={() => setConnectionsOpen(false)} className="rounded-xl theme-accent-bg px-3 py-2 text-[11px] font-bold theme-accent">Open Scanner</Link>
             </div>
           </Card>
