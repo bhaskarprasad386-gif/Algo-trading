@@ -9,7 +9,7 @@ import { appConfig } from "@/lib/config";
 
 const markets = ["ALL F&O STOCKS", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
 const columns = ["Symbol", "Expiry", "Cash Bid/Ask", "Future Bid/Ask", "Executable Gap", "Volume / OI", "Signal"];
-const pairColumns = ["Time", "Symbol", "Contract", "Pair State", "Cash Ask", "Future Bid", "Gap %", "Why / Diagnostics"];
+const pairColumns = ["Time", "Symbol", "Contract", "Pair State", "Cash Ask", "Future Bid", "Gap %", "Stability", "Feed Age", "Eligibility / Diagnostics"];
 
 type Row = Record<string, unknown>;
 
@@ -166,12 +166,28 @@ function ScannerContent() {
     });
   }, [pairHistory, market, search]);
 
-  const pairStats = useMemo(() => ({
-    pairs: filteredPairs.length,
-    missing: filteredPairs.filter((row) => row.status === "MISSING_EXECUTION_QUOTE").length,
-    noSignal: filteredPairs.filter((row) => row.status === "NO_SIGNAL").length,
-    signals: filteredPairs.filter((row) => row.status === "SIGNAL").length,
-  }), [filteredPairs]);
+  const pairStats = useMemo(() => {
+    const missing = filteredPairs.filter((row) => row.status === "MISSING_EXECUTION_QUOTE");
+    const quoted = filteredPairs.filter((row) => row.status !== "MISSING_EXECUTION_QUOTE");
+    const liquidityBlocked = filteredPairs.filter((row) => row.status === "LIQUIDITY_BLOCKED");
+    const positiveGap = quoted.filter((row) => numberValue(row, "gap") > 0);
+    const stable = quoted.filter((row) => {
+      const reasons = Array.isArray(row.reason_codes) ? row.reason_codes : String(row.reason_codes ?? "").split(",");
+      return reasons.includes("STABLE");
+    });
+    const signals = filteredPairs.filter((row) => row.status === "SIGNAL");
+    const noSignal = filteredPairs.filter((row) => row.status === "NO_SIGNAL");
+    return {
+      pairs: filteredPairs.length,
+      missing: missing.length,
+      quoted: quoted.length,
+      liquidityBlocked: liquidityBlocked.length,
+      positiveGap: positiveGap.length,
+      stable: stable.length,
+      noSignal: noSignal.length,
+      signals: signals.length,
+    };
+  }, [filteredPairs]);
 
   const formatTime = (value: unknown) => {
     if (!value) return "—";
@@ -179,9 +195,37 @@ function ScannerContent() {
     return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleTimeString("en-IN", { hour12: false });
   };
 
-  const reasonText = (row: Row) => {
-    const reasons = Array.isArray(row.reason_codes) ? row.reason_codes : String(row.reason_codes ?? "").split(",").filter(Boolean);
-    return reasons.join(" • ") || "PAIR_CREATED";
+  const reasonCodes = (row: Row) => Array.isArray(row.reason_codes)
+    ? row.reason_codes.map(String)
+    : String(row.reason_codes ?? "").split(",").filter(Boolean);
+
+  const reasonText = (row: Row) => reasonCodes(row).join(" • ") || "PAIR_CREATED";
+
+  const stabilityText = (row: Row) => {
+    const stable = numberValue(row, "stable_observations");
+    const reasons = reasonCodes(row);
+    if (stable > 0) return String(stable);
+    if (reasons.includes("NOT_STABLE_YET")) return "0";
+    return "—";
+  };
+
+  const eligibilityText = (row: Row) => {
+    const status = String(row.status ?? "");
+    if (status === "MISSING_EXECUTION_QUOTE") return "QUOTE ✗";
+    if (status === "LIQUIDITY_BLOCKED") return "LIQUIDITY ✗";
+    const reasons = reasonCodes(row);
+    const checks = [
+      numberValue(row, "gap") > 0 ? "Gap ✓" : "Gap ✗",
+      numberValue(row, "net_gap") > 0 || reasons.includes("POSITIVE_NET_GAP") ? "Net ✓" : "Net ✗",
+      reasons.includes("STABLE") ? "Stable ✓" : "Stable ✗",
+    ];
+    return checks.join(" • ");
+  };
+
+  const feedAgeText = (row: Row) => {
+    const age = Number(row.age_ms);
+    if (!Number.isFinite(age)) return "—";
+    return age < 1000 ? `${Math.round(age)} ms` : `${(age / 1000).toFixed(1)} s`;
   };
 
   const refresh = async () => {
@@ -272,7 +316,10 @@ function ScannerContent() {
               <td className="px-4 py-3 theme-muted">{formatTime(row.observed_at)}</td><td className="px-4 py-3 font-semibold theme-text">{cell(row, "symbol")}</td>
               <td className="px-4 py-3 theme-muted">{cell(row, "contract_month")}</td><td className="px-4 py-3 font-semibold theme-text">{statusLabel}</td>
               <td className="px-4 py-3 theme-muted">{cell(row, "cash_ask")}</td><td className="px-4 py-3 theme-muted">{cell(row, "future_bid")}</td>
-              <td className="px-4 py-3 theme-muted">{numberValue(row, "gap_pct").toFixed(4)}%</td><td className="max-w-[430px] px-4 py-3 text-xs leading-5 theme-muted">{reasonText(row)}</td>
+              <td className="px-4 py-3 theme-muted">{numberValue(row, "gap_pct").toFixed(4)}%</td>
+              <td className="px-4 py-3 theme-muted">{stabilityText(row)}</td>
+              <td className="px-4 py-3 theme-muted">{feedAgeText(row)}</td>
+              <td className="max-w-[430px] px-4 py-3 text-xs leading-5 theme-muted"><div className="font-semibold theme-text">{eligibilityText(row)}</div><div className="mt-1">{reasonText(row)}</div></td>
             </tr>;
           })}</tbody>
         </table></div>
