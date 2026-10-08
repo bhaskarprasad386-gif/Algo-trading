@@ -116,15 +116,20 @@ def cash_future_live_pairs(
 ):
     """Return recent Cash-Future pair diagnostics, including pairs that cannot form a signal."""
     from app.main import live_cash_future_scanner
+    data = live_cash_future_scanner.pair_snapshot(
+        max_age_seconds=float(max_age_seconds),
+        limit=int(limit),
+    )
+    with live_cash_future_scanner._lock:
+        stats = dict(live_cash_future_scanner._stats)
     return {
         "status": "success",
         "scanner": "cash-future",
         "mode": "live-pair-diagnostics",
         "max_age_seconds": float(max_age_seconds),
-        "data": live_cash_future_scanner.pair_snapshot(
-            max_age_seconds=float(max_age_seconds),
-            limit=int(limit),
-        ),
+        "count": len(data),
+        "stats": stats,
+        "data": data,
     }
 
 
