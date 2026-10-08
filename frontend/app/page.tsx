@@ -330,8 +330,8 @@ export default function HomePage() {
               <input inputMode="numeric" value={capitalDraft} onChange={(event) => { setCapitalDraft(event.target.value.replace(/[^0-9]/g, "")); setCapitalSaved(false); }} aria-label="Manual paper capital amount" className="mt-3 min-h-10 w-full px-3 text-xs" />
               <button type="button" onClick={saveCapital} disabled={!capitalDraft || Number(capitalDraft) <= 0} className="mt-2 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-[var(--app-accent)] px-3 text-xs font-bold theme-text transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"><Save size={14} /> {capitalSaved ? "Saved" : "Save"}</button>
             </Card>
-            <Card className="rounded-2xl p-4"><div className="flex gap-6"><div><div className="text-[11px] font-semibold theme-subtle">Available Balance</div><div className="mt-1 text-sm font-semibold">Not connected</div></div><div><div className="text-[11px] font-semibold theme-subtle">Today&apos;s P&amp;L</div><div className="mt-1 text-sm font-semibold">Not connected</div></div></Card>
-            <Card className="rounded-2xl p-4"><div className="text-[11px] font-semibold theme-subtle">Open Positions</div><div className="mt-1 text-sm font-semibold">—</div></Card>
+            <Card className="rounded-2xl p-4"><div className="flex gap-6"><div><div className="text-[11px] font-semibold theme-subtle">Available Balance</div><div className="mt-1 text-sm font-semibold">Not connected</div></div><div><div className="text-[11px] font-semibold theme-subtle">Today&apos;s P&amp;L</div><div className="mt-1 text-sm font-semibold">Not connected</div></div></div></Card>
+            <Card className="rounded-2xl p-4"><div className="text-[11px] font-semibold theme-subtle">Open Positions</div><div className="mt-1 text-sm font-semibold">Not connected</div></Card>
           </div>
         </section>
 
@@ -341,7 +341,7 @@ export default function HomePage() {
             {health(apiLabel, wsLabel, feedLabel, runtime.ticks, runtime.runners).map(([name, value, state]) => (
               <div key={name} className="flex items-center justify-between rounded-xl px-2 py-2">
                 <div className="flex items-center gap-2 text-[12px] font-medium theme-muted">{state === "error" ? <TriangleAlert size={14} className="theme-danger" /> : state === "warn" ? <TriangleAlert size={14} className="theme-warning" /> : <span className="h-2 w-2 rounded-full bg-[var(--app-success)]" />}{name}</div>
-                <span title={name === "Live Ticks" && runtime.runtimeStartedAt ? `Session started ${tickRuntimeLabel}; counter resets only when FastAPI restarts` : undefined} className={"rounded-full px-2.5 py-1 text-[10px] font-bold " + (state === "ok" ? "theme-success-bg theme-success" : state === "warn" ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{value}</span>
+                <span title={name === "Ticks Received (session)" && runtime.runtimeStartedAt ? `Session started ${tickRuntimeLabel}; counter resets only when FastAPI restarts` : undefined} className={"rounded-full px-2.5 py-1 text-[10px] font-bold " + (state === "ok" ? "theme-success-bg theme-success" : state === "warn" ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{value}</span>
               </div>
             ))}
           </Card>
