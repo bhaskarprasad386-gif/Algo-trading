@@ -125,9 +125,11 @@ function ScannerContent() {
     if (marketSession === "OPEN") {
       void load();
       void loadPairLive();
-    } else if (marketSession === "CLOSED") {
+    } else {
+      setLoading(false);
       setRows([]);
       setPairRows([]);
+      setError(null);
     }
     void loadPairHistory();
     const liveTimer = window.setInterval(() => {
