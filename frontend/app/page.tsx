@@ -317,6 +317,34 @@ export default function HomePage() {
         </section>
       </div>
 
+      <section aria-label="Error Diagnostics" className="mt-4">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2"><TriangleAlert size={16} className={diagnosticErrors.length ? "theme-danger" : "theme-success"} /><h2 className="text-[15px] font-semibold">Error Diagnostics</h2></div>
+          <span className={diagnosticErrors.length ? "theme-danger" : "theme-success"}>{diagnosticErrors.length ? diagnosticErrors.length + " active" : "No active errors"}</span>
+        </div>
+        <Card className="rounded-2xl border theme-border theme-surface-2 p-3">
+          {diagnosticErrors.length === 0 ? <div className="py-4 text-center text-[11px] theme-success">No active errors</div> : (
+            <div className="space-y-2">
+              {diagnosticErrors.map((error) => (
+                <div key={error.id} className="rounded-xl border theme-border p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2"><TriangleAlert size={14} className="theme-danger" /><span className="text-[11px] font-bold">{error.component}</span><span className="text-[9px] font-bold theme-danger">{error.severity}</span></div>
+                    <span className="text-[9px] theme-subtle">{new Date(error.time).toLocaleString("en-IN")}</span>
+                  </div>
+                  <div className="mt-2 text-[11px] font-semibold">{error.message}</div>
+                  <div className="mt-1 flex flex-wrap gap-3 text-[9px] theme-subtle">
+                    {error.error_type ? <span>Type: {error.error_type}</span> : null}
+                    {error.endpoint ? <span>Endpoint: {error.endpoint}</span> : null}
+                    {error.status_code ? <span>HTTP: {error.status_code}</span> : null}
+                    {error.context && Object.keys(error.context).length ? <span>Context: {JSON.stringify(error.context)}</span> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </section>
+
       <div className="mt-6 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
         <section aria-label="Strategy workspaces">
           <div className="mb-3 flex items-center gap-2"><Zap size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Strategy Workspaces</h2></div>
