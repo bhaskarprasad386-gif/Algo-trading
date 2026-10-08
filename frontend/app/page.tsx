@@ -168,6 +168,51 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    const loadRuntimeHealth = async () => {
+      try {
+        const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+        const response = await fetch(base + "/api/v1/market-data/runtime/health", { cache: "no-store" });
+        if (!response.ok) throw new Error("runtime health");
+        const body = await response.json();
+        if (cancelled) return;
+        const feed = body?.common_feed ?? {};
+        const runners = body?.runners ?? {};
+        const runnerDetail = (value: any) => {
+          if (!value) return { running: false, detail: "UNAVAILABLE" };
+          const running = Boolean(value.running);
+          const instruments = Number(value.registered_instruments ?? value.active_instruments ?? 0);
+          const updates = Number(value.scanner_updates ?? value.records_received ?? value.callbacks ?? 0);
+          const parts = [running ? "RUNNING" : "STOPPED"];
+          if (Number.isFinite(instruments) && instruments > 0) parts.push(instruments.toLocaleString("en-IN") + " instruments");
+          if (Number.isFinite(updates) && updates > 0) parts.push(updates.toLocaleString("en-IN") + " updates");
+          return { running, detail: parts.join(" • ") };
+        };
+        setRuntime({
+          ticks: Number(feed.ticks_received ?? 0),
+          activeInstruments: Number(feed.active_instruments ?? 0),
+          socketGroups: Number(feed.socket_groups ?? 0),
+          maxSocketSessions: Number(feed.max_socket_sessions ?? 3),
+          consumers: Array.isArray(feed.consumers) ? feed.consumers : [],
+          deliveryErrors: Number(feed.delivery_errors ?? 0),
+          normalizerErrors: Number(feed.normalizer_errors ?? 0),
+          runners: {
+            cash_future: runnerDetail(runners.cash_future),
+            synthetic_arbitrage: runnerDetail(runners.synthetic_arbitrage),
+            box_spread: runnerDetail(runners.box_spread),
+            calendar_spread: runnerDetail(runners.calendar_spread),
+          },
+        });
+      } catch {
+        // Keep the last successful runtime snapshot during transient API failures.
+      }
+    };
+    void loadRuntimeHealth();
+    const timer = window.setInterval(loadRuntimeHealth, 1500);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
+
+  useEffect(() => {
     const saved = window.localStorage.getItem("algo-paper-capital");
     if (saved && Number(saved) > 0) {
       setCapital(saved);
@@ -278,7 +323,7 @@ export default function HomePage() {
         <div className="space-y-4">
           <section aria-label="Scanner status"><div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Radio size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Scanner Status</h2></div><div className="text-[10px] theme-subtle">{snapshotAge == null ? "No snapshot yet" : snapshotAge < 10 ? `Snapshot ${Math.round(snapshotAge)}s ago` : `Snapshot stale • ${Math.round(snapshotAge)}s ago`}</div></div><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{scannerStatus.map((item) => <Card key={item.label} className="rounded-xl p-2.5"><div className="text-[10px] font-medium theme-subtle">{item.label}</div><div className="mt-1 text-[11px] font-semibold">{item.value}</div></Card>)}</div></section>
           <section aria-label="Operations"><div className="mb-3 flex items-center gap-2"><Zap size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Operations</h2></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Link href="/scanner"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Radio size={16} className="theme-accent" /><div><div className="text-[12px] font-semibold">Live Scanner</div><div className="text-[10px] theme-subtle">Open scanner console</div></div></div></Card></Link>
+            <Link href="/scanner"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Radio size={16} className="theme-accent" /><div><div className="text-[12px] font-semibold">Cash Future</div><div className="text-[10px] theme-subtle">Open Cash Future scanner</div></div></div></Card></Link>
             <Link href="/custom-alert"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Bell size={16} className="theme-warning" /><div><div className="text-[12px] font-semibold">Custom Alerts</div><div className="text-[10px] theme-subtle">Manage alerts</div></div></div></Card></Link>
             <Link href="/history"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Clock3 size={16} className="theme-accent" /><div><div className="text-[12px] font-semibold">History</div><div className="text-[10px] theme-subtle">Trade history & logs</div></div></div></Card></Link>
           </div></section>
@@ -303,7 +348,12 @@ export default function HomePage() {
               {[
                 ["FastAPI", apiLabel],
                 ["Dashboard WebSocket", wsLabel],
-                ["Market Feed", feedLabel],
+                ["Common Market Data Feed", feedLabel],
+                ["Live Ticks", runtime.ticks.toLocaleString("en-IN")],
+                ["Cash Future Runner", runtime.runners.cash_future?.detail ?? "UNAVAILABLE"],
+                ["Synthetic Future Runner", runtime.runners.synthetic_arbitrage?.detail ?? "UNAVAILABLE"],
+                ["Box Spread Runner", runtime.runners.box_spread?.detail ?? "UNAVAILABLE"],
+                ["Calendar Spread Runner", runtime.runners.calendar_spread?.detail ?? "UNAVAILABLE"],
                 ["Broker Orders", "OFF"],
               ].map(([name, value]) => (
                 <div key={name} className="flex items-center justify-between rounded-xl border theme-border px-3 py-2.5">
