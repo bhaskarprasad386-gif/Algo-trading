@@ -146,26 +146,33 @@ def cash_future_live_scanner_history(
     """
     now = datetime.now(IST).replace(tzinfo=None)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    rows = db.scalars(
-        select(LiveCashFutureScannerResult)
+    # Select the newest persisted observation per symbol/contract directly in SQL.
+    # This guarantees that one very active pair cannot consume the query window
+    # and hide other pairs from the 100-row post-market view.
+    ranked = (
+        select(
+            LiveCashFutureScannerResult.id.label("id"),
+            func.row_number().over(
+                partition_by=(
+                    LiveCashFutureScannerResult.symbol,
+                    LiveCashFutureScannerResult.contract_month,
+                ),
+                order_by=LiveCashFutureScannerResult.observed_at.desc(),
+            ).label("rn"),
+        )
         .where(
             LiveCashFutureScannerResult.observed_at >= day_start,
             LiveCashFutureScannerResult.observed_at <= now,
         )
+        .subquery()
+    )
+    rows = db.scalars(
+        select(LiveCashFutureScannerResult)
+        .join(ranked, LiveCashFutureScannerResult.id == ranked.c.id)
+        .where(ranked.c.rn == 1)
         .order_by(LiveCashFutureScannerResult.observed_at.desc())
-        .limit(int(limit) * 10)
+        .limit(int(limit))
     ).all()
-
-    # Persisted diagnostics can contain repeated observations for one pair.
-    # Keep the newest observation for each symbol/contract and expose at most
-    # 100 rows to the post-market panel.
-    latest: dict[tuple[str, str], LiveCashFutureScannerResult] = {}
-    for row in rows:
-        key = (str(row.symbol).upper(), str(row.contract_month).upper())
-        latest.setdefault(key, row)
-        if len(latest) >= int(limit):
-            break
-    rows = list(latest.values())[:int(limit)]
 
     return {
         "status": "success",
