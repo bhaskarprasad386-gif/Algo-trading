@@ -18,7 +18,12 @@ const numberValue = (row: Row, ...keys: string[]) => {
     const value = Number(row[key]);
     if (Number.isFinite(value)) return value;
   }
-  return 0;
+  return null;
+};
+
+const numberText = (row: Row, ...keys: string[]) => {
+  const value = numberValue(row, ...keys);
+  return value === null ? "—" : value.toLocaleString("en-IN", { maximumFractionDigits: 4 });
 };
 
 const cell = (row: Row, ...keys: string[]) => {
@@ -178,7 +183,7 @@ function ScannerContent() {
     const quoted = filteredPairs.filter((row) => row.status !== "MISSING_EXECUTION_QUOTE");
     const liquidityBlocked = filteredPairs.filter((row) => row.status === "LIQUIDITY_BLOCKED");
     const invalidBook = filteredPairs.filter((row) => row.status === "INVALID_FUTURE_BOOK");
-    const positiveGap = quoted.filter((row) => numberValue(row, "gap") > 0);
+    const positiveGap = quoted.filter((row) => (numberValue(row, "gap") ?? 0) > 0);
     const stable = quoted.filter((row) => {
       const reasons = Array.isArray(row.reason_codes) ? row.reason_codes : String(row.reason_codes ?? "").split(",");
       return reasons.includes("STABLE");
@@ -225,8 +230,8 @@ function ScannerContent() {
     if (status === "INVALID_FUTURE_BOOK") return "FUTURE BOOK ✗";
     const reasons = reasonCodes(row);
     const checks = [
-      numberValue(row, "gap") > 0 ? "Gap ✓" : "Gap ✗",
-      numberValue(row, "net_gap") > 0 || reasons.includes("POSITIVE_NET_GAP") ? "Net ✓" : "Net ✗",
+      numberValue(row, "gap") === null ? "Gap —" : numberValue(row, "gap")! > 0 ? "Gap ✓" : "Gap ✗",
+      numberValue(row, "net_gap") === null ? "Net —" : (numberValue(row, "net_gap")! > 0 || reasons.includes("POSITIVE_NET_GAP")) ? "Net ✓" : "Net ✗",
       reasons.includes("STABLE") ? "Stable ✓" : "Stable ✗",
     ];
     return checks.join(" • ");
@@ -236,6 +241,11 @@ function ScannerContent() {
     const age = Number(row.age_ms);
     if (!Number.isFinite(age)) return "—";
     return age < 1000 ? `${Math.round(age)} ms` : `${(age / 1000).toFixed(1)} s`;
+  };
+
+  const percentText = (row: Row, key = "gap_pct") => {
+    const value = numberValue(row, key);
+    return value === null ? "—" : `${value.toFixed(4)}%`;
   };
 
   const lastScanText = lastLiveScanAt
@@ -251,10 +261,10 @@ function ScannerContent() {
 
   const refresh = async () => {
     setRefreshing(true);
-    if (marketSession === "CLOSED") {
-      await loadPairHistory();
-    } else {
+    if (marketSession === "OPEN") {
       await Promise.all([load(), loadPairLive(), loadPairHistory()]);
+    } else {
+      await loadPairHistory();
     }
     setRefreshing(false);
   };
@@ -269,7 +279,7 @@ function ScannerContent() {
             <span className="h-2 w-2 rounded-full bg-current" />
             {loading ? "CONNECTING" : error ? "BACKEND ERROR" : marketSession === "OPEN" ? (rows.length ? "API CONNECTED • LIVE DATA" : "API CONNECTED • WAITING FOR LIVE DATA") : marketSession === "CLOSED" ? "API CONNECTED • NO LIVE DATA" : "API CONNECTED"}
           </span>
-          <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Zap className="h-4 w-4" /> {marketSession === "CLOSED" ? "Polling paused • Market closed" : "1.5s polling"}</span>
+          <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Zap className="h-4 w-4" /> {marketSession === "OPEN" ? "Auto-update • 1.5s" : marketSession === "CLOSED" ? "Auto-update paused • Market closed" : "Auto-update waiting • Market state"}</span>
           <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Bell className="h-4 w-4" /> Alerts: —</span>
         </div>
         <div className="flex gap-2">
@@ -314,11 +324,11 @@ function ScannerContent() {
                 : filteredRows.length === 0 ? <tr><td colSpan={columns.length} className="px-4 py-14 text-center text-sm theme-muted">No live data</td></tr>
                 : filteredRows.map((row, index) => <tr key={String(row.id ?? row.event_id ?? `scanner-${index}`)} className="border-b theme-border last:border-0">
                   <td className="px-4 py-3 font-semibold theme-text">{cell(row, "symbol", "underlying")}</td>
-                  <td className="px-4 py-3 theme-muted">{cell(row, "contract_month", "expiry")}</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "expiry")}</td>
                   <td className="px-4 py-3 theme-muted">{cell(row, "cash_bid")} / {cell(row, "cash_ask")}</td>
                   <td className="px-4 py-3 theme-muted">{cell(row, "future_bid")} / {cell(row, "future_ask")}</td>
                   <td className="px-4 py-3 theme-muted">{cell(row, "gap")}</td>
-                  <td className="px-4 py-3 theme-muted">{numberValue(row, "gap_pct").toFixed(4)}%</td>
+                  <td className="px-4 py-3 theme-muted">{percentText(row)}</td>
                   <td className="px-4 py-3 theme-muted">{cell(row, "future_volume")} / {cell(row, "future_oi")}</td>
                   <td className="px-4 py-3 theme-muted">{cell(row, "stable_observations")}</td>
                   <td className="px-4 py-3 font-semibold theme-text">{row.alert_eligible === true ? "ALERT SIGNAL" : row.eligible === true ? "QUALIFIED" : "—"}</td>
