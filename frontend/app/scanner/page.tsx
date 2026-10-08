@@ -66,27 +66,38 @@ function ScannerContent() {
     setMarket(markets.includes(requestedMarket) ? requestedMarket : "ALL F&O STOCKS");
   }, [requestedMarket]);
 
-  const loadPairDiagnostics = async () => {
+  const loadPairLive = async () => {
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const [liveResponse, historyResponse] = await Promise.all([
-        fetch(`${base}/api/v1/scanner/cash-future/live/pairs?max_age_seconds=30&limit=150`, { cache: "no-store" }),
-        fetch(`${base}/api/v1/scanner/cash-future/live/history?days=1&limit=250`, { cache: "no-store" }),
-      ]);
-      const liveBody = await liveResponse.json().catch(() => ({}));
-      const historyBody = await historyResponse.json().catch(() => ({}));
-      setPairRows(Array.isArray(liveBody?.data) ? liveBody.data : []);
-      setPairHistory(Array.isArray(historyBody?.data) ? historyBody.data : []);
+      const response = await fetch(`${base}/api/v1/scanner/cash-future/live/pairs?max_age_seconds=30&limit=150`, { cache: "no-store" });
+      const body = await response.json().catch(() => ({}));
+      setPairRows(Array.isArray(body?.data) ? body.data : []);
     } catch {
       setPairRows([]);
     }
   };
 
+  const loadPairHistory = async () => {
+    try {
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+      const response = await fetch(`${base}/api/v1/scanner/cash-future/live/history?days=1&limit=250`, { cache: "no-store" });
+      const body = await response.json().catch(() => ({}));
+      setPairHistory(Array.isArray(body?.data) ? body.data : []);
+    } catch {
+      setPairHistory([]);
+    }
+  };
+
   useEffect(() => {
     void load();
-    void loadPairDiagnostics();
-    const timer = window.setInterval(() => { void load(); void loadPairDiagnostics(); }, 1500);
-    return () => window.clearInterval(timer);
+    void loadPairLive();
+    void loadPairHistory();
+    const liveTimer = window.setInterval(() => { void load(); void loadPairLive(); }, 1500);
+    const historyTimer = window.setInterval(() => { void loadPairHistory(); }, 10000);
+    return () => {
+      window.clearInterval(liveTimer);
+      window.clearInterval(historyTimer);
+    };
   }, []);
 
   const filteredRows = useMemo(() => {
@@ -139,7 +150,7 @@ function ScannerContent() {
 
   const refresh = async () => {
     setRefreshing(true);
-    await Promise.all([load(), loadPairDiagnostics()]);
+    await Promise.all([load(), loadPairLive(), loadPairHistory()]);
     setRefreshing(false);
   };
 
