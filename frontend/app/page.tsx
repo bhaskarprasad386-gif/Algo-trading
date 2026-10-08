@@ -216,7 +216,25 @@ export default function HomePage() {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
 
-  useEffect(() => {\n    let cancelled = false;\n    const loadDiagnosticErrors = async () => {\n      try {\n        const base = appConfig.apiBaseUrl.replace(/\\/$/, "");\n        const response = await fetch(base + "/api/v1/diagnostics/errors?limit=50", { cache: "no-store" });\n        if (!response.ok) throw new Error("diagnostics");\n        const body = await response.json();\n        if (!cancelled) setDiagnosticErrors(Array.isArray(body?.errors) ? body.errors : []);\n      } catch {\n        // Do not manufacture a fake runtime error when the diagnostic endpoint is unavailable.\n      }\n    };\n    void loadDiagnosticErrors();\n    const timer = window.setInterval(loadDiagnosticErrors, 2000);\n    return () => { cancelled = true; window.clearInterval(timer); };\n  }, []);\n\n  useEffect(() => {
+  useEffect(() => {
+    let cancelled = false;
+    const loadDiagnosticErrors = async () => {
+      try {
+        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+        const response = await fetch(base + "/api/v1/diagnostics/errors?limit=50", { cache: "no-store" });
+        if (!response.ok) throw new Error("diagnostics");
+        const body = await response.json();
+        if (!cancelled) setDiagnosticErrors(Array.isArray(body?.errors) ? body.errors : []);
+      } catch {
+        // Do not manufacture a fake runtime error when the diagnostic endpoint is unavailable.
+      }
+    };
+    void loadDiagnosticErrors();
+    const timer = window.setInterval(loadDiagnosticErrors, 2000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
+
+\n  useEffect(() => {
     const saved = window.localStorage.getItem("algo-paper-capital");
     if (saved && Number(saved) > 0) {
       setCapital(saved);
@@ -399,6 +417,23 @@ export default function HomePage() {
                   <span className="text-[10px] font-bold theme-accent">{value}</span>
                 </div>
               ))}
+            </div>
+            <div className="mt-4 rounded-xl border theme-border theme-surface-2 p-3">
+              <div className="text-[10px] font-bold uppercase tracking-wide">Error Diagnostics</div>
+              {diagnosticErrors.length === 0 ? <div className="mt-2 text-[10px] theme-success">No active errors</div> : (
+                <div className="mt-2 max-h-48 space-y-2 overflow-auto">
+                  {diagnosticErrors.map((error) => (
+                    <div key={error.id} className="rounded-lg border theme-border px-2.5 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-bold">{error.component} • {error.severity}</span>
+                        <span className="text-[9px] theme-subtle">{new Date(error.time).toLocaleString("en-IN")}</span>
+                      </div>
+                      <div className="mt-1 text-[10px]">{error.message}</div>
+                      <div className="mt-1 text-[9px] theme-subtle">{[error.error_type && "Type: " + error.error_type, error.endpoint && "Endpoint: " + error.endpoint, error.status_code && "HTTP: " + error.status_code].filter(Boolean).join(" • ")}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="mt-4 rounded-xl border theme-border theme-accent-bg p-3"><div className="text-[10px] font-bold uppercase tracking-wide theme-accent">Common Feed Diagnostics</div><div className="mt-2 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4"><span>Consumers: <b>{runtime.consumers.length}</b></span><span>Delivery errors: <b>{runtime.deliveryErrors}</b></span><span>Normalizer errors: <b>{runtime.normalizerErrors}</b></span><span>Market: <b>{marketSession}</b></span></div></div><div className="mt-4 flex justify-end">
               <Link href="/scanner" onClick={() => setConnectionsOpen(false)} className="rounded-xl theme-accent-bg px-3 py-2 text-[11px] font-bold theme-accent">Open Scanner</Link>
