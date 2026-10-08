@@ -26,7 +26,17 @@ jobs:
           ssh-keyscan -T 10 -H "$VPS_HOST" > "$SSH_KNOWN_HOSTS"
           test -s "$SSH_KNOWN_HOSTS"
           SSH_OPTS=(-i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -o UserKnownHostsFile="$SSH_KNOWN_HOSTS" -o StrictHostKeyChecking=yes)
-          ssh "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE_SCRIPT' || SSH_RC=$?
+          echo "=== SSH_PRECHECK ==="
+          set +e
+          ssh "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" 'printf "SSH_OK\\n"'
+          PRECHECK_RC=$?
+          set -e
+          echo "SSH_PRECHECK_RC=$PRECHECK_RC"
+          echo "=== SSH_DIAGNOSTIC ==="
+          set +e
+          ssh "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE_SCRIPT'
+          set -u
+          echo "REMOTE_SHELL_OK"
           set -u
           echo "=== DNS ==="
           getent hosts apiconnect.angelone.in || true
