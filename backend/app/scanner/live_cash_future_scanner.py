@@ -155,7 +155,6 @@ class LiveCashFutureScanner:
             return
         try:
             observed_at = datetime.fromtimestamp(signal.timestamp_ns / 1_000_000_000, IST).replace(tzinfo=None)
-            observed_at = datetime.fromtimestamp(signal.timestamp_ns / 1_000_000_000, IST).replace(tzinfo=None)
             now = datetime.now(IST).replace(tzinfo=None)
             retention_days = max(1, int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
             with session_factory() as db:
@@ -222,6 +221,7 @@ class LiveCashFutureScanner:
         if session_factory is None or not signal.alert_event or signal.lifecycle == "EXPIRED":
             return
         try:
+            observed_at = datetime.fromtimestamp(signal.timestamp_ns / 1_000_000_000, IST).replace(tzinfo=None)
             now = datetime.now(IST).replace(tzinfo=None)
             retention_days = max(1, int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
             with session_factory() as db:
