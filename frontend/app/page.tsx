@@ -44,6 +44,7 @@ export default function HomePage() {
   const [feedAge, setFeedAge] = useState<number | null>(null);
   const [runtime, setRuntime] = useState<{ticks: number; activeInstruments: number; socketGroups: number; maxSocketSessions: number; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string}>}>({ticks: 0, activeInstruments: 0, socketGroups: 0, maxSocketSessions: 3, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
   const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const [diagnosticErrors, setDiagnosticErrors] = useState<any[]>([]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -215,7 +216,7 @@ export default function HomePage() {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
 
-  useEffect(() => {
+  useEffect(() => {\n    let cancelled = false;\n    const loadDiagnosticErrors = async () => {\n      try {\n        const base = appConfig.apiBaseUrl.replace(/\\/$/, "");\n        const response = await fetch(base + "/api/v1/diagnostics/errors?limit=50", { cache: "no-store" });\n        if (!response.ok) throw new Error("diagnostics");\n        const body = await response.json();\n        if (!cancelled) setDiagnosticErrors(Array.isArray(body?.errors) ? body.errors : []);\n      } catch {\n        // Do not manufacture a fake runtime error when the diagnostic endpoint is unavailable.\n      }\n    };\n    void loadDiagnosticErrors();\n    const timer = window.setInterval(loadDiagnosticErrors, 2000);\n    return () => { cancelled = true; window.clearInterval(timer); };\n  }, []);\n\n  useEffect(() => {
     const saved = window.localStorage.getItem("algo-paper-capital");
     if (saved && Number(saved) > 0) {
       setCapital(saved);
