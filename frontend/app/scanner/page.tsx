@@ -228,6 +228,13 @@ function ScannerContent() {
     return age < 1000 ? `${Math.round(age)} ms` : `${(age / 1000).toFixed(1)} s`;
   };
 
+  const historyAgeText = (row: Row) => {
+    const observed = new Date(String(row.observed_at ?? ""));
+    if (Number.isNaN(observed.getTime())) return "—";
+    const age = Math.max(0, Date.now() - observed.getTime());
+    return age < 60000 ? `${Math.round(age / 1000)}s ago` : `${Math.round(age / 60000)}m ago`;
+  };
+
   const refresh = async () => {
     setRefreshing(true);
     await Promise.all([load(), loadPairLive(), loadPairHistory()]);
@@ -306,7 +313,17 @@ function ScannerContent() {
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live Pair Monitor & Diagnostics</h2><p className="mt-1 text-xs theme-muted">Every matched cash + futures pair is shown here even when it cannot become a signal. Diagnostics are persisted for post-market review.</p></div>
           <span className="text-xs font-semibold theme-muted">{pairStats.pairs} unique pairs • {marketSession === "CLOSED" ? "refresh paused" : "1.5s refresh"}</span>
         </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-4">{[["Pairs matched", pairStats.pairs], ["Missing quote", pairStats.missing], ["No signal", pairStats.noSignal], ["Signals", pairStats.signals]].map(([label, value]) => <div key={String(label)} className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">{label}</p><p className="mt-1 text-lg font-semibold theme-text">{value}</p></div>)}</div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">{[
+          ["Pairs matched", pairStats.pairs],
+          ["Quotes present", pairStats.quoted],
+          ["Missing quote", pairStats.missing],
+          ["Positive gap", pairStats.positiveGap],
+          ["Liquidity blocked", pairStats.liquidityBlocked],
+          ["Stable", pairStats.stable],
+          ["No signal", pairStats.noSignal],
+          ["Signals", pairStats.signals],
+        ].map(([label, value]) => <div key={String(label)} className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">{label}</p><p className="mt-1 text-lg font-semibold theme-text">{value}</p></div>)}</div>
+        <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs theme-muted"><span className="font-semibold theme-text">Pipeline:</span> Pair Created → Quotes → Liquidity → Positive Gap → Stability → Signal. Counts are read-only diagnostics derived from the current pair observations.</div>
         <div className="mt-4 overflow-x-auto"><table className="min-w-[1100px] w-full text-left text-sm">
           <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
           <tbody>{filteredPairs.length === 0 ? <tr><td colSpan={pairColumns.length} className="px-4 py-10 text-center text-sm theme-muted">No pair diagnostics in the last 2 minutes.</td></tr> : filteredPairs.map((row, index) => {
@@ -336,7 +353,10 @@ function ScannerContent() {
               <td className="px-4 py-3 theme-muted">{formatTime(row.observed_at)}</td><td className="px-4 py-3 font-semibold theme-text">{cell(row, "symbol")}</td>
               <td className="px-4 py-3 theme-muted">{cell(row, "contract_month")}</td><td className="px-4 py-3 font-semibold theme-text">{statusLabel}</td>
               <td className="px-4 py-3 theme-muted">{cell(row, "cash_ask")}</td><td className="px-4 py-3 theme-muted">{cell(row, "future_bid")}</td>
-              <td className="px-4 py-3 theme-muted">{numberValue(row, "gap_pct").toFixed(4)}%</td><td className="max-w-[430px] px-4 py-3 text-xs leading-5 theme-muted">{reasonText(row)}</td>
+              <td className="px-4 py-3 theme-muted">{numberValue(row, "gap_pct").toFixed(4)}%</td>
+              <td className="px-4 py-3 theme-muted">{stabilityText(row)}</td>
+              <td className="px-4 py-3 theme-muted">{historyAgeText(row)}</td>
+              <td className="max-w-[430px] px-4 py-3 text-xs leading-5 theme-muted"><div className="font-semibold theme-text">{eligibilityText(row)}</div><div className="mt-1">{reasonText(row)}</div></td>
             </tr>;
           })}</tbody>
         </table></div>
