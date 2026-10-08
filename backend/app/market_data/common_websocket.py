@@ -17,6 +17,7 @@ from .registry import InstrumentRegistry, Subscription
 from .normalizer import AngelOneTickNormalizer
 from .websocket import MarketDataWebSocket
 from app.core.logger import app_logger
+from app.core.diagnostics import runtime_diagnostics
 
 
 @dataclass(frozen=True)
@@ -227,6 +228,12 @@ class CommonWebSocketManager:
                                 "failed_at_ns": time.time_ns(),
                                 "subscriptions": len(pairs),
                             }
+                        runtime_diagnostics.record(
+                            component="Common Market Feed",
+                            error_type=type(exc).__name__,
+                            message=str(exc),
+                            context={"event": "socket_connect", "group": f"{group.mode}:{group.shard}", "subscriptions": len(pairs)},
+                        )
                         app_logger.warning(
                             "Common feed socket connect failed group=%s error=%s: %s",
                             group, type(exc).__name__, exc,
@@ -414,6 +421,12 @@ class CommonWebSocketManager:
             except Exception:
                 with self._lock:
                     self._delivery_errors += 1
+                runtime_diagnostics.record(
+                    component="Common Market Feed",
+                    error_type="CallbackDeliveryError",
+                    message="Raw market-data consumer callback failed.",
+                    context={"event": "delivery", "group": f"{group.mode}:{group.shard}", "token": token},
+                )
         for callback, key in record_callbacks:
             if callback is None:
                 continue
@@ -439,6 +452,12 @@ class CommonWebSocketManager:
                 with self._lock:
                     self._normalizer_errors += 1
                     self._last_normalizer_error = f"{type(exc).__name__}: {exc}"
+                runtime_diagnostics.record(
+                    component="Common Market Feed",
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                    context={"event": "normalizer", "group": f"{group.mode}:{group.shard}", "token": token},
+                )
                 if self._normalizer_errors <= 5 or self._normalizer_errors % 1000 == 0:
                     app_logger.warning(
                         "Common feed normalizer rejected tick group=%s token=%s error=%s count=%s",
