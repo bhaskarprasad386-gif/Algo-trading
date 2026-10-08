@@ -53,7 +53,7 @@ const configs: Record<string, WorkspaceConfig> = {
     metrics: ["Eligible Boxes", "Executable Edges", "Signals", "Last Scan"],
     controls: ["All Eligible", "Expiry", "Strike Range", "Edge Threshold"],
     pairTitle: "Low / High Strike Pair Monitor",
-    pairColumns: ["Time", "Underlying", "Expiry", "Low Strike", "High Strike", "Box Edge", "Liquidity", "Direction", "State"],
+    pairColumns: ["Time", "Underlying", "Expiry", "Low Strike", "High Strike", "Box Edge", "Lot Size", "Direction", "State"],
     historyEndpoint: "/api/v1/scanner/box-spread/alerts?days=1&limit=100",
   },
   "custom-strategy": {
@@ -128,7 +128,7 @@ function pairCell(slug: string, column: string, row: Row) {
     "box-spread": {
       Time: ["timestamp_ns", "observed_at"], Underlying: ["symbol", "underlying"], Expiry: ["expiry"],
       "Low Strike": ["low_strike"], "High Strike": ["high_strike"], "Box Edge": ["executable_edge"],
-      Liquidity: ["liquidity_qty"], Direction: ["direction"], State: ["executable_edge"],
+      "Lot Size": ["lot_size"], Direction: ["direction"], State: ["executable_edge"],
     },
   };
   const raw = value(row, ...(maps[slug]?.[column] ?? []));
