@@ -1,0 +1,27 @@
+name: Best-5 Depth Regression
+
+on:
+  workflow_dispatch:
+
+jobs:
+  best5-depth:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Run Best-5 depth regression
+        run: >-
+          python -m pytest
+          backend/app/market_data/tests/test_batch_k.py::test_angel_one_best5_depth_normalizes_quotes_and_quantities
+          -q --tb=short
