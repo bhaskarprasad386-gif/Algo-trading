@@ -402,10 +402,20 @@ class LiveCashFutureScanner:
             from app.core.logger import app_logger
             app_logger.error("Cash-Future pair diagnostic persistence failed: %s", exc)
 
-    def pair_snapshot(self, *, max_age_seconds: float = 15.0, limit: int = 100) -> list[dict]:
+    def pair_snapshot(self, *, max_age_seconds: float = 120.0, limit: int = 100) -> list[dict]:
+        """Return the newest diagnostic observation for each symbol/contract pair."""
         cutoff_ns = time.time_ns() - int(max(1.0, max_age_seconds) * 1_000_000_000)
         with self._lock:
-            return [dict(item) for item in list(self._pair_events) if int(item.get("received_at_ns", item["timestamp_ns"])) >= cutoff_ns][:limit]
+            latest: dict[tuple[str, str], dict] = {}
+            for item in self._pair_events:
+                received_at_ns = int(item.get("received_at_ns", item["timestamp_ns"]))
+                if received_at_ns < cutoff_ns:
+                    continue
+                key = (str(item.get("symbol", "")).upper(), str(item.get("contract_month", "")).upper())
+                if key not in latest:
+                    latest[key] = dict(item)
+            return list(latest.values())[:limit]
+
 
     def observe(self, payload: dict, *, session_factory=None) -> LiveCashFutureSignal | None:
         leg = str(payload.get("leg") or "").upper()
