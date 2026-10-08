@@ -525,6 +525,18 @@ class LiveCashFutureScanner:
 
         if future["bid"] is not None and future["ask"] is not None and future["bid"] > future["ask"]:
             self._stats["dropped"] += 1
+            self._record_pair_event(
+                symbol=symbol,
+                month=month,
+                timestamp_ns=timestamp_ns,
+                received_at_ns=received_at_ns,
+                cash=cash,
+                future=future,
+                status="INVALID_FUTURE_BOOK",
+                reasons=("PAIR_CREATED", "EXECUTION_QUOTES_PRESENT", "INVALID_FUTURE_BOOK"),
+                lot_size=lot,
+                session_factory=session_factory,
+            )
             return None
         gap = future_bid - cash_ask
         gap_pct = gap / cash_ask * 100.0
