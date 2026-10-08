@@ -173,10 +173,59 @@ def test_live_scanner_history_route_excludes_expired_rows(tmp_path):
             reason_codes="STABLE", observation_ref="NEW:CURRENT:2",
         ))
         db.commit()
-        response = cash_future_live_scanner_history(days=30, limit=10, db=db)
+        response = cash_future_live_scanner_history(days=1, limit=10, db=db)
 
     assert response["count"] == 1
     assert response["data"][0]["symbol"] == "NEW"
+
+
+def test_live_scanner_history_returns_latest_100_unique_pairs_for_today(tmp_path):
+    from datetime import datetime
+
+    from app.scanner.auto_routes import cash_future_live_scanner_history
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'scanner-history-limit.sqlite3'}")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    now = datetime.now()
+    with Session() as db:
+        for index in range(105):
+            db.add(LiveCashFutureScannerResult(
+                symbol=f"SYM{index:03d}", contract_month="CURRENT", timestamp_ns=index + 1,
+                observed_at=now, cash_ltp=100, future_ltp=101, gap=1, gap_pct=1,
+                cash_day_high=100, cash_day_low=100, future_day_high=101, future_day_low=101,
+                estimated_cost=0, net_gap=1, net_gap_pct=1, stable_observations=1,
+                lifecycle="NO_SIGNAL", reason_codes="PAIR_CREATED", observation_ref=f"SYM{index:03d}:CURRENT:{index + 1}",
+            ))
+        db.commit()
+        response = cash_future_live_scanner_history(days=1, limit=100, db=db)
+
+    assert response["count"] == 100
+    assert len(response["data"]) == 100
+
+
+def test_live_scanner_history_resets_at_next_calendar_day(monkeypatch, tmp_path):
+    from datetime import datetime
+
+    from app.scanner.auto_routes import cash_future_live_scanner_history
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'scanner-history-day.sqlite3'}")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        db.add(LiveCashFutureScannerResult(
+            symbol="YESTERDAY", contract_month="CURRENT", timestamp_ns=1,
+            observed_at=datetime.now() - timedelta(days=1),
+            cash_ltp=100, future_ltp=101, gap=1, gap_pct=1,
+            cash_day_high=100, cash_day_low=100, future_day_high=101, future_day_low=101,
+            estimated_cost=0, net_gap=1, net_gap_pct=1, stable_observations=1,
+            lifecycle="NO_SIGNAL", reason_codes="PAIR_CREATED", observation_ref="YESTERDAY:CURRENT:1",
+        ))
+        db.commit()
+        response = cash_future_live_scanner_history(days=1, limit=100, db=db)
+
+    assert response["count"] == 0
+    assert response["data"] == []
 
 
 def test_live_scanner_history_and_alert_routes_are_registered():
