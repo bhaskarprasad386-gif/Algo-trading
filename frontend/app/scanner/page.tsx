@@ -43,6 +43,7 @@ function ScannerContent() {
   const [error, setError] = useState<string | null>(null);
   const [pairRows, setPairRows] = useState<Row[]>([]);
   const [pairHistory, setPairHistory] = useState<Row[]>([]);
+  const [pairBackendStats, setPairBackendStats] = useState<Row>({});
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
 
   const load = async () => {
@@ -73,6 +74,7 @@ function ScannerContent() {
       const response = await fetch(`${base}/api/v1/scanner/cash-future/live/pairs?max_age_seconds=120&limit=500`, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       setPairRows(Array.isArray(body?.data) ? body.data : []);
+      setPairBackendStats(body?.stats && typeof body.stats === "object" ? body.stats : {});
     } catch {
       setPairRows([]);
     }
@@ -324,6 +326,12 @@ function ScannerContent() {
           ["Signals", pairStats.signals],
         ].map(([label, value]) => <div key={String(label)} className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">{label}</p><p className="mt-1 text-lg font-semibold theme-text">{value}</p></div>)}</div>
         <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs theme-muted"><span className="font-semibold theme-text">Pipeline:</span> Pair Created → Quotes → Liquidity → Positive Gap → Stability → Signal. Counts are read-only diagnostics derived from the current pair observations.</div>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs theme-muted">
+          <span className="rounded-lg border theme-border px-3 py-2">Feed observations: {cell(pairBackendStats, "observations")}</span>
+          <span className="rounded-lg border theme-border px-3 py-2">Pairs formed: {cell(pairBackendStats, "pairs")}</span>
+          <span className="rounded-lg border theme-border px-3 py-2">Quote failures: {cell(pairBackendStats, "pairs_missing_quotes")}</span>
+          <span className="rounded-lg border theme-border px-3 py-2">Diagnostics persisted: {cell(pairBackendStats, "pair_events_persisted")}</span>
+        </div>
         <div className="mt-4 overflow-x-auto"><table className="min-w-[1100px] w-full text-left text-sm">
           <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
           <tbody>{filteredPairs.length === 0 ? <tr><td colSpan={pairColumns.length} className="px-4 py-10 text-center text-sm theme-muted">No pair diagnostics in the last 2 minutes.</td></tr> : filteredPairs.map((row, index) => {
