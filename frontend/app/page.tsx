@@ -17,12 +17,12 @@ const strategies = [
   { name: "Broker Orders", detail: "Always OFF • Paper safe •", href: "/paper-trading", icon: ShieldCheck },
 ];
 
-const health = (api: string, ws: string) => [
+const health = (api: string, ws: string, feed: string) => [
   ["Frontend", "READY", "ok"],
   ["FastAPI", api, api === "CONNECTED" ? "ok" : api === "ERROR" ? "error" : "warn"],
-  ["WebSocket", ws, ws === "CONNECTED" ? "ok" : ws === "ERROR" ? "error" : "warn"],
-  ["Scanner", ws === "CONNECTED" ? "LIVE" : "AWAITING API", ws === "CONNECTED" ? "ok" : "warn"],
-  ["Database", api === "CONNECTED" ? "CONNECTED" : "AWAITING API", api === "CONNECTED" ? "ok" : "warn"],
+  ["Dashboard WS", ws, ws === "CONNECTED" ? "ok" : ws === "ERROR" ? "error" : "warn"],
+  ["Market Feed", feed, feed === "LIVE" ? "ok" : feed === "ERROR" ? "error" : "warn"],
+  ["Cash-Future", "SEE SCANNER", "warn"],
   ["Broker Orders", "OFF", "warn"],
 ] as const;
 
@@ -35,6 +35,10 @@ export default function HomePage() {
   const [snapshot, setSnapshot] = useState({ cashFuture: 0, calendar: 0, synthetic: 0, box: 0, opportunities: 0, timestamp: null as string | null });
   const [indexLtps, setIndexLtps] = useState<Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null }>>({});
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
+  const [marketCheckedAt, setMarketCheckedAt] = useState<string | null>(null);
+  const [feedStatus, setFeedStatus] = useState<"checking" | "live" | "stale" | "no-data" | "closed" | "error">("checking");
+  const [feedAge, setFeedAge] = useState<number | null>(null);
+  const [connectionsOpen, setConnectionsOpen] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -45,25 +49,50 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    const socket = new WebSocket(appConfig.wsUrl.replace(/\/$/, "") + "/ws/dashboard");
-    socket.onopen = () => setWsStatus("connected");
-    socket.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        if (message?.type !== "dashboard_snapshot") return;
-        setSnapshot({
-          cashFuture: Number(message?.integration?.cash_future?.count ?? 0),
-          calendar: Number(message?.integration?.calendar_spread?.count ?? 0),
-          synthetic: Number(message?.integration?.synthetic_arbitrage?.count ?? 0),
-          box: Number(message?.integration?.box_spread?.count ?? 0),
-          opportunities: Number(message?.scanner?.opportunity_count ?? 0),
-          timestamp: message?.timestamp ?? null,
-        });
-      } catch { /* preserve existing behavior for malformed snapshots */ }
+    let cancelled = false;
+    let socket: WebSocket | null = null;
+    let retryTimer: number | null = null;
+    let retryMs = 1000;
+
+    const connect = () => {
+      if (cancelled) return;
+      setWsStatus("connecting");
+      socket = new WebSocket(appConfig.wsUrl.replace(/\/$/, "") + "/ws/dashboard");
+      socket.onopen = () => {
+        retryMs = 1000;
+        setWsStatus("connected");
+      };
+      socket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message?.type !== "dashboard_snapshot") return;
+          setSnapshot({
+            cashFuture: Number(message?.integration?.cash_future?.count ?? 0),
+            calendar: Number(message?.integration?.calendar_spread?.count ?? 0),
+            synthetic: Number(message?.integration?.synthetic_arbitrage?.count ?? 0),
+            box: Number(message?.integration?.box_spread?.count ?? 0),
+            opportunities: Number(message?.scanner?.opportunity_count ?? 0),
+            timestamp: message?.timestamp ?? null,
+          });
+        } catch {
+          // Ignore malformed dashboard messages without losing the last valid snapshot.
+        }
+      };
+      socket.onerror = () => setWsStatus("error");
+      socket.onclose = () => {
+        if (cancelled) return;
+        setWsStatus("error");
+        retryTimer = window.setTimeout(connect, retryMs);
+        retryMs = Math.min(retryMs * 2, 10000);
+      };
     };
-    socket.onerror = () => setWsStatus("error");
-    socket.onclose = () => setWsStatus("error");
-    return () => socket.close();
+
+    connect();
+    return () => {
+      cancelled = true;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      socket?.close();
+    };
   }, []);
 
   useEffect(() => {
@@ -85,6 +114,7 @@ export default function HomePage() {
         }
         if (!cancelled) {
           setMarketSession(session);
+          setMarketCheckedAt(new Date().toISOString());
           setIndexLtps((previous) => {
             const merged = { ...previous };
             for (const [symbol, value] of Object.entries(next)) {
@@ -104,6 +134,32 @@ export default function HomePage() {
     };
     loadMarketOverview();
     const timer = window.setInterval(loadMarketOverview, 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadFeedHealth = async () => {
+      try {
+        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+        const response = await fetch(`${base}/api/v1/market-data/live-health`, { cache: "no-store" });
+        if (!response.ok) throw new Error("feed health");
+        const body = await response.json();
+        if (cancelled) return;
+        const status = String(body?.feed_status ?? "").toUpperCase();
+        const session = String(body?.market_session ?? "").toUpperCase();
+        const age = body?.runtime_feed?.age_seconds ?? body?.age_seconds;
+        setFeedAge(age == null || !Number.isFinite(Number(age)) ? null : Number(age));
+        if (session === "CLOSED") setFeedStatus("closed");
+        else if (status === "LIVE") setFeedStatus("live");
+        else if (status === "STALE") setFeedStatus("stale");
+        else setFeedStatus("no-data");
+      } catch {
+        if (!cancelled) setFeedStatus("error");
+      }
+    };
+    void loadFeedHealth();
+    const timer = window.setInterval(loadFeedHealth, 5000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
 
@@ -128,14 +184,17 @@ export default function HomePage() {
   const formattedCapital = Number(capital || 0).toLocaleString("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
   const apiLabel = apiStatus === "connected" ? "CONNECTED" : apiStatus === "error" ? "ERROR" : "CONNECTING";
   const wsLabel = wsStatus === "connected" ? "CONNECTED" : wsStatus === "error" ? "ERROR" : "CONNECTING";
+  const feedLabel = feedStatus === "live" ? "LIVE" : feedStatus === "stale" ? "STALE" : feedStatus === "no-data" ? "NO DATA" : feedStatus === "closed" ? "CLOSED" : feedStatus === "error" ? "ERROR" : "CHECKING";
+  const snapshotAge = snapshot.timestamp ? Math.max(0, (Date.now() - new Date(snapshot.timestamp).getTime()) / 1000) : null;
+  const marketDataAge = marketCheckedAt ? Math.max(0, (Date.now() - new Date(marketCheckedAt).getTime()) / 1000) : null;
   const scannerStatus = [
     { label: "Signals Detected", value: snapshot.opportunities.toLocaleString("en-IN") },
     { label: "Cash-Future Rows", value: snapshot.cashFuture.toLocaleString("en-IN") },
     { label: "Calendar Rows", value: snapshot.calendar.toLocaleString("en-IN") },
     { label: "Synthetic Rows", value: snapshot.synthetic.toLocaleString("en-IN") },
-    { label: "Orders Placed", value: "0 orders" },
-    { label: "Fills", value: "0 fills" },
-    { label: "Errors", value: "0 errors" },
+    { label: "Orders", value: "Not reported" },
+    { label: "Fills", value: "Not reported" },
+    { label: "Backend Errors", value: "Not reported" },
     { label: "Box Rows", value: snapshot.box.toLocaleString("en-IN") },
   ];
 
@@ -143,7 +202,7 @@ export default function HomePage() {
     <div className="min-h-screen theme-bg theme-text p-1">
       <PageTitle eyebrow="Phase 2 • Home / Command Center" title="Command Center" description="" />
       <div className="mb-5 flex flex-wrap justify-end gap-2">
-        <div className="inline-flex items-center gap-2 rounded-full border theme-border theme-accent-bg px-3 py-1.5 text-[11px] font-semibold theme-accent"><Radio size={13} /> {wsLabel === "CONNECTED" ? "Live market feed connected" : "Market feed connecting"}</div>
+        <div className="inline-flex items-center gap-2 rounded-full border theme-border theme-accent-bg px-3 py-1.5 text-[11px] font-semibold theme-accent"><Radio size={13} /> {feedLabel === "LIVE" ? "Live market feed LIVE" : feedLabel === "CLOSED" ? "Market closed" : `Market feed ${feedLabel.toLowerCase()}`}</div>
         <div className="inline-flex items-center gap-2 rounded-full border theme-border theme-success-bg px-3 py-1.5 text-[11px] font-semibold theme-success"><ShieldCheck size={13} /> Paper-safe broker orders OFF</div>
       </div>
 
@@ -155,7 +214,7 @@ export default function HomePage() {
             const positive = change != null && change > 0;
             const negative = change != null && change < 0;
             return (
-              <Link key={symbol} href={"/scanner?market=" + encodeURIComponent(symbol)} className="block">
+              <Link key={symbol} href="/scanner" className="block">
                 <Card className="relative overflow-hidden rounded-2xl p-4 transition hover:-translate-y-0.5">
                   <span className="absolute inset-y-0 left-0 w-1 theme-accent-bg" />
                   <div className="pl-1">
@@ -167,7 +226,7 @@ export default function HomePage() {
                     <div className={"mt-1 text-[12px] font-bold " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-muted")}>{change == null ? "No live change" : (change > 0 ? "+" : "") + change.toFixed(2) + "%"}</div>
                     <div className="mt-1 text-[10px] theme-subtle">{indexLtps[symbol]?.previousClose == null ? "Previous close unavailable" : marketSession === "CLOSED" ? "Last close: " + indexLtps[symbol]!.previousClose!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + indexLtps[symbol]!.previousClose!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     <div className="mt-3 flex items-center justify-between border-t theme-border pt-2 text-[10px] font-semibold theme-accent">
-                      <span>Open Scanner</span><Radio size={13} />
+                      <span>Open Live Scanner</span><Radio size={13} />
                     </div>
                   </div>
                 </Card>
@@ -195,13 +254,14 @@ export default function HomePage() {
         <section aria-label="System health">
           <div className="mb-3 flex items-center gap-2"><Gauge size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">System Health</h2></div>
           <Card className="rounded-2xl p-2">
-            {health(apiLabel, wsLabel).map(([name, value, state]) => (
+            {health(apiLabel, wsLabel, feedLabel).map(([name, value, state]) => (
               <div key={name} className="flex items-center justify-between rounded-xl px-2 py-2">
                 <div className="flex items-center gap-2 text-[12px] font-medium theme-muted">{state === "error" ? <TriangleAlert size={14} className="theme-danger" /> : state === "warn" ? <TriangleAlert size={14} className="theme-warning" /> : <span className="h-2 w-2 rounded-full bg-[var(--app-success)]" />}{name}</div>
                 <span className={"rounded-full px-2.5 py-1 text-[10px] font-bold " + (state === "ok" ? "theme-success-bg theme-success" : state === "warn" ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{value}</span>
               </div>
             ))}
           </Card>
+          <div className="mt-2 text-[10px] theme-subtle">Feed age: {feedAge == null ? "—" : `${feedAge.toFixed(1)}s`} • Overview checked: {marketDataAge == null ? "—" : `${Math.round(marketDataAge)}s ago`}</div>
         </section>
       </div>
 
@@ -213,7 +273,7 @@ export default function HomePage() {
           </div>
         </section>
         <div className="space-y-4">
-          <section aria-label="Scanner status"><div className="mb-3 flex items-center gap-2"><Radio size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Scanner Status</h2></div><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{scannerStatus.map((item) => <Card key={item.label} className="rounded-xl p-2.5"><div className="text-[10px] font-medium theme-subtle">{item.label}</div><div className="mt-1 text-[11px] font-semibold">{item.value}</div></Card>)}</div></section>
+          <section aria-label="Scanner status"><div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Radio size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Scanner Status</h2></div><div className="text-[10px] theme-subtle">{snapshotAge == null ? "No snapshot yet" : snapshotAge < 10 ? `Snapshot ${Math.round(snapshotAge)}s ago` : `Snapshot stale • ${Math.round(snapshotAge)}s ago`}</div></div><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{scannerStatus.map((item) => <Card key={item.label} className="rounded-xl p-2.5"><div className="text-[10px] font-medium theme-subtle">{item.label}</div><div className="mt-1 text-[11px] font-semibold">{item.value}</div></Card>)}</div></section>
           <section aria-label="Operations"><div className="mb-3 flex items-center gap-2"><Zap size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Operations</h2></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Link href="/scanner"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Radio size={16} className="theme-accent" /><div><div className="text-[12px] font-semibold">Live Scanner</div><div className="text-[10px] theme-subtle">Open scanner console</div></div></div></Card></Link>
             <Link href="/custom-alert"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Bell size={16} className="theme-warning" /><div><div className="text-[12px] font-semibold">Custom Alerts</div><div className="text-[10px] theme-subtle">Manage alerts</div></div></div></Card></Link>
@@ -224,8 +284,38 @@ export default function HomePage() {
 
       <Card className="mt-6 flex flex-col gap-3 rounded-2xl p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-start gap-3"><Database size={17} className="mt-0.5 shrink-0 theme-accent" /><div><div className="text-[13px] font-semibold">Integration Boundary</div><div className="text-[11px] theme-subtle">External broker orders remain OFF. FastAPI market data and paper-trading services are connected independently.</div></div></div>
-        <button type="button" className="shrink-0 rounded-xl theme-accent-bg px-3 py-2 text-[11px] font-bold theme-accent">View Connections</button>
+        <button type="button" onClick={() => setConnectionsOpen(true)} className="shrink-0 rounded-xl theme-accent-bg px-3 py-2 text-[11px] font-bold theme-accent">View Connections</button>
       </Card>
+      {connectionsOpen ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="connections-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setConnectionsOpen(false); }}>
+          <Card className="w-full max-w-md rounded-2xl p-5 shadow-2xl">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div id="connections-title" className="text-[14px] font-bold">Connections</div>
+                <div className="mt-1 text-[10px] theme-subtle">Current frontend connection state</div>
+              </div>
+              <button type="button" onClick={() => setConnectionsOpen(false)} className="rounded-lg px-2 py-1 text-xs theme-muted" aria-label="Close connections">✕</button>
+            </div>
+            <div className="mt-4 space-y-2">
+              {[
+                ["FastAPI", apiLabel],
+                ["Dashboard WebSocket", wsLabel],
+                ["Market Feed", feedLabel],
+                ["Cash-Future", "Open Live Scanner"],
+                ["Broker Orders", "OFF"],
+              ].map(([name, value]) => (
+                <div key={name} className="flex items-center justify-between rounded-xl border theme-border px-3 py-2.5">
+                  <span className="text-[11px] theme-muted">{name}</span>
+                  <span className="text-[10px] font-bold theme-accent">{value}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex justify-end">
+              <Link href="/scanner" onClick={() => setConnectionsOpen(false)} className="rounded-xl theme-accent-bg px-3 py-2 text-[11px] font-bold theme-accent">Open Scanner</Link>
+            </div>
+          </Card>
+        </div>
+      ) : null}
     </div>
   );
 }
