@@ -72,7 +72,7 @@ class LiveCashFutureScanner:
         self._stability: dict[tuple[str, str], tuple[int, int]] = {}
         self._alert_state: dict[tuple[str, str], str] = {}
         self._alert_last_at: dict[tuple[str, str], float] = {}
-        self._stats = {"observations": 0, "pairs": 0, "dropped": 0, "persisted": 0}
+        self._stats = {"observations": 0, "pairs": 0, "pairs_with_quotes": 0, "pairs_missing_quotes": 0, "pairs_dropped_liquidity": 0, "dropped": 0, "persisted": 0}
         self._alert_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cf-alert")
         self._result_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cf-result")
         self._last_result_cleanup = 0.0
@@ -352,7 +352,11 @@ class LiveCashFutureScanner:
 
         cash_ask, future_bid = cash["ask"], future["bid"]
         if cash_ask is None or future_bid is None:
+            with self._lock:
+                self._stats["pairs_missing_quotes"] += 1
             return None
+        with self._lock:
+            self._stats["pairs_with_quotes"] += 1
 
         liquidity_values = [
             cash["bid_qty"], cash["ask_qty"],
@@ -361,6 +365,8 @@ class LiveCashFutureScanner:
         liquidity_qty = min(liquidity_values) if all(value is not None for value in liquidity_values) else None
         min_liquidity = max(0, int(settings.LIVE_CASH_FUTURE_MIN_LIQUIDITY_QTY))
         if min_liquidity > 0 and (liquidity_qty is None or liquidity_qty < min_liquidity):
+            with self._lock:
+                self._stats["pairs_dropped_liquidity"] += 1
             return None
 
         if future["bid"] is not None and future["ask"] is not None and future["bid"] > future["ask"]:
