@@ -318,7 +318,7 @@ function ScannerContent() {
       <Card className="overflow-hidden theme-border theme-surface">
         <div className="flex flex-col gap-2 border-b theme-border p-4 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="font-semibold theme-text">Live Opportunities</h2><p className="mt-1 text-xs theme-muted">Live rows from the FastAPI scanner. Broker orders remain OFF.</p></div>
-          <span className="text-xs theme-muted">Market: {market}{search ? " • Search: " + search : ""} • {marketSession === "CLOSED" ? "Live scan paused" : "Live scan active"}</span>
+          <span className="text-xs theme-muted">Market: {market}{search ? " • Search: " + search : ""} • {marketSession === "CLOSED" ? "Live scan paused" : marketSession === "OPEN" ? "Live scan active" : "Live scan waiting"}</span>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-[1250px] w-full text-left text-sm">
