@@ -341,7 +341,7 @@ export default function HomePage() {
             {health(apiLabel, wsLabel, feedLabel, runtime.ticks, runtime.runners).map(([name, value, state]) => (
               <div key={name} className="flex items-center justify-between rounded-xl px-2 py-2">
                 <div className="flex items-center gap-2 text-[12px] font-medium theme-muted">{state === "error" ? <TriangleAlert size={14} className="theme-danger" /> : state === "warn" ? <TriangleAlert size={14} className="theme-warning" /> : <span className="h-2 w-2 rounded-full bg-[var(--app-success)]" />}{name}</div>
-                <span title={name === "Live Ticks" && runtime.runtimeStartedAt ? `Session started ${tickRuntimeLabel}; counter resets only when FastAPI restarts` : undefined} className={"rounded-full px-2.5 py-1 text-[10px] font-bold " + (state === "ok" ? "theme-success-bg theme-success" : state === "warn" ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{value}</span>
+                <span title={name === "Ticks Received (session)" && runtime.runtimeStartedAt ? `Session started ${tickRuntimeLabel}; counter resets only when FastAPI restarts` : undefined} className={"rounded-full px-2.5 py-1 text-[10px] font-bold " + (state === "ok" ? "theme-success-bg theme-success" : state === "warn" ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{value}</span>
               </div>
             ))}
           </Card>
