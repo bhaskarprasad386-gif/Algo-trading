@@ -78,16 +78,30 @@ class AngelOneTickNormalizer:
         direct = payload.get(f"{side}_{field}")
         if direct is not None:
             return direct
-        for key in (f"best_{side}_data", f"best_{side}", side):
+        for key in (
+            f"best_{side}_data",
+            f"best_5_{side}_data",
+            f"best_{side}",
+            side,
+        ):
             value = payload.get(key)
             if isinstance(value, Mapping):
-                for candidate in (field, f"{side}_{field}", "price" if field == "price" else "quantity", "qty" if field == "quantity" else field):
+                for candidate in (
+                    field,
+                    f"{side}_{field}",
+                    "price" if field == "price" else "quantity",
+                    "qty" if field == "quantity" else field,
+                ):
                     if value.get(candidate) is not None:
                         return value[candidate]
             elif isinstance(value, list) and value:
                 first = value[0]
                 if isinstance(first, Mapping):
-                    for candidate in (field, "price" if field == "price" else "quantity", "qty"):
+                    for candidate in (
+                        field,
+                        "price" if field == "price" else "quantity",
+                        "qty",
+                    ):
                         if first.get(candidate) is not None:
                             return first[candidate]
         return None
