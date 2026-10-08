@@ -45,6 +45,7 @@ function ScannerContent() {
   const [pairHistory, setPairHistory] = useState<Row[]>([]);
   const [pairBackendStats, setPairBackendStats] = useState<Row>({});
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
+  const [lastLiveScanAt, setLastLiveScanAt] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -56,6 +57,7 @@ function ScannerContent() {
       if (!response.ok) throw new Error(body?.detail || `Scanner HTTP ${response.status}`);
       const data = Array.isArray(body?.data) ? body.data : [];
       setRows(data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
+      setLastLiveScanAt(new Date().toISOString());
     } catch (e) {
       setRows([]);
       setError(e instanceof Error ? e.message : "Backend unavailable");
@@ -235,6 +237,10 @@ function ScannerContent() {
     return age < 1000 ? `${Math.round(age)} ms` : `${(age / 1000).toFixed(1)} s`;
   };
 
+  const lastScanText = lastLiveScanAt
+    ? new Date(lastLiveScanAt).toLocaleTimeString("en-IN", { hour12: false }) + " IST"
+    : "—";
+
   const historyAgeText = (row: Row) => {
     const observed = new Date(String(row.observed_at ?? ""));
     if (Number.isNaN(observed.getTime())) return "—";
@@ -244,7 +250,11 @@ function ScannerContent() {
 
   const refresh = async () => {
     setRefreshing(true);
-    await Promise.all([load(), loadPairLive(), loadPairHistory()]);
+    if (marketSession === "CLOSED") {
+      await loadPairHistory();
+    } else {
+      await Promise.all([load(), loadPairLive(), loadPairHistory()]);
+    }
     setRefreshing(false);
   };
 
@@ -256,7 +266,7 @@ function ScannerContent() {
         <div className="flex flex-wrap items-center gap-2">
           <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold ${loading ? "theme-border theme-warning-bg theme-warning" : error ? "theme-border theme-danger-bg theme-danger" : "theme-border theme-success-bg theme-success"}`}>
             <span className="h-2 w-2 rounded-full bg-current" />
-            {loading ? "CONNECTING" : error ? "BACKEND ERROR" : rows.length ? "LIVE TICKS" : "API CONNECTED • NO LIVE DATA"}
+            {loading ? "CONNECTING" : error ? "BACKEND ERROR" : marketSession === "OPEN" ? (rows.length ? "API CONNECTED • LIVE DATA" : "API CONNECTED • WAITING FOR LIVE DATA") : marketSession === "CLOSED" ? "API CONNECTED • NO LIVE DATA" : "API CONNECTED"}
           </span>
           <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Zap className="h-4 w-4" /> {marketSession === "CLOSED" ? "Polling paused • Market closed" : "1.5s polling"}</span>
           <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Bell className="h-4 w-4" /> Alerts: —</span>
@@ -284,7 +294,7 @@ function ScannerContent() {
           ["Live F&O Rows", loading ? "…" : filteredRows.length.toLocaleString("en-IN")],
           ["Signals Detected", loading ? "…" : signals.toLocaleString("en-IN")],
           ["Executable Gaps", loading ? "…" : gaps.toLocaleString("en-IN")],
-          ["Last Scan", loading ? "…" : rows.length ? "LIVE" : "—"],
+          ["Last Live Scan", loading ? "…" : lastScanText],
         ].map(([label, value]) => <Card key={label} className="theme-border theme-surface p-4"><p className="text-xs theme-muted">{label}</p><p className="mt-2 text-xl font-semibold theme-text">{value}</p></Card>)}
       </div>
 
@@ -293,7 +303,7 @@ function ScannerContent() {
       <Card className="overflow-hidden theme-border theme-surface">
         <div className="flex flex-col gap-2 border-b theme-border p-4 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="font-semibold theme-text">Live Opportunities</h2><p className="mt-1 text-xs theme-muted">Live rows from the FastAPI scanner. Broker orders remain OFF.</p></div>
-          <span className="text-xs theme-muted">Market: {market}{search ? " • Search: " + search : ""}</span>
+          <span className="text-xs theme-muted">Market: {market}{search ? " • Search: " + search : ""} • {marketSession === "CLOSED" ? "Live scan paused" : "Live scan active"}</span>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-[1000px] w-full text-left text-sm">
@@ -320,6 +330,7 @@ function ScannerContent() {
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live Pair Monitor & Diagnostics</h2><p className="mt-1 text-xs theme-muted">Every matched cash + futures pair is shown here even when it cannot become a signal. Diagnostics are persisted for post-market review.</p></div>
           <span className="text-xs font-semibold theme-muted">{pairStats.pairs} unique pairs • {marketSession === "CLOSED" ? "refresh paused" : "1.5s refresh"}</span>
         </div>
+        {marketSession === "CLOSED" && <div className="mt-4 rounded-xl border theme-border theme-warning-bg p-3 text-xs theme-warning">Live scanning is paused because the market is closed. Current live counters are intentionally 0; saved diagnostics below remain available for the completed session.</div>}
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">{[
           ["Pairs matched", pairStats.pairs],
           ["Quotes present", pairStats.quoted],
@@ -357,7 +368,7 @@ function ScannerContent() {
       </Card>
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-semibold theme-text">Post-Market Pair History</h2><p className="mt-1 text-xs theme-muted">Last 100 unique pairs from today's trading session. They remain visible after market close and reset to zero on the next day.</p></div><span className="text-xs theme-muted">{filteredPairHistory.length.toLocaleString("en-IN")} shown • {pairHistory.length.toLocaleString("en-IN")} saved</span></div>
-        <div className="mt-3 flex flex-wrap gap-2 text-xs theme-muted"><span className="rounded-lg border theme-border px-3 py-2">Saved automatically</span><span className="rounded-lg border theme-border px-3 py-2">Daily reset: next day</span><span className="rounded-lg border theme-border px-3 py-2">Includes quote failures + no-signal reasons</span></div>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs theme-muted"><span className="rounded-lg border theme-border px-3 py-2">Saved automatically</span><span className="rounded-lg border theme-border px-3 py-2">Daily reset: next day</span><span className="rounded-lg border theme-border px-3 py-2">Includes quote failures + no-signal reasons</span><span className="rounded-lg border theme-border px-3 py-2">Last live scan: {lastScanText}</span></div>
         <div className="mt-4 overflow-x-auto"><table className="min-w-[1100px] w-full text-left text-sm">
           <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
           <tbody>{filteredPairHistory.length === 0 ? <tr><td colSpan={pairColumns.length} className="px-4 py-10 text-center text-sm theme-muted">No saved pair diagnostics for this selection.</td></tr> : filteredPairHistory.map((row, index) => {
