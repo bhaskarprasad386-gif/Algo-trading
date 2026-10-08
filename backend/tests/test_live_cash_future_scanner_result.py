@@ -134,7 +134,8 @@ def test_live_pair_diagnostic_persistence_uses_source_observation_time(tmp_path)
 
     with Session() as db:
         row = db.query(LiveCashFutureScannerResult).one()
-        assert row.observed_at == datetime.fromtimestamp(source_ns / 1_000_000_000).replace(tzinfo=None)
+        from zoneinfo import ZoneInfo
+        assert row.observed_at == datetime.fromtimestamp(source_ns / 1_000_000_000, ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
         assert row.symbol == "ABC"
         assert row.lifecycle == "NO_SIGNAL"
 
