@@ -57,7 +57,7 @@ function ScannerContent() {
       if (!response.ok) throw new Error(body?.detail || `Scanner HTTP ${response.status}`);
       const data = Array.isArray(body?.data) ? body.data : [];
       setRows(data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
-      setLastLiveScanAt(new Date().toISOString());
+      if (typeof body?.scan_at === "string") setLastLiveScanAt(body.scan_at);
     } catch (e) {
       setRows([]);
       setError(e instanceof Error ? e.message : "Backend unavailable");
@@ -76,7 +76,9 @@ function ScannerContent() {
       const response = await fetch(`${base}/api/v1/scanner/cash-future/live/pairs?max_age_seconds=120&limit=500`, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       setPairRows(Array.isArray(body?.data) ? body.data : []);
-      setPairBackendStats(body?.stats && typeof body.stats === "object" ? body.stats : {});
+      const stats = body?.stats && typeof body.stats === "object" ? body.stats : {};
+      setPairBackendStats(stats);
+      if (typeof stats?.last_observation_at === "string") setLastLiveScanAt(stats.last_observation_at);
     } catch {
       // Keep the last good diagnostic snapshot visible during a transient poll failure.
     }
@@ -113,7 +115,7 @@ function ScannerContent() {
   }, []);
 
   useEffect(() => {
-    if (marketSession !== "CLOSED") {
+    if (marketSession === "OPEN") {
       void load();
       void loadPairLive();
     }
@@ -328,7 +330,7 @@ function ScannerContent() {
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live Pair Monitor & Diagnostics</h2><p className="mt-1 text-xs theme-muted">Every matched cash + futures pair is shown here even when it cannot become a signal. Diagnostics are persisted for post-market review.</p></div>
-          <span className="text-xs font-semibold theme-muted">{pairStats.pairs} unique pairs • {marketSession === "CLOSED" ? "refresh paused" : "1.5s refresh"}</span>
+          <span className="text-xs font-semibold theme-muted">{pairStats.pairs} current live pairs • {marketSession === "CLOSED" ? "refresh paused" : marketSession === "OPEN" ? "1.5s refresh" : "waiting for market state"}</span>
         </div>
         {marketSession === "CLOSED" && <div className="mt-4 rounded-xl border theme-border theme-warning-bg p-3 text-xs theme-warning">Live scanning is paused because the market is closed. Current live counters are intentionally 0; saved diagnostics below remain available for the completed session.</div>}
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">{[
@@ -344,7 +346,7 @@ function ScannerContent() {
         ].map(([label, value]) => <div key={String(label)} className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">{label}</p><p className="mt-1 text-lg font-semibold theme-text">{value}</p></div>)}</div>
         <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs theme-muted"><span className="font-semibold theme-text">Pipeline:</span> Pair Created → Quotes → Liquidity → Positive Gap → Stability → Signal. Counts are read-only diagnostics derived from the current pair observations.</div>
         <div className="mt-3 flex flex-wrap gap-2 text-xs theme-muted">
-          <span className="rounded-lg border theme-border px-3 py-2">Feed observations: {cell(pairBackendStats, "observations")}</span>
+          <span className="rounded-lg border theme-border px-3 py-2">Session feed observations: {cell(pairBackendStats, "observations")}</span>
           <span className="rounded-lg border theme-border px-3 py-2">Pairs formed: {cell(pairBackendStats, "pairs")}</span>
           <span className="rounded-lg border theme-border px-3 py-2">Quote failures: {cell(pairBackendStats, "pairs_missing_quotes")}</span>
           <span className="rounded-lg border theme-border px-3 py-2">Diagnostics persisted: {cell(pairBackendStats, "pair_events_persisted")}</span>
