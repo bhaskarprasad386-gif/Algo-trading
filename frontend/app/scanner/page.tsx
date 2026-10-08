@@ -174,6 +174,7 @@ function ScannerContent() {
     const missing = filteredPairs.filter((row) => row.status === "MISSING_EXECUTION_QUOTE");
     const quoted = filteredPairs.filter((row) => row.status !== "MISSING_EXECUTION_QUOTE");
     const liquidityBlocked = filteredPairs.filter((row) => row.status === "LIQUIDITY_BLOCKED");
+    const invalidBook = filteredPairs.filter((row) => row.status === "INVALID_FUTURE_BOOK");
     const positiveGap = quoted.filter((row) => numberValue(row, "gap") > 0);
     const stable = quoted.filter((row) => {
       const reasons = Array.isArray(row.reason_codes) ? row.reason_codes : String(row.reason_codes ?? "").split(",");
@@ -186,6 +187,7 @@ function ScannerContent() {
       missing: missing.length,
       quoted: quoted.length,
       liquidityBlocked: liquidityBlocked.length,
+      invalidBook: invalidBook.length,
       positiveGap: positiveGap.length,
       stable: stable.length,
       noSignal: noSignal.length,
@@ -324,6 +326,7 @@ function ScannerContent() {
           ["Missing quote", pairStats.missing],
           ["Positive gap", pairStats.positiveGap],
           ["Liquidity blocked", pairStats.liquidityBlocked],
+          ["Invalid future book", pairStats.invalidBook],
           ["Stable", pairStats.stable],
           ["No signal", pairStats.noSignal],
           ["Signals", pairStats.signals],
