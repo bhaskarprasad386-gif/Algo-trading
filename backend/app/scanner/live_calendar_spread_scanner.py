@@ -85,8 +85,6 @@ class LiveCalendarSpreadScanner:
             if abs(near.timestamp_ns - far.timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS or near.lot_size != far.lot_size or near.instrument.exchange != far.instrument.exchange:
                 return None
             long_edge=float(far.bid)-float(near.ask); short_edge=float(near.bid)-float(far.ask)
-            if long_edge < 0 and short_edge < 0:
-                return None
             if long_edge >= short_edge:
                 gap=long_edge; direction="LONG_NEAR_SHORT_FAR"
                 legs=(OpportunityLeg(near,OrderSide.BUY,"near-entry"),OpportunityLeg(far,OrderSide.SELL,"far-entry"))
@@ -155,6 +153,15 @@ class LiveCalendarSpreadScanner:
             )
             return self.update(record)
         except Exception:return None
+
+    def pair_snapshot(self, limit=200):
+        """Return every fresh matched near/far pair, including NO SIGNAL rows."""
+        import time
+        now_ns = time.time_ns()
+        with self._lock:
+            values = tuple(self._signals.values())
+        values = tuple(x for x in values if now_ns - x.timestamp_ns <= self.SNAPSHOT_MAX_AGE_NS)
+        return tuple(sorted(values, key=lambda x: x.timestamp_ns, reverse=True)[:limit])
 
     def snapshot(self,limit=50,*,minimum_gap_points=None,minimum_gross_profit=None):
         min_gap=self.minimum_gap_points if minimum_gap_points is None else float(minimum_gap_points)
