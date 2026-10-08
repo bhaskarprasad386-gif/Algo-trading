@@ -51,6 +51,10 @@ class LiveCashFutureSignal:
     net_gap_pct: float
     annualized_gap_pct: float | None
     stable_observations: int
+    future_volume: int | None
+    future_oi: int | None
+    eligible: bool
+    alert_eligible: bool
     capacity_lots: int | None
     capacity_notional: float | None
     lifecycle: str
@@ -91,6 +95,14 @@ class LiveCashFutureScanner:
         if not math.isfinite(number) or number <= 0:
             return None
         return number / divisor
+
+    @staticmethod
+    def _safe_int(value: object) -> int | None:
+        try:
+            number = int(float(value))
+        except (TypeError, ValueError):
+            return None
+        return number if number >= 0 else None
 
     @staticmethod
     def _positive_qty(payload: dict, key: str) -> float | None:
@@ -468,6 +480,7 @@ class LiveCashFutureScanner:
             "ltp": ltp, "bid": bid, "ask": ask,
             "bid_qty": bid_qty, "ask_qty": ask_qty,
             "lot_size": lot, "expiry": payload.get("expiry"),
+            "volume": payload.get("volume"), "oi": payload.get("oi") or payload.get("open_interest"),
             "received_at_ns": received_at_ns,
         }
         ts_date = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, IST).date()
@@ -698,6 +711,10 @@ class LiveCashFutureScanner:
             net_gap_pct=net_gap_pct,
             annualized_gap_pct=annualized,
             stable_observations=stable,
+            future_volume=self._safe_int(future.get("volume")),
+            future_oi=self._safe_int(future.get("oi")),
+            eligible=eligible,
+            alert_eligible=alert_eligible,
             capacity_lots=capacity_lots,
             capacity_notional=capacity_notional,
             lifecycle=lifecycle,
@@ -741,7 +758,10 @@ class LiveCashFutureScanner:
         now_ns = int(datetime.now(IST).timestamp() * 1_000_000_000)
         cutoff = int(now_ns - max_age_seconds * 1_000_000_000)
         with self._lock:
-            signals = [signal for signal in self._signals.values() if signal.received_at_ns >= cutoff]
+            signals = [
+                signal for signal in self._signals.values()
+                if signal.received_at_ns >= cutoff and signal.eligible
+            ]
         signals.sort(key=lambda item: (-item.gap_pct, item.symbol, item.contract_month))
         rank_scores = self._rank(signals)
         by_symbol: dict[str, list[LiveCashFutureSignal]] = {}
