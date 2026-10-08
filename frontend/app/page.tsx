@@ -8,6 +8,7 @@ import { appConfig } from "@/lib/config";
 
 const markets = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
 const strategies = [
+  { name: "Cash Future", detail: "Live Scanner • F&O •", href: "/scanner", icon: Radio },
   { name: "Calendar Spread", detail: "Time spread • NIFTY •", href: "/strategies/calendar-spread", icon: Activity },
   { name: "Synthetic Arbitrage", detail: "Cash-Synth • Arbitrage •", href: "/strategies/synthetic-arbitrage", icon: Zap },
   { name: "Box Spread", detail: "Options • Box •", href: "/strategies/box-spread", icon: Gauge },
@@ -16,11 +17,16 @@ const strategies = [
   { name: "Broker Orders", detail: "Always OFF • Paper safe •", href: "/paper-trading", icon: ShieldCheck },
 ];
 
-const health = (api: string, ws: string, feed: string) => [
+const health = (api: string, ws: string, feed: string, ticks: number | null, runners: Record<string, { running: boolean; detail: string }>) => [
   ["Frontend", "READY", "ok"],
   ["FastAPI", api, api === "CONNECTED" ? "ok" : api === "ERROR" ? "error" : "warn"],
   ["Dashboard WS", ws, ws === "CONNECTED" ? "ok" : ws === "ERROR" ? "error" : "warn"],
-  ["Market Feed", feed, feed === "LIVE" ? "ok" : feed === "ERROR" ? "error" : "warn"],
+  ["Common Market Data Feed", feed, feed === "LIVE" ? "ok" : feed === "ERROR" ? "error" : "warn"],
+  ["Live Ticks", ticks == null ? "—" : ticks.toLocaleString("en-IN"), ticks && ticks > 0 ? "ok" : "warn"],
+  ["Cash Future Runner", runners.cash_future?.detail ?? "—", runners.cash_future?.running ? "ok" : "warn"],
+  ["Synthetic Future Runner", runners.synthetic_arbitrage?.detail ?? "—", runners.synthetic_arbitrage?.running ? "ok" : "warn"],
+  ["Box Spread Runner", runners.box_spread?.detail ?? "—", runners.box_spread?.running ? "ok" : "warn"],
+  ["Calendar Spread Runner", runners.calendar_spread?.detail ?? "—", runners.calendar_spread?.running ? "ok" : "warn"],
   ["Broker Orders", "OFF", "warn"],
 ] as const;
 
@@ -36,6 +42,7 @@ export default function HomePage() {
   const [marketCheckedAt, setMarketCheckedAt] = useState<string | null>(null);
   const [feedStatus, setFeedStatus] = useState<"checking" | "live" | "stale" | "no-data" | "closed" | "error">("checking");
   const [feedAge, setFeedAge] = useState<number | null>(null);
+  const [runtime, setRuntime] = useState<{ticks: number; activeInstruments: number; socketGroups: number; maxSocketSessions: number; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string}>}>({ticks: 0, activeInstruments: 0, socketGroups: 0, maxSocketSessions: 3, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
   const [connectionsOpen, setConnectionsOpen] = useState(false);
 
   useEffect(() => {
@@ -250,14 +257,14 @@ export default function HomePage() {
         <section aria-label="System health">
           <div className="mb-3 flex items-center gap-2"><Gauge size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">System Health</h2></div>
           <Card className="rounded-2xl p-2">
-            {health(apiLabel, wsLabel, feedLabel).map(([name, value, state]) => (
+            {health(apiLabel, wsLabel, feedLabel, runtime.ticks, runtime.runners).map(([name, value, state]) => (
               <div key={name} className="flex items-center justify-between rounded-xl px-2 py-2">
                 <div className="flex items-center gap-2 text-[12px] font-medium theme-muted">{state === "error" ? <TriangleAlert size={14} className="theme-danger" /> : state === "warn" ? <TriangleAlert size={14} className="theme-warning" /> : <span className="h-2 w-2 rounded-full bg-[var(--app-success)]" />}{name}</div>
                 <span className={"rounded-full px-2.5 py-1 text-[10px] font-bold " + (state === "ok" ? "theme-success-bg theme-success" : state === "warn" ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{value}</span>
               </div>
             ))}
           </Card>
-          <div className="mt-2 text-[10px] theme-subtle">Feed age: {feedAge == null ? "—" : `${feedAge.toFixed(1)}s`} • Overview checked: {marketDataAge == null ? "—" : `${Math.round(marketDataAge)}s ago`}</div>
+          <div className="mt-2 text-[10px] theme-subtle">Ticks: {runtime.ticks.toLocaleString("en-IN")} • Instruments: {runtime.activeInstruments.toLocaleString("en-IN")} • Sockets: {runtime.socketGroups}/{runtime.maxSocketSessions} • Feed age: {feedAge == null ? "—" : `${feedAge.toFixed(1)}s`} • Errors: {runtime.deliveryErrors + runtime.normalizerErrors}</div>
         </section>
       </div>
 
