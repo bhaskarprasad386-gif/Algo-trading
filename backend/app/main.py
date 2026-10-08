@@ -36,7 +36,7 @@ BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
 from app.order_engine.routes import router as orders_router
-from app.market_data.routes import router as market_data_router
+from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot
 from app.scanner.routes import router as scanner_router, full_fno_router, configure_live_cash_future_snapshot
 from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
 from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
@@ -78,6 +78,9 @@ instrument_master = InstrumentMaster()
 live_cash_future_scanner = LiveCashFutureScanner()
 configure_live_cash_future_snapshot(live_cash_future_scanner.snapshot)
 live_cash_future_runner: LiveCashFutureCommonRunner | None = None
+configure_live_cash_future_runner_snapshot(
+    lambda: None if live_cash_future_runner is None else live_cash_future_runner.snapshot()
+)
 live_calendar_spread_scanner = LiveCalendarSpreadScanner(
     minimum_gap_points=settings.LIVE_CALENDAR_SPREAD_MIN_GAP_POINTS,
     minimum_gross_profit=settings.LIVE_CALENDAR_SPREAD_MIN_GROSS_PROFIT,
