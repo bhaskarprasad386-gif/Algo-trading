@@ -312,7 +312,7 @@ export default function HomePage() {
             ))}
           </Card>
           <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
-            {[["Ticks", runtime.ticks.toLocaleString("en-IN")],["Instruments", runtime.activeInstruments.toLocaleString("en-IN")],["Sockets", runtime.socketGroups + "/" + runtime.maxSocketSessions],["Feed age", feedAge == null ? "—" : feedAge.toFixed(1) + "s"],["Errors", (runtime.deliveryErrors + runtime.normalizerErrors).toLocaleString("en-IN")]].map(([label, value]) => <div key={label} className="rounded-xl border theme-border theme-surface-2 px-2.5 py-2"><div className="text-[9px] uppercase tracking-wide theme-subtle">{label}</div><div className="mt-0.5 text-[11px] font-bold">{value}</div></div>)}</div>
+            {[["Ticks", runtime.ticks.toLocaleString("en-IN")],["Instruments", runtime.activeInstruments.toLocaleString("en-IN")],["Sockets", runtime.socketGroups + "/" + runtime.maxSocketSessions],["Feed age", feedAge == null ? "—" : feedAge.toFixed(1) + "s"]].map(([label, value]) => <div key={label} className="rounded-xl border theme-border theme-surface-2 px-2.5 py-2"><div className="text-[9px] uppercase tracking-wide theme-subtle">{label}</div><div className="mt-0.5 text-[11px] font-bold">{value}</div></div>)}</div>
         </section>
       </div>
 
