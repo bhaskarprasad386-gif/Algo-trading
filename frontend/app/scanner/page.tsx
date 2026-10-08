@@ -70,7 +70,7 @@ function ScannerContent() {
   const loadPairLive = async () => {
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(`${base}/api/v1/scanner/cash-future/live/pairs?max_age_seconds=30&limit=150`, { cache: "no-store" });
+      const response = await fetch(`${base}/api/v1/scanner/cash-future/live/pairs?max_age_seconds=120&limit=500`, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       setPairRows(Array.isArray(body?.data) ? body.data : []);
     } catch {
@@ -260,12 +260,12 @@ function ScannerContent() {
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live Pair Monitor & Diagnostics</h2><p className="mt-1 text-xs theme-muted">Every matched cash + futures pair is shown here even when it cannot become a signal. Diagnostics are persisted for post-market review.</p></div>
-          <span className="text-xs font-semibold theme-muted">{pairStats.pairs} recent pairs • {marketSession === "CLOSED" ? "refresh paused" : "1.5s refresh"}</span>
+          <span className="text-xs font-semibold theme-muted">{pairStats.pairs} unique pairs • {marketSession === "CLOSED" ? "refresh paused" : "1.5s refresh"}</span>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-4">{[["Pairs matched", pairStats.pairs], ["Missing quote", pairStats.missing], ["No signal", pairStats.noSignal], ["Signals", pairStats.signals]].map(([label, value]) => <div key={String(label)} className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">{label}</p><p className="mt-1 text-lg font-semibold theme-text">{value}</p></div>)}</div>
         <div className="mt-4 overflow-x-auto"><table className="min-w-[1100px] w-full text-left text-sm">
           <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
-          <tbody>{filteredPairs.length === 0 ? <tr><td colSpan={pairColumns.length} className="px-4 py-10 text-center text-sm theme-muted">No pair diagnostics in the last 30 seconds.</td></tr> : filteredPairs.map((row, index) => {
+          <tbody>{filteredPairs.length === 0 ? <tr><td colSpan={pairColumns.length} className="px-4 py-10 text-center text-sm theme-muted">No pair diagnostics in the last 2 minutes.</td></tr> : filteredPairs.map((row, index) => {
             const status = String(row.status ?? "PAIR_CREATED");
             const statusLabel = status === "SIGNAL" ? "SIGNAL" : status === "NO_SIGNAL" ? "NO SIGNAL" : status === "MISSING_EXECUTION_QUOTE" ? "BLOCKED • QUOTE" : status;
             return <tr key={String(row.observation_ref ?? "pair-" + index)} className="border-b theme-border last:border-0">
