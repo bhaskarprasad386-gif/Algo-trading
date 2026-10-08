@@ -17,6 +17,7 @@ export type WorkspaceConfig = {
   pairTitle: string;
   pairColumns: string[];
   historyEndpoint: string;
+  pairEndpoint?: string;
 };
 
 const configs: Record<string, WorkspaceConfig> = {
@@ -31,6 +32,7 @@ const configs: Record<string, WorkspaceConfig> = {
     pairTitle: "Near / Far Pair Monitor",
     pairColumns: ["Time", "Underlying", "Exchange", "Near", "Far", "Spread", "Edge", "Liquidity", "State"],
     historyEndpoint: "/api/v1/scanner/calendar-spread/history?days=1&limit=100",
+    pairEndpoint: "/api/v1/scanner/calendar-spread/pairs?limit=200",
   },
   "synthetic-arbitrage": {
     slug: "synthetic-arbitrage",
@@ -172,6 +174,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [refreshing, setRefreshing] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
   const [historyRows, setHistoryRows] = useState<Row[]>([]);
+  const [pairRows, setPairRows] = useState<Row[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -205,6 +208,23 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     }
   };
 
+  const loadPairs = async () => {
+    if (isCustom || !c.pairEndpoint) {
+      setPairRows(rows);
+      return;
+    }
+    try {
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+      const response = await fetch(base + c.pairEndpoint, { cache: "no-store" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(c.title + " pair monitor HTTP " + response.status);
+      const data = Array.isArray(body?.data) ? body.data : [];
+      setPairRows(data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
+    } catch {
+      // Keep the last pair snapshot during a transient backend failure.
+    }
+  };
+
   const loadHistory = async () => {
     if (isCustom || !c.historyEndpoint) return;
     setHistoryLoading(true);
@@ -228,6 +248,17 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     const timer = window.setInterval(() => void loadHistory(), 10000);
     return () => window.clearInterval(timer);
   }, [isCustom, c.historyEndpoint]);
+
+  useEffect(() => {
+    if (isCustom) return;
+    if (!c.pairEndpoint) {
+      setPairRows(rows);
+      return;
+    }
+    void loadPairs();
+    const timer = window.setInterval(() => void loadPairs(), 1500);
+    return () => window.clearInterval(timer);
+  }, [isCustom, c.pairEndpoint, rows]);
 
   useEffect(() => {
     if (isCustom) return;
@@ -279,6 +310,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   }, [rows, search]);
 
   const signals = rows.filter((row) => isSignal(slug, row)).length;
+  const monitorRows = c.pairEndpoint ? pairRows : rows;
   const lastScan = rows.reduce<string | null>((latest, row) => {
     const raw = value(row, "timestamp_ns", "timestamp");
     if (raw == null) return latest;
@@ -288,7 +320,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const refresh = async () => {
     setRefreshing(true);
-    await Promise.all([load(), loadHistory()]);
+    await Promise.all([load(), loadHistory(), loadPairs()]);
     setRefreshing(false);
   };
 
@@ -385,10 +417,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live {c.pairTitle}</h2><p className="mt-1 text-xs theme-muted">Every current pair/combo from the real backend snapshot is shown, including rows without a signal.</p></div>
-          <span className="text-xs font-semibold theme-muted">{filteredRows.length.toLocaleString("en-IN")} live pairs • 1.5s refresh</span>
+          <span className="text-xs font-semibold theme-muted">{monitorRows.length.toLocaleString("en-IN")} live pairs • 1.5s refresh</span>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Live pairs</p><p className="mt-1 text-lg font-semibold theme-text">{filteredRows.length.toLocaleString("en-IN")}</p></div>
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Live pairs</p><p className="mt-1 text-lg font-semibold theme-text">{monitorRows.length.toLocaleString("en-IN")}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Signals / edges</p><p className="mt-1 text-lg font-semibold theme-text">{signals.toLocaleString("en-IN")}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Feed status</p><p className="mt-1 text-lg font-semibold theme-text">{feedStatus}</p></div>
           <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Feed age</p><p className="mt-1 text-lg font-semibold theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</p></div>
