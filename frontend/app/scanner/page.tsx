@@ -76,7 +76,7 @@ function ScannerContent() {
       setPairRows(Array.isArray(body?.data) ? body.data : []);
       setPairBackendStats(body?.stats && typeof body.stats === "object" ? body.stats : {});
     } catch {
-      setPairRows([]);
+      // Keep the last good diagnostic snapshot visible during a transient poll failure.
     }
   };
 
@@ -111,8 +111,10 @@ function ScannerContent() {
   }, []);
 
   useEffect(() => {
-    void load();
-    void loadPairLive();
+    if (marketSession !== "CLOSED") {
+      void load();
+      void loadPairLive();
+    }
     void loadPairHistory();
     const liveTimer = window.setInterval(() => {
       if (marketSession === "CLOSED") return;
@@ -212,9 +214,10 @@ function ScannerContent() {
   };
 
   const eligibilityText = (row: Row) => {
-    const status = String(row.status ?? "");
+    const status = String(row.status ?? row.lifecycle ?? "");
     if (status === "MISSING_EXECUTION_QUOTE") return "QUOTE ✗";
     if (status === "LIQUIDITY_BLOCKED") return "LIQUIDITY ✗";
+    if (status === "INVALID_FUTURE_BOOK") return "FUTURE BOOK ✗";
     const reasons = reasonCodes(row);
     const checks = [
       numberValue(row, "gap") > 0 ? "Gap ✓" : "Gap ✗",
@@ -335,8 +338,8 @@ function ScannerContent() {
         <div className="mt-4 overflow-x-auto"><table className="min-w-[1100px] w-full text-left text-sm">
           <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
           <tbody>{filteredPairs.length === 0 ? <tr><td colSpan={pairColumns.length} className="px-4 py-10 text-center text-sm theme-muted">No pair diagnostics in the last 2 minutes.</td></tr> : filteredPairs.map((row, index) => {
-            const status = String(row.status ?? "PAIR_CREATED");
-            const statusLabel = status === "SIGNAL" ? "SIGNAL" : status === "NO_SIGNAL" ? "NO SIGNAL" : status === "MISSING_EXECUTION_QUOTE" ? "BLOCKED • QUOTE" : status;
+            const status = String(row.status ?? row.lifecycle ?? "PAIR_CREATED");
+            const statusLabel = status === "SIGNAL" ? "SIGNAL" : status === "NO_SIGNAL" ? "NO SIGNAL" : status === "MISSING_EXECUTION_QUOTE" ? "BLOCKED • QUOTE" : status === "INVALID_FUTURE_BOOK" ? "BLOCKED • FUTURE BOOK" : status === "LIQUIDITY_BLOCKED" ? "BLOCKED • LIQUIDITY" : status;
             return <tr key={String(row.observation_ref ?? "pair-" + index)} className="border-b theme-border last:border-0">
               <td className="px-4 py-3 theme-muted">{formatTime(row.observed_at)}</td><td className="px-4 py-3 font-semibold theme-text">{cell(row, "symbol")}</td>
               <td className="px-4 py-3 theme-muted">{cell(row, "contract_month")}</td><td className="px-4 py-3 font-semibold theme-text">{statusLabel}</td>
@@ -355,8 +358,8 @@ function ScannerContent() {
         <div className="mt-4 overflow-x-auto"><table className="min-w-[1100px] w-full text-left text-sm">
           <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
           <tbody>{filteredPairHistory.length === 0 ? <tr><td colSpan={pairColumns.length} className="px-4 py-10 text-center text-sm theme-muted">No saved pair diagnostics for this selection.</td></tr> : filteredPairHistory.map((row, index) => {
-            const status = String(row.lifecycle ?? "PAIR_CREATED");
-            const statusLabel = status === "SIGNAL" ? "SIGNAL" : status === "NO_SIGNAL" ? "NO SIGNAL" : status === "MISSING_EXECUTION_QUOTE" ? "BLOCKED • QUOTE" : status === "LIQUIDITY_BLOCKED" ? "BLOCKED • LIQUIDITY" : status;
+            const status = String(row.status ?? row.lifecycle ?? "PAIR_CREATED");
+            const statusLabel = status === "SIGNAL" ? "SIGNAL" : status === "NO_SIGNAL" ? "NO SIGNAL" : status === "MISSING_EXECUTION_QUOTE" ? "BLOCKED • QUOTE" : status === "INVALID_FUTURE_BOOK" ? "BLOCKED • FUTURE BOOK" : status === "LIQUIDITY_BLOCKED" ? "BLOCKED • LIQUIDITY" : status;
             return <tr key={String(row.observation_ref ?? "history-" + index)} className="border-b theme-border last:border-0">
               <td className="px-4 py-3 theme-muted">{formatTime(row.observed_at)}</td><td className="px-4 py-3 font-semibold theme-text">{cell(row, "symbol")}</td>
               <td className="px-4 py-3 theme-muted">{cell(row, "contract_month")}</td><td className="px-4 py-3 font-semibold theme-text">{statusLabel}</td>
