@@ -154,6 +154,7 @@ class LiveCashFutureScanner:
         if session_factory is None or signal.lifecycle in {"", "EXPIRED"}:
             return
         try:
+            observed_at = datetime.fromtimestamp(int(event["timestamp_ns"]) / 1_000_000_000, IST).replace(tzinfo=None)
             now = datetime.now(IST).replace(tzinfo=None)
             retention_days = max(1, int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
             with session_factory() as db:
@@ -313,7 +314,7 @@ class LiveCashFutureScanner:
         lot_size: int | None = None,
         session_factory=None,
     ) -> None:
-        observed_at = datetime.now(IST)
+        observed_at = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, IST)
         event = {
             "symbol": symbol,
             "contract_month": month,
@@ -377,7 +378,7 @@ class LiveCashFutureScanner:
                     symbol=event["symbol"],
                     contract_month=event["contract_month"],
                     timestamp_ns=event["timestamp_ns"],
-                    observed_at=now,
+                    observed_at=observed_at,
                     cash_ltp=cash_ltp,
                     future_ltp=future_ltp,
                     cash_bid=cash.get("bid"),
