@@ -1,0 +1,58 @@
+name: VPS Read-Only Diagnostic
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: vps-readonly-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Read-only VPS diagnostic
+        env:
+          VPS_KEY_B64: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$VPS_KEY_B64" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          SSH_KNOWN_HOSTS=/tmp/vps_known_hosts
+          : > "$SSH_KNOWN_HOSTS"
+          ssh-keyscan -T 10 -H "$VPS_HOST" > "$SSH_KNOWN_HOSTS"
+          test -s "$SSH_KNOWN_HOSTS"
+          SSH_OPTS=(-i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -o UserKnownHostsFile="$SSH_KNOWN_HOSTS" -o StrictHostKeyChecking=yes)
+          ssh "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE_SCRIPT'
+          set -u
+          echo "=== DNS ==="
+          getent hosts apiconnect.angelone.in || true
+          echo "=== RESOLVER ==="
+          resolvectl status 2>/dev/null | sed -n '1,100p' || cat /etc/resolv.conf
+          echo "=== ANGEL_HTTPS ==="
+          curl -I --connect-timeout 5 --max-time 12 https://apiconnect.angelone.in 2>&1 | head -40 || true
+          echo "=== SERVICE ==="
+          systemctl show algo-trading.service -p MainPID -p ActiveState -p SubState -p NRestarts -p MemoryCurrent -p MemoryPeak -p OOMPolicy -p MemoryMax
+          echo "=== HEALTH ==="
+          curl --fail --silent --show-error --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/health || true
+          echo
+          echo "=== LIVE_HEALTH ==="
+          curl --fail --silent --show-error --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/market-data/live-health || true
+          echo
+          echo "=== COMMON_FEED_HEALTH ==="
+          curl --fail --silent --show-error --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/market-data/common-feed-health || true
+          echo
+          echo "=== SCANNER_LIVE_FAST ==="
+          curl --fail --silent --show-error --connect-timeout 2 --max-time 12 "http://127.0.0.1:8000/api/v1/scanner/cash-future/live/fast?limit=20" || true
+          echo
+          echo "=== RECENT_ANGEL_WS_LOGS ==="
+          journalctl -u algo-trading.service --since "30 minutes ago" --no-pager 2>/dev/null | grep -Ei "angel|websocket|dns|name resolution|login failed|connect_fail|temporary failure" | tail -120 || true
+          echo "=== TIME ==="
+          TZ=Asia/Kolkata date
+          echo "=== UPTIME_MEMORY ==="
+          uptime
+          free -h
+          REMOTE_SCRIPT
