@@ -135,23 +135,43 @@ def cash_future_live_pairs(
 
 @router.get("/cash-future/live/history")
 def cash_future_live_scanner_history(
-    days: int = Query(90, ge=1, le=90),
-    limit: int = Query(1000, ge=1, le=5000),
+    days: int = Query(1, ge=1, le=1),
+    limit: int = Query(100, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    """Return persisted live pair diagnostics and scanner results for up to the last 90 days."""
-    cutoff = datetime.now(IST).replace(tzinfo=None) - timedelta(days=int(days))
+    """Return today's latest 100 persisted Cash-Future pair diagnostics.
+
+    The scanner UI is intentionally session-scoped: rows remain visible after
+    market close, but the next calendar day starts with an empty history.
+    """
+    now = datetime.now(IST).replace(tzinfo=None)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     rows = db.scalars(
         select(LiveCashFutureScannerResult)
-        .where(LiveCashFutureScannerResult.observed_at >= cutoff)
+        .where(
+            LiveCashFutureScannerResult.observed_at >= day_start,
+            LiveCashFutureScannerResult.observed_at <= now,
+        )
         .order_by(LiveCashFutureScannerResult.observed_at.desc())
-        .limit(int(limit))
+        .limit(int(limit) * 10)
     ).all()
+
+    # Persisted diagnostics can contain repeated observations for one pair.
+    # Keep the newest observation for each symbol/contract and expose at most
+    # 100 rows to the post-market panel.
+    latest: dict[tuple[str, str], LiveCashFutureScannerResult] = {}
+    for row in rows:
+        key = (str(row.symbol).upper(), str(row.contract_month).upper())
+        latest.setdefault(key, row)
+        if len(latest) >= int(limit):
+            break
+    rows = list(latest.values())[:int(limit)]
+
     return {
         "status": "success",
         "scanner": "cash-future",
         "mode": "live-pair-history",
-        "days": int(days),
+        "days": 1,
         "count": len(rows),
         "data": [
             {
