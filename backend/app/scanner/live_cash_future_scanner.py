@@ -51,6 +51,10 @@ class LiveCashFutureSignal:
     net_gap_pct: float
     annualized_gap_pct: float | None
     stable_observations: int
+    future_volume: int | None
+    future_oi: int | None
+    eligible: bool
+    alert_eligible: bool
     capacity_lots: int | None
     capacity_notional: float | None
     lifecycle: str
@@ -91,6 +95,14 @@ class LiveCashFutureScanner:
         if not math.isfinite(number) or number <= 0:
             return None
         return number / divisor
+
+    @staticmethod
+    def _safe_int(value: object) -> int | None:
+        try:
+            number = int(float(value))
+        except (TypeError, ValueError):
+            return None
+        return number if number >= 0 else None
 
     @staticmethod
     def _positive_qty(payload: dict, key: str) -> float | None:
@@ -142,6 +154,7 @@ class LiveCashFutureScanner:
         if session_factory is None or signal.lifecycle in {"", "EXPIRED"}:
             return
         try:
+            observed_at = datetime.fromtimestamp(signal.timestamp_ns / 1_000_000_000, IST).replace(tzinfo=None)
             now = datetime.now(IST).replace(tzinfo=None)
             retention_days = max(1, int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
             with session_factory() as db:
@@ -165,7 +178,7 @@ class LiveCashFutureScanner:
                     symbol=signal.symbol,
                     contract_month=signal.contract_month,
                     timestamp_ns=signal.timestamp_ns,
-                    observed_at=now,
+                    observed_at=observed_at,
                     cash_ltp=signal.cash_ltp,
                     future_ltp=signal.future_ltp,
                     cash_bid=signal.cash_bid,
@@ -208,6 +221,7 @@ class LiveCashFutureScanner:
         if session_factory is None or not signal.alert_event or signal.lifecycle == "EXPIRED":
             return
         try:
+            observed_at = datetime.fromtimestamp(signal.timestamp_ns / 1_000_000_000, IST).replace(tzinfo=None)
             now = datetime.now(IST).replace(tzinfo=None)
             retention_days = max(1, int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
             with session_factory() as db:
@@ -224,7 +238,7 @@ class LiveCashFutureScanner:
                 if exists:
                     return
                 db.add(LiveCashFutureAlertHistory(
-                    observed_at=now,
+                    observed_at=observed_at,
                     timestamp_ns=signal.timestamp_ns,
                     symbol=signal.symbol,
                     contract_month=signal.contract_month,
@@ -301,7 +315,7 @@ class LiveCashFutureScanner:
         lot_size: int | None = None,
         session_factory=None,
     ) -> None:
-        observed_at = datetime.now(IST)
+        observed_at = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, IST)
         event = {
             "symbol": symbol,
             "contract_month": month,
@@ -330,6 +344,10 @@ class LiveCashFutureScanner:
         with self._lock:
             self._pair_events.appendleft(event)
             self._stats["pair_events"] += 1
+            # `last_observation_at` is the last accepted scanner pair observation,
+            # not merely the last incoming leg that may later be rejected.
+            if self._last_observation_ns is None or timestamp_ns >= self._last_observation_ns:
+                self._last_observation_ns = timestamp_ns
             persist_ok = time.monotonic() - self._last_pair_persist_at.get((symbol, month), 0.0) >= 5.0
             if persist_ok:
                 self._last_pair_persist_at[(symbol, month)] = time.monotonic()
@@ -345,6 +363,7 @@ class LiveCashFutureScanner:
 
     def _persist_pair_event(self, session_factory, event: dict, cash: dict, future: dict, lot_size: int | None) -> None:
         try:
+            observed_at = datetime.fromtimestamp(int(event["timestamp_ns"]) / 1_000_000_000, IST).replace(tzinfo=None)
             now = datetime.now(IST).replace(tzinfo=None)
             retention_days = max(1, int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
             with session_factory() as db:
@@ -365,7 +384,7 @@ class LiveCashFutureScanner:
                     symbol=event["symbol"],
                     contract_month=event["contract_month"],
                     timestamp_ns=event["timestamp_ns"],
-                    observed_at=now,
+                    observed_at=observed_at,
                     cash_ltp=cash_ltp,
                     future_ltp=future_ltp,
                     cash_bid=cash.get("bid"),
@@ -427,7 +446,6 @@ class LiveCashFutureScanner:
             return None
         with self._lock:
             self._stats["observations"] += 1
-            self._last_observation_ns = timestamp_ns
         received_at_ns = payload.get("received_at_ns")
         try:
             received_at_ns = int(received_at_ns) if received_at_ns is not None else time.time_ns()
@@ -468,6 +486,7 @@ class LiveCashFutureScanner:
             "ltp": ltp, "bid": bid, "ask": ask,
             "bid_qty": bid_qty, "ask_qty": ask_qty,
             "lot_size": lot, "expiry": payload.get("expiry"),
+            "volume": payload.get("volume"), "oi": payload.get("oi") or payload.get("open_interest"),
             "received_at_ns": received_at_ns,
         }
         ts_date = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, IST).date()
@@ -698,6 +717,10 @@ class LiveCashFutureScanner:
             net_gap_pct=net_gap_pct,
             annualized_gap_pct=annualized,
             stable_observations=stable,
+            future_volume=self._safe_int(future.get("volume")),
+            future_oi=self._safe_int(future.get("oi")),
+            eligible=eligible,
+            alert_eligible=alert_eligible,
             capacity_lots=capacity_lots,
             capacity_notional=capacity_notional,
             lifecycle=lifecycle,
@@ -741,7 +764,10 @@ class LiveCashFutureScanner:
         now_ns = int(datetime.now(IST).timestamp() * 1_000_000_000)
         cutoff = int(now_ns - max_age_seconds * 1_000_000_000)
         with self._lock:
-            signals = [signal for signal in self._signals.values() if signal.received_at_ns >= cutoff]
+            signals = [
+                signal for signal in self._signals.values()
+                if signal.received_at_ns >= cutoff and signal.eligible
+            ]
         signals.sort(key=lambda item: (-item.gap_pct, item.symbol, item.contract_month))
         rank_scores = self._rank(signals)
         by_symbol: dict[str, list[LiveCashFutureSignal]] = {}

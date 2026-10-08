@@ -101,10 +101,12 @@ def cash_future_live_fast_scanner(
     # The process-level scanner is installed by app.main; importing the singleton
     # here avoids a second market-data subscription.
     from app.main import live_cash_future_scanner
+    stats = live_cash_future_scanner.health()
     return {
         "status": "success",
         "scanner": "cash-future",
         "mode": "live-fast",
+        "scan_at": stats.get("last_observation_at"),
         "data": live_cash_future_scanner.snapshot(max_age_seconds=max_age_seconds, limit=limit),
     }
 

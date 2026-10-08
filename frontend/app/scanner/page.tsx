@@ -8,17 +8,24 @@ import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 
 const markets = ["ALL F&O STOCKS", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
-const columns = ["Symbol", "Expiry", "Cash Bid/Ask", "Future Bid/Ask", "Executable Gap", "Volume / OI", "Signal"];
+const columns = ["Symbol", "Expiry", "Cash Bid/Ask", "Future Bid/Ask", "Gap", "Gap %", "Future Vol / OI", "Stability", "Status"];
 const pairColumns = ["Time", "Symbol", "Contract", "Pair State", "Cash Ask", "Future Bid", "Gap %", "Stability", "Feed Age", "Eligibility / Diagnostics"];
 
 type Row = Record<string, unknown>;
 
 const numberValue = (row: Row, ...keys: string[]) => {
   for (const key of keys) {
-    const value = Number(row[key]);
+    const raw = row[key];
+    if (raw === null || raw === undefined || (typeof raw === "string" && raw.trim() === "")) continue;
+    const value = Number(raw);
     if (Number.isFinite(value)) return value;
   }
-  return 0;
+  return null;
+};
+
+const numberText = (row: Row, ...keys: string[]) => {
+  const value = numberValue(row, ...keys);
+  return value === null ? "—" : value.toLocaleString("en-IN", { maximumFractionDigits: 4 });
 };
 
 const cell = (row: Row, ...keys: string[]) => {
@@ -118,10 +125,15 @@ function ScannerContent() {
     if (marketSession === "OPEN") {
       void load();
       void loadPairLive();
+    } else {
+      setLoading(false);
+      setRows([]);
+      setPairRows([]);
+      setError(null);
     }
     void loadPairHistory();
     const liveTimer = window.setInterval(() => {
-      if (marketSession === "CLOSED") return;
+      if (marketSession !== "OPEN") return;
       void load();
       void loadPairLive();
     }, 1500);
@@ -144,12 +156,8 @@ function ScannerContent() {
     });
   }, [rows, market, search]);
 
-  const signals = filteredRows.filter((row) =>
-    row.executable === true ||
-    numberValue(row, "executable_gap", "gap", "net_gap") > 0
-  ).length;
-
-  const gaps = filteredRows.filter((row) => numberValue(row, "executable_gap", "gap", "net_gap") > 0).length;
+  const signals = filteredRows.filter((row) => row.alert_eligible === true).length;
+  const gaps = filteredRows.filter((row) => row.eligible === true).length;
   const filteredPairs = useMemo(() => {
     const q = search.trim().toUpperCase();
     return pairRows.filter((row) => {
@@ -179,7 +187,7 @@ function ScannerContent() {
     const quoted = filteredPairs.filter((row) => row.status !== "MISSING_EXECUTION_QUOTE");
     const liquidityBlocked = filteredPairs.filter((row) => row.status === "LIQUIDITY_BLOCKED");
     const invalidBook = filteredPairs.filter((row) => row.status === "INVALID_FUTURE_BOOK");
-    const positiveGap = quoted.filter((row) => numberValue(row, "gap") > 0);
+    const positiveGap = quoted.filter((row) => (numberValue(row, "gap") ?? 0) > 0);
     const stable = quoted.filter((row) => {
       const reasons = Array.isArray(row.reason_codes) ? row.reason_codes : String(row.reason_codes ?? "").split(",");
       return reasons.includes("STABLE");
@@ -212,7 +220,7 @@ function ScannerContent() {
   const reasonText = (row: Row) => reasonCodes(row).join(" • ") || "PAIR_CREATED";
 
   const stabilityText = (row: Row) => {
-    const stable = numberValue(row, "stable_observations");
+    const stable = numberValue(row, "stable_observations") ?? 0;
     const reasons = reasonCodes(row);
     if (stable > 0) return String(stable);
     if (reasons.includes("NOT_STABLE_YET")) return "0";
@@ -226,8 +234,8 @@ function ScannerContent() {
     if (status === "INVALID_FUTURE_BOOK") return "FUTURE BOOK ✗";
     const reasons = reasonCodes(row);
     const checks = [
-      numberValue(row, "gap") > 0 ? "Gap ✓" : "Gap ✗",
-      numberValue(row, "net_gap") > 0 || reasons.includes("POSITIVE_NET_GAP") ? "Net ✓" : "Net ✗",
+      numberValue(row, "gap") === null ? "Gap —" : numberValue(row, "gap")! > 0 ? "Gap ✓" : "Gap ✗",
+      numberValue(row, "net_gap") === null ? "Net —" : (numberValue(row, "net_gap")! > 0 || reasons.includes("POSITIVE_NET_GAP")) ? "Net ✓" : "Net ✗",
       reasons.includes("STABLE") ? "Stable ✓" : "Stable ✗",
     ];
     return checks.join(" • ");
@@ -237,6 +245,11 @@ function ScannerContent() {
     const age = Number(row.age_ms);
     if (!Number.isFinite(age)) return "—";
     return age < 1000 ? `${Math.round(age)} ms` : `${(age / 1000).toFixed(1)} s`;
+  };
+
+  const percentText = (row: Row, key = "gap_pct") => {
+    const value = numberValue(row, key);
+    return value === null ? "—" : `${value.toFixed(4)}%`;
   };
 
   const lastScanText = lastLiveScanAt
@@ -252,10 +265,10 @@ function ScannerContent() {
 
   const refresh = async () => {
     setRefreshing(true);
-    if (marketSession === "CLOSED") {
-      await loadPairHistory();
-    } else {
+    if (marketSession === "OPEN") {
       await Promise.all([load(), loadPairLive(), loadPairHistory()]);
+    } else {
+      await loadPairHistory();
     }
     setRefreshing(false);
   };
@@ -270,7 +283,7 @@ function ScannerContent() {
             <span className="h-2 w-2 rounded-full bg-current" />
             {loading ? "CONNECTING" : error ? "BACKEND ERROR" : marketSession === "OPEN" ? (rows.length ? "API CONNECTED • LIVE DATA" : "API CONNECTED • WAITING FOR LIVE DATA") : marketSession === "CLOSED" ? "API CONNECTED • NO LIVE DATA" : "API CONNECTED"}
           </span>
-          <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Zap className="h-4 w-4" /> {marketSession === "CLOSED" ? "Polling paused • Market closed" : "1.5s polling"}</span>
+          <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Zap className="h-4 w-4" /> {marketSession === "OPEN" ? "Auto-update • 1.5s" : marketSession === "CLOSED" ? "Auto-update paused • Market closed" : "Auto-update waiting • Market state"}</span>
           <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Bell className="h-4 w-4" /> Alerts: —</span>
         </div>
         <div className="flex gap-2">
@@ -293,9 +306,9 @@ function ScannerContent() {
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          ["Live F&O Rows", loading ? "…" : filteredRows.length.toLocaleString("en-IN")],
-          ["Signals Detected", loading ? "…" : signals.toLocaleString("en-IN")],
-          ["Executable Gaps", loading ? "…" : gaps.toLocaleString("en-IN")],
+          ["Qualified Live Rows", loading ? "…" : filteredRows.length.toLocaleString("en-IN")],
+          ["Alert Signals", loading ? "…" : signals.toLocaleString("en-IN")],
+          ["Execution-Qualified", loading ? "…" : gaps.toLocaleString("en-IN")],
           ["Last Live Scan", loading ? "…" : lastScanText],
         ].map(([label, value]) => <Card key={label} className="theme-border theme-surface p-4"><p className="text-xs theme-muted">{label}</p><p className="mt-2 text-xl font-semibold theme-text">{value}</p></Card>)}
       </div>
@@ -308,19 +321,21 @@ function ScannerContent() {
           <span className="text-xs theme-muted">Market: {market}{search ? " • Search: " + search : ""} • {marketSession === "CLOSED" ? "Live scan paused" : "Live scan active"}</span>
         </div>
         <div className="overflow-x-auto">
-          <table className="min-w-[1000px] w-full text-left text-sm">
+          <table className="min-w-[1250px] w-full text-left text-sm">
             <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{columns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
             <tbody>
               {loading ? <tr><td colSpan={columns.length} className="px-4 py-14 text-center text-sm theme-muted">Loading live data…</td></tr>
                 : filteredRows.length === 0 ? <tr><td colSpan={columns.length} className="px-4 py-14 text-center text-sm theme-muted">No live data</td></tr>
                 : filteredRows.map((row, index) => <tr key={String(row.id ?? row.event_id ?? `scanner-${index}`)} className="border-b theme-border last:border-0">
                   <td className="px-4 py-3 font-semibold theme-text">{cell(row, "symbol", "underlying")}</td>
-                  <td className="px-4 py-3 theme-muted">{cell(row, "contract_month", "expiry")}</td>
-                  <td className="px-4 py-3 theme-muted">{cell(row, "cash_execution_price", "cash_bid", "cash_ask")}</td>
-                  <td className="px-4 py-3 theme-muted">{cell(row, "future_execution_price", "future_bid", "future_ask")}</td>
-                  <td className="px-4 py-3 theme-muted">{cell(row, "executable_gap", "net_gap", "gap")}</td>
-                  <td className="px-4 py-3 theme-muted">{cell(row, "volume", "open_interest", "oi")}</td>
-                  <td className="px-4 py-3 font-semibold theme-text">{row.executable === true ? "SIGNAL" : numberValue(row, "executable_gap", "gap", "net_gap") > 0 ? "OPPORTUNITY" : "—"}</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "expiry")}</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "cash_bid")} / {cell(row, "cash_ask")}</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "future_bid")} / {cell(row, "future_ask")}</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "gap")}</td>
+                  <td className="px-4 py-3 theme-muted">{percentText(row)}</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "future_volume")} / {cell(row, "future_oi")}</td>
+                  <td className="px-4 py-3 theme-muted">{cell(row, "stable_observations")}</td>
+                  <td className="px-4 py-3 font-semibold theme-text">{row.alert_eligible === true ? "ALERT SIGNAL" : row.eligible === true ? "QUALIFIED" : "—"}</td>
                 </tr>)}
             </tbody>
           </table>
@@ -333,8 +348,8 @@ function ScannerContent() {
           <span className="text-xs font-semibold theme-muted">{pairStats.pairs} current live pairs • {marketSession === "CLOSED" ? "refresh paused" : marketSession === "OPEN" ? "1.5s refresh" : "waiting for market state"}</span>
         </div>
         {marketSession === "CLOSED" && <div className="mt-4 rounded-xl border theme-border theme-warning-bg p-3 text-xs theme-warning">Live scanning is paused because the market is closed. Current live counters are intentionally 0; saved diagnostics below remain available for the completed session.</div>}
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">{[
-          ["Pairs matched", pairStats.pairs],
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-9">{[
+          ["Pair observations", pairStats.pairs],
           ["Quotes present", pairStats.quoted],
           ["Missing quote", pairStats.missing],
           ["Positive gap", pairStats.positiveGap],
@@ -344,10 +359,10 @@ function ScannerContent() {
           ["No signal", pairStats.noSignal],
           ["Signals", pairStats.signals],
         ].map(([label, value]) => <div key={String(label)} className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">{label}</p><p className="mt-1 text-lg font-semibold theme-text">{value}</p></div>)}</div>
-        <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs theme-muted"><span className="font-semibold theme-text">Pipeline:</span> Pair Created → Quotes → Liquidity → Positive Gap → Stability → Signal. Counts are read-only diagnostics derived from the current pair observations.</div>
+        <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs theme-muted"><span className="font-semibold theme-text">Pipeline:</span> Pair Created → Quotes → Liquidity → Positive Gap → Stability → Signal. Counts are read-only diagnostic observations, not unique-pair counts.</div>
         <div className="mt-3 flex flex-wrap gap-2 text-xs theme-muted">
           <span className="rounded-lg border theme-border px-3 py-2">Session feed observations: {cell(pairBackendStats, "observations")}</span>
-          <span className="rounded-lg border theme-border px-3 py-2">Pairs formed: {cell(pairBackendStats, "pairs")}</span>
+          <span className="rounded-lg border theme-border px-3 py-2">Pair observations: {cell(pairBackendStats, "pairs")}</span>
           <span className="rounded-lg border theme-border px-3 py-2">Quote failures: {cell(pairBackendStats, "pairs_missing_quotes")}</span>
           <span className="rounded-lg border theme-border px-3 py-2">Diagnostics persisted: {cell(pairBackendStats, "pair_events_persisted")}</span>
         </div>
@@ -360,7 +375,7 @@ function ScannerContent() {
               <td className="px-4 py-3 theme-muted">{formatTime(row.observed_at)}</td><td className="px-4 py-3 font-semibold theme-text">{cell(row, "symbol")}</td>
               <td className="px-4 py-3 theme-muted">{cell(row, "contract_month")}</td><td className="px-4 py-3 font-semibold theme-text">{statusLabel}</td>
               <td className="px-4 py-3 theme-muted">{cell(row, "cash_ask")}</td><td className="px-4 py-3 theme-muted">{cell(row, "future_bid")}</td>
-              <td className="px-4 py-3 theme-muted">{numberValue(row, "gap_pct").toFixed(4)}%</td>
+              <td className="px-4 py-3 theme-muted">{percentText(row)}</td>
               <td className="px-4 py-3 theme-muted">{stabilityText(row)}</td>
               <td className="px-4 py-3 theme-muted">{feedAgeText(row)}</td>
               <td className="max-w-[430px] px-4 py-3 text-xs leading-5 theme-muted"><div className="font-semibold theme-text">{eligibilityText(row)}</div><div className="mt-1">{reasonText(row)}</div></td>
@@ -369,7 +384,7 @@ function ScannerContent() {
         </table></div>
       </Card>
       <Card className="theme-border theme-surface p-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-semibold theme-text">Post-Market Pair History</h2><p className="mt-1 text-xs theme-muted">Last 100 unique pairs from today's trading session. They remain visible after market close and reset to zero on the next day.</p></div><span className="text-xs theme-muted">{filteredPairHistory.length.toLocaleString("en-IN")} shown • {pairHistory.length.toLocaleString("en-IN")} saved</span></div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-semibold theme-text">Post-Market Pair History</h2><p className="mt-1 text-xs theme-muted">Latest 100 saved pair observations from today's trading session. They remain visible after market close and reset to zero on the next day.</p></div><span className="text-xs theme-muted">{filteredPairHistory.length.toLocaleString("en-IN")} shown • {pairHistory.length.toLocaleString("en-IN")} saved observations</span></div>
         <div className="mt-3 flex flex-wrap gap-2 text-xs theme-muted"><span className="rounded-lg border theme-border px-3 py-2">Saved automatically</span><span className="rounded-lg border theme-border px-3 py-2">Daily reset: next day</span><span className="rounded-lg border theme-border px-3 py-2">Includes quote failures + no-signal reasons</span><span className="rounded-lg border theme-border px-3 py-2">Last live scan: {lastScanText}</span></div>
         <div className="mt-4 overflow-x-auto"><table className="min-w-[1100px] w-full text-left text-sm">
           <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
@@ -380,7 +395,7 @@ function ScannerContent() {
               <td className="px-4 py-3 theme-muted">{formatTime(row.observed_at)}</td><td className="px-4 py-3 font-semibold theme-text">{cell(row, "symbol")}</td>
               <td className="px-4 py-3 theme-muted">{cell(row, "contract_month")}</td><td className="px-4 py-3 font-semibold theme-text">{statusLabel}</td>
               <td className="px-4 py-3 theme-muted">{cell(row, "cash_ask")}</td><td className="px-4 py-3 theme-muted">{cell(row, "future_bid")}</td>
-              <td className="px-4 py-3 theme-muted">{numberValue(row, "gap_pct").toFixed(4)}%</td>
+              <td className="px-4 py-3 theme-muted">{percentText(row)}</td>
               <td className="px-4 py-3 theme-muted">{stabilityText(row)}</td>
               <td className="px-4 py-3 theme-muted">{historyAgeText(row)}</td>
               <td className="max-w-[430px] px-4 py-3 text-xs leading-5 theme-muted"><div className="font-semibold theme-text">{eligibilityText(row)}</div><div className="mt-1">{reasonText(row)}</div></td>

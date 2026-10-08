@@ -44,6 +44,7 @@ def test_live_scanner_result_persists_and_cleans_up_after_30_days(monkeypatch, t
 
     with Session() as db:
         row = db.query(LiveCashFutureScannerResult).one()
+        assert row.observed_at.isoformat().startswith("1970-01-01T05:30:01")
         row.observed_at = row.observed_at - timedelta(days=91)
         db.commit()
 
@@ -89,7 +90,7 @@ def test_live_scanner_alert_history_is_retained_for_90_days(monkeypatch, tmp_pat
         row = db.query(LiveCashFutureAlertHistory).one()
         assert row.timestamp_ns == signal.timestamp_ns
         assert row.gap == signal.gap
-        assert row.observed_at >= datetime.now() - timedelta(seconds=5)
+        assert row.observed_at.isoformat().startswith("1970-01-01T05:30:03")
         row.observed_at = row.observed_at - timedelta(days=91)
         db.commit()
 
@@ -102,6 +103,41 @@ def test_live_scanner_alert_history_is_retained_for_90_days(monkeypatch, tmp_pat
         assert rows[0].timestamp_ns == recovered.timestamp_ns
         assert rows[0].event == "RECOVERY"
 
+
+def test_live_pair_diagnostic_persistence_uses_source_observation_time(tmp_path):
+    from contextlib import contextmanager
+    from datetime import datetime
+
+    engine = create_engine("sqlite:///" + str(tmp_path / "pair-diagnostic.sqlite3"))
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    @contextmanager
+    def session_factory():
+        db = Session()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    scanner = LiveCashFutureScanner()
+    source_ns = 4_000_000_000
+    event = {
+        "symbol": "ABC", "contract_month": "CURRENT", "timestamp_ns": source_ns,
+        "status": "NO_SIGNAL", "reason_codes": ["PAIR_CREATED"],
+        "observation_ref": "ABC:CURRENT:4000000000",
+        "gap": 0.5, "gap_pct": 0.5, "liquidity_qty": None,
+    }
+    cash = {"ltp": 100.0, "bid": 99.9, "ask": 100.0}
+    future = {"ltp": 100.5, "bid": 100.5, "ask": 100.6}
+    scanner._persist_pair_event(session_factory, event, cash, future, 100)
+
+    with Session() as db:
+        row = db.query(LiveCashFutureScannerResult).one()
+        from zoneinfo import ZoneInfo
+        assert row.observed_at == datetime.fromtimestamp(source_ns / 1_000_000_000, ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
+        assert row.symbol == "ABC"
+        assert row.lifecycle == "NO_SIGNAL"
 
 def test_live_alert_history_route_returns_persisted_alerts(tmp_path):
     from datetime import datetime
@@ -132,6 +168,9 @@ def test_live_fast_scanner_route_uses_process_local_snapshot(monkeypatch):
     from app.scanner.auto_routes import cash_future_live_fast_scanner
 
     class StubScanner:
+        def health(self):
+            return {"last_observation_at": "2026-10-09T09:15:01+05:30"}
+
         def snapshot(self, *, max_age_seconds, limit):
             assert max_age_seconds == 5.0
             assert limit == 10
