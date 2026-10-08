@@ -20,6 +20,20 @@ def live(limit:int=Query(50,ge=1,le=200), min_gap_points:float|None=Query(None,g
   "liquidity_qty":x.liquidity_qty,"capacity_lots":x.capacity_lots,"rank_score":x.rank_score,"direction":x.direction,"gap_points":x.gap_points,"gross_profit":x.gross_profit,"qualifies":x.qualifies,"minimum_gap_points":(scanner.minimum_gap_points if min_gap_points is None else min_gap_points),"minimum_gross_profit":(scanner.minimum_gross_profit if min_gross_profit is None else min_gross_profit)
  } for x in scanner.snapshot(limit=limit, minimum_gap_points=min_gap_points, minimum_gross_profit=min_gross_profit)]
  return {"status":"success","scanner":"calendar-spread-live-1s","mode":"paper-safe","data":signals,"opportunity_count":sum(max(x["long_edge"],x["short_edge"])>0 for x in signals)}
+@router.get("/pairs")
+def pairs(limit:int=Query(200,ge=1,le=500)):
+ if scanner is None:return {"status":"disabled","data":[],"pair_count":0}
+ rows=[{
+  "underlying":x.underlying,"exchange":x.exchange,"instrument_type":x.instrument_type,
+  "near_contract_month":x.near_contract_month,"far_contract_month":x.far_contract_month,
+  "timestamp_ns":x.timestamp_ns,"near_bid":x.near_bid,"near_ask":x.near_ask,
+  "far_bid":x.far_bid,"far_ask":x.far_ask,"lot_size":x.lot_size,
+  "long_edge":x.edge_long,"short_edge":x.edge_short,
+  "long_edge_pct":x.edge_pct_long,"short_edge_pct":x.edge_pct_short,
+  "liquidity_qty":x.liquidity_qty,"capacity_lots":x.capacity_lots,"rank_score":x.rank_score,
+  "direction":x.direction,"gap_points":x.gap_points,"gross_profit":x.gross_profit,"qualifies":x.qualifies,
+ } for x in scanner.pair_snapshot(limit=limit)]
+ return {"status":"success","scanner":"calendar-spread-pair-monitor","mode":"paper-safe","data":rows,"pair_count":len(rows)}
 @router.get("/history")
 def history(days:int=Query(1,ge=1,le=90),limit:int=Query(200,ge=1,le=1000)):
  from datetime import datetime,timedelta,timezone
