@@ -8,7 +8,7 @@ import { themeOptions, useTheme, type ThemeName } from "@/components/theme-provi
 
 const nav = [
   { href: "/", label: "Command Center", icon: Home },
-  { href: "/scanner", label: "Live Scanner", icon: Activity },
+  { href: "/scanner", label: "Cash Future", icon: Activity },
   { href: "/strategies/calendar-spread", label: "Calendar Scanner", icon: Activity },
   { href: "/strategies/synthetic-arbitrage", label: "Synthetic Scanner", icon: Activity },
   { href: "/strategies/box-spread", label: "Box Scanner", icon: Activity },
