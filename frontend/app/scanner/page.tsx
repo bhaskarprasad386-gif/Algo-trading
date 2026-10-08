@@ -81,7 +81,7 @@ function ScannerContent() {
   const loadPairHistory = async () => {
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(`${base}/api/v1/scanner/cash-future/live/history?days=1&limit=250`, { cache: "no-store" });
+      const response = await fetch(`${base}/api/v1/scanner/cash-future/live/history?days=1&limit=100`, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       setPairHistory(Array.isArray(body?.data) ? body.data : []);
     } catch {
@@ -278,11 +278,11 @@ function ScannerContent() {
         </table></div>
       </Card>
       <Card className="theme-border theme-surface p-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-semibold theme-text">Post-Market Pair History</h2><p className="mt-1 text-xs theme-muted">Persisted pair diagnostics from the last trading day. This remains available after the live feed stops.</p></div><span className="text-xs theme-muted">{filteredPairHistory.length.toLocaleString("en-IN")} shown • {pairHistory.length.toLocaleString("en-IN")} saved</span></div>
-        <div className="mt-3 flex flex-wrap gap-2 text-xs theme-muted"><span className="rounded-lg border theme-border px-3 py-2">Saved automatically</span><span className="rounded-lg border theme-border px-3 py-2">Retention: scanner result setting</span><span className="rounded-lg border theme-border px-3 py-2">Includes quote failures + no-signal reasons</span></div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-semibold theme-text">Post-Market Pair History</h2><p className="mt-1 text-xs theme-muted">Last 100 unique pairs from today's trading session. They remain visible after market close and reset to zero on the next day.</p></div><span className="text-xs theme-muted">{filteredPairHistory.length.toLocaleString("en-IN")} shown • {pairHistory.length.toLocaleString("en-IN")} saved</span></div>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs theme-muted"><span className="rounded-lg border theme-border px-3 py-2">Saved automatically</span><span className="rounded-lg border theme-border px-3 py-2">Daily reset: next day</span><span className="rounded-lg border theme-border px-3 py-2">Includes quote failures + no-signal reasons</span></div>
         <div className="mt-4 overflow-x-auto"><table className="min-w-[1100px] w-full text-left text-sm">
           <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
-          <tbody>{filteredPairHistory.length === 0 ? <tr><td colSpan={pairColumns.length} className="px-4 py-10 text-center text-sm theme-muted">No saved pair diagnostics for this selection.</td></tr> : filteredPairHistory.slice(0, 100).map((row, index) => {
+          <tbody>{filteredPairHistory.length === 0 ? <tr><td colSpan={pairColumns.length} className="px-4 py-10 text-center text-sm theme-muted">No saved pair diagnostics for this selection.</td></tr> : filteredPairHistory.map((row, index) => {
             const status = String(row.lifecycle ?? "PAIR_CREATED");
             const statusLabel = status === "SIGNAL" ? "SIGNAL" : status === "NO_SIGNAL" ? "NO SIGNAL" : status === "MISSING_EXECUTION_QUOTE" ? "BLOCKED • QUOTE" : status === "LIQUIDITY_BLOCKED" ? "BLOCKED • LIQUIDITY" : status;
             return <tr key={String(row.observation_ref ?? "history-" + index)} className="border-b theme-border last:border-0">
