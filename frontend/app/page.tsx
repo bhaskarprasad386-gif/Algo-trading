@@ -42,7 +42,7 @@ export default function HomePage() {
   const [marketCheckedAt, setMarketCheckedAt] = useState<string | null>(null);
   const [feedStatus, setFeedStatus] = useState<"checking" | "live" | "stale" | "no-data" | "closed" | "error">("checking");
   const [feedAge, setFeedAge] = useState<number | null>(null);
-  const [runtime, setRuntime] = useState<{ticks: number; activeInstruments: number; socketGroups: number; maxSocketSessions: number; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string}>}>({ticks: 0, activeInstruments: 0, socketGroups: 0, maxSocketSessions: 3, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
+  const [runtime, setRuntime] = useState<{ticks: number; runtimeStartedAt: number | null; activeInstruments: number; socketGroups: number; maxSocketSessions: number; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string}>}>({ticks: 0, runtimeStartedAt: null, activeInstruments: 0, socketGroups: 0, maxSocketSessions: 3, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [diagnosticErrors, setDiagnosticErrors] = useState<any[]>([]);
 
@@ -194,6 +194,7 @@ export default function HomePage() {
         };
         setRuntime({
           ticks: Number(feed.ticks_received ?? 0),
+          runtimeStartedAt: feed.runtime_started_at == null ? null : Number(feed.runtime_started_at),
           activeInstruments: Number(feed.active_instruments ?? 0),
           socketGroups: Number(feed.socket_groups ?? 0),
           maxSocketSessions: Number(feed.max_socket_sessions ?? 3),
@@ -256,6 +257,7 @@ export default function HomePage() {
   const formattedCapital = Number(capital || 0).toLocaleString("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
   const apiLabel = apiStatus === "connected" ? "CONNECTED" : apiStatus === "error" ? "ERROR" : "CONNECTING";
   const wsLabel = wsStatus === "connected" ? "CONNECTED" : wsStatus === "error" ? "ERROR" : "CONNECTING";
+  const tickRuntimeLabel = runtime.runtimeStartedAt ? new Date(runtime.runtimeStartedAt * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—";
   const feedLabel = feedStatus === "live" ? "LIVE" : feedStatus === "stale" ? "STALE" : feedStatus === "no-data" ? "NO DATA" : feedStatus === "closed" ? "CLOSED" : feedStatus === "error" ? "ERROR" : "CHECKING";
   const snapshotAge = snapshot.timestamp ? Math.max(0, (Date.now() - new Date(snapshot.timestamp).getTime()) / 1000) : null;
   const marketDataAge = marketCheckedAt ? Math.max(0, (Date.now() - new Date(marketCheckedAt).getTime()) / 1000) : null;
@@ -327,12 +329,12 @@ export default function HomePage() {
             {health(apiLabel, wsLabel, feedLabel, runtime.ticks, runtime.runners).map(([name, value, state]) => (
               <div key={name} className="flex items-center justify-between rounded-xl px-2 py-2">
                 <div className="flex items-center gap-2 text-[12px] font-medium theme-muted">{state === "error" ? <TriangleAlert size={14} className="theme-danger" /> : state === "warn" ? <TriangleAlert size={14} className="theme-warning" /> : <span className="h-2 w-2 rounded-full bg-[var(--app-success)]" />}{name}</div>
-                <span className={"rounded-full px-2.5 py-1 text-[10px] font-bold " + (state === "ok" ? "theme-success-bg theme-success" : state === "warn" ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{value}</span>
+                <span title={name === "Live Ticks" && runtime.runtimeStartedAt ? `Session started ${tickRuntimeLabel}; counter resets only when FastAPI restarts` : undefined} className={"rounded-full px-2.5 py-1 text-[10px] font-bold " + (state === "ok" ? "theme-success-bg theme-success" : state === "warn" ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{value}</span>
               </div>
             ))}
           </Card>
           <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
-            {[["Ticks", runtime.ticks.toLocaleString("en-IN")],["Instruments", runtime.activeInstruments.toLocaleString("en-IN")],["Sockets", runtime.socketGroups + "/" + runtime.maxSocketSessions],["Feed age", feedAge == null ? "—" : feedAge.toFixed(1) + "s"]].map(([label, value]) => <div key={label} className="rounded-xl border theme-border theme-surface-2 px-2.5 py-2"><div className="text-[9px] uppercase tracking-wide theme-subtle">{label}</div><div className="mt-0.5 text-[11px] font-bold">{value}</div></div>)}</div>
+            {[["Ticks", runtime.ticks.toLocaleString("en-IN")],["Instruments", runtime.activeInstruments.toLocaleString("en-IN")],["Sockets", runtime.socketGroups + "/" + runtime.maxSocketSessions],["Feed age", feedAge == null ? "—" : feedAge.toFixed(1) + "s"]].map(([label, value]) => <div key={label} className="rounded-xl border theme-border theme-surface-2 px-2.5 py-2"><div className="text-[9px] uppercase tracking-wide theme-subtle">{label}</div><div className="mt-0.5 text-[11px] font-bold">{value}</div>{label === "Ticks" && runtime.runtimeStartedAt ? <div className="mt-0.5 text-[8px] theme-subtle">session {tickRuntimeLabel}</div> : null}</div>)}</div>
         </section>
       </div>
 
@@ -393,6 +395,7 @@ export default function HomePage() {
                 ["Dashboard WebSocket", wsLabel],
                 ["Common Market Data Feed", feedLabel],
                 ["Live Ticks", runtime.ticks.toLocaleString("en-IN")],
+                ["Tick Counter", runtime.runtimeStartedAt ? `Session • ${tickRuntimeLabel}` : "—"],
                 ["Cash Future Runner", runtime.runners.cash_future?.detail ?? "UNAVAILABLE"],
                 ["Synthetic Future Runner", runtime.runners.synthetic_arbitrage?.detail ?? "UNAVAILABLE"],
                 ["Box Spread Runner", runtime.runners.box_spread?.detail ?? "UNAVAILABLE"],
