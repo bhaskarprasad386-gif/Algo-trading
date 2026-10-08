@@ -64,6 +64,9 @@ const configs: Record<string, WorkspaceConfig> = {
     columns: ["Symbol", "Segment", "Contract", "Side", "Live Price", "Condition", "Action"],
     metrics: ["Eligible Symbols", "Conditions Met", "Alerts", "Last Scan"],
     controls: ["F&O Stocks", "Cash / Future / Option", "BUY / SELL", "Condition"],
+    pairTitle: "Pair Monitor",
+    pairColumns: ["Time", "Symbol", "State"],
+    historyEndpoint: "",
   },
 };
 
