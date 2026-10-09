@@ -184,9 +184,11 @@ export default function HomePage() {
           if (!value) return { running: false, detail: "UNAVAILABLE" };
           const running = Boolean(value.running);
           const nestedFeed = value.underlying_feed ?? value.feed ?? null;
-          const instruments = Number(value.registered_instruments ?? value.active_instruments ?? nestedFeed?.active_instruments ?? nestedFeed?.subscriptions ?? 0);
-          const updates = Number(value.scanner_updates ?? value.records_received ?? value.callbacks ?? nestedFeed?.ticks_received ?? 0);
-          const connected = nestedFeed?.connected_groups?.length ?? 0;
+          // Show only runner-owned counters here. Common-feed ticks/subscriptions
+          // are global transport telemetry and must not imply this strategy processed data.
+          const instruments = Number(value.registered_instruments ?? value.active_instruments ?? 0);
+          const updates = Number(value.scanner_updates ?? value.records_received ?? value.payload_callbacks ?? value.callbacks ?? 0);
+          const connected = Array.isArray(nestedFeed?.connected_groups) ? nestedFeed.connected_groups.length : 0;
           const parts = [running ? "RUNNING" : "STOPPED"];
           if (Number.isFinite(instruments) && instruments > 0) parts.push(instruments.toLocaleString("en-IN") + " instruments");
           if (Number.isFinite(updates) && updates > 0) parts.push(updates.toLocaleString("en-IN") + " updates");
