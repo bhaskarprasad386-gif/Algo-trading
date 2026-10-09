@@ -36,8 +36,8 @@ export default function HomePage() {
   const [capitalSaved, setCapitalSaved] = useState(false);
   const [apiStatus, setApiStatus] = useState<"checking" | "connected" | "error">("checking");
   const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "error">("connecting");
-  const [snapshot, setSnapshot] = useState({ calendar: 0, synthetic: 0, box: 0, opportunities: 0, timestamp: null as string | null });
-  const [indexLtps, setIndexLtps] = useState<Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null }>>({});
+  const [snapshot, setSnapshot] = useState({ calendar: 0, synthetic: 0, box: 0, opportunities: 0, timestamp: null as string | null, cashFutureObservedAt: null as string | null });
+  const [indexLtps, setIndexLtps] = useState<Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null; status: string }>>({});
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [marketCheckedAt, setMarketCheckedAt] = useState<string | null>(null);
   const [feedStatus, setFeedStatus] = useState<"checking" | "live" | "stale" | "no-data" | "closed" | "error">("checking");
@@ -79,6 +79,7 @@ export default function HomePage() {
             box: Number(message?.integration?.box_spread?.count ?? 0),
             opportunities: Number(message?.scanner?.opportunity_count ?? 0),
             timestamp: message?.timestamp ?? null,
+            cashFutureObservedAt: message?.scanner?.health?.last_observation_at ?? null,
           });
         } catch {
           // Ignore malformed dashboard messages without losing the last valid snapshot.
@@ -108,31 +109,20 @@ export default function HomePage() {
         const response = await fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/market-data/overview", { cache: "no-store" });
         if (!response.ok) throw new Error("market overview");
         const body = await response.json();
-        const next: Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null }> = {};
+        const next: Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null; status: string }> = {};
         const session = body?.market_session === "OPEN" ? "OPEN" : body?.market_session === "CLOSED" ? "CLOSED" : "UNKNOWN";
         for (const row of Array.isArray(body?.indices) ? body.indices : []) {
           if (row?.symbol) {
             const ltp = row?.ltp == null ? null : Number(row.ltp);
             const previousClose = row?.close == null ? null : Number(row.close);
             const changePercent = ltp != null && previousClose != null && previousClose !== 0 ? ((ltp - previousClose) / previousClose) * 100 : null;
-            next[String(row.symbol).toUpperCase()] = { ltp, previousClose, changePercent };
+            next[String(row.symbol).toUpperCase()] = { ltp, previousClose, changePercent, status: String(row?.status ?? "NO_QUOTE").toUpperCase() };
           }
         }
         if (!cancelled) {
           setMarketSession(session);
           setMarketCheckedAt(new Date().toISOString());
-          setIndexLtps((previous) => {
-            const merged = { ...previous };
-            for (const [symbol, value] of Object.entries(next)) {
-              const prior = previous[symbol];
-              merged[symbol] = {
-                ltp: value.ltp ?? prior?.ltp ?? null,
-                previousClose: value.previousClose ?? prior?.previousClose ?? null,
-                changePercent: value.changePercent ?? prior?.changePercent ?? null,
-              };
-            }
-            return merged;
-          });
+          setIndexLtps(next);
         }
       } catch {
         // Keep the last successful overview snapshot during transient API/quote failures.
@@ -157,8 +147,9 @@ export default function HomePage() {
         const age = body?.runtime_feed?.age_seconds ?? body?.age_seconds;
         setFeedAge(age == null || !Number.isFinite(Number(age)) ? null : Number(age));
         if (session === "CLOSED") setFeedStatus("closed");
-        else if (status === "LIVE") setFeedStatus("live");
-        else if (status === "STALE") setFeedStatus("stale");
+        else if (session !== "OPEN") setFeedStatus("no-data");
+        else if (status === "LIVE" && age != null && Number.isFinite(Number(age)) && Number(age) >= 0 && Number(age) <= 5) setFeedStatus("live");
+        else if (status === "STALE" || (age != null && Number.isFinite(Number(age)) && Number(age) > 5)) setFeedStatus("stale");
         else setFeedStatus("no-data");
       } catch {
         if (!cancelled) setFeedStatus("error");
@@ -185,7 +176,7 @@ export default function HomePage() {
           const running = Boolean(value.running);
           const nestedFeed = value.underlying_feed ?? value.feed ?? null;
           const instruments = Number(value.registered_instruments ?? value.active_instruments ?? nestedFeed?.active_instruments ?? nestedFeed?.subscriptions ?? 0);
-          const updates = Number(value.scanner_updates ?? value.records_received ?? value.callbacks ?? nestedFeed?.ticks_received ?? 0);
+          const updates = Number(value.scanner_updates ?? value.records_received ?? value.payload_callbacks ?? value.callbacks ?? 0);
           const connected = nestedFeed?.connected_groups?.length ?? 0;
           const parts = [running ? "RUNNING" : "STOPPED"];
           if (Number.isFinite(instruments) && instruments > 0) parts.push(instruments.toLocaleString("en-IN") + " instruments");
@@ -272,9 +263,11 @@ export default function HomePage() {
     return detail;
   };
   const snapshotAge = snapshot.timestamp ? Math.max(0, (Date.now() - new Date(snapshot.timestamp).getTime()) / 1000) : null;
+  const observationAge = snapshot.cashFutureObservedAt ? Math.max(0, (Date.now() - new Date(snapshot.cashFutureObservedAt).getTime()) / 1000) : null;
+  const observationAgeLabel = observationAge == null ? "No Cash-Future observation time" : observationAge < 60 ? `Cash-Future observation ${Math.round(observationAge)}s ago` : `Cash-Future observation stale • ${Math.round(observationAge / 60)}m ago`;
   const marketDataAge = marketCheckedAt ? Math.max(0, (Date.now() - new Date(marketCheckedAt).getTime()) / 1000) : null;
   const scannerStatus = [
-    { label: "Signals Detected", value: snapshot.opportunities.toLocaleString("en-IN") },
+    { label: "Positive Net-Gap Signals (max 50)", value: snapshot.opportunities.toLocaleString("en-IN") },
     { label: "Calendar Rows", value: snapshot.calendar.toLocaleString("en-IN") },
     { label: "Synthetic Rows", value: snapshot.synthetic.toLocaleString("en-IN") },
     { label: "Orders", value: "Not reported" },
@@ -286,7 +279,7 @@ export default function HomePage() {
   return (
     <div className="min-h-screen theme-bg theme-text p-1">
       <PageTitle eyebrow="Phase 2 • Home / Command Center" title="Command Center" description="" />
-      <div className="mb-5 grid gap-3 lg:grid-cols-[1fr_auto]"><Card className="rounded-2xl border theme-border theme-surface-2 p-3"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] theme-subtle">Exchange Sessions</div><div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-semibold"><span className={marketSession === "OPEN" ? "theme-success" : "theme-warning"}>NSE {marketSession}</span><span className="theme-subtle">•</span><span className="theme-accent">MCX 09:00–23:30</span><span className="theme-subtle">•</span><span className="theme-muted">23:55 seasonal DST</span></div></div><div className="text-right text-[10px] theme-subtle">MCX agri till 17:00 • International agri till 21:00</div></div></Card><div className="flex flex-wrap justify-end gap-2">
+      <div className="mb-5 grid gap-3 lg:grid-cols-[1fr_auto]"><Card className="rounded-2xl border theme-border theme-surface-2 p-3"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] theme-subtle">Exchange Sessions</div><div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-semibold"><span className={marketSession === "OPEN" ? "theme-success" : "theme-warning"}>NSE {marketSession}</span><span className="theme-subtle">•</span><span className="theme-accent">MCX session varies by contract/calendar</span></div></div><div className="text-right text-[10px] theme-subtle">Exchange hours depend on segment, contract and exchange calendar</div></div></Card><div className="flex flex-wrap justify-end gap-2">
         <div className="inline-flex items-center gap-2 rounded-full border theme-border theme-accent-bg px-3 py-1.5 text-[11px] font-semibold theme-accent"><Radio size={13} /> {feedLabel === "LIVE" ? "Live market feed LIVE" : feedLabel === "CLOSED" ? "Market closed" : `Market feed ${feedLabel.toLowerCase()}`}</div>
         <div className="inline-flex items-center gap-2 rounded-full border theme-border theme-success-bg px-3 py-1.5 text-[11px] font-semibold theme-success"><ShieldCheck size={13} /> Paper-safe broker orders OFF</div></div></div>
 
@@ -294,7 +287,9 @@ export default function HomePage() {
         <div className="mb-3 flex items-center gap-2"><Activity size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Market Overview</h2></div>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
           {markets.map((symbol) => {
-            const change = indexLtps[symbol]?.changePercent;
+            const quote = indexLtps[symbol];
+            const quoteAvailable = marketDataAge != null && marketDataAge <= 15 && (marketSession === "OPEN" ? quote?.status === "LIVE" : marketSession === "CLOSED" ? quote?.status === "CLOSED_LAST_CLOSE" : false);
+            const change = quoteAvailable ? quote?.changePercent : null;
             const positive = change != null && change > 0;
             const negative = change != null && change < 0;
             return (
@@ -304,11 +299,11 @@ export default function HomePage() {
                   <div className="pl-1">
                     <div className="flex items-center justify-between"><span className="text-[12px] font-bold tracking-wide">{symbol}</span>{marketSession === "CLOSED" ? <span className="rounded-full theme-warning-bg theme-warning px-2 py-0.5 text-[9px] font-bold">CLOSED</span> : null}{positive ? <TrendingUp size={15} className="theme-success" /> : negative ? <TrendingDown size={15} className="theme-danger" /> : <Activity size={15} className="theme-subtle" />}</div>
                     <div className="mt-3 flex items-center justify-between gap-2">
-                      <div className={"text-lg font-bold " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-text")}>{indexLtps[symbol]?.ltp == null ? "No live data" : indexLtps[symbol]!.ltp!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                      {indexLtps[symbol]?.ltp == null && <Radio size={14} className="theme-warning" aria-label="No live data" />}
+                      <div className={"text-lg font-bold " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-text")}>{!quoteAvailable || quote?.ltp == null ? (marketSession === "CLOSED" ? "Last close unavailable" : "No verified quote") : quote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                      {(!quoteAvailable || quote?.ltp == null) && <Radio size={14} className="theme-warning" aria-label="No verified quote" />}
                     </div>
                     <div className={"mt-1 text-[12px] font-bold " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-muted")}>{change == null ? "No live change" : (change > 0 ? "+" : "") + change.toFixed(2) + "%"}</div>
-                    <div className="mt-1 text-[10px] theme-subtle">{indexLtps[symbol]?.previousClose == null ? "Previous close unavailable" : marketSession === "CLOSED" ? "Last close: " + indexLtps[symbol]!.previousClose!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + indexLtps[symbol]!.previousClose!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    <div className="mt-1 text-[10px] theme-subtle">{!quoteAvailable || quote?.previousClose == null ? "Previous close unavailable" : marketSession === "CLOSED" ? "Last close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     <div className="mt-3 flex items-center justify-between border-t theme-border pt-2 text-[10px] font-semibold theme-accent">
                       <span>Open Live Scanner</span><Radio size={13} />
                     </div>
@@ -378,7 +373,7 @@ export default function HomePage() {
           </div>
         </section>
         <div className="space-y-4">
-          <section aria-label="Scanner status"><div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Radio size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Scanner Status</h2></div><div className="text-[10px] theme-subtle">{snapshotAge == null ? "No snapshot yet" : snapshotAge < 10 ? `Snapshot ${Math.round(snapshotAge)}s ago` : `Snapshot stale • ${Math.round(snapshotAge)}s ago`}</div></div><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{scannerStatus.map((item) => <Card key={item.label} className="rounded-xl p-2.5"><div className="text-[10px] font-medium theme-subtle">{item.label}</div><div className="mt-1 text-[11px] font-semibold">{item.value}</div></Card>)}</div></section>
+          <section aria-label="Scanner status"><div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Radio size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Scanner Status</h2></div><div className="text-[10px] theme-subtle">{snapshotAge == null ? "No dashboard heartbeat yet" : snapshotAge < 10 ? `Heartbeat ${Math.round(snapshotAge)}s ago` : `Heartbeat stale • ${Math.round(snapshotAge)}s ago`} • {observationAgeLabel}</div></div><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{scannerStatus.map((item) => <Card key={item.label} className="rounded-xl p-2.5"><div className="text-[10px] font-medium theme-subtle">{item.label}</div><div className="mt-1 text-[11px] font-semibold">{item.value}</div></Card>)}</div></section>
           <section aria-label="Operations"><div className="mb-3 flex items-center gap-2"><Zap size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Operations</h2></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Link href="/scanner"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Radio size={16} className="theme-accent" /><div><div className="text-[12px] font-semibold">Cash Future</div><div className="text-[10px] theme-subtle">Open Cash Future scanner</div></div></div></Card></Link>
             <Link href="/custom-alert"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Bell size={16} className="theme-warning" /><div><div className="text-[12px] font-semibold">Custom Alerts</div><div className="text-[10px] theme-subtle">Manage alerts</div></div></div></Card></Link>
@@ -418,7 +413,7 @@ export default function HomePage() {
                 ["Last Feed Tick Age", feedAgeLabel],
                 ["Delivery / Normalizer Errors", runtime.deliveryErrors + " / " + runtime.normalizerErrors],
                 ["NSE Session", marketSession],
-                ["MCX Session Window", "09:00–23:30 / 23:55 seasonal"],
+                ["MCX Session Window", "Varies by segment, contract and exchange calendar"],
               ].map(([name, value]) => (
                 <div key={name} className="flex items-center justify-between rounded-xl border theme-border theme-surface-2 px-3 py-2.5">
                   <span className="text-[11px] theme-muted">{name}</span>
