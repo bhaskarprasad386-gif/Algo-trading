@@ -154,11 +154,16 @@ export default function HomePage() {
         if (cancelled) return;
         const status = String(body?.feed_status ?? "").toUpperCase();
         const session = String(body?.market_session ?? "").toUpperCase();
-        const age = body?.runtime_feed?.age_seconds ?? body?.age_seconds;
-        setFeedAge(age == null || !Number.isFinite(Number(age)) ? null : Number(age));
+        const rawAge = body?.runtime_feed?.age_seconds ?? body?.age_seconds;
+        const age = rawAge == null || !Number.isFinite(Number(rawAge)) ? null : Number(rawAge);
+        setFeedAge(age);
+
+        // "LIVE" is reserved for an open NSE session with a recent verified tick.
+        // A backend label alone must not make missing/old data look live.
         if (session === "CLOSED") setFeedStatus("closed");
-        else if (status === "LIVE") setFeedStatus("live");
-        else if (status === "STALE") setFeedStatus("stale");
+        else if (session !== "OPEN") setFeedStatus("no-data");
+        else if (status === "LIVE" && age !== null && age >= 0 && age <= 5) setFeedStatus("live");
+        else if (status === "STALE" || (age !== null && age > 5)) setFeedStatus("stale");
         else setFeedStatus("no-data");
       } catch {
         if (!cancelled) setFeedStatus("error");
