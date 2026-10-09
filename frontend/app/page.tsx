@@ -274,7 +274,7 @@ export default function HomePage() {
   const snapshotAge = snapshot.timestamp ? Math.max(0, (Date.now() - new Date(snapshot.timestamp).getTime()) / 1000) : null;
   const marketDataAge = marketCheckedAt ? Math.max(0, (Date.now() - new Date(marketCheckedAt).getTime()) / 1000) : null;
   const scannerStatus = [
-    { label: "Signals Detected", value: snapshot.opportunities.toLocaleString("en-IN") },
+    { label: "Positive Net-Gap Signals (max 50)", value: snapshot.opportunities.toLocaleString("en-IN") },
     { label: "Calendar Rows", value: snapshot.calendar.toLocaleString("en-IN") },
     { label: "Synthetic Rows", value: snapshot.synthetic.toLocaleString("en-IN") },
     { label: "Orders", value: "Not reported" },
