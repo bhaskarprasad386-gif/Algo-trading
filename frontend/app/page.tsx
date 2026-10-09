@@ -37,7 +37,7 @@ export default function HomePage() {
   const [apiStatus, setApiStatus] = useState<"checking" | "connected" | "error">("checking");
   const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [snapshot, setSnapshot] = useState({ calendar: 0, synthetic: 0, box: 0, opportunities: 0, timestamp: null as string | null });
-  const [indexLtps, setIndexLtps] = useState<Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null }>>({});
+  const [indexLtps, setIndexLtps] = useState<Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null; status: string }>>({});
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [marketCheckedAt, setMarketCheckedAt] = useState<string | null>(null);
   const [feedStatus, setFeedStatus] = useState<"checking" | "live" | "stale" | "no-data" | "closed" | "error">("checking");
@@ -108,31 +108,20 @@ export default function HomePage() {
         const response = await fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/market-data/overview", { cache: "no-store" });
         if (!response.ok) throw new Error("market overview");
         const body = await response.json();
-        const next: Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null }> = {};
+        const next: Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null; status: string }> = {};
         const session = body?.market_session === "OPEN" ? "OPEN" : body?.market_session === "CLOSED" ? "CLOSED" : "UNKNOWN";
         for (const row of Array.isArray(body?.indices) ? body.indices : []) {
           if (row?.symbol) {
             const ltp = row?.ltp == null ? null : Number(row.ltp);
             const previousClose = row?.close == null ? null : Number(row.close);
             const changePercent = ltp != null && previousClose != null && previousClose !== 0 ? ((ltp - previousClose) / previousClose) * 100 : null;
-            next[String(row.symbol).toUpperCase()] = { ltp, previousClose, changePercent };
+            next[String(row.symbol).toUpperCase()] = { ltp, previousClose, changePercent, status: String(row?.status ?? "NO_QUOTE").toUpperCase() };
           }
         }
         if (!cancelled) {
           setMarketSession(session);
           setMarketCheckedAt(new Date().toISOString());
-          setIndexLtps((previous) => {
-            const merged = { ...previous };
-            for (const [symbol, value] of Object.entries(next)) {
-              const prior = previous[symbol];
-              merged[symbol] = {
-                ltp: value.ltp ?? prior?.ltp ?? null,
-                previousClose: value.previousClose ?? prior?.previousClose ?? null,
-                changePercent: value.changePercent ?? prior?.changePercent ?? null,
-              };
-            }
-            return merged;
-          });
+          setIndexLtps(next);
         }
       } catch {
         // Keep the last successful overview snapshot during transient API/quote failures.
@@ -294,7 +283,12 @@ export default function HomePage() {
         <div className="mb-3 flex items-center gap-2"><Activity size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Market Overview</h2></div>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
           {markets.map((symbol) => {
-            const change = indexLtps[symbol]?.changePercent;
+            const quote = indexLtps[symbol];
+            const quoteIsUsable = marketSession === "CLOSED"
+              ? quote?.status === "CLOSED_LAST_CLOSE"
+              : marketSession === "OPEN" && quote?.status === "LIVE";
+            const displayedLtp = quoteIsUsable ? quote?.ltp : null;
+            const change = quoteIsUsable ? quote?.changePercent : null;
             const positive = change != null && change > 0;
             const negative = change != null && change < 0;
             return (
@@ -304,11 +298,11 @@ export default function HomePage() {
                   <div className="pl-1">
                     <div className="flex items-center justify-between"><span className="text-[12px] font-bold tracking-wide">{symbol}</span>{marketSession === "CLOSED" ? <span className="rounded-full theme-warning-bg theme-warning px-2 py-0.5 text-[9px] font-bold">CLOSED</span> : null}{positive ? <TrendingUp size={15} className="theme-success" /> : negative ? <TrendingDown size={15} className="theme-danger" /> : <Activity size={15} className="theme-subtle" />}</div>
                     <div className="mt-3 flex items-center justify-between gap-2">
-                      <div className={"text-lg font-bold " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-text")}>{indexLtps[symbol]?.ltp == null ? "No live data" : indexLtps[symbol]!.ltp!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                      {indexLtps[symbol]?.ltp == null && <Radio size={14} className="theme-warning" aria-label="No live data" />}
+                      <div className={"text-lg font-bold " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-text")}>{displayedLtp == null ? (marketSession === "CLOSED" ? "Last close unavailable" : "No verified quote") : displayedLtp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                      {displayedLtp == null && <Radio size={14} className="theme-warning" aria-label="No verified quote" />}
                     </div>
                     <div className={"mt-1 text-[12px] font-bold " + (positive ? "theme-success" : negative ? "theme-danger" : "theme-muted")}>{change == null ? "No live change" : (change > 0 ? "+" : "") + change.toFixed(2) + "%"}</div>
-                    <div className="mt-1 text-[10px] theme-subtle">{indexLtps[symbol]?.previousClose == null ? "Previous close unavailable" : marketSession === "CLOSED" ? "Last close: " + indexLtps[symbol]!.previousClose!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + indexLtps[symbol]!.previousClose!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    <div className="mt-1 text-[10px] theme-subtle">{!quoteIsUsable || quote?.previousClose == null ? "Previous close unavailable" : marketSession === "CLOSED" ? "Prior close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Prev close: " + quote.previousClose.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     <div className="mt-3 flex items-center justify-between border-t theme-border pt-2 text-[10px] font-semibold theme-accent">
                       <span>Open Live Scanner</span><Radio size={13} />
                     </div>
