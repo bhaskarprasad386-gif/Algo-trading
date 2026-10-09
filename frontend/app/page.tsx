@@ -288,7 +288,7 @@ export default function HomePage() {
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
           {markets.map((symbol) => {
             const quote = indexLtps[symbol];
-            const quoteAvailable = marketSession === "OPEN" ? quote?.status === "LIVE" : marketSession === "CLOSED" ? quote?.status === "CLOSED_LAST_CLOSE" : false;
+            const quoteAvailable = marketDataAge != null && marketDataAge <= 15 && (marketSession === "OPEN" ? quote?.status === "LIVE" : marketSession === "CLOSED" ? quote?.status === "CLOSED_LAST_CLOSE" : false);
             const change = quoteAvailable ? quote?.changePercent : null;
             const positive = change != null && change > 0;
             const negative = change != null && change < 0;
