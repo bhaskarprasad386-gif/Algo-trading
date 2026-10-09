@@ -260,8 +260,15 @@ export default function HomePage() {
     const suffix = detail.replace(/^RUNNING|^STOPPED/, "").trim();
     if (marketSession === "CLOSED") return `${running ? "RUNNING • IDLE" : "STOPPED"} • Market closed${suffix ? " • " + suffix.replace(/^•\s*/, "") : ""}`;
     if (marketSession === "UNKNOWN") return `${running ? "RUNNING" : "STOPPED"} • Market state unknown${suffix ? " • " + suffix.replace(/^•\s*/, "") : ""}`;
+    if (marketSession === "OPEN" && feedStatus !== "live") {
+      const feedHealth = feedStatus === "stale" ? "STALE" : feedStatus === "error" ? "HEALTH CHECK ERROR" : feedStatus === "no-data" ? "NO DATA" : "NOT CONFIRMED LIVE";
+      return `${running ? "PROCESS RUNNING" : "STOPPED"} • FEED ${feedHealth}${suffix ? " • " + suffix.replace(/^•\s*/, "") : ""}`;
+    }
     return detail;
   };
+  const runnerHealth = Object.fromEntries(
+    Object.entries(runtime.runners).map(([key, runner]) => [key, { ...runner, detail: runnerState(runner.detail, runner.running) }])
+  ) as typeof runtime.runners;
   const snapshotAge = snapshot.timestamp ? Math.max(0, (Date.now() - new Date(snapshot.timestamp).getTime()) / 1000) : null;
   const observationAge = snapshot.cashFutureObservedAt ? Math.max(0, (Date.now() - new Date(snapshot.cashFutureObservedAt).getTime()) / 1000) : null;
   const observationAgeLabel = observationAge == null ? "No Cash-Future observation time" : observationAge < 60 ? `Cash-Future observation ${Math.round(observationAge)}s ago` : `Cash-Future observation stale • ${Math.round(observationAge / 60)}m ago`;
@@ -333,7 +340,7 @@ export default function HomePage() {
         <section aria-label="System health">
           <div className="mb-3 flex items-center gap-2"><Gauge size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">System Health</h2></div>
           <Card className="rounded-2xl border theme-border theme-surface-2 p-2 shadow-sm">
-            {health(apiLabel, wsLabel, feedLabel, runtime.ticks, runtime.runners).map(([name, value, state]) => (
+            {health(apiLabel, wsLabel, feedLabel, runtime.ticks, runnerHealth).map(([name, value, state]) => (
               <div key={name} className="flex items-center justify-between rounded-xl px-2 py-2">
                 <div className="flex items-center gap-2 text-[12px] font-medium theme-muted">{state === "error" ? <TriangleAlert size={14} className="theme-danger" /> : state === "warn" ? <TriangleAlert size={14} className="theme-warning" /> : <span className="h-2 w-2 rounded-full bg-[var(--app-success)]" />}{name}</div>
                 <span title={name === "Ticks Received (session)" && runtime.runtimeStartedAt ? `Session started ${tickRuntimeLabel}; counter resets only when FastAPI restarts` : undefined} className={"rounded-full px-2.5 py-1 text-[10px] font-bold " + (state === "ok" ? "theme-success-bg theme-success" : state === "warn" ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{value}</span>
@@ -403,10 +410,10 @@ export default function HomePage() {
                 ["Common Market Data Feed", feedLabel],
                 ["Ticks Received (session)", runtime.ticks.toLocaleString("en-IN")],
                 ["Tick Counter", runtime.runtimeStartedAt ? `Session • ${tickRuntimeLabel}` : "—"],
-                ["Cash Future Runner", runtime.runners.cash_future?.detail ?? "UNAVAILABLE"],
-                ["Synthetic Future Runner", runtime.runners.synthetic_arbitrage?.detail ?? "UNAVAILABLE"],
-                ["Box Spread Runner", runtime.runners.box_spread?.detail ?? "UNAVAILABLE"],
-                ["Calendar Spread Runner", runtime.runners.calendar_spread?.detail ?? "UNAVAILABLE"],
+                ["Cash Future Runner", runnerHealth.cash_future?.detail ?? "UNAVAILABLE"],
+                ["Synthetic Future Runner", runnerHealth.synthetic_arbitrage?.detail ?? "UNAVAILABLE"],
+                ["Box Spread Runner", runnerHealth.box_spread?.detail ?? "UNAVAILABLE"],
+                ["Calendar Spread Runner", runnerHealth.calendar_spread?.detail ?? "UNAVAILABLE"],
                 ["Broker Orders", "OFF"],
                 ["Common Feed Instruments", runtime.activeInstruments.toLocaleString("en-IN")],
                 ["Socket Groups", runtime.socketGroups + "/" + runtime.maxSocketSessions],
