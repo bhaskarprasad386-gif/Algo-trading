@@ -36,7 +36,7 @@ export default function HomePage() {
   const [capitalSaved, setCapitalSaved] = useState(false);
   const [apiStatus, setApiStatus] = useState<"checking" | "connected" | "error">("checking");
   const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "error">("connecting");
-  const [snapshot, setSnapshot] = useState({ calendar: 0, synthetic: 0, box: 0, opportunities: 0, timestamp: null as string | null });
+  const [snapshot, setSnapshot] = useState({ calendar: 0, synthetic: 0, box: 0, opportunities: 0, timestamp: null as string | null, cashFutureObservedAt: null as string | null });
   const [indexLtps, setIndexLtps] = useState<Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null }>>({});
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [marketCheckedAt, setMarketCheckedAt] = useState<string | null>(null);
@@ -78,7 +78,8 @@ export default function HomePage() {
             synthetic: Number(message?.integration?.synthetic_arbitrage?.count ?? 0),
             box: Number(message?.integration?.box_spread?.count ?? 0),
             opportunities: Number(message?.scanner?.opportunity_count ?? 0),
-            timestamp: message?.timestamp ?? null,
+            timestamp: message?.timestamp ?? null, // dashboard heartbeat only
+            cashFutureObservedAt: message?.scanner?.health?.last_observation_at ?? null,
           });
         } catch {
           // Ignore malformed dashboard messages without losing the last valid snapshot.
@@ -272,6 +273,9 @@ export default function HomePage() {
     return detail;
   };
   const snapshotAge = snapshot.timestamp ? Math.max(0, (Date.now() - new Date(snapshot.timestamp).getTime()) / 1000) : null;
+  const cashFutureObservationAge = snapshot.cashFutureObservedAt && Number.isFinite(new Date(snapshot.cashFutureObservedAt).getTime())
+    ? Math.max(0, (Date.now() - new Date(snapshot.cashFutureObservedAt).getTime()) / 1000)
+    : null;
   const marketDataAge = marketCheckedAt ? Math.max(0, (Date.now() - new Date(marketCheckedAt).getTime()) / 1000) : null;
   const scannerStatus = [
     { label: "Signals Detected", value: snapshot.opportunities.toLocaleString("en-IN") },
@@ -378,7 +382,7 @@ export default function HomePage() {
           </div>
         </section>
         <div className="space-y-4">
-          <section aria-label="Scanner status"><div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Radio size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Scanner Status</h2></div><div className="text-[10px] theme-subtle">{snapshotAge == null ? "No snapshot yet" : snapshotAge < 10 ? `Snapshot ${Math.round(snapshotAge)}s ago` : `Snapshot stale • ${Math.round(snapshotAge)}s ago`}</div></div><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{scannerStatus.map((item) => <Card key={item.label} className="rounded-xl p-2.5"><div className="text-[10px] font-medium theme-subtle">{item.label}</div><div className="mt-1 text-[11px] font-semibold">{item.value}</div></Card>)}</div></section>
+          <section aria-label="Scanner status"><div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Radio size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Scanner Status</h2></div><div className="text-[10px] theme-subtle text-right">{snapshotAge == null ? "No dashboard heartbeat" : `Heartbeat ${Math.round(snapshotAge)}s ago`}{cashFutureObservationAge == null ? " • No Cash-Future observation time" : ` • Cash-Future observation ${Math.round(cashFutureObservationAge)}s ago`}</div></div><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{scannerStatus.map((item) => <Card key={item.label} className="rounded-xl p-2.5"><div className="text-[10px] font-medium theme-subtle">{item.label}</div><div className="mt-1 text-[11px] font-semibold">{item.value}</div></Card>)}</div></section>
           <section aria-label="Operations"><div className="mb-3 flex items-center gap-2"><Zap size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Operations</h2></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Link href="/scanner"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Radio size={16} className="theme-accent" /><div><div className="text-[12px] font-semibold">Cash Future</div><div className="text-[10px] theme-subtle">Open Cash Future scanner</div></div></div></Card></Link>
             <Link href="/custom-alert"><Card className="rounded-2xl p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Bell size={16} className="theme-warning" /><div><div className="text-[12px] font-semibold">Custom Alerts</div><div className="text-[10px] theme-subtle">Manage alerts</div></div></div></Card></Link>
