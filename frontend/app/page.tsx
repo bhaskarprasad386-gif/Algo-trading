@@ -121,18 +121,9 @@ export default function HomePage() {
         if (!cancelled) {
           setMarketSession(session);
           setMarketCheckedAt(new Date().toISOString());
-          setIndexLtps((previous) => {
-            const merged = { ...previous };
-            for (const [symbol, value] of Object.entries(next)) {
-              const prior = previous[symbol];
-              merged[symbol] = {
-                ltp: value.ltp ?? prior?.ltp ?? null,
-                previousClose: value.previousClose ?? prior?.previousClose ?? null,
-                changePercent: value.changePercent ?? prior?.changePercent ?? null,
-              };
-            }
-            return merged;
-          });
+          // Replace the overview snapshot as a whole. Keeping prior non-null quotes
+          // when the API now returns null/missing data makes old prices look current.
+          setIndexLtps(next);
         }
       } catch {
         // Keep the last successful overview snapshot during transient API/quote failures.
