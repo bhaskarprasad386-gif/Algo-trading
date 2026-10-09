@@ -286,7 +286,7 @@ export default function HomePage() {
   return (
     <div className="min-h-screen theme-bg theme-text p-1">
       <PageTitle eyebrow="Phase 2 • Home / Command Center" title="Command Center" description="" />
-      <div className="mb-5 grid gap-3 lg:grid-cols-[1fr_auto]"><Card className="rounded-2xl border theme-border theme-surface-2 p-3"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] theme-subtle">Exchange Sessions</div><div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-semibold"><span className={marketSession === "OPEN" ? "theme-success" : "theme-warning"}>NSE {marketSession}</span><span className="theme-subtle">•</span><span className="theme-accent">MCX 09:00–23:30</span><span className="theme-subtle">•</span><span className="theme-muted">23:55 seasonal DST</span></div></div><div className="text-right text-[10px] theme-subtle">MCX agri till 17:00 • International agri till 21:00</div></div></Card><div className="flex flex-wrap justify-end gap-2">
+      <div className="mb-5 grid gap-3 lg:grid-cols-[1fr_auto]"><Card className="rounded-2xl border theme-border theme-surface-2 p-3"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] theme-subtle">Exchange Sessions</div><div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-semibold"><span className={marketSession === "OPEN" ? "theme-success" : "theme-warning"}>NSE {marketSession}</span><span className="theme-subtle">•</span><span className="theme-accent">MCX hours vary by segment</span></div></div><div className="text-right text-[10px] theme-subtle">MCX timings depend on segment, contract and exchange calendar</div></div></Card><div className="flex flex-wrap justify-end gap-2">
         <div className="inline-flex items-center gap-2 rounded-full border theme-border theme-accent-bg px-3 py-1.5 text-[11px] font-semibold theme-accent"><Radio size={13} /> {feedLabel === "LIVE" ? "Live market feed LIVE" : feedLabel === "CLOSED" ? "Market closed" : `Market feed ${feedLabel.toLowerCase()}`}</div>
         <div className="inline-flex items-center gap-2 rounded-full border theme-border theme-success-bg px-3 py-1.5 text-[11px] font-semibold theme-success"><ShieldCheck size={13} /> Paper-safe broker orders OFF</div></div></div>
 
@@ -418,7 +418,7 @@ export default function HomePage() {
                 ["Last Feed Tick Age", feedAgeLabel],
                 ["Delivery / Normalizer Errors", runtime.deliveryErrors + " / " + runtime.normalizerErrors],
                 ["NSE Session", marketSession],
-                ["MCX Session Window", "09:00–23:30 / 23:55 seasonal"],
+                ["MCX Session Window", "Varies by segment / exchange calendar"],
               ].map(([name, value]) => (
                 <div key={name} className="flex items-center justify-between rounded-xl border theme-border theme-surface-2 px-3 py-2.5">
                   <span className="text-[11px] theme-muted">{name}</span>
