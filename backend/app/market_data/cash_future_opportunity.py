@@ -69,6 +69,8 @@ class CashFutureOpportunityScanner:
         self._lock = RLock()
         self._latest: dict[str, dict[str, MarketDataRecord]] = {}
         self._results: dict[tuple[str, str], CashFutureScanResult] = {}
+        self._out_of_order_records = 0
+        self._stale_pair_rejections = 0
 
     @staticmethod
     def _validate_record(record: MarketDataRecord) -> None:
@@ -78,6 +80,16 @@ class CashFutureOpportunityScanner:
             raise ValueError("Cash-Future requires a valid two-sided executable quote")
         if record.timestamp_ns < 1:
             raise ValueError("record timestamp must be positive")
+
+    @property
+    def out_of_order_records(self) -> int:
+        with self._lock:
+            return self._out_of_order_records
+
+    @property
+    def stale_pair_rejections(self) -> int:
+        with self._lock:
+            return self._stale_pair_rejections
 
     def update(self, record: MarketDataRecord, *, contract_month: str) -> CashFutureScanResult | None:
         self._validate_record(record)
@@ -91,6 +103,12 @@ class CashFutureOpportunityScanner:
         symbol = (record.underlying or record.symbol).strip().upper()
         with self._lock:
             bucket = self._latest.setdefault(symbol, {})
+            previous = bucket.get(leg)
+            if previous is not None and record.timestamp_ns < previous.timestamp_ns:
+                # A delayed broker frame must not replace a newer quote for
+                # the same leg and make a previously fresh pair stale.
+                self._out_of_order_records += 1
+                return None
             bucket[leg] = record
             cash = bucket.get("CASH")
             if cash is None:
@@ -103,6 +121,7 @@ class CashFutureOpportunityScanner:
                     self._results.pop((symbol, candidate_month), None)
                     continue
                 if abs(cash.timestamp_ns - future.timestamp_ns) > self.MAX_PAIR_AGE_NS:
+                    self._stale_pair_rejections += 1
                     self._results.pop((symbol, candidate_month), None)
                     continue
                 forward_gap = float(future.bid) - float(cash.ask)
