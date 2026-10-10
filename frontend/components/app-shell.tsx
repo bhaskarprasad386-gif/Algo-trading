@@ -14,7 +14,6 @@ const nav = [
   { href: "/strategies/box-spread", label: "Box Scanner", icon: Activity },
   { href: "/strategies/custom-strategy", label: "Custom Scanner", icon: Activity },
   { href: "/custom-alert", label: "Custom Alert", icon: Bell },
-  { href: "/history", label: "History", icon: Clock3 },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
