@@ -14,7 +14,6 @@ const nav = [
   { href: "/strategies/box-spread", label: "Box Scanner", icon: Activity },
   { href: "/strategies/custom-strategy", label: "Custom Scanner", icon: Activity },
   { href: "/custom-alert", label: "Custom Alert", icon: Bell },
-  { href: "/positions", label: "Positions", icon: BriefcaseBusiness },
   { href: "/completed-trades", label: "Completed Trades", icon: ChartNoAxesCombined },
   { href: "/history", label: "History", icon: Clock3 },
 ];
