@@ -1,4 +1,5 @@
 from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
+from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
 from threading import Event
@@ -519,5 +520,15 @@ def test_recovery_rebuilds_missing_expected_group_when_socket_count_looks_comple
         assert set(manager._sockets) == expected
         assert SocketGroup(1, 9) not in manager._sockets
         assert manager.snapshot()["socket_groups"] == 2
+    finally:
+        manager.close()
+
+
+def test_common_manager_disables_nested_socket_reconnect_supervisor():
+    manager = CommonWebSocketManager()
+    socket = manager._create_socket()
+    try:
+        assert isinstance(socket, MarketDataWebSocket)
+        assert socket._auto_reconnect is False
     finally:
         manager.close()
