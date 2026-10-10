@@ -236,13 +236,6 @@ data class AppUpdateInfo(val platform: String = "android", val version_code: Int
 data class StrategyRegistryItem(val id: String = "", val name: String = "", val version: String = "1", val enabled: Boolean = true, val screen: String = "backend", val data_mode: String = "", val execution_mode: String = "PAPER", val live_orders: Boolean = false, val capabilities: List<String> = emptyList(), val live_route: String? = null, val workspace_route: String? = null)
 data class StrategyWorkspaceResponse(val status: String = "", val workspace: StrategyRegistryItem = StrategyRegistryItem())
 data class StrategyRegistryResponse(val strategies: List<StrategyRegistryItem> = emptyList())
-data class BoxSpreadOverview(
-    val status: String = "", val strategy: String = "", val mode: String = "",
-    val account: BoxSpreadAccount? = null, val open_position: BoxSpreadPositionSummary? = null,
-    val live_opportunities: BoxSpreadLiveOpportunities = BoxSpreadLiveOpportunities(),
-    val history: BoxSpreadHistoryPage = BoxSpreadHistoryPage(), val journal: BoxSpreadJournalPage = BoxSpreadJournalPage()
-)
-
 interface ApiInterface {
     @GET("/") suspend fun getRootStatus(): MarketStatus
     @GET("/api/v1/app/update") suspend fun appUpdate(): AppUpdateInfo
