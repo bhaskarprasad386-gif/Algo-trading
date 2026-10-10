@@ -148,3 +148,75 @@ def test_calendar_scanner_does_not_cross_pair_index_and_stock_future_families():
     assert paired is not None
     assert paired.near_contract_month == "2026-10-29"
     assert paired.far_contract_month == "2026-11-26"
+
+
+def test_calendar_invalidates_old_signal_when_latest_pair_has_no_positive_edge():
+    import time
+
+    scanner = LiveCalendarSpreadScanner()
+    ts = time.time_ns()
+    near = rec("invalidate-near", "NIFTY-CUR", ts, 99, 100, expiry="2026-10-29")
+    far = rec("invalidate-far", "NIFTY-NEAR", ts + 100_000_000, 104, 105, expiry="2026-11-26")
+    scanner.update(near)
+    first = scanner.update(far)
+    assert first is not None
+    assert scanner.snapshot()
+
+    updated_far = rec("invalidate-far", "NIFTY-NEAR", ts + 200_000_000, 99, 100, expiry="2026-11-26")
+    assert scanner.update(updated_far) is None
+    assert scanner.snapshot() == ()
+    assert scanner.pair_snapshot() == ()
+
+
+def test_calendar_positive_gross_edge_without_two_sided_depth_does_not_qualify():
+    from dataclasses import replace
+    import time
+
+    scanner = LiveCalendarSpreadScanner()
+    ts = time.time_ns()
+    near = rec("depth-near", "NIFTY-CUR", ts, 99, 100, expiry="2026-10-29")
+    far = replace(rec("depth-far", "NIFTY-NEAR", ts + 100_000_000, 104, 105, expiry="2026-11-26"), bid_qty=0)
+    scanner.update(near)
+    result = scanner.update(far)
+    assert result is not None
+    assert result.gap_points == 4
+    assert result.gross_profit == 200
+    assert result.liquidity_qty == 0
+    assert result.qualifies is False
+    assert scanner.snapshot() == ()
+
+
+def test_calendar_preserves_original_leg_timestamps_and_family_in_signal_metadata():
+    from dataclasses import replace
+    import time
+
+    scanner = LiveCalendarSpreadScanner()
+    ts = time.time_ns()
+    near = replace(
+        rec("time-near", "NIFTY-CUR", ts, 99, 100, expiry="2026-10-29"),
+        payload={"contract_family": "INDEX_FUTURE"},
+    )
+    far_ts = ts + 250_000_000
+    far = replace(
+        rec("time-far", "NIFTY-NEAR", far_ts, 104, 105, expiry="2026-11-26"),
+        payload={"contract_family": "INDEX_FUTURE"},
+    )
+    scanner.update(near)
+    result = scanner.update(far)
+    assert result is not None
+    assert result.contract_family == "INDEX_FUTURE"
+    assert result.near_timestamp_ns == ts
+    assert result.far_timestamp_ns == far_ts
+    assert result.timestamp_skew_ns == 250_000_000
+    assert result.signal.metadata["near_timestamp_ns"] == ts
+    assert result.signal.metadata["far_timestamp_ns"] == far_ts
+    assert result.signal.metadata["profit_basis"] == "gross_before_fees_and_slippage"
+
+
+def test_canonical_executable_quote_rejects_zero_bid_and_zero_ask():
+    from dataclasses import replace
+
+    valid = rec("canonical-depth", "NIFTY-CUR", 3_000_000_000, 99, 100)
+    assert valid.is_executable_quote is True
+    assert replace(valid, bid=0).is_executable_quote is False
+    assert replace(valid, ask=0).is_executable_quote is False
