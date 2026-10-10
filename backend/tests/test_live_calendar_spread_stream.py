@@ -296,3 +296,12 @@ def test_calendar_drops_tick_without_provider_timestamp_instead_of_using_receive
     collector._observe_record(record)
     assert collector.snapshot()["diagnostics"]["source_timestamp_dropped"] == 1
     assert collector.snapshot()["latest_instrument_buckets"] == 0
+
+
+def test_calendar_mcx_close_tracks_us_daylight_saving_transition():
+    collector = LiveCalendarSpreadOneSecondCollector("unused")
+    # Before the US autumn transition, the published MCX close is 23:30 IST.
+    assert not collector._exchange_open("MCX", datetime(2026, 10, 30, 23, 40, tzinfo=IST))
+    # After the transition, the published winter close extends to 23:55 IST.
+    assert collector._exchange_open("MCX", datetime(2026, 11, 2, 23, 50, tzinfo=IST))
+    assert not collector._exchange_open("MCX", datetime(2026, 11, 2, 23, 56, tzinfo=IST))
