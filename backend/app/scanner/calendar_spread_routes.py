@@ -39,11 +39,21 @@ def pair_diagnostics(limit:int=Query(200,ge=1,le=500)):
  if scanner is None:return {"status":"disabled","counters":{},"data":[],"pair_count":0}
  result=scanner.diagnostics_snapshot(limit=limit)
  return {"status":"success","scanner":"calendar-spread-pair-diagnostics","mode":"paper-safe","counters":result["counters"],"data":result["pairs"],"pair_count":len(result["pairs"])}
+def _ensure_contract_family_history_column(db):
+ from sqlalchemy import text
+ if db.get_bind().dialect.name != "sqlite":
+  return
+ columns={row[1] for row in db.execute(text("PRAGMA table_info(live_calendar_spread_scanner_results)")).fetchall()}
+ if columns and "contract_family" not in columns:
+  db.execute(text("ALTER TABLE live_calendar_spread_scanner_results ADD COLUMN contract_family VARCHAR NOT NULL DEFAULT 'UNKNOWN'"))
+  db.commit()
+
 @router.get("/history")
 def history(days:int=Query(1,ge=1,le=90),limit:int=Query(200,ge=1,le=1000)):
  from datetime import datetime,timedelta,timezone
  db=SessionLocal()
  try:
+  _ensure_contract_family_history_column(db)
   since=datetime.now(timezone.utc).replace(tzinfo=None)-timedelta(days=days)
   rows=db.query(LiveCalendarSpreadScannerResult).filter(LiveCalendarSpreadScannerResult.observed_at>=since).order_by(LiveCalendarSpreadScannerResult.rank_score.desc()).limit(limit).all()
   return {"status":"success","data":[{c.name:getattr(r,c.name) for c in LiveCalendarSpreadScannerResult.__table__.columns if c.name!="id"} for r in rows]}
