@@ -93,3 +93,13 @@ def test_calendar_live_no_contract_retry_is_interruptible(monkeypatch):
 
     assert not worker.is_alive()
     assert collector.stop_event.is_set()
+
+
+def test_calendar_descriptor_preserves_underlying_for_distinct_contract_symbols():
+    from datetime import date
+
+    collector = LiveCalendarSpreadOneSecondCollector("unused")
+    near = collector._descriptor({"exchange": "NFO", "token": "101", "symbol": "SBIN30OCT26FUT", "kind": "STOCK_FUTURE", "expiry": date(2026, 10, 29), "lot_size": 150, "underlying": "SBIN"})
+    far = collector._descriptor({"exchange": "NFO", "token": "102", "symbol": "SBIN27NOV26FUT", "kind": "STOCK_FUTURE", "expiry": date(2026, 11, 26), "lot_size": 150, "underlying": "SBIN"})
+    assert near.symbol != far.symbol
+    assert near.underlying == far.underlying == "SBIN"
