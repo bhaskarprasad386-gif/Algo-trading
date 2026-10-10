@@ -622,7 +622,7 @@ th{font-size:7px!important}
 
 
 <section id="tradingJournalPage" hidden><div class="journal-page">
- <div class="page-head"><div><h1>Trading Journal</h1><p>Every paper trade • thesis, execution, result and review in one place</p></div><div class="refresh-box"><span id="journalStatus">JOURNAL • LOCAL</span><button class="secondary" onclick="refreshTradingJournal()">↻ REFRESH</button></div></div>
+ <div class="page-head"><div><h1>Trading Journal</h1><p>Trade ideas • thesis, signals, results and review in one place</p></div><div class="refresh-box"><span id="journalStatus">JOURNAL • LOCAL</span><button class="secondary" onclick="refreshTradingJournal()">↻ REFRESH</button></div></div>
  <div class="card journal-toolbar"><div class="journal-field"><label>STRATEGY</label><select id="journalStrategyFilter"><option value="ALL">ALL STRATEGIES</option><option>CASH-FUTURE</option><option>CALENDAR SPREAD</option><option>SYNTHETIC ARBITRAGE</option><option>BOX SPREAD</option></select></div><div class="journal-field"><label>RESULT</label><select id="journalResultFilter"><option value="ALL">ALL</option><option value="WIN">WIN</option><option value="LOSS">LOSS</option><option value="OPEN">OPEN</option></select></div><div class="journal-field"><label>SYMBOL</label><input id="journalSymbolFilter" placeholder="ALL SYMBOLS"></div><button class="primary" onclick="newJournalEntry()">+ NEW JOURNAL ENTRY</button></div>
  <div class="journal-kpis"><div class="journal-kpi"><b>TOTAL TRADES</b><strong id="jrTotal">0</strong></div><div class="journal-kpi"><b>WINS</b><strong id="jrWins" class="up">0</strong></div><div class="journal-kpi"><b>LOSSES</b><strong id="jrLosses" class="down">0</strong></div><div class="journal-kpi"><b>WIN RATE</b><strong id="jrWinRate">—</strong></div><div class="journal-kpi"><b>REALIZED P&amp;L</b><strong id="jrPnl">₹0</strong></div><div class="journal-kpi"><b>OPEN / REVIEW</b><strong id="jrOpen">0</strong></div></div>
  <div class="journal-grid">
@@ -1114,7 +1114,7 @@ function updateAlertPreview(){const c=document.getElementById('alertCondition'),
 const JOURNAL_KEY='algo.dashboard.journal.v1';
 let journalEntries=JSON.parse(localStorage.getItem(JOURNAL_KEY)||'[]'),journalSelectedId=null;
 function showTradingJournal(){
- ['home','analyzePage','cashFuturePage','calendarPage','syntheticPage','boxSpreadPage','customAlertsPage','paperPortfolioPage'].forEach(id=>{const e=document.getElementById(id);if(e)e.hidden=true});
+ ['home','analyzePage','cashFuturePage','calendarPage','syntheticPage','boxSpreadPage','customAlertsPage','__removed_paper_portfolio_page__'].forEach(id=>{const e=document.getElementById(id);if(e)e.hidden=true});
  document.getElementById('tradingJournalPage').hidden=false;document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById('tradingJournalNav')?.classList.add('active');renderTradingJournal();window.scrollTo({top:0,behavior:'smooth'});
 }
 function journalPnl(e){return Number(e.pnl||0)}
@@ -1207,7 +1207,7 @@ if(typeof showCalendarSpread==='function')showCalendarSpread=histHideBefore(show
 if(typeof showSyntheticArbitrage==='function')showSyntheticArbitrage=histHideBefore(showSyntheticArbitrage);
 if(typeof showBoxSpread==='function')showBoxSpread=histHideBefore(showBoxSpread);
 if(typeof showCustomAlerts==='function')showCustomAlerts=histHideBefore(showCustomAlerts);
-if(typeof showPaperPortfolio==='function')showPaperPortfolio=histHideBefore(showPaperPortfolio);
+
 if(typeof showTradingJournal==='function')showTradingJournal=histHideBefore(showTradingJournal);
 
 function openWorkspaceLauncher(){const e=document.getElementById('workspaceLauncher');if(e){e.classList.add('open');e.setAttribute('aria-hidden','false');document.body.style.overflow='hidden'}}
@@ -1307,9 +1307,7 @@ function setMobileNav(id){document.querySelectorAll('#responsiveQuickNav button'
       if(!r.ok) return;
       const d=await r.json();
       const box=document.getElementById('alertControlPanel'); if(!box) return;
-      box.querySelector('#acPaper').checked=!!d.paper.enabled && !d.paper.emergency_stop;
-      box.querySelector('#acAmount').value=Number(d.paper.paper_amount||0);
-      box.querySelector('#acRules').innerHTML=(d.rules||[]).map(x=>
+                  box.querySelector('#acRules').innerHTML=(d.rules||[]).map(x=>
         '<div style="padding:8px;border:1px solid #202b35;border-radius:7px;margin-top:6px;font-size:10px">'+
         '<b>'+x.strategy_id+'</b> • Gross ₹'+Number(x.min_gross_profit).toFixed(2)+
         ' • WhatsApp '+(x.whatsapp_enabled?'ON':'OFF')+' • '+(x.enabled?'ACTIVE':'OFF')+
@@ -1323,7 +1321,7 @@ function setMobileNav(id){document.querySelectorAll('#responsiveQuickNav button'
     if(!host) return;
     const box=document.createElement('div'); box.id='alertControlPanel'; box.className='card';
     box.style.cssText='margin-bottom:10px;border-color:#6541A6';
-    box.innerHTML='<div class="card-head"><div><h2>Alert & Global Paper Control</h2><div class="sub">One global paper amount • strategy selected per alert rule</div></div></div>'+
+    box.innerHTML='<div class="card-head"><div><h2>Alert Rule Controls</h2><div class="sub">Configure scanner alert notifications; paper execution is removed</div></div></div>'+
       '<div class="form-grid">'+
       '<div class="field"><label>Strategy</label><select id="acStrategy"><option value="cash-future">Cash-Future</option><option value="calendar-spread">Calendar Spread</option><option value="synthetic-future-cash-carry">Synthetic Arbitrage</option><option value="box-spread">Box Spread</option></select></div>'+
       '<div class="field"><label>Minimum Gross Profit ₹</label><input id="acGross" type="number" min="0" step="0.01" value="0"></div>'+
@@ -1334,24 +1332,16 @@ function setMobileNav(id){document.querySelectorAll('#responsiveQuickNav button'
       '<div class="field"><label>Max Simultaneous Positions</label><input id="acPositions" type="number" min="1" value="20"></div>'+
       '<div class="field"><label>Priority</label><input id="acPriority" type="number" min="0" value="0"></div>'+
       '<div class="field" style="display:flex;align-items:end;gap:8px"><label style="display:flex;gap:7px;align-items:center"><input id="acWhats" type="checkbox"> WhatsApp Alert</label></div>'+
-      '<div class="field" style="display:flex;align-items:end;gap:8px"><label style="display:flex;gap:7px;align-items:center"><input id="acPaper" type="checkbox"> </label></div>'+
-      '<div class="field full-field"><label>Global Paper Trading Amount ₹</label><input id="acAmount" type="number" min="0" step="1000" value="10000000"></div>'+
+      
+      
       '</div>'+
-      '<div class="modal-actions"><button id="acSave" class="primary">Save Alert Rule</button><button id="acSavePaper" class="secondary">Save Global Paper</button><button id="acKill" class="secondary">Emergency Kill Switch</button></div>'+
+      '<div class="modal-actions"><button id="acSave" class="primary">Save Alert Rule</button></div>'+
       '<div style="margin-top:10px;font-size:9px;color:#7f919f">Saved Rules</div><div id="acRules"></div>';
     host.prepend(box);
     box.querySelector('#acSave').onclick=async()=>{
       const body={strategy_id:box.querySelector('#acStrategy').value,min_gross_profit:+box.querySelector('#acGross').value,mobile_number:box.querySelector('#acMobile').value.trim(),whatsapp_enabled:box.querySelector('#acWhats').checked,enabled:true,max_loss:+box.querySelector('#acLoss').value,max_daily_capital:+box.querySelector('#acDaily').value,max_simultaneous_positions:+box.querySelector('#acPositions').value,cooldown_seconds:+box.querySelector('#acCooldown').value,priority:+box.querySelector('#acPriority').value};
       const r=await fetch('/api/v1/alerts/rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       if(!r.ok){alert('Alert rule save failed');return;} loadAlertControl();
-    };
-    box.querySelector('#acSavePaper').onclick=async()=>{
-      const r=await fetch('/api/v1/alerts/paper',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:box.querySelector('#acPaper').checked,paper_amount:+box.querySelector('#acAmount').value,emergency_stop:false})});
-      if(!r.ok) alert('Global paper setting save failed'); else loadAlertControl();
-    };
-    box.querySelector('#acKill').onclick=async()=>{
-      if(!confirm('Disable automatic paper execution now?')) return;
-      await fetch('/api/v1/alerts/paper/kill-switch',{method:'POST'}); loadAlertControl();
     };
     loadAlertControl();
   }
