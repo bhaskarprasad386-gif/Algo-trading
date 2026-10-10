@@ -185,3 +185,15 @@ def test_websocket_marks_async_handshake_as_connecting(monkeypatch):
     client.connect(1, ["101"], reconnect_attempts=0)
     assert client.connected is False
     assert client.connecting is True
+
+
+def test_websocket_failure_callbacks_notify_manager_on_error_and_close(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    failures = []
+    client.connect(1, ["101"], on_failure=failures.append)
+    socket = client.websocket
+    socket.on_error(socket, "temporary DNS failure")
+    assert failures == ["temporary DNS failure"]
+    socket.on_close(socket)
+    assert failures == ["temporary DNS failure", "socket closed"]
