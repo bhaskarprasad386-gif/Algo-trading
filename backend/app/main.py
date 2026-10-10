@@ -881,6 +881,7 @@ def market_data_runtime_health():
     calendar_runner = live_calendar_spread_runner
     synthetic_runner = live_synthetic_runner
     box_runner = live_box_spread_runner
+    calendar_counts = live_calendar_spread_scanner.counts_snapshot()
     return {
         "status": "ok",
         "common_feed": manager.snapshot(),
@@ -892,8 +893,8 @@ def market_data_runtime_health():
         },
         "scanner": {
             "strategy": "calendar-spread",
-            "signals": len(live_calendar_spread_scanner.snapshot(limit=200)),
-            "pairs": len(live_calendar_spread_scanner.pair_snapshot(limit=200)),
+            "signals": calendar_counts["signals"],
+            "pairs": calendar_counts["pairs"],
             "diagnostics": live_calendar_spread_scanner.diagnostics_snapshot(limit=50)["counters"],
         },
         "cash_future_scanner": live_cash_future_scanner.health(),
