@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from dataclasses import replace
+from math import isfinite
 from datetime import time as datetime_time
 from zoneinfo import ZoneInfo
 from threading import Lock
@@ -50,7 +51,7 @@ class LiveSyntheticScanner:
             number = float(value)
         except (TypeError, ValueError):
             return None
-        return number if number > 0 else None
+        return number if isfinite(number) and number > 0 else None
 
     def observe(self, payload: dict) -> tuple[SyntheticScanResult, ...]:
         symbol = str(payload.get("underlying") or "").strip().upper()
@@ -75,8 +76,9 @@ class LiveSyntheticScanner:
 
         def positive_number(value: object) -> float:
             try:
-                return max(float(value), 0.0)
-            except (TypeError, ValueError):
+                number = float(value)
+                return number if isfinite(number) and number > 0 else 0.0
+            except (TypeError, ValueError, OverflowError):
                 return 0.0
 
         def liquid_leg(option: dict) -> bool:
