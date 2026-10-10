@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from math import isfinite
 from threading import Event, Lock, RLock, Thread, current_thread
 import time
 from typing import Any, Callable
@@ -77,6 +78,8 @@ class CommonWebSocketManager:
         self._last_tick: dict[str, Any] | None = None
         self._socket_created_at: dict[SocketGroup, float] = {}
         self._last_data_at: dict[SocketGroup, float] = {}
+        # None means this socket generation has not delivered a tick to any consumer yet.
+        self._last_successful_delivery_at: dict[SocketGroup, float | None] = {}
         # Identify socket generations so late Angel callbacks from a replaced
         # socket cannot be counted as live data for the new/absent group.
         self._socket_generation: dict[SocketGroup, int] = {}
@@ -158,8 +161,8 @@ class CommonWebSocketManager:
         consumer = self._consumer_name(consumer)
         if not keys:
             return ()
-        if isinstance(mode, bool) or mode not in (1, 2, 3):
-            raise ValueError("mode must be one of Angel One WebSocket modes 1, 2, or 3")
+        if not isinstance(mode, int) or isinstance(mode, bool) or mode not in (1, 2, 3, 4):
+            raise ValueError("mode must be one of Angel One WebSocket modes 1, 2, 3, or 4")
         with self._lock:
             if self._closed:
                 raise RuntimeError("CommonWebSocketManager is closed")
@@ -248,6 +251,7 @@ class CommonWebSocketManager:
                     self._socket_tokens.pop(group, None)
                     self._socket_created_at.pop(group, None)
                     self._last_data_at.pop(group, None)
+                    self._last_successful_delivery_at.pop(group, None)
                     self._socket_generation.pop(group, None)
 
             for socket in stale_sockets:
@@ -273,6 +277,7 @@ class CommonWebSocketManager:
                         now = time.monotonic()
                         self._socket_created_at[group] = now
                         self._last_data_at[group] = now
+                        self._last_successful_delivery_at[group] = None
                     self._start_socket_connect(
                         socket=socket,
                         group=group,
@@ -355,6 +360,7 @@ class CommonWebSocketManager:
                         self._socket_tokens.pop(group, None)
                         self._socket_created_at.pop(group, None)
                         self._last_data_at.pop(group, None)
+                        self._last_successful_delivery_at.pop(group, None)
                         self._socket_generation.pop(group, None)
                     self._connect_failures += 1
                     self._last_connect_failure = {
@@ -417,6 +423,7 @@ class CommonWebSocketManager:
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
                 self._last_data_at.pop(group, None)
+                self._last_successful_delivery_at.pop(group, None)
                 self._socket_generation.pop(group, None)
                 self._socket_failure_events += 1
                 self._last_socket_failure = {
@@ -497,6 +504,7 @@ class CommonWebSocketManager:
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
                 self._last_data_at.pop(group, None)
+                self._last_successful_delivery_at.pop(group, None)
                 self._socket_generation.pop(group, None)
 
         if is_current:
@@ -635,6 +643,7 @@ class CommonWebSocketManager:
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
                 self._last_data_at.pop(group, None)
+                self._last_successful_delivery_at.pop(group, None)
                 self._socket_generation.pop(group, None)
         if not stale and not missing_groups:
             return 0
@@ -696,14 +705,21 @@ class CommonWebSocketManager:
                 self._missing_token_frames += 1
                 return
 
-            exchange_type_raw = message.get("exchange_type", message.get("exchangeType"))
+            exchange_type_raw = message.get("exchange_type")
+            if exchange_type_raw is None:
+                exchange_type_raw = message.get("exchangeType")
             exchange_type = None
             if exchange_type_raw is not None:
                 try:
-                    exchange_type = int(exchange_type_raw)
+                    if isinstance(exchange_type_raw, bool):
+                        raise ValueError("exchange_type must be an integer, not bool")
+                    numeric_exchange_type = float(exchange_type_raw)
+                    if not isfinite(numeric_exchange_type) or not numeric_exchange_type.is_integer():
+                        raise ValueError("exchange_type must be a finite integer")
+                    exchange_type = int(numeric_exchange_type)
                     if exchange_type <= 0:
                         raise ValueError("exchange_type must be positive")
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
                     self._invalid_exchange_type_frames += 1
                     return
 
@@ -714,9 +730,19 @@ class CommonWebSocketManager:
                     self._exchange_mismatch_frames += 1
             else:
                 self._missing_exchange_type_frames += 1
+                # Token-only fallback must be unambiguous across every shard
+                # and exchange group for this subscription mode. Exchange types
+                # are partitioned into separate groups, so a local-shard check
+                # can silently misroute a duplicate token from another exchange.
+                # Other modes are intentionally excluded: the callback's socket
+                # group already identifies the subscription mode.
                 token_routes = tuple(
-                    item for (route_exchange, route_token), items in routes.items()
-                    if route_token == token for item in items
+                    item
+                    for candidate_group, group_routes in self._route_index.items()
+                    if candidate_group.mode == group.mode
+                    for (route_exchange, route_token), items in group_routes.items()
+                    if route_token == token
+                    for item in items
                 )
                 # A token alone is not globally unique across exchanges. Route it
                 # only when every matching subscription resolves to one exchange.
@@ -738,8 +764,12 @@ class CommonWebSocketManager:
             )
             if matching:
                 self._ticks_received += 1
-                self._ticks_by_exchange[str(exchange_type or "unknown")] += 1
-                self._last_data_at[group] = time.monotonic()
+                routed_exchange_type = (
+                    exchange_type
+                    if exchange_type is not None
+                    else self._resolve_exchange_type(matching[0][1])
+                )
+                self._ticks_by_exchange[str(routed_exchange_type)] += 1
         for callback in {id(cb): cb for cb in raw_callbacks if cb is not None}.values():
             with self._lock:
                 self._raw_callback_attempts += 1
@@ -747,6 +777,8 @@ class CommonWebSocketManager:
                 callback(message)
                 with self._lock:
                     self._raw_callback_successes += 1
+                    self._last_data_at[group] = time.monotonic()
+                    self._last_successful_delivery_at[group] = self._last_data_at[group]
             except Exception as exc:
                 with self._lock:
                     self._delivery_errors += 1
@@ -789,6 +821,8 @@ class CommonWebSocketManager:
                 callback(record)
                 with self._lock:
                     self._normalized_records_delivered += 1
+                    self._last_data_at[group] = time.monotonic()
+                    self._last_successful_delivery_at[group] = self._last_data_at[group]
             except (TypeError, ValueError, OverflowError) as exc:
                 with self._lock:
                     self._normalizer_errors += 1
@@ -861,6 +895,14 @@ class CommonWebSocketManager:
                     max(0.0, time.monotonic() - self._last_raw_frame_at)
                     if self._last_raw_frame_at is not None else None
                 ),
+                "last_successful_delivery_age_seconds_by_group": {
+                    f"{group.mode}:{group.shard}": (
+                        None if delivered_at is None
+                        else max(0.0, time.monotonic() - delivered_at)
+                    )
+                    for group, delivered_at in self._last_successful_delivery_at.items()
+                    if group in sockets
+                },
                 "runtime_started_at": self._runtime_started_at,
                 "ticks_by_exchange_type": dict(self._ticks_by_exchange),
                 "last_tick": dict(self._last_tick) if self._last_tick else None,
@@ -896,6 +938,7 @@ class CommonWebSocketManager:
                 self._socket_tokens.clear()
                 self._socket_created_at.clear()
                 self._last_data_at.clear()
+                self._last_successful_delivery_at.clear()
                 self._socket_generation.clear()
             for socket in sockets:
                 self._close_socket_bounded(socket)

@@ -60,7 +60,7 @@ class CommonStrategyMarketFeed:
         self.consumer = str(consumer).strip()
         if not self.consumer:
             raise ValueError("consumer is required")
-        if mode not in {1, 2, 3, 4}:
+        if not isinstance(mode, int) or isinstance(mode, bool) or mode not in {1, 2, 3, 4}:
             raise ValueError("mode must be one of 1, 2, 3 or 4")
         self.mode = mode
         self.manager = manager or shared_common_manager(auth, socket_factory=socket_factory)

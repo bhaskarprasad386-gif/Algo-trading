@@ -60,6 +60,10 @@ def test_normalized_callback_uses_exact_exchange_group():
             self.connect_calls.append(kwargs)
         def subscribe(self, tokens, mode=None):
             pass
+        def subscribe_groups(self, groups, mode=None):
+            pass
+        def unsubscribe_groups(self, groups):
+            pass
         def close(self):
             self.closed = True
 
@@ -109,3 +113,51 @@ def test_bounded_ingestor_batches_and_flushes_without_unbounded_memory():
     assert sum(len(batch) for batch in catalog.batches) == 3
     assert all(r.source == "angelone-live-1s" for batch in catalog.batches for r in batch)
     assert ingestor.snapshot()["queue_capacity"] == 2
+
+
+def test_non_finite_depth_does_not_drop_other_valid_market_fields():
+    record = AngelOneTickNormalizer().normalize(
+        descriptor(),
+        {
+            "token": "101",
+            "last_traded_price": 12345,
+            "volume_trade_for_the_day": 77,
+            "open_interest": 88,
+            "best_buy_data": [{"price": float("nan"), "quantity": float("inf")}],
+            "best_sell_data": [{"price": "not-a-price", "quantity": -1}],
+        },
+    )
+    assert record.ltp == 123.45
+    assert record.bid is None
+    assert record.ask is None
+    assert record.bid_qty is None
+    assert record.ask_qty is None
+    assert record.volume == 77
+    assert record.oi == 88
+
+
+def test_crossed_depth_does_not_discard_valid_ltp_and_oi():
+    record = AngelOneTickNormalizer().normalize(
+        descriptor(),
+        {
+            "token": "101",
+            "last_traded_price": 12345,
+            "open_interest": 88,
+            "best_buy_data": [{"price": 12400, "quantity": 10}],
+            "best_sell_data": [{"price": 12300, "quantity": 12}],
+        },
+    )
+    assert record.ltp == 123.45
+    assert record.bid is None
+    assert record.ask is None
+    assert record.oi == 88
+
+
+def test_price_scale_rejects_non_finite_values():
+    for value in (float("nan"), float("inf"), 0, -1):
+        try:
+            AngelOneTickNormalizer(price_scale=value)
+        except ValueError as exc:
+            assert "finite and positive" in str(exc)
+        else:
+            raise AssertionError(f"invalid price scale accepted: {value}")

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import replace
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
 from typing import Any, Callable
@@ -72,6 +73,8 @@ class LiveCashFutureCommonRunner:
         self._payload_callbacks = 0
         self._scanner_updates = 0
         self._scanner_results = 0
+        self._records_missing_executable_quote = 0
+        self._scanner_rejections = 0
 
     @property
     def last_result(self) -> CashFutureScanResult | None:
@@ -89,6 +92,10 @@ class LiveCashFutureCommonRunner:
             "payload_callbacks": self._payload_callbacks,
             "scanner_updates": self._scanner_updates,
             "scanner_results": self._scanner_results,
+            "records_missing_executable_quote": self._records_missing_executable_quote,
+            "scanner_rejections": self._scanner_rejections,
+            "scanner_out_of_order_records": getattr(self.scanner, "out_of_order_records", 0),
+            "scanner_stale_pair_rejections": getattr(self.scanner, "stale_pair_rejections", 0),
         }
 
     def _build_descriptors(self) -> tuple[InstrumentDescriptor, ...]:
@@ -237,6 +244,11 @@ class LiveCashFutureCommonRunner:
         if meta is None:
             self._records_missing_metadata += 1
             return
+        # The broker tick usually contains no underlying field. The runner's
+        # instrument-master mapping is authoritative and must be attached before
+        # the scanner pairs cash symbols with their current/near futures.
+        if record.underlying != meta["underlying"]:
+            record = replace(record, underlying=meta["underlying"])
         if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED and self._ingestor is not None:
             # Persist one latest broker tick per second. The canonical WebSocket
         # can emit many ticks inside a second, but this stream is explicitly 1s.
@@ -263,7 +275,11 @@ class LiveCashFutureCommonRunner:
                 record,
                 contract_month=meta["contract_month"],
             )
-        except ValueError:
+        except ValueError as exc:
+            if "two-sided executable quote" in str(exc):
+                self._records_missing_executable_quote += 1
+            else:
+                self._scanner_rejections += 1
             return
         if result is not None and result.signal.qualifies:
             self._scanner_results += 1

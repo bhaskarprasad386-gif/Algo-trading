@@ -6,6 +6,11 @@ on:
     paths:
       - "backend/app/market_data/common_websocket.py"
       - "backend/app/market_data/common_strategy_feed.py"
+      - "backend/app/market_data/normalizer.py"
+      - "backend/app/market_data/cash_future_opportunity.py"
+      - "backend/app/market_data/live_cash_future_common.py"
+      - "backend/app/market_data/tests/test_batch_k.py"
+      - "backend/tests/test_live_cash_future_common.py"
       - "backend/app/market_data/websocket.py"
       - "backend/app/market_data/tests/test_common_websocket.py"
       - "backend/app/market_data/tests/test_websocket.py"
@@ -38,6 +43,9 @@ jobs:
           python -m py_compile app/market_data/common_websocket.py
           python -m py_compile app/market_data/common_strategy_feed.py
           python -m py_compile app/market_data/websocket.py
+          python -m py_compile app/market_data/normalizer.py
+          python -m py_compile app/market_data/cash_future_opportunity.py
+          python -m py_compile app/market_data/live_cash_future_common.py
       - name: Run targeted common feed tests
         working-directory: backend
         env:
@@ -46,4 +54,6 @@ jobs:
           python -m pytest -q \
             app/market_data/tests/test_common_websocket.py \
             app/market_data/tests/test_websocket.py \
-            app/market_data/tests/test_batch_pq.py
+            app/market_data/tests/test_batch_pq.py \
+            app/market_data/tests/test_batch_k.py \
+            tests/test_live_cash_future_common.py
