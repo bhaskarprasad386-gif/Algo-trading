@@ -1,6 +1,6 @@
 import math
 import time
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 from typing import Callable, Optional
 
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
@@ -36,6 +36,7 @@ class MarketDataWebSocket:
         self._last_error = None
         self._reconnect_lock = Lock()
         self._auto_reconnect = bool(auto_reconnect)
+        self._socket_operation_timeout_seconds = 0.25
         self._connecting = False
 
     @property
@@ -90,7 +91,7 @@ class MarketDataWebSocket:
                 self._last_error = None
             app_logger.info("Angel One WebSocket connected")
             if self.exchange_type is not None and self.tokens:
-                socket.subscribe(self.correlation_id, self.mode, self._token_groups())
+                self._subscribe_initial_bounded(socket)
 
         def handle_data(wsapp, message):
             if self.on_data:
@@ -132,6 +133,42 @@ class MarketDataWebSocket:
         socket.on_close = handle_close
         return socket
 
+    def _subscribe_initial_bounded(self, socket: Any) -> None:
+        """Bound the SDK subscribe call made from Angel's on_open callback."""
+        completed = Event()
+        failure: dict[str, Exception] = {}
+        payload = self._token_groups()
+        correlation_id = self.correlation_id
+        mode = self.mode
+
+        def _subscribe() -> None:
+            try:
+                socket.subscribe(correlation_id, mode, payload)
+            except Exception as exc:
+                failure["exception"] = exc
+            finally:
+                completed.set()
+
+        Thread(target=_subscribe, name="angel-ws-initial-subscribe", daemon=True).start()
+        finished = completed.wait(timeout=max(0.01, self._socket_operation_timeout_seconds))
+        error = failure.get("exception")
+        if finished and error is None:
+            return
+        if not finished:
+            reason = f"initial subscribe exceeded {self._socket_operation_timeout_seconds:.2f}s"
+        else:
+            reason = f"initial subscribe failed: {type(error).__name__}: {error}"
+        app_logger.error("Angel One WebSocket %s", reason)
+        with self._lock:
+            self._connected = False
+            self._last_error = reason
+            self._consecutive_failures += 1
+            failure_callback = self.on_failure
+        if failure_callback is not None:
+            try:
+                failure_callback(reason)
+            except Exception as exc:
+                app_logger.error(f"Angel One WebSocket initial-subscribe notification failed: {exc}")
     def _schedule_reconnect(self) -> None:
         with self._reconnect_lock:
             if self._stopping:
