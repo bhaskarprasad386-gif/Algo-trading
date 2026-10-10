@@ -52,6 +52,9 @@ def test_calendar_observe_to_pair_and_live_api():
     assert live_response["status"] == "success"
     assert live_response["opportunity_count"] == 1
     assert live_response["data"][0]["qualifies"] is True
+    assert live_response["data"][0]["capacity_type"] == "estimate_only"
+    assert live_response["data"][0]["estimated_capacity_lots"] == live_response["data"][0]["capacity_lots"]
+    assert "excludes broker margin" in live_response["data"][0]["capacity_basis"]
 
 
 def test_live_api_qualifies_using_requested_threshold_overrides():
