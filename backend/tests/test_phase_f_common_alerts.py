@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from app.models import LiveCalendarSpreadAlertHistory
 from app.notifications.common import AlertEvent, AlertService
 from app.notifications.calendar_spread_alerts import CalendarSpreadAlertService
+from app.notifications.whatsapp import WhatsAppConfig, WhatsAppNotifier
 
 
 def test_common_alert_contract_has_stable_dedup_key():
@@ -80,8 +81,9 @@ def test_strategy_alert_events_expose_metric_metadata_for_rule_matching():
 
 def test_alert_status_counts_active_user_rules(db_session, monkeypatch):
     from app.alert_routes import get_alert_status
-    from app.models import AlertRule
+    from app.models import AlertRule, User
     monkeypatch.setattr("app.alert_routes.current_user_id", lambda _db: 1)
+    db_session.add(User(id=1, email="alert-status@example.com", hashed_password="x", alerts_enabled=True))
     db_session.add(AlertRule(
         user_id=1, strategy_id="cash-future", name="Active", metric="gap", operator=">=", threshold=1,
         min_gross_profit=0, mobile_number="919999999999", enabled=True,
