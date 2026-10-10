@@ -59,7 +59,9 @@ class LiveCalendarSpreadScanner:
     def _record_ok(record: MarketDataRecord) -> bool:
         return (
             record.instrument_type in {InstrumentType.FUTURE, InstrumentType.COMMODITY}
-            and record.timestamp_ns > 0 and record.is_executable_quote
+            and record.timestamp_ns > 0
+            and record.bid is not None and record.ask is not None
+            and record.bid > 0 and record.ask > 0 and record.bid <= record.ask
             and record.lot_size is not None and record.lot_size > 0 and bool(record.expiry)
         )
 
