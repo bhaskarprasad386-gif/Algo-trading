@@ -166,6 +166,9 @@ def test_calendar_invalidates_old_signal_when_latest_pair_has_no_positive_edge()
     assert scanner.update(updated_far) is None
     assert scanner.snapshot() == ()
     assert scanner.pair_snapshot() == ()
+    diagnostics = scanner.diagnostics_snapshot()
+    assert diagnostics["counters"]["no_positive_edge"] == 1
+    assert diagnostics["pairs"][0]["status"] == "no_positive_edge"
 
 
 def test_calendar_positive_gross_edge_without_two_sided_depth_does_not_qualify():
