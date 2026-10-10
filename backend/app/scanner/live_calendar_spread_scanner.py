@@ -63,7 +63,7 @@ class LiveCalendarSpreadScanner:
             "waiting_for_second_expiry": 0, "timestamp_mismatch": 0,
             "lot_size_mismatch": 0, "no_positive_edge": 0,
             "qualified": 0, "side_effect_queue_dropped": 0,
-            "side_effect_errors": 0,
+            "side_effect_errors": 0, "observe_errors": 0,
         }
         self._side_effect_queue = Queue(maxsize=256)
         self._side_effect_worker_started = False
@@ -301,7 +301,7 @@ class LiveCalendarSpreadScanner:
             return self.update(record)
         except Exception:
             with self._lock:
-                self._diagnostics["side_effect_errors"] += 1
+                self._diagnostics["observe_errors"] += 1
             logger.exception(
                 "Calendar Spread observe failed while converting/updating payload; payload_type=%s keys=%s",
                 type(payload).__name__,
