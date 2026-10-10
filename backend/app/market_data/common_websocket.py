@@ -339,6 +339,56 @@ class CommonWebSocketManager:
             if error is not None:
                 raise error
 
+    def _schedule_socket_failure_recovery(
+        self, group: SocketGroup, socket: Any, generation: int, reason: str
+    ) -> None:
+        """Invalidate a failed current socket and recover off the SDK callback thread."""
+        with self._lock:
+            if (
+                self._sockets.get(group) is not socket
+                or self._socket_generation.get(group) != generation
+            ):
+                return
+            self._sockets.pop(group, None)
+            self._socket_tokens.pop(group, None)
+            self._socket_created_at.pop(group, None)
+            self._last_data_at.pop(group, None)
+            self._socket_generation.pop(group, None)
+            self._socket_failure_events += 1
+            self._last_socket_failure = {
+                "group": f"{group.mode}:{group.shard}",
+                "reason": str(reason),
+                "failed_at_ns": time.time_ns(),
+                "generation": generation,
+            }
+        runtime_diagnostics.record(
+            component="Common Market Feed",
+            error_type="AngelSocketFailure",
+            message=str(reason),
+            context={"event": "socket_failure_callback", "group": f"{group.mode}:{group.shard}", "generation": generation},
+        )
+        app_logger.warning(
+            "Common feed socket failure callback group=%s generation=%s reason=%s; scheduling immediate recovery",
+            group, generation, reason,
+        )
+
+        def _recover() -> None:
+            self._close_socket_bounded(socket)
+            try:
+                self.recover_disconnected(min_age_seconds=0.0, silent_age_seconds=0.0)
+            except Exception as exc:
+                runtime_diagnostics.record(
+                    component="Common Market Feed",
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                    context={"event": "failure_triggered_recovery", "group": f"{group.mode}:{group.shard}"},
+                )
+                app_logger.warning(
+                    "Common feed failure-triggered recovery failed group=%s; supervisor will retry: %s",
+                    group, exc,
+                )
+
+        Thread(target=_recover, name=f"common-ws-failure-recovery-{group.mode}-{group.shard}", daemon=True).start()
     def _run_socket_operation_bounded(
         self,
         *,
@@ -670,6 +720,8 @@ class CommonWebSocketManager:
                 ],
                 "connect_failures": self._connect_failures,
                 "last_connect_failure": dict(self._last_connect_failure) if self._last_connect_failure else None,
+                "socket_failure_events": self._socket_failure_events,
+                "last_socket_failure": dict(self._last_socket_failure) if self._last_socket_failure else None,
                 "recovery_attempts": self._recovery_attempts,
                 "last_recovery_at": self._last_recovery_at,
             }
