@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Bell, Home, Menu, Settings2, X } from "lucide-react";
+import { Activity, Bell, ChartNoAxesCombined, Home, Menu, Settings2, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { themeOptions, useTheme, type ThemeName } from "@/components/theme-provider";
 
