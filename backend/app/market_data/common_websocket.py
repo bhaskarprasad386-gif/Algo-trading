@@ -714,13 +714,16 @@ class CommonWebSocketManager:
                     self._exchange_mismatch_frames += 1
             else:
                 self._missing_exchange_type_frames += 1
-                # Token-only fallback must be unambiguous across every socket
-                # group, not merely this shard. Exchange types are partitioned
-                # into separate groups, so a local check can silently misroute
-                # an NSE token when the same token is subscribed on NFO elsewhere.
+                # Token-only fallback must be unambiguous across every shard
+                # and exchange group for this subscription mode. Exchange types
+                # are partitioned into separate groups, so a local-shard check
+                # can silently misroute a duplicate token from another exchange.
+                # Other modes are intentionally excluded: the callback's socket
+                # group already identifies the subscription mode.
                 token_routes = tuple(
                     item
-                    for group_routes in self._route_index.values()
+                    for candidate_group, group_routes in self._route_index.items()
+                    if candidate_group.mode == group.mode
                     for (route_exchange, route_token), items in group_routes.items()
                     if route_token == token
                     for item in items
