@@ -1,7 +1,7 @@
 import math
 import time
 from threading import Event, Lock, Thread
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 
