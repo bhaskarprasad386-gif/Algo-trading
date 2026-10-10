@@ -68,6 +68,8 @@ def test_live_synthetic_scanner_rejects_mismatched_option_expiry():
             "expiry": "30SEP2026",
             "bid": 115.0,
             "ask": 116.0,
+            "bid_qty": 10,
+            "ask_qty": 10,
             "lot_size": 1,
             "source_timestamp_ns": ts,
             "symbol": "NIFTYFUT",
@@ -169,7 +171,7 @@ def test_live_synthetic_scanner_rejects_future_without_executable_depth():
     scanner.observe(_base(ts, 105.0, "CE", 4.0, 5.0))
     scanner.observe(_base(ts, 105.0, "PE", 4.0, 5.0))
     result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"",
-        "expiry":"30SEP2026","bid":115,"ask":116,"lot_size":1,"source_timestamp_ns":ts,
+        "expiry":"30SEP2026","bid":115,"ask":116,"bid_qty":10,"ask_qty":10,"lot_size":1,"source_timestamp_ns":ts,
         "symbol":"NIFTYFUT","volume":100,"oi":1000})
     assert result == ()
 
