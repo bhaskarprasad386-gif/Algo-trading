@@ -756,7 +756,12 @@ class CommonWebSocketManager:
             )
             if matching:
                 self._ticks_received += 1
-                self._ticks_by_exchange[str(exchange_type or "unknown")] += 1
+                routed_exchange_type = (
+                    exchange_type
+                    if exchange_type is not None
+                    else self._resolve_exchange_type(matching[0][1])
+                )
+                self._ticks_by_exchange[str(routed_exchange_type)] += 1
         for callback in {id(cb): cb for cb in raw_callbacks if cb is not None}.values():
             with self._lock:
                 self._raw_callback_attempts += 1
