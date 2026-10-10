@@ -78,6 +78,8 @@ class CommonWebSocketManager:
         self._last_tick: dict[str, Any] | None = None
         self._socket_created_at: dict[SocketGroup, float] = {}
         self._last_data_at: dict[SocketGroup, float] = {}
+        # None means this socket generation has not delivered a tick to any consumer yet.
+        self._last_successful_delivery_at: dict[SocketGroup, float | None] = {}
         # Identify socket generations so late Angel callbacks from a replaced
         # socket cannot be counted as live data for the new/absent group.
         self._socket_generation: dict[SocketGroup, int] = {}
@@ -249,6 +251,8 @@ class CommonWebSocketManager:
                     self._socket_tokens.pop(group, None)
                     self._socket_created_at.pop(group, None)
                     self._last_data_at.pop(group, None)
+                self._last_successful_delivery_at.pop(group, None)
+                    self._last_successful_delivery_at.pop(group, None)
                     self._socket_generation.pop(group, None)
 
             for socket in stale_sockets:
@@ -274,6 +278,7 @@ class CommonWebSocketManager:
                         now = time.monotonic()
                         self._socket_created_at[group] = now
                         self._last_data_at[group] = now
+                        self._last_successful_delivery_at[group] = None
                     self._start_socket_connect(
                         socket=socket,
                         group=group,
@@ -356,6 +361,8 @@ class CommonWebSocketManager:
                         self._socket_tokens.pop(group, None)
                         self._socket_created_at.pop(group, None)
                         self._last_data_at.pop(group, None)
+                self._last_successful_delivery_at.pop(group, None)
+                    self._last_successful_delivery_at.pop(group, None)
                         self._socket_generation.pop(group, None)
                     self._connect_failures += 1
                     self._last_connect_failure = {
@@ -418,6 +425,7 @@ class CommonWebSocketManager:
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
                 self._last_data_at.pop(group, None)
+                self._last_successful_delivery_at.pop(group, None)
                 self._socket_generation.pop(group, None)
                 self._socket_failure_events += 1
                 self._last_socket_failure = {
@@ -498,6 +506,7 @@ class CommonWebSocketManager:
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
                 self._last_data_at.pop(group, None)
+                self._last_successful_delivery_at.pop(group, None)
                 self._socket_generation.pop(group, None)
 
         if is_current:
@@ -636,6 +645,7 @@ class CommonWebSocketManager:
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
                 self._last_data_at.pop(group, None)
+                self._last_successful_delivery_at.pop(group, None)
                 self._socket_generation.pop(group, None)
         if not stale and not missing_groups:
             return 0
@@ -770,6 +780,7 @@ class CommonWebSocketManager:
                 with self._lock:
                     self._raw_callback_successes += 1
                     self._last_data_at[group] = time.monotonic()
+                    self._last_successful_delivery_at[group] = self._last_data_at[group]
             except Exception as exc:
                 with self._lock:
                     self._delivery_errors += 1
@@ -813,6 +824,7 @@ class CommonWebSocketManager:
                 with self._lock:
                     self._normalized_records_delivered += 1
                     self._last_data_at[group] = time.monotonic()
+                    self._last_successful_delivery_at[group] = self._last_data_at[group]
             except (TypeError, ValueError, OverflowError) as exc:
                 with self._lock:
                     self._normalizer_errors += 1
@@ -886,8 +898,11 @@ class CommonWebSocketManager:
                     if self._last_raw_frame_at is not None else None
                 ),
                 "last_successful_delivery_age_seconds_by_group": {
-                    f"{group.mode}:{group.shard}": max(0.0, time.monotonic() - delivered_at)
-                    for group, delivered_at in self._last_data_at.items()
+                    f"{group.mode}:{group.shard}": (
+                        None if delivered_at is None
+                        else max(0.0, time.monotonic() - delivered_at)
+                    )
+                    for group, delivered_at in self._last_successful_delivery_at.items()
                     if group in sockets
                 },
                 "runtime_started_at": self._runtime_started_at,
@@ -925,6 +940,7 @@ class CommonWebSocketManager:
                 self._socket_tokens.clear()
                 self._socket_created_at.clear()
                 self._last_data_at.clear()
+                self._last_successful_delivery_at.clear()
                 self._socket_generation.clear()
             for socket in sockets:
                 self._close_socket_bounded(socket)
