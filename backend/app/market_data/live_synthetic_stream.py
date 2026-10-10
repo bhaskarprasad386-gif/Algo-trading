@@ -20,6 +20,7 @@ from app.backtesting.historical_catalog import HistoricalRecord
 from app.market_data.persistence import DailySQLiteMarketDataRepository
 from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.common_websocket import CommonWebSocketManager
+from app.core.logger import app_logger
 
 IST = ZoneInfo("Asia/Kolkata")
 OPEN = time(9, 15)
@@ -103,6 +104,7 @@ class LiveSyntheticOptionFutureRecorder:
         self._latest: dict[tuple[str, str], tuple[int, Any]] = {}
         self._lock = Lock()
         self._metadata: dict[tuple[str, str], SyntheticSubscription] = {}
+        self._callback_errors = 0
 
     @staticmethod
     def market_open(now: datetime | None = None) -> bool:
@@ -186,8 +188,13 @@ class LiveSyntheticOptionFutureRecorder:
         if self.on_observation is not None:
             try:
                 self.on_observation(dict(payload))
-            except Exception:
-                pass
+            except Exception as exc:
+                with self._lock:
+                    self._callback_errors += 1
+                app_logger.exception(
+                    "Synthetic observation callback failed for %s token=%s: %s",
+                    record.symbol, record.instrument.token, exc,
+                )
         if self._ingestor is not None:
             self._ingestor.submit_historical(
                 HistoricalRecord(
@@ -263,7 +270,8 @@ class LiveSyntheticOptionFutureRecorder:
                     self._run_session()
                 else:
                     sleep(5)
-            except Exception:
+            except Exception as exc:
+                app_logger.exception("Synthetic option/future recorder session failed: %s", exc)
                 sleep(10)
 
     def snapshot(self) -> dict[str, Any]:
@@ -275,6 +283,7 @@ class LiveSyntheticOptionFutureRecorder:
             "running": not self.stop_event.is_set(),
             "subscriptions": len(self.subscriptions),
             "latest_instruments": latest,
+            "callback_errors": self._callback_errors,
             "feed": None if feed is None else feed.snapshot(),
         }
 
