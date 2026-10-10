@@ -19,6 +19,22 @@ jobs:
 
       - run: rm -f backend/*.db || true
 
+      - name: Run WebSocket recovery simulation tests
+        env:
+          SECRET_KEY: ci-test-secret-key-not-for-production
+          PYTHONPATH: backend
+          DATABASE_URL: "sqlite:///:memory:"
+          LIVE_CASH_FUTURE_DATA_ENABLED: "false"
+          LIVE_CALENDAR_SPREAD_DATA_ENABLED: "false"
+          LIVE_SYNTHETIC_DATA_ENABLED: "false"
+          LIVE_BOX_SPREAD_DATA_ENABLED: "false"
+          LIVE_MARKET_DATA_PERSISTENCE_ENABLED: "false"
+          LIVE_CASH_FUTURE_DAILY_SHARDS_ENABLED: "false"
+        run: >-
+          python -m pytest
+          backend/app/market_data/tests/test_common_websocket_recovery_simulation.py
+          -q --tb=short -r fE --timeout=60 --timeout-method=thread
+
       - name: Run backend tests
         env:
           SECRET_KEY: ci-test-secret-key-not-for-production
