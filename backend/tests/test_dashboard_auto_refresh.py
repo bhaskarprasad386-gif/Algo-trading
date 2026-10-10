@@ -12,7 +12,8 @@ def test_dashboard_auto_refresh_controls_and_scheduler():
     assert "let refreshTimer=null" in body
     assert "function scheduleScan()" in body
     assert "refreshTimer=setTimeout(async()=>{" in body
-    assert "loadMarketOverview(),loadLiveDataHealth(),loadPaperAccount()" in body
+    assert "loadMarketOverview(),loadLiveDataHealth()" in body
+    assert "loadPaperAccount" not in body
     assert "autoRefresh').addEventListener('change',scheduleScan)" in body
     assert "refreshSeconds').addEventListener('change',scheduleScan)" in body
     assert "scheduleScan()" in body
