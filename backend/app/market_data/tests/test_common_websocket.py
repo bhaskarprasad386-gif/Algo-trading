@@ -2,7 +2,7 @@ from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
 from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
-from threading import Event
+from threading import Event, Thread
 import time
 
 
@@ -530,5 +530,37 @@ def test_common_manager_disables_nested_socket_reconnect_supervisor():
     try:
         assert isinstance(socket, MarketDataWebSocket)
         assert socket._auto_reconnect is False
+    finally:
+        manager.close()
+
+
+def test_failure_callback_invalidation_waits_for_reconcile_snapshot_to_finish():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [d.key])
+        original = FakeSocket.instances[0]
+        callback = original.connect_calls[0]["on_failure"]
+        callback_finished = Event()
+        with manager._reconcile_lock:
+            worker = Thread(
+                target=lambda: (callback("concurrent failure"), callback_finished.set()),
+                daemon=True,
+            )
+            worker.start()
+            time.sleep(0.05)
+            assert not callback_finished.is_set()
+            assert manager._sockets[SocketGroup(1, 0)] is original
+
+        assert callback_finished.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and len(FakeSocket.instances) < 2:
+            time.sleep(0.01)
+        assert len(FakeSocket.instances) == 2
+        assert manager._sockets[SocketGroup(1, 0)] is FakeSocket.instances[1]
+        assert original.closed is True
     finally:
         manager.close()
