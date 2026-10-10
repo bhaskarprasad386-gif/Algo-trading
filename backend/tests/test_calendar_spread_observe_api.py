@@ -41,7 +41,7 @@ def test_calendar_observe_to_pair_and_live_api():
     calendar_spread_routes.configure(scanner)
     try:
         pairs_response = calendar_spread_routes.pairs(limit=10)
-        live_response = calendar_spread_routes.live(limit=10)
+        live_response = calendar_spread_routes.live(limit=10, min_gap_points=0, min_gross_profit=0)
     finally:
         calendar_spread_routes.configure(None)
 
