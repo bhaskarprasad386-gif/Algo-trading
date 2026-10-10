@@ -36,7 +36,7 @@ class Settings(BaseSettings):
 
     # Continuous live Cash-Future feed; broker/WebSocket scanning stays live even when persistence is disabled.
     LIVE_CASH_FUTURE_DATA_ENABLED: bool = True
-    # Keep live market data in memory only; alerts/paper-trades use the normal trading DB.
+    # Keep live market data in memory only; alert history uses the normal trading DB.
     LIVE_MARKET_DATA_PERSISTENCE_ENABLED: bool = False
     # Historical download/replay/backtesting subsystem is currently unavailable by default.
     BACKTESTING_ENABLED: bool = False
@@ -60,12 +60,6 @@ class Settings(BaseSettings):
     LIVE_BOX_SPREAD_DATA_ENABLED: bool = True
     LIVE_BOX_SPREAD_MIN_ARBITRAGE_POINTS: float = 0.0
     LIVE_BOX_SPREAD_RESULT_RETENTION_DAYS: int = 90
-    # Box-Spread paper automation is opt-in and only touches active PAPER accounts.
-    PAPER_BOX_SPREAD_AUTO_CYCLE_ENABLED: bool = False
-    # Keep alert-driven paper monitoring isolated from the live scanner by default.
-    LIVE_PAPER_MONITOR_ENABLED: bool = False
-    PAPER_BOX_SPREAD_AUTO_CYCLE_INTERVAL_SECONDS: int = 5
-    PAPER_BOX_SPREAD_AUTO_CYCLE_MIN_PNL: float = 0.0
     LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT: float = 0.0
     # Restrict the 1-second Cash-Future feed to a configured universe; empty means all active F&O stock futures.
     LIVE_CASH_FUTURE_SYMBOLS: str = ""
