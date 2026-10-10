@@ -360,7 +360,7 @@ class CommonWebSocketManager:
                         self._socket_tokens.pop(group, None)
                         self._socket_created_at.pop(group, None)
                         self._last_data_at.pop(group, None)
-                    self._last_successful_delivery_at.pop(group, None)
+                        self._last_successful_delivery_at.pop(group, None)
                         self._socket_generation.pop(group, None)
                     self._connect_failures += 1
                     self._last_connect_failure = {
