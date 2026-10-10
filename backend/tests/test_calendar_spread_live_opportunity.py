@@ -103,3 +103,10 @@ def test_calendar_rejects_materially_future_dated_live_tick():
     future_timestamp = time.time_ns() + 10_000_000_000
     assert scanner.update(rec("future", "NIFTY-CUR", future_timestamp, 99, 100)) is None
     assert scanner.pair_snapshot() == ()
+
+
+
+def test_calendar_scanner_rejects_zero_bid_or_ask_quotes():
+    scanner = LiveCalendarSpreadScanner()
+    assert scanner.update(rec("zero-bid", "NIFTY-CUR", 1, 0, 100)) is None
+    assert scanner.update(rec("zero-ask", "NIFTY-NEAR", 2, 99, 0, expiry="2026-11-26")) is None
