@@ -8,6 +8,7 @@ delegates pricing/ranking to the existing pure synthetic scanner.
 from __future__ import annotations
 
 from datetime import datetime
+from dataclasses import replace
 from threading import Lock
 from typing import Callable
 
@@ -199,6 +200,16 @@ class LiveSyntheticScanner:
                 self._prune(timestamp_ns)
                 return ()
             config = self.config_provider(symbol)
+            # The live path must not silently price carry with TTE=0 for every
+            # expiry. Derive remaining calendar time when no explicit TTE is set.
+            if config.time_to_expiry_years == 0:
+                try:
+                    expiry_date = datetime.strptime(str(future_expiry), "%Y%m%d").date()
+                    days_remaining = max((expiry_date - datetime.now().date()).days, 0)
+                    config = replace(config, time_to_expiry_years=days_remaining / 365.0)
+                except ValueError:
+                    self._prune(timestamp_ns)
+                    return ()
             results = scan_synthetic_snapshot(
                 option_quotes,
                 future,
