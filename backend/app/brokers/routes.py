@@ -13,7 +13,7 @@ from app.brokers.registry import BrokerRegistry
 from app.brokers.safety import trading_safety
 from app.core.database import get_db
 from app.core.logger import app_logger
-from app.execution.paper_routes import current_user_id
+from app.core.user_context import current_user_id
 
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
 
