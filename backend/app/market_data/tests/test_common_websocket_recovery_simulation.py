@@ -397,3 +397,54 @@ def test_supervisor_replaces_connected_but_silent_socket_automatically():
         assert live_sockets == [replacement]
     finally:
         manager.close()
+
+
+
+class ConnectReturnsWithoutConnectingSocket(SimulatedAngelSocket):
+    """The SDK call returns, but the first socket never reaches connected state."""
+
+    def connect(self, **kwargs):
+        self.connect_calls.append(kwargs)
+        self.connecting = False
+        if len(type(self).instances) == 1:
+            self.connected = False
+            return
+        self.connected = True
+
+
+def test_supervisor_retries_socket_when_connect_returns_without_connected_state():
+    registry = InstrumentRegistry()
+    descriptor = make_descriptor()
+    registry.register(descriptor)
+    manager = CommonWebSocketManager(
+        registry, socket_factory=ConnectReturnsWithoutConnectingSocket
+    )
+    manager._recovery_interval_seconds = 0.02
+
+    try:
+        manager.subscribe("cash-future", [descriptor.key])
+        group = SocketGroup(1, 0)
+        failed_socket = manager._sockets[group]
+        assert failed_socket.connect_calls
+        assert not failed_socket.connected
+        assert not failed_socket.connecting
+
+        # No error callback is fired: recovery must infer failure from state/age.
+        assert wait_until(
+            lambda: group in manager._sockets
+            and manager._sockets[group] is not failed_socket
+            and manager._sockets[group].connected,
+            timeout=2.5,
+        ), "supervisor did not replace a connect call that returned disconnected"
+
+        replacement = manager._sockets[group]
+        assert replacement.connect_calls[0]["subscriptions"] == {1: ["101"]}
+        assert failed_socket.closed
+        assert manager.snapshot()["connected_groups"] == ["1:0"]
+        live_sockets = [
+            socket for socket in ConnectReturnsWithoutConnectingSocket.instances
+            if not socket.closed
+        ]
+        assert live_sockets == [replacement]
+    finally:
+        manager.close()
