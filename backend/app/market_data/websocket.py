@@ -23,6 +23,7 @@ class MarketDataWebSocket:
         self.tokens: list[str] = []
         self.subscriptions: dict[int, list[str]] = {}
         self.on_data: Optional[Callable] = None
+        self.on_failure: Optional[Callable[[str], None]] = None
         self._lock = Lock()
         self._connected = False
         self._stopping = False
@@ -102,14 +103,26 @@ class MarketDataWebSocket:
                 self._error_count += 1
                 self._consecutive_failures += 1
                 self._last_error = str(error)
+                failure_callback = self.on_failure
             app_logger.error(f"Angel One WebSocket error: {error}")
+            if failure_callback is not None:
+                try:
+                    failure_callback(str(error))
+                except Exception as exc:
+                    app_logger.error(f"Angel One WebSocket failure notification failed: {exc}")
 
         def handle_close(wsapp):
             with self._lock:
                 self._connected = False
                 self._connecting = False
                 stopping = self._stopping
+                failure_callback = self.on_failure
             app_logger.warning("Angel One WebSocket connection closed")
+            if not stopping and failure_callback is not None:
+                try:
+                    failure_callback("socket closed")
+                except Exception as exc:
+                    app_logger.error(f"Angel One WebSocket close notification failed: {exc}")
             if not stopping and self._auto_reconnect:
                 self._schedule_reconnect()
 
@@ -167,7 +180,7 @@ class MarketDataWebSocket:
                 time.sleep(delay)
                 self._schedule_reconnect()
 
-    def connect(self, exchange_type: int | None = None, tokens: list[str] | None = None, mode: int = 1, correlation_id: str = "market-data", on_data: Optional[Callable] = None, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 2.0, subscriptions: Optional[dict[int, list[str]]] = None):
+    def connect(self, exchange_type: int | None = None, tokens: list[str] | None = None, mode: int = 1, correlation_id: str = "market-data", on_data: Optional[Callable] = None, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 2.0, subscriptions: Optional[dict[int, list[str]]] = None, on_failure: Optional[Callable[[str], None]] = None):
         """Connect and retry failed starts while preserving validated subscriptions."""
         if exchange_type is not None and (not isinstance(exchange_type, int) or isinstance(exchange_type, bool) or exchange_type <= 0):
             raise ValueError("exchange_type must be a positive integer")
@@ -192,6 +205,7 @@ class MarketDataWebSocket:
             self.mode = mode
             self.correlation_id = correlation_id.strip()
             self.on_data = on_data
+            self.on_failure = on_failure
             self._stopping = False
             self._connecting = True
             self._reconnect_attempts = reconnect_attempts
