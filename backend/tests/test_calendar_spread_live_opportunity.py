@@ -59,3 +59,37 @@ def test_calendar_crossed_quote_is_rejected_by_canonical_contract():
     except ValueError:
         return
     raise AssertionError("crossed quote must be rejected")
+
+
+
+def test_calendar_scanner_does_not_pair_future_and_commodity_families():
+    from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord
+
+    scanner = LiveCalendarSpreadScanner()
+
+    def family_record(kind, token, expiry, timestamp):
+        return MarketDataRecord(
+            instrument=InstrumentKey(exchange="MCX", segment="MCX", token=token),
+            symbol="CRUDEOIL" + expiry,
+            instrument_type=kind,
+            timestamp_ns=timestamp,
+            timeframe="1s",
+            ltp=100.0,
+            bid=99.0,
+            ask=100.0,
+            bid_qty=10,
+            ask_qty=10,
+            underlying="CRUDEOIL",
+            expiry=expiry,
+            lot_size=100,
+            tick_size=0.05,
+        )
+
+    scanner.update(family_record(InstrumentType.FUTURE, "f1", "2026-10-29", 3_000_000_000))
+    # Same underlying/exchange and an earlier expiry, but a different family.
+    assert scanner.update(family_record(InstrumentType.COMMODITY, "c1", "2026-10-22", 3_100_000_000)) is None
+    # A second future should pair with the first future, not the commodity.
+    paired = scanner.update(family_record(InstrumentType.FUTURE, "f2", "2026-11-26", 3_200_000_000))
+    assert paired is not None
+    assert paired.near_contract_month == "2026-10-29"
+    assert paired.far_contract_month == "2026-11-26"
