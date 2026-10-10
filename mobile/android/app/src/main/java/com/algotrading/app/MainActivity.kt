@@ -23,23 +23,15 @@ import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
-    private lateinit var etEntryPrice: EditText
-    private lateinit var etQuantity: EditText
-    private lateinit var etExitPrice: EditText
-    private lateinit var tvPaperResult: TextView
     private lateinit var tvScannerResult: TextView
     private lateinit var tvAlertCenter: TextView
     private lateinit var tvScannerAutoRefreshStatus: TextView
     private lateinit var tvScannerNextRefresh: TextView
     private lateinit var btnRunScanner: Button
-    private lateinit var btnScannerPaperExecute: Button
     private lateinit var btnFullFnoBacktest: Button
     private lateinit var btnBoxSpread: Button
     private lateinit var cbScannerAutoRefresh: CheckBox
     private lateinit var etScannerRefreshSeconds: EditText
-    private lateinit var btnPaperEntry: Button
-    private lateinit var btnPaperPosition: Button
-    private lateinit var btnPaperExit: Button
     private lateinit var etBrokerApiKey: EditText
     private lateinit var etBrokerClientCode: EditText
     private lateinit var etBrokerPassword: EditText
@@ -66,7 +58,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cbShowAlerts: CheckBox
     private lateinit var cbShowStrategy: CheckBox
     private lateinit var cbShowResults: CheckBox
-    private lateinit var cbShowPaper: CheckBox
     private lateinit var btnSaveDashboardLayout: Button
     private lateinit var btnResetDashboardLayout: Button
     private lateinit var tvDashboardLayoutStatus: TextView
@@ -75,7 +66,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnQuickScanner: Button
     private lateinit var btnQuickStrategies: Button
     private lateinit var btnQuickResults: Button
-    private lateinit var btnQuickPaper: Button
     private lateinit var btnQuickExpansion: Button
 
     private val scannerRefreshHandler = Handler(Looper.getMainLooper())
@@ -96,26 +86,17 @@ class MainActivity : AppCompatActivity() {
         btnQuickScanner = findViewById(R.id.btnQuickScanner)
         btnQuickStrategies = findViewById(R.id.btnQuickStrategies)
         btnQuickResults = findViewById(R.id.btnQuickResults)
-        btnQuickPaper = findViewById(R.id.btnQuickPaper)
         btnQuickExpansion = findViewById(R.id.btnQuickExpansion)
-        etEntryPrice = findViewById(R.id.etEntryPrice)
-        etQuantity = findViewById(R.id.etQuantity)
-        etExitPrice = findViewById(R.id.etExitPrice)
-        tvPaperResult = findViewById(R.id.tvPaperResult)
         tvScannerResult = findViewById(R.id.tvScannerResult)
         tvAlertCenter = findViewById(R.id.tvAlertCenter)
         cbShowAlerts = findViewById(R.id.cbShowAlerts)
         tvScannerAutoRefreshStatus = findViewById(R.id.tvScannerAutoRefreshStatus)
         tvScannerNextRefresh = findViewById(R.id.tvScannerNextRefresh)
         btnRunScanner = findViewById(R.id.btnRunScanner)
-        btnScannerPaperExecute = findViewById(R.id.btnScannerPaperExecute)
         btnFullFnoBacktest = findViewById(R.id.btnFullFnoBacktest)
         btnBoxSpread = findViewById(R.id.btnBoxSpread)
         cbScannerAutoRefresh = findViewById(R.id.cbScannerAutoRefresh)
         etScannerRefreshSeconds = findViewById(R.id.etScannerRefreshSeconds)
-        btnPaperEntry = findViewById(R.id.btnPaperEntry)
-        btnPaperPosition = findViewById(R.id.btnPaperPosition)
-        btnPaperExit = findViewById(R.id.btnPaperExit)
         etBrokerApiKey = findViewById(R.id.etBrokerApiKey)
         etBrokerClientCode = findViewById(R.id.etBrokerClientCode)
         etBrokerPassword = findViewById(R.id.etBrokerPassword)
@@ -130,7 +111,6 @@ class MainActivity : AppCompatActivity() {
         btnKillSwitch = findViewById(R.id.btnKillSwitch)
         btnAppUpdate = findViewById(R.id.btnAppUpdate)
         btnStrategies = findViewById(R.id.btnStrategies)
-        btnScannerPaperExecute.isEnabled = false
         scannerRefreshRunnable = Runnable { runCashFutureScanner() }
         scannerCountdownRunnable = object : Runnable {
             override fun run() {
@@ -153,12 +133,10 @@ class MainActivity : AppCompatActivity() {
         btnSaveDashboardLayout.setOnClickListener { saveDashboardLayout() }
         btnResetDashboardLayout.setOnClickListener { resetDashboardLayout() }
         btnRunScanner.setOnClickListener { runCashFutureScanner() }
-        btnScannerPaperExecute.setOnClickListener { paperExecuteScannerOpportunity() }
         btnFullFnoBacktest.setOnClickListener { startActivity(Intent(this, FullFnoBacktestActivity::class.java)) }
         btnBoxSpread.setOnClickListener { startActivity(Intent(this, BoxSpreadActivity::class.java)) }
         cbScannerAutoRefresh.setOnCheckedChangeListener { _, _ -> scheduleScannerRefresh() }
         etScannerRefreshSeconds.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) scheduleScannerRefresh() }
-        btnPaperEntry.setOnClickListener { paperEntry() }; btnPaperPosition.setOnClickListener { paperPosition() }; btnPaperExit.setOnClickListener { paperExit() }
         btnConnectBroker.setOnClickListener { connectAngelOne() }; btnDisconnectBroker.setOnClickListener { disconnectAngelOne() }
         btnEnableRealTrading.setOnClickListener { confirmEnableRealTrading() }; btnDisableRealTrading.setOnClickListener { disableRealTrading() }; btnKillSwitch.setOnClickListener { triggerKillSwitch() }
         tvScannerResult.setOnClickListener { openScannerDetail(lastExecutableOpportunity) }
@@ -166,7 +144,6 @@ class MainActivity : AppCompatActivity() {
         btnQuickScanner.setOnClickListener { mainScroll.post { mainScroll.smoothScrollTo(0, btnRunScanner.top) }; runCashFutureScanner() }
         btnQuickStrategies.setOnClickListener { startActivity(Intent(this, StrategyRegistryActivity::class.java)) }
         btnQuickResults.setOnClickListener { startActivity(Intent(this, ResultsJournalActivity::class.java)) }
-        btnQuickPaper.setOnClickListener { mainScroll.post { mainScroll.smoothScrollTo(0, btnPaperPosition.top) } }
         btnQuickExpansion.setOnClickListener { mainScroll.post { mainScroll.smoothScrollTo(0, findViewById<View>(R.id.phase13Expansion).top) } }
     }
 
@@ -189,7 +166,6 @@ class MainActivity : AppCompatActivity() {
         cbShowAlerts.isChecked = p.getBoolean("alerts", true)
         cbShowStrategy.isChecked = p.getBoolean("strategy", true)
         cbShowResults.isChecked = p.getBoolean("results", true)
-        cbShowPaper.isChecked = p.getBoolean("paper", true)
         tvDashboardLayoutStatus.text = if (p.getBoolean("saved", false)) "Layout: SAVED • this device" else "Layout: DEFAULT • saved on this device"
         applyDashboardVisibility()
     }
@@ -201,14 +177,13 @@ class MainActivity : AppCompatActivity() {
             .putBoolean("alerts", cbShowAlerts.isChecked)
             .putBoolean("strategy", cbShowStrategy.isChecked)
             .putBoolean("results", cbShowResults.isChecked)
-            .putBoolean("paper", cbShowPaper.isChecked)
             .apply()
         tvDashboardLayoutStatus.text = "Layout: SAVED • this device"
         applyDashboardVisibility()
     }
     private fun resetDashboardLayout() {
         dashboardPreferences().edit().clear().apply()
-        cbShowMarket.isChecked = true; cbShowScanner.isChecked = true; cbShowAlerts.isChecked = true; cbShowStrategy.isChecked = true; cbShowResults.isChecked = true; cbShowPaper.isChecked = true
+        cbShowMarket.isChecked = true; cbShowScanner.isChecked = true; cbShowAlerts.isChecked = true; cbShowStrategy.isChecked = true; cbShowResults.isChecked = true
         tvDashboardLayoutStatus.text = "Layout: DEFAULT • saved on this device"
         applyDashboardVisibility()
     }
@@ -230,10 +205,6 @@ class MainActivity : AppCompatActivity() {
         btnFullFnoBacktest.visibility = if (cbShowStrategy.isChecked) visible else hidden
         btnBoxSpread.visibility = if (cbShowStrategy.isChecked) visible else hidden
         btnResultsJournal.visibility = if (cbShowResults.isChecked) visible else hidden
-        btnPaperEntry.visibility = if (cbShowPaper.isChecked) visible else hidden
-        btnPaperPosition.visibility = if (cbShowPaper.isChecked) visible else hidden
-        btnPaperExit.visibility = if (cbShowPaper.isChecked) visible else hidden
-        tvPaperResult.visibility = if (cbShowPaper.isChecked) visible else hidden
     }
     private fun loadMarketOverview() = lifecycleScope.launch(Dispatchers.IO) {
         withContext(Dispatchers.Main) {
@@ -300,7 +271,6 @@ class MainActivity : AppCompatActivity() {
     }
     private fun disconnectAngelOne() = lifecycleScope.launch(Dispatchers.IO) { withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Disconnecting…" }; try { ApiService.retrofitService.disconnectBroker("angel_one"); withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Angel One disconnected • Real Trading OFF" }; checkSafetyStatus() } catch (error: Exception) { withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Disconnect failed • ${error.message ?: "API error"}" } } }
 
-    private fun renderScannerPaperState() { val opportunity = lastExecutableOpportunity; btnScannerPaperExecute.isEnabled = opportunity != null; btnScannerPaperExecute.text = opportunity?.let { "PAPER EXECUTE ${it.symbol} • ₹${it.cash_ask ?: it.cash_ltp}" } ?: "PAPER EXECUTE • NO EXECUTABLE OPPORTUNITY" }
     private fun openScannerDetail(opportunity: LiveCashFutureSignal?) {
         opportunity ?: return
         val cash = opportunity.cash_ask ?: opportunity.cash_ltp
@@ -321,7 +291,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun runCashFutureScanner(): Job = lifecycleScope.launch(Dispatchers.IO) {
-        withContext(Dispatchers.Main) { scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable); scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable); tvScannerNextRefresh.text = "Next Refresh: SCAN IN PROGRESS"; btnRunScanner.isEnabled = false; btnRunScanner.text = "SCANNING LIVE..."; btnScannerPaperExecute.isEnabled = false; tvScannerResult.text = lastScannerResult?.let { "$it\n\nREFRESHING LIVE 1s SCANNER..." } ?: "LIVE SCAN IN PROGRESS\n\nReading Cash–Future 1-second signals..." }
+        withContext(Dispatchers.Main) { scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable); scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable); tvScannerNextRefresh.text = "Next Refresh: SCAN IN PROGRESS"; btnRunScanner.isEnabled = false; btnRunScanner.text = "SCANNING LIVE..."; tvScannerResult.text = lastScannerResult?.let { "$it\n\nREFRESHING LIVE 1s SCANNER..." } ?: "LIVE SCAN IN PROGRESS\n\nReading Cash–Future 1-second signals..." }
         try {
             val response = ApiService.retrofitService.liveCashFutureScan(maxAgeSeconds = 5.0, limit = 50)
             val completedAt = currentTimestamp()
@@ -368,56 +338,14 @@ class MainActivity : AppCompatActivity() {
                 if (errorText.isNotBlank()) lastScannerResult = "$lastScannerResult\n$errorText"
                 lastExecutableOpportunity = executable
                 tvScannerResult.text = lastScannerResult
-                renderScannerPaperState()
             }
         } catch (error: Exception) {
             val failedAt = currentTimestamp()
-            withContext(Dispatchers.Main) { val failure = "SCAN ERROR\n\nLast Attempt: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}"; lastScannerResult = failure; tvScannerResult.text = failure; lastExecutableOpportunity = null; renderScannerPaperState() }
+            withContext(Dispatchers.Main) { val failure = "SCAN ERROR\n\nLast Attempt: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}"; lastScannerResult = failure; tvScannerResult.text = failure; lastExecutableOpportunity = null }
         } finally {
             withContext(Dispatchers.Main) { btnRunScanner.isEnabled = true; btnRunScanner.text = "RUN LIVE CASH–FUTURE SCAN"; if (lastScannerResult?.contains("SCAN ERROR") == true) tvScannerResult.text = "REFRESH FAILED\n\nLast Attempt: ${currentTimestamp()}\n\n${lastScannerResult}"; scheduleScannerRefresh() }
         }
     }
 
-    private fun setPaperBusy(busy: Boolean, message: String? = null) { btnPaperEntry.isEnabled = !busy; btnPaperPosition.isEnabled = !busy; btnPaperExit.isEnabled = !busy; if (message != null) tvPaperResult.text = message }
-    private fun paperExecuteScannerOpportunity() { val opportunity = lastExecutableOpportunity ?: return; etEntryPrice.setText((opportunity.cash_ask ?: opportunity.cash_ltp).toString()); etQuantity.setText("1"); tvPaperResult.text = "Selected ${opportunity.symbol} • Paper entry price loaded"; paperEntry() }
 
-    private fun paperEntry() = lifecycleScope.launch(Dispatchers.IO) {
-        withContext(Dispatchers.Main) { setPaperBusy(true, "PAPER ENTRY IN PROGRESS...") }
-        try {
-            val price = etEntryPrice.text.toString().toDoubleOrNull() ?: 0.0
-            val quantity = etQuantity.text.toString().toDoubleOrNull() ?: 0.0
-            val response = ApiService.retrofitService.paperEntry(PaperEntryRequest(price, quantity))
-            val completedAt = currentTimestamp()
-            withContext(Dispatchers.Main) { tvPaperResult.text = "ENTRY SUCCESS\n\nPAPER POSITION ACTIVE\nCompleted: $completedAt\n\nEntry: ₹${response.entry_price}\nStop Loss: ₹${response.stop_loss}\nTarget: ₹${response.target}\nQuantity: ${response.position.quantity}" }
-        } catch (error: Exception) {
-            val failedAt = currentTimestamp()
-            withContext(Dispatchers.Main) { tvPaperResult.text = "ENTRY FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
-        } finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
-    }
-
-    private fun paperPosition() = lifecycleScope.launch(Dispatchers.IO) {
-        withContext(Dispatchers.Main) { setPaperBusy(true, "CHECKING PAPER POSITION...") }
-        try {
-            val response = ApiService.retrofitService.paperPosition()
-            val completedAt = currentTimestamp()
-            val position = response.position
-            withContext(Dispatchers.Main) { tvPaperResult.text = if (position == null) "POSITION CHECK SUCCESS\n\nPAPER POSITION: FLAT\nChecked: $completedAt" else "POSITION CHECK SUCCESS\n\nPAPER POSITION ACTIVE\nChecked: $completedAt\n\nEntry: ₹${position.entry_price}\nStop Loss: ₹${position.stop_loss}\nTarget: ₹${position.target}\nQuantity: ${position.quantity}" }
-        } catch (error: Exception) {
-            val failedAt = currentTimestamp()
-            withContext(Dispatchers.Main) { tvPaperResult.text = "POSITION CHECK FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
-        } finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
-    }
-
-    private fun paperExit() = lifecycleScope.launch(Dispatchers.IO) {
-        withContext(Dispatchers.Main) { setPaperBusy(true, "PAPER EXIT IN PROGRESS...") }
-        try {
-            val price = etExitPrice.text.toString().toDoubleOrNull() ?: 0.0
-            val response = ApiService.retrofitService.paperExit(PaperExitRequest(price))
-            val completedAt = currentTimestamp()
-            withContext(Dispatchers.Main) { tvPaperResult.text = if (response.status == "closed") "EXIT SUCCESS\n\nCompleted: $completedAt\n\nEntry: ₹${response.entry_price ?: 0.0}\nExit: ₹${response.exit_price ?: 0.0}\nQuantity: ${response.quantity ?: 0.0}\nNet P&L: ₹${response.pnl}" else "EXIT SUCCESS\n\nCompleted: $completedAt\n\nStatus: ${response.status}\nNet P&L: ₹${response.pnl}" }
-        } catch (error: Exception) {
-            val failedAt = currentTimestamp()
-            withContext(Dispatchers.Main) { tvPaperResult.text = "EXIT FAILED\n\nTime: $failedAt\n\n${error.message ?: "API error"}" }
-        } finally { withContext(Dispatchers.Main) { setPaperBusy(false) } }
-    }
 }
