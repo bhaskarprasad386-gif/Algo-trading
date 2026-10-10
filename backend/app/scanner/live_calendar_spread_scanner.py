@@ -96,6 +96,11 @@ class LiveCalendarSpreadScanner:
             if abs(near.timestamp_ns - far.timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS or near.lot_size != far.lot_size or near.instrument.exchange != far.instrument.exchange:
                 return None
             long_edge=float(far.bid)-float(near.ask); short_edge=float(near.bid)-float(far.ask)
+            # A matched pair is not automatically an opportunity. If neither
+            # executable direction has positive edge, skip it before gross-profit
+            # sizing (which correctly rejects negative points).
+            if max(long_edge, short_edge) <= 0:
+                return None
             if long_edge >= short_edge:
                 gap=long_edge; direction="LONG_NEAR_SHORT_FAR"
                 legs=(OpportunityLeg(near,OrderSide.BUY,"near-entry"),OpportunityLeg(far,OrderSide.SELL,"far-entry"))
