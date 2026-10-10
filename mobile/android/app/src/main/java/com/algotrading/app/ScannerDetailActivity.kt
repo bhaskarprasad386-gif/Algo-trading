@@ -83,8 +83,8 @@ class ScannerDetailActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.tvBreakevenValue).text = "Break-even: Not calculated without an executed strategy"
         findViewById<TextView>(R.id.tvMaxProfitValue).text = "Max Profit (scanner estimate): ${money(scannerNet)}"
         findViewById<TextView>(R.id.tvMaxLossValue).text = "Max Loss: Not available until strategy legs are defined"
-        tvRiskValue.text = "Observation only • Paper execution removed"
-        findViewById<TextView>(R.id.tvAnalysisNote).text = "Scanner estimates are for analysis only. No paper order or broker order is created by this screen."
+        tvRiskValue.text = "Observation only • execution disabled"
+        findViewById<TextView>(R.id.tvAnalysisNote).text = "Scanner estimates are for analysis only. This screen is read-only; no order is created."
     }
 
     private fun refreshExecutionAndQuote() {
@@ -103,8 +103,8 @@ class ScannerDetailActivity : AppCompatActivity() {
             }
             withContext(Dispatchers.Main) {
                 tvCurrentLtpValue.text = if (ltp != null) "${money(ltp)} • live quote" else if (scannerCash > 0.0) "${money(scannerCash)} • scanner snapshot" else "Quote unavailable • ${quoteError ?: "unknown error"}"
-                tvRiskValue.text = "Observation only • no paper position"
-                findViewById<TextView>(R.id.tvAnalysisNote).text = "Current quote is shown for analysis. This app no longer creates, manages, or tracks paper trades."
+                tvRiskValue.text = "Observation only • no active position"
+                findViewById<TextView>(R.id.tvAnalysisNote).text = "Current quote is shown for analysis. This app displays scanner data only; it does not create or track positions."
             }
         }
     }
