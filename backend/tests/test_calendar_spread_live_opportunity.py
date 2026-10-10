@@ -297,3 +297,45 @@ def test_calendar_rejects_pair_when_stored_counterpart_has_aged_out(monkeypatch)
     diagnostics = scanner.diagnostics_snapshot()
     assert diagnostics["counters"]["stale_pair"] == 1
     assert diagnostics["pairs"][0]["status"] == "stale_pair"
+
+
+def test_calendar_result_persistence_applies_configured_retention(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.core.config import settings
+    from app.core.database import Base
+    from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
+
+    monkeypatch.setattr(settings, "LIVE_CALENDAR_SPREAD_RESULT_RETENTION_DAYS", 90)
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    db = Session()
+    db.add(LiveCalendarSpreadScannerResult(
+        underlying="OLD", exchange="NFO", instrument_type="future", contract_family="INDEX_FUTURE",
+        near_contract_month="2026-01-29", far_contract_month="2026-02-26", timestamp_ns=1,
+        near_bid=99, near_ask=100, far_bid=104, far_ask=105, lot_size=50,
+        edge_long=4, edge_short=-6, edge_pct_long=4, edge_pct_short=-6,
+        liquidity_qty=10, capacity_lots=1, rank_score=0.04,
+        observed_at=now - timedelta(days=91),
+    ))
+    db.commit()
+    db.close()
+
+    scanner = LiveCalendarSpreadScanner()
+    scanner.update(rec("retention-near", "NIFTY-CUR", 1, 99, 100, expiry="2026-10-29"))
+    result = scanner.update(rec("retention-far", "NIFTY-NEAR", 1, 104, 105, expiry="2026-11-26"))
+    assert result is not None
+    scanner._persist(result, Session)
+
+    db = Session()
+    try:
+        rows = db.query(LiveCalendarSpreadScannerResult).all()
+        assert len(rows) == 1
+        assert rows[0].underlying == "NIFTY"
+    finally:
+        db.close()
+        engine.dispose()
