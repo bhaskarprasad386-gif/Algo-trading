@@ -157,7 +157,7 @@ class AngelOneTickNormalizer:
             high=self._price(payload, "high_price_of_the_day", "high"),
             low=self._price(payload, "low_price_of_the_day", "low"),
             close=self._price(payload, "closed_price", "close"),
-            underlying=payload.get("underlying") or descriptor.symbol,
+            underlying=(str(payload.get("underlying") or "").strip().upper() or descriptor.underlying or descriptor.symbol),
             expiry=descriptor.expiry,
             strike=descriptor.strike,
             option_type=option_type,
