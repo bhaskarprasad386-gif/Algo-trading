@@ -270,26 +270,3 @@ def set_alert_master(request: AlertMasterRequest, db: Session = Depends(get_db))
     user.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
     return {"status":"success","alerts":{"enabled":bool(user.alerts_enabled)}}
-
-@router.put("/paper")
-def set_global_paper(request: PaperGlobalRequest, db: Session = Depends(get_db)):
-    uid=current_user_id(db)
-    setting=db.query(GlobalPaperSetting).filter(GlobalPaperSetting.user_id==uid).first()
-    if setting is None:
-        setting=GlobalPaperSetting(user_id=uid); db.add(setting)
-    setting.enabled=bool(request.enabled)
-    setting.paper_amount=float(request.paper_amount)
-    setting.emergency_stop=bool(request.emergency_stop)
-    setting.updated_at=datetime.now(timezone.utc).replace(tzinfo=None)
-    db.commit(); db.refresh(setting)
-    return {"status":"success","paper":{"enabled":bool(setting.enabled),"paper_amount":float(setting.paper_amount),"emergency_stop":bool(setting.emergency_stop),"live_orders":False}}
-
-@router.post("/paper/kill-switch")
-def paper_kill_switch(db: Session = Depends(get_db)):
-    uid=current_user_id(db)
-    setting=db.query(GlobalPaperSetting).filter(GlobalPaperSetting.user_id==uid).first()
-    if setting is None:
-        setting=GlobalPaperSetting(user_id=uid); db.add(setting)
-    setting.enabled=False; setting.emergency_stop=True
-    db.commit(); db.refresh(setting)
-    return {"status":"success","enabled":False,"emergency_stop":True,"live_orders":False}
