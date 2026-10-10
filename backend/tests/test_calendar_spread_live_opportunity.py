@@ -67,7 +67,7 @@ def test_calendar_scanner_does_not_pair_future_and_commodity_families():
 
     scanner = LiveCalendarSpreadScanner()
 
-    def family_record(kind, token, expiry, timestamp):
+    def family_record(kind, token, expiry, timestamp, bid=99.0, ask=100.0):
         return MarketDataRecord(
             instrument=InstrumentKey(exchange="MCX", segment="MCX", token=token),
             symbol="CRUDEOIL" + expiry,
@@ -75,8 +75,8 @@ def test_calendar_scanner_does_not_pair_future_and_commodity_families():
             timestamp_ns=timestamp,
             timeframe="1s",
             ltp=100.0,
-            bid=99.0,
-            ask=100.0,
+            bid=bid,
+            ask=ask,
             bid_qty=10,
             ask_qty=10,
             underlying="CRUDEOIL",
@@ -89,10 +89,21 @@ def test_calendar_scanner_does_not_pair_future_and_commodity_families():
     # Same underlying/exchange and an earlier expiry, but a different family.
     assert scanner.update(family_record(InstrumentType.COMMODITY, "c1", "2026-10-22", 3_100_000_000)) is None
     # A second future should pair with the first future, not the commodity.
-    paired = scanner.update(family_record(InstrumentType.FUTURE, "f2", "2026-11-26", 3_200_000_000))
+    paired = scanner.update(family_record(InstrumentType.FUTURE, "f2", "2026-11-26", 3_200_000_000, bid=104.0, ask=105.0))
     assert paired is not None
     assert paired.near_contract_month == "2026-10-29"
     assert paired.far_contract_month == "2026-11-26"
+
+
+
+def test_calendar_scanner_skips_pair_when_both_executable_edges_are_non_positive():
+    scanner = LiveCalendarSpreadScanner()
+    near = rec("no-edge-near", "NIFTY-CUR", 3_000_000_000, 99, 100, expiry="2026-10-29")
+    far = rec("no-edge-far", "NIFTY-NEAR", 3_100_000_000, 99, 100, expiry="2026-11-26")
+
+    assert scanner.update(near) is None
+    assert scanner.update(far) is None
+    assert scanner.pair_snapshot() == ()
 
 
 
