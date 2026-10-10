@@ -191,6 +191,8 @@ class AlertService:
         try:
             import math
             gross_value = float(gross) if gross is not None else None
+            if gross_value is not None and not math.isfinite(gross_value):
+                return 0
         except (TypeError, ValueError):
             gross_value = None
         rules = db.query(AlertRule).filter(
