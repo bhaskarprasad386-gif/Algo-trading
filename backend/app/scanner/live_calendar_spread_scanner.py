@@ -201,7 +201,7 @@ class LiveCalendarSpreadScanner:
             signal_far = replace(far, timestamp_ns=near.timestamp_ns)
             signal_legs = (OpportunityLeg(signal_near, OrderSide.BUY if direction == "LONG_NEAR_SHORT_FAR" else OrderSide.SELL, "near-entry"), OpportunityLeg(signal_far, OrderSide.SELL if direction == "LONG_NEAR_SHORT_FAR" else OrderSide.BUY, "far-entry"))
             base = max(float(near.ask), float(far.ask), 1e-12)
-            cap = int(settings.LIVE_CALENDAR_SPREAD_CAPITAL / (base * lot)) if settings.LIVE_CASH_FUTURE_CAPITAL > 0 else 0
+            cap = int(settings.LIVE_CALENDAR_SPREAD_CAPITAL / (base * lot)) if settings.LIVE_CALENDAR_SPREAD_CAPITAL > 0 else 0
             signal = OpportunitySignal(
                 strategy_id=self.strategy_id, opportunity_type="calendar-spread",
                 symbol=key[0], timestamp_ns=near.timestamp_ns, gap_points=gap,
