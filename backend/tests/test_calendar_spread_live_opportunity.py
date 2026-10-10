@@ -169,7 +169,7 @@ def test_calendar_invalidates_old_signal_when_latest_pair_has_no_positive_edge()
     assert scanner.snapshot() == ()
     assert scanner.pair_snapshot() == ()
     diagnostics = scanner.diagnostics_snapshot()
-    assert diagnostics["counters"]["no_positive_edge"] == 1
+    assert diagnostics["counters"]["no_positive_edge"] == 2  # both updated legs trigger a no-edge evaluation
     assert diagnostics["pairs"][0]["status"] == "no_positive_edge"
 
 
