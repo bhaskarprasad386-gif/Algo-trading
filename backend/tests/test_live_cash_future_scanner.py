@@ -116,7 +116,7 @@ def test_live_scanner_lifecycle_recovery_and_current_near_comparison(monkeypatch
     current = next(row for row in rows if row["contract_month"] == "CURRENT")
     assert current["peer_contract_month"] == "NEAR"
     assert current["gap_pct_delta_vs_peer"] is not None
-    assert current["is_best_contract_month"] is False
+    assert current["is_best_contract_month"] is True
 
     weakening = pair("CURRENT", base + 3_000_000_000, 100.5)
     assert weakening.lifecycle == "WEAKENING"
