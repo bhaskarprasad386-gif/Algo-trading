@@ -7,6 +7,7 @@ strategies.
 from __future__ import annotations
 
 from datetime import date, datetime, time
+from dataclasses import replace
 from threading import Lock
 import time as time_module
 from typing import Any
@@ -21,6 +22,7 @@ from app.market_data.persistence import DailySQLiteMarketDataRepository
 from app.backtesting.historical_catalog import HistoricalRecord
 from app.market_data.ingestion import BoundedMarketDataIngestor
 from app.market_data.bounded_buffer import BufferPriority
+from app.market_data.live_exchange_calendar import any_exchange_open, exchange_is_open
 
 IST = ZoneInfo("Asia/Kolkata")
 SOURCE = "angelone-calendar-live-1s"
@@ -59,6 +61,36 @@ def _timestamp_ns(message: dict[str, Any]) -> int | None:
     if n < 100_000_000_000_000_000:
         return n * 1_000
     return n
+
+
+def _source_timestamp_ns(message: dict[str, Any]) -> int | None:
+    """Read a real provider timestamp; never substitute local receive time."""
+    for key in (
+        "exchange_timestamp_ns", "exchange_timestamp", "exchange_timestamp_ms",
+        "timestamp_ns", "timestamp", "feed_time",
+    ):
+        value = message.get(key)
+        if value is None:
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not number or number < 0:
+            continue
+        if number < 100_000_000_000:
+            stamp_ns = int(number * 1_000_000_000)       # seconds
+        elif number < 100_000_000_000_000:
+            stamp_ns = int(number * 1_000_000)           # milliseconds
+        elif number < 100_000_000_000_000_000:
+            stamp_ns = int(number * 1_000)               # microseconds
+        else:
+            stamp_ns = int(number)                       # nanoseconds
+        # Exchange time must be a plausible epoch, not a relative counter.
+        if stamp_ns < 946_684_800_000_000_000:
+            continue
+        return stamp_ns
+    return None
 
 
 def _side(message: dict[str, Any], key: str) -> tuple[float | None, float | None]:
@@ -110,20 +142,17 @@ class LiveCalendarSpreadOneSecondCollector:
             "persistence_errors": 0,
             "persistence_dropped": 0,
             "callback_errors": 0,
+            "source_timestamp_dropped": 0,
         }
 
     @staticmethod
     def market_open(now: datetime | None = None) -> bool:
         t = now or datetime.now(IST)
-        return t.weekday() < 5 and time(9, 0) <= t.time() <= time(23, 30)
+        return any_exchange_open(t)
 
     @staticmethod
     def _exchange_open(exchange: str, value: datetime) -> bool:
-        if value.weekday() >= 5:
-            return False
-        if exchange.upper() == "MCX":
-            return time(9, 0) <= value.time() <= time(23, 30)
-        return time(9, 15) <= value.time() <= time(15, 30)
+        return exchange_is_open(exchange, value)
 
     def _contracts(self) -> list[dict[str, Any]]:
         today = datetime.now(IST).date()
@@ -174,9 +203,19 @@ class LiveCalendarSpreadOneSecondCollector:
 
     def _observe_record(self, record) -> None:
         exchange = record.instrument.exchange.strip().upper()
+        raw_payload = getattr(record, "payload", {})
+        source_timestamp_ns = _source_timestamp_ns(raw_payload if isinstance(raw_payload, dict) else {})
         with self._lock:
             self._stats["records_received"] += 1
-        local = datetime.fromtimestamp(record.timestamp_ns / 1_000_000_000, tz=ZoneInfo("UTC")).astimezone(IST)
+        if source_timestamp_ns is None:
+            # The common normalizer can use receive time for other consumers,
+            # but Calendar Spread must not trade on a timestamp whose source is unknown.
+            with self._lock:
+                self._stats["source_timestamp_dropped"] += 1
+            return
+        if record.timestamp_ns != source_timestamp_ns:
+            record = replace(record, timestamp_ns=source_timestamp_ns)
+        local = datetime.fromtimestamp(source_timestamp_ns / 1_000_000_000, tz=ZoneInfo("UTC")).astimezone(IST)
         if not self._exchange_open(exchange, local):
             with self._lock:
                 self._stats["out_of_session_dropped"] += 1
@@ -218,6 +257,7 @@ class LiveCalendarSpreadOneSecondCollector:
         payload["bucket_timestamp_ns"] = timestamp_ns
         payload["source_timestamp_ns"] = record.timestamp_ns
         payload["exchange_timestamp_ns"] = record.timestamp_ns
+        payload["timestamp_source"] = "exchange"
         payload["exchange"] = record.instrument.exchange
         payload["instrument_type"] = record.instrument_type.value
         # Preserve the instrument-master family: FUTIDX and FUTSTK both map to
