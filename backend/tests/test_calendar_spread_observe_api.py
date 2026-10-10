@@ -47,8 +47,8 @@ def test_calendar_observe_to_pair_and_live_api():
 
     assert pairs_response["status"] == "success"
     assert pairs_response["pair_count"] == 1
-    assert pairs_response["data"][0]["near_contract_month"] == "2026-10"
-    assert pairs_response["data"][0]["far_contract_month"] == "2026-11"
+    assert pairs_response["data"][0]["near_contract_month"] == "2026-10-29"
+    assert pairs_response["data"][0]["far_contract_month"] == "2026-11-26"
     assert live_response["status"] == "success"
     assert live_response["opportunity_count"] == 1
     assert live_response["data"][0]["qualifies"] is True
