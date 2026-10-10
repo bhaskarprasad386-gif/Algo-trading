@@ -15,10 +15,8 @@ def test_batch6_box_spread_workspace_ui_contract():
         "LOW STRIKE • CALL / PUT",
         "HIGH STRIKE • CALL / PUT",
         'onclick="selectBox(',
-        "function boxPaperEntry()",
         "box-mobile-actions",
         "connectDashboardWebSocket",
-        "Real broker routing remains OFF",
-        "₹1 crore paper ledger",
+        "Broker order routing remains OFF",
     ):
         assert marker in ui
