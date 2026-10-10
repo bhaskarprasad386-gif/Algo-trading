@@ -86,6 +86,15 @@ class CommonWebSocketManager:
         self._last_recovery_at = None
 
     @staticmethod
+    def _create_socket(self) -> Any:
+        """Create a socket whose reconnect policy is owned by this manager."""
+        if self._socket_factory is MarketDataWebSocket:
+            # The shared manager must be the sole reconnect supervisor; the
+            # wrapper's private retry loop could otherwise open orphan sessions
+            # after this manager has replaced a failed socket.
+            return self._socket_factory(auto_reconnect=False)
+        return self._socket_factory()
+
     def _default_exchange_type(key: InstrumentKey) -> int:
         value = key.exchange.strip().upper()
         mapping = {"NSE": 1, "NFO": 2, "BSE": 3, "BFO": 4, "MCX": 5, "NCDEX": 7}
@@ -205,7 +214,7 @@ class CommonWebSocketManager:
             for group, pairs in desired_tokens.items():
                 socket = existing.get(group)
                 if socket is None:
-                    socket = self._socket_factory()
+                    socket = self._create_socket()
                     subscriptions = self._group_subscriptions(pairs)
                     with self._lock:
                         generation = self._socket_generation_counter.get(group, 0) + 1
