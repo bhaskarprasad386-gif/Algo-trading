@@ -488,3 +488,36 @@ def test_angel_failure_callback_triggers_immediate_recovery_and_rejects_old_gene
         assert snapshot["last_socket_failure"]["reason"] == "simulated Angel disconnect"
     finally:
         manager.close()
+
+
+def test_recovery_rebuilds_missing_expected_group_when_socket_count_looks_complete():
+    registry = InstrumentRegistry()
+    first = descriptor("101")
+    second = descriptor("102")
+    registry.register_many([first, second])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 1
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [first.key, second.key])
+        expected = {SocketGroup(1, 0), SocketGroup(1, 1)}
+        assert set(manager._sockets) == expected
+
+        # Simulate an unexpected stale group masking the missing shard while
+        # leaving the total socket count equal to the expected count.
+        with manager._lock:
+            socket = manager._sockets.pop(SocketGroup(1, 1))
+            manager._sockets[SocketGroup(1, 9)] = socket
+            manager._socket_tokens[SocketGroup(1, 9)] = manager._socket_tokens.pop(SocketGroup(1, 1))
+            manager._socket_created_at[SocketGroup(1, 9)] = manager._socket_created_at.pop(SocketGroup(1, 1))
+            manager._last_data_at[SocketGroup(1, 9)] = manager._last_data_at.pop(SocketGroup(1, 1))
+            manager._socket_generation[SocketGroup(1, 9)] = manager._socket_generation.pop(SocketGroup(1, 1))
+
+        assert len(manager._sockets) == len(expected)
+        manager.recover_disconnected(min_age_seconds=0.0)
+
+        assert set(manager._sockets) == expected
+        assert SocketGroup(1, 9) not in manager._sockets
+        assert manager.snapshot()["socket_groups"] == 2
+    finally:
+        manager.close()
