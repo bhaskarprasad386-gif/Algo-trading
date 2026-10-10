@@ -2,7 +2,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB = ROOT / "web" / "dashboard" / "index.html"
-PAPER_ROUTES = ROOT / "backend" / "app" / "execution" / "paper_routes.py"
 
 
 def test_batch1_home_command_center_contract():
@@ -13,7 +12,6 @@ def test_batch1_home_command_center_contract():
         "Custom Alerts",
         "Live Scanner",
         "Strategy Opportunities",
-        "Paper Portfolio",
         "Recent Alerts",
         "Live Market Chart",
         "System Status",
@@ -26,7 +24,6 @@ def test_batch1_home_command_center_contract():
         "/api/v1/market-data/overview",
         "/api/v1/market-data/live-health",
         "/api/v1/scanner/cash-future/live/fast",
-        "/api/v1/execution/paper/account",
         "/ws/dashboard",
         "connectDashboardWebSocket",
         "WS CONNECTED",
@@ -44,10 +41,8 @@ def test_batch1_home_has_backend_strategy_workspace_contract():
         assert strategy in ui
 
 
-def test_batch1_paper_account_summary_route_exists():
-    source = PAPER_ROUTES.read_text(encoding="utf-8")
-    assert '@router.get("/paper/account")' in source
-    assert '"virtual_balance"' in source
-    assert '"realized_pnl"' in source
-    assert '"open_positions"' in source
-    assert '"live_orders": "OFF"' in source
+def test_batch1_home_has_no_paper_execution_contract():
+    ui = WEB.read_text(encoding="utf-8")
+    assert "Paper Portfolio" not in ui
+    assert "/api/v1/execution/paper/" not in ui
+    assert "/api/v1/live-paper/" not in ui
