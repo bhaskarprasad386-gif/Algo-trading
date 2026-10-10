@@ -119,6 +119,10 @@ class LiveCalendarSpreadScanner:
                 old = bucket.get((contract_month or record.expiry or "").strip())
                 # Do not let an out-of-order malformed tick invalidate a newer quote.
                 if old is None or record.timestamp_ns >= old.timestamp_ns:
+                    if old is not None:
+                        bucket.pop((contract_month or record.expiry or "").strip(), None)
+                        if not bucket:
+                            self._latest.pop(key, None)
                     self._signals.pop(key, None)
                     self._set_pair_status(key, "invalid_quote", timestamp_ns=record.timestamp_ns)
             return None
