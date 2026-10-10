@@ -7,8 +7,8 @@ from app.backtesting.arbitrage_backtester import BoxSpreadBacktester, OptionQuot
 from app.backtesting.arbitrage_scan_policy import ScanPolicy, ordered_strikes_around_atm, enumerate_box_pairs
 
 BOX_SCAN_POLICY = ScanPolicy(
-    stock_box_distances=(3, 4, 5),
-    index_box_distances=tuple(range(3, 16)),
+    stock_box_distances=(1, 2, 3, 4, 5),
+    index_box_distances=tuple(range(1, 11)),
 )
 
 @dataclass(frozen=True)
