@@ -128,7 +128,7 @@ def test_calendar_same_second_keeps_valid_quote_and_rejects_older_ticks():
     collector = LiveCalendarSpreadOneSecondCollector("unused")
     emitted = []
     collector.on_observation = emitted.append
-    base = int(datetime(2026, 10, 12, 10, 0, tzinfo=IST).timestamp() * 1_000_000_000)
+    base = int(datetime(2026, 10, 12, 10, 0, tzinfo=IST).timestamp()) * 1_000_000_000
 
     collector._observe_record(_calendar_test_record(base + 100_000_000))
     collector._observe_record(_calendar_test_record(base + 300_000_000, bid=99.0, ask=100.0))
