@@ -253,13 +253,37 @@ class LiveSyntheticRunner:
     def _underlying_feed_supervisor(self) -> None:
         """Keep the automatically-created underlying feed recoverable after thread exit."""
         if self.underlying_feed is not None:
-            self._active_underlying_feed = self.underlying_feed
-            try:
-                self.underlying_feed.run_forever()
-            except Exception as exc:
-                app_logger.exception("Injected synthetic underlying feed failed: {}", exc)
-            finally:
-                self._active_underlying_feed = None
+            while not self._stop_requested.is_set():
+                feed = self.underlying_feed
+                self._active_underlying_feed = feed
+                try:
+                    feed.run_forever()
+                    if not self._stop_requested.is_set():
+                        app_logger.warning("Injected synthetic underlying feed exited unexpectedly")
+                except Exception as exc:
+                    app_logger.exception("Injected synthetic underlying feed failed: {}", exc)
+                finally:
+                    self._active_underlying_feed = None
+                if self._stop_requested.is_set():
+                    return
+                # LiveSyntheticUnderlyingFeed uses a one-shot stop event, so
+                # recreate it with the same resolved configuration before retry.
+                if not isinstance(feed, LiveSyntheticUnderlyingFeed):
+                    app_logger.error("Cannot recreate injected feed type {}; supervisor stopped", type(feed).__name__)
+                    return
+                self.underlying_feed = LiveSyntheticUnderlyingFeed(
+                    feed.symbols,
+                    tracker=feed.tracker,
+                    instrument_master=feed.instrument_master,
+                    auth=feed.auth,
+                    on_price=feed.on_price,
+                    concrete_tokens=feed.concrete_tokens,
+                    index_symbols=feed.index_symbols,
+                    commodity_symbols=feed.commodity_symbols,
+                    consumer=feed.consumer,
+                )
+                app_logger.warning("Recreated injected synthetic underlying feed after unexpected exit")
+                sleep(5.0)
             return
 
         while not self._stop_requested.is_set():
