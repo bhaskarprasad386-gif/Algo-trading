@@ -432,12 +432,15 @@ def _stop_live_runner_nonblocking(runner, *, name: str) -> None:
 
 
 async def _run_live_runner_in_daemon_thread(
-    runner, *, name: str, error_holder: list[BaseException] | None = None
+    runner, *, name: str, error_holder: list[BaseException] | None = None,
+    stop_on_exit: bool = True,
 ) -> None:
     """Run a blocking market runner in a daemon thread.
 
     When requested, capture worker-thread exceptions so the async supervisor can
-    retry instead of treating a dead worker as a normal stop.
+    retry instead of treating a dead worker as a normal stop. Supervisors that
+    need to distinguish unexpected worker exit from requested shutdown can defer
+    stop() to their own finally block with stop_on_exit=False.
     """
     def _target() -> None:
         try:
@@ -463,7 +466,8 @@ async def _run_live_runner_in_daemon_thread(
         if error_holder:
             raise error_holder[0]
     finally:
-        _stop_live_runner_nonblocking(runner, name=f"{name}-stop")
+        if stop_on_exit:
+            _stop_live_runner_nonblocking(runner, name=f"{name}-stop")
 
 
 async def _live_cash_future_loop() -> None:
@@ -704,21 +708,47 @@ def _update_live_box_spread_results(results: tuple) -> None:
 
 
 async def _live_calendar_spread_loop() -> None:
+    """Supervise Calendar Spread collector exits with bounded exponential retry."""
     global live_calendar_spread_runner
-    collector = LiveCalendarSpreadOneSecondCollector(
-        settings.BACKTEST_DATA_DB,
-        auth=AngelOneAuth(),
-        instrument_master=instrument_master,
-        on_observation=lambda payload: live_calendar_spread_scanner.observe(payload, session_factory=SessionLocal),
-    )
-    live_calendar_spread_runner = collector
-    try:
-        await _run_live_runner_in_daemon_thread(
-            collector, name="live-calendar-spread-runner"
+    retry_delay = 5.0
+    max_retry_delay = 60.0
+    while True:
+        collector = LiveCalendarSpreadOneSecondCollector(
+            settings.BACKTEST_DATA_DB,
+            auth=AngelOneAuth(),
+            instrument_master=instrument_master,
+            on_observation=lambda payload: live_calendar_spread_scanner.observe(
+                payload, session_factory=SessionLocal
+            ),
         )
-    finally:
-        _stop_live_runner_nonblocking(collector, name="live-calendar-final-stop")
-        live_calendar_spread_runner = None
+        live_calendar_spread_runner = collector
+        try:
+            worker_errors: list[BaseException] = []
+            await _run_live_runner_in_daemon_thread(
+                collector,
+                name="live-calendar-spread-runner",
+                error_holder=worker_errors,
+                stop_on_exit=False,
+            )
+            if collector.stop_event.is_set():
+                return
+            app_logger.warning(
+                "Live Calendar Spread runner exited unexpectedly; retrying in {:.1f}s",
+                retry_delay,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            app_logger.error(
+                "Live Calendar Spread runner failed; retrying in {:.1f}s: {}",
+                retry_delay, exc,
+            )
+        finally:
+            _stop_live_runner_nonblocking(collector, name="live-calendar-final-stop")
+            if live_calendar_spread_runner is collector:
+                live_calendar_spread_runner = None
+        await asyncio.sleep(retry_delay)
+        retry_delay = min(max_retry_delay, retry_delay * 2.0)
 
 
 def _sync_contract_master_snapshot(database_path: str, snapshot_date):
