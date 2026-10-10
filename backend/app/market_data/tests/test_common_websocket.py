@@ -1,7 +1,8 @@
 from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
+from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
-from threading import Event
+from threading import Event, Thread
 import time
 
 
@@ -488,3 +489,216 @@ def test_angel_failure_callback_triggers_immediate_recovery_and_rejects_old_gene
         assert snapshot["last_socket_failure"]["reason"] == "simulated Angel disconnect"
     finally:
         manager.close()
+
+
+def test_recovery_rebuilds_missing_expected_group_when_socket_count_looks_complete():
+    registry = InstrumentRegistry()
+    first = descriptor("101")
+    second = descriptor("102")
+    registry.register_many([first, second])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 1
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [first.key, second.key])
+        expected = {SocketGroup(1, 0), SocketGroup(1, 1)}
+        assert set(manager._sockets) == expected
+
+        # Simulate an unexpected stale group masking the missing shard while
+        # leaving the total socket count equal to the expected count.
+        with manager._lock:
+            socket = manager._sockets.pop(SocketGroup(1, 1))
+            manager._sockets[SocketGroup(1, 9)] = socket
+            manager._socket_tokens[SocketGroup(1, 9)] = manager._socket_tokens.pop(SocketGroup(1, 1))
+            manager._socket_created_at[SocketGroup(1, 9)] = manager._socket_created_at.pop(SocketGroup(1, 1))
+            manager._last_data_at[SocketGroup(1, 9)] = manager._last_data_at.pop(SocketGroup(1, 1))
+            manager._socket_generation[SocketGroup(1, 9)] = manager._socket_generation.pop(SocketGroup(1, 1))
+
+        assert len(manager._sockets) == len(expected)
+        manager.recover_disconnected(min_age_seconds=0.0)
+
+        assert set(manager._sockets) == expected
+        assert SocketGroup(1, 9) not in manager._sockets
+        assert manager.snapshot()["socket_groups"] == 2
+    finally:
+        manager.close()
+
+
+def test_common_manager_disables_nested_socket_reconnect_supervisor():
+    manager = CommonWebSocketManager()
+    socket = manager._create_socket()
+    captured = {}
+    group = SocketGroup(1, 0)
+    socket.connect = lambda **kwargs: captured.update(kwargs)
+    with manager._lock:
+        manager._sockets[group] = socket
+        manager._socket_tokens[group] = {(1, "101")}
+        manager._socket_created_at[group] = time.monotonic()
+        manager._last_data_at[group] = time.monotonic()
+        manager._socket_generation[group] = 1
+    try:
+        assert isinstance(socket, MarketDataWebSocket)
+        assert socket._auto_reconnect is False
+        manager._start_socket_connect(
+            socket=socket,
+            group=group,
+            pairs={(1, "101")},
+            subscriptions={1: ["101"]},
+            generation=1,
+        )
+        assert captured["reconnect_attempts"] == 0
+        assert captured["reconnect_delay_seconds"] == 0.0
+    finally:
+        manager.close()
+
+
+class LateSuccessfulConnectSocket(FakeSocket):
+    attempts = 0
+    release_first_connect = Event()
+    late_connect_finished = Event()
+
+    def connect(self, **kwargs):
+        self.connect_calls.append(kwargs)
+        type(self).attempts += 1
+        if type(self).attempts == 1:
+            self.connecting = True
+            type(self).release_first_connect.wait(timeout=5.0)
+            super().connect(**kwargs)
+            type(self).late_connect_finished.set()
+            return
+        super().connect(**kwargs)
+
+
+def test_late_successful_connect_is_closed_after_recovery_replaces_socket():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    LateSuccessfulConnectSocket.attempts = 0
+    LateSuccessfulConnectSocket.release_first_connect.clear()
+    LateSuccessfulConnectSocket.late_connect_finished.clear()
+    manager = CommonWebSocketManager(registry, socket_factory=LateSuccessfulConnectSocket)
+    manager._connect_call_wait_seconds = 0.05
+    manager._connect_timeout_seconds = 1.0
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [d.key])
+        original = LateSuccessfulConnectSocket.instances[0]
+        with manager._lock:
+            manager._socket_created_at[SocketGroup(1, 0)] -= 2.0
+        assert manager.recover_disconnected(min_age_seconds=0.0) == 1
+        replacement = manager._sockets[SocketGroup(1, 0)]
+        assert replacement is not original
+
+        LateSuccessfulConnectSocket.release_first_connect.set()
+        assert LateSuccessfulConnectSocket.late_connect_finished.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and original.connected:
+            time.sleep(0.01)
+        assert original.closed is True
+        assert original.connected is False
+        assert replacement.connected is True
+        assert len([item for item in LateSuccessfulConnectSocket.instances if not item.closed]) == 1
+    finally:
+        LateSuccessfulConnectSocket.release_first_connect.set()
+        manager.close()
+        LateSuccessfulConnectSocket.attempts = 0
+
+
+def test_failure_callback_invalidation_waits_for_reconcile_snapshot_to_finish():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [d.key])
+        original = FakeSocket.instances[0]
+        callback = original.connect_calls[0]["on_failure"]
+        callback_finished = Event()
+        with manager._reconcile_lock:
+            worker = Thread(
+                target=lambda: (callback("concurrent failure"), callback_finished.set()),
+                daemon=True,
+            )
+            worker.start()
+            time.sleep(0.05)
+            assert not callback_finished.is_set()
+            assert manager._sockets[SocketGroup(1, 0)] is original
+
+        assert callback_finished.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and len(FakeSocket.instances) < 2:
+            time.sleep(0.01)
+        assert len(FakeSocket.instances) == 2
+        assert manager._sockets[SocketGroup(1, 0)] is FakeSocket.instances[1]
+        assert original.closed is True
+    finally:
+        manager.close()
+
+
+
+class GuardedSocket(FakeSocket):
+    forbidden_socket = None
+    created_while_forbidden_open = False
+
+    def __init__(self):
+        if self.forbidden_socket is not None and not self.forbidden_socket.closed:
+            type(self).created_while_forbidden_open = True
+        super().__init__()
+
+
+def test_recovery_closes_unexpected_group_before_opening_missing_shard():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor(str(i)) for i in range(3)]
+    registry.register_many(descriptors)
+    GuardedSocket.forbidden_socket = None
+    GuardedSocket.created_while_forbidden_open = False
+    manager = CommonWebSocketManager(registry, socket_factory=GuardedSocket)
+    manager._max_tokens_per_socket = 1
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [item.key for item in descriptors])
+        expected = {SocketGroup(1, 0), SocketGroup(1, 1), SocketGroup(1, 2)}
+        assert set(manager._sockets) == expected
+        unexpected_socket = manager._sockets.pop(SocketGroup(1, 2))
+        manager._sockets[SocketGroup(1, 9)] = unexpected_socket
+        manager._socket_tokens[SocketGroup(1, 9)] = manager._socket_tokens.pop(SocketGroup(1, 2))
+        manager._socket_created_at[SocketGroup(1, 9)] = manager._socket_created_at.pop(SocketGroup(1, 2))
+        manager._last_data_at[SocketGroup(1, 9)] = manager._last_data_at.pop(SocketGroup(1, 2))
+        manager._socket_generation[SocketGroup(1, 9)] = manager._socket_generation.pop(SocketGroup(1, 2))
+        GuardedSocket.forbidden_socket = unexpected_socket
+
+        manager.recover_disconnected(min_age_seconds=0.0)
+
+        assert unexpected_socket.closed is True
+        assert GuardedSocket.created_while_forbidden_open is False
+        assert set(manager._sockets) == expected
+        assert len([s for s in GuardedSocket.instances if not s.closed]) == 3
+    finally:
+        manager.close()
+        GuardedSocket.forbidden_socket = None
+
+
+
+def test_closed_manager_does_not_reopen_sockets_from_late_recovery():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    manager.subscribe("cash", [d.key])
+    assert len(FakeSocket.instances) == 1
+
+    manager.close()
+    assert manager.snapshot()["socket_groups"] == 0
+    assert manager.recover_disconnected(min_age_seconds=0.0) == 0
+    time.sleep(0.05)
+    assert manager.snapshot()["socket_groups"] == 0
+    assert len([item for item in FakeSocket.instances if not item.closed]) == 0
+
+    try:
+        manager.subscribe("cash", [d.key])
+    except RuntimeError as exc:
+        assert "closed" in str(exc)
+    else:
+        raise AssertionError("closed manager must reject new subscriptions")

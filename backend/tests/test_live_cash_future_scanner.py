@@ -108,19 +108,21 @@ def test_live_scanner_lifecycle_recovery_and_current_near_comparison(monkeypatch
     second = pair("CURRENT", base + 1_000_000_000, 101)
     assert second.lifecycle == "ACTIVE"
     assert second.alert_event is None
-    weakening = pair("CURRENT", base + 2_000_000_000, 100.5)
-    assert weakening.lifecycle == "WEAKENING"
-    expired = pair("CURRENT", base + 3_000_000_000, 99.5)
-    assert expired.lifecycle == "EXPIRED"
-    assert expired.alert_event is None
-
-    near = pair("NEAR", base + 3_000_000_000, 100.2)
+    # Compare current/near while both contracts are still actionable. Expired
+    # signals are intentionally excluded from the live-fast snapshot.
+    near = pair("NEAR", base + 2_000_000_000, 100.2)
     assert near is not None
     rows = scanner.snapshot(max_age_seconds=10_000, limit=10)
     current = next(row for row in rows if row["contract_month"] == "CURRENT")
     assert current["peer_contract_month"] == "NEAR"
     assert current["gap_pct_delta_vs_peer"] is not None
     assert current["is_best_contract_month"] is False
+
+    weakening = pair("CURRENT", base + 3_000_000_000, 100.5)
+    assert weakening.lifecycle == "WEAKENING"
+    expired = pair("CURRENT", base + 4_000_000_000, 99.5)
+    assert expired.lifecycle == "EXPIRED"
+    assert expired.alert_event is None
 
 
 def test_live_scanner_ranking_exposes_multi_factor_score():

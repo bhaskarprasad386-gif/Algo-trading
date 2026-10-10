@@ -470,7 +470,10 @@ class LiveCashFutureScanner:
         ask = self._price(payload, "ask")
         bid_qty = self._positive_qty(payload, "bid_qty")
         ask_qty = self._positive_qty(payload, "ask_qty")
-        if bid is not None and ask is not None and bid > ask:
+        # Keep crossed futures long enough to pair them with the cash quote so
+        # pair_snapshot can explain the invalid book. Crossed cash quotes cannot
+        # produce a valid executable pair and remain an immediate drop.
+        if leg == "CASH" and bid is not None and ask is not None and bid > ask:
             self._stats["dropped"] += 1
             return None
         lot = None

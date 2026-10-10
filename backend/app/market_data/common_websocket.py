@@ -46,7 +46,7 @@ class CommonWebSocketManager:
         self._record_callbacks: dict[str, Callable[[Any], None]] = {}
         self._normalizer = AngelOneTickNormalizer()
         self._lock = RLock()
-        self._reconcile_lock = Lock()
+        self._reconcile_lock = RLock()
         self._delivery_errors = 0
         self._normalizer_errors = 0
         self._last_normalizer_error: str | None = None
@@ -77,6 +77,7 @@ class CommonWebSocketManager:
         ] = {}
         self._recovery_stop = Event()
         self._recovery_thread: Thread | None = None
+        self._closed = False
         self._recovery_interval_seconds = 5.0
         self._connect_failures = 0
         self._last_connect_failure = None
@@ -84,6 +85,15 @@ class CommonWebSocketManager:
         self._last_socket_failure = None
         self._recovery_attempts = 0
         self._last_recovery_at = None
+
+    def _create_socket(self) -> Any:
+        """Create a socket whose reconnect policy is owned by this manager."""
+        if self._socket_factory is MarketDataWebSocket:
+            # The shared manager must be the sole reconnect supervisor; the
+            # wrapper's private retry loop could otherwise open orphan sessions
+            # after this manager has replaced a failed socket.
+            return self._socket_factory(auto_reconnect=False)
+        return self._socket_factory()
 
     @staticmethod
     def _default_exchange_type(key: InstrumentKey) -> int:
@@ -128,6 +138,8 @@ class CommonWebSocketManager:
         if not keys:
             return ()
         with self._lock:
+            if self._closed:
+                raise RuntimeError("CommonWebSocketManager is closed")
             for key in keys:
                 if not isinstance(key, InstrumentKey):
                     raise TypeError("keys must contain InstrumentKey values")
@@ -160,6 +172,8 @@ class CommonWebSocketManager:
         """Pack subscriptions while keeping broker I/O outside the state lock."""
         with self._reconcile_lock:
             with self._lock:
+                if self._closed:
+                    raise RuntimeError("CommonWebSocketManager is closed")
                 grouped: dict[int, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
                 for sub in self.registry.subscriptions():
                     exchange_type = self._resolve_exchange_type(sub.key)
@@ -202,10 +216,24 @@ class CommonWebSocketManager:
                 existing = dict(self._sockets)
                 previous_tokens = {group: set(tokens) for group, tokens in self._socket_tokens.items()}
 
+                # Free obsolete groups before opening replacement/missing groups.
+                # Otherwise a recovery from an unexpected group can temporarily
+                # exceed Angel One's global three-session limit.
+                stale_groups = [group for group in self._sockets if group not in desired_tokens]
+                stale_sockets = [self._sockets.pop(group) for group in stale_groups]
+                for group in stale_groups:
+                    self._socket_tokens.pop(group, None)
+                    self._socket_created_at.pop(group, None)
+                    self._last_data_at.pop(group, None)
+                    self._socket_generation.pop(group, None)
+
+            for socket in stale_sockets:
+                self._close_socket_bounded(socket)
+
             for group, pairs in desired_tokens.items():
                 socket = existing.get(group)
                 if socket is None:
-                    socket = self._socket_factory()
+                    socket = self._create_socket()
                     subscriptions = self._group_subscriptions(pairs)
                     with self._lock:
                         generation = self._socket_generation_counter.get(group, 0) + 1
@@ -249,17 +277,6 @@ class CommonWebSocketManager:
                     with self._lock:
                         self._socket_tokens[group] = set(pairs)
 
-            with self._lock:
-                stale_groups = [group for group in self._sockets if group not in desired_tokens]
-                stale_sockets = [self._sockets.pop(group) for group in stale_groups]
-                for group in stale_groups:
-                    self._socket_tokens.pop(group, None)
-                    self._socket_created_at.pop(group, None)
-                    self._last_data_at.pop(group, None)
-                    self._socket_generation.pop(group, None)
-            for socket in stale_sockets:
-                self._close_socket_bounded(socket)
-
     def _start_socket_connect(
         self,
         *,
@@ -275,18 +292,37 @@ class CommonWebSocketManager:
 
         def _connect() -> None:
             try:
-                socket.connect(
-                    mode=group.mode,
-                    subscriptions=subscriptions,
-                    correlation_id=f"common-{group.mode}-{group.shard}",
-                    on_data=lambda message: self._on_data(group, message, generation),
-                    on_failure=lambda reason: self._schedule_socket_failure_recovery(group, socket, generation, reason),
-                )
+                connect_kwargs = {
+                    "mode": group.mode,
+                    "subscriptions": subscriptions,
+                    "correlation_id": f"common-{group.mode}-{group.shard}",
+                    "on_data": lambda message: self._on_data(group, message, generation),
+                    "on_failure": lambda reason: self._schedule_socket_failure_recovery(group, socket, generation, reason),
+                }
+                if isinstance(socket, MarketDataWebSocket):
+                    # The manager owns reconnect policy. Do not let the wrapper
+                    # perform several hidden retries before supervisor recovery.
+                    connect_kwargs["reconnect_attempts"] = 0
+                    connect_kwargs["reconnect_delay_seconds"] = 0.0
+                socket.connect(**connect_kwargs)
+                # A timed-out connect worker can finish after recovery has
+                # already installed a replacement. Never leave that late,
+                # successfully connected socket alive as an orphan session.
+                with self._lock:
+                    is_current_after_connect = (
+                        self._sockets.get(group) is socket
+                        and self._socket_generation.get(group) == generation
+                    )
+                if not is_current_after_connect:
+                    self._close_socket_bounded(socket)
             except Exception as exc:
                 failure["exception"] = exc
+                # Keep this exception path non-blocking: _start_socket_connect
+                # waits briefly for immediate failures, so waiting here for the
+                # reconcile lock would hide the original broker error from its
+                # caller. The state lock plus generation check protects a newer
+                # replacement; the recovery supervisor serializes the rebuild.
                 with self._lock:
-                    # A delayed failure from a socket already replaced by
-                    # recovery must never remove the replacement socket.
                     is_current = (
                         self._sockets.get(group) is socket
                         and self._socket_generation.get(group) == generation
@@ -343,24 +379,29 @@ class CommonWebSocketManager:
         self, group: SocketGroup, socket: Any, generation: int, reason: str
     ) -> None:
         """Invalidate a failed current socket and recover off the SDK callback thread."""
-        with self._lock:
-            if (
-                self._sockets.get(group) is not socket
-                or self._socket_generation.get(group) != generation
-            ):
-                return
-            self._sockets.pop(group, None)
-            self._socket_tokens.pop(group, None)
-            self._socket_created_at.pop(group, None)
-            self._last_data_at.pop(group, None)
-            self._socket_generation.pop(group, None)
-            self._socket_failure_events += 1
-            self._last_socket_failure = {
-                "group": f"{group.mode}:{group.shard}",
-                "reason": str(reason),
-                "failed_at_ns": time.time_ns(),
-                "generation": generation,
-            }
+        # A failure callback can arrive while _reconcile() is holding a
+        # snapshot of the current sockets. Serialize invalidation with that
+        # snapshot so reconcile cannot accidentally keep operating on a failed
+        # socket and publish it as current again.
+        with self._reconcile_lock:
+            with self._lock:
+                if self._closed or (
+                    self._sockets.get(group) is not socket
+                    or self._socket_generation.get(group) != generation
+                ):
+                    return
+                self._sockets.pop(group, None)
+                self._socket_tokens.pop(group, None)
+                self._socket_created_at.pop(group, None)
+                self._last_data_at.pop(group, None)
+                self._socket_generation.pop(group, None)
+                self._socket_failure_events += 1
+                self._last_socket_failure = {
+                    "group": f"{group.mode}:{group.shard}",
+                    "reason": str(reason),
+                    "failed_at_ns": time.time_ns(),
+                    "generation": generation,
+                }
         runtime_diagnostics.record(
             component="Common Market Feed",
             error_type="AngelSocketFailure",
@@ -463,6 +504,8 @@ class CommonWebSocketManager:
     def _ensure_recovery_supervisor(self) -> None:
         """Start one process-local self-healing loop for the shared broker feed."""
         with self._lock:
+            if self._closed:
+                return
             if self._recovery_thread is not None and self._recovery_thread.is_alive():
                 return
             self._recovery_stop.clear()
@@ -496,6 +539,22 @@ class CommonWebSocketManager:
                 )
 
     def recover_disconnected(
+        self,
+        *,
+        min_age_seconds: float = 10.0,
+        silent_age_seconds: float | None = None,
+    ) -> int:
+        """Serialize recovery against reconciliation so concurrent passes cannot race."""
+        with self._reconcile_lock:
+            with self._lock:
+                if self._closed:
+                    return 0
+            return self._recover_disconnected_serialized(
+                min_age_seconds=min_age_seconds,
+                silent_age_seconds=silent_age_seconds,
+            )
+
+    def _recover_disconnected_serialized(
         self,
         *,
         min_age_seconds: float = 10.0,
@@ -538,17 +597,22 @@ class CommonWebSocketManager:
                 pairs_by_mode[sub.mode].add(
                     (self._resolve_exchange_type(sub.key), sub.key.token.strip())
                 )
-            expected_groups = 0
-            for pairs in pairs_by_mode.values():
-                expected_groups += (
-                    len(pairs) + self._max_tokens_per_socket - 1
-                ) // self._max_tokens_per_socket
-            missing_groups = bool(pairs_by_mode) and len(self._sockets) < expected_groups
+            expected_socket_groups: set[SocketGroup] = set()
+            for mode, pairs in pairs_by_mode.items():
+                for index, _ in enumerate(sorted(pairs)):
+                    expected_socket_groups.add(
+                        SocketGroup(mode=mode, shard=index // self._max_tokens_per_socket)
+                    )
+            # Compare identities, not only counts: a stale/unexpected group can
+            # make the count look complete while a required shard is missing.
+            missing_groups = set(self._sockets) != expected_socket_groups
 
             for group, _, _, _ in stale:
                 self._sockets.pop(group, None)
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
+                self._last_data_at.pop(group, None)
+                self._socket_generation.pop(group, None)
         if not stale and not missing_groups:
             return 0
 
@@ -728,16 +792,20 @@ class CommonWebSocketManager:
 
     def close(self) -> None:
         self._recovery_stop.set()
-        with self._lock:
-            recovery_thread = self._recovery_thread
-            self._recovery_thread = None
-            sockets = list(self._sockets.values())
-            self._sockets.clear()
-            self._socket_tokens.clear()
-            self._socket_created_at.clear()
-            self._last_data_at.clear()
-            self._socket_generation.clear()
-        for socket in sockets:
-            self._close_socket_bounded(socket)
+        # Serialize shutdown with reconciliation/recovery so a late pass cannot
+        # publish fresh sockets after shutdown clears the active sessions.
+        with self._reconcile_lock:
+            with self._lock:
+                self._closed = True
+                recovery_thread = self._recovery_thread
+                self._recovery_thread = None
+                sockets = list(self._sockets.values())
+                self._sockets.clear()
+                self._socket_tokens.clear()
+                self._socket_created_at.clear()
+                self._last_data_at.clear()
+                self._socket_generation.clear()
+            for socket in sockets:
+                self._close_socket_bounded(socket)
         if recovery_thread is not None and recovery_thread is not current_thread():
             recovery_thread.join(timeout=1.0)
