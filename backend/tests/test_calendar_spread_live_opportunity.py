@@ -339,3 +339,31 @@ def test_calendar_result_persistence_applies_configured_retention(monkeypatch):
     finally:
         db.close()
         engine.dispose()
+
+
+def test_calendar_long_direction_uses_only_executable_side_depth():
+    from dataclasses import replace
+
+    scanner = LiveCalendarSpreadScanner()
+    near = replace(rec("depth-long-near", "NIFTY-CUR", 1, 99, 100), bid_qty=0, ask_qty=100)
+    far = replace(rec("depth-long-far", "NIFTY-NEAR", 1, 104, 105, expiry="2026-11-26"), bid_qty=100, ask_qty=0)
+
+    scanner.update(near)
+    result = scanner.update(far)
+    assert result is not None
+    assert result.direction == "LONG_NEAR_SHORT_FAR"
+    assert result.liquidity_qty == 100
+
+
+def test_calendar_reverse_direction_uses_only_executable_side_depth():
+    from dataclasses import replace
+
+    scanner = LiveCalendarSpreadScanner()
+    near = replace(rec("depth-short-near", "NIFTY-CUR", 1, 105, 106), bid_qty=100, ask_qty=0)
+    far = replace(rec("depth-short-far", "NIFTY-NEAR", 1, 99, 100, expiry="2026-11-26"), bid_qty=0, ask_qty=100)
+
+    scanner.update(near)
+    result = scanner.update(far)
+    assert result is not None
+    assert result.direction == "SHORT_NEAR_LONG_FAR"
+    assert result.liquidity_qty == 100
