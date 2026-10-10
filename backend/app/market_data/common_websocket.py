@@ -51,6 +51,16 @@ class CommonWebSocketManager:
         self._normalizer_errors = 0
         self._last_normalizer_error: str | None = None
         self._ticks_received = 0
+        # Count every current-generation callback before parsing/routing. This
+        # separates "broker sent no frames" from "frames arrived but could not
+        # be mapped to a registered instrument".
+        self._raw_frames_received = 0
+        self._invalid_frame_types = 0
+        self._missing_token_frames = 0
+        self._invalid_exchange_type_frames = 0
+        self._unmatched_frames = 0
+        self._exchange_mismatch_frames = 0
+        self._last_raw_frame_at: float | None = None
         self._runtime_started_at = time.time()
         self._ticks_by_exchange: dict[str, int] = defaultdict(int)
         self._last_tick: dict[str, Any] | None = None
@@ -655,31 +665,47 @@ class CommonWebSocketManager:
         socket.unsubscribe_groups(cls._by_exchange(pairs))
 
     def _on_data(self, group: SocketGroup, message: Any, generation: int | None = None) -> None:
-        if not isinstance(message, dict):
-            return
-        token = str(message.get("token") or message.get("symboltoken") or "").strip()
-        if not token:
-            return
-        exchange_type_raw = message.get("exchange_type", message.get("exchangeType"))
-        try:
-            exchange_type = int(exchange_type_raw) if exchange_type_raw is not None else None
-        except (TypeError, ValueError):
-            exchange_type = None
         with self._lock:
             # Reject callbacks from an older socket after recovery has replaced
-            # or removed that group. This prevents orphan ticks from masking a
-            # zero-socket manager state.
+            # or removed that group. Never let an orphan socket inflate telemetry.
             if generation is not None and self._socket_generation.get(group) != generation:
                 return
             if group not in self._sockets:
                 return
+            self._raw_frames_received += 1
+            self._last_raw_frame_at = time.monotonic()
+            if not isinstance(message, dict):
+                self._invalid_frame_types += 1
+                return
+
+            token = str(message.get("token") or message.get("symboltoken") or "").strip()
+            if not token:
+                self._missing_token_frames += 1
+                return
+
+            exchange_type_raw = message.get("exchange_type", message.get("exchangeType"))
+            exchange_type = None
+            if exchange_type_raw is not None:
+                try:
+                    exchange_type = int(exchange_type_raw)
+                    if exchange_type <= 0:
+                        raise ValueError("exchange_type must be positive")
+                except (TypeError, ValueError):
+                    self._invalid_exchange_type_frames += 1
+                    return
+
+            routes = self._route_index.get(group, {})
             if exchange_type is not None:
-                matching = tuple(self._route_index.get(group, {}).get((exchange_type, token), ()))
+                matching = tuple(routes.get((exchange_type, token), ()))
+                if not matching and any(route_token == token for _, route_token in routes):
+                    self._exchange_mismatch_frames += 1
             else:
                 matching = tuple(
-                    item for (route_exchange, route_token), items in self._route_index.get(group, {}).items()
+                    item for (route_exchange, route_token), items in routes.items()
                     if route_token == token for item in items
                 )
+            if not matching:
+                self._unmatched_frames += 1
             raw_callbacks = [self._callbacks.get(name) for name, _ in matching]
             record_callbacks = [(self._record_callbacks.get(name), key) for name, key in matching]
             if matching:
@@ -769,6 +795,16 @@ class CommonWebSocketManager:
                 "normalizer_errors": self._normalizer_errors,
                 "last_normalizer_error": self._last_normalizer_error,
                 "ticks_received": self._ticks_received,
+                "raw_frames_received": self._raw_frames_received,
+                "invalid_frame_types": self._invalid_frame_types,
+                "missing_token_frames": self._missing_token_frames,
+                "invalid_exchange_type_frames": self._invalid_exchange_type_frames,
+                "unmatched_frames": self._unmatched_frames,
+                "exchange_mismatch_frames": self._exchange_mismatch_frames,
+                "last_raw_frame_age_seconds": (
+                    max(0.0, time.monotonic() - self._last_raw_frame_at)
+                    if self._last_raw_frame_at is not None else None
+                ),
                 "runtime_started_at": self._runtime_started_at,
                 "ticks_by_exchange_type": dict(self._ticks_by_exchange),
                 "last_tick": dict(self._last_tick) if self._last_tick else None,
