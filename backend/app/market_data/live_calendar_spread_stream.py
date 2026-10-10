@@ -153,6 +153,7 @@ class LiveCalendarSpreadOneSecondCollector:
             segment=contract["exchange"],
             expiry=contract["expiry"].isoformat(),
             lot_size=contract["lot_size"],
+            underlying=contract["underlying"],
         )
 
     def _observe_record(self, record) -> None:
