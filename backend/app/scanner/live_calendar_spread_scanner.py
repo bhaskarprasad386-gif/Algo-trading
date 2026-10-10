@@ -399,6 +399,30 @@ class LiveCalendarSpreadScanner:
         )
         return tuple(sorted(values, key=lambda x: x.timestamp_ns, reverse=True)[:limit])
 
+    def counts_snapshot(self):
+        """Return exact fresh pair/opportunity counts without response-limit truncation."""
+        import time
+        now_ns = time.time_ns()
+        with self._lock:
+            values = tuple(self._signals.values())
+        fresh = tuple(
+            item for item in values
+            if -self.TIMESTAMP_TOLERANCE_NS
+            <= now_ns - item.timestamp_ns
+            <= self.SNAPSHOT_MAX_AGE_NS
+        )
+        signals = sum(
+            1 for item in fresh
+            if item.liquidity_qty > 0
+            and qualifies_opportunity(
+                gap_points=item.gap_points,
+                gross_profit=item.gross_profit,
+                minimum_gap_points=self.minimum_gap_points,
+                minimum_gross_profit=self.minimum_gross_profit,
+            )
+        )
+        return {"signals": signals, "pairs": len(fresh)}
+
     def snapshot(self,limit=50,*,minimum_gap_points=None,minimum_gross_profit=None):
         min_gap=self.minimum_gap_points if minimum_gap_points is None else float(minimum_gap_points)
         min_gross=self.minimum_gross_profit if minimum_gross_profit is None else float(minimum_gross_profit)
