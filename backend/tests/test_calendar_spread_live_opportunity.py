@@ -59,3 +59,205 @@ def test_calendar_crossed_quote_is_rejected_by_canonical_contract():
     except ValueError:
         return
     raise AssertionError("crossed quote must be rejected")
+
+
+
+def test_calendar_scanner_does_not_pair_future_and_commodity_families():
+    from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord
+
+    scanner = LiveCalendarSpreadScanner()
+
+    def family_record(kind, token, expiry, timestamp, bid=99.0, ask=100.0):
+        return MarketDataRecord(
+            instrument=InstrumentKey(exchange="MCX", segment="MCX", token=token),
+            symbol="CRUDEOIL" + expiry,
+            instrument_type=kind,
+            timestamp_ns=timestamp,
+            timeframe="1s",
+            ltp=100.0,
+            bid=bid,
+            ask=ask,
+            bid_qty=10,
+            ask_qty=10,
+            underlying="CRUDEOIL",
+            expiry=expiry,
+            lot_size=100,
+            tick_size=0.05,
+        )
+
+    scanner.update(family_record(InstrumentType.FUTURE, "f1", "2026-10-29", 3_000_000_000))
+    # Same underlying/exchange and an earlier expiry, but a different family.
+    assert scanner.update(family_record(InstrumentType.COMMODITY, "c1", "2026-10-22", 3_100_000_000)) is None
+    # A second future should pair with the first future, not the commodity.
+    paired = scanner.update(family_record(InstrumentType.FUTURE, "f2", "2026-11-26", 3_200_000_000, bid=104.0, ask=105.0))
+    assert paired is not None
+    assert paired.near_contract_month == "2026-10-29"
+    assert paired.far_contract_month == "2026-11-26"
+
+
+
+def test_calendar_scanner_skips_pair_when_both_executable_edges_are_non_positive():
+    scanner = LiveCalendarSpreadScanner()
+    near = rec("no-edge-near", "NIFTY-CUR", 3_000_000_000, 99, 100, expiry="2026-10-29")
+    far = rec("no-edge-far", "NIFTY-NEAR", 3_100_000_000, 99, 100, expiry="2026-11-26")
+
+    assert scanner.update(near) is None
+    assert scanner.update(far) is None
+    assert scanner.pair_snapshot() == ()
+
+
+
+def test_calendar_rejects_materially_future_dated_live_tick():
+    import time
+
+    scanner = LiveCalendarSpreadScanner()
+    future_timestamp = time.time_ns() + 10_000_000_000
+    assert scanner.update(rec("future", "NIFTY-CUR", future_timestamp, 99, 100)) is None
+    assert scanner.pair_snapshot() == ()
+
+
+
+def test_calendar_scanner_rejects_zero_bid_or_ask_quotes():
+    scanner = LiveCalendarSpreadScanner()
+    assert scanner.update(rec("zero-bid", "NIFTY-CUR", 1, 0, 100)) is None
+    assert scanner.update(rec("zero-ask", "NIFTY-NEAR", 2, 0, 0, expiry="2026-11-26")) is None
+
+
+def test_calendar_scanner_does_not_cross_pair_index_and_stock_future_families():
+    from dataclasses import replace
+
+    scanner = LiveCalendarSpreadScanner()
+
+    index_near = replace(
+        rec("index-near", "SAME-INDEX-NEAR", 3_000_000_000, 99, 100, lot=50, underlying="SAME", expiry="2026-10-29"),
+        payload={"contract_family": "INDEX_FUTURE"},
+    )
+    stock_near = replace(
+        rec("stock-near", "SAME-STOCK-NEAR", 3_100_000_000, 99, 100, lot=50, underlying="SAME", expiry="2026-10-22"),
+        payload={"contract_family": "STOCK_FUTURE"},
+    )
+    index_far = replace(
+        rec("index-far", "SAME-INDEX-FAR", 3_200_000_000, 104, 105, lot=50, underlying="SAME", expiry="2026-11-26"),
+        payload={"contract_family": "INDEX_FUTURE"},
+    )
+
+    assert scanner.update(index_near) is None
+    assert scanner.update(stock_near) is None
+    paired = scanner.update(index_far)
+
+    assert paired is not None
+    assert paired.near_contract_month == "2026-10-29"
+    assert paired.far_contract_month == "2026-11-26"
+
+
+def test_calendar_invalidates_old_signal_when_latest_pair_has_no_positive_edge():
+    import time
+
+    scanner = LiveCalendarSpreadScanner()
+    # Keep this invalidation test's quotes inside the snapshot's non-future window.
+    ts = time.time_ns() - 500_000_000
+    near = rec("invalidate-near", "NIFTY-CUR", ts, 99, 100, expiry="2026-10-29")
+    far = rec("invalidate-far", "NIFTY-NEAR", ts + 100_000_000, 104, 105, expiry="2026-11-26")
+    scanner.update(near)
+    first = scanner.update(far)
+    assert first is not None
+    assert scanner.snapshot()
+
+    updated_near = rec("invalidate-near", "NIFTY-CUR", ts + 200_000_000, 99, 110, expiry="2026-10-29")
+    assert scanner.update(updated_near) is None
+    updated_far = rec("invalidate-far", "NIFTY-NEAR", ts + 200_000_000, 99, 100, expiry="2026-11-26")
+    assert scanner.update(updated_far) is None
+    assert scanner.snapshot() == ()
+    assert scanner.pair_snapshot() == ()
+    diagnostics = scanner.diagnostics_snapshot()
+    assert diagnostics["counters"]["no_positive_edge"] == 2  # both updated legs trigger a no-edge evaluation
+    assert diagnostics["pairs"][0]["status"] == "no_positive_edge"
+
+
+
+def test_calendar_diagnostics_keep_status_with_allowed_future_timestamp():
+    import time
+
+    scanner = LiveCalendarSpreadScanner()
+    ts = time.time_ns() + 500_000_000
+    near = rec("future-near", "NIFTY-CUR", ts, 99, 100, expiry="2026-10-29")
+    far = rec("future-far", "NIFTY-NEAR", ts + 100_000_000, 99, 100, expiry="2026-11-26")
+
+    scanner.update(near)
+    scanner.update(far)
+
+    diagnostics = scanner.diagnostics_snapshot()
+    assert diagnostics["pairs"]
+    assert diagnostics["pairs"][0]["status"] == "no_positive_edge"
+
+
+def test_calendar_positive_gross_edge_without_two_sided_depth_does_not_qualify():
+    from dataclasses import replace
+    import time
+
+    scanner = LiveCalendarSpreadScanner()
+    ts = time.time_ns()
+    near = rec("depth-near", "NIFTY-CUR", ts, 99, 100, expiry="2026-10-29")
+    far = replace(rec("depth-far", "NIFTY-NEAR", ts + 100_000_000, 104, 105, expiry="2026-11-26"), bid_qty=0)
+    scanner.update(near)
+    result = scanner.update(far)
+    assert result is None
+    assert scanner.snapshot() == ()
+    assert scanner.diagnostics_snapshot()["counters"]["insufficient_depth"] == 1
+
+
+def test_calendar_preserves_original_leg_timestamps_and_family_in_signal_metadata():
+    from dataclasses import replace
+    import time
+
+    scanner = LiveCalendarSpreadScanner()
+    ts = time.time_ns()
+    near = replace(
+        rec("time-near", "NIFTY-CUR", ts, 99, 100, expiry="2026-10-29"),
+        payload={"contract_family": "INDEX_FUTURE"},
+    )
+    far_ts = ts + 250_000_000
+    far = replace(
+        rec("time-far", "NIFTY-NEAR", far_ts, 104, 105, expiry="2026-11-26"),
+        payload={"contract_family": "INDEX_FUTURE"},
+    )
+    scanner.update(near)
+    result = scanner.update(far)
+    assert result is not None
+    assert result.contract_family == "INDEX_FUTURE"
+    assert result.near_timestamp_ns == ts
+    assert result.far_timestamp_ns == far_ts
+    assert result.timestamp_skew_ns == 250_000_000
+    assert result.signal.metadata["near_timestamp_ns"] == ts
+    assert result.signal.metadata["far_timestamp_ns"] == far_ts
+    assert result.signal.metadata["profit_basis"] == "gross_before_fees_and_slippage"
+
+
+def test_canonical_executable_quote_rejects_zero_bid_and_zero_ask():
+    from dataclasses import replace
+
+    valid = rec("canonical-depth", "NIFTY-CUR", 3_000_000_000, 99, 100)
+    assert valid.is_executable_quote is True
+    assert replace(valid, bid=0).is_executable_quote is False
+    import pytest
+    with pytest.raises(ValueError, match="bid cannot exceed ask"):
+        replace(valid, ask=0)
+
+
+def test_calendar_invalid_latest_quote_removes_that_expiry_from_pairing_state():
+    import time
+
+    scanner = LiveCalendarSpreadScanner()
+    ts = time.time_ns()
+    near = rec("invalid-near", "NIFTY-CUR", ts, 99, 100, expiry="2026-10-29")
+    far = rec("invalid-far", "NIFTY-NEAR", ts + 100_000_000, 104, 105, expiry="2026-11-26")
+    scanner.update(near)
+    assert scanner.update(far) is not None
+
+    invalid_near = rec("invalid-near", "NIFTY-CUR", ts + 200_000_000, 0, 100, expiry="2026-10-29")
+    assert scanner.update(invalid_near) is None
+    assert scanner.snapshot() == ()
+    # A subsequent far-leg update must not pair against the removed stale near quote.
+    next_far = rec("invalid-far", "NIFTY-NEAR", ts + 300_000_000, 104, 105, expiry="2026-11-26")
+    assert scanner.update(next_far) is None
+    assert scanner.snapshot() == ()

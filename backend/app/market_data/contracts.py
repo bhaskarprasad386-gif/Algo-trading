@@ -102,7 +102,10 @@ class MarketDataRecord:
 
     @property
     def is_executable_quote(self) -> bool:
-        return self.bid is not None and self.ask is not None and self.bid >= 0 and self.ask >= self.bid
+        return (
+            self.bid is not None and self.ask is not None
+            and self.bid > 0 and self.ask > 0 and self.bid <= self.ask
+        )
 
     def as_dict(self) -> dict[str, Any]:
         result = {
