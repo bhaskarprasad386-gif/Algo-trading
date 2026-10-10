@@ -88,3 +88,65 @@ def test_calendar_signal_snapshot_keeps_allowed_future_timestamp():
     assert signal is not None
     assert len(scanner.snapshot()) == 1
     assert len(scanner.pair_snapshot()) == 1
+
+
+def test_calendar_runner_replay_reaches_live_pairs_and_diagnostics_api(monkeypatch):
+    """Replay normalized feed ticks through collector -> scanner -> API routes."""
+    from app.scanner import calendar_spread_routes as routes
+
+    scanner = LiveCalendarSpreadScanner(minimum_gap_points=3, minimum_gross_profit=150)
+    collector = LiveCalendarSpreadOneSecondCollector(
+        data_db=":memory:",
+        on_observation=scanner.observe,
+    )
+    monkeypatch.setattr(collector, "_exchange_open", lambda exchange, value: True)
+    collector._kind_by_key = {
+        ("NFO", "near-token"): "INDEX_FUTURE",
+        ("NFO", "far-token"): "INDEX_FUTURE",
+    }
+
+    base = time.time_ns() - 2_500_000_000
+    records = [
+        _record("near-token", "NIFTY-NEAR", "2026-10-29", base + 100_000_000, 99, 100),
+        _record("far-token", "NIFTY-FAR", "2026-11-26", base + 200_000_000, 104, 105),
+        _record("near-token", "NIFTY-NEAR", "2026-10-29", base + 1_100_000_000, 99, 100),
+        _record("far-token", "NIFTY-FAR", "2026-11-26", base + 1_200_000_000, 104, 105),
+    ]
+    for record in records:
+        collector._observe_record(record)
+
+    # Match the collector's orderly final bucket flush after a replay ends.
+    with collector._lock:
+        pending = list(collector._latest.values())
+        collector._latest.clear()
+    for bucket_timestamp, record in pending:
+        collector._emit(record, bucket_timestamp)
+
+    previous_scanner = routes.scanner
+    routes.configure(scanner)
+    try:
+        live = routes.live(limit=50, min_gap_points=None, min_gross_profit=None)
+        pairs = routes.pairs(limit=200)
+        diagnostics = routes.pair_diagnostics(limit=200)
+
+        assert live["status"] == "success"
+        assert live["opportunity_count"] == 1
+        assert len(live["data"]) == 1
+        assert live["data"][0]["direction"] == "LONG_NEAR_SHORT_FAR"
+        assert live["data"][0]["gross_profit"] == 200
+        assert live["data"][0]["qualifies"] is True
+
+        assert pairs["status"] == "success"
+        assert pairs["pair_count"] == 1
+        assert pairs["data"][0]["near_contract_month"] == "2026-10-29"
+        assert pairs["data"][0]["far_contract_month"] == "2026-11-26"
+
+        assert diagnostics["status"] == "success"
+        assert diagnostics["pair_count"] == 1
+        assert diagnostics["data"][0]["status"] == "opportunity"
+        assert diagnostics["counters"]["observe_errors"] == 0
+    finally:
+        routes.configure(previous_scanner)
+
+    assert collector.snapshot()["diagnostics"]["callback_errors"] == 0
+    assert scanner.diagnostics_snapshot()["counters"]["observe_errors"] == 0
