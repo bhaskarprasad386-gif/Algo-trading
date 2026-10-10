@@ -47,7 +47,7 @@ def _finish_dispatch_transaction(dispatch_method):
         try:
             return dispatch_method(self, db, event)
         finally:
-            # dispatch() commits accepted paper mutations itself. Queries made
+            # Queries made
             # afterward (or an early fail-closed return) can otherwise leave a
             # fresh SQLAlchemy session in an implicit read transaction. Close
             # only transactions created by this dispatcher; never rollback a
@@ -164,11 +164,7 @@ class AlertService:
         return tuple(channels)
 
     def dispatch_user(self, user, event: AlertEvent) -> bool:
-        # Compatibility notification path. Paper auto-entry is intentionally
-        # owned by dispatch(), where enabled AlertRule risk gates, capital
-        # reservation, max-loss and user isolation are enforced. This path is
-        # also used by legacy scanner notifications and must never bypass those
-        # controls by creating a paper position directly.
+        # Compatibility notification path; dispatch_user only sends alerts.
         return self._dispatch_notification_only(user, event)
 
     def _dispatch_notification_only(self, user, event: AlertEvent) -> bool:
@@ -195,10 +191,8 @@ class AlertService:
         try:
             import math
             gross_value = float(gross) if gross is not None else None
-            gross_valid = gross is None or math.isfinite(gross_value)
         except (TypeError, ValueError):
             gross_value = None
-            gross_valid = gross is None
         rules = db.query(AlertRule).filter(
             AlertRule.enabled.is_(True),
             AlertRule.strategy_id == event.strategy_id.strip().lower(),
