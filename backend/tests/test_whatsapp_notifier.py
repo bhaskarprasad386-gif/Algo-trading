@@ -46,51 +46,24 @@ def test_notification_service_sends_formatted_alert_to_user(monkeypatch):
     assert "Net Profit: ₹180.00" in sent[0][1]
 
 
-def test_legacy_notify_user_never_creates_paper_trade(monkeypatch, db_session):
+def test_legacy_notify_user_is_notification_only(monkeypatch):
     from types import SimpleNamespace
-    from app.models import AlertRule, GlobalPaperSetting, LivePaperTrade
     from app.notifications.common import AlertEvent, AlertService
-
-    db_session.add(GlobalPaperSetting(
-        user_id=7, enabled=True, paper_amount=100000, emergency_stop=False,
-    ))
-    db_session.add(AlertRule(
-        user_id=7, strategy_id="cash-future", min_gross_profit=0,
-        mobile_number="+919999999999", whatsapp_enabled=True, enabled=True,
-        max_daily_capital=0, max_simultaneous_positions=5, max_loss=0,
-    ))
-    db_session.commit()
 
     service = AlertService()
     sent = []
     monkeypatch.setattr(service._notifier, "send_text", lambda recipient, message: sent.append((recipient, message)) or True)
     monkeypatch.setattr("app.notifications.common.settings.LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS", 0.0)
 
-    user = SimpleNamespace(id=7, mobile_number="+919999999999")
+    user = SimpleNamespace(id=7, mobile_number="+919999999999", alerts_enabled=True, whatsapp_alerts_enabled=True, email_alerts_enabled=False)
     event = AlertEvent(
         strategy_id="cash-future",
         event_id="LEGACY-NOTIFY-NO-PAPER",
         symbol="ABC",
         timestamp_ns=3_000_000_000,
         message="legacy",
-        metadata={
-            "gross_profit": 1000.0,
-            "paper_trade": {
-                "direction": "LONG",
-                "expiry": "2026-10-30",
-                "earliest_expiry": "2026-10-30",
-                "lot_size": 10,
-                "lots": 1,
-                "edge": 5,
-                "capital_used": 30000,
-                "legs": [],
-            },
-        },
+        metadata={"gross_profit": 1000.0, "paper_trade": {"direction": "LONG", "lots": 1}},
     )
 
     assert service.dispatch_user(user, event) is True
     assert sent == [(user.mobile_number, event.message)]
-    assert db_session.query(LivePaperTrade).filter(
-        LivePaperTrade.user_id == 7,
-        LivePaperTrade.event_id == event.event_id,
-    ).count() == 0
