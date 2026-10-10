@@ -260,3 +260,60 @@ def test_subscription_failure_invalidates_socket_and_recovery_restores_full_inte
         assert replacement.connect_calls[0]["subscriptions"] == {1: ["101", "102"]}
     finally:
         manager.close()
+
+
+class RepeatedConnectFailureSocket(SimulatedAngelSocket):
+    """Fail the first two handshakes, then allow the supervisor retry to connect."""
+
+    attempts = 0
+
+    def connect(self, **kwargs):
+        type(self).attempts += 1
+        self.connect_calls.append(kwargs)
+        if type(self).attempts <= 2:
+            raise ConnectionError(f"simulated connect failure {type(self).attempts}")
+        self.connecting = False
+        self.connected = True
+
+
+def test_supervisor_retries_repeated_connect_failures_until_socket_connects():
+    registry = InstrumentRegistry()
+    descriptor = make_descriptor()
+    registry.register(descriptor)
+    RepeatedConnectFailureSocket.attempts = 0
+    manager = CommonWebSocketManager(
+        registry, socket_factory=RepeatedConnectFailureSocket
+    )
+    manager._recovery_interval_seconds = 0.02
+
+    try:
+        try:
+            manager.subscribe("cash-future", [descriptor.key])
+        except ConnectionError as exc:
+            assert "simulated connect failure 1" in str(exc)
+        else:
+            raise AssertionError("first simulated connect attempt should fail")
+
+        # Do not call recover_disconnected() manually: the supervisor itself
+        # must retry while the registry still retains subscription intent.
+        assert wait_until(
+            lambda: (
+                manager.snapshot()["connected_groups"] == ["1:0"]
+                and RepeatedConnectFailureSocket.attempts >= 3
+            ),
+            timeout=2.0,
+        ), "automatic supervisor did not recover after repeated connect failures"
+
+        snapshot = manager.snapshot()
+        assert snapshot["subscriptions"] == 1
+        assert snapshot["active_instruments"] == 1
+        assert snapshot["connected_groups"] == ["1:0"]
+        assert snapshot["connect_failures"] >= 2
+        live_sockets = [
+            socket for socket in RepeatedConnectFailureSocket.instances
+            if not socket.closed
+        ]
+        assert live_sockets == [manager._sockets[SocketGroup(1, 0)]]
+    finally:
+        manager.close()
+        RepeatedConnectFailureSocket.attempts = 0
