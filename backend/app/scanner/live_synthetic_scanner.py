@@ -218,10 +218,21 @@ class LiveSyntheticScanner:
                 except ValueError:
                     self._prune(timestamp_ns)
                     return ()
+            # A live stream may not have a liquid, complete CE+PE pair at
+            # the exact ATM strike. Anchor strike-distance enumeration to the
+            # nearest *observed executable pair* rather than raising and
+            # interrupting the runner on a partial option chain.
+            available_strikes = {quote.strike for quote in option_quotes}
+            requested_atm = float(atm)
+            scan_atm = (
+                requested_atm
+                if requested_atm in available_strikes
+                else min(available_strikes, key=lambda value: abs(value - requested_atm))
+            )
             results = scan_synthetic_snapshot(
                 option_quotes,
                 future,
-                atm_strike=float(atm),
+                atm_strike=scan_atm,
                 config=config,
             )
             self._prune(timestamp_ns)
