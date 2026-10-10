@@ -67,7 +67,6 @@ def _source_timestamp_ns(message: dict[str, Any]) -> int | None:
     """Read a real provider timestamp; never substitute local receive time."""
     for key in (
         "exchange_timestamp_ns", "exchange_timestamp", "exchange_timestamp_ms",
-        "timestamp_ns", "timestamp", "feed_time",
     ):
         value = message.get(key)
         if value is None:
