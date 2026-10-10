@@ -20,6 +20,7 @@ from app.market_data.instruments import InstrumentMaster
 from app.market_data.persistence import DailySQLiteMarketDataRepository
 from app.backtesting.historical_catalog import HistoricalRecord
 from app.market_data.ingestion import BoundedMarketDataIngestor
+from app.market_data.bounded_buffer import BufferPriority
 
 IST = ZoneInfo("Asia/Kolkata")
 SOURCE = "angelone-calendar-live-1s"
@@ -108,6 +109,7 @@ class LiveCalendarSpreadOneSecondCollector:
             "same_second_updates": 0,
             "same_second_weaker_dropped": 0,
             "persistence_errors": 0,
+            "persistence_dropped": 0,
             "callback_errors": 0,
         }
 
@@ -212,25 +214,10 @@ class LiveCalendarSpreadOneSecondCollector:
         payload["instrument_type"] = record.instrument_type.value
         if record.expiry:
             payload["contract_month"] = record.expiry[:7]
-        if self._ingestor is not None:
-            try:
-                self._ingestor.submit_historical(
-                    HistoricalRecord(
-                        source=SOURCE,
-                        instrument=f"{record.instrument.exchange}:{record.instrument.token}:{record.symbol}",
-                        timeframe=TIMEFRAME,
-                        timestamp_ns=timestamp_ns,
-                        payload=payload,
-                    )
-                )
-            except Exception as exc:
-                # Persistence is optional; a saturated or failed writer must
-                # never prevent the in-memory live scanner from receiving ticks.
-                with self._lock:
-                    self._stats["persistence_errors"] += 1
-                app_logger.error(f"Calendar Spread persistence enqueue failed; live callback will continue: {exc}")
         with self._lock:
             self._stats["records_emitted"] += 1
+        # Deliver to the in-memory scanner first. Optional disk persistence is
+        # best-effort and uses a short-timeout NORMAL queue entry below.
         if self.on_observation is not None:
             try:
                 self.on_observation(payload)
@@ -238,6 +225,27 @@ class LiveCalendarSpreadOneSecondCollector:
                 with self._lock:
                     self._stats["callback_errors"] += 1
                 app_logger.warning(f"Calendar Spread live scanner callback failed: {exc}")
+        if self._ingestor is not None:
+            try:
+                accepted = self._ingestor.submit_historical(
+                    HistoricalRecord(
+                        source=SOURCE,
+                        instrument=f"{record.instrument.exchange}:{record.instrument.token}:{record.symbol}",
+                        timeframe=TIMEFRAME,
+                        timestamp_ns=timestamp_ns,
+                        payload=payload,
+                    ),
+                    priority=BufferPriority.NORMAL,
+                )
+                if accepted is False:
+                    with self._lock:
+                        self._stats["persistence_dropped"] += 1
+            except Exception as exc:
+                # Persistence is optional; a failed writer must never prevent
+                # the in-memory live scanner from receiving ticks.
+                with self._lock:
+                    self._stats["persistence_errors"] += 1
+                app_logger.error(f"Calendar Spread persistence enqueue failed after live callback: {exc}")
 
     def _run_session(self) -> None:
         contracts = self._contracts()
@@ -260,6 +268,9 @@ class LiveCalendarSpreadOneSecondCollector:
                 self._ingestor = BoundedMarketDataIngestor(
                     self._repository,
                     record_source=SOURCE,
+                    # Persistence is optional and must not stall live scanning
+                    # behind a saturated disk-writer queue.
+                    put_timeout_seconds=0.01,
                 )
                 self._ingestor.start()
             feed.start(descriptors, self._observe_record)
