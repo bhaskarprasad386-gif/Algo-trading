@@ -18,7 +18,6 @@ def test_batch13_full_ux_mobile_workspace_launcher_contract():
         'showSyntheticArbitrage()',
         'showBoxSpread()',
         'showCustomAlerts()',
-        'showPaperPortfolio()',
         'showTradingJournal()',
         'showHistoricalReplay()',
         'openBrokerSettings()',
@@ -28,8 +27,11 @@ def test_batch13_full_ux_mobile_workspace_launcher_contract():
         assert marker in ui
 
 
-def test_batch13_keeps_live_bus_and_paper_only_contract():
+def test_batch13_keeps_live_bus_without_paper_controls():
     ui = WEB.read_text(encoding="utf-8")
     assert 'id="liveChannelStrip"' in ui
-    assert 'BROKER ORDERS OFF' in ui
-    assert 'PAPER ONLY' in ui
+    assert 'Live broker orders: OFF' in ui
+    assert 'SCANNER ONLY' in ui
+    assert 'PAPER ONLY' not in ui
+    assert 'Paper Portfolio' not in ui
+    assert 'showPaperPortfolio' not in ui
