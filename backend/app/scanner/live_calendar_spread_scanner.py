@@ -288,16 +288,22 @@ class LiveCalendarSpreadScanner:
             record=MarketDataRecord(
                 instrument=InstrumentKey(str(payload.get("exchange") or payload.get("segment") or ""),str(payload.get("segment") or payload.get("exchange") or ""),str(payload.get("token") or payload.get("symbol") or payload.get("underlying") or "calendar")),
                 symbol=str(payload.get("symbol") or payload.get("underlying") or "calendar"),instrument_type=kind,
-                timestamp_ns=int(payload.get("timestamp_ns") or 0),timeframe=str(payload.get("timeframe") or "1s"),
+                timestamp_ns=int(payload.get("source_timestamp_ns") or payload.get("exchange_timestamp_ns") or payload.get("timestamp_ns") or 0),timeframe=str(payload.get("timeframe") or "1s"),
                 ltp=payload.get("ltp"),bid=payload.get("bid"),ask=payload.get("ask"),bid_qty=payload.get("bid_qty"),ask_qty=payload.get("ask_qty"),
                 volume=payload.get("volume"),oi=payload.get("oi"),open=payload.get("open"),high=payload.get("high"),low=payload.get("low"),close=payload.get("close"),
                 underlying=payload.get("underlying"),expiry=payload.get("expiry"),lot_size=payload.get("lot_size"),tick_size=payload.get("tick_size"),
-                payload={"contract_family": payload.get("contract_family")} if payload.get("contract_family") else {},
+                payload={
+                    **({"contract_family": payload.get("contract_family")} if payload.get("contract_family") else {}),
+                    "source_timestamp_ns": int(payload.get("source_timestamp_ns") or payload.get("exchange_timestamp_ns") or payload.get("timestamp_ns") or 0),
+                    "bucket_timestamp_ns": int(payload.get("bucket_timestamp_ns") or payload.get("timestamp_ns") or 0),
+                },
             )
             return self.update(record)
         except Exception:
+            with self._lock:
+                self._diagnostics["side_effect_errors"] += 1
             logger.exception(
-                "Calendar Spread observe failed while converting payload; payload_type=%s keys=%s",
+                "Calendar Spread observe failed while converting/updating payload; payload_type=%s keys=%s",
                 type(payload).__name__,
                 list(payload.keys()) if isinstance(payload, dict) else None,
             )
