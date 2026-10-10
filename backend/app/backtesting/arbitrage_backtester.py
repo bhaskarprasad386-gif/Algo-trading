@@ -107,9 +107,14 @@ class SyntheticCashCarryBacktester:
         if option.underlying!=future.underlying or option.expiry!=future.expiry or option.instrument_class!=future.instrument_class: raise ValueError("synthetic legs must share underlying, expiry and instrument class")
         if option.timestamp_ns!=future.timestamp_ns: raise ValueError("synthetic legs must share timestamp")
         if option.lot_size!=future.lot_size: raise ValueError("synthetic legs must share lot size")
+        # When live depth metadata is present, zero displayed size is not executable.
+        for quantity in (option.call_bid_qty, option.call_ask_qty, option.put_bid_qty, option.put_ask_qty):
+            if quantity is not None and quantity <= 0: return None
+        for quantity in (future.bid_qty, future.ask_qty):
+            if quantity is not None and quantity <= 0: return None
         if liquidity is not None:
             if not liquidity.accepts(volume=option.volume,oi=option.oi,bid=option.call_bid,ask=option.call_ask): return None
-            if not liquidity.accepts(volume=option.volume,oi=option.oi,bid=option.put_bid,ask=option.put_ask): return None
+            if not liquidity.accepts(volume=option.volume if option.put_volume is None else option.put_volume,oi=option.oi if option.put_oi is None else option.put_oi,bid=option.put_bid,ask=option.put_ask): return None
             if not liquidity.accepts_future(future): return None
         carry=exp(rate*time_to_expiry_years)
         synthetic_buy=option.strike+(option.call_ask-option.put_bid)*carry
