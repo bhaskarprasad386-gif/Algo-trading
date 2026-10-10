@@ -108,14 +108,10 @@ class LiveSyntheticScanner:
                 return ()
             future_payload = bucket["future"]
             future_expiry = self._expiry(future_payload.get("expiry"))
-            timestamps = [int(future_payload.get("source_timestamp_ns") or 0)]
-            for legs in bucket["options"].values():
-                timestamps.extend(int(leg.get("source_timestamp_ns") or 0) for leg in legs.values())
-            timestamps = [value for value in timestamps if value > 0]
-            if not timestamps or max(timestamps) - min(timestamps) > self.TIMESTAMP_TOLERANCE_NS:
+            future_timestamp_ns = int(future_payload.get("source_timestamp_ns") or 0)
+            if future_timestamp_ns <= 0:
                 self._prune(timestamp_ns)
                 return ()
-            anchor_timestamp_ns = max(timestamps)
             strikes = bucket["options"]
             option_quotes: list[OptionQuote] = []
             for option_strike, legs in strikes.items():
@@ -128,6 +124,15 @@ class LiveSyntheticScanner:
                     or self._expiry(pe.get("expiry")) != future_expiry
                 ):
                     continue
+                ce_timestamp_ns = int(ce.get("source_timestamp_ns") or 0)
+                pe_timestamp_ns = int(pe.get("source_timestamp_ns") or 0)
+                # Freshness is pair-local: a stale unrelated strike must not
+                # suppress a complete, independently fresh CE/PE pair.
+                leg_timestamps = (future_timestamp_ns, ce_timestamp_ns, pe_timestamp_ns)
+                if any(value <= 0 for value in leg_timestamps):
+                    continue
+                if max(leg_timestamps) - min(leg_timestamps) > self.TIMESTAMP_TOLERANCE_NS:
+                    continue
                 if not liquid_leg(ce) or not liquid_leg(pe):
                     continue
                 ce_bid, ce_ask = self._price(ce.get("bid")), self._price(ce.get("ask"))
@@ -139,7 +144,7 @@ class LiveSyntheticScanner:
                     continue
                 option_quotes.append(
                     OptionQuote(
-                        timestamp_ns=anchor_timestamp_ns,
+                        timestamp_ns=future_timestamp_ns,
                         underlying=symbol,
                         expiry=future_expiry,
                         strike=option_strike,
@@ -151,6 +156,14 @@ class LiveSyntheticScanner:
                         instrument_class=cls,
                         volume=int(float(ce.get("volume") or 0)),
                         oi=int(float(ce.get("oi") or 0)),
+                        call_timestamp_ns=ce_timestamp_ns,
+                        put_timestamp_ns=pe_timestamp_ns,
+                        call_bid_qty=int(float(ce.get("bid_qty") or 0)),
+                        call_ask_qty=int(float(ce.get("ask_qty") or 0)),
+                        put_bid_qty=int(float(pe.get("bid_qty") or 0)),
+                        put_ask_qty=int(float(pe.get("ask_qty") or 0)),
+                        put_volume=int(float(pe.get("volume") or 0)),
+                        put_oi=int(float(pe.get("oi") or 0)),
                     )
                 )
 
@@ -159,11 +172,13 @@ class LiveSyntheticScanner:
                 return ()
 
             future_bid, future_ask = self._price(future_payload.get("bid")), self._price(future_payload.get("ask"))
-            if future_bid is None or future_ask is None:
+            future_bid_qty = int(float(future_payload.get("bid_qty") or 0))
+            future_ask_qty = int(float(future_payload.get("ask_qty") or 0))
+            if future_bid is None or future_ask is None or future_bid_qty <= 0 or future_ask_qty <= 0:
                 self._prune(timestamp_ns)
                 return ()
             future = FutureQuote(
-                timestamp_ns=anchor_timestamp_ns,
+                timestamp_ns=future_timestamp_ns,
                 underlying=symbol,
                 expiry=future_expiry,
                 bid=future_bid,
@@ -172,6 +187,9 @@ class LiveSyntheticScanner:
                 instrument_class=cls,
                 volume=int(float(future_payload.get("volume") or 0)),
                 oi=int(float(future_payload.get("oi") or 0)),
+                source_timestamp_ns=future_timestamp_ns,
+                bid_qty=future_bid_qty,
+                ask_qty=future_ask_qty,
             )
             if future.lot_size <= 0:
                 self._prune(timestamp_ns)
