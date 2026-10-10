@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, replace
+import logging
 from threading import RLock
 from app.core.config import settings
 from app.market_data.contracts import MarketDataRecord, InstrumentType
@@ -7,6 +8,8 @@ from app.market_data.opportunity import OpportunityLeg, OpportunitySignal, Order
 from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
 from app.notifications.calendar_spread_alerts import CalendarSpreadAlertService
 from sqlalchemy.exc import IntegrityError
+
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class CalendarSpreadSignal:
@@ -152,7 +155,13 @@ class LiveCalendarSpreadScanner:
                 underlying=payload.get("underlying"),expiry=payload.get("expiry"),lot_size=payload.get("lot_size"),tick_size=payload.get("tick_size"),
             )
             return self.update(record)
-        except Exception:return None
+        except Exception:
+            logger.exception(
+                "Calendar Spread observe failed while converting payload; payload_type=%s keys=%s",
+                type(payload).__name__,
+                list(payload.keys()) if isinstance(payload, dict) else None,
+            )
+            return None
 
     def pair_snapshot(self, limit=200):
         """Return every fresh matched near/far pair, including NO SIGNAL rows."""
