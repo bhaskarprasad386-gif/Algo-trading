@@ -724,10 +724,10 @@ class CommonWebSocketManager:
         for callback in {id(cb): cb for cb in raw_callbacks if cb is not None}.values():
             try:
                 callback(message)
-            except Exception:
+            except Exception as exc:
                 with self._lock:
                     self._delivery_errors += 1
-                    self._last_delivery_error = f"{type(Exception).__name__}: raw callback failed"
+                    self._last_delivery_error = f"{type(exc).__name__}: {exc}"
                 runtime_diagnostics.record(
                     component="Common Market Feed",
                     error_type="CallbackDeliveryError",
