@@ -162,7 +162,7 @@ def test_calendar_invalidates_old_signal_when_latest_pair_has_no_positive_edge()
     assert first is not None
     assert scanner.snapshot()
 
-    updated_near = rec("invalidate-near", "NIFTY-CUR", ts + 200_000_000, 99, 100, expiry="2026-10-29")
+    updated_near = rec("invalidate-near", "NIFTY-CUR", ts + 200_000_000, 99, 110, expiry="2026-10-29")
     assert scanner.update(updated_near) is None
     updated_far = rec("invalidate-far", "NIFTY-NEAR", ts + 200_000_000, 99, 100, expiry="2026-11-26")
     assert scanner.update(updated_far) is None
@@ -185,7 +185,7 @@ def test_calendar_positive_gross_edge_without_two_sided_depth_does_not_qualify()
     result = scanner.update(far)
     assert result is None
     assert scanner.snapshot() == ()
-    assert scanner.diagnostics_snapshot()["pairs"][0]["status"] == "insufficient_depth"
+    assert scanner.diagnostics_snapshot()["counters"]["insufficient_depth"] == 1
 
 
 def test_calendar_preserves_original_leg_timestamps_and_family_in_signal_metadata():
