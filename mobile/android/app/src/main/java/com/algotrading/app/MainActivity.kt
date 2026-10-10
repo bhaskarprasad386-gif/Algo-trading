@@ -286,7 +286,6 @@ class MainActivity : AppCompatActivity() {
             putExtra(ScannerDetailActivity.EXTRA_DEPLOYED_CAPITAL, opportunity.capacity_notional ?: 0.0)
             putExtra(ScannerDetailActivity.EXTRA_NET_PROFIT, opportunity.net_profit ?: 0.0)
             putExtra(ScannerDetailActivity.EXTRA_ROI_PCT, opportunity.net_gap_pct)
-            putExtra(ScannerDetailActivity.EXTRA_EXECUTABLE, opportunity.lifecycle != "EXPIRED" && opportunity.gap > 0.0 && opportunity.net_gap > 0.0)
         })
     }
 
