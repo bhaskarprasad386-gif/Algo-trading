@@ -26,5 +26,5 @@ __all__ = [
     "Order", "Position", "SystemLog", "BacktestJob", "BacktestJobResultChunk", "PasswordResetToken",
     "HistoricalMarketBar", "BacktestDataCoverage", "LiveCashFutureScannerResult", "LiveCashFutureAlertHistory",
     "LiveSyntheticAlertHistory", "LiveBoxSpreadAlertHistory",
-    "LiveCalendarSpreadAlertHistory", "StrategyAutoSetting", "AlertRule", "AlertContact",
+    "LiveCalendarSpreadAlertHistory", "AlertRule", "AlertContact",
 ]
