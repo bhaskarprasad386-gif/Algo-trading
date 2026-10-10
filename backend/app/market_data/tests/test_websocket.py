@@ -185,3 +185,34 @@ def test_websocket_marks_async_handshake_as_connecting(monkeypatch):
     client.connect(1, ["101"], reconnect_attempts=0)
     assert client.connected is False
     assert client.connecting is True
+
+
+def test_websocket_failure_callbacks_notify_manager_on_error_and_close(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    failures = []
+    client.connect(1, ["101"], on_failure=failures.append)
+    socket = client.websocket
+    socket.on_error(socket, "temporary DNS failure")
+    assert failures == ["temporary DNS failure"]
+    socket.on_close(socket)
+    assert failures == ["temporary DNS failure", "socket closed"]
+
+
+def test_blocking_initial_subscribe_notifies_failure_and_does_not_stall_on_open(monkeypatch):
+    from threading import Event
+
+    release = Event()
+    class BlockingSubscribeSocket(FakeSocket):
+        def subscribe(self, correlation_id, mode, payload):
+            release.wait(timeout=1.0)
+
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", BlockingSubscribeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client._socket_operation_timeout_seconds = 0.02
+    failures = []
+    client.connect(1, ["101"], on_failure=failures.append)
+    assert failures == ["initial subscribe exceeded 0.02s"]
+    assert client.connected is False
+    release.set()
+    client.close()

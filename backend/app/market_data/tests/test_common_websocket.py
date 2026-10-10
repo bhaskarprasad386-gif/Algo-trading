@@ -450,3 +450,41 @@ def test_blocking_subscription_call_is_bounded_and_socket_is_recovered():
         BlockingSubscribeSocket.release_first_subscribe.set()
         manager.close()
         BlockingSubscribeSocket.subscribe_attempts = 0
+
+
+def test_angel_failure_callback_triggers_immediate_recovery_and_rejects_old_generation_ticks():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    seen = []
+    manager.register_callback("cash", lambda message: seen.append(message["token"]))
+    try:
+        manager.subscribe("cash", [d.key])
+        original = FakeSocket.instances[0]
+        old_connect = original.connect_calls[0]
+        old_data = old_connect["on_data"]
+        old_generation = manager._socket_generation[SocketGroup(1, 0)]
+
+        old_connect["on_failure"]("simulated Angel disconnect")
+
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and len(FakeSocket.instances) < 2:
+            time.sleep(0.01)
+        assert len(FakeSocket.instances) == 2
+        replacement = FakeSocket.instances[1]
+        new_connect = replacement.connect_calls[0]
+        new_generation = manager._socket_generation[SocketGroup(1, 0)]
+        assert new_generation > old_generation
+        assert original.closed is True
+
+        old_data({"token": "101", "exchange_type": 1})
+        assert seen == []
+        new_connect["on_data"]({"token": "101", "exchange_type": 1})
+        assert seen == ["101"]
+        snapshot = manager.snapshot()
+        assert snapshot["socket_failure_events"] == 1
+        assert snapshot["last_socket_failure"]["reason"] == "simulated Angel disconnect"
+    finally:
+        manager.close()

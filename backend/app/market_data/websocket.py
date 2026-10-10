@@ -1,7 +1,7 @@
 import math
 import time
-from threading import Lock, Thread
-from typing import Callable, Optional
+from threading import Event, Lock, Thread
+from typing import Any, Callable, Optional
 
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 
@@ -23,6 +23,7 @@ class MarketDataWebSocket:
         self.tokens: list[str] = []
         self.subscriptions: dict[int, list[str]] = {}
         self.on_data: Optional[Callable] = None
+        self.on_failure: Optional[Callable[[str], None]] = None
         self._lock = Lock()
         self._connected = False
         self._stopping = False
@@ -35,6 +36,7 @@ class MarketDataWebSocket:
         self._last_error = None
         self._reconnect_lock = Lock()
         self._auto_reconnect = bool(auto_reconnect)
+        self._socket_operation_timeout_seconds = 0.25
         self._connecting = False
 
     @property
@@ -89,7 +91,7 @@ class MarketDataWebSocket:
                 self._last_error = None
             app_logger.info("Angel One WebSocket connected")
             if self.exchange_type is not None and self.tokens:
-                socket.subscribe(self.correlation_id, self.mode, self._token_groups())
+                self._subscribe_initial_bounded(socket)
 
         def handle_data(wsapp, message):
             if self.on_data:
@@ -102,14 +104,26 @@ class MarketDataWebSocket:
                 self._error_count += 1
                 self._consecutive_failures += 1
                 self._last_error = str(error)
+                failure_callback = self.on_failure
             app_logger.error(f"Angel One WebSocket error: {error}")
+            if failure_callback is not None:
+                try:
+                    failure_callback(str(error))
+                except Exception as exc:
+                    app_logger.error(f"Angel One WebSocket failure notification failed: {exc}")
 
         def handle_close(wsapp):
             with self._lock:
                 self._connected = False
                 self._connecting = False
                 stopping = self._stopping
+                failure_callback = self.on_failure
             app_logger.warning("Angel One WebSocket connection closed")
+            if not stopping and failure_callback is not None:
+                try:
+                    failure_callback("socket closed")
+                except Exception as exc:
+                    app_logger.error(f"Angel One WebSocket close notification failed: {exc}")
             if not stopping and self._auto_reconnect:
                 self._schedule_reconnect()
 
@@ -118,6 +132,43 @@ class MarketDataWebSocket:
         socket.on_error = handle_error
         socket.on_close = handle_close
         return socket
+
+    def _subscribe_initial_bounded(self, socket: Any) -> None:
+        """Bound the SDK subscribe call made from Angel's on_open callback."""
+        completed = Event()
+        failure: dict[str, Exception] = {}
+        payload = self._token_groups()
+        correlation_id = self.correlation_id
+        mode = self.mode
+
+        def _subscribe() -> None:
+            try:
+                socket.subscribe(correlation_id, mode, payload)
+            except Exception as exc:
+                failure["exception"] = exc
+            finally:
+                completed.set()
+
+        Thread(target=_subscribe, name="angel-ws-initial-subscribe", daemon=True).start()
+        finished = completed.wait(timeout=max(0.01, self._socket_operation_timeout_seconds))
+        error = failure.get("exception")
+        if finished and error is None:
+            return
+        if not finished:
+            reason = f"initial subscribe exceeded {self._socket_operation_timeout_seconds:.2f}s"
+        else:
+            reason = f"initial subscribe failed: {type(error).__name__}: {error}"
+        app_logger.error("Angel One WebSocket %s", reason)
+        with self._lock:
+            self._connected = False
+            self._last_error = reason
+            self._consecutive_failures += 1
+            failure_callback = self.on_failure
+        if failure_callback is not None:
+            try:
+                failure_callback(reason)
+            except Exception as exc:
+                app_logger.error(f"Angel One WebSocket initial-subscribe notification failed: {exc}")
 
     def _schedule_reconnect(self) -> None:
         with self._reconnect_lock:
@@ -142,6 +193,7 @@ class MarketDataWebSocket:
             mode = self.mode
             correlation_id = self.correlation_id
             on_data = self.on_data
+            on_failure = self.on_failure
         if exchange_type is None or not tokens:
             return
         reconnect_subscriptions = dict(self.subscriptions) or {exchange_type: tokens}
@@ -151,6 +203,7 @@ class MarketDataWebSocket:
                 mode=mode,
                 correlation_id=correlation_id,
                 on_data=on_data,
+                on_failure=on_failure,
                 reconnect_attempts=self._reconnect_attempts,
                 reconnect_delay_seconds=self._reconnect_delay_seconds,
             )
@@ -167,7 +220,7 @@ class MarketDataWebSocket:
                 time.sleep(delay)
                 self._schedule_reconnect()
 
-    def connect(self, exchange_type: int | None = None, tokens: list[str] | None = None, mode: int = 1, correlation_id: str = "market-data", on_data: Optional[Callable] = None, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 2.0, subscriptions: Optional[dict[int, list[str]]] = None):
+    def connect(self, exchange_type: int | None = None, tokens: list[str] | None = None, mode: int = 1, correlation_id: str = "market-data", on_data: Optional[Callable] = None, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 2.0, subscriptions: Optional[dict[int, list[str]]] = None, on_failure: Optional[Callable[[str], None]] = None):
         """Connect and retry failed starts while preserving validated subscriptions."""
         if exchange_type is not None and (not isinstance(exchange_type, int) or isinstance(exchange_type, bool) or exchange_type <= 0):
             raise ValueError("exchange_type must be a positive integer")
@@ -192,6 +245,7 @@ class MarketDataWebSocket:
             self.mode = mode
             self.correlation_id = correlation_id.strip()
             self.on_data = on_data
+            self.on_failure = on_failure
             self._stopping = False
             self._connecting = True
             self._reconnect_attempts = reconnect_attempts
@@ -205,8 +259,9 @@ class MarketDataWebSocket:
                 self.websocket = self._build_socket()
                 self.websocket.connect()
                 with self._lock:
-                    self._consecutive_failures = 0
-                    self._last_error = None
+                    # on_open may report initial-subscription failure before connect returns.
+                    if self._connected and self._last_error is None:
+                        self._consecutive_failures = 0
                 return
             except Exception as exc:
                 last_error = exc
