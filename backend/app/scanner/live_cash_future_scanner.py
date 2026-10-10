@@ -458,15 +458,17 @@ class LiveCashFutureScanner:
         )
         cutoff_ns = now_ns - retention_ns
         for key, bucket in list(self._latest.items()):
-            received = []
             cash = bucket.get("CASH")
-            if cash:
-                received.append(int(cash.get("received_at_ns") or 0))
-            for future in bucket.get("FUTURE", {}).values():
-                received.append(int(future.get("received_at_ns") or 0))
-            if received and max(received) < cutoff_ns:
-                self._latest.pop(key, None)
+            if cash and int(cash.get("received_at_ns") or 0) < cutoff_ns:
+                bucket.pop("CASH", None)
                 self._stats["cache_evictions"] += 1
+            futures = bucket.get("FUTURE", {})
+            for month, future in list(futures.items()):
+                if int(future.get("received_at_ns") or 0) < cutoff_ns:
+                    futures.pop(month, None)
+                    self._stats["cache_evictions"] += 1
+            if not bucket.get("CASH") and not futures:
+                self._latest.pop(key, None)
         limit = max(1, int(self._max_latest_buckets))
         while len(self._latest) > limit:
             oldest_key = min(
@@ -594,6 +596,16 @@ class LiveCashFutureScanner:
             if "CASH" not in bucket or month not in futures:
                 return None
             cash, future = bucket["CASH"], futures[month]
+            # A fresh incoming leg must never revive a pair whose counterpart
+            # has aged out while the socket continued delivering only one side.
+            pair_max_age_ns = int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 1_000_000_000)
+            if (
+                now_ns - int(cash.get("received_at_ns") or 0) > pair_max_age_ns
+                or now_ns - int(future.get("received_at_ns") or 0) > pair_max_age_ns
+            ):
+                self._stats["stale_quotes"] += 1
+                self._stats["dropped"] += 1
+                return None
             self._stats["pairs"] += 1
 
         cash_ask, future_bid = cash["ask"], future["bid"]
