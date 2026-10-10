@@ -22,7 +22,7 @@ from app.market_data.persistence import DailySQLiteMarketDataRepository
 from app.backtesting.historical_catalog import HistoricalRecord
 from app.market_data.ingestion import BoundedMarketDataIngestor
 from app.market_data.bounded_buffer import BufferPriority
-from app.market_data.live_exchange_calendar import any_exchange_open, exchange_is_open
+from app.market_data.live_exchange_calendar import SUPPORTED_YEARS, any_exchange_open, exchange_is_open
 
 IST = ZoneInfo("Asia/Kolkata")
 SOURCE = "angelone-calendar-live-1s"
@@ -396,6 +396,11 @@ class LiveCalendarSpreadOneSecondCollector:
             "feed_connected": feed_connected,
             "registered_instruments": len(self._kind_by_key),
             "latest_instrument_buckets": latest_buckets,
+            "session_calendar": {
+                "supported_years": sorted(SUPPORTED_YEARS),
+                "current_year_supported": datetime.now(IST).year in SUPPORTED_YEARS,
+                "unknown_year_policy": "fail_closed",
+            },
             "feed": feed_snapshot,
             "ingestor": None if ingestor is None else ingestor.snapshot(),
             "diagnostics": stats,
