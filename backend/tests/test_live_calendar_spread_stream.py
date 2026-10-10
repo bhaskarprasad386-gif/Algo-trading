@@ -157,6 +157,9 @@ def test_calendar_persistence_enqueue_failure_does_not_block_live_callback():
         def submit_historical(self, _record, **_kwargs):
             raise TimeoutError("queue full")
 
+        def snapshot(self):
+            return {"state": "failed", "queue_depth": 0}
+
     collector._ingestor = BrokenIngestor()
     record = _calendar_test_record(
         int(datetime(2026, 10, 12, 10, 0, tzinfo=IST).timestamp() * 1_000_000_000),
