@@ -746,16 +746,19 @@ class CommonWebSocketManager:
 
     def close(self) -> None:
         self._recovery_stop.set()
-        with self._lock:
-            recovery_thread = self._recovery_thread
-            self._recovery_thread = None
-            sockets = list(self._sockets.values())
-            self._sockets.clear()
-            self._socket_tokens.clear()
-            self._socket_created_at.clear()
-            self._last_data_at.clear()
-            self._socket_generation.clear()
-        for socket in sockets:
-            self._close_socket_bounded(socket)
+        # Serialize shutdown with reconciliation/recovery so a late pass cannot
+        # publish fresh sockets after shutdown clears the active sessions.
+        with self._reconcile_lock:
+            with self._lock:
+                recovery_thread = self._recovery_thread
+                self._recovery_thread = None
+                sockets = list(self._sockets.values())
+                self._sockets.clear()
+                self._socket_tokens.clear()
+                self._socket_created_at.clear()
+                self._last_data_at.clear()
+                self._socket_generation.clear()
+            for socket in sockets:
+                self._close_socket_bounded(socket)
         if recovery_thread is not None and recovery_thread is not current_thread():
             recovery_thread.join(timeout=1.0)
