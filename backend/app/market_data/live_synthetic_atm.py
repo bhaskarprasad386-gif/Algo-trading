@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from bisect import bisect_left
 from threading import Lock
+from time import time_ns
 
 
 def concrete_strikes_from_master(
@@ -59,29 +60,39 @@ class LiveSyntheticAtmTracker:
         if not normalized:
             raise ValueError("at least one ATM symbol is required")
         self._strikes = normalized
-        self._prices: dict[str, float] = {}
+        self._prices: dict[str, tuple[float, int]] = {}
         self._lock = Lock()
 
-    def update(self, symbol: str, price: float) -> float | None:
+    def update(self, symbol: str, price: float, timestamp_ns: int | None = None) -> float | None:
         key = str(symbol).strip().upper()
         if key not in self._strikes:
             return None
         value = float(price)
         if value <= 0:
             raise ValueError("underlying price must be positive")
+        tick_ns = int(timestamp_ns) if timestamp_ns is not None else time_ns()
+        if tick_ns <= 0:
+            tick_ns = time_ns()
         with self._lock:
-            self._prices[key] = value
+            self._prices[key] = (value, tick_ns)
         return self.atm(key)
 
-    def atm(self, symbol: str, _timestamp_ns: int | None = None) -> float | None:
+    def atm(self, symbol: str, _timestamp_ns: int | None = None, *, max_age_seconds: float = 5.0) -> float | None:
         key = str(symbol).strip().upper()
         strikes = self._strikes.get(key)
         if strikes is None:
             return None
         with self._lock:
-            price = self._prices.get(key)
-        if price is None:
+            quote = self._prices.get(key)
+        if quote is None:
             return None
+        price, source_timestamp_ns = quote
+        # Apply wall-clock freshness only to epoch timestamps. Compact logical
+        # timestamps are retained for deterministic unit tests and replay fixtures.
+        if source_timestamp_ns >= 1_000_000_000_000_000:
+            age_ns = time_ns() - source_timestamp_ns
+            if age_ns < -1_000_000_000 or age_ns > int(max_age_seconds * 1_000_000_000):
+                return None
         index = bisect_left(strikes, price)
         if index == 0:
             return strikes[0]
