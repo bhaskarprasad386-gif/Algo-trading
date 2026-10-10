@@ -12,10 +12,6 @@ import kotlinx.coroutines.withContext
 
 class ScannerDetailActivity : AppCompatActivity() {
     private lateinit var tvCurrentLtpValue: TextView
-    private lateinit var tvEntryValue: TextView
-    private lateinit var tvQuantityValue: TextView
-    private lateinit var tvLivePnlValue: TextView
-    private lateinit var tvNetPnlValue: TextView
     private lateinit var tvRiskValue: TextView
 
     private val quoteHandler = Handler(Looper.getMainLooper())
@@ -23,7 +19,6 @@ class ScannerDetailActivity : AppCompatActivity() {
     private var detailSymbol = ""
     private var scannerCash = 0.0
     private var scannerNet = 0.0
-    private var scannerExecutable = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -31,10 +26,6 @@ class ScannerDetailActivity : AppCompatActivity() {
 
         findViewById<TextView>(R.id.tvDetailBack).setOnClickListener { finish() }
         tvCurrentLtpValue = findViewById(R.id.tvCurrentLtpValue)
-        tvEntryValue = findViewById(R.id.tvEntryValue)
-        tvQuantityValue = findViewById(R.id.tvQuantityValue)
-        tvLivePnlValue = findViewById(R.id.tvLivePnlValue)
-        tvNetPnlValue = findViewById(R.id.tvNetPnlValue)
         tvRiskValue = findViewById(R.id.tvRiskValue)
 
         detailSymbol = intent.getStringExtra(EXTRA_SYMBOL).orEmpty().trim().uppercase()
@@ -47,7 +38,6 @@ class ScannerDetailActivity : AppCompatActivity() {
         val capital = intent.getDoubleExtra(EXTRA_DEPLOYED_CAPITAL, 0.0)
         scannerNet = intent.getDoubleExtra(EXTRA_NET_PROFIT, 0.0)
         val roi = intent.getDoubleExtra(EXTRA_ROI_PCT, 0.0)
-        scannerExecutable = intent.getBooleanExtra(EXTRA_EXECUTABLE, false)
 
         findViewById<TextView>(R.id.tvDetailTitle).text = detailSymbol.ifBlank { "Scanner Opportunity" }
         findViewById<TextView>(R.id.tvDetailStatus).text = "SCANNER SNAPSHOT • NO EXECUTION"
@@ -82,10 +72,6 @@ class ScannerDetailActivity : AppCompatActivity() {
 
     private fun renderScannerSnapshot(future: Double, gap: Double, gapPct: Double, gross: Double, margin: Double, capital: Double, roi: Double) {
         tvCurrentLtpValue.text = if (scannerCash > 0.0) "${money(scannerCash)} • scanner snapshot" else "Awaiting live quote"
-        tvEntryValue.text = "Not executed"
-        tvQuantityValue.text = "0"
-        tvLivePnlValue.text = "₹0.00 • no active position"
-        tvNetPnlValue.text = "Awaiting executed position"
         findViewById<TextView>(R.id.tvCashValue).text = money(scannerCash)
         findViewById<TextView>(R.id.tvFutureValue).text = money(future)
         findViewById<TextView>(R.id.tvGapValue).text = "${money(gap)} (${pct(gapPct)}%)"
@@ -116,10 +102,6 @@ class ScannerDetailActivity : AppCompatActivity() {
                 quoteError = error.message ?: "Quote API error"
             }
             withContext(Dispatchers.Main) {
-                tvEntryValue.text = "No execution"
-                tvQuantityValue.text = "—"
-                tvLivePnlValue.text = "Not tracked • execution removed"
-                tvNetPnlValue.text = "No paper execution state"
                 tvCurrentLtpValue.text = if (ltp != null) "${money(ltp)} • live quote" else if (scannerCash > 0.0) "${money(scannerCash)} • scanner snapshot" else "Quote unavailable • ${quoteError ?: "unknown error"}"
                 tvRiskValue.text = "Observation only • no paper position"
                 findViewById<TextView>(R.id.tvAnalysisNote).text = "Current quote is shown for analysis. This app no longer creates, manages, or tracks paper trades."
@@ -144,6 +126,5 @@ class ScannerDetailActivity : AppCompatActivity() {
         const val EXTRA_DEPLOYED_CAPITAL = "deployed_capital"
         const val EXTRA_NET_PROFIT = "net_profit"
         const val EXTRA_ROI_PCT = "roi_pct"
-        const val EXTRA_EXECUTABLE = "executable"
     }
 }
