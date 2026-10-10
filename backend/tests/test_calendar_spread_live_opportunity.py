@@ -110,3 +110,30 @@ def test_calendar_scanner_rejects_zero_bid_or_ask_quotes():
     scanner = LiveCalendarSpreadScanner()
     assert scanner.update(rec("zero-bid", "NIFTY-CUR", 1, 0, 100)) is None
     assert scanner.update(rec("zero-ask", "NIFTY-NEAR", 2, 0, 0, expiry="2026-11-26")) is None
+
+
+def test_calendar_scanner_does_not_cross_pair_index_and_stock_future_families():
+    from dataclasses import replace
+
+    scanner = LiveCalendarSpreadScanner()
+
+    index_near = replace(
+        rec("index-near", "SAME-INDEX-NEAR", 3_000_000_000, 99, 100, lot=50, underlying="SAME", expiry="2026-10-29"),
+        payload={"contract_family": "INDEX_FUTURE"},
+    )
+    stock_near = replace(
+        rec("stock-near", "SAME-STOCK-NEAR", 3_100_000_000, 99, 100, lot=50, underlying="SAME", expiry="2026-10-22"),
+        payload={"contract_family": "STOCK_FUTURE"},
+    )
+    index_far = replace(
+        rec("index-far", "SAME-INDEX-FAR", 3_200_000_000, 104, 105, lot=50, underlying="SAME", expiry="2026-11-26"),
+        payload={"contract_family": "INDEX_FUTURE"},
+    )
+
+    assert scanner.update(index_near) is None
+    assert scanner.update(stock_near) is None
+    paired = scanner.update(index_far)
+
+    assert paired is not None
+    assert paired.near_contract_month == "2026-10-29"
+    assert paired.far_contract_month == "2026-11-26"
