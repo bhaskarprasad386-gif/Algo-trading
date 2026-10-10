@@ -20,6 +20,7 @@ class InstrumentDescriptor:
     option_type: str | None = None
     lot_size: int | None = None
     tick_size: float | None = None
+    underlying: str | None = None
 
 
 @dataclass(frozen=True)
