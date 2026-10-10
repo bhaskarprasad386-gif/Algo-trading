@@ -271,6 +271,8 @@ def test_calendar_live_sessions_apply_segment_holidays_and_partial_mcx_sessions(
     assert not collector._exchange_open("NFO", datetime(2027, 1, 4, 10, 0, tzinfo=IST))
     # Collector stays available for the MCX evening session even when NFO is shut.
     assert collector.market_open(datetime(2026, 10, 20, 18, 0, tzinfo=IST))
+    assert collector.snapshot()["session_calendar"]["supported_years"] == [2026]
+    assert collector.snapshot()["session_calendar"]["unknown_year_policy"] == "fail_closed"
 
 
 def test_calendar_source_timestamp_parser_handles_epoch_units_without_receive_time():
