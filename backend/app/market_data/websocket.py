@@ -169,6 +169,7 @@ class MarketDataWebSocket:
                 failure_callback(reason)
             except Exception as exc:
                 app_logger.error(f"Angel One WebSocket initial-subscribe notification failed: {exc}")
+
     def _schedule_reconnect(self) -> None:
         with self._reconnect_lock:
             if self._stopping:
@@ -192,6 +193,7 @@ class MarketDataWebSocket:
             mode = self.mode
             correlation_id = self.correlation_id
             on_data = self.on_data
+            on_failure = self.on_failure
         if exchange_type is None or not tokens:
             return
         reconnect_subscriptions = dict(self.subscriptions) or {exchange_type: tokens}
@@ -201,6 +203,7 @@ class MarketDataWebSocket:
                 mode=mode,
                 correlation_id=correlation_id,
                 on_data=on_data,
+                on_failure=on_failure,
                 reconnect_attempts=self._reconnect_attempts,
                 reconnect_delay_seconds=self._reconnect_delay_seconds,
             )
@@ -256,8 +259,9 @@ class MarketDataWebSocket:
                 self.websocket = self._build_socket()
                 self.websocket.connect()
                 with self._lock:
-                    self._consecutive_failures = 0
-                    self._last_error = None
+                    # on_open may report initial-subscription failure before connect returns.
+                    if self._connected and self._last_error is None:
+                        self._consecutive_failures = 0
                 return
             except Exception as exc:
                 last_error = exc
