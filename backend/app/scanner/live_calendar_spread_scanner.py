@@ -174,6 +174,7 @@ class LiveCalendarSpreadScanner:
                         self._signals.pop(key, None)
                         self._set_pair_status(
                             key, "future_pair", near=near, far=far,
+                            timestamp_ns=now_ns,
                             future_leg=leg_name, future_offset_ns=-leg_age_ns,
                         )
                         self._diagnostics["future_tick"] += 1
