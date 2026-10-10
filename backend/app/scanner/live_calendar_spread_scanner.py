@@ -78,7 +78,8 @@ class LiveCalendarSpreadScanner:
                 return None
         if not self._record_ok(record):
             return None
-        key=(str(record.underlying or record.symbol).strip().upper(), record.instrument.exchange.strip().upper(), record.instrument_type.value)
+        contract_family = str(record.payload.get("contract_family") or record.instrument_type.value).strip().upper()
+        key=(str(record.underlying or record.symbol).strip().upper(), record.instrument.exchange.strip().upper(), contract_family)
         month=(contract_month or record.expiry or "").strip()
         if not month:
             return None
@@ -160,6 +161,7 @@ class LiveCalendarSpreadScanner:
                 ltp=payload.get("ltp"),bid=payload.get("bid"),ask=payload.get("ask"),bid_qty=payload.get("bid_qty"),ask_qty=payload.get("ask_qty"),
                 volume=payload.get("volume"),oi=payload.get("oi"),open=payload.get("open"),high=payload.get("high"),low=payload.get("low"),close=payload.get("close"),
                 underlying=payload.get("underlying"),expiry=payload.get("expiry"),lot_size=payload.get("lot_size"),tick_size=payload.get("tick_size"),
+                payload={"contract_family": payload.get("contract_family")} if payload.get("contract_family") else {},
             )
             return self.update(record)
         except Exception:
