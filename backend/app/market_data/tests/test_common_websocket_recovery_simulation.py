@@ -172,9 +172,11 @@ class HangingConnectSocket(SimulatedAngelSocket):
 
     def connect(self, **kwargs):
         self.connect_calls.append(kwargs)
-        self.connecting = True
-        self.connect_started.set()
-        self.release_connect.wait(timeout=3.0)
+        # Only the first generation wedges; recovery's replacement is healthy.
+        if len(type(self).instances) == 1:
+            self.connecting = True
+            self.connect_started.set()
+            self.release_connect.wait(timeout=3.0)
         self.connecting = False
         self.connected = True
 
