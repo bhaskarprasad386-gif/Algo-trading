@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, Bell, Clock3, Database, Gauge, Radio, Save, ShieldCheck, TriangleAlert, TrendingDown, TrendingUp, WalletCards, Zap } from "lucide-react";
+import { Activity, Bell, Clock3, Database, Gauge, Radio, ShieldCheck, TriangleAlert, TrendingDown, TrendingUp, Zap } from "lucide-react";
 import Link from "next/link";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
@@ -14,7 +14,6 @@ const strategies = [
   { name: "Box Spread", detail: "Options • Box •", href: "/strategies/box-spread", icon: Gauge },
   { name: "Custom Strategy", detail: "Independent • User-defined •", href: "/strategies/custom-strategy", icon: Activity },
   { name: "Strategy Scanner", detail: "Dedicated workspaces •", href: "/scanner", icon: Radio },
-  { name: "Broker Orders", detail: "Always OFF • Paper safe •", href: "/paper-trading", icon: ShieldCheck },
 ];
 
 const health = (api: string, ws: string, feed: string, ticks: number | null, runners: Record<string, { running: boolean; detail: string }>) => [
@@ -32,8 +31,6 @@ const health = (api: string, ws: string, feed: string, ticks: number | null, run
 
 export default function HomePage() {
   const [capital, setCapital] = useState("10000000");
-  const [capitalDraft, setCapitalDraft] = useState("10000000");
-  const [capitalSaved, setCapitalSaved] = useState(false);
   const [apiStatus, setApiStatus] = useState<"checking" | "connected" | "error">("checking");
   const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [snapshot, setSnapshot] = useState({ calendar: 0, synthetic: 0, box: 0, opportunities: 0, timestamp: null as string | null, cashFutureObservedAt: null as string | null });
@@ -231,25 +228,6 @@ export default function HomePage() {
   }, []);
 
 
-  useEffect(() => {
-    const saved = window.localStorage.getItem("algo-paper-capital");
-    if (saved && Number(saved) > 0) {
-      setCapital(saved);
-      setCapitalDraft(saved);
-    }
-  }, []);
-
-  const saveCapital = () => {
-    const normalized = capitalDraft.replace(/[^0-9]/g, "");
-    if (Number(normalized) <= 0) return;
-    setCapital(normalized);
-    setCapitalDraft(normalized);
-    window.localStorage.setItem("algo-paper-capital", normalized);
-    setCapitalSaved(true);
-    window.setTimeout(() => setCapitalSaved(false), 1800);
-  };
-
-  const formattedCapital = Number(capital || 0).toLocaleString("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
   const apiLabel = apiStatus === "connected" ? "CONNECTED" : apiStatus === "error" ? "ERROR" : "CONNECTING";
   const wsLabel = wsStatus === "connected" ? "CONNECTED" : wsStatus === "error" ? "ERROR" : "CONNECTING";
   const tickRuntimeLabel = runtime.runtimeStartedAt ? new Date(runtime.runtimeStartedAt * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—";
@@ -281,7 +259,7 @@ export default function HomePage() {
       <PageTitle eyebrow="Phase 2 • Home / Command Center" title="Command Center" description="" />
       <div className="mb-5 grid gap-3 lg:grid-cols-[1fr_auto]"><Card className="rounded-2xl border theme-border theme-surface-2 p-3"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-[10px] font-bold uppercase tracking-[0.18em] theme-subtle">Exchange Sessions</div><div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-semibold"><span className={marketSession === "OPEN" ? "theme-success" : "theme-warning"}>NSE {marketSession}</span><span className="theme-subtle">•</span><span className="theme-accent">MCX session varies by contract/calendar</span></div></div><div className="text-right text-[10px] theme-subtle">Exchange hours depend on segment, contract and exchange calendar</div></div></Card><div className="flex flex-wrap justify-end gap-2">
         <div className="inline-flex items-center gap-2 rounded-full border theme-border theme-accent-bg px-3 py-1.5 text-[11px] font-semibold theme-accent"><Radio size={13} /> {feedLabel === "LIVE" ? "Live market feed LIVE" : feedLabel === "CLOSED" ? "Market closed" : `Market feed ${feedLabel.toLowerCase()}`}</div>
-        <div className="inline-flex items-center gap-2 rounded-full border theme-border theme-success-bg px-3 py-1.5 text-[11px] font-semibold theme-success"><ShieldCheck size={13} /> Paper-safe broker orders OFF</div></div></div>
+        <div className="inline-flex items-center gap-2 rounded-full border theme-border theme-success-bg px-3 py-1.5 text-[11px] font-semibold theme-success"><ShieldCheck size={13} /> Live broker orders OFF</div></div></div>
 
       <section aria-label="Market overview">
         <div className="mb-3 flex items-center gap-2"><Activity size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Market Overview</h2></div>
@@ -316,20 +294,6 @@ export default function HomePage() {
       </section>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
-        <section aria-label="Paper ledger">
-          <div className="mb-3 flex items-center gap-2"><WalletCards size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Paper Ledger</h2></div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Card className="rounded-2xl p-4">
-              <div className="flex items-center justify-between"><div className="text-[11px] font-semibold uppercase tracking-wide theme-subtle">Paper Capital • This Browser</div><WalletCards size={15} className="theme-accent" /></div>
-              <div className="mt-1 text-[16px] font-bold">{formattedCapital}</div>
-              <input inputMode="numeric" value={capitalDraft} onChange={(event) => { setCapitalDraft(event.target.value.replace(/[^0-9]/g, "")); setCapitalSaved(false); }} aria-label="Manual paper capital amount" className="mt-3 min-h-10 w-full px-3 text-xs" />
-              <button type="button" onClick={saveCapital} disabled={!capitalDraft || Number(capitalDraft) <= 0} className="mt-2 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-[var(--app-accent)] px-3 text-xs font-bold theme-text transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"><Save size={14} /> {capitalSaved ? "Saved" : "Save"}</button>
-            </Card>
-            <Card className="rounded-2xl p-4"><div className="flex gap-6"><div><div className="text-[11px] font-semibold theme-subtle">Available Balance</div><div className="mt-1 text-sm font-semibold">Not connected</div></div><div><div className="text-[11px] font-semibold theme-subtle">Today&apos;s P&amp;L</div><div className="mt-1 text-sm font-semibold">Not connected</div></div></div></Card>
-            <Card className="rounded-2xl p-4"><div className="text-[11px] font-semibold theme-subtle">Open Positions</div><div className="mt-1 text-sm font-semibold">Not connected</div></Card>
-          </div>
-        </section>
-
         <section aria-label="System health">
           <div className="mb-3 flex items-center gap-2"><Gauge size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">System Health</h2></div>
           <Card className="rounded-2xl border theme-border theme-surface-2 p-2 shadow-sm">
@@ -383,7 +347,7 @@ export default function HomePage() {
       </div>
 
       <Card className="mt-6 flex flex-col gap-3 rounded-2xl p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-start gap-3"><Database size={17} className="mt-0.5 shrink-0 theme-accent" /><div><div className="text-[13px] font-semibold">Integration Boundary</div><div className="text-[11px] theme-subtle">External broker orders remain OFF. FastAPI market data and paper-trading services are connected independently.</div></div></div>
+        <div className="flex min-w-0 items-start gap-3"><Database size={17} className="mt-0.5 shrink-0 theme-accent" /><div><div className="text-[13px] font-semibold">Integration Boundary</div><div className="text-[11px] theme-subtle">External broker orders remain OFF. FastAPI market data runs independently of broker order routing.</div></div></div>
         <button type="button" onClick={() => setConnectionsOpen(true)} className="shrink-0 rounded-xl theme-accent-bg px-3 py-2 text-[11px] font-bold theme-accent">View Connections</button>
       </Card>
       {connectionsOpen ? (
