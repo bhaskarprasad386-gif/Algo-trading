@@ -904,6 +904,7 @@ def test_missing_exchange_type_still_routes_unique_token():
         assert snapshot["missing_exchange_type_frames"] == 1
         assert snapshot["ambiguous_token_frames"] == 0
         assert snapshot["ticks_received"] == 1
+        assert snapshot["ticks_by_exchange_type"] == {"1": 1}
     finally:
         manager.close()
 
