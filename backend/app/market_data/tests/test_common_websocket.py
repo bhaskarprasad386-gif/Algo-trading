@@ -527,11 +527,81 @@ def test_recovery_rebuilds_missing_expected_group_when_socket_count_looks_comple
 def test_common_manager_disables_nested_socket_reconnect_supervisor():
     manager = CommonWebSocketManager()
     socket = manager._create_socket()
+    captured = {}
+    group = SocketGroup(1, 0)
+    socket.connect = lambda **kwargs: captured.update(kwargs)
+    with manager._lock:
+        manager._sockets[group] = socket
+        manager._socket_tokens[group] = {(1, "101")}
+        manager._socket_created_at[group] = time.monotonic()
+        manager._last_data_at[group] = time.monotonic()
+        manager._socket_generation[group] = 1
     try:
         assert isinstance(socket, MarketDataWebSocket)
         assert socket._auto_reconnect is False
+        manager._start_socket_connect(
+            socket=socket,
+            group=group,
+            pairs={(1, "101")},
+            subscriptions={1: ["101"]},
+            generation=1,
+        )
+        assert captured["reconnect_attempts"] == 0
+        assert captured["reconnect_delay_seconds"] == 0.0
     finally:
         manager.close()
+
+
+class LateSuccessfulConnectSocket(FakeSocket):
+    attempts = 0
+    release_first_connect = Event()
+    late_connect_finished = Event()
+
+    def connect(self, **kwargs):
+        self.connect_calls.append(kwargs)
+        type(self).attempts += 1
+        if type(self).attempts == 1:
+            self.connecting = True
+            type(self).release_first_connect.wait(timeout=5.0)
+            super().connect(**kwargs)
+            type(self).late_connect_finished.set()
+            return
+        super().connect(**kwargs)
+
+
+def test_late_successful_connect_is_closed_after_recovery_replaces_socket():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    LateSuccessfulConnectSocket.attempts = 0
+    LateSuccessfulConnectSocket.release_first_connect.clear()
+    LateSuccessfulConnectSocket.late_connect_finished.clear()
+    manager = CommonWebSocketManager(registry, socket_factory=LateSuccessfulConnectSocket)
+    manager._connect_call_wait_seconds = 0.05
+    manager._connect_timeout_seconds = 1.0
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [d.key])
+        original = LateSuccessfulConnectSocket.instances[0]
+        with manager._lock:
+            manager._socket_created_at[SocketGroup(1, 0)] -= 2.0
+        assert manager.recover_disconnected(min_age_seconds=0.0) == 1
+        replacement = manager._sockets[SocketGroup(1, 0)]
+        assert replacement is not original
+
+        LateSuccessfulConnectSocket.release_first_connect.set()
+        assert LateSuccessfulConnectSocket.late_connect_finished.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and original.connected:
+            time.sleep(0.01)
+        assert original.closed is True
+        assert original.connected is False
+        assert replacement.connected is True
+        assert len([item for item in LateSuccessfulConnectSocket.instances if not item.closed]) == 1
+    finally:
+        LateSuccessfulConnectSocket.release_first_connect.set()
+        manager.close()
+        LateSuccessfulConnectSocket.attempts = 0
 
 
 def test_failure_callback_invalidation_waits_for_reconcile_snapshot_to_finish():
