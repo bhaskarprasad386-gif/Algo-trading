@@ -497,7 +497,10 @@ class LiveCashFutureScanner:
             timestamp_ns = int(payload.get("source_timestamp_ns") or payload.get("exchange_timestamp") or 0)
         except (TypeError, ValueError, OverflowError):
             timestamp_ns = 0
-        if timestamp_ns <= 0 or not symbol:
+        wall_now_ns = time.time_ns()
+        # Reject corrupt far-future exchange timestamps before datetime
+        # conversion/cache indexing; allow a small clock-skew window.
+        if timestamp_ns <= 0 or not symbol or timestamp_ns > wall_now_ns + 300_000_000_000:
             with self._lock:
                 self._stats["invalid_timestamps"] += 1
                 self._stats["dropped"] += 1
