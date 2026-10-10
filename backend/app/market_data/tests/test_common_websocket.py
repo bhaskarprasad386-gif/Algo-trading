@@ -1,6 +1,7 @@
 from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
 from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
+from threading import Event
 import time
 
 
@@ -356,4 +357,49 @@ def test_recovery_replaces_socket_stuck_in_connecting_state_after_timeout():
         assert manager.snapshot()["socket_groups"] == 1
         assert manager.snapshot()["disconnected_groups"] == ["1:0"]
     finally:
+        manager.close()
+
+
+class BlockingFirstSocket(FakeSocket):
+    attempts = 0
+    release_first_connect = Event()
+
+    def connect(self, **kwargs):
+        self.connect_calls.append(kwargs)
+        type(self).attempts += 1
+        if type(self).attempts == 1:
+            self.connecting = True
+            type(self).release_first_connect.wait(timeout=5.0)
+            return
+        super().connect(**kwargs)
+
+
+def test_blocking_connect_does_not_hold_recovery_reconcile_lock():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    BlockingFirstSocket.attempts = 0
+    BlockingFirstSocket.release_first_connect.clear()
+    manager = CommonWebSocketManager(registry, socket_factory=BlockingFirstSocket)
+    manager._connect_call_wait_seconds = 0.05
+    manager._connect_timeout_seconds = 1.0
+    manager._recovery_interval_seconds = 60.0
+    try:
+        started = time.monotonic()
+        manager.subscribe("cash", [d.key])
+        assert time.monotonic() - started < 1.0
+
+        original = BlockingFirstSocket.instances[0]
+        with manager._lock:
+            manager._socket_created_at[SocketGroup(1, 0)] -= 2.0
+
+        recovered = manager.recover_disconnected(min_age_seconds=0.0)
+
+        assert recovered == 1
+        assert original.closed is True
+        assert len(BlockingFirstSocket.instances) == 2
+        assert manager.snapshot()["socket_groups"] == 1
+        assert manager.snapshot()["connected_groups"] == ["1:0"]
+    finally:
+        BlockingFirstSocket.release_first_connect.set()
         manager.close()
