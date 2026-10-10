@@ -202,9 +202,14 @@ class LiveCalendarSpreadScanner:
                 legs=(OpportunityLeg(near,OrderSide.SELL,"near-entry"),OpportunityLeg(far,OrderSide.BUY,"far-entry"))
             lot = int(near.lot_size)
             gross = gross_profit_from_points(gap, lot)
-            nq = min(float(near.bid_qty or 0), float(near.ask_qty or 0))
-            fq = min(float(far.bid_qty or 0), float(far.ask_qty or 0))
-            liquidity = min(nq, fq) if nq > 0 and fq > 0 else 0.0
+            # Liquidity must reflect only the two sides actually executed
+            # by the selected direction; missing depth on unused sides must
+            # not suppress an otherwise executable calendar spread.
+            if direction == "LONG_NEAR_SHORT_FAR":
+                liquidity = min(float(near.ask_qty or 0), float(far.bid_qty or 0))
+            else:
+                liquidity = min(float(near.bid_qty or 0), float(far.ask_qty or 0))
+            liquidity = liquidity if liquidity > 0 else 0.0
             # Do not manufacture an OpportunitySignal when depth is absent.
             # The opportunity model independently enforces configured thresholds.
             if liquidity <= 0:
