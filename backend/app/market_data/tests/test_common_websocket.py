@@ -488,3 +488,31 @@ def test_angel_failure_callback_triggers_immediate_recovery_and_rejects_old_gene
         assert snapshot["last_socket_failure"]["reason"] == "simulated Angel disconnect"
     finally:
         manager.close()
+
+
+def test_recovery_detects_missing_required_shard_when_unexpected_group_masks_count():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor(str(i)) for i in range(1001)]
+    registry.register_many(descriptors)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    try:
+        manager.subscribe("cash", [d.key for d in descriptors])
+        missing = SocketGroup(1, 1)
+        unexpected = SocketGroup(1, 99)
+        with manager._lock:
+            manager._sockets[unexpected] = manager._sockets.pop(missing)
+            manager._socket_tokens[unexpected] = manager._socket_tokens.pop(missing)
+            manager._socket_created_at[unexpected] = manager._socket_created_at.pop(missing)
+            manager._last_data_at[unexpected] = manager._last_data_at.pop(missing)
+            manager._socket_generation[unexpected] = manager._socket_generation.pop(missing)
+
+        # Two tracked groups remain for two expected shards, but shard 1 is absent.
+        assert manager.snapshot()["socket_groups"] == 2
+        manager.recover_disconnected(min_age_seconds=0.0)
+
+        assert SocketGroup(1, 1) in manager._sockets
+        assert unexpected not in manager._sockets
+        assert manager.snapshot()["socket_groups"] == 2
+        assert manager.snapshot()["connected_groups"] == ["1:0", "1:1"]
+    finally:
+        manager.close()
