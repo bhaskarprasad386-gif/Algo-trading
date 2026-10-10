@@ -15,13 +15,17 @@ def test_common_feed_tracks_in_memory_tick_telemetry_without_persistence():
     manager.registry.subscribe("test", key, mode=3)
     group = SocketGroup(3, 0)
     manager._route_index = {group: {(1, "123"): [("test", key)]}}
+    # _on_data intentionally ignores ticks from absent/stale socket groups.
+    # Model an active socket generation as the production connect callback does.
+    manager._sockets[group] = object()
+    manager._socket_generation[group] = 1
     manager._normalizer.normalize = lambda _descriptor, _message: SimpleNamespace(
         instrument=key, symbol="TEST", timestamp_ns=123456789, ltp=101.5, bid=101.4, ask=101.6,
     )
 
     manager.register_normalized_callback("test", lambda _record: None)
 
-    manager._on_data(group, {"token": "123", "exchange_type": 1})
+    manager._on_data(group, {"token": "123", "exchange_type": 1}, generation=1)
 
     snapshot = manager.snapshot()
     assert snapshot["ticks_received"] == 1
