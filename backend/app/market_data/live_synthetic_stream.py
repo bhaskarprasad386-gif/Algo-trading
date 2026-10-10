@@ -192,7 +192,7 @@ class LiveSyntheticOptionFutureRecorder:
                 with self._lock:
                     self._callback_errors += 1
                 app_logger.exception(
-                    "Synthetic observation callback failed for %s token=%s: %s",
+                    "Synthetic observation callback failed for {} token={}: {}",
                     record.symbol, record.instrument.token, exc,
                 )
         if self._ingestor is not None:
@@ -271,7 +271,7 @@ class LiveSyntheticOptionFutureRecorder:
                 else:
                     sleep(5)
             except Exception as exc:
-                app_logger.exception("Synthetic option/future recorder session failed: %s", exc)
+                app_logger.exception("Synthetic option/future recorder session failed: {}", exc)
                 sleep(10)
 
     def snapshot(self) -> dict[str, Any]:
