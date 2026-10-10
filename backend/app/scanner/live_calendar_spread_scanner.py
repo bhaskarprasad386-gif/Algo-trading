@@ -338,8 +338,15 @@ class LiveCalendarSpreadScanner:
         with self._lock:
             statuses = [dict(item) for item in self._pair_status.values()]
             counters = dict(self._diagnostics)
-        statuses = [item for item in statuses
-                    if 0 <= now_ns - int(item.get("timestamp_ns") or 0) <= self.SNAPSHOT_MAX_AGE_NS]
+        # The live update path accepts exchange timestamps up to the configured
+        # skew tolerance into the future. Keep those statuses visible too; a small
+        # clock offset must not make diagnostics disappear immediately.
+        statuses = [
+            item for item in statuses
+            if -self.TIMESTAMP_TOLERANCE_NS
+            <= now_ns - int(item.get("timestamp_ns") or 0)
+            <= self.SNAPSHOT_MAX_AGE_NS
+        ]
         statuses.sort(key=lambda item: int(item.get("timestamp_ns") or 0), reverse=True)
         return {"counters": counters, "pairs": statuses[:limit]}
 
