@@ -331,11 +331,28 @@ class LiveCalendarSpreadOneSecondCollector:
         with self._lock:
             stats = dict(self._stats)
             latest_buckets = len(self._latest)
+        worker = getattr(self, "_runner_worker", None)
+        worker_alive = bool(worker is not None and worker.is_alive())
+        stop_requested = self.stop_event.is_set()
+        feed_snapshot = None if feed is None else feed.snapshot()
+        feed_connected = bool(
+            isinstance(feed_snapshot, dict)
+            and (
+                feed_snapshot.get("connected")
+                or feed_snapshot.get("is_connected")
+                or feed_snapshot.get("connected_groups")
+            )
+        )
         return {
-            "running": not self.stop_event.is_set(),
+            # "running" means the actual supervisor worker is alive, not merely
+            # that stop() has not been requested yet.
+            "running": worker_alive and not stop_requested,
+            "worker_alive": worker_alive,
+            "stop_requested": stop_requested,
+            "feed_connected": feed_connected,
             "registered_instruments": len(self._kind_by_key),
             "latest_instrument_buckets": latest_buckets,
-            "feed": None if feed is None else feed.snapshot(),
+            "feed": feed_snapshot,
             "ingestor": None if ingestor is None else ingestor.snapshot(),
             "diagnostics": stats,
         }
