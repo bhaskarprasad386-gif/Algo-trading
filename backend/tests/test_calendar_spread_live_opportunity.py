@@ -154,9 +154,8 @@ def test_calendar_invalidates_old_signal_when_latest_pair_has_no_positive_edge()
     import time
 
     scanner = LiveCalendarSpreadScanner()
-    # Keep fixture timestamps behind wall clock so diagnostics_snapshot()'s
-    # live freshness filter does not hide the pair as slightly future-dated.
-    ts = time.time_ns() - 1_000_000_000
+    # Exercise diagnostics for an exchange timestamp within the allowed +1s skew.
+    ts = time.time_ns() + 500_000_000
     near = rec("invalidate-near", "NIFTY-CUR", ts, 99, 100, expiry="2026-10-29")
     far = rec("invalidate-far", "NIFTY-NEAR", ts + 100_000_000, 104, 105, expiry="2026-11-26")
     scanner.update(near)
