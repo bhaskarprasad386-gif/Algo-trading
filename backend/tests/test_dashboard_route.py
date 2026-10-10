@@ -16,39 +16,14 @@ def test_dashboard_serves_html_and_scanner_connector():
     assert "/api/v1/scanner/cash-future/live/fast" in body
 
 
-def test_dashboard_contains_paper_execution_connectors():
+def test_dashboard_does_not_expose_paper_execution_controls():
     response = dashboard()
     body = response.body.decode("utf-8")
-    assert "/api/v1/execution/paper/entry" in body
-    assert "/api/v1/execution/paper/position" in body
-    assert "/api/v1/execution/paper/exit" in body
-    assert '"price",exit' in body or 'price:exit' in body
-    # Live Paper Trading now intentionally renders P&L percentage; the legacy
-    # paper execution connector contract above remains unchanged.
-    assert "livePaperState.ongoing_pnl" in body
-    assert "x.pnl_pct" in body
-
-
-def test_dashboard_contains_paper_position_check_ui():
-    response = dashboard()
-    body = response.body.decode("utf-8")
-    assert 'onclick="paperPosition()"' in body
-    assert "Check Position" in body
-    assert "CHECKING PAPER POSITION…" in body
-    assert "PAPER POSITION ACTIVE" in body
-    assert "No active paper position." in body
-
-
-def test_dashboard_paper_actions_have_busy_state_protection():
-    response = dashboard()
-    body = response.body.decode("utf-8")
-    assert 'const paperButtons=[\'paperEntryBtn\',\'paperPositionBtn\',\'paperExitBtn\'];' in body
-    assert 'function setPaperBusy(busy,message)' in body
-    assert 'document.getElementById(id).disabled=busy' in body
-    assert "setPaperBusy(true,'PAPER ENTRY IN PROGRESS…')" in body
-    assert "setPaperBusy(true,'CHECKING PAPER POSITION…')" in body
-    assert "setPaperBusy(true,'PAPER EXIT IN PROGRESS…')" in body
-    assert "finally{setPaperBusy(false)}" in body
+    assert "/api/v1/execution/paper/" not in body
+    assert "/api/v1/live-paper/" not in body
+    assert "PAPER ENTRY" not in body
+    assert "PAPER EXIT" not in body
+    assert "Paper Portfolio" not in body
 
 
 def test_dashboard_scanner_has_busy_state_protection():
