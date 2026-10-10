@@ -746,7 +746,6 @@ class CommonWebSocketManager:
             if matching:
                 self._ticks_received += 1
                 self._ticks_by_exchange[str(exchange_type or "unknown")] += 1
-        delivered_to_consumer = False
         for callback in {id(cb): cb for cb in raw_callbacks if cb is not None}.values():
             with self._lock:
                 self._raw_callback_attempts += 1
@@ -755,7 +754,6 @@ class CommonWebSocketManager:
                 with self._lock:
                     self._raw_callback_successes += 1
                     self._last_data_at[group] = time.monotonic()
-                delivered_to_consumer = True
             except Exception as exc:
                 with self._lock:
                     self._delivery_errors += 1
@@ -799,7 +797,6 @@ class CommonWebSocketManager:
                 with self._lock:
                     self._normalized_records_delivered += 1
                     self._last_data_at[group] = time.monotonic()
-                delivered_to_consumer = True
             except (TypeError, ValueError, OverflowError) as exc:
                 with self._lock:
                     self._normalizer_errors += 1
