@@ -287,13 +287,29 @@ class CommonWebSocketManager:
 
         def _connect() -> None:
             try:
-                socket.connect(
-                    mode=group.mode,
-                    subscriptions=subscriptions,
-                    correlation_id=f"common-{group.mode}-{group.shard}",
-                    on_data=lambda message: self._on_data(group, message, generation),
-                    on_failure=lambda reason: self._schedule_socket_failure_recovery(group, socket, generation, reason),
-                )
+                connect_kwargs = {
+                    "mode": group.mode,
+                    "subscriptions": subscriptions,
+                    "correlation_id": f"common-{group.mode}-{group.shard}",
+                    "on_data": lambda message: self._on_data(group, message, generation),
+                    "on_failure": lambda reason: self._schedule_socket_failure_recovery(group, socket, generation, reason),
+                }
+                if isinstance(socket, MarketDataWebSocket):
+                    # The manager owns reconnect policy. Do not let the wrapper
+                    # perform several hidden retries before supervisor recovery.
+                    connect_kwargs["reconnect_attempts"] = 0
+                    connect_kwargs["reconnect_delay_seconds"] = 0.0
+                socket.connect(**connect_kwargs)
+                # A timed-out connect worker can finish after recovery has
+                # already installed a replacement. Never leave that late,
+                # successfully connected socket alive as an orphan session.
+                with self._lock:
+                    is_current_after_connect = (
+                        self._sockets.get(group) is socket
+                        and self._socket_generation.get(group) == generation
+                    )
+                if not is_current_after_connect:
+                    self._close_socket_bounded(socket)
             except Exception as exc:
                 failure["exception"] = exc
                 # Keep this exception path non-blocking: _start_socket_connect
