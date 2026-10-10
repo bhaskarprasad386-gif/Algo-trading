@@ -564,3 +564,46 @@ def test_failure_callback_invalidation_waits_for_reconcile_snapshot_to_finish():
         assert original.closed is True
     finally:
         manager.close()
+
+
+
+class GuardedSocket(FakeSocket):
+    forbidden_socket = None
+    created_while_forbidden_open = False
+
+    def __init__(self):
+        if self.forbidden_socket is not None and not self.forbidden_socket.closed:
+            type(self).created_while_forbidden_open = True
+        super().__init__()
+
+
+def test_recovery_closes_unexpected_group_before_opening_missing_shard():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor(str(i)) for i in range(3)]
+    registry.register_many(descriptors)
+    GuardedSocket.forbidden_socket = None
+    GuardedSocket.created_while_forbidden_open = False
+    manager = CommonWebSocketManager(registry, socket_factory=GuardedSocket)
+    manager._max_tokens_per_socket = 1
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [item.key for item in descriptors])
+        expected = {SocketGroup(1, 0), SocketGroup(1, 1), SocketGroup(1, 2)}
+        assert set(manager._sockets) == expected
+        unexpected_socket = manager._sockets.pop(SocketGroup(1, 2))
+        manager._sockets[SocketGroup(1, 9)] = unexpected_socket
+        manager._socket_tokens[SocketGroup(1, 9)] = manager._socket_tokens.pop(SocketGroup(1, 2))
+        manager._socket_created_at[SocketGroup(1, 9)] = manager._socket_created_at.pop(SocketGroup(1, 2))
+        manager._last_data_at[SocketGroup(1, 9)] = manager._last_data_at.pop(SocketGroup(1, 2))
+        manager._socket_generation[SocketGroup(1, 9)] = manager._socket_generation.pop(SocketGroup(1, 2))
+        GuardedSocket.forbidden_socket = unexpected_socket
+
+        manager.recover_disconnected(min_age_seconds=0.0)
+
+        assert unexpected_socket.closed is True
+        assert GuardedSocket.created_while_forbidden_open is False
+        assert set(manager._sockets) == expected
+        assert len([s for s in GuardedSocket.instances if not s.closed]) == 3
+    finally:
+        manager.close()
+        GuardedSocket.forbidden_socket = None
