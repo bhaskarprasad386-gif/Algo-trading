@@ -85,7 +85,6 @@ class CommonWebSocketManager:
         self._recovery_attempts = 0
         self._last_recovery_at = None
 
-    @staticmethod
     def _create_socket(self) -> Any:
         """Create a socket whose reconnect policy is owned by this manager."""
         if self._socket_factory is MarketDataWebSocket:
@@ -95,6 +94,7 @@ class CommonWebSocketManager:
             return self._socket_factory(auto_reconnect=False)
         return self._socket_factory()
 
+    @staticmethod
     def _default_exchange_type(key: InstrumentKey) -> int:
         value = key.exchange.strip().upper()
         mapping = {"NSE": 1, "NFO": 2, "BSE": 3, "BFO": 4, "MCX": 5, "NCDEX": 7}
