@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Bell, Bot, BriefcaseBusiness, ChartNoAxesCombined, Clock3, Home, Menu, Settings2, WalletCards, X } from "lucide-react";
+import { Activity, Bell, BriefcaseBusiness, ChartNoAxesCombined, Clock3, Home, Menu, Settings2, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { themeOptions, useTheme, type ThemeName } from "@/components/theme-provider";
 
@@ -14,8 +14,6 @@ const nav = [
   { href: "/strategies/box-spread", label: "Box Scanner", icon: Activity },
   { href: "/strategies/custom-strategy", label: "Custom Scanner", icon: Activity },
   { href: "/custom-alert", label: "Custom Alert", icon: Bell },
-  { href: "/paper-trading", label: "Paper Trading", icon: WalletCards },
-  { href: "/auto-paper", label: "Auto Paper Trading", icon: Bot },
   { href: "/positions", label: "Positions", icon: BriefcaseBusiness },
   { href: "/completed-trades", label: "Completed Trades", icon: ChartNoAxesCombined },
   { href: "/history", label: "History", icon: Clock3 },
