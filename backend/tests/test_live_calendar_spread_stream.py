@@ -154,7 +154,7 @@ def test_calendar_persistence_enqueue_failure_does_not_block_live_callback():
     collector.on_observation = emitted.append
 
     class BrokenIngestor:
-        def submit_historical(self, _record):
+        def submit_historical(self, _record, **_kwargs):
             raise TimeoutError("queue full")
 
     collector._ingestor = BrokenIngestor()
