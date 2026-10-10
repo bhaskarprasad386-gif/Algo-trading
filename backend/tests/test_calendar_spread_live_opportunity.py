@@ -261,3 +261,18 @@ def test_calendar_invalid_latest_quote_removes_that_expiry_from_pairing_state():
     next_far = rec("invalid-far", "NIFTY-NEAR", ts + 300_000_000, 104, 105, expiry="2026-11-26")
     assert scanner.update(next_far) is None
     assert scanner.snapshot() == ()
+
+
+def test_calendar_capacity_uses_calendar_specific_capital(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "LIVE_CALENDAR_SPREAD_CAPITAL", 1_050_000.0)
+    monkeypatch.setattr(settings, "LIVE_CASH_FUTURE_CAPITAL", 100.0)
+    scanner = LiveCalendarSpreadScanner()
+    near = rec("capital-near", "NIFTY-CUR", 1, 99, 100)
+    far = rec("capital-far", "NIFTY-NEAR", 1, 104, 105, expiry="2026-11-26")
+    scanner.update(near)
+    result = scanner.update(far)
+
+    assert result is not None
+    assert result.capacity_lots == 200  # 1,050,000 / (105 * 50)
