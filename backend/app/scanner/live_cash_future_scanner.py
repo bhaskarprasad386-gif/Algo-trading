@@ -767,14 +767,18 @@ class LiveCashFutureScanner:
         now_ns = int(datetime.now(IST).timestamp() * 1_000_000_000)
         cutoff = int(now_ns - max_age_seconds * 1_000_000_000)
         with self._lock:
-            signals = [
+            fresh_signals = [
                 signal for signal in self._signals.values()
-                if signal.received_at_ns >= cutoff and signal.eligible
+                if signal.received_at_ns >= cutoff
             ]
+        # Only eligible signals are emitted, but a fresh near contract can still
+        # provide comparison context for a current contract even when its own
+        # executable edge is below the opportunity threshold.
+        signals = [signal for signal in fresh_signals if signal.eligible]
         signals.sort(key=lambda item: (-item.gap_pct, item.symbol, item.contract_month))
         rank_scores = self._rank(signals)
         by_symbol: dict[str, list[LiveCashFutureSignal]] = {}
-        for signal in signals:
+        for signal in fresh_signals:
             by_symbol.setdefault(signal.symbol, []).append(signal)
 
         data: list[dict] = []
