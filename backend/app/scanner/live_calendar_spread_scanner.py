@@ -60,7 +60,7 @@ class LiveCalendarSpreadScanner:
         self._signals: dict[tuple[str,str,str], CalendarSpreadSignal] = {}
         self._pair_status: dict[tuple[str,str,str], dict] = {}
         self._diagnostics = {
-            "invalid_quote": 0, "stale_tick": 0, "future_tick": 0,
+            "invalid_quote": 0, "stale_tick": 0, "stale_pair": 0, "future_tick": 0,
             "waiting_for_second_expiry": 0, "timestamp_mismatch": 0, "insufficient_depth": 0,
             "lot_size_mismatch": 0, "no_positive_edge": 0,
             "qualified": 0, "side_effect_queue_dropped": 0,
@@ -154,6 +154,29 @@ class LiveCalendarSpreadScanner:
                                       timestamp_skew_ns=abs(near.timestamp_ns-far.timestamp_ns))
                 self._diagnostics["timestamp_mismatch"] += 1
                 return None
+            # The incoming tick can be fresh while the stored counterpart has
+            # aged out. Never create/persist/alert on a pair unless both legs
+            # are independently inside the live freshness window.
+            now_ns = time.time_ns()
+            for leg_name, leg in (("near", near), ("far", far)):
+                if leg.timestamp_ns >= 1_000_000_000_000_000:
+                    leg_age_ns = now_ns - leg.timestamp_ns
+                    if leg_age_ns > self.SNAPSHOT_MAX_AGE_NS:
+                        self._signals.pop(key, None)
+                        self._set_pair_status(
+                            key, "stale_pair", near=near, far=far,
+                            stale_leg=leg_name, stale_age_ns=leg_age_ns,
+                        )
+                        self._diagnostics["stale_pair"] += 1
+                        return None
+                    if leg_age_ns < -self.TIMESTAMP_TOLERANCE_NS:
+                        self._signals.pop(key, None)
+                        self._set_pair_status(
+                            key, "future_pair", near=near, far=far,
+                            future_leg=leg_name, future_offset_ns=-leg_age_ns,
+                        )
+                        self._diagnostics["future_tick"] += 1
+                        return None
             if near.lot_size != far.lot_size or near.instrument.exchange != far.instrument.exchange:
                 self._signals.pop(key, None)
                 self._set_pair_status(key, "lot_size_mismatch", near=near, far=far)
