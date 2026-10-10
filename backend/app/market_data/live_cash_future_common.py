@@ -73,6 +73,8 @@ class LiveCashFutureCommonRunner:
         self._payload_callbacks = 0
         self._scanner_updates = 0
         self._scanner_results = 0
+        self._records_missing_executable_quote = 0
+        self._scanner_rejections = 0
 
     @property
     def last_result(self) -> CashFutureScanResult | None:
@@ -90,6 +92,10 @@ class LiveCashFutureCommonRunner:
             "payload_callbacks": self._payload_callbacks,
             "scanner_updates": self._scanner_updates,
             "scanner_results": self._scanner_results,
+            "records_missing_executable_quote": self._records_missing_executable_quote,
+            "scanner_rejections": self._scanner_rejections,
+            "scanner_out_of_order_records": getattr(self.scanner, "out_of_order_records", 0),
+            "scanner_stale_pair_rejections": getattr(self.scanner, "stale_pair_rejections", 0),
         }
 
     def _build_descriptors(self) -> tuple[InstrumentDescriptor, ...]:
@@ -269,7 +275,11 @@ class LiveCashFutureCommonRunner:
                 record,
                 contract_month=meta["contract_month"],
             )
-        except ValueError:
+        except ValueError as exc:
+            if "two-sided executable quote" in str(exc):
+                self._records_missing_executable_quote += 1
+            else:
+                self._scanner_rejections += 1
             return
         if result is not None and result.signal.qualifies:
             self._scanner_results += 1
