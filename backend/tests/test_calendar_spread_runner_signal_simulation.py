@@ -74,3 +74,17 @@ def test_calendar_runner_feed_bucket_to_executable_signal(monkeypatch):
     assert signal.qualifies is True
     assert signal.signal.metadata["live_orders"] is False
     assert signal.signal.metadata["source"] == "common-market-data"
+
+
+def test_calendar_signal_snapshot_keeps_allowed_future_timestamp():
+    scanner = LiveCalendarSpreadScanner(minimum_gap_points=3, minimum_gross_profit=150)
+    future_ns = time.time_ns() + 500_000_000
+    near = _record("near-token", "NIFTY-NEAR", "2026-10-29", future_ns, 99, 100)
+    far = _record("far-token", "NIFTY-FAR", "2026-11-26", future_ns, 104, 105)
+
+    assert scanner.update(near) is None
+    signal = scanner.update(far)
+
+    assert signal is not None
+    assert len(scanner.snapshot()) == 1
+    assert len(scanner.pair_snapshot()) == 1
