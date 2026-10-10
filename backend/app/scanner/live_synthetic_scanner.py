@@ -58,8 +58,10 @@ class LiveSyntheticScanner:
         # Only wall-clock epoch timestamps are eligible for the live freshness guard.
         # Compact logical timestamps remain valid for deterministic scanner tests.
         import time
-        if timestamp_ns >= 1_000_000_000_000_000 and time.time_ns() - timestamp_ns > 5_000_000_000:
-            return ()
+        if timestamp_ns >= 1_000_000_000_000_000:
+            age_ns = time.time_ns() - timestamp_ns
+            if age_ns > 5_000_000_000 or age_ns < -1_000_000_000:
+                return ()
         if not symbol or cls not in {"STOCK", "INDEX"}:
             return ()
         bid = self._price(payload.get("bid"))
