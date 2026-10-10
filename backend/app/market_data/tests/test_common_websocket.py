@@ -677,3 +677,28 @@ def test_recovery_closes_unexpected_group_before_opening_missing_shard():
     finally:
         manager.close()
         GuardedSocket.forbidden_socket = None
+
+
+
+def test_closed_manager_does_not_reopen_sockets_from_late_recovery():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    manager.subscribe("cash", [d.key])
+    assert len(FakeSocket.instances) == 1
+
+    manager.close()
+    assert manager.snapshot()["socket_groups"] == 0
+    assert manager.recover_disconnected(min_age_seconds=0.0) == 0
+    time.sleep(0.05)
+    assert manager.snapshot()["socket_groups"] == 0
+    assert len([item for item in FakeSocket.instances if not item.closed]) == 0
+
+    try:
+        manager.subscribe("cash", [d.key])
+    except RuntimeError as exc:
+        assert "closed" in str(exc)
+    else:
+        raise AssertionError("closed manager must reject new subscriptions")
