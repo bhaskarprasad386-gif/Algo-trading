@@ -9,10 +9,15 @@ ArbitrageKind = Literal["BOX", "SYNTHETIC_CASH_CARRY", "CASH_CARRY"]
 @dataclass(frozen=True)
 class OptionQuote:
     timestamp_ns:int; underlying:str; expiry:int; strike:float; call_bid:float; call_ask:float; put_bid:float; put_ask:float; lot_size:int=1; instrument_class:Literal["STOCK","INDEX"]="STOCK"; volume:int=0; oi:int=0
+    # Live provenance/depth fields are optional so historical callers remain compatible.
+    call_timestamp_ns:int|None=None; put_timestamp_ns:int|None=None
+    call_bid_qty:int|None=None; call_ask_qty:int|None=None; put_bid_qty:int|None=None; put_ask_qty:int|None=None
+    put_volume:int|None=None; put_oi:int|None=None
 
 @dataclass(frozen=True)
 class FutureQuote:
     timestamp_ns:int; underlying:str; expiry:int; bid:float; ask:float; lot_size:int=1; instrument_class:Literal["STOCK","INDEX"]="STOCK"; volume:int=0; oi:int=0
+    source_timestamp_ns:int|None=None; bid_qty:int|None=None; ask_qty:int|None=None
 
 @dataclass(frozen=True)
 class LiquidityPolicy:
@@ -38,6 +43,14 @@ def _validate_option_quote(quote:OptionQuote)->None:
     if isinstance(quote.expiry,bool) or not isinstance(quote.expiry,int) or quote.expiry<0: raise ValueError("option expiry must be a non-negative integer")
     values=(quote.strike,quote.call_bid,quote.call_ask,quote.put_bid,quote.put_ask)
     if not all(isinstance(v,(int,float)) and not isinstance(v,bool) and isfinite(float(v)) for v in values): raise ValueError("option prices and strike must be finite")
+    for name in ("call_timestamp_ns", "put_timestamp_ns"):
+        value=getattr(quote,name)
+        if value is not None and (type(value) is not int or value < 0): raise ValueError(f"{name} must be a non-negative integer")
+    for name in ("call_bid_qty", "call_ask_qty", "put_bid_qty", "put_ask_qty"):
+        value=getattr(quote,name)
+        if value is not None and (type(value) is not int or value < 0): raise ValueError(f"{name} must be a non-negative integer")
+    if quote.put_volume is not None and (type(quote.put_volume) is not int or quote.put_volume < 0): raise ValueError("put_volume must be non-negative")
+    if quote.put_oi is not None and (type(quote.put_oi) is not int or quote.put_oi < 0): raise ValueError("put_oi must be non-negative")
     if quote.strike<=0: raise ValueError("option strike must be positive")
     if quote.call_bid<0 or quote.put_bid<0 or quote.call_ask<=0 or quote.put_ask<=0 or quote.call_ask<quote.call_bid or quote.put_ask<quote.put_bid: raise ValueError("invalid executable option bid/ask")
     if quote.instrument_class not in {"STOCK","INDEX"}: raise ValueError("invalid option instrument_class")
@@ -53,6 +66,10 @@ def _validate_future_quote(future:FutureQuote)->None:
     if future.instrument_class not in {"STOCK","INDEX"}: raise ValueError("invalid future instrument_class")
     if type(future.lot_size) is not int or future.lot_size<=0: raise ValueError("future lot_size must be a positive integer")
     if type(future.volume) is not int or future.volume<0 or type(future.oi) is not int or future.oi<0: raise ValueError("future volume and oi must be non-negative integers")
+    if future.source_timestamp_ns is not None and (type(future.source_timestamp_ns) is not int or future.source_timestamp_ns < 0): raise ValueError("future source timestamp must be non-negative")
+    for name in ("bid_qty", "ask_qty"):
+        value=getattr(future,name)
+        if value is not None and (type(value) is not int or value < 0): raise ValueError(f"{name} must be a non-negative integer")
 
 def _validate_direction(direction:str)->None:
     if direction not in ("LONG","SHORT"): raise ValueError("direction must be LONG or SHORT")
