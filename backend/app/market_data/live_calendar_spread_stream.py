@@ -100,6 +100,16 @@ class LiveCalendarSpreadOneSecondCollector:
         self._lock = Lock()
         self._ingestor = None
         self._repository = None
+        self._stats = {
+            "records_received": 0,
+            "records_emitted": 0,
+            "out_of_session_dropped": 0,
+            "out_of_order_dropped": 0,
+            "same_second_updates": 0,
+            "same_second_weaker_dropped": 0,
+            "persistence_errors": 0,
+            "callback_errors": 0,
+        }
 
     @staticmethod
     def market_open(now: datetime | None = None) -> bool:
@@ -158,18 +168,41 @@ class LiveCalendarSpreadOneSecondCollector:
 
     def _observe_record(self, record) -> None:
         exchange = record.instrument.exchange.strip().upper()
+        with self._lock:
+            self._stats["records_received"] += 1
         local = datetime.fromtimestamp(record.timestamp_ns / 1_000_000_000, tz=ZoneInfo("UTC")).astimezone(IST)
         if not self._exchange_open(exchange, local):
+            with self._lock:
+                self._stats["out_of_session_dropped"] += 1
             return
         key = (exchange, record.instrument.token.strip())
         second = (record.timestamp_ns // 1_000_000_000) * 1_000_000_000
+        previous_to_emit = None
         with self._lock:
             previous = self._latest.get(key)
+            if previous is not None and second < previous[0]:
+                self._stats["out_of_order_dropped"] += 1
+                return
             if previous is not None and previous[0] == second:
+                old_record = previous[1]
+                old_valid = bool(getattr(old_record, "is_executable_quote", False))
+                new_valid = bool(getattr(record, "is_executable_quote", False))
+                if record.timestamp_ns <= old_record.timestamp_ns:
+                    self._stats["out_of_order_dropped"] += 1
+                    return
+                # Preserve an executable quote if a later tick in this second
+                # has missing depth; otherwise keep the newest observation.
+                if old_valid and not new_valid:
+                    self._stats["same_second_weaker_dropped"] += 1
+                    return
+                self._latest[key] = (second, record)
+                self._stats["same_second_updates"] += 1
                 return
             self._latest[key] = (second, record)
-        if previous is not None:
-            self._emit(previous[1], previous[0])
+            if previous is not None:
+                previous_to_emit = previous
+        if previous_to_emit is not None:
+            self._emit(previous_to_emit[1], previous_to_emit[0])
 
     def _emit(self, record, timestamp_ns: int) -> None:
         payload = record.as_dict()
@@ -180,19 +213,30 @@ class LiveCalendarSpreadOneSecondCollector:
         if record.expiry:
             payload["contract_month"] = record.expiry[:7]
         if self._ingestor is not None:
-            self._ingestor.submit_historical(
-                HistoricalRecord(
-                    source=SOURCE,
-                    instrument=f"{record.instrument.exchange}:{record.instrument.token}:{record.symbol}",
-                    timeframe=TIMEFRAME,
-                    timestamp_ns=timestamp_ns,
-                    payload=payload,
+            try:
+                self._ingestor.submit_historical(
+                    HistoricalRecord(
+                        source=SOURCE,
+                        instrument=f"{record.instrument.exchange}:{record.instrument.token}:{record.symbol}",
+                        timeframe=TIMEFRAME,
+                        timestamp_ns=timestamp_ns,
+                        payload=payload,
+                    )
                 )
-            )
+            except Exception as exc:
+                # Persistence is optional; a saturated or failed writer must
+                # never prevent the in-memory live scanner from receiving ticks.
+                with self._lock:
+                    self._stats["persistence_errors"] += 1
+                app_logger.error(f"Calendar Spread persistence enqueue failed; live callback will continue: {exc}")
+        with self._lock:
+            self._stats["records_emitted"] += 1
         if self.on_observation is not None:
             try:
                 self.on_observation(payload)
             except Exception as exc:
+                with self._lock:
+                    self._stats["callback_errors"] += 1
                 app_logger.warning(f"Calendar Spread live scanner callback failed: {exc}")
 
     def _run_session(self) -> None:
@@ -203,20 +247,22 @@ class LiveCalendarSpreadOneSecondCollector:
             return
         self._kind_by_key = {(c["exchange"], c["token"]): c["kind"] for c in contracts}
         descriptors = tuple(self._descriptor(c) for c in contracts)
-        if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
-            self._repository = DailySQLiteMarketDataRepository(self.data_db)
-            self._ingestor = BoundedMarketDataIngestor(
-                self._repository,
-                record_source=SOURCE,
-            )
-            self._ingestor.start()
         feed = self._feed or CommonStrategyMarketFeed(
             "calendar-spread",
             auth=self.auth,
         )
         self._feed = feed
-        feed.start(descriptors, self._observe_record)
         try:
+            # Guard startup too: feed.start() can partially allocate resources
+            # before raising, so it must be covered by the same cleanup path.
+            if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED:
+                self._repository = DailySQLiteMarketDataRepository(self.data_db)
+                self._ingestor = BoundedMarketDataIngestor(
+                    self._repository,
+                    record_source=SOURCE,
+                )
+                self._ingestor.start()
+            feed.start(descriptors, self._observe_record)
             while not self.stop_event.is_set() and self.market_open():
                 time_module.sleep(self.poll_seconds)
             with self._lock:
@@ -225,36 +271,48 @@ class LiveCalendarSpreadOneSecondCollector:
             for timestamp, record in latest:
                 self._emit(record, timestamp)
         finally:
-            feed.stop()
-            if self._ingestor is not None:
-                self._ingestor.close()
-            if self._repository is not None:
-                self._repository.close()
+            # One broken cleanup operation must not prevent the remaining
+            # resources from being released.
+            for resource, method, label in (
+                (feed, "stop", "feed"),
+                (self._ingestor, "close", "ingestor"),
+                (self._repository, "close", "repository"),
+            ):
+                if resource is None:
+                    continue
+                try:
+                    getattr(resource, method)()
+                except Exception as exc:
+                    app_logger.error(f"Calendar Spread {label} cleanup failed: {exc}")
             self._ingestor = None
             self._repository = None
             self._feed = None
         app_logger.info("Calendar Spread common-feed live session complete")
 
     def run_forever(self) -> None:
+        # Let the application-level supervisor observe worker failures and apply
+        # one consistent bounded exponential retry policy. Swallowing exceptions
+        # here would trap the supervisor behind a fixed internal 10-second loop.
         while not self.stop_event.is_set():
-            try:
-                if self.market_open():
-                    self._run_session()
-                else:
-                    time_module.sleep(5)
-            except Exception as exc:
-                app_logger.error(f"Calendar Spread common-feed collector failed: {exc}")
-                time_module.sleep(10)
+            if self.market_open():
+                self._run_session()
+            else:
+                time_module.sleep(5)
 
     def snapshot(self) -> dict[str, Any]:
         """Return lightweight runtime state for the shared-feed health endpoint."""
         feed = self._feed
         ingestor = self._ingestor
+        with self._lock:
+            stats = dict(self._stats)
+            latest_buckets = len(self._latest)
         return {
             "running": not self.stop_event.is_set(),
             "registered_instruments": len(self._kind_by_key),
+            "latest_instrument_buckets": latest_buckets,
             "feed": None if feed is None else feed.snapshot(),
             "ingestor": None if ingestor is None else ingestor.snapshot(),
+            "diagnostics": stats,
         }
 
     def stop(self) -> None:
