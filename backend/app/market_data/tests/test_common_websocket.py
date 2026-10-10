@@ -702,3 +702,67 @@ def test_closed_manager_does_not_reopen_sockets_from_late_recovery():
         assert "closed" in str(exc)
     else:
         raise AssertionError("closed manager must reject new subscriptions")
+
+class FailTwiceThenRecoverSocket(FakeSocket):
+    attempts = 0
+
+    def connect(self, **kwargs):
+        type(self).attempts += 1
+        if type(self).attempts <= 2:
+            raise ConnectionError(f"temporary broker failure {type(self).attempts}")
+        return super().connect(**kwargs)
+
+
+def test_recovery_supervisor_retries_repeated_connect_failures_until_success():
+    registry = InstrumentRegistry()
+    item = descriptor("991")
+    registry.register(item)
+    FailTwiceThenRecoverSocket.attempts = 0
+    manager = CommonWebSocketManager(registry, socket_factory=FailTwiceThenRecoverSocket)
+    manager._connect_call_wait_seconds = 0.02
+    manager._recovery_interval_seconds = 0.01
+    try:
+        try:
+            manager.subscribe("cash", [item.key])
+        except ConnectionError:
+            pass
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            snapshot = manager.snapshot()
+            if snapshot["connected_groups"] == ["1:0"]:
+                break
+            time.sleep(0.01)
+
+        snapshot = manager.snapshot()
+        assert FailTwiceThenRecoverSocket.attempts >= 3
+        assert snapshot["socket_groups"] == 1
+        assert snapshot["connected_groups"] == ["1:0"]
+        assert snapshot["connect_failures"] >= 2
+    finally:
+        manager.close()
+        FailTwiceThenRecoverSocket.attempts = 0
+
+
+def test_socket_capacity_configuration_fails_fast_without_opening_partial_feed():
+    registry = InstrumentRegistry()
+    items = [descriptor("992"), descriptor("993")]
+    registry.register_many(items)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 1
+    manager._max_sockets = 1
+    manager._recovery_interval_seconds = 0.01
+    try:
+        try:
+            manager.subscribe("cash", [item.key for item in items])
+        except ValueError as exc:
+            assert "global WebSocket limit exceeded" in str(exc)
+        else:
+            raise AssertionError("socket capacity overflow must fail fast")
+
+        assert manager.snapshot()["socket_groups"] == 0
+        assert FakeSocket.instances == []
+        assert manager.registry.subscriptions()
+    finally:
+        manager.close()
+

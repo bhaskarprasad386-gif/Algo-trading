@@ -216,3 +216,21 @@ def test_blocking_initial_subscribe_notifies_failure_and_does_not_stall_on_open(
     assert client.connected is False
     release.set()
     client.close()
+
+def test_websocket_rejects_missing_auth_tokens_before_opening_socket(monkeypatch):
+    FakeSocket.instances.clear()
+    auth = make_auth()
+    auth.session_data = {"jwtToken": "jwt", "feedToken": ""}
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=auth, auto_reconnect=False)
+
+    try:
+        client._build_socket()
+    except Exception as exc:
+        assert getattr(exc, "name", None) == "WebSocketAuthError"
+        assert getattr(exc, "message", "") == "JWT token or feed token is missing."
+    else:
+        raise AssertionError("missing feed token must prevent socket creation")
+
+    assert FakeSocket.instances == []
+
