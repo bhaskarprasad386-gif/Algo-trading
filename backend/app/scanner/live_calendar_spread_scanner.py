@@ -50,8 +50,8 @@ class LiveCalendarSpreadScanner:
             raise ValueError("thresholds cannot be negative")
         self.minimum_gap_points = float(minimum_gap_points)
         self.minimum_gross_profit = float(minimum_gross_profit)
-        self._latest: dict[tuple[str,str], dict[str, MarketDataRecord]] = {}
-        self._signals: dict[tuple[str,str], CalendarSpreadSignal] = {}
+        self._latest: dict[tuple[str,str,str], dict[str, MarketDataRecord]] = {}
+        self._signals: dict[tuple[str,str,str], CalendarSpreadSignal] = {}
         self._lock = RLock()
         self.alerts = alerts or CalendarSpreadAlertService()
 
@@ -71,7 +71,7 @@ class LiveCalendarSpreadScanner:
             return None
         if not self._record_ok(record):
             return None
-        key=(str(record.underlying or record.symbol).strip().upper(), record.instrument.exchange.strip().upper())
+        key=(str(record.underlying or record.symbol).strip().upper(), record.instrument.exchange.strip().upper(), record.instrument_type.value)
         month=(contract_month or record.expiry or "").strip()
         if not month:
             return None
