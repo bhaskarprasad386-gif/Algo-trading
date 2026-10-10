@@ -333,3 +333,27 @@ def test_stale_socket_callback_is_ignored_after_recovery_replaces_socket():
         assert manager.snapshot()["ticks_received"] == 1
     finally:
         manager.close()
+
+
+def test_recovery_replaces_socket_stuck_in_connecting_state_after_timeout():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=ConnectingSocket)
+    manager._connect_timeout_seconds = 1.0
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [d.key])
+        original = ConnectingSocket.instances[0]
+        with manager._lock:
+            manager._socket_created_at[SocketGroup(1, 0)] -= 2.0
+
+        recovered = manager.recover_disconnected(min_age_seconds=0.0)
+
+        assert recovered == 1
+        assert original.closed is True
+        assert len(ConnectingSocket.instances) == 2
+        assert manager.snapshot()["socket_groups"] == 1
+        assert manager.snapshot()["disconnected_groups"] == ["1:0"]
+    finally:
+        manager.close()

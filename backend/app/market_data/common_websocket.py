@@ -60,6 +60,9 @@ class CommonWebSocketManager:
         # socket cannot be counted as live data for the new/absent group.
         self._socket_generation: dict[SocketGroup, int] = {}
         self._silent_feed_timeout_seconds = 30.0
+        # A broker handshake can fail without firing on_error/on_close, leaving
+        # MarketDataWebSocket.connecting stuck True forever. Bound that state.
+        self._connect_timeout_seconds = 15.0
         self._route_index: dict[
             SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
         ] = {}
@@ -309,18 +312,20 @@ class CommonWebSocketManager:
         with self._lock:
             for group, socket in self._sockets.items():
                 connected = bool(getattr(socket, "connected", False))
-                # SmartWebSocketV2.connect() returns before on_open for the
-                # asynchronous broker handshake. Do not reap a socket while
-                # that handshake is still in progress.
-                if bool(getattr(socket, "connecting", False)):
-                    continue
+                connecting = bool(getattr(socket, "connecting", False))
                 created_at = self._socket_created_at.get(group, now)
-                if now - created_at < max(1.0, float(min_age_seconds)):
+                age = now - created_at
+                # A normal async handshake gets a grace period, but a socket
+                # that remains "connecting" beyond the deadline is wedged.
+                # Replace it so the supervisor can retry with fresh auth/socket.
+                if connecting and age < max(1.0, self._connect_timeout_seconds):
+                    continue
+                if age < max(1.0, float(min_age_seconds)):
                     continue
                 tokens = set(self._socket_tokens.get(group, set()))
                 if not tokens:
                     continue
-                if connected:
+                if connected and not connecting:
                     timeout = self._silent_feed_timeout_seconds if silent_age_seconds is None else silent_age_seconds
                     last_data_at = self._last_data_at.get(group, created_at)
                     if timeout < 0 or now - last_data_at < float(timeout):
