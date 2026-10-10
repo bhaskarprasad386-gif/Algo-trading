@@ -217,6 +217,47 @@ def test_late_connect_completion_is_closed_after_recovery_replaces_socket():
         manager.close()
 
 
+
+def test_supervisor_replaces_hung_connect_without_manual_recovery():
+    registry = InstrumentRegistry()
+    descriptor = make_descriptor()
+    registry.register(descriptor)
+    manager = CommonWebSocketManager(registry, socket_factory=HangingConnectSocket)
+    manager._recovery_interval_seconds = 0.02
+    manager._connect_call_wait_seconds = 0.02
+    manager._connect_timeout_seconds = 1.0
+
+    try:
+        manager.subscribe("cash-future", [descriptor.key])
+        group = SocketGroup(1, 0)
+        old_socket = manager._sockets[group]
+        assert old_socket.connect_started.wait(timeout=1.0), "connect worker did not start"
+
+        # Do not age internal timestamps or invoke recovery directly: the
+        # periodic supervisor must detect the stuck handshake by itself.
+        assert wait_until(
+            lambda: (
+                group in manager._sockets
+                and manager._sockets[group] is not old_socket
+                and manager._sockets[group].connected
+            ),
+            timeout=2.5,
+        ), "automatic supervisor did not replace the hung connect"
+
+        replacement = manager._sockets[group]
+        assert old_socket.closed
+        assert manager.snapshot()["subscriptions"] == 1
+        assert manager.snapshot()["connected_groups"] == ["1:0"]
+        live_sockets = [
+            socket for socket in HangingConnectSocket.instances if not socket.closed
+        ]
+        assert live_sockets == [replacement]
+    finally:
+        for socket in HangingConnectSocket.instances:
+            socket.release_connect.set()
+        manager.close()
+
+
 class SubscribeFailureSocket(SimulatedAngelSocket):
     fail_next_subscribe = False
 
