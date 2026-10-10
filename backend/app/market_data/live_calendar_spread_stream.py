@@ -216,6 +216,12 @@ class LiveCalendarSpreadOneSecondCollector:
         payload["source_timestamp_ns"] = timestamp_ns
         payload["exchange"] = record.instrument.exchange
         payload["instrument_type"] = record.instrument_type.value
+        # Preserve the instrument-master family: FUTIDX and FUTSTK both map to
+        # canonical FUTURE in the neutral contract, but must never cross-pair.
+        payload["contract_family"] = self._kind_by_key.get(
+            (record.instrument.exchange.strip().upper(), record.instrument.token.strip()),
+            record.instrument_type.value,
+        )
         if record.expiry:
             payload["contract_month"] = record.expiry[:7]
         with self._lock:
