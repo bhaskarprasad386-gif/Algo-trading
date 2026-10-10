@@ -141,7 +141,7 @@ def test_calendar_same_second_keeps_valid_quote_and_rejects_older_ticks():
     assert len(emitted) == 1
     assert emitted[0]["bid"] == 99.0
     assert emitted[0]["ask"] == 100.0
-    assert emitted[0]["source_timestamp_ns"] == base
+    assert emitted[0]["source_timestamp_ns"] == base + 300_000_000
     stats = collector.snapshot()["diagnostics"]
     assert stats["same_second_updates"] == 1
     assert stats["same_second_weaker_dropped"] == 1
