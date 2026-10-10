@@ -185,7 +185,7 @@ def test_live_synthetic_scanner_keeps_fresh_pair_when_unrelated_strike_is_older(
     scanner.observe(_base(ts + 400_000_000, 105.0, "PE", 4.0, 5.0))
     scanner.observe(_base(ts - 700_000_000, 110.0, "CE", 4.0, 5.0))
     result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"",
-        "expiry":"30SEP2026","bid":115,"ask":116,"bid_qty":10,"ask_qty":10,
+        "expiry":"30OCT2026","bid":115,"ask":116,"bid_qty":10,"ask_qty":10,
         "lot_size":1,"source_timestamp_ns":ts + 700_000_000,"symbol":"NIFTYFUT","volume":100,"oi":1000})
     assert result
     assert result[0].option.call_timestamp_ns == ts
