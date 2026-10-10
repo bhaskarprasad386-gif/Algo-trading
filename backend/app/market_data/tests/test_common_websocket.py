@@ -1004,3 +1004,21 @@ def test_matched_frame_only_refreshes_silence_timer_after_successful_delivery():
         assert snapshot["last_successful_delivery_age_seconds_by_group"]["1:0"] >= 0
     finally:
         manager.close()
+
+
+def test_non_integer_subscription_mode_is_rejected_before_broker_io():
+    registry = InstrumentRegistry()
+    item = descriptor("783")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    try:
+        try:
+            manager.subscribe("consumer", [item.key], mode=1.0)
+        except ValueError as exc:
+            assert "mode must be one" in str(exc)
+        else:
+            raise AssertionError("float mode must be rejected rather than reaching the broker SDK")
+        assert FakeSocket.instances == []
+        assert registry.subscriptions() == ()
+    finally:
+        manager.close()
