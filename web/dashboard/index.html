@@ -524,7 +524,7 @@ th{font-size:7px!important}
 </main>
 </div>
 
-<div id="workspaceLauncher" class="workspace-launcher" aria-hidden="true" onclick="if(event.target===this)closeWorkspaceLauncher()"><div class="workspace-sheet"><div class="workspace-sheet-head"><div><b>WORKSPACE LAUNCHER</b><span>All modules • live data bus • paper only</span></div><button class="workspace-close" onclick="closeWorkspaceLauncher()">CLOSE</button></div><div class="workspace-grid"><button class="workspace-tile" onclick="goHome();closeWorkspaceLauncher()"><b>⌂ Command Center</b><small>Market overview + live scanner</small></button><button class="workspace-tile" onclick="showAnalyze();closeWorkspaceLauncher()"><b>⌕ Analyze Hub</b><small>Macro + market intelligence</small></button><button class="workspace-tile" onclick="showCashFuture();closeWorkspaceLauncher()"><b>Cash-Future</b><small>Executable live opportunities</small></button><button class="workspace-tile" onclick="showCalendarSpread();closeWorkspaceLauncher()"><b>Calendar Spread</b><small>Near / far contracts</small></button><button class="workspace-tile" onclick="showSyntheticArbitrage();closeWorkspaceLauncher()"><b>Synthetic Arbitrage</b><small>Executable option carry</small></button><button class="workspace-tile" onclick="showBoxSpread();closeWorkspaceLauncher()"><b>Box Spread</b><small>Four-leg opportunities</small></button><button class="workspace-tile" onclick="showCustomAlerts();closeWorkspaceLauncher()"><b>Custom Alerts</b><small>Touch-friendly alert rules</small></button><button class="workspace-tile" onclick="showPaperPortfolio();closeWorkspaceLauncher()"><b>strategy workspace</b><small>₹1 crore virtual ledger</small></button><button class="workspace-tile" onclick="showTradingJournal();closeWorkspaceLauncher()"><b>Trading Journal</b><small>Review + analytics</small></button><button class="workspace-tile" onclick="showHistoricalReplay();closeWorkspaceLauncher()"><b>Historical + Replay</b><small>Saved 1s data replay</small></button><button class="workspace-tile" onclick="openBrokerSettings();closeWorkspaceLauncher()"><b>Settings</b><small>Broker configuration</small></button><button class="workspace-tile" onclick="toast('System Status is shown by the live data bus and source-health panels.');closeWorkspaceLauncher()"><b>System Status</b><small>Connection + source health</small></button></div></div></div>
+<div id="workspaceLauncher" class="workspace-launcher" aria-hidden="true" onclick="if(event.target===this)closeWorkspaceLauncher()"><div class="workspace-sheet"><div class="workspace-sheet-head"><div><b>WORKSPACE LAUNCHER</b><span>All modules • live data bus • scanner only</span></div><button class="workspace-close" onclick="closeWorkspaceLauncher()">CLOSE</button></div><div class="workspace-grid"><button class="workspace-tile" onclick="goHome();closeWorkspaceLauncher()"><b>⌂ Command Center</b><small>Market overview + live scanner</small></button><button class="workspace-tile" onclick="showAnalyze();closeWorkspaceLauncher()"><b>⌕ Analyze Hub</b><small>Macro + market intelligence</small></button><button class="workspace-tile" onclick="showCashFuture();closeWorkspaceLauncher()"><b>Cash-Future</b><small>Executable live opportunities</small></button><button class="workspace-tile" onclick="showCalendarSpread();closeWorkspaceLauncher()"><b>Calendar Spread</b><small>Near / far contracts</small></button><button class="workspace-tile" onclick="showSyntheticArbitrage();closeWorkspaceLauncher()"><b>Synthetic Arbitrage</b><small>Executable option carry</small></button><button class="workspace-tile" onclick="showBoxSpread();closeWorkspaceLauncher()"><b>Box Spread</b><small>Four-leg opportunities</small></button><button class="workspace-tile" onclick="showCustomAlerts();closeWorkspaceLauncher()"><b>Custom Alerts</b><small>Touch-friendly alert rules</small></button><button class="workspace-tile" onclick="showPaperPortfolio();closeWorkspaceLauncher()"><b>strategy workspace</b><small>₹1 crore virtual ledger</small></button><button class="workspace-tile" onclick="showTradingJournal();closeWorkspaceLauncher()"><b>Trading Journal</b><small>Review + analytics</small></button><button class="workspace-tile" onclick="showHistoricalReplay();closeWorkspaceLauncher()"><b>Historical + Replay</b><small>Saved 1s data replay</small></button><button class="workspace-tile" onclick="openBrokerSettings();closeWorkspaceLauncher()"><b>Settings</b><small>Broker configuration</small></button><button class="workspace-tile" onclick="toast('System Status is shown by the live data bus and source-health panels.');closeWorkspaceLauncher()"><b>System Status</b><small>Connection + source health</small></button></div></div></div>
 <nav class="bottom-nav" id="responsiveQuickNav"><button class="active" id="bottomHome" onclick="goHome()">⌂<br>Home</button><button id="bottomAnalyze" onclick="showAnalyze()">⌕<br>Analyze</button><button id="bottomAlerts" onclick="showCustomAlerts()">♧<br>Alerts</button><button id="bottomMore" class="mobile-nav-more" onclick="openWorkspaceLauncher()">•••<br>More</button></nav>
 </div>
 </div>
@@ -894,7 +894,7 @@ async function loadStrategies(){
 }
 async function strategyOpen(id){
  const workspaceUrl='/api/v1/app/strategies/'+encodeURIComponent(id)+'/workspace';
- try{const r=await fetch(base()+workspaceUrl,{cache:'no-store'});if(!r.ok)throw new Error('Workspace API '+r.status);const w=(await r.json()).workspace||{};document.getElementById('strategyOutput').textContent=(w.name||id)+' • v'+(w.version||'—')+' • '+(w.data_mode||'DATA')+' • '+(w.execution_mode||'PAPER')+' • live_orders '+(w.live_orders?'ON':'OFF');}
+ try{const r=await fetch(base()+workspaceUrl,{cache:'no-store'});if(!r.ok)throw new Error('Workspace API '+r.status);const w=(await r.json()).workspace||{};document.getElementById('strategyOutput').textContent=(w.name||id)+' • v'+(w.version||'—')+' • '+(w.data_mode||'DATA')+' • '+(w.execution_mode||'SCANNER ONLY')+' • live_orders '+(w.live_orders?'ON':'OFF');}
  catch(e){document.getElementById('strategyOutput').textContent='Workspace unavailable: '+e.message}
 }
 function scheduleScan(){
@@ -1114,7 +1114,7 @@ function updateAlertPreview(){const c=document.getElementById('alertCondition'),
 const JOURNAL_KEY='algo.dashboard.journal.v1';
 let journalEntries=JSON.parse(localStorage.getItem(JOURNAL_KEY)||'[]'),journalSelectedId=null;
 function showTradingJournal(){
- ['home','analyzePage','cashFuturePage','calendarPage','syntheticPage','boxSpreadPage','customAlertsPage','__removed_paper_portfolio_page__'].forEach(id=>{const e=document.getElementById(id);if(e)e.hidden=true});
+ ['home','analyzePage','cashFuturePage','calendarPage','syntheticPage','boxSpreadPage','customAlertsPage'].forEach(id=>{const e=document.getElementById(id);if(e)e.hidden=true});
  document.getElementById('tradingJournalPage').hidden=false;document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById('tradingJournalNav')?.classList.add('active');renderTradingJournal();window.scrollTo({top:0,behavior:'smooth'});
 }
 function journalPnl(e){return Number(e.pnl||0)}
@@ -1143,7 +1143,7 @@ document.getElementById('journalStrategyFilter')?.addEventListener('change',rend
 /* Batch-10 Historical + Replay runtime */
 let histRows=[],histCursor=0,histTimer=null,histSpeed='1s';
 function showHistoricalReplay(){
- ['home','analyzePage','cashFuturePage','calendarPage','syntheticPage','boxSpreadPage','customAlertsPage','__removed_paper_portfolio_page__','tradingJournalPage'].forEach(id=>{const e=document.getElementById(id);if(e)e.hidden=true});
+ ['home','analyzePage','cashFuturePage','calendarPage','syntheticPage','boxSpreadPage','customAlertsPage','tradingJournalPage'].forEach(id=>{const e=document.getElementById(id);if(e)e.hidden=true});
  const p=document.getElementById('historicalReplayPage');if(p)p.hidden=false;
  document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById('historicalReplayNav')?.classList.add('active');
  const d=document.getElementById('histDate');if(d&&!d.value){const now=new Date();d.value=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');}
@@ -1247,7 +1247,7 @@ function setMobileNav(id){document.querySelectorAll('#responsiveQuickNav button'
   <div class="hist-kpi"><div class="hist-kpi-icon">◷</div><div><b>RESOLUTION</b><strong id="histResolution">—</strong><small>Actual cadence</small></div></div>
   <div class="hist-kpi"><div class="hist-kpi-icon">↤</div><div><b>START</b><strong id="histFirst">—</strong><small>First observation</small></div></div>
   <div class="hist-kpi"><div class="hist-kpi-icon">↦</div><div><b>END</b><strong id="histLast">—</strong><small>Last observation</small></div></div>
-  <div class="hist-kpi hist-paper"><div class="hist-kpi-icon">P</div><div><b>EXECUTION</b><strong>OFF</strong><small>Paper replay only</small></div></div>
+  <div class="hist-kpi hist-paper"><div class="hist-kpi-icon">P</div><div><b>EXECUTION</b><strong>OFF</strong><small>Historical replay only</small></div></div>
  </div>
 
  <div class="hist-main-grid">
@@ -1321,7 +1321,7 @@ function setMobileNav(id){document.querySelectorAll('#responsiveQuickNav button'
     if(!host) return;
     const box=document.createElement('div'); box.id='alertControlPanel'; box.className='card';
     box.style.cssText='margin-bottom:10px;border-color:#6541A6';
-    box.innerHTML='<div class="card-head"><div><h2>Alert Rule Controls</h2><div class="sub">Configure scanner alert notifications; paper execution is removed</div></div></div>'+
+    box.innerHTML='<div class="card-head"><div><h2>Alert Rule Controls</h2><div class="sub">Configure scanner alert notifications</div></div></div>'+
       '<div class="form-grid">'+
       '<div class="field"><label>Strategy</label><select id="acStrategy"><option value="cash-future">Cash-Future</option><option value="calendar-spread">Calendar Spread</option><option value="synthetic-future-cash-carry">Synthetic Arbitrage</option><option value="box-spread">Box Spread</option></select></div>'+
       '<div class="field"><label>Minimum Gross Profit ₹</label><input id="acGross" type="number" min="0" step="0.01" value="0"></div>'+
