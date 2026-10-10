@@ -780,7 +780,7 @@ STRATEGY_WORKSPACES = [
     {
         "id": "cash-future", "name": "Cash–Future", "version": "1", "enabled": True,
         "screen": "cash_future_scanner", "data_mode": "LIVE 1s",
-        "execution_mode": "PAPER", "live_orders": False,
+        "execution_mode": "SCANNER ONLY", "live_orders": False,
         "capabilities": ["LIVE DATA", "SCANNER", "HISTORICAL", "BACKDATE", "BACKTEST", "REPLAY", "PAPER TRADE", "RESULTS"],
         "live_route": "/api/v1/scanner/cash-future/live/fast",
         "workspace_route": "/api/v1/backtesting/cash-future/strategy-run"
