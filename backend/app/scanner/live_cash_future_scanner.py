@@ -70,20 +70,37 @@ class LiveCashFutureScanner:
 
     def __init__(self, *, notifier: NotificationService | None = None) -> None:
         self.notifier = notifier or NotificationService()
-        self._lock = threading.Lock()
+        # Scanner callbacks can overlap across socket shards. RLock keeps all
+        # shared state transitions and health counters coherent when helpers
+        # are called from already-locked sections.
+        self._lock = threading.RLock()
         self._latest: dict[tuple[str, int], dict[str, dict]] = {}
+        self._max_latest_buckets = 5000
         self._signals: dict[tuple[str, str], LiveCashFutureSignal] = {}
         self._session_extremes: dict[tuple[str, str], dict[str, float]] = {}
         self._stability: dict[tuple[str, str], tuple[int, int]] = {}
         self._alert_state: dict[tuple[str, str], str] = {}
         self._alert_last_at: dict[tuple[str, str], float] = {}
-        self._stats = {"observations": 0, "pairs": 0, "pairs_with_quotes": 0, "pairs_missing_quotes": 0, "pairs_dropped_liquidity": 0, "dropped": 0, "persisted": 0, "pair_events": 0, "pair_events_persisted": 0}
+        self._stats = {
+            "observations": 0, "pairs": 0, "pairs_with_quotes": 0,
+            "pairs_missing_quotes": 0, "pairs_dropped_liquidity": 0,
+            "dropped": 0, "persisted": 0, "pair_events": 0,
+            "pair_events_persisted": 0, "invalid_payloads": 0,
+            "invalid_legs": 0, "invalid_timestamps": 0, "invalid_prices": 0,
+            "stale_quotes": 0, "crossed_cash_quotes": 0,
+            "out_of_order_updates": 0, "cache_evictions": 0,
+        }
         self._last_observation_ns: int | None = None
         self._pair_events: deque[dict] = deque(maxlen=2000)
         self._last_pair_persist_at: dict[tuple[str, str], float] = {}
         self._alert_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cf-alert")
         self._result_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cf-result")
         self._last_result_cleanup = 0.0
+
+    def _increment_stat(self, key: str, amount: int = 1) -> None:
+        """Update a health counter safely from concurrent market-data callbacks."""
+        with self._lock:
+            self._stats[key] = self._stats.get(key, 0) + amount
 
     @staticmethod
     def _price(payload: dict, key: str, divisor: float = 1.0) -> float | None:
@@ -100,7 +117,7 @@ class LiveCashFutureScanner:
     def _safe_int(value: object) -> int | None:
         try:
             number = int(float(value))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
         return number if number >= 0 else None
 
@@ -211,7 +228,7 @@ class LiveCashFutureScanner:
                     alert_event=signal.alert_event,
                 ))
                 db.commit()
-                self._stats["persisted"] += 1
+                self._increment_stat("persisted")
         except Exception as exc:
             from app.core.logger import app_logger
             app_logger.error("Cash-Future scanner result persistence failed: %s", exc)
@@ -343,7 +360,7 @@ class LiveCashFutureScanner:
         }
         with self._lock:
             self._pair_events.appendleft(event)
-            self._stats["pair_events"] += 1
+            self._increment_stat("pair_events")
             # `last_observation_at` is the last accepted scanner pair observation,
             # not merely the last incoming leg that may later be rejected.
             if self._last_observation_ns is None or timestamp_ns >= self._last_observation_ns:
@@ -417,7 +434,7 @@ class LiveCashFutureScanner:
                     alert_event=None,
                 ))
                 db.commit()
-                self._stats["pair_events_persisted"] += 1
+                self._increment_stat("pair_events_persisted")
         except Exception as exc:
             from app.core.logger import app_logger
             app_logger.error("Cash-Future pair diagnostic persistence failed: %s", exc)
@@ -437,33 +454,91 @@ class LiveCashFutureScanner:
             return list(latest.values())[:limit]
 
 
+    def _prune_latest_locked(self, now_ns: int, tolerance_ns: int) -> None:
+        """Bound quote-cache lifetime by receive time, not exchange-clock order."""
+        retention_ns = max(
+            5_000_000_000,
+            int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 2_000_000_000),
+            tolerance_ns + 1_000_000_000,
+        )
+        cutoff_ns = now_ns - retention_ns
+        for key, bucket in list(self._latest.items()):
+            cash = bucket.get("CASH")
+            if cash and int(cash.get("received_at_ns") or 0) < cutoff_ns:
+                bucket.pop("CASH", None)
+                self._increment_stat("cache_evictions")
+            futures = bucket.get("FUTURE", {})
+            for month, future in list(futures.items()):
+                if int(future.get("received_at_ns") or 0) < cutoff_ns:
+                    futures.pop(month, None)
+                    self._increment_stat("cache_evictions")
+            if not bucket.get("CASH") and not futures:
+                self._latest.pop(key, None)
+        limit = max(1, int(self._max_latest_buckets))
+        while len(self._latest) > limit:
+            oldest_key = min(
+                self._latest,
+                key=lambda key: max(
+                    [int(self._latest[key].get("CASH", {}).get("received_at_ns") or 0)]
+                    + [
+                        int(item.get("received_at_ns") or 0)
+                        for item in self._latest[key].get("FUTURE", {}).values()
+                    ]
+                ),
+            )
+            self._latest.pop(oldest_key, None)
+            self._increment_stat("cache_evictions")
+
     def observe(self, payload: dict, *, session_factory=None) -> LiveCashFutureSignal | None:
+        if not isinstance(payload, dict):
+            with self._lock:
+                self._increment_stat("invalid_payloads")
+                self._increment_stat("dropped")
+            return None
         leg = str(payload.get("leg") or "").upper()
         symbol = str(payload.get("underlying") or "").strip().upper()
         month = str(payload.get("contract_month") or "").strip().upper()
-        timestamp_ns = int(payload.get("source_timestamp_ns") or payload.get("exchange_timestamp") or 0)
-        if timestamp_ns <= 0 or not symbol:
+        try:
+            timestamp_ns = int(payload.get("source_timestamp_ns") or payload.get("exchange_timestamp") or 0)
+        except (TypeError, ValueError, OverflowError):
+            timestamp_ns = 0
+        wall_now_ns = time.time_ns()
+        # Reject corrupt far-future exchange timestamps before datetime
+        # conversion/cache indexing; allow a small clock-skew window.
+        if timestamp_ns <= 0 or not symbol or timestamp_ns > wall_now_ns + 300_000_000_000:
+            with self._lock:
+                self._increment_stat("invalid_timestamps")
+                self._increment_stat("dropped")
             return None
         with self._lock:
-            self._stats["observations"] += 1
-        received_at_ns = payload.get("received_at_ns")
-        try:
-            received_at_ns = int(received_at_ns) if received_at_ns is not None else time.time_ns()
-        except (TypeError, ValueError):
-            received_at_ns = time.time_ns()
-        max_age_ns = int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 1_000_000_000)
-        if time.time_ns() - received_at_ns > max_age_ns:
-            self._stats["dropped"] += 1
-            return None
+            self._increment_stat("observations")
         if leg == "CASH":
             month = "CASH"
         elif leg != "FUTURE" or not month:
+            with self._lock:
+                self._increment_stat("invalid_legs")
+                self._increment_stat("dropped")
+            return None
+        received_at_ns = payload.get("received_at_ns")
+        try:
+            received_at_ns = int(received_at_ns) if received_at_ns is not None else time.time_ns()
+        except (TypeError, ValueError, OverflowError):
+            received_at_ns = time.time_ns()
+        max_age_ns = int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 1_000_000_000)
+        now_ns = time.time_ns()
+        if received_at_ns <= 0 or received_at_ns > now_ns + 5_000_000_000 or now_ns - received_at_ns > max_age_ns:
+            with self._lock:
+                self._increment_stat("stale_quotes")
+                self._increment_stat("dropped")
             return None
 
         ltp = self._price(payload, "ltp")
         if ltp is None:
             ltp = self._price({"x": payload.get("last_traded_price")}, "x", 100.0)
         if ltp is None:
+            with self._lock:
+                self._increment_stat("invalid_prices")
+                self._increment_stat("dropped")
             return None
 
         bid = self._price(payload, "bid")
@@ -474,14 +549,16 @@ class LiveCashFutureScanner:
         # pair_snapshot can explain the invalid book. Crossed cash quotes cannot
         # produce a valid executable pair and remain an immediate drop.
         if leg == "CASH" and bid is not None and ask is not None and bid > ask:
-            self._stats["dropped"] += 1
+            with self._lock:
+                self._increment_stat("crossed_cash_quotes")
+                self._increment_stat("dropped")
             return None
         lot = None
         try:
             raw_lot = payload.get("lot_size")
             if raw_lot is not None and int(raw_lot) > 0:
                 lot = int(raw_lot)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             pass
 
         key = (symbol, timestamp_ns)
@@ -491,26 +568,53 @@ class LiveCashFutureScanner:
             "lot_size": lot, "expiry": payload.get("expiry"),
             "volume": payload.get("volume"), "oi": payload.get("oi") or payload.get("open_interest"),
             "received_at_ns": received_at_ns,
+            "timestamp_ns": timestamp_ns,
         }
         ts_date = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, IST).date()
         ts_date_key = ts_date.isoformat()
         tolerance_ns = int(max(0.0, float(settings.LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS)) * 1_000_000_000)
         with self._lock:
             self._session_extremes = {k: v for k, v in self._session_extremes.items() if k[1] == ts_date_key}
+            self._prune_latest_locked(now_ns, tolerance_ns)
             candidates = [k for k in self._latest if k[0] == symbol and abs(k[1] - timestamp_ns) <= tolerance_ns]
             nearest = min(candidates, key=lambda k: abs(k[1] - timestamp_ns), default=key)
             bucket = self._latest.setdefault(nearest, {})
             if leg == "CASH":
+                previous_leg = bucket.get("CASH")
+                if previous_leg and timestamp_ns < int(previous_leg.get("timestamp_ns") or 0):
+                    self._increment_stat("out_of_order_updates")
+                    self._increment_stat("dropped")
+                    return None
                 bucket["CASH"] = leg_payload
             else:
                 futures = bucket.setdefault("FUTURE", {})
+                previous_leg = futures.get(month)
+                if previous_leg and timestamp_ns < int(previous_leg.get("timestamp_ns") or 0):
+                    self._increment_stat("out_of_order_updates")
+                    self._increment_stat("dropped")
+                    return None
                 futures[month] = leg_payload
-            self._latest = {k: v for k, v in self._latest.items() if k[1] >= timestamp_ns - max(2_000_000_000, tolerance_ns + 1_000_000_000)}
+            self._prune_latest_locked(now_ns, tolerance_ns)
+            # A bounded eviction can remove an old bucket; re-resolve the active
+            # bucket before pairing instead of retaining a stale local reference.
+            bucket = self._latest.get(nearest)
+            if bucket is None:
+                return None
             futures = bucket.get("FUTURE", {})
             if "CASH" not in bucket or month not in futures:
                 return None
             cash, future = bucket["CASH"], futures[month]
-            self._stats["pairs"] += 1
+            # A fresh incoming leg must never revive a pair whose counterpart
+            # has aged out while the socket continued delivering only one side.
+            pair_max_age_ns = int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 1_000_000_000)
+            if (
+                now_ns - int(cash.get("received_at_ns") or 0) > pair_max_age_ns
+                or now_ns - int(future.get("received_at_ns") or 0) > pair_max_age_ns
+            ):
+                self._increment_stat("stale_quotes")
+                self._increment_stat("dropped")
+                return None
+            self._increment_stat("pairs")
 
         cash_ask, future_bid = cash["ask"], future["bid"]
         if cash_ask is None or future_bid is None:
@@ -520,7 +624,7 @@ class LiveCashFutureScanner:
             if future_bid is None:
                 missing.append("FUTURE_BID_MISSING")
             with self._lock:
-                self._stats["pairs_missing_quotes"] += 1
+                self._increment_stat("pairs_missing_quotes")
             self._record_pair_event(
                 symbol=symbol, month=month, timestamp_ns=timestamp_ns, received_at_ns=received_at_ns,
                 cash=cash, future=future, status="MISSING_EXECUTION_QUOTE",
@@ -528,7 +632,7 @@ class LiveCashFutureScanner:
             )
             return None
         with self._lock:
-            self._stats["pairs_with_quotes"] += 1
+            self._increment_stat("pairs_with_quotes")
 
         liquidity_values = [
             cash["bid_qty"], cash["ask_qty"],
@@ -538,7 +642,7 @@ class LiveCashFutureScanner:
         min_liquidity = max(0, int(settings.LIVE_CASH_FUTURE_MIN_LIQUIDITY_QTY))
         if min_liquidity > 0 and (liquidity_qty is None or liquidity_qty < min_liquidity):
             with self._lock:
-                self._stats["pairs_dropped_liquidity"] += 1
+                self._increment_stat("pairs_dropped_liquidity")
             self._record_pair_event(
                 symbol=symbol, month=month, timestamp_ns=timestamp_ns, received_at_ns=received_at_ns,
                 cash=cash, future=future, status="LIQUIDITY_BLOCKED",
@@ -549,7 +653,7 @@ class LiveCashFutureScanner:
             return None
 
         if future["bid"] is not None and future["ask"] is not None and future["bid"] > future["ask"]:
-            self._stats["dropped"] += 1
+            self._increment_stat("dropped")
             self._record_pair_event(
                 symbol=symbol,
                 month=month,
@@ -755,6 +859,8 @@ class LiveCashFutureScanner:
     def health(self) -> dict:
         with self._lock:
             stats = dict(self._stats)
+            stats["latest_cache_buckets"] = len(self._latest)
+            stats["latest_cache_limit"] = max(1, int(self._max_latest_buckets))
             last_observation_ns = self._last_observation_ns
         stats["last_observation_at"] = (
             datetime.fromtimestamp(last_observation_ns / 1_000_000_000, IST).isoformat()

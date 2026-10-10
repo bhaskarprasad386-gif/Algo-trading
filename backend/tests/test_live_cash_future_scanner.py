@@ -340,3 +340,60 @@ def test_live_scanner_snapshot_uses_receive_time_not_exchange_timestamp():
     rows = scanner.snapshot(max_age_seconds=5, limit=10)
     assert rows
     assert rows[0]["received_at_ns"] == received_ts
+
+
+
+def test_live_scanner_rejects_out_of_order_same_leg_updates_and_counts_reason(monkeypatch):
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS", 1.0)
+    scanner = LiveCashFutureScanner()
+    assert scanner.observe({
+        "leg": "CASH", "underlying": "ABC", "ltp": 100,
+        "bid": 99.9, "ask": 100, "source_timestamp_ns": 10_000_000_000,
+    }) is None
+    assert scanner.observe({
+        "leg": "CASH", "underlying": "ABC", "ltp": 99,
+        "bid": 98.9, "ask": 99, "source_timestamp_ns": 9_500_000_000,
+    }) is None
+    health = scanner.health()
+    assert health["out_of_order_updates"] == 1
+    assert health["dropped"] >= 1
+
+
+def test_live_scanner_cache_is_bounded_and_reports_evictions():
+    scanner = LiveCashFutureScanner()
+    scanner._max_latest_buckets = 2
+    base = int(time() * 1_000_000_000)
+    for index in range(5):
+        scanner.observe({
+            "leg": "CASH", "underlying": f"SYM{index}", "ltp": 100,
+            "bid": 99.9, "ask": 100, "source_timestamp_ns": base + index * 1_000_000_000,
+        })
+    health = scanner.health()
+    assert health["latest_cache_buckets"] <= 2
+    assert health["latest_cache_limit"] == 2
+    assert health["cache_evictions"] >= 3
+
+
+def test_live_scanner_counts_invalid_and_stale_input_categories():
+    scanner = LiveCashFutureScanner()
+    assert scanner.observe(None) is None
+    assert scanner.observe({"leg": "CASH", "underlying": "ABC", "ltp": 100}) is None
+    assert scanner.observe({
+        "leg": "CASH", "underlying": "ABC", "ltp": 100,
+        "source_timestamp_ns": int(time() * 1_000_000_000),
+        "received_at_ns": int(time() * 1_000_000_000) - 10_000_000_000,
+    }) is None
+    health = scanner.health()
+    assert health["invalid_payloads"] == 1
+    assert health["invalid_timestamps"] == 1
+    assert health["stale_quotes"] == 1
+
+
+
+def test_live_scanner_rejects_far_future_exchange_timestamp_without_crashing():
+    scanner = LiveCashFutureScanner()
+    assert scanner.observe({
+        "leg": "CASH", "underlying": "ABC", "ltp": 100,
+        "source_timestamp_ns": 10**30,
+    }) is None
+    assert scanner.health()["invalid_timestamps"] == 1
