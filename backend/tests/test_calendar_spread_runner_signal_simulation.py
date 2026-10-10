@@ -22,6 +22,9 @@ def _record(token, symbol, expiry, timestamp_ns, bid, ask, *, underlying="NIFTY"
         expiry=expiry,
         lot_size=50,
         tick_size=0.05,
+        # The collector intentionally requires an explicit provider timestamp;
+        # simulated feed records must carry the same provenance as live ticks.
+        payload={"exchange_timestamp_ns": timestamp_ns},
     )
 
 
