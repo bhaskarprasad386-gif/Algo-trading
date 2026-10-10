@@ -234,3 +234,21 @@ def test_calendar_contract_selection_keeps_index_and_stock_families_separate():
     assert set(families) == {"INDEX_FUTURE", "STOCK_FUTURE"}
     assert all(len(rows) == 2 for rows in families.values())
     assert all(rows[0]["expiry"] < rows[1]["expiry"] for rows in families.values())
+
+
+
+def test_calendar_contract_selection_deduplicates_expiry_and_excludes_unsupported_family():
+    class Master:
+        def download(self):
+            return [
+                {"exch_seg": "MCX", "instrumenttype": "FUTCOM", "expiry": "30OCT2099", "token": "31", "symbol": "CRUDEOIL30OCTFUT", "name": "CRUDEOIL", "lotsize": "100"},
+                {"exch_seg": "MCX", "instrumenttype": "FUTCOM", "expiry": "30OCT2099", "token": "32", "symbol": "CRUDEOIL30OCTFUT-ALT", "name": "CRUDEOIL", "lotsize": "100"},
+                {"exch_seg": "MCX", "instrumenttype": "FUTCOM", "expiry": "27NOV2099", "token": "33", "symbol": "CRUDEOIL27NOVFUT", "name": "CRUDEOIL", "lotsize": "100"},
+                {"exch_seg": "MCX", "instrumenttype": "FUTCOMINDEX", "expiry": "30OCT2099", "token": "34", "symbol": "CRUDEOILIDX30OCTFUT", "name": "CRUDEOIL", "lotsize": "100"},
+            ]
+
+    collector = LiveCalendarSpreadOneSecondCollector("unused", instrument_master=Master())
+    contracts = collector._contracts()
+    assert len(contracts) == 2
+    assert [row["expiry"].isoformat() for row in contracts] == ["2099-10-30", "2099-11-27"]
+    assert {row["token"] for row in contracts} == {"31", "33"}
