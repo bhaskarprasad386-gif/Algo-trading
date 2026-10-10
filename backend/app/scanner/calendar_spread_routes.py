@@ -11,7 +11,7 @@ def configure(value):
 def live(limit:int=Query(50,ge=1,le=200), min_gap_points:float|None=Query(None,ge=0), min_gross_profit:float|None=Query(None,ge=0)):
  if scanner is None:return {"status":"disabled","data":[],"opportunity_count":0}
  signals=[{
-  "underlying":x.underlying,"exchange":x.exchange,"instrument_type":x.instrument_type,
+  "underlying":x.underlying,"exchange":x.exchange,"instrument_type":x.instrument_type,"contract_family":x.contract_family,
   "near_contract_month":x.near_contract_month,"far_contract_month":x.far_contract_month,
   "timestamp_ns":x.timestamp_ns,"near_bid":x.near_bid,"near_ask":x.near_ask,
   "far_bid":x.far_bid,"far_ask":x.far_ask,"lot_size":x.lot_size,
@@ -24,7 +24,7 @@ def live(limit:int=Query(50,ge=1,le=200), min_gap_points:float|None=Query(None,g
 def pairs(limit:int=Query(200,ge=1,le=500)):
  if scanner is None:return {"status":"disabled","data":[],"pair_count":0}
  rows=[{
-  "underlying":x.underlying,"exchange":x.exchange,"instrument_type":x.instrument_type,
+  "underlying":x.underlying,"exchange":x.exchange,"instrument_type":x.instrument_type,"contract_family":x.contract_family,
   "near_contract_month":x.near_contract_month,"far_contract_month":x.far_contract_month,
   "timestamp_ns":x.timestamp_ns,"near_bid":x.near_bid,"near_ask":x.near_ask,
   "far_bid":x.far_bid,"far_ask":x.far_ask,"lot_size":x.lot_size,
@@ -34,6 +34,11 @@ def pairs(limit:int=Query(200,ge=1,le=500)):
   "direction":x.direction,"gap_points":x.gap_points,"gross_profit":x.gross_profit,"qualifies":x.qualifies,
  } for x in scanner.pair_snapshot(limit=limit)]
  return {"status":"success","scanner":"calendar-spread-pair-monitor","mode":"paper-safe","data":rows,"pair_count":len(rows)}
+@router.get("/pair-diagnostics")
+def pair_diagnostics(limit:int=Query(200,ge=1,le=500)):
+ if scanner is None:return {"status":"disabled","counters":{},"data":[],"pair_count":0}
+ result=scanner.diagnostics_snapshot(limit=limit)
+ return {"status":"success","scanner":"calendar-spread-pair-diagnostics","mode":"paper-safe","counters":result["counters"],"data":result["pairs"],"pair_count":len(result["pairs"])}
 @router.get("/history")
 def history(days:int=Query(1,ge=1,le=90),limit:int=Query(200,ge=1,le=1000)):
  from datetime import datetime,timedelta,timezone
