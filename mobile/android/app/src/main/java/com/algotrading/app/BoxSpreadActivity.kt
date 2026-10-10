@@ -49,7 +49,7 @@ class BoxSpreadActivity : AppCompatActivity() {
                     "HP ${value("high_put_bid")}/${value("high_put_ask")}"
             }
             withContext(Dispatchers.Main) {
-                tvSummary.text = "LIVE BOX SPREAD SCANNER • $count rows • $opportunities positive-edge opportunities\nPaper trading and execution controls are removed."
+                tvSummary.text = "LIVE BOX SPREAD SCANNER • $count rows • $opportunities positive-edge opportunities\nRead-only scanner; no order execution."
                 tvOpportunities.text = if (rendered.isEmpty()) "No current live opportunities." else rendered.joinToString("\n\n")
             }
         } catch (error: Exception) {
