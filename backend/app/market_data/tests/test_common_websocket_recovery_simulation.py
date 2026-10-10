@@ -540,3 +540,44 @@ def test_stale_failure_callback_cannot_replace_newer_socket_generation():
         ]
     finally:
         manager.close()
+
+
+def test_stale_tick_from_replaced_socket_cannot_refresh_silence_watchdog():
+    registry = InstrumentRegistry()
+    descriptor = make_descriptor()
+    registry.register(descriptor)
+    manager = CommonWebSocketManager(registry, socket_factory=SimulatedAngelSocket)
+    manager._recovery_interval_seconds = 60.0
+    delivered: list[dict] = []
+    manager.register_callback("cash-future", delivered.append)
+
+    try:
+        manager.subscribe("cash-future", [descriptor.key])
+        group = SocketGroup(1, 0)
+        original = manager._sockets[group]
+        old_data = original.connect_calls[0]["on_data"]
+
+        original.connect_calls[0]["on_failure"]("simulated disconnect")
+        assert wait_until(
+            lambda: group in manager._sockets
+            and manager._sockets[group] is not original
+            and manager._sockets[group].connected
+        ), "failure callback did not install a connected replacement"
+
+        replacement = manager._sockets[group]
+        last_data_before = manager._last_data_at[group]
+        ticks_before = manager.snapshot()["ticks_received"]
+
+        # A delayed tick from the obsolete generation must not make the new
+        # socket look active to the silent-feed watchdog.
+        old_data({"token": "101", "ltp": 99.0})
+
+        assert manager._last_data_at[group] == last_data_before
+        assert manager.snapshot()["ticks_received"] == ticks_before
+        assert delivered == []
+
+        replacement.connect_calls[0]["on_data"]({"token": "101", "ltp": 100.0})
+        assert wait_until(lambda: len(delivered) == 1)
+        assert manager._last_data_at[group] >= last_data_before
+    finally:
+        manager.close()
