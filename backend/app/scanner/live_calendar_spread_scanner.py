@@ -61,7 +61,7 @@ class LiveCalendarSpreadScanner:
         self._pair_status: dict[tuple[str,str,str], dict] = {}
         self._diagnostics = {
             "invalid_quote": 0, "stale_tick": 0, "future_tick": 0,
-            "waiting_for_second_expiry": 0, "timestamp_mismatch": 0,
+            "waiting_for_second_expiry": 0, "timestamp_mismatch": 0, "insufficient_depth": 0,
             "lot_size_mismatch": 0, "no_positive_edge": 0,
             "qualified": 0, "side_effect_queue_dropped": 0,
             "side_effect_errors": 0, "observe_errors": 0,
@@ -187,6 +187,7 @@ class LiveCalendarSpreadScanner:
                 self._set_pair_status(key, "insufficient_depth", near=near, far=far,
                                       long_edge=long_edge, short_edge=short_edge,
                                       liquidity_qty=liquidity, gross_profit=gross)
+                self._diagnostics["insufficient_depth"] += 1
                 return None
             qualifies = qualifies_opportunity(
                 gap_points=gap, gross_profit=gross,
