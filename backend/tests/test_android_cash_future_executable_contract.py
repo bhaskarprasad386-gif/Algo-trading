@@ -19,7 +19,7 @@ def test_android_cash_future_screen_displays_scanner_opportunities_without_paper
     assert "response.data" in body
     assert ".sortedWith(compareByDescending<LiveCashFutureSignal> { it.executable }" in body
     assert "lastExecutableOpportunity = executable" in body
-    assert "openScannerDetail(executable)" in body
+    assert "openScannerDetail(lastExecutableOpportunity)" in body
     assert "btnScannerPaperExecute" not in body
     assert "paperEntry(" not in body
     assert "paperExit(" not in body
