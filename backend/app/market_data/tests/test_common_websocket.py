@@ -766,3 +766,59 @@ def test_socket_capacity_configuration_fails_fast_without_opening_partial_feed()
     finally:
         manager.close()
 
+
+def test_feed_telemetry_distinguishes_raw_frames_from_routing_failures():
+    registry = InstrumentRegistry()
+    d = descriptor("101", "NSE", "EQ")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    seen = []
+    manager.register_callback("cash", lambda message: seen.append(message))
+    try:
+        manager.subscribe("cash", [d.key])
+        group = SocketGroup(1, 0)
+
+        # Current socket receives frames, but several cannot be routed.
+        manager._on_data(group, ["not", "a", "dict"])
+        manager._on_data(group, {"ltp": 100})
+        manager._on_data(group, {"token": "101", "exchange_type": "bad"})
+        manager._on_data(group, {"token": "999", "exchange_type": 1})
+        manager._on_data(group, {"token": "101", "exchange_type": 2})
+        manager._on_data(group, {"token": "101", "exchange_type": 1, "ltp": 100})
+
+        snapshot = manager.snapshot()
+        assert snapshot["raw_frames_received"] == 6
+        assert snapshot["invalid_frame_types"] == 1
+        assert snapshot["missing_token_frames"] == 1
+        assert snapshot["invalid_exchange_type_frames"] == 1
+        assert snapshot["unmatched_frames"] == 2
+        assert snapshot["exchange_mismatch_frames"] == 1
+        assert snapshot["ticks_received"] == 1
+        assert snapshot["last_raw_frame_age_seconds"] is not None
+        assert len(seen) == 1
+    finally:
+        manager.close()
+
+
+def test_stale_socket_generation_does_not_increment_raw_frame_telemetry():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [d.key])
+        group = SocketGroup(1, 0)
+        old_callback = FakeSocket.instances[0].connect_calls[0]["on_data"]
+        with manager._lock:
+            old_generation = manager._socket_generation[group]
+            manager._socket_generation[group] = old_generation + 1
+
+        old_callback({"token": "101", "exchange_type": 1})
+        snapshot = manager.snapshot()
+        assert snapshot["raw_frames_received"] == 0
+        assert snapshot["ticks_received"] == 0
+    finally:
+        manager.close()
+
