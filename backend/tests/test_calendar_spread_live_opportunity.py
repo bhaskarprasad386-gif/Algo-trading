@@ -162,6 +162,8 @@ def test_calendar_invalidates_old_signal_when_latest_pair_has_no_positive_edge()
     assert first is not None
     assert scanner.snapshot()
 
+    updated_near = rec("invalidate-near", "NIFTY-CUR", ts + 200_000_000, 99, 100, expiry="2026-10-29")
+    assert scanner.update(updated_near) is None
     updated_far = rec("invalidate-far", "NIFTY-NEAR", ts + 200_000_000, 99, 100, expiry="2026-11-26")
     assert scanner.update(updated_far) is None
     assert scanner.snapshot() == ()
@@ -181,12 +183,9 @@ def test_calendar_positive_gross_edge_without_two_sided_depth_does_not_qualify()
     far = replace(rec("depth-far", "NIFTY-NEAR", ts + 100_000_000, 104, 105, expiry="2026-11-26"), bid_qty=0)
     scanner.update(near)
     result = scanner.update(far)
-    assert result is not None
-    assert result.gap_points == 4
-    assert result.gross_profit == 200
-    assert result.liquidity_qty == 0
-    assert result.qualifies is False
+    assert result is None
     assert scanner.snapshot() == ()
+    assert scanner.diagnostics_snapshot()["pairs"][0]["status"] == "insufficient_depth"
 
 
 def test_calendar_preserves_original_leg_timestamps_and_family_in_signal_metadata():
@@ -222,7 +221,9 @@ def test_canonical_executable_quote_rejects_zero_bid_and_zero_ask():
     valid = rec("canonical-depth", "NIFTY-CUR", 3_000_000_000, 99, 100)
     assert valid.is_executable_quote is True
     assert replace(valid, bid=0).is_executable_quote is False
-    assert replace(valid, ask=0).is_executable_quote is False
+    import pytest
+    with pytest.raises(ValueError, match="bid cannot exceed ask"):
+        replace(valid, ask=0)
 
 
 def test_calendar_invalid_latest_quote_removes_that_expiry_from_pairing_state():
