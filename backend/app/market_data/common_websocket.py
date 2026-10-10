@@ -59,6 +59,8 @@ class CommonWebSocketManager:
         # Identify socket generations so late Angel callbacks from a replaced
         # socket cannot be counted as live data for the new/absent group.
         self._socket_generation: dict[SocketGroup, int] = {}
+        # Keep generation counters monotonic after an active socket is removed.
+        self._socket_generation_counter: dict[SocketGroup, int] = {}
         self._silent_feed_timeout_seconds = 30.0
         # A broker handshake can fail without firing on_error/on_close, leaving
         # MarketDataWebSocket.connecting stuck True forever. Bound that state.
@@ -78,6 +80,8 @@ class CommonWebSocketManager:
         self._recovery_interval_seconds = 5.0
         self._connect_failures = 0
         self._last_connect_failure = None
+        self._socket_failure_events = 0
+        self._last_socket_failure = None
         self._recovery_attempts = 0
         self._last_recovery_at = None
 
@@ -204,7 +208,8 @@ class CommonWebSocketManager:
                     socket = self._socket_factory()
                     subscriptions = self._group_subscriptions(pairs)
                     with self._lock:
-                        generation = self._socket_generation.get(group, 0) + 1
+                        generation = self._socket_generation_counter.get(group, 0) + 1
+                        self._socket_generation_counter[group] = generation
                         self._socket_generation[group] = generation
                         # Register the socket before broker I/O. Angel's
                         # SmartWebSocketV2.connect() is asynchronous and may
@@ -275,6 +280,7 @@ class CommonWebSocketManager:
                     subscriptions=subscriptions,
                     correlation_id=f"common-{group.mode}-{group.shard}",
                     on_data=lambda message: self._on_data(group, message, generation),
+                    on_failure=lambda reason: self._schedule_socket_failure_recovery(group, socket, generation, reason),
                 )
             except Exception as exc:
                 failure["exception"] = exc
