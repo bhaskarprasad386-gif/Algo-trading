@@ -934,12 +934,73 @@ def test_invalid_subscription_mode_is_rejected_before_broker_io():
     manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
     try:
         try:
-            manager.subscribe("consumer", [item.key], mode=4)
+            manager.subscribe("consumer", [item.key], mode=5)
         except ValueError as exc:
             assert "mode must be one" in str(exc)
         else:
             raise AssertionError("unsupported mode must be rejected")
         assert FakeSocket.instances == []
         assert registry.subscriptions() == ()
+    finally:
+        manager.close()
+
+
+def test_mode_four_is_accepted_consistently_by_common_manager():
+    registry = InstrumentRegistry()
+    item = descriptor("781")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    try:
+        manager.subscribe("depth-consumer", [item.key], mode=4)
+        assert manager.snapshot()["connected_groups"] == ["4:0"]
+        assert FakeSocket.instances[0].connect_calls[0]["mode"] == 4
+    finally:
+        manager.close()
+
+
+def test_missing_exchange_type_rejects_ambiguous_token_across_socket_groups():
+    registry = InstrumentRegistry()
+    nse = descriptor("777", "NSE", "EQ")
+    nfo = descriptor("777", "NFO", "DERIVATIVES")
+    registry.register_many([nse, nfo])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 1
+    seen = []
+    manager.register_callback("nse", lambda message: seen.append("nse"))
+    manager.register_callback("nfo", lambda message: seen.append("nfo"))
+    try:
+        manager.subscribe("nse", [nse.key])
+        manager.subscribe("nfo", [nfo.key])
+        assert manager.snapshot()["socket_groups"] == 2
+        manager._on_data(SocketGroup(1, 0), {"token": "777", "ltp": 100})
+        snapshot = manager.snapshot()
+        assert seen == []
+        assert snapshot["ambiguous_token_frames"] == 1
+        assert snapshot["ticks_received"] == 0
+    finally:
+        manager.close()
+
+
+def test_matched_frame_only_refreshes_silence_timer_after_successful_delivery():
+    registry = InstrumentRegistry()
+    item = descriptor("782")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+
+    def fail_delivery(_message):
+        raise RuntimeError("consumer delivery failed")
+
+    manager.register_callback("consumer", fail_delivery)
+    try:
+        manager.subscribe("consumer", [item.key])
+        group = SocketGroup(1, 0)
+        before = manager._last_data_at[group]
+        manager._on_data(group, {"token": "782", "exchange_type": 1, "ltp": 100})
+        snapshot = manager.snapshot()
+        assert manager._last_data_at[group] == before
+        assert snapshot["ticks_received"] == 1
+        assert snapshot["raw_callback_attempts"] == 1
+        assert snapshot["raw_callback_successes"] == 0
+        assert snapshot["last_successful_delivery_age_seconds_by_group"]["1:0"] >= 0
     finally:
         manager.close()
