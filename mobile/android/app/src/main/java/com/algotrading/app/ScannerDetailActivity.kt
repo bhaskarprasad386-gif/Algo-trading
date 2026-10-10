@@ -24,7 +24,6 @@ class ScannerDetailActivity : AppCompatActivity() {
     private var scannerCash = 0.0
     private var scannerNet = 0.0
     private var scannerExecutable = false
-    private var activePosition: PaperPosition? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,7 +50,7 @@ class ScannerDetailActivity : AppCompatActivity() {
         scannerExecutable = intent.getBooleanExtra(EXTRA_EXECUTABLE, false)
 
         findViewById<TextView>(R.id.tvDetailTitle).text = detailSymbol.ifBlank { "Scanner Opportunity" }
-        findViewById<TextView>(R.id.tvDetailStatus).text = if (scannerExecutable) "EXECUTABLE • PAPER MODE" else "OBSERVATION ONLY"
+        findViewById<TextView>(R.id.tvDetailStatus).text = "SCANNER SNAPSHOT • NO EXECUTION"
         renderScannerSnapshot(future, gap, gapPct, gross, margin, capital, roi)
     }
 
@@ -95,73 +94,37 @@ class ScannerDetailActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.tvCapitalValue).text = money(capital)
         findViewById<TextView>(R.id.tvNetValue).text = money(scannerNet)
         findViewById<TextView>(R.id.tvRoiValue).text = "${pct(roi)}%"
-        findViewById<TextView>(R.id.tvBreakevenValue).text = "Break-even: Awaiting executed strategy legs"
+        findViewById<TextView>(R.id.tvBreakevenValue).text = "Break-even: Not calculated without an executed strategy"
         findViewById<TextView>(R.id.tvMaxProfitValue).text = "Max Profit (scanner estimate): ${money(scannerNet)}"
         findViewById<TextView>(R.id.tvMaxLossValue).text = "Max Loss: Not available until strategy legs are defined"
-        tvRiskValue.text = if (scannerExecutable) "Risk: paper execution eligible; loading actual paper position…" else "Risk: observation only; no executable position is active"
-        findViewById<TextView>(R.id.tvAnalysisNote).text = if (scannerExecutable) "Scanner snapshot is separate from execution. Actual paper state and current market quote are refreshed independently; scanner estimates are never reused as executed P&L. Live order routing remains disabled." else "This result is for analysis only. No executable trade is suggested by the scanner."
+        tvRiskValue.text = "Observation only • Paper execution removed"
+        findViewById<TextView>(R.id.tvAnalysisNote).text = "Scanner estimates are for analysis only. No paper order or broker order is created by this screen."
     }
 
     private fun refreshExecutionAndQuote() {
+        if (detailSymbol.isBlank()) {
+            tvCurrentLtpValue.text = if (scannerCash > 0.0) "${money(scannerCash)} • scanner snapshot" else "Awaiting live quote"
+            return
+        }
         lifecycleScope.launch(Dispatchers.IO) {
-            var position: PaperPosition? = null
-            var positionError: String? = null
             var ltp: Double? = null
             var quoteError: String? = null
             try {
-                position = ApiService.retrofitService.paperPosition().position
+                ltp = ApiService.retrofitService.ltpBySymbol(detailSymbol).ltp
+                if (ltp == null || ltp <= 0.0) quoteError = "LTP unavailable"
             } catch (error: Exception) {
-                positionError = error.message ?: "Paper position API error"
-            }
-            if (detailSymbol.isNotBlank()) {
-                try {
-                    ltp = ApiService.retrofitService.ltpBySymbol(detailSymbol).ltp
-                    if (ltp == null || ltp <= 0.0) quoteError = "LTP unavailable"
-                } catch (error: Exception) {
-                    quoteError = error.message ?: "Quote API error"
-                }
+                quoteError = error.message ?: "Quote API error"
             }
             withContext(Dispatchers.Main) {
-                activePosition = if (position?.quantity ?: 0.0 > 0.0 && position?.symbol?.uppercase() == detailSymbol) position else null
-                renderLiveState(ltp, positionError, quoteError)
+                tvEntryValue.text = "No execution"
+                tvQuantityValue.text = "—"
+                tvLivePnlValue.text = "Not tracked • execution removed"
+                tvNetPnlValue.text = "No paper execution state"
+                tvCurrentLtpValue.text = if (ltp != null) "${money(ltp)} • live quote" else if (scannerCash > 0.0) "${money(scannerCash)} • scanner snapshot" else "Quote unavailable • ${quoteError ?: "unknown error"}"
+                tvRiskValue.text = "Observation only • no paper position"
+                findViewById<TextView>(R.id.tvAnalysisNote).text = "Current quote is shown for analysis. This app no longer creates, manages, or tracks paper trades."
             }
         }
-    }
-
-    private fun renderLiveState(ltp: Double?, positionError: String?, quoteError: String?) {
-        val position = activePosition
-        if (position == null) {
-            tvEntryValue.text = "Not executed"
-            tvQuantityValue.text = "0"
-            tvLivePnlValue.text = "₹0.00 • no matching active position"
-            tvNetPnlValue.text = "Awaiting executed position"
-            tvCurrentLtpValue.text = if (ltp != null) "${money(ltp)} • live quote" else if (scannerCash > 0.0) "${money(scannerCash)} • scanner snapshot" else "Awaiting live quote"
-            tvRiskValue.text = if (positionError != null) "Paper position unavailable • $positionError" else if (scannerExecutable) "Risk: paper execution eligible; no matching active position" else "Risk: observation only; no active position"
-            return
-        }
-
-        tvEntryValue.text = money(position.entry_price)
-        tvQuantityValue.text = formatQuantity(position.quantity)
-        if (ltp != null) {
-            val grossPnl = (ltp - position.entry_price) * position.quantity
-            val pnlPct = if (position.entry_price > 0.0) ((ltp - position.entry_price) / position.entry_price) * 100.0 else 0.0
-            tvCurrentLtpValue.text = "${money(ltp)} • live quote"
-            tvLivePnlValue.text = "${signedMoney(grossPnl)} • ${signedPct(pnlPct)}"
-            tvNetPnlValue.text = "Gross P&L ${signedMoney(grossPnl)} • charges not available"
-            tvRiskValue.text = when {
-                ltp <= position.stop_loss -> "RISK: BELOW STOP LOSS • ${money(position.stop_loss)}"
-                ltp >= position.target -> "TARGET ZONE • ${money(position.target)}"
-                else -> "PAPER POSITION ACTIVE • qty ${formatQuantity(position.quantity)} • target ${money(position.target)}"
-            }
-            findViewById<TextView>(R.id.tvAnalysisNote).text = "Live paper P&L = (current LTP − executed entry) × executed quantity. Net P&L is not fabricated: broker/applicable charges are not yet available from the execution response."
-        } else {
-            tvCurrentLtpValue.text = if (scannerCash > 0.0) "${money(scannerCash)} • scanner snapshot" else "Quote unavailable"
-            tvLivePnlValue.text = "₹0.00 • ${quoteError ?: "quote unavailable"}"
-            tvNetPnlValue.text = "Execution active • net P&L awaits quote/charges"
-            tvRiskValue.text = "PAPER POSITION ACTIVE • quote unavailable"
-        }
-        findViewById<TextView>(R.id.tvBreakevenValue).text = "Break-even: ${money(position.entry_price)} • paper position"
-        findViewById<TextView>(R.id.tvMaxLossValue).text = "Stop Loss: ${money(position.stop_loss)}"
     }
 
     private fun money(value: Double): String = "₹" + String.format("%,.2f", value)
