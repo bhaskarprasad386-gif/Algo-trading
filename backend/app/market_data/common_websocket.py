@@ -67,6 +67,9 @@ class CommonWebSocketManager:
         # that does not return promptly continues in a daemon worker while the
         # recovery supervisor remains free to replace its stale socket.
         self._connect_call_wait_seconds = 0.25
+        # Subscription APIs can block inside the SDK too; bound those calls so
+        # they cannot monopolize the reconciliation lock and stop recovery.
+        self._socket_call_wait_seconds = 0.25
         self._route_index: dict[
             SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
         ] = {}
@@ -225,9 +228,19 @@ class CommonWebSocketManager:
                     removed = previous_tokens.get(group, set()) - pairs
                     added = pairs - previous_tokens.get(group, set())
                     if removed:
-                        self._unsubscribe_pairs(socket, group.mode, removed)
+                        self._run_socket_operation_bounded(
+                            socket=socket,
+                            group=group,
+                            operation=lambda: self._unsubscribe_pairs(socket, group.mode, removed),
+                            operation_name="unsubscribe",
+                        )
                     if added:
-                        self._subscribe_pairs(socket, group.mode, added)
+                        self._run_socket_operation_bounded(
+                            socket=socket,
+                            group=group,
+                            operation=lambda: self._subscribe_pairs(socket, group.mode, added),
+                            operation_name="subscribe",
+                        )
                     with self._lock:
                         self._socket_tokens[group] = set(pairs)
 
@@ -319,6 +332,77 @@ class CommonWebSocketManager:
             error = failure.get("exception")
             if error is not None:
                 raise error
+
+    def _run_socket_operation_bounded(
+        self,
+        *,
+        socket: Any,
+        group: SocketGroup,
+        operation: Callable[[], None],
+        operation_name: str,
+    ) -> None:
+        """Run subscribe/unsubscribe outside the caller's blocking path.
+
+        If the SDK call stalls or fails, invalidate that socket generation and
+        keep subscription intent in the registry so the recovery loop can build
+        a fresh socket with the complete desired token set.
+        """
+        completed = Event()
+        failure: dict[str, Exception] = {}
+
+        def _run() -> None:
+            try:
+                operation()
+            except Exception as exc:
+                failure["exception"] = exc
+            finally:
+                completed.set()
+
+        worker = Thread(
+            target=_run,
+            name=f"common-ws-{operation_name}-{group.mode}-{group.shard}",
+            daemon=True,
+        )
+        worker.start()
+        finished = completed.wait(timeout=max(0.01, self._socket_call_wait_seconds))
+        error = failure.get("exception")
+        if finished and error is None:
+            return
+
+        # Never leave a potentially half-mutated socket as authoritative.
+        with self._lock:
+            is_current = self._sockets.get(group) is socket
+            if is_current:
+                self._sockets.pop(group, None)
+                self._socket_tokens.pop(group, None)
+                self._socket_created_at.pop(group, None)
+                self._last_data_at.pop(group, None)
+                self._socket_generation.pop(group, None)
+
+        if is_current:
+            self._close_socket_bounded(socket)
+
+        if not finished:
+            error = TimeoutError(
+                f"WebSocket {operation_name} call exceeded "
+                f"{self._socket_call_wait_seconds:.2f}s for group {group.mode}:{group.shard}"
+            )
+        assert error is not None
+        runtime_diagnostics.record(
+            component="Common Market Feed",
+            error_type=type(error).__name__,
+            message=str(error),
+            context={
+                "event": f"socket_{operation_name}",
+                "group": f"{group.mode}:{group.shard}",
+                "timed_out": not finished,
+            },
+        )
+        app_logger.warning(
+            "Common feed socket %s failed group=%s error=%s: %s; socket invalidated for recovery",
+            operation_name, group, type(error).__name__, error,
+        )
+        raise error
 
     def _ensure_recovery_supervisor(self) -> None:
         """Start one process-local self-healing loop for the shared broker feed."""
