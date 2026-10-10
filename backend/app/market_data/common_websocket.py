@@ -158,8 +158,8 @@ class CommonWebSocketManager:
         consumer = self._consumer_name(consumer)
         if not keys:
             return ()
-        if isinstance(mode, bool) or mode not in (1, 2, 3):
-            raise ValueError("mode must be one of Angel One WebSocket modes 1, 2, or 3")
+        if not isinstance(mode, int) or isinstance(mode, bool) or mode not in (1, 2, 3, 4):
+            raise ValueError("mode must be one of Angel One WebSocket modes 1, 2, 3, or 4")
         with self._lock:
             if self._closed:
                 raise RuntimeError("CommonWebSocketManager is closed")
@@ -714,9 +714,16 @@ class CommonWebSocketManager:
                     self._exchange_mismatch_frames += 1
             else:
                 self._missing_exchange_type_frames += 1
+                # Token-only fallback must be unambiguous across every socket
+                # group, not merely this shard. Exchange types are partitioned
+                # into separate groups, so a local check can silently misroute
+                # an NSE token when the same token is subscribed on NFO elsewhere.
                 token_routes = tuple(
-                    item for (route_exchange, route_token), items in routes.items()
-                    if route_token == token for item in items
+                    item
+                    for group_routes in self._route_index.values()
+                    for (route_exchange, route_token), items in group_routes.items()
+                    if route_token == token
+                    for item in items
                 )
                 # A token alone is not globally unique across exchanges. Route it
                 # only when every matching subscription resolves to one exchange.
@@ -739,7 +746,7 @@ class CommonWebSocketManager:
             if matching:
                 self._ticks_received += 1
                 self._ticks_by_exchange[str(exchange_type or "unknown")] += 1
-                self._last_data_at[group] = time.monotonic()
+        delivered_to_consumer = False
         for callback in {id(cb): cb for cb in raw_callbacks if cb is not None}.values():
             with self._lock:
                 self._raw_callback_attempts += 1
@@ -747,6 +754,8 @@ class CommonWebSocketManager:
                 callback(message)
                 with self._lock:
                     self._raw_callback_successes += 1
+                    self._last_data_at[group] = time.monotonic()
+                delivered_to_consumer = True
             except Exception as exc:
                 with self._lock:
                     self._delivery_errors += 1
@@ -789,6 +798,8 @@ class CommonWebSocketManager:
                 callback(record)
                 with self._lock:
                     self._normalized_records_delivered += 1
+                    self._last_data_at[group] = time.monotonic()
+                delivered_to_consumer = True
             except (TypeError, ValueError, OverflowError) as exc:
                 with self._lock:
                     self._normalizer_errors += 1
@@ -861,6 +872,11 @@ class CommonWebSocketManager:
                     max(0.0, time.monotonic() - self._last_raw_frame_at)
                     if self._last_raw_frame_at is not None else None
                 ),
+                "last_successful_delivery_age_seconds_by_group": {
+                    f"{group.mode}:{group.shard}": max(0.0, time.monotonic() - delivered_at)
+                    for group, delivered_at in self._last_data_at.items()
+                    if group in sockets
+                },
                 "runtime_started_at": self._runtime_started_at,
                 "ticks_by_exchange_type": dict(self._ticks_by_exchange),
                 "last_tick": dict(self._last_tick) if self._last_tick else None,
