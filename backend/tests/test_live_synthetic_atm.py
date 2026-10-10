@@ -1,3 +1,5 @@
+from time import time_ns
+
 from app.market_data.live_synthetic_atm import LiveSyntheticAtmTracker, concrete_strikes_from_master
 
 
@@ -20,6 +22,12 @@ def test_atm_tracker_rejects_unknown_or_invalid_inputs():
         pass
     else:
         raise AssertionError("expected positive price validation")
+
+def test_atm_tracker_rejects_stale_wall_clock_underlying_price():
+    tracker = LiveSyntheticAtmTracker(strikes_by_symbol={"NIFTY": (100.0, 105.0, 110.0)})
+    tracker.update("NIFTY", 106.0, time_ns() - 6_000_000_000)
+    assert tracker.atm("NIFTY") is None
+
 
 def test_concrete_strikes_from_master_uses_real_chain_and_expiry():
     instruments = [

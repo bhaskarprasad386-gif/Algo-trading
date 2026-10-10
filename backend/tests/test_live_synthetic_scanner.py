@@ -35,6 +35,8 @@ def test_live_synthetic_scanner_assembles_real_ce_pe_and_future():
             "expiry": "30SEP2026",
             "bid": 115.0,
             "ask": 116.0,
+            "bid_qty": 10,
+            "ask_qty": 10,
             "lot_size": 1,
             "source_timestamp_ns": ts,
             "symbol": "NIFTYFUT",
@@ -43,6 +45,9 @@ def test_live_synthetic_scanner_assembles_real_ce_pe_and_future():
     assert result
     assert result[0].option.strike == 105.0
     assert result[0].future.bid == 115.0
+    assert result[0].option.call_timestamp_ns == ts
+    assert result[0].option.put_timestamp_ns == ts
+    assert result[0].future.source_timestamp_ns == ts
 
 
 def test_live_synthetic_scanner_rejects_missing_timestamp():
@@ -63,6 +68,8 @@ def test_live_synthetic_scanner_rejects_mismatched_option_expiry():
             "expiry": "30SEP2026",
             "bid": 115.0,
             "ask": 116.0,
+            "bid_qty": 10,
+            "ask_qty": 10,
             "lot_size": 1,
             "source_timestamp_ns": ts,
             "symbol": "NIFTYFUT",
@@ -84,6 +91,8 @@ def test_live_synthetic_scanner_rejects_mixed_expiry_legs_even_when_both_legs_ex
             "expiry": "30SEP2026",
             "bid": 115.0,
             "ask": 116.0,
+            "bid_qty": 10,
+            "ask_qty": 10,
             "lot_size": 1,
             "source_timestamp_ns": ts,
             "symbol": "NIFTYFUT",
@@ -126,7 +135,7 @@ def test_live_synthetic_scanner_keeps_current_and_near_expiries_isolated():
         scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": exp})
         scanner.observe({**_base(ts, 105.0, "PE", 4.0, 5.0), "expiry": exp})
         result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"",
-            "expiry":exp,"bid":fut,"ask":fut+1,"lot_size":1,"source_timestamp_ns":ts,
+            "expiry":exp,"bid":fut,"ask":fut+1,"bid_qty":10,"ask_qty":10,"lot_size":1,"source_timestamp_ns":ts,
             "symbol":"NIFTYFUT","volume":100,"oi":1000})
         assert result
         assert {r.future.expiry for r in result} == {r.option.expiry for r in result}
@@ -141,7 +150,7 @@ def test_live_synthetic_scanner_does_not_cross_second_boundaries():
     scanner.observe(_base(ts, 105.0, "CE", 4.0, 5.0))
     scanner.observe(_base(ts + 2_000_000_000, 105.0, "PE", 4.0, 5.0))
     result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"",
-        "expiry":"30SEP2026","bid":115,"ask":116,"lot_size":1,"source_timestamp_ns":ts+2_000_000_000,"symbol":"NIFTYFUT"})
+        "expiry":"30SEP2026","bid":115,"ask":116,"bid_qty":10,"ask_qty":10,"lot_size":1,"source_timestamp_ns":ts+2_000_000_000,"symbol":"NIFTYFUT"})
     assert result == ()
 
 
@@ -152,10 +161,37 @@ def test_live_synthetic_scanner_allows_synchronized_ticks_across_second_boundary
     scanner.observe(_base(ts, 100.0, "PE", 4.0, 5.0))
     scanner.observe(_base(ts, 105.0, "CE", 4.0, 5.0))
     scanner.observe(_base(ts + 2, 105.0, "PE", 4.0, 5.0))
-    result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"", "expiry":"30SEP2026", "bid":115,"ask":116,"lot_size":1,"source_timestamp_ns":ts+2,"symbol":"NIFTYFUT","volume":100,"oi":1000})
+    result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"", "expiry":"30SEP2026", "bid":115,"ask":116,"bid_qty":10,"ask_qty":10,"lot_size":1,"source_timestamp_ns":ts+2,"symbol":"NIFTYFUT","volume":100,"oi":1000})
     assert result
     assert result[0].option.timestamp_ns == ts + 2
     assert result[0].future.timestamp_ns == ts + 2
+
+
+def test_live_synthetic_scanner_rejects_future_without_executable_depth():
+    ts = 7_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    scanner.observe(_base(ts, 105.0, "CE", 4.0, 5.0))
+    scanner.observe(_base(ts, 105.0, "PE", 4.0, 5.0))
+    result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"",
+        "expiry":"30SEP2026","bid":115,"ask":116,"bid_qty":10,"ask_qty":10,"lot_size":1,"source_timestamp_ns":ts,
+        "symbol":"NIFTYFUT","volume":100,"oi":1000})
+    assert result == ()
+
+
+def test_live_synthetic_scanner_keeps_fresh_pair_when_unrelated_strike_is_older():
+    ts = 8_000_000_000
+    scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
+    # Keep the option legs on the same future expiry; _base defaults to a
+    # September expiry, which would correctly be rejected against this future.
+    scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": "30OCT2026"})
+    scanner.observe({**_base(ts + 400_000_000, 105.0, "PE", 4.0, 5.0), "expiry": "30OCT2026"})
+    scanner.observe({**_base(ts - 700_000_000, 110.0, "CE", 4.0, 5.0), "expiry": "30OCT2026"})
+    result = scanner.observe({"underlying":"NIFTY","instrument_class":"INDEX","option_type":"",
+        "expiry":"30OCT2026","bid":115,"ask":116,"bid_qty":10,"ask_qty":10,
+        "lot_size":1,"source_timestamp_ns":ts + 700_000_000,"symbol":"NIFTYFUT","volume":100,"oi":1000})
+    assert result
+    assert result[0].option.call_timestamp_ns == ts
+    assert result[0].option.put_timestamp_ns == ts + 400_000_000
 
 
 def test_live_synthetic_scanner_rejects_commodity_scope():
