@@ -63,6 +63,10 @@ class CommonWebSocketManager:
         # A broker handshake can fail without firing on_error/on_close, leaving
         # MarketDataWebSocket.connecting stuck True forever. Bound that state.
         self._connect_timeout_seconds = 15.0
+        # Never let a broker connect call hold reconciliation hostage. A call
+        # that does not return promptly continues in a daemon worker while the
+        # recovery supervisor remains free to replace its stale socket.
+        self._connect_call_wait_seconds = 0.25
         self._route_index: dict[
             SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
         ] = {}
@@ -210,40 +214,13 @@ class CommonWebSocketManager:
                         now = time.monotonic()
                         self._socket_created_at[group] = now
                         self._last_data_at[group] = now
-                    try:
-                        socket.connect(
-                            mode=group.mode,
-                            subscriptions=subscriptions,
-                            correlation_id=f"common-{group.mode}-{group.shard}",
-                            on_data=lambda message, group=group, generation=generation: self._on_data(group, message, generation),
-                        )
-                    except Exception as exc:
-                        with self._lock:
-                            self._sockets.pop(group, None)
-                            self._socket_tokens.pop(group, None)
-                            self._socket_created_at.pop(group, None)
-                            self._last_data_at.pop(group, None)
-                            self._socket_generation.pop(group, None)
-                            self._connect_failures += 1
-                            self._last_connect_failure = {
-                                "group": f"{group.mode}:{group.shard}",
-                                "error_type": type(exc).__name__,
-                                "error": str(exc),
-                                "failed_at_ns": time.time_ns(),
-                                "subscriptions": len(pairs),
-                            }
-                        runtime_diagnostics.record(
-                            component="Common Market Feed",
-                            error_type=type(exc).__name__,
-                            message=str(exc),
-                            context={"event": "socket_connect", "group": f"{group.mode}:{group.shard}", "subscriptions": len(pairs)},
-                        )
-                        app_logger.warning(
-                            "Common feed socket connect failed group=%s error=%s: %s",
-                            group, type(exc).__name__, exc,
-                        )
-                        self._close_socket_bounded(socket)
-                        raise
+                    self._start_socket_connect(
+                        socket=socket,
+                        group=group,
+                        pairs=pairs,
+                        subscriptions=subscriptions,
+                        generation=generation,
+                    )
                 else:
                     removed = previous_tokens.get(group, set()) - pairs
                     added = pairs - previous_tokens.get(group, set())
@@ -264,6 +241,84 @@ class CommonWebSocketManager:
                     self._socket_generation.pop(group, None)
             for socket in stale_sockets:
                 self._close_socket_bounded(socket)
+
+    def _start_socket_connect(
+        self,
+        *,
+        socket: Any,
+        group: SocketGroup,
+        pairs: set[tuple[int, str]],
+        subscriptions: dict[int, list[str]],
+        generation: int,
+    ) -> None:
+        """Start broker I/O without holding the reconcile lock while it blocks."""
+        completed = Event()
+        failure: dict[str, Exception] = {}
+
+        def _connect() -> None:
+            try:
+                socket.connect(
+                    mode=group.mode,
+                    subscriptions=subscriptions,
+                    correlation_id=f"common-{group.mode}-{group.shard}",
+                    on_data=lambda message: self._on_data(group, message, generation),
+                )
+            except Exception as exc:
+                failure["exception"] = exc
+                with self._lock:
+                    # A delayed failure from a socket already replaced by
+                    # recovery must never remove the replacement socket.
+                    is_current = (
+                        self._sockets.get(group) is socket
+                        and self._socket_generation.get(group) == generation
+                    )
+                    if is_current:
+                        self._sockets.pop(group, None)
+                        self._socket_tokens.pop(group, None)
+                        self._socket_created_at.pop(group, None)
+                        self._last_data_at.pop(group, None)
+                        self._socket_generation.pop(group, None)
+                    self._connect_failures += 1
+                    self._last_connect_failure = {
+                        "group": f"{group.mode}:{group.shard}",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                        "failed_at_ns": time.time_ns(),
+                        "subscriptions": len(pairs),
+                    }
+                runtime_diagnostics.record(
+                    component="Common Market Feed",
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                    context={
+                        "event": "socket_connect",
+                        "group": f"{group.mode}:{group.shard}",
+                        "subscriptions": len(pairs),
+                    },
+                )
+                app_logger.warning(
+                    "Common feed socket connect failed group=%s error=%s: %s",
+                    group, type(exc).__name__, exc,
+                )
+                if is_current:
+                    self._close_socket_bounded(socket)
+            finally:
+                completed.set()
+
+        worker = Thread(
+            target=_connect,
+            name=f"common-ws-connect-{group.mode}-{group.shard}",
+            daemon=True,
+        )
+        worker.start()
+        # Keep the old immediate-error behavior for callers/tests, but cap how
+        # long reconcile waits. If connect hangs, the recovery loop can replace
+        # the socket after _connect_timeout_seconds instead of waiting on this
+        # thread while holding _reconcile_lock.
+        if completed.wait(timeout=max(0.01, self._connect_call_wait_seconds)):
+            error = failure.get("exception")
+            if error is not None:
+                raise error
 
     def _ensure_recovery_supervisor(self) -> None:
         """Start one process-local self-healing loop for the shared broker feed."""
