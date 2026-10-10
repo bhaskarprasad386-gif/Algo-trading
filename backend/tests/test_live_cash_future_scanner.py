@@ -88,6 +88,11 @@ def test_live_scanner_liquidity_capacity_and_traceability(monkeypatch):
 
 def test_live_scanner_lifecycle_recovery_and_current_near_comparison(monkeypatch):
     monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS", 1)
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT", 0.0)
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_COST_BPS", 0.0)
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_ESTIMATED_COST_PER_LOT", 0.0)
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_SLIPPAGE_BPS", 0.0)
+    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_SLIPPAGE_PER_LOT", 0.0)
     scanner = LiveCashFutureScanner()
     base = int(time() * 1_000_000_000)
 
