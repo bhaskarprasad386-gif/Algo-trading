@@ -459,6 +459,12 @@ async def _run_live_runner_in_daemon_thread(
                 raise
 
     worker = threading.Thread(target=_target, name=name, daemon=True)
+    # Expose the actual worker lifecycle to runner health snapshots. A clear
+    # stop event alone does not prove the worker thread is still alive.
+    try:
+        setattr(runner, "_runner_worker", worker)
+    except Exception:
+        pass
     worker.start()
     try:
         while worker.is_alive():
