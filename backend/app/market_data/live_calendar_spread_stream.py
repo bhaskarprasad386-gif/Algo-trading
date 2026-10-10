@@ -212,8 +212,12 @@ class LiveCalendarSpreadOneSecondCollector:
 
     def _emit(self, record, timestamp_ns: int) -> None:
         payload = record.as_dict()
+        # Keep the second-bucket timestamp separate from the source tick time.
+        # Pairing/diagnostics must be able to audit the original exchange timestamp.
         payload["timestamp_ns"] = timestamp_ns
-        payload["source_timestamp_ns"] = timestamp_ns
+        payload["bucket_timestamp_ns"] = timestamp_ns
+        payload["source_timestamp_ns"] = record.timestamp_ns
+        payload["exchange_timestamp_ns"] = record.timestamp_ns
         payload["exchange"] = record.instrument.exchange
         payload["instrument_type"] = record.instrument_type.value
         # Preserve the instrument-master family: FUTIDX and FUTSTK both map to
