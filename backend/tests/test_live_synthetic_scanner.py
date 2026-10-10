@@ -91,6 +91,8 @@ def test_live_synthetic_scanner_rejects_mixed_expiry_legs_even_when_both_legs_ex
             "expiry": "30SEP2026",
             "bid": 115.0,
             "ask": 116.0,
+            "bid_qty": 10,
+            "ask_qty": 10,
             "lot_size": 1,
             "source_timestamp_ns": ts,
             "symbol": "NIFTYFUT",
