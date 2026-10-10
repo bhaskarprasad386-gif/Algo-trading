@@ -60,6 +60,10 @@ def test_normalized_callback_uses_exact_exchange_group():
             self.connect_calls.append(kwargs)
         def subscribe(self, tokens, mode=None):
             pass
+        def subscribe_groups(self, groups, mode=None):
+            pass
+        def unsubscribe_groups(self, groups):
+            pass
         def close(self):
             self.closed = True
 
