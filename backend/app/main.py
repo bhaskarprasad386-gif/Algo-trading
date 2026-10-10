@@ -890,7 +890,13 @@ def market_data_runtime_health():
             "synthetic_arbitrage": None if synthetic_runner is None else synthetic_runner.snapshot(),
             "box_spread": None if box_runner is None else box_runner.snapshot(),
         },
-        "scanner": live_cash_future_scanner.health(),
+        "scanner": {
+            "strategy": "calendar-spread",
+            "signals": len(live_calendar_spread_scanner.snapshot(limit=200)),
+            "pairs": len(live_calendar_spread_scanner.pair_snapshot(limit=200)),
+            "diagnostics": live_calendar_spread_scanner.diagnostics_snapshot(limit=50)["counters"],
+        },
+        "cash_future_scanner": live_cash_future_scanner.health(),
     }
 
 
