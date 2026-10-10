@@ -93,3 +93,13 @@ def test_calendar_scanner_does_not_pair_future_and_commodity_families():
     assert paired is not None
     assert paired.near_contract_month == "2026-10-29"
     assert paired.far_contract_month == "2026-11-26"
+
+
+
+def test_calendar_rejects_materially_future_dated_live_tick():
+    import time
+
+    scanner = LiveCalendarSpreadScanner()
+    future_timestamp = time.time_ns() + 10_000_000_000
+    assert scanner.update(rec("future", "NIFTY-CUR", future_timestamp, 99, 100)) is None
+    assert scanner.pair_snapshot() == ()
