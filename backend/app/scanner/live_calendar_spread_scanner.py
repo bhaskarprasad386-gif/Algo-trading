@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 import logging
 from threading import RLock, Thread
 from queue import Queue, Full
@@ -309,6 +310,11 @@ class LiveCalendarSpreadScanner:
                         "ADD COLUMN contract_family VARCHAR NOT NULL DEFAULT 'UNKNOWN'"
                     ))
                     db.commit()
+            retention_days = max(1, int(settings.LIVE_CALENDAR_SPREAD_RESULT_RETENTION_DAYS))
+            cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=retention_days)
+            db.query(LiveCalendarSpreadScannerResult).filter(
+                LiveCalendarSpreadScannerResult.observed_at < cutoff
+            ).delete(synchronize_session=False)
             row=LiveCalendarSpreadScannerResult(
                 underlying=signal.underlying,exchange=signal.exchange,instrument_type=signal.instrument_type,
                 contract_family=signal.contract_family,
