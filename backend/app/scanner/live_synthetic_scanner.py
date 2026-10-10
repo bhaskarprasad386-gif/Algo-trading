@@ -146,7 +146,7 @@ class LiveSyntheticScanner:
                 pe_bid, pe_ask = self._price(pe.get("bid")), self._price(pe.get("ask"))
                 if None in (ce_bid, ce_ask, pe_bid, pe_ask):
                     continue
-                lot = int(float(ce.get("lot_size") or future_payload.get("lot_size") or 0))
+                lot = int(positive_number(ce.get("lot_size") or future_payload.get("lot_size") or 0))
                 if lot <= 0:
                     continue
                 option_quotes.append(
@@ -161,16 +161,16 @@ class LiveSyntheticScanner:
                         put_ask=pe_ask,
                         lot_size=lot,
                         instrument_class=cls,
-                        volume=int(float(ce.get("volume") or 0)),
-                        oi=int(float(ce.get("oi") or 0)),
+                        volume=int(positive_number(ce.get("volume") or 0)),
+                        oi=int(positive_number(ce.get("oi") or 0)),
                         call_timestamp_ns=ce_timestamp_ns,
                         put_timestamp_ns=pe_timestamp_ns,
-                        call_bid_qty=int(float(ce.get("bid_qty") or 0)),
-                        call_ask_qty=int(float(ce.get("ask_qty") or 0)),
-                        put_bid_qty=int(float(pe.get("bid_qty") or 0)),
-                        put_ask_qty=int(float(pe.get("ask_qty") or 0)),
-                        put_volume=int(float(pe.get("volume") or 0)),
-                        put_oi=int(float(pe.get("oi") or 0)),
+                        call_bid_qty=int(positive_number(ce.get("bid_qty") or 0)),
+                        call_ask_qty=int(positive_number(ce.get("ask_qty") or 0)),
+                        put_bid_qty=int(positive_number(pe.get("bid_qty") or 0)),
+                        put_ask_qty=int(positive_number(pe.get("ask_qty") or 0)),
+                        put_volume=int(positive_number(pe.get("volume") or 0)),
+                        put_oi=int(positive_number(pe.get("oi") or 0)),
                     )
                 )
 
@@ -179,8 +179,8 @@ class LiveSyntheticScanner:
                 return ()
 
             future_bid, future_ask = self._price(future_payload.get("bid")), self._price(future_payload.get("ask"))
-            future_bid_qty = int(float(future_payload.get("bid_qty") or 0))
-            future_ask_qty = int(float(future_payload.get("ask_qty") or 0))
+            future_bid_qty = int(positive_number(future_payload.get("bid_qty") or 0))
+            future_ask_qty = int(positive_number(future_payload.get("ask_qty") or 0))
             if future_bid is None or future_ask is None or future_bid_qty <= 0 or future_ask_qty <= 0:
                 self._prune(timestamp_ns)
                 return ()
@@ -190,10 +190,10 @@ class LiveSyntheticScanner:
                 expiry=future_expiry,
                 bid=future_bid,
                 ask=future_ask,
-                lot_size=int(float(future_payload.get("lot_size") or 0)),
+                lot_size=int(positive_number(future_payload.get("lot_size") or 0)),
                 instrument_class=cls,
-                volume=int(float(future_payload.get("volume") or 0)),
-                oi=int(float(future_payload.get("oi") or 0)),
+                volume=int(positive_number(future_payload.get("volume") or 0)),
+                oi=int(positive_number(future_payload.get("oi") or 0)),
                 source_timestamp_ns=future_timestamp_ns,
                 bid_qty=future_bid_qty,
                 ask_qty=future_ask_qty,
