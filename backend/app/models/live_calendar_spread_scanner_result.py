@@ -10,6 +10,7 @@ class LiveCalendarSpreadScannerResult(Base):
     underlying = Column(String, nullable=False, index=True)
     exchange = Column(String, nullable=False)
     instrument_type = Column(String, nullable=False)
+    contract_family = Column(String, nullable=False, default="UNKNOWN", server_default="UNKNOWN")
     near_contract_month = Column(String, nullable=False)
     far_contract_month = Column(String, nullable=False)
     timestamp_ns = Column(Integer, nullable=False)
