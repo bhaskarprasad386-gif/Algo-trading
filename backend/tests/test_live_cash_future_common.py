@@ -160,3 +160,32 @@ def test_runner_skips_incompatible_shared_descriptor_instead_of_crashing():
     manager.registry.register_many((InstrumentDescriptor(key, "NIFTY-INDEX", "index", "NSE", "NSE"),))
     runner = LiveCashFutureCommonRunner("ignored", manager=manager)
     assert runner._register_descriptors((InstrumentDescriptor(key, "ABC-EQ", "equity", "NSE", "NSE"),)) == set()
+
+
+def test_runner_maps_underlying_metadata_before_pairing_cash_and_future():
+    from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
+
+    runner = LiveCashFutureCommonRunner(
+        "ignored",
+        manager=CommonWebSocketManager(socket_factory=lambda: object()),
+        scanner=CashFutureOpportunityScanner(minimum_gap_points=0, minimum_gross_profit=0),
+    )
+    cash_key = InstrumentKey("NSE", "NSE", "1")
+    future_key = InstrumentKey("NFO", "NFO", "2")
+    runner._metadata[cash_key] = {
+        "leg": "CASH", "underlying": "ABC", "contract_month": "CASH",
+    }
+    runner._metadata[future_key] = {
+        "leg": "FUTURE", "underlying": "ABC", "contract_month": "CURRENT",
+    }
+
+    # Broker-normalized records intentionally omit underlying, and the future's
+    # tradingsymbol differs from the cash symbol. Runner metadata must join them.
+    runner._on_record(record(cash_key, "ABC-EQ", InstrumentType.EQUITY, 1_000_000_000, 99, 100))
+    runner._on_record(record(future_key, "ABC26OCTFUT", InstrumentType.FUTURE, 1_000_000_000, 103, 104, lot=50))
+
+    assert runner.last_result is not None
+    assert runner.last_result.signal.symbol == "ABC"
+    assert runner.last_result.cash.underlying == "ABC"
+    assert runner.last_result.future.underlying == "ABC"
+    runner.stop()
