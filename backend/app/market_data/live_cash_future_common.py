@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import replace
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
 from typing import Any, Callable
@@ -237,6 +238,11 @@ class LiveCashFutureCommonRunner:
         if meta is None:
             self._records_missing_metadata += 1
             return
+        # The broker tick usually contains no underlying field. The runner's
+        # instrument-master mapping is authoritative and must be attached before
+        # the scanner pairs cash symbols with their current/near futures.
+        if record.underlying != meta["underlying"]:
+            record = replace(record, underlying=meta["underlying"])
         if settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED and self._ingestor is not None:
             # Persist one latest broker tick per second. The canonical WebSocket
         # can emit many ticks inside a second, but this stream is explicitly 1s.
