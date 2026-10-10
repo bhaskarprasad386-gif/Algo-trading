@@ -39,3 +39,29 @@ def test_calendar_spread_supervisor_restarts_unexpected_worker_exit(monkeypatch)
     assert calls == 2
     assert len(collectors) == 2
     assert all(collector.stop_event.is_set() for collector in collectors)
+
+
+def test_calendar_collector_health_does_not_call_unstarted_worker_running():
+    from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
+
+    collector = LiveCalendarSpreadOneSecondCollector(data_db=":memory:")
+    health = collector.snapshot()
+
+    assert health["running"] is False
+    assert health["worker_alive"] is False
+    assert health["stop_requested"] is False
+
+
+def test_runner_worker_reference_reflects_finished_thread():
+    class FakeRunner:
+        def run_forever(self):
+            return
+
+        def stop(self):
+            return
+
+    runner = FakeRunner()
+    asyncio.run(main._run_live_runner_in_daemon_thread(runner, name="calendar-test-runner"))
+
+    assert hasattr(runner, "_runner_worker")
+    assert runner._runner_worker.is_alive() is False
