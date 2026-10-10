@@ -276,3 +276,24 @@ def test_calendar_capacity_uses_calendar_specific_capital(monkeypatch):
 
     assert result is not None
     assert result.capacity_lots == 200  # 1,050,000 / (105 * 50)
+
+
+def test_calendar_rejects_pair_when_stored_counterpart_has_aged_out(monkeypatch):
+    import time
+
+    real_now = time.time_ns()
+    fake_now = [real_now]
+    monkeypatch.setattr(time, "time_ns", lambda: fake_now[0])
+    scanner = LiveCalendarSpreadScanner()
+    near = rec("stale-near", "NIFTY-CUR", real_now, 99, 100, expiry="2026-10-29")
+    assert scanner.update(near) is None
+
+    # The incoming far quote is individually fresh (<5s), and its skew is
+    # within 1s, but the stored near quote is already stale (>5s).
+    fake_now[0] = real_now + 5_500_000_000
+    far = rec("fresh-far", "NIFTY-NEAR", real_now + 900_000_000, 104, 105, expiry="2026-11-26")
+    assert scanner.update(far) is None
+    assert scanner.pair_snapshot() == ()
+    diagnostics = scanner.diagnostics_snapshot()
+    assert diagnostics["counters"]["stale_pair"] == 1
+    assert diagnostics["pairs"][0]["status"] == "stale_pair"
