@@ -448,3 +448,41 @@ def test_supervisor_retries_socket_when_connect_returns_without_connected_state(
         assert live_sockets == [replacement]
     finally:
         manager.close()
+
+
+
+def test_stale_failure_callback_cannot_replace_newer_socket_generation():
+    registry = InstrumentRegistry()
+    descriptor = make_descriptor()
+    registry.register(descriptor)
+    manager = CommonWebSocketManager(registry, socket_factory=SimulatedAngelSocket)
+    manager._recovery_interval_seconds = 60.0
+
+    try:
+        manager.subscribe("cash-future", [descriptor.key])
+        group = SocketGroup(1, 0)
+        original = manager._sockets[group]
+        stale_failure = original.connect_calls[0]["on_failure"]
+
+        stale_failure("first disconnect")
+        assert wait_until(
+            lambda: group in manager._sockets
+            and manager._sockets[group] is not original
+            and manager._sockets[group].connected
+        ), "first failure did not install a replacement"
+
+        replacement = manager._sockets[group]
+        instance_count = len(SimulatedAngelSocket.instances)
+
+        # The old SDK may deliver a duplicate/late failure after replacement.
+        stale_failure("late duplicate failure from old generation")
+        time.sleep(0.05)
+
+        assert manager._sockets[group] is replacement
+        assert replacement.connected
+        assert len(SimulatedAngelSocket.instances) == instance_count
+        assert [socket for socket in SimulatedAngelSocket.instances if not socket.closed] == [
+            replacement
+        ]
+    finally:
+        manager.close()
