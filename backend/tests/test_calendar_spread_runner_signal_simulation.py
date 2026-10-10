@@ -125,9 +125,9 @@ def test_calendar_runner_replay_reaches_live_pairs_and_diagnostics_api(monkeypat
     previous_scanner = routes.scanner
     routes.configure(scanner)
     try:
-        live = routes.live()
-        pairs = routes.pairs()
-        diagnostics = routes.pair_diagnostics()
+        live = routes.live(limit=50, min_gap_points=None, min_gross_profit=None)
+        pairs = routes.pairs(limit=200)
+        diagnostics = routes.pair_diagnostics(limit=200)
 
         assert live["status"] == "success"
         assert live["opportunity_count"] == 1
