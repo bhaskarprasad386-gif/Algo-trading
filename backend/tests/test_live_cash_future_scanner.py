@@ -387,3 +387,13 @@ def test_live_scanner_counts_invalid_and_stale_input_categories():
     assert health["invalid_payloads"] == 1
     assert health["invalid_timestamps"] == 1
     assert health["stale_quotes"] == 1
+
+
+
+def test_live_scanner_rejects_far_future_exchange_timestamp_without_crashing():
+    scanner = LiveCashFutureScanner()
+    assert scanner.observe({
+        "leg": "CASH", "underlying": "ABC", "ltp": 100,
+        "source_timestamp_ns": 10**30,
+    }) is None
+    assert scanner.health()["invalid_timestamps"] == 1
