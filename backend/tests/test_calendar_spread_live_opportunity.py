@@ -367,3 +367,16 @@ def test_calendar_reverse_direction_uses_only_executable_side_depth():
     assert result is not None
     assert result.direction == "SHORT_NEAR_LONG_FAR"
     assert result.liquidity_qty == 100
+
+
+def test_calendar_counts_snapshot_reports_exact_fresh_pairs_and_qualified_signals():
+    import time
+
+    scanner = LiveCalendarSpreadScanner(minimum_gap_points=5, minimum_gross_profit=250)
+    ts = time.time_ns()
+    scanner.update(rec("count-near", "NIFTY-CUR", ts, 99, 100, expiry="2026-10-29"))
+    result = scanner.update(rec("count-far", "NIFTY-NEAR", ts, 104, 105, expiry="2026-11-26"))
+
+    assert result is not None and result.qualifies is False
+    assert scanner.counts_snapshot() == {"signals": 0, "pairs": 1}
+
