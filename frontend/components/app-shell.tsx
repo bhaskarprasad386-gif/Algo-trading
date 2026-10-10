@@ -50,7 +50,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               Live status
             </Link>
             <div className="rounded-lg border theme-border theme-warning-bg px-3 py-2 text-xs font-semibold theme-warning">
-              PAPER MODE · LIVE ORDERS OFF
+              SCANNER MODE · LIVE ORDERS OFF
             </div>
           </div>
           <button className="min-h-10 min-w-10 rounded-lg p-2 theme-muted" aria-label="Settings">
