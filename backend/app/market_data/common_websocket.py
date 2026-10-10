@@ -46,7 +46,7 @@ class CommonWebSocketManager:
         self._record_callbacks: dict[str, Callable[[Any], None]] = {}
         self._normalizer = AngelOneTickNormalizer()
         self._lock = RLock()
-        self._reconcile_lock = Lock()
+        self._reconcile_lock = RLock()
         self._delivery_errors = 0
         self._normalizer_errors = 0
         self._last_normalizer_error: str | None = None
@@ -501,6 +501,19 @@ class CommonWebSocketManager:
         min_age_seconds: float = 10.0,
         silent_age_seconds: float | None = None,
     ) -> int:
+        """Serialize recovery against reconciliation so concurrent passes cannot race."""
+        with self._reconcile_lock:
+            return self._recover_disconnected_serialized(
+                min_age_seconds=min_age_seconds,
+                silent_age_seconds=silent_age_seconds,
+            )
+
+    def _recover_disconnected_serialized(
+        self,
+        *,
+        min_age_seconds: float = 10.0,
+        silent_age_seconds: float | None = None,
+    ) -> int:
         """Replace stale/disconnected or connected-but-silent broker sockets."""
         now = time.monotonic()
         stale: list[tuple[SocketGroup, Any, set[tuple[int, str]], float]] = []
@@ -552,6 +565,8 @@ class CommonWebSocketManager:
                 self._sockets.pop(group, None)
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
+                self._last_data_at.pop(group, None)
+                self._socket_generation.pop(group, None)
         if not stale and not missing_groups:
             return 0
 
