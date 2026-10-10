@@ -18,7 +18,6 @@ from app.models.live_cash_future_alert_history import LiveCashFutureAlertHistory
 from app.models.live_synthetic_alert_history import LiveSyntheticAlertHistory
 from app.models.live_box_spread_alert_history import LiveBoxSpreadAlertHistory
 from app.models.live_calendar_spread_alert_history import LiveCalendarSpreadAlertHistory
-from app.models.strategy_auto_setting import StrategyAutoSetting
 from app.models.alert_rule import AlertRule
 from app.models.alert_contact import AlertContact
 
