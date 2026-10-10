@@ -356,7 +356,12 @@ class LiveCalendarSpreadScanner:
         now_ns = time.time_ns()
         with self._lock:
             values = tuple(self._signals.values())
-        values = tuple(x for x in values if 0 <= now_ns - x.timestamp_ns <= self.SNAPSHOT_MAX_AGE_NS)
+        values = tuple(
+            x for x in values
+            if -self.TIMESTAMP_TOLERANCE_NS
+            <= now_ns - x.timestamp_ns
+            <= self.SNAPSHOT_MAX_AGE_NS
+        )
         return tuple(sorted(values, key=lambda x: x.timestamp_ns, reverse=True)[:limit])
 
     def snapshot(self,limit=50,*,minimum_gap_points=None,minimum_gross_profit=None):
@@ -366,5 +371,17 @@ class LiveCalendarSpreadScanner:
         import time
         now_ns = time.time_ns()
         with self._lock:values=tuple(self._signals.values())
-        values=tuple(x for x in values if 0 <= now_ns - x.timestamp_ns <= self.SNAPSHOT_MAX_AGE_NS and x.liquidity_qty > 0 and qualifies_opportunity(gap_points=x.gap_points,gross_profit=x.gross_profit,minimum_gap_points=min_gap,minimum_gross_profit=min_gross))
+        values=tuple(
+            x for x in values
+            if -self.TIMESTAMP_TOLERANCE_NS
+            <= now_ns - x.timestamp_ns
+            <= self.SNAPSHOT_MAX_AGE_NS
+            and x.liquidity_qty > 0
+            and qualifies_opportunity(
+                gap_points=x.gap_points,
+                gross_profit=x.gross_profit,
+                minimum_gap_points=min_gap,
+                minimum_gross_profit=min_gross,
+            )
+        )
         return tuple(sorted(values,key=lambda x:(x.gross_profit,x.gap_points),reverse=True)[:limit])
