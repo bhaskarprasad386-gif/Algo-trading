@@ -358,3 +358,42 @@ def test_supervisor_retries_repeated_connect_failures_until_socket_connects():
     finally:
         manager.close()
         RepeatedConnectFailureSocket.attempts = 0
+
+
+def test_supervisor_replaces_connected_but_silent_socket_automatically():
+    registry = InstrumentRegistry()
+    descriptor = make_descriptor()
+    registry.register(descriptor)
+    manager = CommonWebSocketManager(registry, socket_factory=SimulatedAngelSocket)
+    manager._recovery_interval_seconds = 0.02
+    manager._silent_feed_timeout_seconds = 0.05
+
+    try:
+        manager.subscribe("cash-future", [descriptor.key])
+        group = SocketGroup(1, 0)
+        old_socket = manager._sockets[group]
+        assert old_socket.connected
+
+        # The transport still reports connected, but no matching tick arrives.
+        # The watchdog must recover without manually calling recover_disconnected.
+        assert wait_until(
+            lambda: (
+                group in manager._sockets
+                and manager._sockets[group] is not old_socket
+                and manager._sockets[group].connected
+            ),
+            timeout=1.5,
+        ), "supervisor did not replace a connected-but-silent socket"
+
+        replacement = manager._sockets[group]
+        assert old_socket.closed
+        assert replacement.connect_calls[0]["subscriptions"] == {1: ["101"]}
+        snapshot = manager.snapshot()
+        assert snapshot["subscriptions"] == 1
+        assert snapshot["connected_groups"] == ["1:0"]
+        live_sockets = [
+            socket for socket in SimulatedAngelSocket.instances if not socket.closed
+        ]
+        assert live_sockets == [replacement]
+    finally:
+        manager.close()
