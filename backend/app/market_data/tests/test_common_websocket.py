@@ -822,3 +822,45 @@ def test_stale_socket_generation_does_not_increment_raw_frame_telemetry():
     finally:
         manager.close()
 
+
+
+
+def test_matched_tick_without_consumer_callback_is_counted_as_a_delivery_gap():
+    registry = InstrumentRegistry()
+    d = descriptor("909")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    try:
+        manager.subscribe("consumer-not-registered", [d.key])
+        manager._on_data(SocketGroup(1, 0), {"token": "909", "ltp": 12345})
+
+        snapshot = manager.snapshot()
+        assert snapshot["ticks_received"] == 1
+        assert snapshot["missing_callback_routes"] == 1
+        assert snapshot["normalized_records_emitted"] == 0
+        assert snapshot["delivery_errors"] == 0
+    finally:
+        manager.close()
+
+
+def test_normalized_record_delivery_failure_is_counted_separately():
+    registry = InstrumentRegistry()
+    d = descriptor("910")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+
+    def fail_delivery(record):
+        raise RuntimeError("consumer intentionally failed")
+
+    try:
+        manager.register_normalized_callback("consumer", fail_delivery)
+        manager.subscribe("consumer", [d.key])
+        manager._on_data(SocketGroup(1, 0), {"token": "910", "ltp": 12345})
+
+        snapshot = manager.snapshot()
+        assert snapshot["normalized_records_emitted"] == 1
+        assert snapshot["normalized_delivery_errors"] == 1
+        assert snapshot["delivery_errors"] == 1
+        assert "consumer intentionally failed" in snapshot["last_delivery_error"]
+    finally:
+        manager.close()

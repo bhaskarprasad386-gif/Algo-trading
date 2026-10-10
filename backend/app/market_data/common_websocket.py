@@ -48,6 +48,11 @@ class CommonWebSocketManager:
         self._lock = RLock()
         self._reconcile_lock = RLock()
         self._delivery_errors = 0
+        self._missing_callback_routes = 0
+        self._missing_descriptor_records = 0
+        self._normalized_records_emitted = 0
+        self._normalized_delivery_errors = 0
+        self._last_delivery_error: str | None = None
         self._normalizer_errors = 0
         self._last_normalizer_error: str | None = None
         self._ticks_received = 0
@@ -708,6 +713,10 @@ class CommonWebSocketManager:
                 self._unmatched_frames += 1
             raw_callbacks = [self._callbacks.get(name) for name, _ in matching]
             record_callbacks = [(self._record_callbacks.get(name), key) for name, key in matching]
+            self._missing_callback_routes += sum(
+                1 for name, _ in matching
+                if self._callbacks.get(name) is None and self._record_callbacks.get(name) is None
+            )
             if matching:
                 self._ticks_received += 1
                 self._ticks_by_exchange[str(exchange_type or "unknown")] += 1
@@ -715,9 +724,10 @@ class CommonWebSocketManager:
         for callback in {id(cb): cb for cb in raw_callbacks if cb is not None}.values():
             try:
                 callback(message)
-            except Exception:
+            except Exception as exc:
                 with self._lock:
                     self._delivery_errors += 1
+                    self._last_delivery_error = f"{type(exc).__name__}: {exc}"
                 runtime_diagnostics.record(
                     component="Common Market Feed",
                     error_type="CallbackDeliveryError",
@@ -729,10 +739,19 @@ class CommonWebSocketManager:
                 continue
             descriptor = self.registry.get(key)
             if descriptor is None:
+                with self._lock:
+                    self._missing_descriptor_records += 1
+                runtime_diagnostics.record(
+                    component="Common Market Feed",
+                    error_type="MissingInstrumentDescriptor",
+                    message="Matched WebSocket route has no registry descriptor.",
+                    context={"event": "missing_descriptor", "group": f"{group.mode}:{group.shard}", "token": token, "instrument": key.value},
+                )
                 continue
             try:
                 record = self._normalizer.normalize(descriptor, message)
                 with self._lock:
+                    self._normalized_records_emitted += 1
                     self._last_tick = {
                         "exchange_type": exchange_type or self._resolve_exchange_type(key),
                         "exchange": record.instrument.exchange,
@@ -764,6 +783,8 @@ class CommonWebSocketManager:
             except Exception as exc:
                 with self._lock:
                     self._delivery_errors += 1
+                    self._normalized_delivery_errors += 1
+                    self._last_delivery_error = f"{type(exc).__name__}: {exc}"
                 runtime_diagnostics.record(
                     component="Common Market Feed",
                     error_type=type(exc).__name__,
@@ -792,6 +813,11 @@ class CommonWebSocketManager:
                 "max_socket_sessions": self._max_sockets,
                 "consumers": sorted(set(self._callbacks) | set(self._record_callbacks)),
                 "delivery_errors": self._delivery_errors,
+                "missing_callback_routes": self._missing_callback_routes,
+                "missing_descriptor_records": self._missing_descriptor_records,
+                "normalized_records_emitted": self._normalized_records_emitted,
+                "normalized_delivery_errors": self._normalized_delivery_errors,
+                "last_delivery_error": self._last_delivery_error,
                 "normalizer_errors": self._normalizer_errors,
                 "last_normalizer_error": self._last_normalizer_error,
                 "ticks_received": self._ticks_received,
