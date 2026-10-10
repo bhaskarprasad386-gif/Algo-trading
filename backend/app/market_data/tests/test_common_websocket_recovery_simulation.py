@@ -451,6 +451,60 @@ def test_supervisor_retries_socket_when_connect_returns_without_connected_state(
 
 
 
+
+def test_supervisor_recreates_missing_subscription_shard_automatically():
+    registry = InstrumentRegistry()
+    first = make_descriptor("101")
+    second = make_descriptor("102")
+    registry.register(first)
+    registry.register(second)
+    manager = CommonWebSocketManager(registry, socket_factory=SimulatedAngelSocket)
+    manager._max_tokens_per_socket = 1
+    manager._recovery_interval_seconds = 0.02
+
+    try:
+        manager.subscribe("cash-future", [first.key, second.key])
+        first_group = SocketGroup(1, 0)
+        missing_group = SocketGroup(1, 1)
+        first_socket = manager._sockets[first_group]
+        failed_socket = manager._sockets[missing_group]
+        assert first_socket.connected and failed_socket.connected
+
+        # Model a partial reconcile where one shard vanished but subscription
+        # intent remains in the registry. No failure callback is delivered.
+        with manager._lock:
+            manager._sockets.pop(missing_group)
+            manager._socket_tokens.pop(missing_group, None)
+            manager._socket_created_at.pop(missing_group, None)
+            manager._last_data_at.pop(missing_group, None)
+            manager._socket_generation.pop(missing_group, None)
+        failed_socket.close()
+
+        assert wait_until(
+            lambda: (
+                missing_group in manager._sockets
+                and manager._sockets[missing_group] is not failed_socket
+                and manager._sockets[missing_group].connected
+            ),
+            timeout=2.0,
+        ), "supervisor did not recreate the missing subscription shard"
+
+        replacement = manager._sockets[missing_group]
+        assert first_group in manager._sockets
+        assert manager._sockets[first_group] is first_socket
+        assert replacement.connect_calls[0]["subscriptions"] == {1: ["102"]}
+        snapshot = manager.snapshot()
+        assert snapshot["subscriptions"] == 2
+        assert snapshot["connected_groups"] == ["1:0", "1:1"]
+        live_sockets = [
+            socket for socket in SimulatedAngelSocket.instances if not socket.closed
+        ]
+        assert live_sockets == [first_socket, replacement]
+    finally:
+        manager.close()
+
+
+
 def test_stale_failure_callback_cannot_replace_newer_socket_generation():
     registry = InstrumentRegistry()
     descriptor = make_descriptor()
