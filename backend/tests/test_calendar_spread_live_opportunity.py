@@ -223,3 +223,22 @@ def test_canonical_executable_quote_rejects_zero_bid_and_zero_ask():
     assert valid.is_executable_quote is True
     assert replace(valid, bid=0).is_executable_quote is False
     assert replace(valid, ask=0).is_executable_quote is False
+
+
+def test_calendar_invalid_latest_quote_removes_that_expiry_from_pairing_state():
+    import time
+
+    scanner = LiveCalendarSpreadScanner()
+    ts = time.time_ns()
+    near = rec("invalid-near", "NIFTY-CUR", ts, 99, 100, expiry="2026-10-29")
+    far = rec("invalid-far", "NIFTY-NEAR", ts + 100_000_000, 104, 105, expiry="2026-11-26")
+    scanner.update(near)
+    assert scanner.update(far) is not None
+
+    invalid_near = rec("invalid-near", "NIFTY-CUR", ts + 200_000_000, 0, 100, expiry="2026-10-29")
+    assert scanner.update(invalid_near) is None
+    assert scanner.snapshot() == ()
+    # A subsequent far-leg update must not pair against the removed stale near quote.
+    next_far = rec("invalid-far", "NIFTY-NEAR", ts + 300_000_000, 104, 105, expiry="2026-11-26")
+    assert scanner.update(next_far) is None
+    assert scanner.snapshot() == ()
