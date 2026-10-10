@@ -38,7 +38,6 @@ jobs:
           --ignore=backend/tests/test_universal_result_main_integration.py
           --ignore=backend/tests/test_cash_future_strategy_db_route.py
           --ignore=backend/tests/test_historical_arbitrage_catalog_e2e.py
-          --ignore=backend/tests/test_paper_execution_e2e.py
           --ignore=backend/tests/test_historical_catalog_replay.py
           --ignore=backend/tests/test_historical_arbitrage_service.py
           --ignore=backend/tests/test_angelone_cash_future_batch_runner.py
