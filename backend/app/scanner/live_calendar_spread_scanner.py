@@ -9,6 +9,7 @@ from app.market_data.opportunity import OpportunityLeg, OpportunitySignal, Order
 from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
 from app.notifications.calendar_spread_alerts import CalendarSpreadAlertService
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
@@ -268,8 +269,21 @@ class LiveCalendarSpreadScanner:
     def _persist(self, signal, session_factory):
         db=session_factory()
         try:
+            # Additive SQLite migration for databases created before family metadata
+            # was introduced. History must not silently merge index and stock futures.
+            if db.get_bind().dialect.name == "sqlite":
+                columns = {row[1] for row in db.execute(text(
+                    "PRAGMA table_info(live_calendar_spread_scanner_results)"
+                )).fetchall()}
+                if columns and "contract_family" not in columns:
+                    db.execute(text(
+                        "ALTER TABLE live_calendar_spread_scanner_results "
+                        "ADD COLUMN contract_family VARCHAR NOT NULL DEFAULT 'UNKNOWN'"
+                    ))
+                    db.commit()
             row=LiveCalendarSpreadScannerResult(
                 underlying=signal.underlying,exchange=signal.exchange,instrument_type=signal.instrument_type,
+                contract_family=signal.contract_family,
                 near_contract_month=signal.near_contract_month,far_contract_month=signal.far_contract_month,
                 timestamp_ns=signal.timestamp_ns,near_bid=signal.near_bid,near_ask=signal.near_ask,
                 far_bid=signal.far_bid,far_ask=signal.far_ask,lot_size=signal.lot_size,
