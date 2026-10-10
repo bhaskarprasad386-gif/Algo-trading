@@ -77,6 +77,7 @@ class CommonWebSocketManager:
         ] = {}
         self._recovery_stop = Event()
         self._recovery_thread: Thread | None = None
+        self._closed = False
         self._recovery_interval_seconds = 5.0
         self._connect_failures = 0
         self._last_connect_failure = None
@@ -137,6 +138,8 @@ class CommonWebSocketManager:
         if not keys:
             return ()
         with self._lock:
+            if self._closed:
+                raise RuntimeError("CommonWebSocketManager is closed")
             for key in keys:
                 if not isinstance(key, InstrumentKey):
                     raise TypeError("keys must contain InstrumentKey values")
@@ -169,6 +172,8 @@ class CommonWebSocketManager:
         """Pack subscriptions while keeping broker I/O outside the state lock."""
         with self._reconcile_lock:
             with self._lock:
+                if self._closed:
+                    raise RuntimeError("CommonWebSocketManager is closed")
                 grouped: dict[int, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
                 for sub in self.registry.subscriptions():
                     exchange_type = self._resolve_exchange_type(sub.key)
@@ -380,7 +385,7 @@ class CommonWebSocketManager:
         # socket and publish it as current again.
         with self._reconcile_lock:
             with self._lock:
-                if (
+                if self._closed or (
                     self._sockets.get(group) is not socket
                     or self._socket_generation.get(group) != generation
                 ):
@@ -499,6 +504,8 @@ class CommonWebSocketManager:
     def _ensure_recovery_supervisor(self) -> None:
         """Start one process-local self-healing loop for the shared broker feed."""
         with self._lock:
+            if self._closed:
+                return
             if self._recovery_thread is not None and self._recovery_thread.is_alive():
                 return
             self._recovery_stop.clear()
@@ -539,6 +546,9 @@ class CommonWebSocketManager:
     ) -> int:
         """Serialize recovery against reconciliation so concurrent passes cannot race."""
         with self._reconcile_lock:
+            with self._lock:
+                if self._closed:
+                    return 0
             return self._recover_disconnected_serialized(
                 min_age_seconds=min_age_seconds,
                 silent_age_seconds=silent_age_seconds,
@@ -786,6 +796,7 @@ class CommonWebSocketManager:
         # publish fresh sockets after shutdown clears the active sessions.
         with self._reconcile_lock:
             with self._lock:
+                self._closed = True
                 recovery_thread = self._recovery_thread
                 self._recovery_thread = None
                 sockets = list(self._sockets.values())
