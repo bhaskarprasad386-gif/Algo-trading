@@ -17,6 +17,7 @@ def test_phase2_web_persistent_widget_preferences():
 
 
 def test_phase2_android_persistent_dashboard_preferences():
+    ui = WEB.read_text(encoding="utf-8")
     layout = ANDROID_LAYOUT.read_text(encoding="utf-8")
     main = ANDROID_MAIN.read_text(encoding="utf-8")
     for marker in ("dashboardCustomization", "cbShowMarket", "cbShowScanner", "cbShowStrategy", "cbShowResults", "btnSaveDashboardLayout", "btnResetDashboardLayout"):
