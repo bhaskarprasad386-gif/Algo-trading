@@ -180,14 +180,18 @@ class LiveCalendarSpreadScanner:
             nq = min(float(near.bid_qty or 0), float(near.ask_qty or 0))
             fq = min(float(far.bid_qty or 0), float(far.ask_qty or 0))
             liquidity = min(nq, fq) if nq > 0 and fq > 0 else 0.0
-            # Positive gross edge is not enough if neither leg has executable depth.
-            qualifies = (
-                liquidity > 0
-                and qualifies_opportunity(
-                    gap_points=gap, gross_profit=gross,
-                    minimum_gap_points=self.minimum_gap_points,
-                    minimum_gross_profit=self.minimum_gross_profit,
-                )
+            # Do not manufacture an OpportunitySignal when depth is absent.
+            # The opportunity model independently enforces configured thresholds.
+            if liquidity <= 0:
+                self._signals.pop(key, None)
+                self._set_pair_status(key, "insufficient_depth", near=near, far=far,
+                                      long_edge=long_edge, short_edge=short_edge,
+                                      liquidity_qty=liquidity, gross_profit=gross)
+                return None
+            qualifies = qualifies_opportunity(
+                gap_points=gap, gross_profit=gross,
+                minimum_gap_points=self.minimum_gap_points,
+                minimum_gross_profit=self.minimum_gross_profit,
             )
             # OpportunitySignal requires leg timestamps to be identical. Once the
             # pair passes Calendar-specific skew tolerance, anchor both leg snapshots
