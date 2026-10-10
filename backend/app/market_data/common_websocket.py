@@ -211,6 +211,20 @@ class CommonWebSocketManager:
                 existing = dict(self._sockets)
                 previous_tokens = {group: set(tokens) for group, tokens in self._socket_tokens.items()}
 
+                # Free obsolete groups before opening replacement/missing groups.
+                # Otherwise a recovery from an unexpected group can temporarily
+                # exceed Angel One's global three-session limit.
+                stale_groups = [group for group in self._sockets if group not in desired_tokens]
+                stale_sockets = [self._sockets.pop(group) for group in stale_groups]
+                for group in stale_groups:
+                    self._socket_tokens.pop(group, None)
+                    self._socket_created_at.pop(group, None)
+                    self._last_data_at.pop(group, None)
+                    self._socket_generation.pop(group, None)
+
+            for socket in stale_sockets:
+                self._close_socket_bounded(socket)
+
             for group, pairs in desired_tokens.items():
                 socket = existing.get(group)
                 if socket is None:
@@ -257,17 +271,6 @@ class CommonWebSocketManager:
                         )
                     with self._lock:
                         self._socket_tokens[group] = set(pairs)
-
-            with self._lock:
-                stale_groups = [group for group in self._sockets if group not in desired_tokens]
-                stale_sockets = [self._sockets.pop(group) for group in stale_groups]
-                for group in stale_groups:
-                    self._socket_tokens.pop(group, None)
-                    self._socket_created_at.pop(group, None)
-                    self._last_data_at.pop(group, None)
-                    self._socket_generation.pop(group, None)
-            for socket in stale_sockets:
-                self._close_socket_bounded(socket)
 
     def _start_socket_connect(
         self,
