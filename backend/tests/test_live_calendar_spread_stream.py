@@ -212,3 +212,25 @@ def test_calendar_feed_start_failure_still_stops_feed_and_clears_references(monk
     assert collector._feed is None
     assert collector._ingestor is None
     assert collector._repository is None
+
+
+
+def test_calendar_contract_selection_keeps_index_and_stock_families_separate():
+    class Master:
+        def download(self):
+            return [
+                {"exch_seg": "NFO", "instrumenttype": "FUTIDX", "expiry": "30OCT2099", "token": "21", "symbol": "SAME30OCTFUT", "name": "SAME", "lotsize": "50"},
+                {"exch_seg": "NFO", "instrumenttype": "FUTIDX", "expiry": "27NOV2099", "token": "22", "symbol": "SAME27NOVFUT", "name": "SAME", "lotsize": "50"},
+                {"exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "30OCT2099", "token": "23", "symbol": "SAME30OCTSTKFUT", "name": "SAME", "lotsize": "100"},
+                {"exch_seg": "NFO", "instrumenttype": "FUTSTK", "expiry": "27NOV2099", "token": "24", "symbol": "SAME27NOVSTKFUT", "name": "SAME", "lotsize": "100"},
+            ]
+
+    collector = LiveCalendarSpreadOneSecondCollector("unused", instrument_master=Master())
+    contracts = collector._contracts()
+    assert len(contracts) == 4
+    families = {}
+    for contract in contracts:
+        families.setdefault(contract["kind"], []).append(contract)
+    assert set(families) == {"INDEX_FUTURE", "STOCK_FUTURE"}
+    assert all(len(rows) == 2 for rows in families.values())
+    assert all(rows[0]["expiry"] < rows[1]["expiry"] for rows in families.values())
