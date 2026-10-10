@@ -189,3 +189,18 @@ def test_runner_maps_underlying_metadata_before_pairing_cash_and_future():
     assert runner.last_result.cash.underlying == "ABC"
     assert runner.last_result.future.underlying == "ABC"
     runner.stop()
+
+
+def test_cash_future_scanner_does_not_replace_newer_leg_with_out_of_order_tick():
+    scanner = CashFutureOpportunityScanner(minimum_gap_points=0, minimum_gross_profit=0)
+    cash_key = InstrumentKey("NSE", "NSE", "1")
+    future_key = InstrumentKey("NFO", "NFO", "2")
+    cash = record(cash_key, "ABC-EQ", InstrumentType.EQUITY, 2_000_000_000, 99, 100, underlying="ABC")
+    future = record(future_key, "ABC26OCTFUT", InstrumentType.FUTURE, 2_000_000_000, 103, 104, lot=50, underlying="ABC")
+    assert scanner.update(cash, contract_month="CASH") is None
+    assert scanner.update(future, contract_month="CURRENT") is not None
+
+    delayed = record(cash_key, "ABC-EQ", InstrumentType.EQUITY, 1_000_000_000, 90, 91, underlying="ABC")
+    assert scanner.update(delayed, contract_month="CASH") is None
+    assert scanner._latest["ABC"]["CASH"].timestamp_ns == 2_000_000_000
+    assert scanner.out_of_order_records == 1
