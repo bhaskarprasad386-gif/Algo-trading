@@ -1022,3 +1022,24 @@ def test_non_integer_subscription_mode_is_rejected_before_broker_io():
         assert registry.subscriptions() == ()
     finally:
         manager.close()
+
+
+def test_missing_exchange_type_uses_mode_scope_not_other_mode_routes():
+    registry = InstrumentRegistry()
+    nse = descriptor("777", "NSE", "EQ")
+    nfo = descriptor("777", "NFO", "DERIVATIVES")
+    registry.register_many([nse, nfo])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_callback("nse", lambda message: seen.append("nse"))
+    manager.register_callback("nfo", lambda message: seen.append("nfo"))
+    try:
+        manager.subscribe("nse", [nse.key], mode=1)
+        manager.subscribe("nfo", [nfo.key], mode=3)
+        manager._on_data(SocketGroup(1, 0), {"token": "777", "ltp": 100})
+        assert seen == ["nse"]
+        snapshot = manager.snapshot()
+        assert snapshot["ambiguous_token_frames"] == 0
+        assert snapshot["ticks_received"] == 1
+    finally:
+        manager.close()
