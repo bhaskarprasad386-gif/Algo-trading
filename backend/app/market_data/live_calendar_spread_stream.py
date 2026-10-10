@@ -32,7 +32,6 @@ INSTRUMENT_TYPES = {
     "FUTSTK": "STOCK_FUTURE",
     "STOCK_FUTURE": "STOCK_FUTURE",
     "FUTCOM": "COMMODITY_FUTURE",
-    "FUTCOMINDEX": "COMMODITY_FUTURE",
 }
 
 
@@ -150,8 +149,13 @@ class LiveCalendarSpreadOneSecondCollector:
             })
         selected: list[dict[str, Any]] = []
         for rows in grouped.values():
-            rows.sort(key=lambda x: (x["expiry"], x["symbol"], x["token"]))
-            selected.extend(rows[:2])
+            # Keep at most one contract per expiry. Duplicate master rows for
+            # the same month must not consume both near/far slots.
+            by_expiry: dict[date, dict[str, Any]] = {}
+            for row in sorted(rows, key=lambda x: (x["expiry"], x["symbol"], x["token"])):
+                by_expiry.setdefault(row["expiry"], row)
+            expiries = sorted(by_expiry)
+            selected.extend(by_expiry[expiry] for expiry in expiries[:2])
         return selected
 
     @staticmethod
