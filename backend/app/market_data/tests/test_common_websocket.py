@@ -1002,7 +1002,7 @@ def test_matched_frame_only_refreshes_silence_timer_after_successful_delivery():
         assert snapshot["ticks_received"] == 1
         assert snapshot["raw_callback_attempts"] == 1
         assert snapshot["raw_callback_successes"] == 0
-        assert snapshot["last_successful_delivery_age_seconds_by_group"]["1:0"] >= 0
+        assert snapshot["last_successful_delivery_age_seconds_by_group"]["1:0"] is None
     finally:
         manager.close()
 
