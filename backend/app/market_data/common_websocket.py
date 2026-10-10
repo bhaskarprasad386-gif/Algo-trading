@@ -293,30 +293,30 @@ class CommonWebSocketManager:
                 )
             except Exception as exc:
                 failure["exception"] = exc
-                # Keep connection-failure state changes serialized with
-                # reconcile/recovery. Generation checks protect replacements
-                # from late failures; the re-entrant lock allows recovery paths
-                # to reuse this same synchronization boundary safely.
-                with self._reconcile_lock:
-                    with self._lock:
-                        is_current = (
-                            self._sockets.get(group) is socket
-                            and self._socket_generation.get(group) == generation
-                        )
-                        if is_current:
-                            self._sockets.pop(group, None)
-                            self._socket_tokens.pop(group, None)
-                            self._socket_created_at.pop(group, None)
-                            self._last_data_at.pop(group, None)
-                            self._socket_generation.pop(group, None)
-                        self._connect_failures += 1
-                        self._last_connect_failure = {
-                            "group": f"{group.mode}:{group.shard}",
-                            "error_type": type(exc).__name__,
-                            "error": str(exc),
-                            "failed_at_ns": time.time_ns(),
-                            "subscriptions": len(pairs),
-                        }
+                # Keep this exception path non-blocking: _start_socket_connect
+                # waits briefly for immediate failures, so waiting here for the
+                # reconcile lock would hide the original broker error from its
+                # caller. The state lock plus generation check protects a newer
+                # replacement; the recovery supervisor serializes the rebuild.
+                with self._lock:
+                    is_current = (
+                        self._sockets.get(group) is socket
+                        and self._socket_generation.get(group) == generation
+                    )
+                    if is_current:
+                        self._sockets.pop(group, None)
+                        self._socket_tokens.pop(group, None)
+                        self._socket_created_at.pop(group, None)
+                        self._last_data_at.pop(group, None)
+                        self._socket_generation.pop(group, None)
+                    self._connect_failures += 1
+                    self._last_connect_failure = {
+                        "group": f"{group.mode}:{group.shard}",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                        "failed_at_ns": time.time_ns(),
+                        "subscriptions": len(pairs),
+                    }
                 runtime_diagnostics.record(
                     component="Common Market Feed",
                     error_type=type(exc).__name__,
