@@ -117,7 +117,7 @@ class LiveCashFutureScanner:
     def _safe_int(value: object) -> int | None:
         try:
             number = int(float(value))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
         return number if number >= 0 else None
 
@@ -522,7 +522,7 @@ class LiveCashFutureScanner:
         received_at_ns = payload.get("received_at_ns")
         try:
             received_at_ns = int(received_at_ns) if received_at_ns is not None else time.time_ns()
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             received_at_ns = time.time_ns()
         max_age_ns = int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 1_000_000_000)
         now_ns = time.time_ns()
@@ -558,7 +558,7 @@ class LiveCashFutureScanner:
             raw_lot = payload.get("lot_size")
             if raw_lot is not None and int(raw_lot) > 0:
                 lot = int(raw_lot)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             pass
 
         key = (symbol, timestamp_ns)
