@@ -864,3 +864,82 @@ def test_normalized_record_delivery_failure_is_counted_separately():
         assert "consumer intentionally failed" in snapshot["last_delivery_error"]
     finally:
         manager.close()
+
+
+
+def test_missing_exchange_type_routes_only_when_token_is_unambiguous():
+    registry = InstrumentRegistry()
+    nse = descriptor("777", "NSE", "EQ")
+    nfo = descriptor("777", "NFO", "DERIVATIVES")
+    registry.register_many([nse, nfo])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_callback("nse", lambda message: seen.append("nse"))
+    manager.register_callback("nfo", lambda message: seen.append("nfo"))
+    try:
+        manager.subscribe("nse", [nse.key])
+        manager.subscribe("nfo", [nfo.key])
+        manager._on_data(SocketGroup(1, 0), {"token": "777", "ltp": 100})
+        snapshot = manager.snapshot()
+        assert seen == []
+        assert snapshot["missing_exchange_type_frames"] == 1
+        assert snapshot["ambiguous_token_frames"] == 1
+        assert snapshot["ticks_received"] == 0
+    finally:
+        manager.close()
+
+
+def test_missing_exchange_type_still_routes_unique_token():
+    registry = InstrumentRegistry()
+    item = descriptor("778")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_callback("cash", lambda message: seen.append(message["token"]))
+    try:
+        manager.subscribe("cash", [item.key])
+        manager._on_data(SocketGroup(1, 0), {"token": "778", "ltp": 100})
+        snapshot = manager.snapshot()
+        assert seen == ["778"]
+        assert snapshot["missing_exchange_type_frames"] == 1
+        assert snapshot["ambiguous_token_frames"] == 0
+        assert snapshot["ticks_received"] == 1
+    finally:
+        manager.close()
+
+
+def test_normalized_delivery_counter_only_increments_after_consumer_success():
+    registry = InstrumentRegistry()
+    item = descriptor("779")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    try:
+        manager.register_normalized_callback(
+            "consumer", lambda record: (_ for _ in ()).throw(RuntimeError("consumer failed"))
+        )
+        manager.subscribe("consumer", [item.key])
+        manager._on_data(SocketGroup(1, 0), {"token": "779", "ltp": 12345})
+        snapshot = manager.snapshot()
+        assert snapshot["normalized_records_emitted"] == 1
+        assert snapshot["normalized_records_delivered"] == 0
+        assert snapshot["normalized_delivery_errors"] == 1
+    finally:
+        manager.close()
+
+
+def test_invalid_subscription_mode_is_rejected_before_broker_io():
+    registry = InstrumentRegistry()
+    item = descriptor("780")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    try:
+        try:
+            manager.subscribe("consumer", [item.key], mode=4)
+        except ValueError as exc:
+            assert "mode must be one" in str(exc)
+        else:
+            raise AssertionError("unsupported mode must be rejected")
+        assert FakeSocket.instances == []
+        assert registry.subscriptions() == ()
+    finally:
+        manager.close()
