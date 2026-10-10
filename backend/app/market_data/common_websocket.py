@@ -46,7 +46,7 @@ class CommonWebSocketManager:
         self._record_callbacks: dict[str, Callable[[Any], None]] = {}
         self._normalizer = AngelOneTickNormalizer()
         self._lock = RLock()
-        self._reconcile_lock = Lock()
+        self._reconcile_lock = RLock()
         self._delivery_errors = 0
         self._normalizer_errors = 0
         self._last_normalizer_error: str | None = None
@@ -501,6 +501,19 @@ class CommonWebSocketManager:
         min_age_seconds: float = 10.0,
         silent_age_seconds: float | None = None,
     ) -> int:
+        """Serialize recovery against reconciliation so concurrent passes cannot race."""
+        with self._reconcile_lock:
+            return self._recover_disconnected_serialized(
+                min_age_seconds=min_age_seconds,
+                silent_age_seconds=silent_age_seconds,
+            )
+
+    def _recover_disconnected_serialized(
+        self,
+        *,
+        min_age_seconds: float = 10.0,
+        silent_age_seconds: float | None = None,
+    ) -> int:
         """Replace stale/disconnected or connected-but-silent broker sockets."""
         now = time.monotonic()
         stale: list[tuple[SocketGroup, Any, set[tuple[int, str]], float]] = []
@@ -538,17 +551,23 @@ class CommonWebSocketManager:
                 pairs_by_mode[sub.mode].add(
                     (self._resolve_exchange_type(sub.key), sub.key.token.strip())
                 )
-            expected_groups = 0
-            for pairs in pairs_by_mode.values():
-                expected_groups += (
-                    len(pairs) + self._max_tokens_per_socket - 1
-                ) // self._max_tokens_per_socket
-            missing_groups = bool(pairs_by_mode) and len(self._sockets) < expected_groups
+            expected_groups: set[SocketGroup] = set()
+            for mode, pairs in pairs_by_mode.items():
+                ordered_pairs = sorted(pairs)
+                for index in range(0, len(ordered_pairs), self._max_tokens_per_socket):
+                    expected_groups.add(
+                        SocketGroup(mode=mode, shard=index // self._max_tokens_per_socket)
+                    )
+            # Compare identities, not just counts: an unexpected stale group
+            # must not mask a missing required shard when the totals match.
+            missing_groups = bool(expected_groups) and not expected_groups.issubset(self._sockets)
 
             for group, _, _, _ in stale:
                 self._sockets.pop(group, None)
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
+                self._last_data_at.pop(group, None)
+                self._socket_generation.pop(group, None)
         if not stale and not missing_groups:
             return 0
 
