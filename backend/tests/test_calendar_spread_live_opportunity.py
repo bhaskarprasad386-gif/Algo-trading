@@ -154,8 +154,8 @@ def test_calendar_invalidates_old_signal_when_latest_pair_has_no_positive_edge()
     import time
 
     scanner = LiveCalendarSpreadScanner()
-    # Exercise diagnostics for an exchange timestamp within the allowed +1s skew.
-    ts = time.time_ns() + 500_000_000
+    # Keep this invalidation test's quotes inside the snapshot's non-future window.
+    ts = time.time_ns() - 500_000_000
     near = rec("invalidate-near", "NIFTY-CUR", ts, 99, 100, expiry="2026-10-29")
     far = rec("invalidate-far", "NIFTY-NEAR", ts + 100_000_000, 104, 105, expiry="2026-11-26")
     scanner.update(near)
@@ -171,6 +171,23 @@ def test_calendar_invalidates_old_signal_when_latest_pair_has_no_positive_edge()
     assert scanner.pair_snapshot() == ()
     diagnostics = scanner.diagnostics_snapshot()
     assert diagnostics["counters"]["no_positive_edge"] == 2  # both updated legs trigger a no-edge evaluation
+    assert diagnostics["pairs"][0]["status"] == "no_positive_edge"
+
+
+
+def test_calendar_diagnostics_keep_status_with_allowed_future_timestamp():
+    import time
+
+    scanner = LiveCalendarSpreadScanner()
+    ts = time.time_ns() + 500_000_000
+    near = rec("future-near", "NIFTY-CUR", ts, 99, 100, expiry="2026-10-29")
+    far = rec("future-far", "NIFTY-NEAR", ts + 100_000_000, 99, 100, expiry="2026-11-26")
+
+    scanner.update(near)
+    scanner.update(far)
+
+    diagnostics = scanner.diagnostics_snapshot()
+    assert diagnostics["pairs"]
     assert diagnostics["pairs"][0]["status"] == "no_positive_edge"
 
 
