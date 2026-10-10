@@ -35,7 +35,6 @@ from app.market_data.nifty50_universe import NIFTY50_STOCK_SYMBOLS, NIFTY50_INDE
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
-from app.order_engine.routes import router as orders_router
 from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot
 from app.scanner.routes import router as scanner_router, full_fno_router, configure_live_cash_future_snapshot
 from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
@@ -159,7 +158,6 @@ app.add_exception_handler(TradingAppException, trading_exception_handler)
 app.add_exception_handler(Exception, global_exception_handler)
 
 app.include_router(brokers_router)
-app.include_router(orders_router)
 app.include_router(arbitrage_router)
 app.include_router(instruments_router)
 app.include_router(market_data_router)
