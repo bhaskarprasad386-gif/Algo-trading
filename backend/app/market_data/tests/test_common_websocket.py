@@ -1043,3 +1043,43 @@ def test_missing_exchange_type_uses_mode_scope_not_other_mode_routes():
         assert snapshot["ticks_received"] == 1
     finally:
         manager.close()
+
+
+def test_exchange_type_alias_is_used_when_primary_field_is_null():
+    registry = InstrumentRegistry()
+    item = descriptor("784")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_callback("cash", lambda message: seen.append(message["token"]))
+    try:
+        manager.subscribe("cash", [item.key])
+        manager._on_data(
+            SocketGroup(1, 0),
+            {"token": "784", "exchange_type": None, "exchangeType": 1, "ltp": 100},
+        )
+        snapshot = manager.snapshot()
+        assert seen == ["784"]
+        assert snapshot["invalid_exchange_type_frames"] == 0
+        assert snapshot["missing_exchange_type_frames"] == 0
+    finally:
+        manager.close()
+
+
+def test_boolean_and_fractional_exchange_types_are_rejected():
+    registry = InstrumentRegistry()
+    item = descriptor("785")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_callback("cash", lambda message: seen.append(message["token"]))
+    try:
+        manager.subscribe("cash", [item.key])
+        manager._on_data(SocketGroup(1, 0), {"token": "785", "exchange_type": True})
+        manager._on_data(SocketGroup(1, 0), {"token": "785", "exchange_type": 1.5})
+        snapshot = manager.snapshot()
+        assert seen == []
+        assert snapshot["invalid_exchange_type_frames"] == 2
+        assert snapshot["ticks_received"] == 0
+    finally:
+        manager.close()
