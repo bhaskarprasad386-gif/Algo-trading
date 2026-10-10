@@ -293,27 +293,30 @@ class CommonWebSocketManager:
                 )
             except Exception as exc:
                 failure["exception"] = exc
-                with self._lock:
-                    # A delayed failure from a socket already replaced by
-                    # recovery must never remove the replacement socket.
-                    is_current = (
-                        self._sockets.get(group) is socket
-                        and self._socket_generation.get(group) == generation
-                    )
-                    if is_current:
-                        self._sockets.pop(group, None)
-                        self._socket_tokens.pop(group, None)
-                        self._socket_created_at.pop(group, None)
-                        self._last_data_at.pop(group, None)
-                        self._socket_generation.pop(group, None)
-                    self._connect_failures += 1
-                    self._last_connect_failure = {
-                        "group": f"{group.mode}:{group.shard}",
-                        "error_type": type(exc).__name__,
-                        "error": str(exc),
-                        "failed_at_ns": time.time_ns(),
-                        "subscriptions": len(pairs),
-                    }
+                # Keep connection-failure state changes serialized with
+                # reconcile/recovery. Generation checks protect replacements
+                # from late failures; the re-entrant lock allows recovery paths
+                # to reuse this same synchronization boundary safely.
+                with self._reconcile_lock:
+                    with self._lock:
+                        is_current = (
+                            self._sockets.get(group) is socket
+                            and self._socket_generation.get(group) == generation
+                        )
+                        if is_current:
+                            self._sockets.pop(group, None)
+                            self._socket_tokens.pop(group, None)
+                            self._socket_created_at.pop(group, None)
+                            self._last_data_at.pop(group, None)
+                            self._socket_generation.pop(group, None)
+                        self._connect_failures += 1
+                        self._last_connect_failure = {
+                            "group": f"{group.mode}:{group.shard}",
+                            "error_type": type(exc).__name__,
+                            "error": str(exc),
+                            "failed_at_ns": time.time_ns(),
+                            "subscriptions": len(pairs),
+                        }
                 runtime_diagnostics.record(
                     component="Common Market Feed",
                     error_type=type(exc).__name__,
@@ -352,24 +355,29 @@ class CommonWebSocketManager:
         self, group: SocketGroup, socket: Any, generation: int, reason: str
     ) -> None:
         """Invalidate a failed current socket and recover off the SDK callback thread."""
-        with self._lock:
-            if (
-                self._sockets.get(group) is not socket
-                or self._socket_generation.get(group) != generation
-            ):
-                return
-            self._sockets.pop(group, None)
-            self._socket_tokens.pop(group, None)
-            self._socket_created_at.pop(group, None)
-            self._last_data_at.pop(group, None)
-            self._socket_generation.pop(group, None)
-            self._socket_failure_events += 1
-            self._last_socket_failure = {
-                "group": f"{group.mode}:{group.shard}",
-                "reason": str(reason),
-                "failed_at_ns": time.time_ns(),
-                "generation": generation,
-            }
+        # A failure callback can arrive while _reconcile() is holding a
+        # snapshot of the current sockets. Serialize invalidation with that
+        # snapshot so reconcile cannot accidentally keep operating on a failed
+        # socket and publish it as current again.
+        with self._reconcile_lock:
+            with self._lock:
+                if (
+                    self._sockets.get(group) is not socket
+                    or self._socket_generation.get(group) != generation
+                ):
+                    return
+                self._sockets.pop(group, None)
+                self._socket_tokens.pop(group, None)
+                self._socket_created_at.pop(group, None)
+                self._last_data_at.pop(group, None)
+                self._socket_generation.pop(group, None)
+                self._socket_failure_events += 1
+                self._last_socket_failure = {
+                    "group": f"{group.mode}:{group.shard}",
+                    "reason": str(reason),
+                    "failed_at_ns": time.time_ns(),
+                    "generation": generation,
+                }
         runtime_diagnostics.record(
             component="Common Market Feed",
             error_type="AngelSocketFailure",
