@@ -538,12 +538,15 @@ class CommonWebSocketManager:
                 pairs_by_mode[sub.mode].add(
                     (self._resolve_exchange_type(sub.key), sub.key.token.strip())
                 )
-            expected_groups = 0
-            for pairs in pairs_by_mode.values():
-                expected_groups += (
-                    len(pairs) + self._max_tokens_per_socket - 1
-                ) // self._max_tokens_per_socket
-            missing_groups = bool(pairs_by_mode) and len(self._sockets) < expected_groups
+            expected_socket_groups: set[SocketGroup] = set()
+            for mode, pairs in pairs_by_mode.items():
+                for index, _ in enumerate(sorted(pairs)):
+                    expected_socket_groups.add(
+                        SocketGroup(mode=mode, shard=index // self._max_tokens_per_socket)
+                    )
+            # Compare identities, not only counts: a stale/unexpected group can
+            # make the count look complete while a required shard is missing.
+            missing_groups = set(self._sockets) != expected_socket_groups
 
             for group, _, _, _ in stale:
                 self._sockets.pop(group, None)
