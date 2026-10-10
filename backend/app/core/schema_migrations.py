@@ -101,11 +101,6 @@ def run_schema_migrations() -> None:
             if "initial_balance_source" not in account_columns:
                 connection.execute(text("ALTER TABLE trading_accounts ADD COLUMN initial_balance_source VARCHAR(32) DEFAULT 'MIGRATED_INFERRED'"))
 
-        if "live_box_spread_paper_positions" in account_tables:
-            box_columns = {column["name"] for column in inspect(connection).get_columns("live_box_spread_paper_positions")}
-            if "closed_at" not in box_columns:
-                connection.execute(text("ALTER TABLE live_box_spread_paper_positions ADD COLUMN closed_at DATETIME"))
-
         if "orders" in account_tables:
             order_columns = {column["name"] for column in inspect(connection).get_columns("orders")}
             for name, definition in {
@@ -129,20 +124,6 @@ def run_schema_migrations() -> None:
             for name, definition in {"user_id": "INTEGER", "stop_loss": "FLOAT", "target": "FLOAT"}.items():
                 if name not in position_columns:
                     connection.execute(text(f"ALTER TABLE positions ADD COLUMN {name} {definition}"))
-
-        if "strategy_auto_paper_positions" in account_tables:
-            paper_columns = {column["name"] for column in inspect(connection).get_columns("strategy_auto_paper_positions")}
-            paper_additions = {
-                "user_id": "INTEGER", "trade_key": "VARCHAR(256)", "alert_event_id": "VARCHAR(256)",
-                "direction": "VARCHAR(64)", "entry_pnl": "FLOAT DEFAULT 0.0", "realized_pnl": "FLOAT",
-                "pnl_pct": "FLOAT DEFAULT 0.0", "capital_allocated": "FLOAT DEFAULT 0.0",
-                "first_expiry": "VARCHAR(64)", "exit_reason": "VARCHAR(64)",
-                "emergency_closed": "BOOLEAN DEFAULT 0", "legs_json": "TEXT DEFAULT '[]'",
-            }
-            for name, definition in paper_additions.items():
-                if name not in paper_columns:
-                    connection.execute(text(f"ALTER TABLE strategy_auto_paper_positions ADD COLUMN {name} {definition}"))
-            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_strategy_auto_paper_trade_key ON strategy_auto_paper_positions (trade_key)"))
 
         if "backtest_jobs" not in account_tables:
             connection.execute(text("""
@@ -224,11 +205,6 @@ def run_schema_migrations() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_live_syn_alert_observed_at ON live_synthetic_alert_history (observed_at)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_live_syn_alert_symbol ON live_synthetic_alert_history (symbol, observed_at)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_live_syn_alert_identity ON live_synthetic_alert_history (symbol, expiry, timestamp_ns, strike, direction)"))
-        if "live_paper_trades" in account_tables:
-            # Prevent concurrent duplicate paper entries for the same user/event.
-            # Existing duplicate rows are not silently deleted; deployment must
-            # fail loudly if legacy data violates the new invariant.
-            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_live_paper_user_event ON live_paper_trades (user_id, event_id)"))
         # A broker fill can be retried, but the same user/fill identity must
         # never create a second cash/P&L mutation. Nullable keeps legacy orders valid.
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_user_fill_id ON orders (user_id, fill_id)"))
@@ -236,11 +212,4 @@ def run_schema_migrations() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_audit_chain ON orders (user_id, id, audit_hash, previous_audit_hash)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_user_id ON orders (user_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_positions_user_id ON positions (user_id)"))
-        # Enforce the same invariant on existing SQLite deployments. Do not silently
-        # deduplicate legacy rows: duplicate active paper positions must fail schema
-        # migration and be reconciled explicitly before trading can start.
-        connection.execute(text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_positions_user_symbol_active_paper "
-            "ON positions (user_id, symbol) "
-            "WHERE is_paper = 1 AND is_open = 1"
-        ))
+

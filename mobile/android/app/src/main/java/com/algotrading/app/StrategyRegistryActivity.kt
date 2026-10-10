@@ -150,7 +150,7 @@ class StrategyRegistryActivity : AppCompatActivity() {
                     }
                 }
                 if (rows.isEmpty()) append("NO CURRENT LIVE ROWS\n")
-                append("\nBid/ask executable scan • paper-safe • live broker orders OFF")
+                append("\nBid/ask executable scan • scanner-only • live broker orders OFF")
             }
             withContext(Dispatchers.Main) {
                 AlertDialog.Builder(this@StrategyRegistryActivity)

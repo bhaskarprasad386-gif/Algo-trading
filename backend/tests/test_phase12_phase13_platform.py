@@ -15,12 +15,13 @@ def test_phase12_web_android_alignment():
     assert "WEB • FULL TABLES" in body
     assert "ANDROID • COMPACT CARDS" in body
     assert "SAME API / DATA" in body
-    assert "PAPER ORDERS ONLY" in body
+    assert "Live broker orders: OFF" in body
+    assert "Paper Portfolio" not in body
 
     layout = ANDROID_LAYOUT.read_text()
     assert "PHASE 12 • MOBILE NAVIGATION" in layout
     assert 'android:id="@+id/mainScroll"' in layout
-    for view_id in ("btnQuickMarket", "btnQuickScanner", "btnQuickStrategies", "btnQuickResults", "btnQuickPaper", "btnQuickExpansion"):
+    for view_id in ("btnQuickMarket", "btnQuickScanner", "btnQuickStrategies", "btnQuickResults", "btnQuickExpansion"):
         assert view_id in layout
 
     main = ANDROID_MAIN.read_text()
@@ -28,7 +29,6 @@ def test_phase12_web_android_alignment():
     assert "btnQuickScanner.setOnClickListener" in main
     assert "btnQuickStrategies.setOnClickListener" in main
     assert "btnQuickResults.setOnClickListener" in main
-    assert "btnQuickPaper.setOnClickListener" in main
     assert "btnQuickExpansion.setOnClickListener" in main
 
 

@@ -47,14 +47,7 @@ class NotificationService:
             timestamp_ns=alert.timestamp_ns,
             message=self._message(alert),
             metadata={
-                "gap": alert.gap, "gross_profit": alert.gross_profit, "net_profit": alert.net_profit,
-                "paper_trade": {
-                    "direction": "LONG", "expiry": alert.expiry or alert.contract_month,
-                    "earliest_expiry": alert.expiry or alert.contract_month, "lot_size": int(alert.lot_size or 1),
-                    "lots": int(alert.alert_lots or 1), "edge": float(alert.gap),
-                    "capital_used": (float(alert.cash_ask) + float(alert.future_bid)) * int(alert.lot_size or 1) * int(alert.alert_lots or 1),
-                    "legs": [{"instrument": "CASH", "side": "BUY", "price": alert.cash_ask}, {"instrument": "FUTURE", "side": "SELL", "price": alert.future_bid}],
-                },
+                "gap": alert.gap, "gross_profit": alert.gross_profit, "net_profit": alert.net_profit
             },
         ))
 
@@ -68,15 +61,7 @@ class NotificationService:
             metadata={
                 "gap": alert.gap,
                 "gross_profit": alert.gross_profit,
-                "net_profit": alert.net_profit,
-                "paper_trade": {
-                    "direction": "LONG", "expiry": alert.expiry or alert.contract_month,
-                    "earliest_expiry": alert.expiry or alert.contract_month,
-                    "lot_size": int(alert.lot_size or 1), "lots": int(alert.alert_lots or 1),
-                    "edge": float(alert.gap),
-                    "capital_used": (float(alert.cash_ask) + float(alert.future_bid)) * int(alert.lot_size or 1) * int(alert.alert_lots or 1),
-                    "legs": [{"instrument": "CASH", "side": "BUY", "price": alert.cash_ask}, {"instrument": "FUTURE", "side": "SELL", "price": alert.future_bid}],
-                },
+                "net_profit": alert.net_profit
             },
         ))
 

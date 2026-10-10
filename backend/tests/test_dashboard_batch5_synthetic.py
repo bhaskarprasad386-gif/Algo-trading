@@ -18,7 +18,6 @@ def test_batch5_synthetic_workspace_ui_contract():
         "CALL BID / ASK",
         "PUT BID / ASK",
         "function selectSynthetic(",
-        "function synPaperEntry()",
         "syn-mobile-actions",
         "connectDashboardWebSocket",
         "real broker routing remains OFF",

@@ -25,7 +25,7 @@ def test_batch10_historical_replay_workspace_contract():
         "histSetSpeed('15m')",
         "histSetSpeed('30m')",
         "histSetSpeed('1h')",
-        "PAPER REPLAY • BROKER ORDERS OFF",
+        "HISTORICAL REPLAY • BROKER ORDERS OFF",
         "no historical downloader",
     ]
     for marker in required:

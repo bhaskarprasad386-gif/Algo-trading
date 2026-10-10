@@ -37,7 +37,7 @@ class BoxSpreadAlertService:
                 event_id=f"{l.underlying}:{l.expiry}:{l.strike:g}:{h.strike:g}:{r.direction}",
                 symbol=l.underlying, timestamp_ns=l.timestamp_ns,
                 message=self._message(r),
-                metadata={"gap": r.executable_edge, "gross_profit": r.gross_pnl, "edge": r.executable_edge, "paper_trade": {"direction": r.direction, "expiry": l.expiry, "earliest_expiry": l.expiry, "lot_size": l.lot_size, "lots": 1, "edge": r.executable_edge, "capital_used": abs(float(h.strike) - float(l.strike)) * l.lot_size, "legs": [{"strike": l.strike, "instrument": "LOW_CALL", "side": "BUY" if r.direction=="LONG" else "SELL", "price": l.call_ask if r.direction=="LONG" else l.call_bid}, {"strike": l.strike, "instrument": "LOW_PUT", "side": "BUY" if r.direction=="LONG" else "SELL", "price": l.put_ask if r.direction=="LONG" else l.put_bid}, {"strike": h.strike, "instrument": "HIGH_CALL", "side": "SELL" if r.direction=="LONG" else "BUY", "price": h.call_bid if r.direction=="LONG" else h.call_ask}, {"strike": h.strike, "instrument": "HIGH_PUT", "side": "SELL" if r.direction=="LONG" else "BUY", "price": h.put_bid if r.direction=="LONG" else h.put_ask}]}}
+                metadata={"gap": r.executable_edge, "gross_profit": r.gross_pnl, "edge": r.executable_edge}
             ))
         return sent
 __all__=["BoxSpreadAlertService"]

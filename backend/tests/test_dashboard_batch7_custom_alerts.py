@@ -29,7 +29,7 @@ def test_batch7_custom_alerts_ui_contract():
         "function toggleCustomAlert(",
         "function deleteCustomAlert(",
         "localStorage",
-        "Paper-safe",
         "never place broker orders",
+        "Configure scanner alert notifications",
     ):
         assert marker in ui

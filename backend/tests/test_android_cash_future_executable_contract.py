@@ -14,9 +14,12 @@ def test_android_cash_future_executable_contract_matches_backend():
     for field in ("symbol", "cash_ask", "future_bid", "gap", "gap_pct", "net_gap", "net_profit", "lifecycle", "rank_score"):
         assert f"val {field}:" in api
 
-def test_android_cash_future_screen_displays_executable_status():
+def test_android_cash_future_screen_displays_scanner_opportunities_without_paper_execution():
     body = MAIN_ACTIVITY.read_text(encoding="utf-8")
     assert "response.data" in body
-    assert '.sortedWith(compareByDescending<LiveCashFutureSignal> { it.executable }' in body
-    assert 'lastExecutableOpportunity = executable' in body
-    assert 'renderScannerPaperState()' in body
+    assert ".sortedWith(compareByDescending<LiveCashFutureSignal> { it.executable }" in body
+    assert "lastExecutableOpportunity = executable" in body
+    assert "openScannerDetail(lastExecutableOpportunity)" in body
+    assert "btnScannerPaperExecute" not in body
+    assert "paperEntry(" not in body
+    assert "paperExit(" not in body

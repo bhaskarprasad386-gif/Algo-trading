@@ -1,4 +1,4 @@
-"""Regression coverage for IST paper-risk day boundaries."""
+"""Regression coverage for IST day-boundary normalization."""
 
 from datetime import datetime, timezone
 

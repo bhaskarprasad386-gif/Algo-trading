@@ -20,19 +20,19 @@ def make_chain(distances, cls="INDEX", underlying="NIFTY"):
 
 
 def test_box_policy_is_locked_to_requested_scope():
-    assert BOX_SCAN_POLICY.stock_box_distances == (1, 2, 3, 4, 5)
-    assert BOX_SCAN_POLICY.index_box_distances == tuple(range(1, 11))
+    assert BOX_SCAN_POLICY.stock_box_distances == (3, 4, 5)
+    assert BOX_SCAN_POLICY.index_box_distances == tuple(range(3, 16))
 
 
-def test_index_scanner_reaches_ten_but_not_eleven():
+def test_index_scanner_reaches_fifteen_but_not_sixteen():
     results = scan_box_snapshot(
         make_chain(range(1, 11)),
         atm_strike=100,
         instrument_class="INDEX",
     )
     distances = {r.strike_distance for r in results}
-    assert 10 in distances
-    assert 11 not in distances
+    assert 15 in distances
+    assert 16 not in distances
 
 
 def test_stock_scanner_stops_at_five():

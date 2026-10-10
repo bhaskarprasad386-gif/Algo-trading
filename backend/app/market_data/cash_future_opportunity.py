@@ -51,7 +51,6 @@ class CashFutureScanResult:
             "gross_profit": self.signal.gross_profit,
             "executable": self.signal.qualifies,
             "live_orders": False,
-            "paper_trade": True,
         })
         return data
 

@@ -40,17 +40,6 @@ data class MarketOverviewResponse(
     val errors: List<Map<String, Any?>> = emptyList()
 )
 data class MarketLtpResponse(val status: Boolean = false, val exchange: String = "", val tradingsymbol: String = "", val symboltoken: String = "", val ltp: Double? = null)
-data class PaperEntryRequest(val price: Double, val quantity: Double, val stop_loss_pct: Double = 0.02, val target_pct: Double = 0.04)
-data class PaperFill(val price: Double, val quantity: Double)
-data class PaperPosition(val symbol: String = "PAPER", val mode: String, val quantity: Double, val entry_price: Double, val stop_loss: Double, val target: Double)
-data class PaperEntryResponse(val status: String, val mode: String, val fill: PaperFill, val entry_price: Double, val stop_loss: Double, val target: Double, val position: PaperPosition, val virtual_balance: Double = 0.0, val realized_pnl: Double = 0.0)
-data class PaperExitRequest(val price: Double)
-data class PaperExitResponse(val status: String, val entry_price: Double? = null, val exit_price: Double? = null, val quantity: Double? = null, val pnl: Double = 0.0, val virtual_balance: Double = 0.0, val realized_pnl: Double = 0.0)
-data class PaperPositionResponse(val status: String, val position: PaperPosition? = null)
-data class PaperOrder(val id: String, val symbol: String, val transaction_type: String, val price: Double? = null, val quantity: Double = 0.0, val status: String, val pnl: Double = 0.0)
-data class PaperOrdersResponse(val mode: String, val orders: List<PaperOrder> = emptyList())
-data class ScannerPaperEntryRequest(val symbol: String, val cash_price: Double, val quantity: Double, val future_price: Double? = null, val gap: Double? = null, val net_profit: Double? = null, val executable: Boolean = true, val stop_loss_pct: Double = 0.02, val target_pct: Double = 0.04)
-data class ScannerPaperEntryResponse(val status: String, val mode: String, val source: String, val scanner_entry_price: Double, val order: PaperOrder, val position: PaperPosition? = null, val virtual_balance: Double = 0.0, val realized_pnl: Double = 0.0)
 data class CashFutureOpportunity(val symbol: String, val cash_price: Double = 0.0, val future_price: Double = 0.0, val gap: Double = 0.0, val gap_pct: Double = 0.0, val gross_spread_profit: Double = 0.0, val margin_required: Double = 0.0, val deployed_capital: Double = 0.0, val net_profit: Double = 0.0, val roi_pct: Double = 0.0, val executable: Boolean = false)
 data class LiveCashFutureSignal(
     val symbol: String = "", val contract_month: String = "", val cash_ltp: Double = 0.0, val future_ltp: Double = 0.0,
@@ -243,46 +232,10 @@ data class CashFutureDownloadAcceptedResponse(val job_id: String, val status: St
 data class CashFutureDownloadJob(val job_id: String = "", val source: String = "", val mode: String = "", val timeframe: String = "", val spot_instrument: String = "", val exchange: String = "", val underlying: String = "", val start_ns: Long = 0L, val end_ns: Long = 0L, val status: String = "", val requested_chunks: Int = 0, val completed_chunks: Int = 0, val skipped_chunks: Int = 0, val failed_chunks: Int = 0, val catalog_count: Int = 0, val fetched_records: Int = 0, val inserted_records: Int = 0, val updated_at_ns: Long = 0L, val error: String? = null)
 data class CashFutureDownloadChunk(val sequence: Int = 0, val instrument: String = "", val status: String = "", val attempts: Int = 0, val expected_timestamps: Int = 0, val actual_timestamps: Int = 0, val missing_timestamps: Int = 0, val fetched_records: Int = 0, val inserted_records: Int = 0, val error: String? = null)
 data class CashFutureDownloadStatusResponse(val job: CashFutureDownloadJob, val chunks: List<CashFutureDownloadChunk> = emptyList())
-data class BoxSpreadOpportunity(
-    @SerializedName("symbol") val underlying: String = "", val instrument_class: String = "", val expiry: String = "",
-    val low_strike: Double = 0.0, val high_strike: Double = 0.0, val direction: String = "",
-    @SerializedName("timestamp_ns") val timestamp: String = "", val executable_edge: Double = 0.0, val edge_per_lot: Double = 0.0,
-    val gross_pnl: Double = 0.0, val lot_size: Int = 0, val strike_distance: Double = 0.0,
-    val liquidity_qty: Double = 0.0,
-    val low_call_bid: Double? = null, val low_call_ask: Double? = null,
-    val low_put_bid: Double? = null, val low_put_ask: Double? = null,
-    val high_call_bid: Double? = null, val high_call_ask: Double? = null,
-    val high_put_bid: Double? = null, val high_put_ask: Double? = null,
-    val executable_low_call: Double? = null, val executable_low_put: Double? = null,
-    val executable_high_call: Double? = null, val executable_high_put: Double? = null
-)
-data class BoxSpreadLiveOpportunities(val count: Int = 0, val data: List<BoxSpreadOpportunity> = emptyList())
-data class BoxSpreadAccount(val virtual_balance: Double = 0.0, val realized_pnl: Double = 0.0, val auto_cycle_lots: Int = 1)
-data class BoxSpreadPositionSummary(
-    val id: Int = 0, val underlying: String = "", val instrument_class: String = "", val expiry: String = "",
-    val low_strike: Double = 0.0, val high_strike: Double = 0.0, val direction: String = "",
-    val lot_size: Int = 0, val lots: Int = 0, val realized_pnl: Double = 0.0, val is_open: Boolean = false
-)
-data class BoxSpreadAutoCycleSettings(val status:String="", val mode:String="paper", val lots:Int=1)
-data class BoxSpreadHistoryItem(
-    val id: Int = 0, val underlying: String = "", val instrument_class: String = "", val expiry: String = "",
-    val low_strike: Double = 0.0, val high_strike: Double = 0.0, val direction: String = "",
-    val lot_size: Int = 0, val lots: Int = 0, val quantity: Int = 0, val realized_pnl: Double = 0.0,
-    val is_open: Boolean = false, val created_at: String = "", val closed_at: String? = null
-)
-data class BoxSpreadHistoryPage(val count: Int = 0, val items: List<BoxSpreadHistoryItem> = emptyList())
-data class BoxSpreadJournalPage(val count: Int = 0, val items: List<Map<String, Any?>> = emptyList())
 data class AppUpdateInfo(val platform: String = "android", val version_code: Int = 1, val version_name: String = "1.0", val release_notes: String = "", val apk_url: String = "", val sha256: String = "", val mandatory: Boolean = false)
-data class StrategyRegistryItem(val id: String = "", val name: String = "", val version: String = "1", val enabled: Boolean = true, val screen: String = "backend", val data_mode: String = "", val execution_mode: String = "PAPER", val live_orders: Boolean = false, val capabilities: List<String> = emptyList(), val live_route: String? = null, val workspace_route: String? = null)
+data class StrategyRegistryItem(val id: String = "", val name: String = "", val version: String = "1", val enabled: Boolean = true, val screen: String = "backend", val data_mode: String = "", val execution_mode: String = "SCANNER ONLY", val live_orders: Boolean = false, val capabilities: List<String> = emptyList(), val live_route: String? = null, val workspace_route: String? = null)
 data class StrategyWorkspaceResponse(val status: String = "", val workspace: StrategyRegistryItem = StrategyRegistryItem())
 data class StrategyRegistryResponse(val strategies: List<StrategyRegistryItem> = emptyList())
-data class BoxSpreadOverview(
-    val status: String = "", val strategy: String = "", val mode: String = "",
-    val account: BoxSpreadAccount? = null, val open_position: BoxSpreadPositionSummary? = null,
-    val live_opportunities: BoxSpreadLiveOpportunities = BoxSpreadLiveOpportunities(),
-    val history: BoxSpreadHistoryPage = BoxSpreadHistoryPage(), val journal: BoxSpreadJournalPage = BoxSpreadJournalPage()
-)
-
 interface ApiInterface {
     @GET("/") suspend fun getRootStatus(): MarketStatus
     @GET("/api/v1/app/update") suspend fun appUpdate(): AppUpdateInfo
@@ -290,6 +243,7 @@ interface ApiInterface {
     @GET("/api/v1/app/strategies/{strategy_id}/workspace") suspend fun strategyWorkspace(@retrofit2.http.Path("strategy_id") strategyId: String): StrategyWorkspaceResponse
     @GET("/api/v1/scanner/calendar-spread/live") suspend fun calendarSpreadLive(@Query("limit") limit: Int = 50): Map<String, Any?>
     @GET("/api/v1/scanner/synthetic-cash-carry/live") suspend fun syntheticCashCarryLive(@Query("limit") limit: Int = 50): Map<String, Any?>
+    @GET("/api/v1/scanner/box-spread/live") suspend fun boxSpreadLive(@Query("limit") limit: Int = 50): Map<String, Any?>
     @GET("/api/v1/brokers/connections") suspend fun brokerConnections(): BrokerConnectionsResponse
     @POST("/api/v1/brokers/connect") suspend fun connectBroker(@Body request: BrokerConnectRequest): BrokerConnectResponse
     @GET("/api/v1/brokers/{broker}/status") suspend fun brokerStatus(@Path("broker") broker: String): BrokerStatusResponse
@@ -298,11 +252,6 @@ interface ApiInterface {
     @POST("/api/v1/brokers/safety/enable") suspend fun enableRealTrading(@Body request: RealTradingEnableRequest): SafetyResponse
     @POST("/api/v1/brokers/safety/disable") suspend fun disableRealTrading(): SafetyResponse
     @POST("/api/v1/brokers/safety/kill-switch") suspend fun triggerKillSwitch(): SafetyResponse
-    @POST("/api/v1/execution/paper/entry") suspend fun paperEntry(@Body request: PaperEntryRequest): PaperEntryResponse
-    @POST("/api/v1/execution/paper/from-scanner") suspend fun paperEntryFromScanner(@Body request: ScannerPaperEntryRequest): ScannerPaperEntryResponse
-    @GET("/api/v1/execution/paper/position") suspend fun paperPosition(): PaperPositionResponse
-    @POST("/api/v1/execution/paper/exit") suspend fun paperExit(@Body request: PaperExitRequest): PaperExitResponse
-    @GET("/api/v1/execution/paper/orders") suspend fun paperOrders(): PaperOrdersResponse
     @GET("/api/v1/market-data/overview") suspend fun marketOverview(): MarketOverviewResponse
     @GET("/api/v1/market-data/live-cash-future/health") suspend fun liveCashFutureHealth(): Map<String, Any?>
     suspend fun liveDataHealth(): LiveDataHealthResponse
@@ -342,12 +291,6 @@ interface ApiInterface {
     @POST("/api/v1/backtesting/cash-future/downloads") suspend fun startCashFutureDownload(@Body request: CashFutureDownloadRequest): CashFutureDownloadAcceptedResponse
     @GET("/api/v1/backtesting/cash-future/downloads/{job_id}") suspend fun cashFutureDownloadStatus(@Path("job_id") jobId: String): CashFutureDownloadStatusResponse
     @POST("/api/v1/backtesting/cash-future/downloads/{job_id}/resume") suspend fun resumeCashFutureDownload(@Path("job_id") jobId: String, @Query("retry_attempts") retryAttempts: Int = 3): CashFutureDownloadAcceptedResponse
-    @GET("/api/v1/execution/paper/box-spread/overview") suspend fun boxSpreadOverview(@Query("limit") limit: Int = 20, @Query("history_limit") historyLimit: Int = 10, @Query("journal_limit") journalLimit: Int = 20): BoxSpreadOverview
-    @GET("/api/v1/execution/paper/box-spread/auto-cycle-settings") suspend fun boxSpreadAutoCycleSettings(): BoxSpreadAutoCycleSettings
-    @retrofit2.http.PUT("/api/v1/execution/paper/box-spread/auto-cycle-settings") suspend fun updateBoxSpreadAutoCycleSettings(@Body request: Map<String, Int>): BoxSpreadAutoCycleSettings
-    @POST("/api/v1/execution/paper/box-spread/auto-entry") suspend fun boxSpreadAutoEntry(@Query("lots") lots: Int = 1): Map<String, Any?>
-    @POST("/api/v1/execution/paper/box-spread/auto-exit") suspend fun boxSpreadAutoExit(@Query("min_pnl") minPnl: Double = 0.0): Map<String, Any?>
-    @POST("/api/v1/execution/paper/box-spread/cycle") suspend fun boxSpreadCycle(@Query("lots") lots: Int = 1, @Query("min_pnl") minPnl: Double = 0.0): Map<String, Any?>
 }
 
 object ApiService {

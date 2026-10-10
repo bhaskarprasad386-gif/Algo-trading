@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Algo Trading",
-  description: "Professional paper-trading command terminal",
+  description: "Live market scanning and strategy analysis terminal",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

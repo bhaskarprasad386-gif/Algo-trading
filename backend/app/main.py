@@ -20,9 +20,8 @@ from app.core.diagnostics import runtime_diagnostics
 from app.core.exceptions import TradingAppException, trading_exception_handler, global_exception_handler
 from app.core.database import engine, Base, SessionLocal, check_database
 from app.core.schema_migrations import run_schema_migrations
-from app.models import User, Instrument, Order, Session, Position, SystemLog, TradingAccount
+from app.models import User, Instrument, Session, Position, SystemLog
 from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
-from app.models.live_calendar_spread_paper_position import LiveCalendarSpreadPaperPosition
 from app.algo.auth import AngelOneAuth
 from app.market_data.live_cash_future_stream import live_cash_future_health
 from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
@@ -36,7 +35,6 @@ from app.market_data.nifty50_universe import NIFTY50_STOCK_SYMBOLS, NIFTY50_INDE
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
-from app.order_engine.routes import router as orders_router
 from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot
 from app.scanner.routes import router as scanner_router, full_fno_router, configure_live_cash_future_snapshot
 from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
@@ -46,15 +44,7 @@ from app.scanner.calendar_spread_routes import router as calendar_spread_scanner
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread
 from app.intelligence.routes import router as intelligence_router
-from app.execution.calendar_spread_paper_routes import router as calendar_spread_paper_router
-from app.execution.box_spread_paper_routes import router as box_spread_paper_router, cycle as box_spread_paper_cycle
-from app.execution.paper_routes import router as paper_execution_router
-from app.execution.live_paper_routes import router as live_paper_execution_router
-from app.auto.routes import router as global_auto_router
 from app.alert_routes import router as alert_router
-from app.live_paper_routes import router as live_paper_router
-from app.auto.live_paper import LivePaperTradeService, is_fresh_market_timestamp
-from app.models.live_paper_trade import LivePaperTrade
 from app.backtesting.replay_routes import create_replay_router
 from app.scanner.cash_future_collector import CashFutureHistoryCollector
 from app.brokers.routes import router as brokers_router
@@ -96,7 +86,7 @@ configure_live_box_spread(lambda: live_box_spread_latest_results)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _paper_box_spread_cycle_task, _live_paper_monitor_task
+    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     # Recovery is intentionally deferred until application startup so the schema
     # migration module has no dependency on scanner/backtest job modules.
@@ -114,17 +104,13 @@ async def lifespan(app: FastAPI):
         _live_synthetic_task = asyncio.create_task(_live_synthetic_loop())
     if settings.LIVE_BOX_SPREAD_DATA_ENABLED and _live_box_spread_task is None:
         _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
-    if settings.PAPER_BOX_SPREAD_AUTO_CYCLE_ENABLED and _paper_box_spread_cycle_task is None:
-        _paper_box_spread_cycle_task = asyncio.create_task(_paper_box_spread_cycle_loop())
-    if settings.LIVE_PAPER_MONITOR_ENABLED and _live_paper_monitor_task is None:
-        _live_paper_monitor_task = asyncio.create_task(_live_paper_monitor_loop())
     try:
         yield
     finally:
         # Signal blocking worker threads before cancelling their asyncio wrappers.
         # This makes to_thread(run_forever) unwind promptly during service stop.
         _signal_live_runner_shutdown()
-        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _paper_box_spread_cycle_task, _live_paper_monitor_task):
+        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task):
             if task is not None:
                 task.cancel()
         shutdown_tasks = tuple(
@@ -136,8 +122,6 @@ async def lifespan(app: FastAPI):
                 _live_calendar_spread_task,
                 _live_synthetic_task,
                 _live_box_spread_task,
-                _paper_box_spread_cycle_task,
-                _live_paper_monitor_task,
             )
             if task is not None
         )
@@ -155,8 +139,6 @@ async def lifespan(app: FastAPI):
         _live_calendar_spread_task = None
         _live_synthetic_task = None
         _live_box_spread_task = None
-        _paper_box_spread_cycle_task = None
-        _live_paper_monitor_task = None
         if backtest_download_manager is not None:
             backtest_download_manager.close()
         if backtest_status_store is not None:
@@ -176,22 +158,15 @@ app.add_exception_handler(TradingAppException, trading_exception_handler)
 app.add_exception_handler(Exception, global_exception_handler)
 
 app.include_router(brokers_router)
-app.include_router(orders_router)
 app.include_router(arbitrage_router)
 app.include_router(instruments_router)
 app.include_router(market_data_router)
 app.include_router(scanner_router)
 app.include_router(full_fno_router)
 app.include_router(auto_scanner_router)
-app.include_router(paper_execution_router)
-app.include_router(live_paper_execution_router)
-app.include_router(global_auto_router)
 app.include_router(alert_router)
-app.include_router(live_paper_router)
 if settings.BACKTESTING_ENABLED:
     app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))
-app.include_router(calendar_spread_paper_router)
-app.include_router(box_spread_paper_router)
 app.include_router(calendar_spread_scanner_router)
 app.include_router(live_synthetic_router)
 app.include_router(live_box_spread_router)
@@ -336,7 +311,6 @@ async def dashboard_websocket(websocket: WebSocket):
                     "calendar_spread": {"count": calendar_count, "timestamp_ns": _ts(calendar_snapshot)},
                     "synthetic_arbitrage": {"count": len(synthetic_snapshot), "timestamp_ns": _ts(synthetic_snapshot)},
                     "box_spread": {"count": len(box_snapshot), "timestamp_ns": _ts(box_snapshot)},
-                    "paper_execution": "OFF",
                 },
                 "live_orders": "OFF",
             })
@@ -359,8 +333,6 @@ live_calendar_spread_runner: LiveCalendarSpreadOneSecondCollector | None = None
 IST = ZoneInfo("Asia/Kolkata")
 _live_synthetic_task: asyncio.Task | None = None
 _live_box_spread_task: asyncio.Task | None = None
-_paper_box_spread_cycle_task: asyncio.Task | None = None
-_live_paper_monitor_task: asyncio.Task | None = None
 MARKET_OPEN = time(9, 15)
 
 
@@ -670,194 +642,6 @@ def _update_live_synthetic_results(results: tuple) -> None:
     live_synthetic_latest_results = tuple(results)
 
 
-def _run_box_spread_paper_cycle_once() -> int:
-    now = datetime.now(IST)
-    if not (MARKET_OPEN <= now.time() <= MARKET_CLOSE):
-        return 0
-    db = SessionLocal()
-    try:
-        accounts = db.query(TradingAccount).filter(
-            TradingAccount.is_active.is_(True),
-            TradingAccount.mode == "PAPER",
-        ).all()
-        processed = 0
-        for account in accounts:
-            try:
-                result = box_spread_paper_cycle(
-                    lots=max(1, int(account.box_spread_auto_lots)),
-                    min_pnl=settings.PAPER_BOX_SPREAD_AUTO_CYCLE_MIN_PNL,
-                    user=account.user_id,
-                    db=db,
-                )
-                processed += 1
-                app_logger.debug("Box Spread paper cycle user=%s: %s", account.user_id, result.get("status", "unknown"))
-            except Exception as exc:
-                db.rollback()
-                app_logger.error("Box Spread paper cycle failed for user=%s: %s", account.user_id, exc)
-        return processed
-    finally:
-        db.close()
-
-
-async def _paper_box_spread_cycle_loop() -> None:
-    interval = max(1, settings.PAPER_BOX_SPREAD_AUTO_CYCLE_INTERVAL_SECONDS)
-    app_logger.info("Box Spread paper auto-cycle started: every %ss", interval)
-    while True:
-        try:
-            await asyncio.to_thread(_run_box_spread_paper_cycle_once)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            app_logger.error("Box Spread paper auto-cycle failed: %s", exc)
-        await asyncio.sleep(interval)
-
-
-def _executable_paper_pnl(trade: LivePaperTrade, row) -> float | None:
-    """Mark an alert's original legs against current executable exit quotes."""
-    # Defense-in-depth: validate every field that participates in executable
-    # quote/P&L arithmetic. Do not require the full lifecycle persistence
-    # contract here: this helper is also used by monitor callers with a
-    # lightweight trade projection, while malformed numeric/leg data must
-    # still fail closed.
-    try:
-        import math
-        from collections.abc import Mapping
-        lot_size = float(trade.lot_size)
-        lots = float(trade.lots)
-        if (
-            not math.isfinite(lot_size) or not lot_size.is_integer() or lot_size <= 0
-            or not math.isfinite(lots) or not lots.is_integer() or lots <= 0
-        ):
-            return None
-        legs = json.loads(trade.legs_json or "[]")
-    except (TypeError, ValueError, OverflowError, json.JSONDecodeError):
-        return None
-    if not isinstance(legs, list) or not legs:
-        return None
-
-    def q(bid, ask, side):
-        try:
-            bid, ask = float(bid), float(ask)
-        except (TypeError, ValueError, OverflowError):
-            return None
-        if (
-            not math.isfinite(bid) or not math.isfinite(ask)
-            or bid <= 0 or ask <= 0 or ask < bid
-        ):
-            return None
-        return bid if side == "BUY" else ask
-
-    total = 0.0
-    for leg in legs:
-        if not isinstance(leg, Mapping):
-            return None
-        side = str(leg.get("side", "")).upper()
-        entry = leg.get("price")
-        if side not in {"BUY", "SELL"} or entry is None:
-            return None
-        try:
-            entry = float(entry)
-        except (TypeError, ValueError, OverflowError):
-            return None
-        if not math.isfinite(entry) or entry <= 0:
-            return None
-        instrument = str(leg.get("instrument", "")).upper()
-        contract = str(leg.get("contract", ""))
-        bid = ask = None
-        if instrument == "CASH":
-            bid = row.get("cash_bid") if isinstance(row, dict) else getattr(row, "cash_bid", None)
-            ask = row.get("cash_ask") if isinstance(row, dict) else getattr(row, "cash_ask", None)
-            if bid is None or ask is None:
-                return None
-        elif instrument == "FUTURE":
-            if hasattr(row, "future"):
-                bid, ask = row.future.bid, row.future.ask
-            else:
-                bid = row.get("future_bid") if isinstance(row, dict) else getattr(row, "future_bid", None)
-                ask = row.get("future_ask") if isinstance(row, dict) else getattr(row, "future_ask", None)
-        elif instrument == "CALL":
-            source = row.option
-            bid, ask = source.call_bid, source.call_ask
-        elif instrument == "PUT":
-            source = row.option
-            bid, ask = source.put_bid, source.put_ask
-        elif instrument in {"LOW_CALL", "LOW_PUT", "HIGH_CALL", "HIGH_PUT"}:
-            source = row.low if instrument.startswith("LOW_") else row.high
-            kind = "call" if instrument.endswith("CALL") else "put"
-            bid, ask = getattr(source, f"{kind}_bid"), getattr(source, f"{kind}_ask")
-        elif contract and contract == getattr(row, "near_contract_month", None):
-            bid, ask = row.near_bid, row.near_ask
-        elif contract and contract == getattr(row, "far_contract_month", None):
-            bid, ask = row.far_bid, row.far_ask
-        else:
-            return None
-        exit_price = q(bid, ask, side)
-        if exit_price is None:
-            return None
-        signed = exit_price - entry if side == "BUY" else entry - exit_price
-        total += signed
-    return round(total * int(trade.lot_size) * int(trade.lots), 8)
-
-async def _live_paper_monitor_loop() -> None:
-    """Continuously mark alert-driven paper trades and close them at expiry."""
-    service = LivePaperTradeService()
-    while True:
-        try:
-            db = SessionLocal()
-            try:
-                active = [
-                    trade for trade in db.query(LivePaperTrade).filter(
-                        LivePaperTrade.status == "ONGOING",
-                    ).all()
-                    if __import__("app.auto.live_paper", fromlist=["_valid_persisted_trade"])._valid_persisted_trade(trade)
-                ]
-                if active:
-                    cash = live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=500)
-                    cash_map = {f"{x.get('symbol')}:{x.get('contract_month')}": x for x in cash}
-                    now_ns = time_module.time_ns()
-                    # Freshness helper rejects both stale and future-dated source timestamps.
-                    cal_rows = tuple(x for x in live_calendar_spread_scanner.snapshot(limit=500) if is_fresh_market_timestamp(getattr(x, "timestamp_ns", 0), now_ns))
-                    syn_rows = tuple(x for x in live_synthetic_latest_results if is_fresh_market_timestamp(getattr(x.option, "timestamp_ns", 0), now_ns))
-                    box_rows = tuple(x for x in live_box_spread_latest_results if is_fresh_market_timestamp(getattr(x.low, "timestamp_ns", 0), now_ns))
-                    cal_map = {f"{x.underlying}:{x.near_contract_month}:{x.far_contract_month}:{x.direction}": x for x in cal_rows}
-                    syn_map = {f"{x.option.underlying}:{x.option.expiry}:{x.option.strike:g}:{x.direction}": x for x in syn_rows}
-                    box_map = {f"{x.low.underlying}:{x.low.expiry}:{x.low.strike:g}:{x.high.strike:g}:{x.direction}": x for x in box_rows}
-                    for trade in active:
-                        edge = None
-                        if trade.strategy_id == "cash-future":
-                            row = cash_map.get(trade.event_id); edge = None if row is None else row.get("gap")
-                        elif trade.strategy_id == "calendar-spread":
-                            row = cal_map.get(trade.event_id); edge = None if row is None else row.gap_points
-                        elif trade.strategy_id == "synthetic-future-cash-carry":
-                            row = syn_map.get(trade.event_id); edge = None if row is None else row.executable_edge
-                        elif trade.strategy_id == "box-spread":
-                            row = box_map.get(trade.event_id); edge = None if row is None else row.executable_edge
-                        if edge is not None:
-                            pnl = _executable_paper_pnl(trade, row)
-                            if pnl is not None:
-                                service.mark(db, trade, edge=float(edge), pnl_override=pnl)
-                            else:
-                                # Never replace a real executable P&L mark with an
-                                # opportunity-edge delta merely because a live quote
-                                # is temporarily unavailable. Preserve the last
-                                # executable mark until a fresh executable quote arrives.
-                                service.mark(
-                                    db,
-                                    trade,
-                                    edge=float(edge),
-                                    pnl_override=float(trade.unrealized_pnl),
-                                )
-                    db.commit()
-                service.close_expired(db)
-            finally:
-                db.close()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            app_logger.error("Live paper monitor failed: %s", exc)
-        await asyncio.sleep(2.0)
-
-
 async def _live_box_spread_loop() -> None:
     global live_box_spread_runner, live_box_spread_latest_results
     master = InstrumentMaster()
@@ -994,39 +778,39 @@ STRATEGY_WORKSPACES = [
     {
         "id": "cash-future", "name": "Cash–Future", "version": "1", "enabled": True,
         "screen": "cash_future_scanner", "data_mode": "LIVE 1s",
-        "execution_mode": "PAPER", "live_orders": False,
-        "capabilities": ["LIVE DATA", "SCANNER", "HISTORICAL", "BACKDATE", "BACKTEST", "REPLAY", "PAPER TRADE", "RESULTS"],
+        "execution_mode": "SCANNER ONLY", "live_orders": False,
+        "capabilities": ["LIVE DATA", "SCANNER", "HISTORICAL", "BACKDATE", "BACKTEST", "REPLAY", "RESULTS"],
         "live_route": "/api/v1/scanner/cash-future/live/fast",
         "workspace_route": "/api/v1/backtesting/cash-future/strategy-run"
     },
     {
         "id": "calendar-spread", "name": "Calendar Spread", "version": "1", "enabled": True,
         "screen": "calendar_spread", "data_mode": "LIVE 1s",
-        "execution_mode": "PAPER", "live_orders": False,
-        "capabilities": ["LIVE DATA", "SCANNER", "BACKTEST", "PAPER TRADE", "RESULTS"],
+        "execution_mode": "SCANNER ONLY", "live_orders": False,
+        "capabilities": ["LIVE DATA", "SCANNER", "BACKTEST", "RESULTS"],
         "live_route": "/api/v1/scanner/calendar-spread/live",
         "workspace_route": "/api/v1/backtesting/calendar-spread"
     },
     {
         "id": "synthetic-future-cash-carry", "name": "Synthetic Future / Cash Carry", "version": "1", "enabled": True,
         "screen": "synthetic_cash_carry", "data_mode": "LIVE",
-        "execution_mode": "PAPER", "live_orders": False,
-        "capabilities": ["LIVE DATA", "SCANNER", "BACKTEST", "PAPER TRADE", "RESULTS"],
+        "execution_mode": "SCANNER ONLY", "live_orders": False,
+        "capabilities": ["LIVE DATA", "SCANNER", "BACKTEST", "RESULTS"],
         "live_route": "/api/v1/scanner/synthetic-cash-carry/live",
         "workspace_route": "/api/v1/backtesting/cash-future/strategy-run"
     },
     {
         "id": "box-spread", "name": "Box Spread", "version": "1", "enabled": True,
         "screen": "box_spread", "data_mode": "LIVE",
-        "execution_mode": "PAPER", "live_orders": False,
-        "capabilities": ["LIVE DATA", "SCANNER", "BACKTEST", "PAPER TRADE", "RESULTS"],
+        "execution_mode": "SCANNER ONLY", "live_orders": False,
+        "capabilities": ["LIVE DATA", "SCANNER", "BACKTEST", "RESULTS"],
         "live_route": "/api/v1/scanner/box-spread/live",
         "workspace_route": "/api/v1/backtesting/cash-future/strategy-run"
     },
     {
         "id": "full-fno", "name": "Full F&O Backtest", "version": "1", "enabled": True,
         "screen": "full_fno", "data_mode": "ACCUMULATED LIVE",
-        "execution_mode": "PAPER", "live_orders": False,
+        "execution_mode": "BACKTEST ONLY", "live_orders": False,
         "capabilities": ["HISTORICAL", "BACKDATE", "BACKTEST", "REPLAY", "RESULTS"],
         "live_route": None,
         "workspace_route": "/api/v1/backtesting/full-fno/start"

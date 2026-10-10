@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Bell, Bot, BriefcaseBusiness, ChartNoAxesCombined, Clock3, Home, Menu, Settings2, WalletCards, X } from "lucide-react";
+import { Activity, Bell, ChartNoAxesCombined, Home, Menu, Settings2, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { themeOptions, useTheme, type ThemeName } from "@/components/theme-provider";
 
@@ -14,11 +14,6 @@ const nav = [
   { href: "/strategies/box-spread", label: "Box Scanner", icon: Activity },
   { href: "/strategies/custom-strategy", label: "Custom Scanner", icon: Activity },
   { href: "/custom-alert", label: "Custom Alert", icon: Bell },
-  { href: "/paper-trading", label: "Paper Trading", icon: WalletCards },
-  { href: "/auto-paper", label: "Auto Paper Trading", icon: Bot },
-  { href: "/positions", label: "Positions", icon: BriefcaseBusiness },
-  { href: "/completed-trades", label: "Completed Trades", icon: ChartNoAxesCombined },
-  { href: "/history", label: "History", icon: Clock3 },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -55,7 +50,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               Live status
             </Link>
             <div className="rounded-lg border theme-border theme-warning-bg px-3 py-2 text-xs font-semibold theme-warning">
-              PAPER MODE · LIVE ORDERS OFF
+              SCANNER MODE · LIVE ORDERS OFF
             </div>
           </div>
           <button className="min-h-10 min-w-10 rounded-lg p-2 theme-muted" aria-label="Settings">
