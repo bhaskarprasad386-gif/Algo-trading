@@ -881,6 +881,7 @@ def market_data_runtime_health():
     calendar_runner = live_calendar_spread_runner
     synthetic_runner = live_synthetic_runner
     box_runner = live_box_spread_runner
+    calendar_counts = live_calendar_spread_scanner.counts_snapshot()
     return {
         "status": "ok",
         "common_feed": manager.snapshot(),
@@ -890,7 +891,13 @@ def market_data_runtime_health():
             "synthetic_arbitrage": None if synthetic_runner is None else synthetic_runner.snapshot(),
             "box_spread": None if box_runner is None else box_runner.snapshot(),
         },
-        "scanner": live_cash_future_scanner.health(),
+        "scanner": {
+            "strategy": "calendar-spread",
+            "signals": calendar_counts["signals"],
+            "pairs": calendar_counts["pairs"],
+            "diagnostics": live_calendar_spread_scanner.diagnostics_snapshot(limit=50)["counters"],
+        },
+        "cash_future_scanner": live_cash_future_scanner.health(),
     }
 
 

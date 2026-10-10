@@ -261,3 +261,122 @@ def test_calendar_invalid_latest_quote_removes_that_expiry_from_pairing_state():
     next_far = rec("invalid-far", "NIFTY-NEAR", ts + 300_000_000, 104, 105, expiry="2026-11-26")
     assert scanner.update(next_far) is None
     assert scanner.snapshot() == ()
+
+
+def test_calendar_capacity_uses_calendar_specific_capital(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "LIVE_CALENDAR_SPREAD_CAPITAL", 1_050_000.0)
+    monkeypatch.setattr(settings, "LIVE_CASH_FUTURE_CAPITAL", 100.0)
+    scanner = LiveCalendarSpreadScanner()
+    near = rec("capital-near", "NIFTY-CUR", 1, 99, 100)
+    far = rec("capital-far", "NIFTY-NEAR", 1, 104, 105, expiry="2026-11-26")
+    scanner.update(near)
+    result = scanner.update(far)
+
+    assert result is not None
+    assert result.capacity_lots == 200  # 1,050,000 / (105 * 50)
+
+
+def test_calendar_rejects_pair_when_stored_counterpart_has_aged_out(monkeypatch):
+    import time
+
+    real_now = time.time_ns()
+    fake_now = [real_now]
+    monkeypatch.setattr(time, "time_ns", lambda: fake_now[0])
+    scanner = LiveCalendarSpreadScanner()
+    near = rec("stale-near", "NIFTY-CUR", real_now, 99, 100, expiry="2026-10-29")
+    assert scanner.update(near) is None
+
+    # The incoming far quote is individually fresh (<5s), and its skew is
+    # within 1s, but the stored near quote is already stale (>5s).
+    fake_now[0] = real_now + 5_500_000_000
+    far = rec("fresh-far", "NIFTY-NEAR", real_now + 900_000_000, 104, 105, expiry="2026-11-26")
+    assert scanner.update(far) is None
+    assert scanner.pair_snapshot() == ()
+    diagnostics = scanner.diagnostics_snapshot()
+    assert diagnostics["counters"]["stale_pair"] == 1
+    assert diagnostics["pairs"][0]["status"] == "stale_pair"
+
+
+def test_calendar_result_persistence_applies_configured_retention(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.core.config import settings
+    from app.core.database import Base
+    from app.models.live_calendar_spread_scanner_result import LiveCalendarSpreadScannerResult
+
+    monkeypatch.setattr(settings, "LIVE_CALENDAR_SPREAD_RESULT_RETENTION_DAYS", 90)
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    db = Session()
+    db.add(LiveCalendarSpreadScannerResult(
+        underlying="OLD", exchange="NFO", instrument_type="future", contract_family="INDEX_FUTURE",
+        near_contract_month="2026-01-29", far_contract_month="2026-02-26", timestamp_ns=1,
+        near_bid=99, near_ask=100, far_bid=104, far_ask=105, lot_size=50,
+        edge_long=4, edge_short=-6, edge_pct_long=4, edge_pct_short=-6,
+        liquidity_qty=10, capacity_lots=1, rank_score=0.04,
+        observed_at=now - timedelta(days=91),
+    ))
+    db.commit()
+    db.close()
+
+    scanner = LiveCalendarSpreadScanner()
+    scanner.update(rec("retention-near", "NIFTY-CUR", 1, 99, 100, expiry="2026-10-29"))
+    result = scanner.update(rec("retention-far", "NIFTY-NEAR", 1, 104, 105, expiry="2026-11-26"))
+    assert result is not None
+    scanner._persist(result, Session)
+
+    db = Session()
+    try:
+        rows = db.query(LiveCalendarSpreadScannerResult).all()
+        assert len(rows) == 1
+        assert rows[0].underlying == "NIFTY"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_calendar_long_direction_uses_only_executable_side_depth():
+    from dataclasses import replace
+
+    scanner = LiveCalendarSpreadScanner()
+    near = replace(rec("depth-long-near", "NIFTY-CUR", 1, 99, 100), bid_qty=0, ask_qty=100)
+    far = replace(rec("depth-long-far", "NIFTY-NEAR", 1, 104, 105, expiry="2026-11-26"), bid_qty=100, ask_qty=0)
+
+    scanner.update(near)
+    result = scanner.update(far)
+    assert result is not None
+    assert result.direction == "LONG_NEAR_SHORT_FAR"
+    assert result.liquidity_qty == 100
+
+
+def test_calendar_reverse_direction_uses_only_executable_side_depth():
+    from dataclasses import replace
+
+    scanner = LiveCalendarSpreadScanner()
+    near = replace(rec("depth-short-near", "NIFTY-CUR", 1, 105, 106), bid_qty=100, ask_qty=0)
+    far = replace(rec("depth-short-far", "NIFTY-NEAR", 1, 99, 100, expiry="2026-11-26"), bid_qty=0, ask_qty=100)
+
+    scanner.update(near)
+    result = scanner.update(far)
+    assert result is not None
+    assert result.direction == "SHORT_NEAR_LONG_FAR"
+    assert result.liquidity_qty == 100
+
+
+def test_calendar_counts_snapshot_reports_exact_fresh_pairs_and_qualified_signals():
+    import time
+
+    scanner = LiveCalendarSpreadScanner(minimum_gap_points=5, minimum_gross_profit=250)
+    ts = time.time_ns()
+    scanner.update(rec("count-near", "NIFTY-CUR", ts, 99, 100, expiry="2026-10-29"))
+    result = scanner.update(rec("count-far", "NIFTY-NEAR", ts, 104, 105, expiry="2026-11-26"))
+
+    assert result is not None and result.qualifies is False
+    assert scanner.counts_snapshot() == {"signals": 0, "pairs": 1}
+

@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     LIVE_CALENDAR_SPREAD_DATA_ENABLED: bool = True
     LIVE_CALENDAR_SPREAD_MIN_GAP_POINTS: float = 0.0
     LIVE_CALENDAR_SPREAD_MIN_GROSS_PROFIT: float = 0.0
+    # Separate display-capacity budget; never inherit Cash-Future sizing implicitly.
+    LIVE_CALENDAR_SPREAD_CAPITAL: float = 10_000_000.0
     LIVE_CALENDAR_SPREAD_RESULT_RETENTION_DAYS: int = 90
     LIVE_SYNTHETIC_DATA_ENABLED: bool = True
     LIVE_SYNTHETIC_MIN_ARBITRAGE_POINTS: float = 0.0

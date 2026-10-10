@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 import logging
 from threading import RLock, Thread
 from queue import Queue, Full
@@ -60,7 +61,7 @@ class LiveCalendarSpreadScanner:
         self._signals: dict[tuple[str,str,str], CalendarSpreadSignal] = {}
         self._pair_status: dict[tuple[str,str,str], dict] = {}
         self._diagnostics = {
-            "invalid_quote": 0, "stale_tick": 0, "future_tick": 0,
+            "invalid_quote": 0, "stale_tick": 0, "stale_pair": 0, "future_tick": 0,
             "waiting_for_second_expiry": 0, "timestamp_mismatch": 0, "insufficient_depth": 0,
             "lot_size_mismatch": 0, "no_positive_edge": 0,
             "qualified": 0, "side_effect_queue_dropped": 0,
@@ -154,6 +155,30 @@ class LiveCalendarSpreadScanner:
                                       timestamp_skew_ns=abs(near.timestamp_ns-far.timestamp_ns))
                 self._diagnostics["timestamp_mismatch"] += 1
                 return None
+            # The incoming tick can be fresh while the stored counterpart has
+            # aged out. Never create/persist/alert on a pair unless both legs
+            # are independently inside the live freshness window.
+            now_ns = time.time_ns()
+            for leg_name, leg in (("near", near), ("far", far)):
+                if leg.timestamp_ns >= 1_000_000_000_000_000:
+                    leg_age_ns = now_ns - leg.timestamp_ns
+                    if leg_age_ns > self.SNAPSHOT_MAX_AGE_NS:
+                        self._signals.pop(key, None)
+                        self._set_pair_status(
+                            key, "stale_pair", near=near, far=far,
+                            stale_leg=leg_name, stale_age_ns=leg_age_ns,
+                        )
+                        self._diagnostics["stale_pair"] += 1
+                        return None
+                    if leg_age_ns < -self.TIMESTAMP_TOLERANCE_NS:
+                        self._signals.pop(key, None)
+                        self._set_pair_status(
+                            key, "future_pair", near=near, far=far,
+                            timestamp_ns=now_ns,
+                            future_leg=leg_name, future_offset_ns=-leg_age_ns,
+                        )
+                        self._diagnostics["future_tick"] += 1
+                        return None
             if near.lot_size != far.lot_size or near.instrument.exchange != far.instrument.exchange:
                 self._signals.pop(key, None)
                 self._set_pair_status(key, "lot_size_mismatch", near=near, far=far)
@@ -177,9 +202,14 @@ class LiveCalendarSpreadScanner:
                 legs=(OpportunityLeg(near,OrderSide.SELL,"near-entry"),OpportunityLeg(far,OrderSide.BUY,"far-entry"))
             lot = int(near.lot_size)
             gross = gross_profit_from_points(gap, lot)
-            nq = min(float(near.bid_qty or 0), float(near.ask_qty or 0))
-            fq = min(float(far.bid_qty or 0), float(far.ask_qty or 0))
-            liquidity = min(nq, fq) if nq > 0 and fq > 0 else 0.0
+            # Liquidity must reflect only the two sides actually executed
+            # by the selected direction; missing depth on unused sides must
+            # not suppress an otherwise executable calendar spread.
+            if direction == "LONG_NEAR_SHORT_FAR":
+                liquidity = min(float(near.ask_qty or 0), float(far.bid_qty or 0))
+            else:
+                liquidity = min(float(near.bid_qty or 0), float(far.ask_qty or 0))
+            liquidity = liquidity if liquidity > 0 else 0.0
             # Do not manufacture an OpportunitySignal when depth is absent.
             # The opportunity model independently enforces configured thresholds.
             if liquidity <= 0:
@@ -201,7 +231,7 @@ class LiveCalendarSpreadScanner:
             signal_far = replace(far, timestamp_ns=near.timestamp_ns)
             signal_legs = (OpportunityLeg(signal_near, OrderSide.BUY if direction == "LONG_NEAR_SHORT_FAR" else OrderSide.SELL, "near-entry"), OpportunityLeg(signal_far, OrderSide.SELL if direction == "LONG_NEAR_SHORT_FAR" else OrderSide.BUY, "far-entry"))
             base = max(float(near.ask), float(far.ask), 1e-12)
-            cap = int(settings.LIVE_CASH_FUTURE_CAPITAL / (base * lot)) if settings.LIVE_CASH_FUTURE_CAPITAL > 0 else 0
+            cap = int(settings.LIVE_CALENDAR_SPREAD_CAPITAL / (base * lot)) if settings.LIVE_CALENDAR_SPREAD_CAPITAL > 0 else 0
             signal = OpportunitySignal(
                 strategy_id=self.strategy_id, opportunity_type="calendar-spread",
                 symbol=key[0], timestamp_ns=near.timestamp_ns, gap_points=gap,
@@ -286,6 +316,11 @@ class LiveCalendarSpreadScanner:
                         "ADD COLUMN contract_family VARCHAR NOT NULL DEFAULT 'UNKNOWN'"
                     ))
                     db.commit()
+            retention_days = max(1, int(settings.LIVE_CALENDAR_SPREAD_RESULT_RETENTION_DAYS))
+            cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=retention_days)
+            db.query(LiveCalendarSpreadScannerResult).filter(
+                LiveCalendarSpreadScannerResult.observed_at < cutoff
+            ).delete(synchronize_session=False)
             row=LiveCalendarSpreadScannerResult(
                 underlying=signal.underlying,exchange=signal.exchange,instrument_type=signal.instrument_type,
                 contract_family=signal.contract_family,
@@ -363,6 +398,30 @@ class LiveCalendarSpreadScanner:
             <= self.SNAPSHOT_MAX_AGE_NS
         )
         return tuple(sorted(values, key=lambda x: x.timestamp_ns, reverse=True)[:limit])
+
+    def counts_snapshot(self):
+        """Return exact fresh pair/opportunity counts without response-limit truncation."""
+        import time
+        now_ns = time.time_ns()
+        with self._lock:
+            values = tuple(self._signals.values())
+        fresh = tuple(
+            item for item in values
+            if -self.TIMESTAMP_TOLERANCE_NS
+            <= now_ns - item.timestamp_ns
+            <= self.SNAPSHOT_MAX_AGE_NS
+        )
+        signals = sum(
+            1 for item in fresh
+            if item.liquidity_qty > 0
+            and qualifies_opportunity(
+                gap_points=item.gap_points,
+                gross_profit=item.gross_profit,
+                minimum_gap_points=self.minimum_gap_points,
+                minimum_gross_profit=self.minimum_gross_profit,
+            )
+        )
+        return {"signals": signals, "pairs": len(fresh)}
 
     def snapshot(self,limit=50,*,minimum_gap_points=None,minimum_gross_profit=None):
         min_gap=self.minimum_gap_points if minimum_gap_points is None else float(minimum_gap_points)

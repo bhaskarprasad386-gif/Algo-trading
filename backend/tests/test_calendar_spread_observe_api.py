@@ -52,3 +52,26 @@ def test_calendar_observe_to_pair_and_live_api():
     assert live_response["status"] == "success"
     assert live_response["opportunity_count"] == 1
     assert live_response["data"][0]["qualifies"] is True
+    assert live_response["data"][0]["capacity_type"] == "estimate_only"
+    assert live_response["data"][0]["estimated_capacity_lots"] == live_response["data"][0]["capacity_lots"]
+    assert "excludes broker margin" in live_response["data"][0]["capacity_basis"]
+
+
+def test_live_api_qualifies_using_requested_threshold_overrides():
+    scanner = LiveCalendarSpreadScanner(minimum_gap_points=5, minimum_gross_profit=250)
+    ts = time.time_ns()
+    scanner.observe(_payload("near-override", "2026-10-29", ts, 99, 100))
+    result = scanner.observe(_payload("far-override", "2026-11-26", ts, 104, 105))
+    assert result is not None
+    assert result.qualifies is False  # original scanner thresholds are stricter
+
+    calendar_spread_routes.configure(scanner)
+    try:
+        response = calendar_spread_routes.live(limit=10, min_gap_points=0, min_gross_profit=0)
+    finally:
+        calendar_spread_routes.configure(None)
+
+    assert response["opportunity_count"] == 1
+    assert response["data"][0]["minimum_gap_points"] == 0
+    assert response["data"][0]["minimum_gross_profit"] == 0
+    assert response["data"][0]["qualifies"] is True

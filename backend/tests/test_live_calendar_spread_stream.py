@@ -7,6 +7,7 @@ from app.market_data.live_calendar_spread_stream import (
     LiveCalendarSpreadOneSecondCollector,
     _expiry,
     _timestamp_ns,
+    _source_timestamp_ns,
 )
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -121,6 +122,7 @@ def _calendar_test_record(timestamp_ns, *, bid=None, ask=None, token="test-token
         expiry="2026-10-29",
         lot_size=75,
         tick_size=0.05,
+        payload={"exchange_timestamp_ns": timestamp_ns},
     )
 
 
@@ -252,3 +254,56 @@ def test_calendar_contract_selection_deduplicates_expiry_and_excludes_unsupporte
     assert len(contracts) == 2
     assert [row["expiry"].isoformat() for row in contracts] == ["2099-10-30", "2099-11-27"]
     assert {row["token"] for row in contracts} == {"31", "33"}
+
+
+def test_calendar_live_sessions_apply_segment_holidays_and_partial_mcx_sessions():
+    collector = LiveCalendarSpreadOneSecondCollector("unused")
+    assert not collector._exchange_open("NFO", datetime(2026, 1, 15, 10, 0, tzinfo=IST))
+    assert collector._exchange_open("NFO", datetime(2026, 1, 16, 10, 0, tzinfo=IST))
+    assert not collector._exchange_open("BFO", datetime(2026, 10, 20, 10, 0, tzinfo=IST))
+    assert not collector._exchange_open("MCX", datetime(2026, 10, 20, 10, 0, tzinfo=IST))
+    assert collector._exchange_open("MCX", datetime(2026, 10, 20, 18, 0, tzinfo=IST))
+    assert not collector._exchange_open("MCX", datetime(2026, 10, 2, 18, 0, tzinfo=IST))
+    # Muhurat hours have not been officially announced, so no guessed session.
+    assert not collector._exchange_open("NFO", datetime(2026, 11, 8, 14, 0, tzinfo=IST))
+    assert not collector._exchange_open("MCX", datetime(2026, 11, 8, 18, 0, tzinfo=IST))
+    # Unknown future-year calendars fail closed until explicitly updated.
+    assert not collector._exchange_open("NFO", datetime(2027, 1, 4, 10, 0, tzinfo=IST))
+    # Collector stays available for the MCX evening session even when NFO is shut.
+    assert collector.market_open(datetime(2026, 10, 20, 18, 0, tzinfo=IST))
+    assert collector.snapshot()["session_calendar"]["supported_years"] == [2026]
+    assert collector.snapshot()["session_calendar"]["unknown_year_policy"] == "fail_closed"
+
+
+def test_calendar_source_timestamp_parser_handles_epoch_units_without_receive_time():
+    from time import time_ns
+
+    now = time_ns()
+    assert _source_timestamp_ns({"exchange_timestamp": 1_800_000_000}) == 1_800_000_000_000_000_000
+    assert _source_timestamp_ns({"exchange_timestamp": 1_800_000_000_000}) == 1_800_000_000_000_000_000
+    assert _source_timestamp_ns({"exchange_timestamp": 1_800_000_000_000_000}) == 1_800_000_000_000_000_000
+    assert _source_timestamp_ns({"exchange_timestamp_ns": now}) == now
+    assert _source_timestamp_ns({}) is None
+    assert _source_timestamp_ns({"exchange_timestamp": "not-a-timestamp"}) is None
+
+
+def test_calendar_drops_tick_without_provider_timestamp_instead_of_using_receive_time():
+    collector = LiveCalendarSpreadOneSecondCollector("unused")
+    record = _calendar_test_record(
+        int(datetime(2026, 10, 12, 10, 0, tzinfo=IST).timestamp() * 1_000_000_000),
+        bid=99.0,
+        ask=100.0,
+    )
+    record = __import__("dataclasses").replace(record, payload={})
+    collector._observe_record(record)
+    assert collector.snapshot()["diagnostics"]["source_timestamp_dropped"] == 1
+    assert collector.snapshot()["latest_instrument_buckets"] == 0
+
+
+def test_calendar_mcx_close_tracks_us_daylight_saving_transition():
+    collector = LiveCalendarSpreadOneSecondCollector("unused")
+    # Before the US autumn transition, the published MCX close is 23:30 IST.
+    assert not collector._exchange_open("MCX", datetime(2026, 10, 30, 23, 40, tzinfo=IST))
+    # After the transition, the published winter close extends to 23:55 IST.
+    assert collector._exchange_open("MCX", datetime(2026, 11, 2, 23, 50, tzinfo=IST))
+    assert not collector._exchange_open("MCX", datetime(2026, 11, 2, 23, 56, tzinfo=IST))
