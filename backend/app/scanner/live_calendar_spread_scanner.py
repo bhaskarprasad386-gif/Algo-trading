@@ -67,8 +67,13 @@ class LiveCalendarSpreadScanner:
         # Only wall-clock epoch timestamps are eligible for the live freshness guard.
         # Synthetic/unit fixtures may intentionally use compact logical timestamps.
         import time
-        if record.timestamp_ns >= 1_000_000_000_000_000 and time.time_ns() - record.timestamp_ns > self.SNAPSHOT_MAX_AGE_NS:
-            return None
+        if record.timestamp_ns >= 1_000_000_000_000_000:
+            age_ns = time.time_ns() - record.timestamp_ns
+            # Allow small exchange/server clock skew, but reject stale ticks and
+            # timestamps materially in the future; future-dated pairs otherwise
+            # appear perpetually fresh in pair_snapshot()/snapshot().
+            if age_ns > self.SNAPSHOT_MAX_AGE_NS or age_ns < -self.TIMESTAMP_TOLERANCE_NS:
+                return None
         if not self._record_ok(record):
             return None
         key=(str(record.underlying or record.symbol).strip().upper(), record.instrument.exchange.strip().upper(), record.instrument_type.value)
