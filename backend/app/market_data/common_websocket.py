@@ -51,6 +51,12 @@ class CommonWebSocketManager:
         self._missing_callback_routes = 0
         self._missing_descriptor_records = 0
         self._normalized_records_emitted = 0
+        # Distinguish successful normalization from a record actually accepted by its consumer.
+        self._normalized_records_delivered = 0
+        self._raw_callback_attempts = 0
+        self._raw_callback_successes = 0
+        self._missing_exchange_type_frames = 0
+        self._ambiguous_token_frames = 0
         self._normalized_delivery_errors = 0
         self._last_delivery_error: str | None = None
         self._normalizer_errors = 0
@@ -152,6 +158,8 @@ class CommonWebSocketManager:
         consumer = self._consumer_name(consumer)
         if not keys:
             return ()
+        if isinstance(mode, bool) or mode not in (1, 2, 3):
+            raise ValueError("mode must be one of Angel One WebSocket modes 1, 2, or 3")
         with self._lock:
             if self._closed:
                 raise RuntimeError("CommonWebSocketManager is closed")
@@ -705,10 +713,21 @@ class CommonWebSocketManager:
                 if not matching and any(route_token == token for _, route_token in routes):
                     self._exchange_mismatch_frames += 1
             else:
-                matching = tuple(
+                self._missing_exchange_type_frames += 1
+                token_routes = tuple(
                     item for (route_exchange, route_token), items in routes.items()
                     if route_token == token for item in items
                 )
+                # A token alone is not globally unique across exchanges. Route it
+                # only when every matching subscription resolves to one exchange.
+                exchanges = {
+                    self._resolve_exchange_type(key) for _, key in token_routes
+                }
+                if len(exchanges) > 1:
+                    self._ambiguous_token_frames += 1
+                    matching = ()
+                else:
+                    matching = token_routes
             if not matching:
                 self._unmatched_frames += 1
             raw_callbacks = [self._callbacks.get(name) for name, _ in matching]
@@ -722,8 +741,12 @@ class CommonWebSocketManager:
                 self._ticks_by_exchange[str(exchange_type or "unknown")] += 1
                 self._last_data_at[group] = time.monotonic()
         for callback in {id(cb): cb for cb in raw_callbacks if cb is not None}.values():
+            with self._lock:
+                self._raw_callback_attempts += 1
             try:
                 callback(message)
+                with self._lock:
+                    self._raw_callback_successes += 1
             except Exception as exc:
                 with self._lock:
                     self._delivery_errors += 1
@@ -764,7 +787,9 @@ class CommonWebSocketManager:
                         "ask": record.ask,
                     }
                 callback(record)
-            except (TypeError, ValueError) as exc:
+                with self._lock:
+                    self._normalized_records_delivered += 1
+            except (TypeError, ValueError, OverflowError) as exc:
                 with self._lock:
                     self._normalizer_errors += 1
                     self._last_normalizer_error = f"{type(exc).__name__}: {exc}"
@@ -816,6 +841,11 @@ class CommonWebSocketManager:
                 "missing_callback_routes": self._missing_callback_routes,
                 "missing_descriptor_records": self._missing_descriptor_records,
                 "normalized_records_emitted": self._normalized_records_emitted,
+                "normalized_records_delivered": self._normalized_records_delivered,
+                "raw_callback_attempts": self._raw_callback_attempts,
+                "raw_callback_successes": self._raw_callback_successes,
+                "missing_exchange_type_frames": self._missing_exchange_type_frames,
+                "ambiguous_token_frames": self._ambiguous_token_frames,
                 "normalized_delivery_errors": self._normalized_delivery_errors,
                 "last_delivery_error": self._last_delivery_error,
                 "normalizer_errors": self._normalizer_errors,
