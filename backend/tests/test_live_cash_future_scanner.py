@@ -88,7 +88,6 @@ def test_live_scanner_liquidity_capacity_and_traceability(monkeypatch):
 
 def test_live_scanner_lifecycle_recovery_and_current_near_comparison(monkeypatch):
     monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS", 1)
-    monkeypatch.setattr("app.scanner.live_cash_future_scanner.settings.LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT", 0.0)
     scanner = LiveCashFutureScanner()
     base = int(time() * 1_000_000_000)
 
@@ -111,7 +110,7 @@ def test_live_scanner_lifecycle_recovery_and_current_near_comparison(monkeypatch
     assert second.alert_event is None
     # Compare current/near while both contracts are still actionable. Expired
     # signals are intentionally excluded from the live-fast snapshot.
-    near = pair("NEAR", base + 2_000_000_000, 100.2)
+    near = pair("NEAR", base + 2_000_000_000, 101.2)
     assert near is not None
     rows = scanner.snapshot(max_age_seconds=10_000, limit=10)
     current = next(row for row in rows if row["contract_month"] == "CURRENT")
