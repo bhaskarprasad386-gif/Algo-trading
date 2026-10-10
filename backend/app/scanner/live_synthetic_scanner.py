@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from dataclasses import replace
+from datetime import time as datetime_time
+from zoneinfo import ZoneInfo
 from threading import Lock
 from typing import Callable
 
@@ -207,8 +209,10 @@ class LiveSyntheticScanner:
             if config.time_to_expiry_years == 0:
                 try:
                     expiry_date = datetime.strptime(str(future_expiry), "%Y%m%d").date()
-                    days_remaining = max((expiry_date - datetime.now().date()).days, 0)
-                    config = replace(config, time_to_expiry_years=days_remaining / 365.0)
+                    ist = ZoneInfo("Asia/Kolkata")
+                    expiry_close = datetime.combine(expiry_date, datetime_time(15, 30), tzinfo=ist)
+                    seconds_remaining = max((expiry_close - datetime.now(ist)).total_seconds(), 0.0)
+                    config = replace(config, time_to_expiry_years=seconds_remaining / (365.0 * 24 * 60 * 60))
                 except ValueError:
                     self._prune(timestamp_ns)
                     return ()
