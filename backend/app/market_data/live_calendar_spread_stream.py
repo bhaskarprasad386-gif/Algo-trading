@@ -128,7 +128,7 @@ class LiveCalendarSpreadOneSecondCollector:
 
     def _contracts(self) -> list[dict[str, Any]]:
         today = datetime.now(IST).date()
-        grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
         for row in self.instrument_master.download():
             exchange = str(row.get("exch_seg") or "").upper()
             kind = INSTRUMENT_TYPES.get(str(row.get("instrumenttype") or "").upper())
@@ -144,7 +144,7 @@ class LiveCalendarSpreadOneSecondCollector:
                 continue
             if not expiry or expiry < today or not token or not symbol or not underlying or lot <= 0:
                 continue
-            grouped.setdefault((exchange, underlying), []).append({
+            grouped.setdefault((exchange, underlying, kind), []).append({
                 "exchange": exchange, "kind": kind, "expiry": expiry, "token": token,
                 "symbol": symbol, "underlying": underlying, "lot_size": lot,
             })
