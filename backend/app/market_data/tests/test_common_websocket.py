@@ -403,3 +403,50 @@ def test_blocking_connect_does_not_hold_recovery_reconcile_lock():
     finally:
         BlockingFirstSocket.release_first_connect.set()
         manager.close()
+
+
+class BlockingSubscribeSocket(FakeSocket):
+    subscribe_attempts = 0
+    release_first_subscribe = Event()
+
+    def subscribe_groups(self, groups, mode=None):
+        self.subscribe_calls.append((dict(groups), mode))
+        type(self).subscribe_attempts += 1
+        if type(self).subscribe_attempts == 1:
+            type(self).release_first_subscribe.wait(timeout=5.0)
+
+
+def test_blocking_subscription_call_is_bounded_and_socket_is_recovered():
+    registry = InstrumentRegistry()
+    first = descriptor("101")
+    second = descriptor("102")
+    registry.register_many([first, second])
+    BlockingSubscribeSocket.subscribe_attempts = 0
+    BlockingSubscribeSocket.release_first_subscribe.clear()
+    manager = CommonWebSocketManager(registry, socket_factory=BlockingSubscribeSocket)
+    manager._socket_call_wait_seconds = 0.05
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [first.key])
+        original = BlockingSubscribeSocket.instances[0]
+
+        started = time.monotonic()
+        try:
+            manager.subscribe("cash", [second.key])
+        except TimeoutError as exc:
+            assert "subscribe call exceeded" in str(exc)
+        else:
+            raise AssertionError("expected blocked subscription call to time out")
+        assert time.monotonic() - started < 1.0
+        assert original.closed is True
+        assert manager.snapshot()["socket_groups"] == 0
+
+        manager.recover_disconnected(min_age_seconds=0.0)
+        snapshot = manager.snapshot()
+        assert snapshot["socket_groups"] == 1
+        assert snapshot["connected_groups"] == ["1:0"]
+        assert len(BlockingSubscribeSocket.instances) == 2
+    finally:
+        BlockingSubscribeSocket.release_first_subscribe.set()
+        manager.close()
+        BlockingSubscribeSocket.subscribe_attempts = 0
