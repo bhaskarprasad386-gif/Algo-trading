@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from math import isfinite
 from threading import Event, Lock, RLock, Thread, current_thread
 import time
 from typing import Any, Callable
@@ -696,14 +697,21 @@ class CommonWebSocketManager:
                 self._missing_token_frames += 1
                 return
 
-            exchange_type_raw = message.get("exchange_type", message.get("exchangeType"))
+            exchange_type_raw = message.get("exchange_type")
+            if exchange_type_raw is None:
+                exchange_type_raw = message.get("exchangeType")
             exchange_type = None
             if exchange_type_raw is not None:
                 try:
-                    exchange_type = int(exchange_type_raw)
+                    if isinstance(exchange_type_raw, bool):
+                        raise ValueError("exchange_type must be an integer, not bool")
+                    numeric_exchange_type = float(exchange_type_raw)
+                    if not isfinite(numeric_exchange_type) or not numeric_exchange_type.is_integer():
+                        raise ValueError("exchange_type must be a finite integer")
+                    exchange_type = int(numeric_exchange_type)
                     if exchange_type <= 0:
                         raise ValueError("exchange_type must be positive")
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
                     self._invalid_exchange_type_frames += 1
                     return
 
