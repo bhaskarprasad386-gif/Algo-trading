@@ -73,7 +73,12 @@ def _source_timestamp_ns(message: dict[str, Any]) -> int | None:
         if value is None:
             continue
         try:
-            number = float(value)
+            # Preserve integer nanoseconds exactly; float conversion loses
+            # sub-microsecond precision at epoch-ns magnitudes.
+            try:
+                number = int(value)
+            except (TypeError, ValueError, OverflowError):
+                number = float(value)
         except (TypeError, ValueError, OverflowError):
             continue
         if not number or number < 0:
