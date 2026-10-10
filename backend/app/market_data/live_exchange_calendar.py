@@ -30,7 +30,7 @@ BFO_HOLIDAYS_2026 = frozenset({
 })
 
 # MCX holiday session policy: "both" closes the full day, "evening" permits
-# only 17:00-23:30, and "morning" permits only 09:00-17:00.
+# only 17:00 through the seasonal close, and "morning" permits 09:00-17:00.
 MCX_HOLIDAY_SESSIONS_2026 = {
     date(2026, 1, 1): "morning",
     date(2026, 1, 26): "both",
