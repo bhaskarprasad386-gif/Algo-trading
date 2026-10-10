@@ -19,7 +19,7 @@ def live(limit:int=Query(50,ge=1,le=200), min_gap_points:float|None=Query(None,g
   "far_bid":x.far_bid,"far_ask":x.far_ask,"lot_size":x.lot_size,
   "long_edge":x.edge_long,"short_edge":x.edge_short,
   "long_edge_pct":x.edge_pct_long,"short_edge_pct":x.edge_pct_short,
-  "liquidity_qty":x.liquidity_qty,"capacity_lots":x.capacity_lots,"rank_score":x.rank_score,"direction":x.direction,"gap_points":x.gap_points,"gross_profit":x.gross_profit,"profit_basis":"gross_before_fees_and_slippage","net_profit_estimate":None,"qualifies":(x.gap_points >= effective_min_gap and x.gross_profit >= effective_min_gross),"minimum_gap_points":effective_min_gap,"minimum_gross_profit":effective_min_gross
+  "liquidity_qty":x.liquidity_qty,"capacity_lots":x.capacity_lots,"estimated_capacity_lots":x.capacity_lots,"capacity_type":"estimate_only","capacity_basis":"configured capital / (far ask × lot size); excludes broker margin, available funds, fees and slippage","rank_score":x.rank_score,"direction":x.direction,"gap_points":x.gap_points,"gross_profit":x.gross_profit,"profit_basis":"gross_before_fees_and_slippage","net_profit_estimate":None,"qualifies":(x.gap_points >= effective_min_gap and x.gross_profit >= effective_min_gross),"minimum_gap_points":effective_min_gap,"minimum_gross_profit":effective_min_gross
  } for x in scanner.snapshot(limit=limit, minimum_gap_points=min_gap_points, minimum_gross_profit=min_gross_profit)]
  return {"status":"success","scanner":"calendar-spread-live-1s","mode":"paper-safe","data":signals,"opportunity_count":sum(max(x["long_edge"],x["short_edge"])>0 for x in signals)}
 @router.get("/pairs")
@@ -32,7 +32,7 @@ def pairs(limit:int=Query(200,ge=1,le=500)):
   "far_bid":x.far_bid,"far_ask":x.far_ask,"lot_size":x.lot_size,
   "long_edge":x.edge_long,"short_edge":x.edge_short,
   "long_edge_pct":x.edge_pct_long,"short_edge_pct":x.edge_pct_short,
-  "liquidity_qty":x.liquidity_qty,"capacity_lots":x.capacity_lots,"rank_score":x.rank_score,
+  "liquidity_qty":x.liquidity_qty,"capacity_lots":x.capacity_lots,"estimated_capacity_lots":x.capacity_lots,"capacity_type":"estimate_only","capacity_basis":"configured capital / (far ask × lot size); excludes broker margin, available funds, fees and slippage","rank_score":x.rank_score,
   "direction":x.direction,"gap_points":x.gap_points,"gross_profit":x.gross_profit,"profit_basis":"gross_before_fees_and_slippage","net_profit_estimate":None,"qualifies":x.qualifies,
  } for x in scanner.pair_snapshot(limit=limit)]
  return {"status":"success","scanner":"calendar-spread-pair-monitor","mode":"paper-safe","data":rows,"pair_count":len(rows)}
