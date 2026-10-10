@@ -1,7 +1,8 @@
 from __future__ import annotations
 from dataclasses import dataclass, replace
 import logging
-from threading import RLock
+from threading import RLock, Thread
+from queue import Queue, Full
 from app.core.config import settings
 from app.market_data.contracts import MarketDataRecord, InstrumentType
 from app.market_data.opportunity import OpportunityLeg, OpportunitySignal, OrderSide, gross_profit_from_points, qualifies_opportunity
@@ -16,9 +17,13 @@ class CalendarSpreadSignal:
     underlying: str
     exchange: str
     instrument_type: str
+    contract_family: str
     near_contract_month: str
     far_contract_month: str
     timestamp_ns: int
+    near_timestamp_ns: int
+    far_timestamp_ns: int
+    timestamp_skew_ns: int
     near_bid: float
     near_ask: float
     far_bid: float
@@ -52,6 +57,16 @@ class LiveCalendarSpreadScanner:
         self.minimum_gross_profit = float(minimum_gross_profit)
         self._latest: dict[tuple[str,str,str], dict[str, MarketDataRecord]] = {}
         self._signals: dict[tuple[str,str,str], CalendarSpreadSignal] = {}
+        self._pair_status: dict[tuple[str,str,str], dict] = {}
+        self._diagnostics = {
+            "invalid_quote": 0, "stale_tick": 0, "future_tick": 0,
+            "waiting_for_second_expiry": 0, "timestamp_mismatch": 0,
+            "lot_size_mismatch": 0, "no_positive_edge": 0,
+            "qualified": 0, "side_effect_queue_dropped": 0,
+            "side_effect_errors": 0,
+        }
+        self._side_effect_queue = Queue(maxsize=256)
+        self._side_effect_worker_started = False
         self._lock = RLock()
         self.alerts = alerts or CalendarSpreadAlertService()
 
@@ -65,41 +80,89 @@ class LiveCalendarSpreadScanner:
             and record.lot_size is not None and record.lot_size > 0 and bool(record.expiry)
         )
 
+    def _key_for_record(self, record: MarketDataRecord) -> tuple[str, str, str]:
+        family = str(record.payload.get("contract_family") or record.instrument_type.value).strip().upper()
+        return (str(record.underlying or record.symbol).strip().upper(),
+                record.instrument.exchange.strip().upper(), family)
+
+    def _set_pair_status(self, key, status, *, near=None, far=None, timestamp_ns=None, **extra):
+        self._pair_status[key] = {
+            "underlying": key[0], "exchange": key[1], "contract_family": key[2],
+            "status": status,
+            "near_contract_month": (near.expiry if near else None),
+            "far_contract_month": (far.expiry if far else None),
+            "timestamp_ns": timestamp_ns or max(
+                getattr(near, "timestamp_ns", 0), getattr(far, "timestamp_ns", 0)
+            ),
+            **extra,
+        }
+
     def update(self, record: MarketDataRecord, *, contract_month: str | None = None) -> CalendarSpreadSignal | None:
         # Only wall-clock epoch timestamps are eligible for the live freshness guard.
         # Synthetic/unit fixtures may intentionally use compact logical timestamps.
         import time
+        key = self._key_for_record(record)
         if record.timestamp_ns >= 1_000_000_000_000_000:
             age_ns = time.time_ns() - record.timestamp_ns
-            # Allow small exchange/server clock skew, but reject stale ticks and
-            # timestamps materially in the future; future-dated pairs otherwise
-            # appear perpetually fresh in pair_snapshot()/snapshot().
-            if age_ns > self.SNAPSHOT_MAX_AGE_NS or age_ns < -self.TIMESTAMP_TOLERANCE_NS:
+            if age_ns > self.SNAPSHOT_MAX_AGE_NS:
+                with self._lock:
+                    self._diagnostics["stale_tick"] += 1
+                return None
+            if age_ns < -self.TIMESTAMP_TOLERANCE_NS:
+                with self._lock:
+                    self._diagnostics["future_tick"] += 1
                 return None
         if not self._record_ok(record):
+            with self._lock:
+                self._diagnostics["invalid_quote"] += 1
+                bucket = self._latest.get(key, {})
+                old = bucket.get((contract_month or record.expiry or "").strip())
+                # Do not let an out-of-order malformed tick invalidate a newer quote.
+                if old is None or record.timestamp_ns >= old.timestamp_ns:
+                    self._signals.pop(key, None)
+                    self._set_pair_status(key, "invalid_quote", timestamp_ns=record.timestamp_ns)
             return None
-        contract_family = str(record.payload.get("contract_family") or record.instrument_type.value).strip().upper()
-        key=(str(record.underlying or record.symbol).strip().upper(), record.instrument.exchange.strip().upper(), contract_family)
+        contract_family = key[2]
         month=(contract_month or record.expiry or "").strip()
         if not month:
             return None
         with self._lock:
-            bucket=self._latest.setdefault(key,{})
-            bucket[month]=record
-            ordered=sorted(bucket.items(), key=lambda item: (item[1].expiry or item[0], item[0]))
-            if len(ordered)>2:
-                self._latest[key]={k:v for k,v in ordered[:2]}
-            if len(self._latest[key])<2:
+            bucket = self._latest.setdefault(key, {})
+            previous = bucket.get(month)
+            if previous is not None and record.timestamp_ns < previous.timestamp_ns:
                 return None
-            ordered=sorted(self._latest[key].items(), key=lambda item: (item[1].expiry or item[0], item[0]))
-            near_m, near=ordered[0]; far_m, far=ordered[1]
-            if abs(near.timestamp_ns - far.timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS or near.lot_size != far.lot_size or near.instrument.exchange != far.instrument.exchange:
+            bucket[month] = record
+            ordered = sorted(bucket.items(), key=lambda item: (item[1].expiry or item[0], item[0]))
+            if len(ordered) > 2:
+                self._latest[key] = {k: v for k, v in ordered[:2]}
+            if len(self._latest[key]) < 2:
+                self._signals.pop(key, None)
+                self._set_pair_status(key, "waiting_for_second_expiry", near=record, timestamp_ns=record.timestamp_ns)
+                self._diagnostics["waiting_for_second_expiry"] += 1
+                return None
+            ordered = sorted(self._latest[key].items(), key=lambda item: (item[1].expiry or item[0], item[0]))
+            near_m, near = ordered[0]
+            far_m, far = ordered[1]
+            if abs(near.timestamp_ns - far.timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS:
+                self._signals.pop(key, None)
+                self._set_pair_status(key, "timestamp_mismatch", near=near, far=far,
+                                      timestamp_skew_ns=abs(near.timestamp_ns-far.timestamp_ns))
+                self._diagnostics["timestamp_mismatch"] += 1
+                return None
+            if near.lot_size != far.lot_size or near.instrument.exchange != far.instrument.exchange:
+                self._signals.pop(key, None)
+                self._set_pair_status(key, "lot_size_mismatch", near=near, far=far)
+                self._diagnostics["lot_size_mismatch"] += 1
                 return None
             long_edge=float(far.bid)-float(near.ask); short_edge=float(near.bid)-float(far.ask)
             # A matched pair is not automatically an opportunity. If neither
             # executable direction has positive edge, skip it before gross-profit
             # sizing (which correctly rejects negative points).
             if max(long_edge, short_edge) <= 0:
+                self._signals.pop(key, None)
+                self._set_pair_status(key, "no_positive_edge", near=near, far=far,
+                                      long_edge=long_edge, short_edge=short_edge)
+                self._diagnostics["no_positive_edge"] += 1
                 return None
             if long_edge >= short_edge:
                 gap=long_edge; direction="LONG_NEAR_SHORT_FAR"
@@ -107,33 +170,96 @@ class LiveCalendarSpreadScanner:
             else:
                 gap=short_edge; direction="SHORT_NEAR_LONG_FAR"
                 legs=(OpportunityLeg(near,OrderSide.SELL,"near-entry"),OpportunityLeg(far,OrderSide.BUY,"far-entry"))
-            lot=int(near.lot_size); gross=gross_profit_from_points(gap,lot)
-            qualifies=qualifies_opportunity(gap_points=gap,gross_profit=gross,minimum_gap_points=self.minimum_gap_points,minimum_gross_profit=self.minimum_gross_profit)
+            lot = int(near.lot_size)
+            gross = gross_profit_from_points(gap, lot)
+            nq = min(float(near.bid_qty or 0), float(near.ask_qty or 0))
+            fq = min(float(far.bid_qty or 0), float(far.ask_qty or 0))
+            liquidity = min(nq, fq) if nq > 0 and fq > 0 else 0.0
+            # Positive gross edge is not enough if neither leg has executable depth.
+            qualifies = (
+                liquidity > 0
+                and qualifies_opportunity(
+                    gap_points=gap, gross_profit=gross,
+                    minimum_gap_points=self.minimum_gap_points,
+                    minimum_gross_profit=self.minimum_gross_profit,
+                )
+            )
             # OpportunitySignal requires leg timestamps to be identical. Once the
             # pair passes Calendar-specific skew tolerance, anchor both leg snapshots
             # to the near-leg timestamp. Original feed records remain unchanged.
             signal_near = replace(near, timestamp_ns=near.timestamp_ns)
             signal_far = replace(far, timestamp_ns=near.timestamp_ns)
             signal_legs = (OpportunityLeg(signal_near, OrderSide.BUY if direction == "LONG_NEAR_SHORT_FAR" else OrderSide.SELL, "near-entry"), OpportunityLeg(signal_far, OrderSide.SELL if direction == "LONG_NEAR_SHORT_FAR" else OrderSide.BUY, "far-entry"))
-            base=max(float(near.ask),float(far.ask),1e-12)
-            nq=min(float(near.bid_qty or 0),float(near.ask_qty or 0)); fq=min(float(far.bid_qty or 0),float(far.ask_qty or 0))
-            liquidity=min(nq,fq) if nq>0 and fq>0 else 0.0
-            cap=int(settings.LIVE_CASH_FUTURE_CAPITAL/(base*lot)) if settings.LIVE_CASH_FUTURE_CAPITAL>0 else 0
-            signal=OpportunitySignal(strategy_id=self.strategy_id,opportunity_type="calendar-spread",symbol=key[0],timestamp_ns=near.timestamp_ns,gap_points=gap,gross_profit=gross,lot_size=lot,qualifies=qualifies,minimum_gap_points=self.minimum_gap_points,minimum_gross_profit=self.minimum_gross_profit,legs=signal_legs,expiry=far.expiry,metadata={"direction":direction,"exchange":key[1],"near_contract_month":near_m,"far_contract_month":far_m,"source":"common-market-data","live_orders":False})
-            result=CalendarSpreadSignal(key[0],key[1],str(near.instrument_type.value),near_m,far_m,near.timestamp_ns,float(near.bid),float(near.ask),float(far.bid),float(far.ask),lot,long_edge,short_edge,long_edge/base*100,short_edge/base*100,liquidity,cap,gap/base,direction,gap,gross,qualifies,signal)
-            self._signals[key]=result
+            base = max(float(near.ask), float(far.ask), 1e-12)
+            cap = int(settings.LIVE_CASH_FUTURE_CAPITAL / (base * lot)) if settings.LIVE_CASH_FUTURE_CAPITAL > 0 else 0
+            signal = OpportunitySignal(
+                strategy_id=self.strategy_id, opportunity_type="calendar-spread",
+                symbol=key[0], timestamp_ns=near.timestamp_ns, gap_points=gap,
+                gross_profit=gross, lot_size=lot, qualifies=qualifies,
+                minimum_gap_points=self.minimum_gap_points,
+                minimum_gross_profit=self.minimum_gross_profit, legs=signal_legs,
+                expiry=far.expiry,
+                metadata={
+                    "direction": direction, "exchange": key[1],
+                    "contract_family": contract_family,
+                    "near_contract_month": near_m, "far_contract_month": far_m,
+                    "near_timestamp_ns": near.timestamp_ns,
+                    "far_timestamp_ns": far.timestamp_ns,
+                    "timestamp_skew_ns": abs(near.timestamp_ns-far.timestamp_ns),
+                    "profit_basis": "gross_before_fees_and_slippage",
+                    "net_profit_estimate": None,
+                    "source": "common-market-data", "live_orders": False,
+                },
+            )
+            result = CalendarSpreadSignal(
+                key[0], key[1], str(near.instrument_type.value), contract_family,
+                near_m, far_m, near.timestamp_ns, near.timestamp_ns, far.timestamp_ns,
+                abs(near.timestamp_ns-far.timestamp_ns),
+                float(near.bid), float(near.ask), float(far.bid), float(far.ask),
+                lot, long_edge, short_edge, long_edge/base*100, short_edge/base*100,
+                liquidity, cap, gap/base, direction, gap, gross, qualifies, signal,
+            )
+            self._signals[key] = result
+            self._set_pair_status(key, "opportunity" if qualifies else "matched_below_threshold",
+                                  near=near, far=far, long_edge=long_edge, short_edge=short_edge,
+                                  liquidity_qty=liquidity, gross_profit=gross,
+                                  profit_basis="gross_before_fees_and_slippage")
+            if qualifies:
+                self._diagnostics["qualified"] += 1
         if qualifies and (session_factory := getattr(self, "_session_factory", None)):
-            self._persist(result, session_factory)
-            db=session_factory()
             try:
-                self.alerts.persist(db, result)
-                self.alerts.emit(db, result)
-            finally:
-                db.close()
+                self._side_effect_queue.put_nowait((result, session_factory))
+            except Full:
+                with self._lock:
+                    self._diagnostics["side_effect_queue_dropped"] += 1
         return result
 
+    def _side_effect_worker(self):
+        while True:
+            result, session_factory = self._side_effect_queue.get()
+            try:
+                self._persist(result, session_factory)
+                db = session_factory()
+                try:
+                    self.alerts.persist(db, result)
+                    self.alerts.emit(db, result)
+                finally:
+                    db.close()
+            except Exception:
+                logger.exception("Calendar Spread asynchronous persistence/alert side effect failed")
+                with self._lock:
+                    self._diagnostics["side_effect_errors"] += 1
+            finally:
+                self._side_effect_queue.task_done()
+
     def set_session_factory(self, session_factory):
-        self._session_factory=session_factory
+        self._session_factory = session_factory
+        if not self._side_effect_worker_started:
+            with self._lock:
+                if not self._side_effect_worker_started:
+                    worker = Thread(target=self._side_effect_worker, name="calendar-spread-side-effects", daemon=True)
+                    worker.start()
+                    self._side_effect_worker_started = True
 
     def _persist(self, signal, session_factory):
         db=session_factory()
@@ -177,13 +303,24 @@ class LiveCalendarSpreadScanner:
             )
             return None
 
+    def diagnostics_snapshot(self, limit=200):
+        import time
+        now_ns = time.time_ns()
+        with self._lock:
+            statuses = [dict(item) for item in self._pair_status.values()]
+            counters = dict(self._diagnostics)
+        statuses = [item for item in statuses
+                    if 0 <= now_ns - int(item.get("timestamp_ns") or 0) <= self.SNAPSHOT_MAX_AGE_NS]
+        statuses.sort(key=lambda item: int(item.get("timestamp_ns") or 0), reverse=True)
+        return {"counters": counters, "pairs": statuses[:limit]}
+
     def pair_snapshot(self, limit=200):
-        """Return every fresh matched near/far pair, including NO SIGNAL rows."""
+        """Return fresh pairs for which a positive executable edge was computed."""
         import time
         now_ns = time.time_ns()
         with self._lock:
             values = tuple(self._signals.values())
-        values = tuple(x for x in values if now_ns - x.timestamp_ns <= self.SNAPSHOT_MAX_AGE_NS)
+        values = tuple(x for x in values if 0 <= now_ns - x.timestamp_ns <= self.SNAPSHOT_MAX_AGE_NS)
         return tuple(sorted(values, key=lambda x: x.timestamp_ns, reverse=True)[:limit])
 
     def snapshot(self,limit=50,*,minimum_gap_points=None,minimum_gross_profit=None):
@@ -193,5 +330,5 @@ class LiveCalendarSpreadScanner:
         import time
         now_ns = time.time_ns()
         with self._lock:values=tuple(self._signals.values())
-        values=tuple(x for x in values if now_ns - x.timestamp_ns <= self.SNAPSHOT_MAX_AGE_NS and qualifies_opportunity(gap_points=x.gap_points,gross_profit=x.gross_profit,minimum_gap_points=min_gap,minimum_gross_profit=min_gross))
+        values=tuple(x for x in values if 0 <= now_ns - x.timestamp_ns <= self.SNAPSHOT_MAX_AGE_NS and x.liquidity_qty > 0 and qualifies_opportunity(gap_points=x.gap_points,gross_profit=x.gross_profit,minimum_gap_points=min_gap,minimum_gross_profit=min_gross))
         return tuple(sorted(values,key=lambda x:(x.gross_profit,x.gap_points),reverse=True)[:limit])
