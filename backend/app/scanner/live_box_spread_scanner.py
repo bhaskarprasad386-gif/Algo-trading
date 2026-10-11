@@ -62,7 +62,10 @@ class LiveBoxSpreadScanner:
                         self._price(ce.get("bid")) or 0,self._price(ce.get("ask")) or 0,
                         self._price(pe.get("bid")) or 0,self._price(pe.get("ask")) or 0,
                         ce_lot,cls,
-                        int(float(ce.get("volume") or 0)),int(float(ce.get("oi") or 0))
+                        # Use the weaker CE/PE leg so one liquid side cannot
+                        # mask an illiquid side in the four-leg structure.
+                        min(int(float(ce.get("volume") or 0)), int(float(pe.get("volume") or 0))),
+                        min(int(float(ce.get("oi") or 0)), int(float(pe.get("oi") or 0)))
                     ))
                 except (ValueError,TypeError): continue
             timestamps=[int(value.get("source_timestamp_ns") or 0) for value in bucket.values() if isinstance(value,dict)]
