@@ -35,11 +35,30 @@ jobs:
           ssh-keygen -y -f /tmp/vps_key > /tmp/vps_pub
           mkdir -p ~/.ssh
           printf 'SSH_KEY_OK\n'
+          if [[ -z "${VPS_HOST:-}" || -z "${VPS_USER:-}" ]]; then
+            printf 'SSH_CONFIG_ERROR: VPS_HOST or VPS_USER secret is empty\n' >&2
+            exit 1
+          fi
+          SSH_PORT=22
           SSH_KNOWN_HOSTS=/tmp/vps_known_hosts
+          SSH_SCAN_ERR=/tmp/vps_keyscan.err
           : > "$SSH_KNOWN_HOSTS"
-          ssh-keyscan -T 10 -H "$VPS_HOST" > "$SSH_KNOWN_HOSTS"
-          test -s "$SSH_KNOWN_HOSTS"
-          printf 'SSH_KEYSCAN_DONE\n'
+          printf 'SSH_KEYSCAN_START port=%s\n' "$SSH_PORT"
+          for attempt in 1 2 3; do
+            if ssh-keyscan -T 7 -p "$SSH_PORT" -H "$VPS_HOST" > "${SSH_KNOWN_HOSTS}.tmp" 2> "$SSH_SCAN_ERR" && test -s "${SSH_KNOWN_HOSTS}.tmp"; then
+              mv "${SSH_KNOWN_HOSTS}.tmp" "$SSH_KNOWN_HOSTS"
+              printf 'SSH_KEYSCAN_DONE attempt=%s\n' "$attempt"
+              break
+            fi
+            printf 'SSH_KEYSCAN_ATTEMPT_FAILED=%s\n' "$attempt" >&2
+            if [[ -s "$SSH_SCAN_ERR" ]]; then sed -E 's/[0-9]{1,3}(\.[0-9]{1,3}){3}/[redacted-ip]/g' "$SSH_SCAN_ERR" >&2; fi
+            rm -f "${SSH_KNOWN_HOSTS}.tmp"
+            if [[ "$attempt" -lt 3 ]]; then sleep 2; fi
+          done
+          if [[ ! -s "$SSH_KNOWN_HOSTS" ]]; then
+            printf 'SSH_KEYSCAN_FAILED: no host key received after 3 attempts; deployment was not started\n' >&2
+            exit 1
+          fi
           SSH_OPTS=(-i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 -o UserKnownHostsFile="$SSH_KNOWN_HOSTS" -o StrictHostKeyChecking=yes)
           ssh "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" 'printf "SSH_AUTH_OK\\n"'
           FORCE_RESTART="${{ inputs.force_restart || false }}"
