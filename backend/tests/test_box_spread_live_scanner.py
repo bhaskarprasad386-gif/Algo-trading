@@ -13,7 +13,35 @@ def test_box_live_scanner_uses_real_bid_ask_for_both_directions():
         config=BoxSpreadScanConfig(allowed_stock_symbols=frozenset({"ABC"}), max_option_spread_pct=5.0),
         policy=ScanPolicy(stock_box_distances=(1,)),
     )
-    # With executable bid/ask prices, only the LONG box is profitable here.\n    # LONG debit = 11 + 2 - 8 - 2 = 3; width = 10; edge = 7.\n    assert len(result) == 1\n    assert result[0].direction == "LONG"\n    assert result[0].executable_edge == 7
+    # LONG debit = (low call ask - high call bid) +
+    #              (high put ask - low put bid) = (11 - 8) + (3 - 1) = 5.
+    # Width = 10, so executable edge = 5. SHORT is not profitable.
+    assert len(result) == 1
+    assert result[0].direction == "LONG"
+    assert result[0].executable_edge == 5
+
+def test_live_box_scanner_uses_weaker_ce_pe_liquidity():
+    scanner = LiveBoxSpreadScanner(
+        atm_provider=lambda _s, _t: 100.0,
+        config_provider=lambda _s: BoxSpreadScanConfig(
+            allowed_stock_symbols=frozenset({"ABC"}),
+            min_option_volume=10,
+            min_option_oi=10,
+        ),
+        policy=ScanPolicy(stock_box_distances=(1,)),
+    )
+    base = {
+        "underlying": "ABC", "instrument_class": "STOCK",
+        "source_timestamp_ns": 1, "expiry": "31DEC2026",
+        "strike": 100, "lot_size": 10, "volume": 100, "oi": 100,
+    }
+    scanner.observe({**base, "option_type": "CE", "bid": 10, "ask": 10.1})
+    scanner.observe({**base, "option_type": "PE", "bid": 1, "ask": 1.01, "volume": 1})
+    upper = {**base, "strike": 110}
+    scanner.observe({**upper, "option_type": "CE", "bid": 8, "ask": 8.1})
+    results = scanner.observe({**upper, "option_type": "PE", "bid": 2, "ask": 2.01})
+    assert results == ()
+
 
 def test_live_box_scanner_waits_for_matching_ce_pe_pairs():
     scanner=LiveBoxSpreadScanner(
