@@ -69,11 +69,14 @@ class BoxSpreadBacktester:
         if low.timestamp_ns!=high.timestamp_ns: raise ValueError("box legs must share timestamp")
         if low.lot_size!=high.lot_size: raise ValueError("box legs must share lot size")
         width=high.strike-low.strike
+        # A box is long the low-strike call and high-strike put, and
+        # short the high-strike call and low-strike put. Use executable
+        # ask prices for buys and bid prices for sells.
         if direction=="LONG":
-            debit=low.call_ask+low.put_ask-high.call_bid-high.put_bid
+            debit=(low.call_ask-high.call_bid)+(high.put_ask-low.put_bid)
             edge=width-debit-fees_per_unit
         else:
-            credit=low.call_bid+low.put_bid-high.call_ask-high.put_ask
+            credit=(low.call_bid-high.call_ask)+(high.put_bid-low.put_ask)
             edge=credit-width-fees_per_unit
         if edge<=0:return None
         pnl=edge*low.lot_size
