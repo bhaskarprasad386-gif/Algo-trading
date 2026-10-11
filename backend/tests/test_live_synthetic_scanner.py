@@ -181,8 +181,10 @@ def test_live_synthetic_scanner_rejects_future_without_executable_depth():
 def test_live_synthetic_scanner_keeps_fresh_pair_when_unrelated_strike_is_older():
     ts = 8_000_000_000
     scanner = LiveSyntheticScanner(atm_provider=lambda _s, _t: 100.0)
-    # Keep the option legs on the same future expiry; _base defaults to a
-    # September expiry, which would correctly be rejected against this future.
+    # Include a complete ATM pair so 105 is a genuine off-ATM candidate.
+    # Keep all option legs on the future expiry; _base defaults to September.
+    scanner.observe({**_base(ts, 100.0, "CE", 4.0, 5.0), "expiry": "30OCT2026"})
+    scanner.observe({**_base(ts + 400_000_000, 100.0, "PE", 4.0, 5.0), "expiry": "30OCT2026"})
     scanner.observe({**_base(ts, 105.0, "CE", 4.0, 5.0), "expiry": "30OCT2026"})
     scanner.observe({**_base(ts + 400_000_000, 105.0, "PE", 4.0, 5.0), "expiry": "30OCT2026"})
     scanner.observe({**_base(ts - 700_000_000, 110.0, "CE", 4.0, 5.0), "expiry": "30OCT2026"})
