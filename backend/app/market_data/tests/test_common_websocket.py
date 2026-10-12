@@ -400,7 +400,18 @@ def test_blocking_connect_does_not_hold_recovery_reconcile_lock():
         assert original.closed is True
         assert len(BlockingFirstSocket.instances) == 2
         assert manager.snapshot()["socket_groups"] == 1
+        # Recovery/reconciliation must complete even though the stale SDK call
+        # is blocked, but the replacement must not overlap that broker handshake.
+        replacement = BlockingFirstSocket.instances[1]
+        assert replacement.connect_calls == []
+        BlockingFirstSocket.release_first_connect.set()
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if manager.snapshot()["connected_groups"] == ["1:0"]:
+                break
+            time.sleep(0.01)
         assert manager.snapshot()["connected_groups"] == ["1:0"]
+        assert len(replacement.connect_calls) == 1
     finally:
         BlockingFirstSocket.release_first_connect.set()
         manager.close()
